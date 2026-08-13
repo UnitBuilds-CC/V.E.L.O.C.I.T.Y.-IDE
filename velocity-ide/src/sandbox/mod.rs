@@ -1,4 +1,4 @@
-// sandbox/mod.rs — Executing NDA opcode trees with nda_int kernels
+﻿// sandbox/mod.rs — Executing NDA opcode trees with nda_int kernels
 #![allow(dead_code, unused)]
 pub mod jit_sandbox;
 pub mod scope_validator;

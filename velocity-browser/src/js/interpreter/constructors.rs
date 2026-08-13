@@ -1,4 +1,4 @@
-//! `new X(...)` constructor dispatch, extracted from eval.rs to keep it under
+﻿//! `new X(...)` constructor dispatch, extracted from eval.rs to keep it under
 //! the file-size budget. Behavior is identical; new constructors (ES2021+ and
 //! Web APIs) are appended at the end of the builtin match.
 

@@ -1,4 +1,4 @@
-//! AI-assisted workflow generation from natural language.
+﻿//! AI-assisted workflow generation from natural language.
 //!
 //! Converts user descriptions into workflow canvas structures by parsing
 //! intent keywords and mapping them to step patterns. This provides a
@@ -28,7 +28,8 @@ pub fn generate_from_description(id: &str, name: &str, description: &str) -> Gen
         return GenerationResult {
             canvas: build_review_pipeline(id, name, description),
             confidence: 0.85,
-            explanation: "Detected code review intent — built check→lint→summarize pipeline".into(),
+            explanation: "Detected code review intent \u{2014} built check\u{2192}lint\u{2192}summarize pipeline"
+                .into(),
         };
     }
 
@@ -37,7 +38,8 @@ pub fn generate_from_description(id: &str, name: &str, description: &str) -> Gen
         return GenerationResult {
             canvas: build_test_pipeline(id, name, description),
             confidence: 0.85,
-            explanation: "Detected testing intent — built test→condition→report pipeline".into(),
+            explanation: "Detected testing intent \u{2014} built test\u{2192}condition\u{2192}report pipeline"
+                .into(),
         };
     }
 
@@ -46,8 +48,9 @@ pub fn generate_from_description(id: &str, name: &str, description: &str) -> Gen
         return GenerationResult {
             canvas: build_deploy_pipeline(id, name, description),
             confidence: 0.80,
-            explanation: "Detected deployment intent — built build→check→deploy→verify pipeline"
-                .into(),
+            explanation:
+                "Detected deployment intent \u{2014} built build\u{2192}check\u{2192}deploy\u{2192}verify pipeline"
+                    .into(),
         };
     }
 
@@ -56,8 +59,8 @@ pub fn generate_from_description(id: &str, name: &str, description: &str) -> Gen
         return GenerationResult {
             canvas: build_debug_pipeline(id, name, description),
             confidence: 0.80,
-            explanation: "Detected debugging intent — built log→analyze→fix→validate pipeline"
-                .into(),
+            explanation:
+                "Detected debugging intent \u{2014} built log\u{2192}analyze\u{2192}fix\u{2192}validate pipeline".into(),
         };
     }
 
@@ -69,8 +72,9 @@ pub fn generate_from_description(id: &str, name: &str, description: &str) -> Gen
         return GenerationResult {
             canvas: build_docs_pipeline(id, name, description),
             confidence: 0.75,
-            explanation: "Detected documentation intent — built research→summarize→write pipeline"
-                .into(),
+            explanation:
+                "Detected documentation intent \u{2014} built research\u{2192}summarize\u{2192}write pipeline"
+                    .into(),
         };
     }
 
@@ -83,7 +87,8 @@ pub fn generate_from_description(id: &str, name: &str, description: &str) -> Gen
             canvas: build_refactor_pipeline(id, name, description),
             confidence: 0.80,
             explanation:
-                "Detected refactoring intent — built analyze→refactor→test→validate pipeline".into(),
+                "Detected refactoring intent \u{2014} built analyze\u{2192}refactor\u{2192}test\u{2192}validate pipeline"
+                    .into(),
         };
     }
 
@@ -95,7 +100,7 @@ pub fn generate_from_description(id: &str, name: &str, description: &str) -> Gen
         return GenerationResult {
             canvas: build_feature_pipeline(id, name, description),
             confidence: 0.70,
-            explanation: "Detected feature implementation intent — built plan→implement→test→document pipeline".into(),
+            explanation: "Detected feature implementation intent \u{2014} built plan\u{2192}implement\u{2192}test\u{2192}document pipeline".into(),
         };
     }
 
@@ -103,8 +108,8 @@ pub fn generate_from_description(id: &str, name: &str, description: &str) -> Gen
     GenerationResult {
         canvas: build_generic_pipeline(id, name, description),
         confidence: 0.50,
-        explanation: "No specific pattern detected — built generic analyze→act→verify pipeline"
-            .into(),
+        explanation:
+            "No specific pattern detected \u{2014} built generic analyze\u{2192}act\u{2192}verify pipeline".into(),
     }
 }
 

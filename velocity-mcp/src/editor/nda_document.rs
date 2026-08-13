@@ -1,4 +1,4 @@
-//! NDA Document editor tab — author, convert, view, and inspect portable NDA1
+﻿//! NDA Document editor tab — author, convert, view, and inspect portable NDA1
 //! documents with self-contained provenance/history.
 //!
 //! A document is stored on disk either *portable* (the 48-byte-header NDA1
@@ -349,7 +349,7 @@ impl NdaDocumentView {
             ui.add_space(16.0);
             ui.vertical_centered(|ui| {
                 ui.label(
-                    egui::RichText::new("◇")
+                    egui::RichText::new("\u{25c7}")
                         .size(28.0)
                         .color(palette.accent.gamma_multiply(0.7)),
                 );
@@ -393,7 +393,7 @@ impl NdaDocumentView {
                 ui.label(egui::RichText::new(badge.0).size(10.0).color(badge.1));
                 if self.dirty {
                     ui.label(
-                        egui::RichText::new("● unsaved")
+                        egui::RichText::new("\u{25cf} unsaved")
                             .size(10.0)
                             .color(palette.warning),
                     );
@@ -402,7 +402,7 @@ impl NdaDocumentView {
                     let revs = self.doc.revisions().len();
                     ui.label(
                         egui::RichText::new(format!(
-                            "{} triples · {} commands · {} revisions",
+                            "{} triples \u{00b7} {} commands \u{00b7} {} revisions",
                             self.doc.triples.len(),
                             self.doc.commands.len(),
                             revs
@@ -445,7 +445,7 @@ impl NdaDocumentView {
 
             if let Some(err) = &self.last_error {
                 ui.label(
-                    egui::RichText::new(format!("⚠ {err}"))
+                    egui::RichText::new(format!("\u{26a0} {err}"))
                         .size(11.0)
                         .color(palette.error),
                 );
@@ -609,7 +609,7 @@ impl NdaDocumentView {
             painter.text(
                 rect.center(),
                 egui::Align2::CENTER_CENTER,
-                "No display commands yet — add one under Triples.",
+                "No display commands yet \u{2014} add one under Triples.",
                 egui::FontId::monospace(12.0),
                 palette.text_muted,
             );
@@ -636,9 +636,9 @@ impl NdaDocumentView {
         );
         ui.horizontal(|ui| {
             ui.text_edit_singleline(&mut self.ts);
-            ui.label("→");
+            ui.label("\u{2192}");
             ui.text_edit_singleline(&mut self.tp);
-            ui.label("→");
+            ui.label("\u{2192}");
             ui.text_edit_singleline(&mut self.to);
             if ui.button("Add").clicked() && !self.ts.is_empty() && !self.tp.is_empty() {
                 self.doc
@@ -781,12 +781,12 @@ impl NdaDocumentView {
                     palette.text
                 };
                 ui.label(
-                    egui::RichText::new(format!("{s} → {p} → {o}"))
+                    egui::RichText::new(format!("{s} \u{2192} {p} \u{2192} {o}"))
                         .size(11.0)
                         .color(color),
                 );
                 if ui
-                    .small_button("✕")
+                    .small_button("\u{2715}")
                     .on_hover_text("Remove triple")
                     .clicked()
                 {
@@ -920,7 +920,7 @@ impl NdaDocumentView {
             ui.horizontal(|ui| {
                 ui.add_space(12.0);
                 if ui
-                    .small_button("↑")
+                    .small_button("\u{2191}")
                     .on_hover_text("Move earlier (paints below)")
                     .clicked()
                     && i > 0
@@ -928,7 +928,7 @@ impl NdaDocumentView {
                     swap = Some((i, i - 1));
                 }
                 if ui
-                    .small_button("↓")
+                    .small_button("\u{2193}")
                     .on_hover_text("Move later (paints above)")
                     .clicked()
                     && i + 1 < n
@@ -936,7 +936,7 @@ impl NdaDocumentView {
                     swap = Some((i, i + 1));
                 }
                 if ui
-                    .small_button("✕")
+                    .small_button("\u{2715}")
                     .on_hover_text("Remove command")
                     .clicked()
                 {
@@ -1062,18 +1062,20 @@ impl NdaDocumentView {
         let revs = self.doc.revisions();
         if revs.is_empty() {
             ui.label(
-                egui::RichText::new("No revisions recorded yet — use “Commit Revision”.")
-                    .size(11.0)
-                    .color(palette.text_muted),
+                egui::RichText::new(
+                    "No revisions recorded yet \u{2014} use \u{201c}Commit Revision\u{201d}.",
+                )
+                .size(11.0)
+                .color(palette.text_muted),
             );
             return;
         }
         let chain_ok = self.doc.verify_history().is_ok();
         ui.label(
             egui::RichText::new(if chain_ok {
-                "✓ history chain verified"
+                "\u{2713} history chain verified"
             } else {
-                "⚠ history chain broken"
+                "\u{26a0} history chain broken"
             })
             .size(11.0)
             .color(if chain_ok {
@@ -1090,14 +1092,14 @@ impl NdaDocumentView {
             let (txt, col) = if !delta.has_commit {
                 ("no commits yet", palette.text_muted)
             } else if delta.changed {
-                ("● uncommitted changes", palette.warning)
+                ("\u{25cf} uncommitted changes", palette.warning)
             } else {
-                ("✓ clean (matches last commit)", palette.success)
+                ("\u{2713} clean (matches last commit)", palette.success)
             };
             ui.label(egui::RichText::new(txt).size(11.0).color(col));
             ui.label(
                 egui::RichText::new(format!(
-                    "· {} content triples · {} commands",
+                    "\u{00b7} {} content triples \u{00b7} {} commands",
                     delta.content_triples, delta.commands
                 ))
                 .size(10.0)
@@ -1162,7 +1164,7 @@ impl NdaDocumentView {
                             ("different content", palette.warning)
                         };
                         ui.label(
-                            egui::RichText::new(format!("{} ↔ {}: {badge}", diff.a_id, diff.b_id))
+                            egui::RichText::new(format!("{} \u{2194} {}: {badge}", diff.a_id, diff.b_id))
                                 .size(11.0)
                                 .color(bcol),
                         );
@@ -1175,7 +1177,7 @@ impl NdaDocumentView {
                         } else {
                             for (field, va, vb) in &diff.changed_fields {
                                 ui.label(
-                                    egui::RichText::new(format!("{field}: “{va}” → “{vb}”"))
+                                    egui::RichText::new(format!("{field}: \u{201c}{va}\u{201d} \u{2192} \u{201c}{vb}\u{201d}"))
                                         .monospace()
                                         .size(10.0)
                                         .color(palette.text),
@@ -1226,12 +1228,12 @@ impl NdaDocumentView {
                     );
                     ui.label(
                         egui::RichText::new(format!(
-                            "content {}… ← parent {}",
+                            "content {}\u{2026} \u{2190} parent {}",
                             &r.content_hash[..r.content_hash.len().min(16)],
                             if r.parent == velocity_browser::nda_portable::GENESIS {
                                 "genesis".to_string()
                             } else {
-                                format!("{}…", &r.parent[..r.parent.len().min(16)])
+                                format!("{}\u{2026}", &r.parent[..r.parent.len().min(16)])
                             }
                         ))
                         .monospace()
@@ -1251,7 +1253,7 @@ impl NdaDocumentView {
         let commands_end = triples_end + command_count * 18;
         ui.label(
             egui::RichText::new(format!(
-                "{} bytes · header 0–47 · triples 48–{} · commands –{} · pool –{}",
+                "{} bytes \u{00b7} header 0\u{2013}47 \u{00b7} triples 48\u{2013}{} \u{00b7} commands \u{2013}{} \u{00b7} pool \u{2013}{}",
                 bytes.len(),
                 triples_end.saturating_sub(1),
                 commands_end.saturating_sub(1),
@@ -1336,7 +1338,7 @@ impl NdaDocumentView {
                 self.image_textures.clear();
                 toasts.push(Toast::success(format!("Saved {}", path.display())));
                 toasts.push(Toast::info(
-                    "Seal unavailable (no key material) — saved portable instead.",
+                    "Seal unavailable (no key material) \u{2014} saved portable instead.",
                 ));
             }
             Ok(SaveOutcome::Saved { sealed }) => {

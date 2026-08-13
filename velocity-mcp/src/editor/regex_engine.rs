@@ -1,4 +1,4 @@
-//! A small, dependency-free regular-expression engine used by the editor's
+﻿//! A small, dependency-free regular-expression engine used by the editor's
 //! Find & Replace. It compiles a practical subset of regex syntax to a
 //! bytecode program and runs it with a backtracking VM that memoizes failed
 //! `(pc, pos)` states, guaranteeing termination in `O(program_len * input_len)`
@@ -681,11 +681,11 @@ mod tests {
     #[test]
     fn byte_offsets_utf8() {
         // Ensure multibyte chars don't corrupt spans.
-        let s = "héllo world héllo";
-        let m = spans("héllo", s, false);
+        let s = "h\u{00e9}llo world h\u{00e9}llo";
+        let m = spans("h\u{00e9}llo", s, false);
         assert_eq!(m.len(), 2);
         for (a, b) in m {
-            assert_eq!(&s[a..b], "héllo");
+            assert_eq!(&s[a..b], "h\u{00e9}llo");
         }
     }
 }

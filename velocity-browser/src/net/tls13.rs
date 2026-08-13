@@ -1,4 +1,4 @@
-//! TLS 1.3 cryptographic foundation (from scratch, no third-party crates).
+﻿//! TLS 1.3 cryptographic foundation (from scratch, no third-party crates).
 //!
 //! This module implements the verified building blocks of the TLS 1.3 key
 //! schedule: a real SHA-256, HMAC-SHA256 (RFC 2104), HKDF (RFC 5869), and the

@@ -1,4 +1,4 @@
-//! Advanced reasoning engine: tree-of-thought, planning, and confidence scoring.
+﻿//! Advanced reasoning engine: tree-of-thought, planning, and confidence scoring.
 //!
 //! Provides structured reasoning capabilities for complex problems:
 //! - **Tree of Thought**: Explore multiple solution paths in parallel

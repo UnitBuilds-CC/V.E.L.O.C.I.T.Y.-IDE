@@ -1,4 +1,4 @@
-#![allow(dead_code)]
+﻿#![allow(dead_code)]
 //! LSP (Language Server Protocol) client implementation.
 //!
 //! Manages language server processes and provides go-to-definition, hover,

@@ -1,4 +1,4 @@
-//! Native HTTP/1.1 client over raw TCP, with TLS 1.3 for `https://` origins.
+﻿//! Native HTTP/1.1 client over raw TCP, with TLS 1.3 for `https://` origins.
 //!
 //! Hardened for real-world responses: follows redirects, decodes
 //! `Transfer-Encoding: chunked`, honors `Content-Length`, and inflates

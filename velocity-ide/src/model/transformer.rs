@@ -1,4 +1,4 @@
-// model/transformer.rs — V.E.L.O.C.I.T.Y.-IDE
+﻿// model/transformer.rs — V.E.L.O.C.I.T.Y.-IDE
 //
 // Full autoregressive transformer forward pass for BitNet b1.58-3B.
 //

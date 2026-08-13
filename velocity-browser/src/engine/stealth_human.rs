@@ -1,4 +1,4 @@
-/// 2D point on a Bezier trajectory path.
+﻿/// 2D point on a Bezier trajectory path.
 #[derive(Debug, Clone)]
 pub struct BezierPoint {
     pub x: f64,

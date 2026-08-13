@@ -1,4 +1,4 @@
-// site_map/verifier.rs — Incremental Merkle verifier for NDA program generation
+﻿// site_map/verifier.rs — Incremental Merkle verifier for NDA program generation
 #![allow(dead_code)]
 //
 // During Path 2 generation, every emitted NDA node is hashed as it is produced.

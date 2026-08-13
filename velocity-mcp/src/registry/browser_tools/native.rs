@@ -1,4 +1,4 @@
-//! Native-engine browser tools.
+﻿//! Native-engine browser tools.
 //!
 //! Unlike the static-crawl and runtime-capture tool families (which fetch a
 //! page and hand back a metadata snapshot), this family drives the pure-Rust
@@ -320,7 +320,7 @@ pub fn handle_native_tool(
             ));
         }
         let mut out = format!(
-            "brief for {} — \"{}\" ({} interactive element(s))\n",
+            "brief for {} \u{2014} \"{}\" ({} interactive element(s))\n",
             view.url,
             view.title,
             view.elements.len()

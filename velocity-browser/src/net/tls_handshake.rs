@@ -1,4 +1,4 @@
-//! TLS 1.3 handshake state machine (RFC 8446 §4), from scratch.
+﻿//! TLS 1.3 handshake state machine (RFC 8446 §4), from scratch.
 //!
 //! This wires together the verified crypto primitives (X25519, SHA-256, HKDF,
 //! ChaCha20-Poly1305, TLS record layer) into a complete TLS 1.3 handshake that

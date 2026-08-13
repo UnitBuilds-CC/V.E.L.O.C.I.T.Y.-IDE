@@ -1,4 +1,4 @@
-//! Agent workspace checkpointing for safe, reversible operations.
+﻿//! Agent workspace checkpointing for safe, reversible operations.
 //!
 //! Before each file-modifying tool batch, the agent creates a lightweight
 //! git-based checkpoint. If the whole batch fails it rolls back to the last

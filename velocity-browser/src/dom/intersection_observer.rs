@@ -1,4 +1,4 @@
-//! IntersectionObserver API: reports when elements enter/exit the viewport.
+﻿//! IntersectionObserver API: reports when elements enter/exit the viewport.
 //!
 //! Since velocity-browser is agent-facing (no visual viewport), we model
 //! intersection based on the layout bounding box vs. the root element's

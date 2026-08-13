@@ -1,4 +1,4 @@
-//! Builds a [`WikiModel`] from a [`SiteMap`].
+﻿//! Builds a [`WikiModel`] from a [`SiteMap`].
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::time::{SystemTime, UNIX_EPOCH};

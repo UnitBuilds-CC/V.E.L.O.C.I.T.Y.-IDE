@@ -1,4 +1,4 @@
-//! Bridge between the cross-device peer system and the local coordination bus.
+﻿//! Bridge between the cross-device peer system and the local coordination bus.
 //!
 //! Translates [`PeerMessage`]s from remote agents into [`AgentBroadcast`]s on
 //! the local bus, and vice versa. This lets remote peers participate in the

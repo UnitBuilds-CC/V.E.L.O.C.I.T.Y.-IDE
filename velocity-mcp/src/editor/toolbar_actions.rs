@@ -1,4 +1,4 @@
-#![allow(dead_code)]
+﻿#![allow(dead_code)]
 
 //! Toolbar Actions - Mode-specific toolbar button definitions and renderers.
 //!
@@ -76,7 +76,7 @@ mod tests {
         let action = ToolbarAction {
             id: "run",
             label: "Run",
-            icon: "▶",
+            icon: "\u{25b6}",
             shortcut: Some("Ctrl+R"),
             category: "Build",
         };
@@ -88,7 +88,7 @@ mod tests {
         let action = ToolbarAction {
             id: "test",
             label: "Test",
-            icon: "✓",
+            icon: "\u{2713}",
             shortcut: None,
             category: "Build",
         };

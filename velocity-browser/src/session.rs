@@ -1,4 +1,4 @@
-use crate::agent_api::{diff, AgentActionResult, NdaDelta};
+﻿use crate::agent_api::{diff, AgentActionResult, NdaDelta};
 use crate::agentic::{
     ActionPredictorEngine, AgenticAomTree, NdaEncoder, PredictedActionTarget, VelocityOcrEngine,
 };
@@ -2002,7 +2002,7 @@ impl BrowserSession {
             const CONTENT_FACT_CHARS: usize = 8000;
             if content.chars().count() > CONTENT_FACT_CHARS {
                 content = content.chars().take(CONTENT_FACT_CHARS).collect::<String>();
-                content.push('…');
+                content.push('\u{2026}');
             }
             if !content.is_empty() {
                 doc.push_str(&self.session_id, SESSION_CONTENT, &content);
@@ -2770,7 +2770,11 @@ mod agent_action_tests {
             .expect("content fact present");
         let text = doc.object_display(fact).expect("content resolves");
         assert_eq!(text.chars().count(), 8001, "capped at 8000 + ellipsis");
-        assert!(text.ends_with('…'), "got {} chars", text.chars().count());
+        assert!(
+            text.ends_with('\u{2026}'),
+            "got {} chars",
+            text.chars().count()
+        );
     }
 
     #[test]

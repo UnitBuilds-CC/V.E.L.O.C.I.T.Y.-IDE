@@ -1,4 +1,4 @@
-//! Tests for ES2024-2025 features and Web APIs rebuilt after the data-loss
+﻿//! Tests for ES2024-2025 features and Web APIs rebuilt after the data-loss
 //! incident: for-await-of, globalThis, Symbol.asyncIterator, isWellFormed,
 //! Promise.withResolvers/try, Object.groupBy, Map.groupBy, Array.fromAsync,
 //! Error.isError, atob/btoa, crypto, URL.canParse, MessageChannel, EventTarget,

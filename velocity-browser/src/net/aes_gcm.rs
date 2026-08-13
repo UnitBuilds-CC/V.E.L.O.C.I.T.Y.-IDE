@@ -1,4 +1,4 @@
-//! AES-256-GCM (RFC 5116 / NIST SP 800-38D) implemented from scratch.
+﻿//! AES-256-GCM (RFC 5116 / NIST SP 800-38D) implemented from scratch.
 //!
 //! This is the NDA at-rest / in-transit AEAD. AES was chosen over
 //! ChaCha20-Poly1305 because every modern x86_64 CPU carries the **AES-NI**

@@ -1,4 +1,4 @@
-//! At-rest encryption for `.velocity/*.nda` artifacts.
+﻿//! At-rest encryption for `.velocity/*.nda` artifacts.
 //!
 //! Model: one 32-byte master key per workspace, generated once and sealed at
 //! rest by the OS key store (Windows DPAPI via FFI, bound to the current user

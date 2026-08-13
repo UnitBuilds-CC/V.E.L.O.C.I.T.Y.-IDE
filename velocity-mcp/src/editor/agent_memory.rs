@@ -1,4 +1,4 @@
-#![allow(dead_code)]
+﻿#![allow(dead_code)]
 //! Agent Memory — persistent per-member knowledge store.
 //!
 //! Each team member accumulates learnings, patterns, and project knowledge

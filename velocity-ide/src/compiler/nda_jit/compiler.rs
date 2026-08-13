@@ -1,4 +1,4 @@
-use std::sync::Arc;
+﻿use std::sync::Arc;
 
 use crate::nda::NdaMatrix;
 use crate::nda_int::{nda_gemv_nda_to_nda, rms_norm_nda, NdaVec};
@@ -272,7 +272,7 @@ fn compile_node_dispatch(node: &NdaNode, counter: &mut usize, registry: &VarRegi
 
                 if input.len != cols {
                     return Err(format!(
-                        "Matrix GEMV dimension mismatch: input len {} ≠ matrix cols {}",
+                        "Matrix GEMV dimension mismatch: input len {} \u{2260} matrix cols {}",
                         input.len, cols
                     ));
                 }
@@ -310,7 +310,7 @@ fn compile_node_dispatch(node: &NdaNode, counter: &mut usize, registry: &VarRegi
 
                 if input.len != size {
                     return Err(format!(
-                        "Norm dimension mismatch: input len {} ≠ norm size {}",
+                        "Norm dimension mismatch: input len {} \u{2260} norm size {}",
                         input.len, size
                     ));
                 }

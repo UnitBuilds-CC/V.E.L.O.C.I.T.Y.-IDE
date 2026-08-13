@@ -1,4 +1,4 @@
-// model/transformer_zero.rs — V.E.L.O.C.I.T.Y.-IDE
+﻿// model/transformer_zero.rs — V.E.L.O.C.I.T.Y.-IDE
 //
 // Pure-integer, zero-float transformer forward pass.
 //

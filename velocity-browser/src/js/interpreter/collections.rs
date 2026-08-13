@@ -1,4 +1,4 @@
-use super::coercion::*;
+﻿use super::coercion::*;
 use super::function::call_function;
 use super::signal::*;
 use crate::js::scope::ScopeRef;

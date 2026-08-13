@@ -1,4 +1,4 @@
-//! Minimal, defensive X.509 (RFC 5280) parsing for TLS peer certificates.
+﻿//! Minimal, defensive X.509 (RFC 5280) parsing for TLS peer certificates.
 //!
 //! Scope and honesty: this module extracts the fields needed to make *real*
 //! trust decisions that do not require large-integer / elliptic-curve crypto —

@@ -1,4 +1,4 @@
-//! Vulkan BitNet (1-bit quantized) transformer layer dispatch.
+﻿//! Vulkan BitNet (1-bit quantized) transformer layer dispatch.
 //!
 //! # Safety Invariants
 //!

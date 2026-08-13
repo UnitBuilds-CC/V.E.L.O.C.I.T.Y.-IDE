@@ -1,4 +1,4 @@
-use super::super::types::*;
+﻿use super::super::types::*;
 use crate::automation::{AgentTaskKind, RoutedSubAgentTask};
 use crate::orchestrator::blueprint::TaskGraph;
 use crate::orchestrator::registry::{OrchestratorRegistry, TaskStatus};
@@ -247,7 +247,7 @@ impl OrchestratorPanel {
                 rationale: routed
                     .map(|task| {
                         format!(
-                            "[{} · {}] {}",
+                            "[{} \u{00b7} {}] {}",
                             task.decomposition_policy_id,
                             task.decomposition_style.as_str(),
                             task.rationale

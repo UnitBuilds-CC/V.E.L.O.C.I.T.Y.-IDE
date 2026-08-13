@@ -1,4 +1,4 @@
-// compiler/mod.rs — V.E.L.O.C.I.T.Y.-IDE compiler sub-system
+﻿// compiler/mod.rs — V.E.L.O.C.I.T.Y.-IDE compiler sub-system
 pub mod driver;
 pub mod fuzzer;
 pub mod nda_jit;

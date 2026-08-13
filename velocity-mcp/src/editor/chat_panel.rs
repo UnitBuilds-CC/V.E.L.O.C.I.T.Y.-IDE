@@ -182,9 +182,9 @@ fn render_header(
         ui.add_space(8.0);
 
         let (label, color) = if state.agent_active {
-            ("● Working", palette.warning)
+            ("\u{25cf} Working", palette.warning)
         } else {
-            ("● Ready", palette.success)
+            ("\u{25cf} Ready", palette.success)
         };
         ui.label(egui::RichText::new(label).size(12.0).color(color));
 
@@ -243,7 +243,7 @@ fn render_messages(ui: &mut egui::Ui, state: &ChatPanelState, palette: IdePalett
                 ui.vertical_centered(|ui| {
                     ui.add_space(48.0);
                     ui.label(
-                        egui::RichText::new("◇")
+                        egui::RichText::new("\u{25c7}")
                             .size(30.0)
                             .color(palette.accent.gamma_multiply(0.7)),
                     );
@@ -257,7 +257,7 @@ fn render_messages(ui: &mut egui::Ui, state: &ChatPanelState, palette: IdePalett
                     ui.add_space(4.0);
                     ui.label(
                         egui::RichText::new(
-                            "Enter to send · Shift+Enter for newline · Ctrl+L to focus",
+                            "Enter to send \u{00b7} Shift+Enter for newline \u{00b7} Ctrl+L to focus",
                         )
                         .small()
                         .color(palette.text_muted.gamma_multiply(0.8)),
@@ -278,7 +278,7 @@ fn render_messages(ui: &mut egui::Ui, state: &ChatPanelState, palette: IdePalett
                     ui.add_space(4.0);
                     ui.spinner();
                     ui.label(
-                        egui::RichText::new("Agent is thinking…")
+                        egui::RichText::new("Agent is thinking\u{2026}")
                             .small()
                             .color(palette.text_muted),
                     );
@@ -376,7 +376,7 @@ fn render_markdown(ui: &mut egui::Ui, text: &str, palette: IdePalette) {
                             ui.with_layout(
                                 egui::Layout::right_to_left(egui::Align::Center),
                                 |ui| {
-                                    if ui.small_button("📋 Copy").clicked() {
+                                    if ui.small_button("\u{1f4cb} Copy").clicked() {
                                         ui.ctx().copy_text(code.clone());
                                     }
                                 },
@@ -449,7 +449,11 @@ fn render_markdown(ui: &mut egui::Ui, text: &str, palette: IdePalette) {
         } else if line.starts_with("- ") || line.starts_with("* ") {
             current_list_number = 0;
             ui.horizontal(|ui| {
-                ui.label(egui::RichText::new(" • ").color(palette.accent).strong());
+                ui.label(
+                    egui::RichText::new(" \u{2022} ")
+                        .color(palette.accent)
+                        .strong(),
+                );
                 render_inline_markdown(ui, &line[2..], palette);
             });
         } else {
@@ -712,7 +716,7 @@ fn render_input(
                     egui::TextEdit::multiline(&mut state.input)
                         .desired_width(f32::INFINITY)
                         .desired_rows(2)
-                        .hint_text("Message… (Enter to send)"),
+                        .hint_text("Message\u{2026} (Enter to send)"),
                 );
 
                 let mut submit = false;
@@ -733,10 +737,10 @@ fn render_input(
                 ui.horizontal(|ui| {
                     ui.add(
                         egui::TextEdit::singleline(&mut state.attach_input)
-                            .hint_text("attach file path…")
+                            .hint_text("attach file path\u{2026}")
                             .desired_width(ui.available_width() - 64.0),
                     );
-                    if ui.small_button("📎 Attach").clicked() {
+                    if ui.small_button("\u{1f4ce} Attach").clicked() {
                         let path = state.attach_input.trim().to_string();
                         if !path.is_empty() {
                             match crate::editor::multimodal::Attachment::load(&path) {
@@ -744,7 +748,9 @@ fn render_input(
                                     state.attachments.push(att);
                                     state.attach_input.clear();
                                 }
-                                Err(_) => state.attach_input = format!("⚠ cannot read: {path}"),
+                                Err(_) => {
+                                    state.attach_input = format!("\u{26a0} cannot read: {path}")
+                                }
                             }
                         }
                     }
@@ -759,7 +765,7 @@ fn render_input(
                                 .and_then(|n| n.to_str())
                                 .unwrap_or("file");
                             if ui
-                                .small_button(format!("{} {} ✖", att.kind.label(), name))
+                                .small_button(format!("{} {} \u{2716}", att.kind.label(), name))
                                 .clicked()
                             {
                                 remove = Some(i);
@@ -840,7 +846,7 @@ fn render_input(
 
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         let send_btn = egui::Button::new(
-                            egui::RichText::new("➔")
+                            egui::RichText::new("\u{2794}")
                                 .strong()
                                 .color(egui::Color32::WHITE),
                         )
@@ -867,7 +873,7 @@ fn truncate_model_label(model: &str, max: usize) -> String {
     if model.len() <= max {
         model.to_string()
     } else {
-        format!("…{}", &model[model.len().saturating_sub(max - 1)..])
+        format!("\u{2026}{}", &model[model.len().saturating_sub(max - 1)..])
     }
 }
 

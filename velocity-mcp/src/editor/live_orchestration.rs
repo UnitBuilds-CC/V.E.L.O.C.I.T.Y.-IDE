@@ -1,4 +1,4 @@
-#![allow(dead_code)]
+﻿#![allow(dead_code)]
 //! Live Multi-Agent Orchestration UI: real-time activity feed, worker progress
 //! tracking, and coordination dashboard for Mission Control.
 
@@ -50,16 +50,16 @@ impl ActivityEventKind {
 
     pub fn icon(&self) -> &'static str {
         match self {
-            Self::WorkerSpawned => "▷",
-            Self::WorkerProgress => "⋯",
-            Self::WorkerCompleted => "✔",
-            Self::WorkerFailed => "✖",
-            Self::WorkerBlocked => "◆",
-            Self::InterventionQueued => "⚠",
-            Self::PlanRouted => "◇",
-            Self::CheckpointCreated => "⊡",
-            Self::MemorySaved => "◉",
-            Self::SystemInfo => "ℹ",
+            Self::WorkerSpawned => "\u{25b7}",
+            Self::WorkerProgress => "\u{22ef}",
+            Self::WorkerCompleted => "\u{2714}",
+            Self::WorkerFailed => "\u{2716}",
+            Self::WorkerBlocked => "\u{25c6}",
+            Self::InterventionQueued => "\u{26a0}",
+            Self::PlanRouted => "\u{25c7}",
+            Self::CheckpointCreated => "\u{22a1}",
+            Self::MemorySaved => "\u{25c9}",
+            Self::SystemInfo => "\u{2139}",
         }
     }
 }

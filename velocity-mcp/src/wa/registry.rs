@@ -1,4 +1,4 @@
-#![allow(dead_code)] // Reserved WA automation API surface; awaiting full MCP dispatch wiring.
+﻿#![allow(dead_code)] // Reserved WA automation API surface; awaiting full MCP dispatch wiring.
 //! Windows Registry and system settings automation.
 //!
 //! Provides reading/writing registry keys, toggling Windows settings

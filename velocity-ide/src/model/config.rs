@@ -1,4 +1,4 @@
-// model/config.rs — V.E.L.O.C.I.T.Y.-IDE
+﻿// model/config.rs — V.E.L.O.C.I.T.Y.-IDE
 //
 // Static configuration for BitNet b1.58-3B and Qwen2.5-Coder-0.5B (NDA-Zero).
 

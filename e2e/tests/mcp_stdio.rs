@@ -1,4 +1,4 @@
-//! E2E test: MCP server stdio JSON-RPC protocol.
+﻿//! E2E test: MCP server stdio JSON-RPC protocol.
 //!
 //! Spawns the actual `velocity_mcp` binary with `--mode stdio` and
 //! exercises the JSON-RPC protocol over stdin/stdout.

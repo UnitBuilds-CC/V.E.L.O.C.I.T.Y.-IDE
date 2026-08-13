@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+﻿use std::path::PathBuf;
 
 use super::super::types::*;
 use super::struct_def::VelocityApp;
@@ -812,7 +812,7 @@ impl VelocityApp {
                     self.bottom_panel_state.active_tab = 2; // Debug tab
                 }
                 Err(e) => {
-                    self.status_message = format!("Debug: failed to launch — {}", e);
+                    self.status_message = format!("Debug: failed to launch \u{2014} {}", e);
                     self.toasts.push(crate::editor::toast::Toast::error(format!(
                         "Debug launch failed: {}",
                         e
@@ -1005,7 +1005,7 @@ impl VelocityApp {
             pipeline.trigger_run();
             self.status_message = "Deploy pipeline started.".into();
             self.toasts.push(crate::editor::toast::Toast::info(
-                "▲ Deploy pipeline running",
+                "\u{25b2} Deploy pipeline running",
             ));
         }
     }

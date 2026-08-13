@@ -1,4 +1,4 @@
-//! Lightweight peer API server for cross-device agent collaboration.
+﻿//! Lightweight peer API server for cross-device agent collaboration.
 //!
 //! Each V.E.L.O.C.I.T.Y. instance can expose a small HTTP API that remote
 //! peers use for pairing, messaging, file transfer, and task delegation.

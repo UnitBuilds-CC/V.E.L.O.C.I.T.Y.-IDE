@@ -1,4 +1,4 @@
-//! Online learning store mapping shape signatures to object classifications.
+﻿//! Online learning store mapping shape signatures to object classifications.
 //!
 //! This is the mechanism that makes the solver improve over time. When an LLM
 //! (or a human) labels a tile — "this is a bus" — the solver extracts the tile's

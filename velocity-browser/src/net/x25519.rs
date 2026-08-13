@@ -1,4 +1,4 @@
-//! X25519 elliptic-curve Diffie-Hellman (RFC 7748), from scratch.
+﻿//! X25519 elliptic-curve Diffie-Hellman (RFC 7748), from scratch.
 //!
 //! This is the key-exchange primitive TLS 1.3 uses to agree on a shared secret
 //! before deriving handshake keys via the HKDF schedule in [`super::tls13`].

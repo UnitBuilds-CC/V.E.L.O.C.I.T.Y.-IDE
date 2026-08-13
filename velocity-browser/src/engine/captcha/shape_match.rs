@@ -1,4 +1,4 @@
-//! Fuzzy shape matching with rotation and scale invariance.
+﻿//! Fuzzy shape matching with rotation and scale invariance.
 //!
 //! Compares [`ShapeSignature`]s produced by the [`super::spline`] extractor.
 //! Scale is already removed by the extractor's normalization; rotation is

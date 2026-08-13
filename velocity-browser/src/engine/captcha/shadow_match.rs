@@ -1,4 +1,4 @@
-//! Shadow-image matching for Azure-style "pick the matching silhouette" challenges.
+﻿//! Shadow-image matching for Azure-style "pick the matching silhouette" challenges.
 //!
 //! This is the hardest common type: a reference object is shown alongside
 //! several shadow silhouettes, and the solver must pick the shadow whose shape

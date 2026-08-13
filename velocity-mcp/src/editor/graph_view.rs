@@ -1,4 +1,4 @@
-//! Code explorer — a lightweight, drill-down alternative to a force-directed
+﻿//! Code explorer — a lightweight, drill-down alternative to a force-directed
 //! graph. The user expands a file to reveal the symbols it defines, then expands
 //! a symbol to reveal its call relations (callers / callees), all sourced from
 //! the site map. Only the visible slice of the graph is materialized, so it
@@ -75,7 +75,7 @@ impl MerkleGraphView {
                         .color(palette.accent),
                 );
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if ui.button("⟳ Refresh").clicked() {
+                    if ui.button("\u{27f3} Refresh").clicked() {
                         self.refresh(workspace_root);
                     }
                 });
@@ -88,14 +88,14 @@ impl MerkleGraphView {
                     ui.add_space(16.0);
                     ui.vertical_centered(|ui| {
                         ui.label(
-                            egui::RichText::new("◇")
+                            egui::RichText::new("\u{25c7}")
                                 .size(28.0)
                                 .color(palette.accent.gamma_multiply(0.7)),
                         );
                         ui.add_space(6.0);
                         ui.label(
                             egui::RichText::new(
-                                "No indexed symbols yet — run the indexer, then Refresh.",
+                                "No indexed symbols yet \u{2014} run the indexer, then Refresh.",
                             )
                             .color(palette.text_muted),
                         );
@@ -108,7 +108,7 @@ impl MerkleGraphView {
             let symbol_count: usize = model.files.values().map(|v| v.len()).sum();
             ui.label(
                 egui::RichText::new(format!(
-                    "{} files · {} symbols — expand a file, then a symbol to trace relations",
+                    "{} files \u{00b7} {} symbols \u{2014} expand a file, then a symbol to trace relations",
                     file_count, symbol_count
                 ))
                 .small()
@@ -132,15 +132,15 @@ impl MerkleGraphView {
                                     .horizontal(|ui| {
                                         ui.label(
                                             egui::RichText::new(if file_expanded {
-                                                "▼"
+                                                "\u{25bc}"
                                             } else {
-                                                "▶"
+                                                "\u{25b6}"
                                             })
                                             .size(9.0)
                                             .color(palette.text_muted),
                                         );
                                         ui.label(
-                                            egui::RichText::new("▤")
+                                            egui::RichText::new("\u{25a4}")
                                                 .monospace()
                                                 .size(11.0)
                                                 .color(palette.text_muted),
@@ -178,15 +178,15 @@ impl MerkleGraphView {
                                                 ui.add_space(16.0);
                                                 ui.label(
                                                     egui::RichText::new(if sym_expanded {
-                                                        "▼"
+                                                        "\u{25bc}"
                                                     } else {
-                                                        "▶"
+                                                        "\u{25b6}"
                                                     })
                                                     .size(9.0)
                                                     .color(palette.text_muted),
                                                 );
                                                 ui.label(
-                                                    egui::RichText::new("ƒ")
+                                                    egui::RichText::new("\u{0192}")
                                                         .monospace()
                                                         .size(11.0)
                                                         .color(palette.accent),
@@ -241,7 +241,7 @@ impl MerkleGraphView {
                                                         if relation_row(
                                                             ui,
                                                             palette,
-                                                            "↳ calls",
+                                                            "\u{21b3} calls",
                                                             callee,
                                                         ) {
                                                             action = Some(
@@ -255,7 +255,7 @@ impl MerkleGraphView {
                                                         if relation_row(
                                                             ui,
                                                             palette,
-                                                            "↰ called by",
+                                                            "\u{21b0} called by",
                                                             caller,
                                                         ) {
                                                             action = Some(
@@ -281,7 +281,7 @@ impl MerkleGraphView {
                         .show(ui, |ui| match self.selected.clone() {
                             Some(Selection::Symbol { name, .. }) => {
                                 ui.label(
-                                    egui::RichText::new(format!("ƒ {}", name))
+                                    egui::RichText::new(format!("\u{0192} {}", name))
                                         .strong()
                                         .color(palette.accent),
                                 );
@@ -306,7 +306,7 @@ impl MerkleGraphView {
                             }
                             Some(Selection::File(file)) => {
                                 ui.label(
-                                    egui::RichText::new(format!("▤ {}", file_name(&file)))
+                                    egui::RichText::new(format!("\u{25a4} {}", file_name(&file)))
                                         .strong()
                                         .color(palette.accent),
                                 );
@@ -330,7 +330,7 @@ impl MerkleGraphView {
                                             sym.line.map(|l| format!(":{}", l)).unwrap_or_default();
                                         if ui
                                             .link(egui::RichText::new(format!(
-                                                "ƒ {}{}",
+                                                "\u{0192} {}{}",
                                                 sym.name, line_label
                                             )))
                                             .clicked()
@@ -346,7 +346,7 @@ impl MerkleGraphView {
                                 ui.add_space(16.0);
                                 ui.vertical_centered(|ui| {
                                     ui.label(
-                                        egui::RichText::new("◌")
+                                        egui::RichText::new("\u{25cc}")
                                             .size(28.0)
                                             .color(palette.accent.gamma_multiply(0.7)),
                                     );
@@ -437,11 +437,11 @@ fn relation_section(
             .color(palette.text_muted),
     );
     if names.is_empty() {
-        ui.label(egui::RichText::new("  —").color(palette.text_muted));
+        ui.label(egui::RichText::new("  \u{2014}").color(palette.text_muted));
     } else {
         for n in names {
             if ui
-                .link(egui::RichText::new(format!("→ {}", n)).size(11.0))
+                .link(egui::RichText::new(format!("\u{2192} {}", n)).size(11.0))
                 .clicked()
             {
                 *action = Some(GraphAction::NavigateToSymbol(n.clone()));

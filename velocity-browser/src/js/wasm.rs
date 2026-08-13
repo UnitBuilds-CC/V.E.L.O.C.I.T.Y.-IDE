@@ -1,4 +1,4 @@
-//! From-scratch WebAssembly interpreter with stack machine, local variables,
+﻿//! From-scratch WebAssembly interpreter with stack machine, local variables,
 //! memory operations, and bytecode dispatch.
 
 #[derive(Debug, Clone, PartialEq)]

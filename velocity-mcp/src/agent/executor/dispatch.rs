@@ -1,4 +1,4 @@
-use super::super::models::*;
+﻿use super::super::models::*;
 use super::utils::send_usage_update;
 use crate::usage::{
     AzureOpenAiAccount, CloudflareAccount, LocalOllamaAccount, OpenRouterAccount, UsageTracker,
@@ -68,7 +68,7 @@ pub fn execute_openrouter_request<'a>(
                             send_usage_update(usage_tracker, accounts, or_accounts, ui_tx);
                             ui_tx
                                 .send(AgentToUiMessage::StatusUpdate(format!(
-                                    "OpenRouter account '{}' quota exhausted — trying next…",
+                                    "OpenRouter account '{}' quota exhausted \u{2014} trying next\u{2026}",
                                     acct.label
                                 )))
                                 .ok();
@@ -79,7 +79,7 @@ pub fn execute_openrouter_request<'a>(
                         let wait_secs = attempt * 2;
                         ui_tx
                             .send(AgentToUiMessage::StatusUpdate(format!(
-                            "OpenRouter rate limit (429) on '{}'. Retrying in {}s (Attempt {}/{})…",
+                            "OpenRouter rate limit (429) on '{}'. Retrying in {}s (Attempt {}/{})\u{2026}",
                             active_acct.map(|a| a.label.as_str()).unwrap_or("default"),
                             wait_secs, attempt, max_attempts
                         )))

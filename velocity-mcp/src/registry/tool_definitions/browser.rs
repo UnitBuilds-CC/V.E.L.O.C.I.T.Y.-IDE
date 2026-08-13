@@ -1,4 +1,4 @@
-use crate::registry::types::Tool;
+﻿use crate::registry::types::Tool;
 use serde_json::json;
 
 pub fn get_browser_tools() -> Vec<Tool> {
@@ -984,7 +984,7 @@ pub fn get_browser_tools() -> Vec<Tool> {
         },
         Tool {
             name: "browser_native_remember".to_string(),
-            description: "Index the current page of the native browser session into vector memory (distilled markdown — title, headings and content with boilerplate stripped — plus optional note, TF-IDF embedded) so it can be recalled later by meaning, keyword, or tag without re-crawling. Returns the memory id and what was indexed.".to_string(),
+            description: "Index the current page of the native browser session into vector memory (distilled markdown \u{2014} title, headings and content with boilerplate stripped \u{2014} plus optional note, TF-IDF embedded) so it can be recalled later by meaning, keyword, or tag without re-crawling. Returns the memory id and what was indexed.".to_string(),
             input_schema: json!({
                 "type": "object",
                 "properties": {
@@ -999,7 +999,7 @@ pub fn get_browser_tools() -> Vec<Tool> {
         },
         Tool {
             name: "browser_native_recall".to_string(),
-            description: "Recall pages previously stored with browser_native_remember. Modes: semantic (TF-IDF cosine similarity, scored), keyword (substring over text/url), tag (exact tag match), similar (query is a memory id; finds pages most similar to that memory, scored). Set minOutcome to only recall pages whose interaction outcome scored at least that high — i.e. recall what worked. Each hit lists memory id, url, similarity, tags, outcome, and a text snippet.".to_string(),
+            description: "Recall pages previously stored with browser_native_remember. Modes: semantic (TF-IDF cosine similarity, scored), keyword (substring over text/url), tag (exact tag match), similar (query is a memory id; finds pages most similar to that memory, scored). Set minOutcome to only recall pages whose interaction outcome scored at least that high \u{2014} i.e. recall what worked. Each hit lists memory id, url, similarity, tags, outcome, and a text snippet.".to_string(),
             input_schema: json!({
                 "type": "object",
                 "properties": {
@@ -1015,7 +1015,7 @@ pub fn get_browser_tools() -> Vec<Tool> {
         },
         Tool {
             name: "browser_native_page_text".to_string(),
-            description: "Read the current page in the native browser session as distilled text. format=text (default) is title + visible body text in reading order, whitespace collapsed, script/style content skipped — the token-cheapest way to read a whole page. format=markdown keeps document structure (headings, lists, links), format=content is readability mode (main/article region only, chrome like sidebars and cookie banners dropped), format=tables renders every table as markdown rows, format=summary is a one-screen structural digest (title, headings, counts). Set maxChars to bound the output on huge pages.".to_string(),
+            description: "Read the current page in the native browser session as distilled text. format=text (default) is title + visible body text in reading order, whitespace collapsed, script/style content skipped \u{2014} the token-cheapest way to read a whole page. format=markdown keeps document structure (headings, lists, links), format=content is readability mode (main/article region only, chrome like sidebars and cookie banners dropped), format=tables renders every table as markdown rows, format=summary is a one-screen structural digest (title, headings, counts). Set maxChars to bound the output on huge pages.".to_string(),
             input_schema: json!({
                 "type": "object",
                 "properties": {
@@ -1040,7 +1040,7 @@ pub fn get_browser_tools() -> Vec<Tool> {
         },
         Tool {
             name: "browser_native_find".to_string(),
-            description: "Query the live Agentic Object Model of the native browser session by role and/or a case-insensitive text match over accessible names and values. Returns only the matching elements with their node ids — far cheaper than reading the whole element view on big pages. At least one of role or text is required.".to_string(),
+            description: "Query the live Agentic Object Model of the native browser session by role and/or a case-insensitive text match over accessible names and values. Returns only the matching elements with their node ids \u{2014} far cheaper than reading the whole element view on big pages. At least one of role or text is required.".to_string(),
             input_schema: json!({
                 "type": "object",
                 "properties": {
@@ -1055,7 +1055,7 @@ pub fn get_browser_tools() -> Vec<Tool> {
         },
         Tool {
             name: "browser_native_validate".to_string(),
-            description: "Run HTML5 constraint validation over every form control on the current page of the native browser session (required, email/url/number type checks, pattern, minlength/maxlength, min/max range). Reports which controls would block a submit and why — check before submitting instead of burning a failed round trip.".to_string(),
+            description: "Run HTML5 constraint validation over every form control on the current page of the native browser session (required, email/url/number type checks, pattern, minlength/maxlength, min/max range). Reports which controls would block a submit and why \u{2014} check before submitting instead of burning a failed round trip.".to_string(),
             input_schema: json!({
                 "type": "object",
                 "properties": {
@@ -1081,7 +1081,7 @@ pub fn get_browser_tools() -> Vec<Tool> {
         },
         Tool {
             name: "browser_native_history".to_string(),
-            description: "List the native browser session's navigation history stack: every visited url with its page title in stack order, marking the entry the session currently points at. The token-cheap answer to \"where have I been\" — pairs with browser_native_back/forward.".to_string(),
+            description: "List the native browser session's navigation history stack: every visited url with its page title in stack order, marking the entry the session currently points at. The token-cheap answer to \"where have I been\" \u{2014} pairs with browser_native_back/forward.".to_string(),
             input_schema: json!({
                 "type": "object",
                 "properties": {

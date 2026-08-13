@@ -1,4 +1,4 @@
-/// TLS JA3/JA3S fingerprint profile for browser impersonation.
+﻿/// TLS JA3/JA3S fingerprint profile for browser impersonation.
 #[derive(Debug, Clone)]
 pub struct TlsJa3Profile {
     pub ja3_hash: String,

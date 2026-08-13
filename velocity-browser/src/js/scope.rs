@@ -1,4 +1,4 @@
-//! Lexical scope chain for the JS evaluator.
+﻿//! Lexical scope chain for the JS evaluator.
 //!
 //! Each scope holds a local variable map and an optional reference to its
 //! parent scope. Variable resolution walks up the chain until a binding is

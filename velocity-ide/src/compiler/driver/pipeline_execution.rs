@@ -1,4 +1,4 @@
-//! Vulkan pipeline execution for transformer model forward pass.
+﻿//! Vulkan pipeline execution for transformer model forward pass.
 //!
 //! # Safety Invariants
 //!

@@ -1,4 +1,4 @@
-use eframe::egui;
+﻿use eframe::egui;
 use std::path::PathBuf;
 
 use crate::editor::agent_ui_render::{render_agent_metrics, RenderSnapshot};
@@ -35,9 +35,9 @@ impl VelocityApp {
                         ui.heading("Search & Replace");
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                             let semantic_label = if self.semantic_search_active {
-                                "⊕ Semantic"
+                                "\u{2295} Semantic"
                             } else {
-                                "⊕ Literal"
+                                "\u{2295} Literal"
                             };
                             if ui
                                 .small_button(
@@ -63,9 +63,9 @@ impl VelocityApp {
                     });
                     ui.horizontal(|ui| {
                         let hint = if self.semantic_search_active {
-                            "Semantic search…"
+                            "Semantic search\u{2026}"
                         } else {
-                            "Search…"
+                            "Search\u{2026}"
                         };
                         let response = ui.add(
                             egui::TextEdit::singleline(&mut self.search_query)
@@ -92,7 +92,7 @@ impl VelocityApp {
                     ui.horizontal(|ui| {
                         ui.add(
                             egui::TextEdit::singleline(&mut self.replace_query)
-                                .hint_text("Replace with…")
+                                .hint_text("Replace with\u{2026}")
                                 .desired_width(ui.available_width() - 90.0),
                         );
                         let can_replace = !self.search_query.is_empty();
@@ -209,7 +209,7 @@ impl VelocityApp {
                                             }
                                         });
                                         let truncated = if hit.text.len() > 80 {
-                                            format!("{}…", &hit.text[..80])
+                                            format!("{}\u{2026}", &hit.text[..80])
                                         } else {
                                             hit.text.clone()
                                         };
@@ -769,7 +769,7 @@ impl eframe::App for VelocityApp {
                     if ui
                         .selectable_label(selected, text)
                         .on_hover_text(format!(
-                            "{}  ·  {}\n{}",
+                            "{}  \u{00b7}  {}\n{}",
                             mode.label(),
                             mode.shortcut_hint(),
                             mode.description()
@@ -786,7 +786,7 @@ impl eframe::App for VelocityApp {
                         self.prompt_open_file();
                         ui.close();
                     }
-                    if ui.button("Open File…").clicked() {
+                    if ui.button("Open File\u{2026}").clicked() {
                         self.open_file_dialog();
                         ui.close();
                     }
@@ -795,7 +795,7 @@ impl eframe::App for VelocityApp {
                         self.save_active();
                         ui.close();
                     }
-                    if ui.button("Save As…").clicked() {
+                    if ui.button("Save As\u{2026}").clicked() {
                         self.save_active_as();
                         ui.close();
                     }
@@ -1158,9 +1158,9 @@ impl eframe::App for VelocityApp {
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     if ui
                         .small_button(if self.right_sidebar_visible {
-                            "◧"
+                            "\u{25e7}"
                         } else {
-                            "◨"
+                            "\u{25e8}"
                         })
                         .on_hover_text("Toggle right panel  (Ctrl+Shift+E)")
                         .clicked()
@@ -1169,9 +1169,9 @@ impl eframe::App for VelocityApp {
                     }
                     if ui
                         .small_button(if self.left_sidebar_visible {
-                            "◨"
+                            "\u{25e8}"
                         } else {
-                            "◧"
+                            "\u{25e7}"
                         })
                         .on_hover_text("Toggle sidebar  (Ctrl+E)")
                         .clicked()
@@ -1216,7 +1216,11 @@ impl eframe::App for VelocityApp {
                         let last = components.len().saturating_sub(1);
                         for (i, comp) in components.iter().enumerate() {
                             if i > 0 {
-                                ui.label(egui::RichText::new("›").color(palette.text_muted).weak());
+                                ui.label(
+                                    egui::RichText::new("\u{203a}")
+                                        .color(palette.text_muted)
+                                        .weak(),
+                                );
                             }
                             if i == last {
                                 ui.label(egui::RichText::new(comp).color(palette.text).strong());
@@ -1225,7 +1229,11 @@ impl eframe::App for VelocityApp {
                             }
                         }
                         if let Some(symbol) = &symbol_for_click {
-                            ui.label(egui::RichText::new("›").color(palette.text_muted).weak());
+                            ui.label(
+                                egui::RichText::new("\u{203a}")
+                                    .color(palette.text_muted)
+                                    .weak(),
+                            );
                             if ui
                                 .link(egui::RichText::new(symbol).color(palette.accent))
                                 .on_hover_text("Re-center on this symbol")
@@ -1300,7 +1308,7 @@ impl eframe::App for VelocityApp {
 
                     // Add-project affordance: button toggles an inline path input.
                     ui.add_space(4.0);
-                    if ui.button("+ Add project…").clicked() {
+                    if ui.button("+ Add project\u{2026}").clicked() {
                         self.show_add_project_ui = !self.show_add_project_ui;
                     }
                     if self.show_add_project_ui {
@@ -1393,7 +1401,7 @@ impl eframe::App for VelocityApp {
                                         let resp = ui
                                             .horizontal(|ui| {
                                                 ui.label(
-                                                    egui::RichText::new("ƒ")
+                                                    egui::RichText::new("\u{0192}")
                                                         .monospace()
                                                         .size(11.0)
                                                         .color(palette.accent),
@@ -1459,7 +1467,7 @@ impl eframe::App for VelocityApp {
                             ui.horizontal(|ui| {
                                 ui.add(
                                     egui::TextEdit::singleline(&mut self.git_state.commit_message)
-                                        .hint_text("Commit message…")
+                                        .hint_text("Commit message\u{2026}")
                                         .desired_width(ui.available_width() - 60.0),
                                 );
                                 if ui.small_button("Commit").clicked()
@@ -1470,7 +1478,7 @@ impl eframe::App for VelocityApp {
                                 }
                             });
                             // Refresh button
-                            if ui.small_button("↻ Refresh").clicked() {
+                            if ui.small_button("\u{21bb} Refresh").clicked() {
                                 let root = self.workspace_root.clone();
                                 self.git_state.refresh(&root);
                             }
@@ -1610,7 +1618,11 @@ impl eframe::App for VelocityApp {
                             }
                         }
                         Some(ST::AccessibilityAudit) => {
-                            crate::editor::sidebar_tabs::render_audit_content(ui, &[], palette);
+                            crate::editor::sidebar_tabs::render_audit_content(
+                                ui,
+                                &self.audit_findings,
+                                palette,
+                            );
                         }
                         _ => {
                             // Default: file tree
@@ -1725,7 +1737,7 @@ impl eframe::App for VelocityApp {
                     // ── Active changes (collapsible) ──
                     if let Some(change_preview) = &active_change_preview {
                         self.smart_sidebar.add_quick_action(0, "Review current changes", &change_preview.file_label, 0);
-                        let changes_header = if self.right_changes_collapsed { "▸ Changes" } else { "▾ Changes" };
+                        let changes_header = if self.right_changes_collapsed { "\u{25b8} Changes" } else { "\u{25be} Changes" };
                         if ui.add(egui::Button::new(egui::RichText::new(changes_header).size(10.0).strong().color(palette.warning)).frame(false)).clicked() {
                             self.right_changes_collapsed = !self.right_changes_collapsed;
                         }
@@ -1795,9 +1807,9 @@ impl eframe::App for VelocityApp {
                     if let Some(symbol) = &active_symbol {
                         self.smart_sidebar.add_symbol(0, symbol, "active-buffer", cursor_pos.map(|(line, _)| line as u32).unwrap_or(0), 0);
                         let sym_header = if self.right_symbol_collapsed {
-                            format!("▸ {}()", symbol)
+                            format!("\u{25b8} {}()", symbol)
                         } else {
-                            format!("▾ {}()", symbol)
+                            format!("\u{25be} {}()", symbol)
                         };
                         if ui.add(egui::Button::new(egui::RichText::new(&sym_header).size(10.0).strong().color(palette.accent)).frame(false)).clicked() {
                             self.right_symbol_collapsed = !self.right_symbol_collapsed;
@@ -1813,7 +1825,7 @@ impl eframe::App for VelocityApp {
                                 );
                                 for name in self.cached_callers.clone() {
                                     if ui
-                                        .link(egui::RichText::new(format!("→ {}", name)).size(11.0))
+                                        .link(egui::RichText::new(format!("\u{2192} {}", name)).size(11.0))
                                         .clicked()
                                     {
                                         self.jump_to_symbol_name(&name);
@@ -1830,7 +1842,7 @@ impl eframe::App for VelocityApp {
                                 );
                                 for name in self.cached_deps.clone() {
                                     if ui
-                                        .link(egui::RichText::new(format!("→ {}", name)).size(11.0))
+                                        .link(egui::RichText::new(format!("\u{2192} {}", name)).size(11.0))
                                         .clicked()
                                     {
                                         self.jump_to_symbol_name(&name);
@@ -1842,7 +1854,7 @@ impl eframe::App for VelocityApp {
                         ui.vertical_centered(|ui| {
                             ui.add_space(24.0);
                             ui.label(
-                                egui::RichText::new("◌")
+                                egui::RichText::new("\u{25cc}")
                                     .size(28.0)
                                     .color(palette.text_muted.gamma_multiply(0.6)),
                             );

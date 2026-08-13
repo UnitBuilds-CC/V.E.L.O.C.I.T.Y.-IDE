@@ -1,4 +1,4 @@
-#[cfg(test)]
+﻿#[cfg(test)]
 use super::compiler::compile;
 #[cfg(test)]
 use super::compiler::jit_tier_info;

@@ -1,4 +1,4 @@
-#![allow(dead_code)]
+﻿#![allow(dead_code)]
 //! Code completion engine — provides suggestions from sitemap symbols,
 //! keywords, and local identifiers.
 

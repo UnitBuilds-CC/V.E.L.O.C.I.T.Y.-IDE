@@ -1,4 +1,4 @@
-// bench_nda_vs_rust.rs — Head-to-head: NDA Sandbox vs Native Rust
+﻿// bench_nda_vs_rust.rs — Head-to-head: NDA Sandbox vs Native Rust
 //
 // This benchmark answers the question: "If we wrote a program in NDA and
 // executed it, how does it compare vs if it were written in Rust?"
@@ -25,12 +25,14 @@ use velocity_ide::site_map::{NdaNode, SiteMap};
 
 fn main() {
     println!();
-    println!("╔═══════════════════════════════════════════════════════════════════╗");
-    println!("║     V.E.L.O.C.I.T.Y.-IDE  —  NDA vs Rust Benchmark Suite       ║");
-    println!("╠═══════════════════════════════════════════════════════════════════╣");
-    println!("║  NDA: 2-bit {{-2,-1,+1,+2}} pure-integer bitwise engine          ║");
-    println!("║  Rust: Native f32 / i64 compiled code (release mode)            ║");
-    println!("╚═══════════════════════════════════════════════════════════════════╝");
+    println!("\u{2554}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2557}");
+    println!(
+        "\u{2551}     V.E.L.O.C.I.T.Y.-IDE  \u{2014}  NDA vs Rust Benchmark Suite       \u{2551}"
+    );
+    println!("\u{2560}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2563}");
+    println!("\u{2551}  NDA: 2-bit {{-2,-1,+1,+2}} pure-integer bitwise engine          \u{2551}");
+    println!("\u{2551}  Rust: Native f32 / i64 compiled code (release mode)            \u{2551}");
+    println!("\u{255a}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{255d}");
     println!();
 
     bench_1_counting_loop();
@@ -41,7 +43,7 @@ fn main() {
     bench_6_jit_vs_rust();
     bench_7_scalar_loop_jit();
 
-    println!("═══════════════════════════════════════════════════════════════════");
+    println!("\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}");
     println!();
 }
 
@@ -51,9 +53,9 @@ fn main() {
 //   NDA equivalent: N iterated vector additions (each is a popcount + shift)
 
 fn bench_1_counting_loop() {
-    println!("┌─────────────────────────────────────────────────────────────────┐");
-    println!("│  Benchmark 1: Counting Loop (1 to 1,000,000)                   │");
-    println!("├─────────────────────────────────────────────────────────────────┤");
+    println!("\u{250c}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2510}");
+    println!("\u{2502}  Benchmark 1: Counting Loop (1 to 1,000,000)                   \u{2502}");
+    println!("\u{251c}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2524}");
 
     let n = 1_000_000u64;
     let iters = 20;
@@ -100,24 +102,24 @@ fn bench_1_counting_loop() {
     }
     let nda_dur = t1.elapsed() / iters;
 
-    println!("│                                                                 │");
+    println!("\u{2502}                                                                 \u{2502}");
     println!(
-        "│  Rust native loop (u64 add)  : {:>12?}                     │",
+        "\u{2502}  Rust native loop (u64 add)  : {:>12?}                     \u{2502}",
         rust_dur
     );
     println!(
-        "│  NDA vector-add equiv        : {:>12?}                     │",
+        "\u{2502}  NDA vector-add equiv        : {:>12?}                     \u{2502}",
         nda_dur
     );
     let ratio = nda_dur.as_nanos() as f64 / rust_dur.as_nanos().max(1) as f64;
     println!(
-        "│  Ratio (NDA / Rust)          : {:>8.1}x slower               │",
+        "\u{2502}  Ratio (NDA / Rust)          : {:>8.1}x slower               \u{2502}",
         ratio
     );
-    println!("│                                                                 │");
-    println!("│  ⚠ NDA is NOT designed for scalar loops — it's a vector engine │");
-    println!("│    This shows the overhead of NDA's encode/decode per step.     │");
-    println!("└─────────────────────────────────────────────────────────────────┘");
+    println!("\u{2502}                                                                 \u{2502}");
+    println!("\u{2502}  \u{26a0} NDA is NOT designed for scalar loops \u{2014} it's a vector engine \u{2502}");
+    println!("\u{2502}    This shows the overhead of NDA's encode/decode per step.     \u{2502}");
+    println!("\u{2514}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2518}");
     println!();
 }
 
@@ -125,9 +127,9 @@ fn bench_1_counting_loop() {
 // Same computation but at NDA's natural granularity: wide vectors.
 
 fn bench_2_vector_accumulation() {
-    println!("┌─────────────────────────────────────────────────────────────────┐");
-    println!("│  Benchmark 2: Wide Vector Accumulation (896-wide, 1000 steps)  │");
-    println!("├─────────────────────────────────────────────────────────────────┤");
+    println!("\u{250c}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2510}");
+    println!("\u{2502}  Benchmark 2: Wide Vector Accumulation (896-wide, 1000 steps)  \u{2502}");
+    println!("\u{251c}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2524}");
 
     let width = 896usize;
     let steps = 1000;
@@ -173,30 +175,30 @@ fn bench_2_vector_accumulation() {
     }
     let nda_dur = t1.elapsed() / iters;
 
-    println!("│                                                                 │");
+    println!("\u{2502}                                                                 \u{2502}");
     println!(
-        "│  Rust f32 vector add         : {:>12?}                     │",
+        "\u{2502}  Rust f32 vector add         : {:>12?}                     \u{2502}",
         rust_dur
     );
     println!(
-        "│  NDA vector add (2-bit)      : {:>12?}                     │",
+        "\u{2502}  NDA vector add (2-bit)      : {:>12?}                     \u{2502}",
         nda_dur
     );
     let ratio = nda_dur.as_nanos() as f64 / rust_dur.as_nanos().max(1) as f64;
     if ratio > 1.0 {
         println!(
-            "│  Ratio                       : {:>8.1}x slower               │",
+            "\u{2502}  Ratio                       : {:>8.1}x slower               \u{2502}",
             ratio
         );
     } else {
         println!(
-            "│  Ratio                       : {:>8.1}x FASTER               │",
+            "\u{2502}  Ratio                       : {:>8.1}x FASTER               \u{2502}",
             1.0 / ratio
         );
     }
-    println!("│                                                                 │");
-    println!("│  NDA trades precision for throughput: 2 bits vs 32 bits.        │");
-    println!("└─────────────────────────────────────────────────────────────────┘");
+    println!("\u{2502}                                                                 \u{2502}");
+    println!("\u{2502}  NDA trades precision for throughput: 2 bits vs 32 bits.        \u{2502}");
+    println!("\u{2514}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2518}");
     println!();
 }
 
@@ -204,9 +206,9 @@ fn bench_2_vector_accumulation() {
 // This is what NDA was DESIGNED for: GEMV with bitwise popcount kernels.
 
 fn bench_3_matrix_chain() {
-    println!("┌─────────────────────────────────────────────────────────────────┐");
-    println!("│  Benchmark 3: 24-Layer GEMV Chain (NDA's Sweet Spot)           │");
-    println!("├─────────────────────────────────────────────────────────────────┤");
+    println!("\u{250c}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2510}");
+    println!("\u{2502}  Benchmark 3: 24-Layer GEMV Chain (NDA's Sweet Spot)           \u{2502}");
+    println!("\u{251c}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2524}");
 
     let iters = 30;
     let input = vec![1.0f32; 896];
@@ -285,48 +287,52 @@ fn bench_3_matrix_chain() {
     }
     let f32_dur = t1.elapsed() / iters;
 
-    println!("│                                                                 │");
+    println!("\u{2502}                                                                 \u{2502}");
     println!(
-        "│  NDA popcount GEMV (2-bit)   : {:>12?}                     │",
+        "\u{2502}  NDA popcount GEMV (2-bit)   : {:>12?}                     \u{2502}",
         nda_dur
     );
     println!(
-        "│  Rust f32 scalar GEMV        : {:>12?}                     │",
+        "\u{2502}  Rust f32 scalar GEMV        : {:>12?}                     \u{2502}",
         f32_dur
     );
     let speedup = f32_dur.as_nanos() as f64 / nda_dur.as_nanos().max(1) as f64;
     if speedup >= 1.0 {
         println!(
-            "│  NDA Speedup vs Rust f32     : {:>8.1}x FASTER ★            │",
+            "\u{2502}  NDA Speedup vs Rust f32     : {:>8.1}x FASTER \u{2605}            \u{2502}",
             speedup
         );
     } else {
         println!(
-            "│  NDA vs Rust f32             : {:>8.1}x slower               │",
+            "\u{2502}  NDA vs Rust f32             : {:>8.1}x slower               \u{2502}",
             1.0 / speedup
         );
     }
-    println!("│                                                                 │");
+    println!("\u{2502}                                                                 \u{2502}");
 
     // Memory comparison
     let nda_bytes: usize = nda_mats.iter().map(|m| m.sign.len() + m.extra.len()).sum();
     let f32_bytes: usize = f32_mats.iter().map(|m| m.len().saturating_mul(4)).sum();
     println!(
-        "│  NDA memory (2-bit weights)  : {:>8.1} KB                     │",
+        "\u{2502}  NDA memory (2-bit weights)  : {:>8.1} KB                     \u{2502}",
         nda_bytes as f64 / 1024.0
     );
     println!(
-        "│  Rust f32 memory             : {:>8.1} KB                     │",
+        "\u{2502}  Rust f32 memory             : {:>8.1} KB                     \u{2502}",
         f32_bytes as f64 / 1024.0
     );
     println!(
-        "│  Memory savings              : {:>8.1}x                       │",
+        "\u{2502}  Memory savings              : {:>8.1}x                       \u{2502}",
         f32_bytes as f64 / nda_bytes.max(1) as f64
     );
-    println!("│                                                                 │");
-    println!("│  ★ NDA trades precision for speed: 2 bits = no multiplications │");
-    println!("│    GEMV becomes XOR + popcount — pure integer, SIMD-friendly.  │");
-    println!("└─────────────────────────────────────────────────────────────────┘");
+    println!("\u{2502}                                                                 \u{2502}");
+    println!(
+        "\u{2502}  \u{2605} NDA trades precision for speed: 2 bits = no multiplications \u{2502}"
+    );
+    println!(
+        "\u{2502}    GEMV becomes XOR + popcount \u{2014} pure integer, SIMD-friendly.  \u{2502}"
+    );
+    println!("\u{2514}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2518}");
     println!();
 }
 
@@ -334,9 +340,11 @@ fn bench_3_matrix_chain() {
 // The fundamental primitive: how fast is NDA's core operation?
 
 fn bench_4_popcount_throughput() {
-    println!("┌─────────────────────────────────────────────────────────────────┐");
-    println!("│  Benchmark 4: Core Primitive — Popcount Throughput             │");
-    println!("├─────────────────────────────────────────────────────────────────┤");
+    println!("\u{250c}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2510}");
+    println!(
+        "\u{2502}  Benchmark 4: Core Primitive \u{2014} Popcount Throughput             \u{2502}"
+    );
+    println!("\u{251c}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2524}");
 
     let n_bytes = 1_000_000usize;
     let iters = 100;
@@ -383,24 +391,24 @@ fn bench_4_popcount_throughput() {
     let fma_dur = t1.elapsed() / iters;
     let fma_gops = n_bytes as f64 / fma_dur.as_nanos() as f64; // ops/ns = Gops
 
-    println!("│                                                                 │");
+    println!("\u{2502}                                                                 \u{2502}");
     println!(
-        "│  XOR + popcount (1M bytes)   : {:>12?}  ({:.1} Gbit/s)  │",
+        "\u{2502}  XOR + popcount (1M bytes)   : {:>12?}  ({:.1} Gbit/s)  \u{2502}",
         pop_dur, pop_gops
     );
     println!(
-        "│  f32 multiply-add (1M elems) : {:>12?}  ({:.1} Gflop/s) │",
+        "\u{2502}  f32 multiply-add (1M elems) : {:>12?}  ({:.1} Gflop/s) \u{2502}",
         fma_dur, fma_gops
     );
     let speedup = fma_dur.as_nanos() as f64 / pop_dur.as_nanos().max(1) as f64;
     println!(
-        "│  Popcount throughput advantage: {:>8.1}x                       │",
+        "\u{2502}  Popcount throughput advantage: {:>8.1}x                       \u{2502}",
         speedup
     );
-    println!("│                                                                 │");
-    println!("│  Each NDA byte processes 8 elements simultaneously.            │");
-    println!("│  Popcount is a single CPU instruction (POPCNT) on x86.         │");
-    println!("└─────────────────────────────────────────────────────────────────┘");
+    println!("\u{2502}                                                                 \u{2502}");
+    println!("\u{2502}  Each NDA byte processes 8 elements simultaneously.            \u{2502}");
+    println!("\u{2502}  Popcount is a single CPU instruction (POPCNT) on x86.         \u{2502}");
+    println!("\u{2514}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2518}");
     println!();
 }
 
@@ -408,9 +416,9 @@ fn bench_4_popcount_throughput() {
 // Shows the overhead of NDA's interpretive sandbox layer.
 
 fn bench_5_sandbox_vs_direct() {
-    println!("┌─────────────────────────────────────────────────────────────────┐");
-    println!("│  Benchmark 5: NDA Sandbox (Interpreted) vs Direct Rust Calls   │");
-    println!("├─────────────────────────────────────────────────────────────────┤");
+    println!("\u{250c}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2510}");
+    println!("\u{2502}  Benchmark 5: NDA Sandbox (Interpreted) vs Direct Rust Calls   \u{2502}");
+    println!("\u{251c}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2524}");
 
     let iters = 50;
     let input = vec![1.0f32; 896];
@@ -473,23 +481,23 @@ fn bench_5_sandbox_vs_direct() {
     let overhead =
         (sandbox_dur.as_nanos() as f64 / direct_dur.as_nanos().max(1) as f64 - 1.0) * 100.0;
 
-    println!("│                                                                 │");
+    println!("\u{2502}                                                                 \u{2502}");
     println!(
-        "│  NDA Sandbox (interpreted)   : {:>12?}                     │",
+        "\u{2502}  NDA Sandbox (interpreted)   : {:>12?}                     \u{2502}",
         sandbox_dur
     );
     println!(
-        "│  NDA Direct Rust calls       : {:>12?}                     │",
+        "\u{2502}  NDA Direct Rust calls       : {:>12?}                     \u{2502}",
         direct_dur
     );
     println!(
-        "│  Sandbox overhead            : {:>8.1}%                       │",
+        "\u{2502}  Sandbox overhead            : {:>8.1}%                       \u{2502}",
         overhead
     );
-    println!("│                                                                 │");
-    println!("│  The sandbox adds catch_unwind + node dispatch overhead.       │");
-    println!("│  Core NDA kernels run at the same speed in both paths.         │");
-    println!("└─────────────────────────────────────────────────────────────────┘");
+    println!("\u{2502}                                                                 \u{2502}");
+    println!("\u{2502}  The sandbox adds catch_unwind + node dispatch overhead.       \u{2502}");
+    println!("\u{2502}  Core NDA kernels run at the same speed in both paths.         \u{2502}");
+    println!("\u{2514}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2518}");
     println!();
 }
 
@@ -509,9 +517,9 @@ fn bench_6_jit_vs_rust() {
     use std::sync::Arc;
     use velocity_ide::compiler::nda_jit;
 
-    println!("┌─────────────────────────────────────────────────────────────────┐");
-    println!("│  Benchmark 6: JIT vs Interpreter vs Native Rust (4-Layer GEMV) │");
-    println!("├─────────────────────────────────────────────────────────────────┤");
+    println!("\u{250c}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2510}");
+    println!("\u{2502}  Benchmark 6: JIT vs Interpreter vs Native Rust (4-Layer GEMV) \u{2502}");
+    println!("\u{251c}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2524}");
 
     let iters = 200usize;
     let input = vec![1.0f32; 896];
@@ -666,48 +674,48 @@ fn bench_6_jit_vs_rust() {
     // ══════════════════════════════════════════════════════════════════════
     // Results
     // ══════════════════════════════════════════════════════════════════════
-    println!("│                                                                 │");
+    println!("\u{2502}                                                                 \u{2502}");
     println!(
-        "│  [A] NDA JIT (closure + AVX2)   : {:>12?}                │",
+        "\u{2502}  [A] NDA JIT (closure + AVX2)   : {:>12?}                \u{2502}",
         jit_dur
     );
     println!(
-        "│  [B] NDA Sandbox (interpreted)  : {:>12?}                │",
+        "\u{2502}  [B] NDA Sandbox (interpreted)  : {:>12?}                \u{2502}",
         sandbox_dur
     );
     println!(
-        "│  [C] NDA direct kernel calls    : {:>12?}                │",
+        "\u{2502}  [C] NDA direct kernel calls    : {:>12?}                \u{2502}",
         direct_nda_dur
     );
     println!(
-        "│  [D] Rust f32 scalar GEMV       : {:>12?}                │",
+        "\u{2502}  [D] Rust f32 scalar GEMV       : {:>12?}                \u{2502}",
         rust_f32_dur
     );
     println!(
-        "│  [E] JIT Sandbox (Compile+Run)  : {:>12?}                │",
+        "\u{2502}  [E] JIT Sandbox (Compile+Run)  : {:>12?}                \u{2502}",
         jit_sb_comp_dur
     );
     println!(
-        "│  [F] JIT Sandbox (Run only)     : {:>12?}                │",
+        "\u{2502}  [F] JIT Sandbox (Run only)     : {:>12?}                \u{2502}",
         jit_sb_run_dur
     );
-    println!("│                                                                 │");
+    println!("\u{2502}                                                                 \u{2502}");
     println!(
-        "│  JIT compile time (once)        : {:>9} µs                │",
+        "\u{2502}  JIT compile time (once)        : {:>9} \u{00b5}s                \u{2502}",
         compile_us
     );
-    println!("│                                                                 │");
+    println!("\u{2502}                                                                 \u{2502}");
 
     // JIT vs Sandbox
     let jit_vs_sb = sandbox_dur.as_nanos() as f64 / jit_dur.as_nanos().max(1) as f64;
     if jit_vs_sb >= 1.0 {
         println!(
-            "│  JIT speedup vs Interpreter     : {:>8.1}x FASTER             │",
+            "\u{2502}  JIT speedup vs Interpreter     : {:>8.1}x FASTER             \u{2502}",
             jit_vs_sb
         );
     } else {
         println!(
-            "│  JIT vs Interpreter             : {:>8.1}x slower              │",
+            "\u{2502}  JIT vs Interpreter             : {:>8.1}x slower              \u{2502}",
             1.0 / jit_vs_sb
         );
     }
@@ -716,12 +724,12 @@ fn bench_6_jit_vs_rust() {
     let jit_sb_vs_sb = sandbox_dur.as_nanos() as f64 / jit_sb_comp_dur.as_nanos().max(1) as f64;
     if jit_sb_vs_sb >= 1.0 {
         println!(
-            "│  JIT Sandbox speedup vs Interp. : {:>8.1}x FASTER (on-the-fly)   │",
+            "\u{2502}  JIT Sandbox speedup vs Interp. : {:>8.1}x FASTER (on-the-fly)   \u{2502}",
             jit_sb_vs_sb
         );
     } else {
         println!(
-            "│  JIT Sandbox vs Interp.         : {:>8.1}x slower (on-the-fly)   │",
+            "\u{2502}  JIT Sandbox vs Interp.         : {:>8.1}x slower (on-the-fly)   \u{2502}",
             1.0 / jit_sb_vs_sb
         );
     }
@@ -730,12 +738,12 @@ fn bench_6_jit_vs_rust() {
     let jit_sb_run_vs_sb = sandbox_dur.as_nanos() as f64 / jit_sb_run_dur.as_nanos().max(1) as f64;
     if jit_sb_run_vs_sb >= 1.0 {
         println!(
-            "│  JIT Sandbox speedup vs Interp. : {:>8.1}x FASTER (run only)     │",
+            "\u{2502}  JIT Sandbox speedup vs Interp. : {:>8.1}x FASTER (run only)     \u{2502}",
             jit_sb_run_vs_sb
         );
     } else {
         println!(
-            "│  JIT Sandbox vs Interp.         : {:>8.1}x slower (run only)     │",
+            "\u{2502}  JIT Sandbox vs Interp.         : {:>8.1}x slower (run only)     \u{2502}",
             1.0 / jit_sb_run_vs_sb
         );
     }
@@ -744,13 +752,13 @@ fn bench_6_jit_vs_rust() {
     let jit_vs_direct = direct_nda_dur.as_nanos() as f64 / jit_dur.as_nanos().max(1) as f64;
     if jit_vs_direct >= 1.0 {
         println!(
-            "│  JIT speedup vs Direct NDA      : {:>8.1}x FASTER             │",
+            "\u{2502}  JIT speedup vs Direct NDA      : {:>8.1}x FASTER             \u{2502}",
             jit_vs_direct
         );
     } else {
         let overhead = (1.0 / jit_vs_direct - 1.0) * 100.0;
         println!(
-            "│  JIT overhead vs Direct NDA     : {:>8.1}% (closure wrap cost) │",
+            "\u{2502}  JIT overhead vs Direct NDA     : {:>8.1}% (closure wrap cost) \u{2502}",
             overhead
         );
     }
@@ -759,12 +767,12 @@ fn bench_6_jit_vs_rust() {
     let jit_vs_f32 = rust_f32_dur.as_nanos() as f64 / jit_dur.as_nanos().max(1) as f64;
     if jit_vs_f32 >= 1.0 {
         println!(
-            "│  JIT speedup vs Rust f32 GEMV   : {:>8.1}x FASTER ★           │",
+            "\u{2502}  JIT speedup vs Rust f32 GEMV   : {:>8.1}x FASTER \u{2605}           \u{2502}",
             jit_vs_f32
         );
     } else {
         println!(
-            "│  JIT vs Rust f32 GEMV           : {:>8.1}x slower              │",
+            "\u{2502}  JIT vs Rust f32 GEMV           : {:>8.1}x slower              \u{2502}",
             1.0 / jit_vs_f32
         );
     }
@@ -781,14 +789,18 @@ fn bench_6_jit_vs_rust() {
         u128::MAX
     };
 
-    println!("│                                                                 │");
+    println!("\u{2502}                                                                 \u{2502}");
     if break_even_runs == u128::MAX {
-        println!("│  Break-even (compile amort.)    : JIT slower than sandbox      │");
+        println!(
+            "\u{2502}  Break-even (compile amort.)    : JIT slower than sandbox      \u{2502}"
+        );
     } else if break_even_runs == 0 {
-        println!("│  Break-even (compile amort.)    : immediate                    │");
+        println!(
+            "\u{2502}  Break-even (compile amort.)    : immediate                    \u{2502}"
+        );
     } else {
         println!(
-            "│  Break-even (compile amort.)    : after {:>4} executions         │",
+            "\u{2502}  Break-even (compile amort.)    : after {:>4} executions         \u{2502}",
             break_even_runs
         );
     }
@@ -796,25 +808,25 @@ fn bench_6_jit_vs_rust() {
     // Memory footprint comparison
     let nda_weight_bytes: usize = nda_mats.iter().map(|m| m.sign.len() + m.extra.len()).sum();
     let f32_weight_bytes: usize = f32_mats.iter().map(|m| m.len().saturating_mul(4)).sum();
-    println!("│                                                                 │");
+    println!("\u{2502}                                                                 \u{2502}");
     println!(
-        "│  NDA weight memory (2-bit)      : {:>9.1} KB               │",
+        "\u{2502}  NDA weight memory (2-bit)      : {:>9.1} KB               \u{2502}",
         nda_weight_bytes as f64 / 1024.0
     );
     println!(
-        "│  Rust f32 weight memory         : {:>9.1} KB               │",
+        "\u{2502}  Rust f32 weight memory         : {:>9.1} KB               \u{2502}",
         f32_weight_bytes as f64 / 1024.0
     );
     println!(
-        "│  Memory ratio                   : {:>9.1}x smaller          │",
+        "\u{2502}  Memory ratio                   : {:>9.1}x smaller          \u{2502}",
         f32_weight_bytes as f64 / nda_weight_bytes.max(1) as f64
     );
-    println!("│                                                                 │");
+    println!("\u{2502}                                                                 \u{2502}");
     println!(
-        "│  Platform                       : {}   │",
+        "\u{2502}  Platform                       : {}   \u{2502}",
         nda_jit::jit_tier_info()
     );
-    println!("└─────────────────────────────────────────────────────────────────┘");
+    println!("\u{2514}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2518}");
     println!();
 }
 
@@ -822,9 +834,9 @@ fn bench_7_scalar_loop_jit() {
     use velocity_ide::compiler::nda_jit;
     use velocity_ide::compiler::nda_parser::hash_name;
 
-    println!("┌─────────────────────────────────────────────────────────────────┐");
-    println!("│  Benchmark 7: JIT vs Interpreter vs Native Rust (Scalar Loop)   │");
-    println!("├─────────────────────────────────────────────────────────────────┤");
+    println!("\u{250c}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2510}");
+    println!("\u{2502}  Benchmark 7: JIT vs Interpreter vs Native Rust (Scalar Loop)   \u{2502}");
+    println!("\u{251c}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2524}");
 
     let iters = 50usize;
     let loop_count = black_box(100_000i32); // 100,000 iterations per execution
@@ -938,36 +950,36 @@ fn bench_7_scalar_loop_jit() {
     let rust_dur = t2.elapsed() / iters as u32;
 
     // Results
-    println!("│                                                                 │");
+    println!("\u{2502}                                                                 \u{2502}");
     println!(
-        "│  [A] NDA JIT (native scalar loop) : {:>12?}                │",
+        "\u{2502}  [A] NDA JIT (native scalar loop) : {:>12?}                \u{2502}",
         jit_dur
     );
     println!(
-        "│  [B] NDA Sandbox (interpreted)    : {:>12?}                │",
+        "\u{2502}  [B] NDA Sandbox (interpreted)    : {:>12?}                \u{2502}",
         sandbox_dur
     );
     println!(
-        "│  [C] Rust Native scalar loop      : {:>12?}                │",
+        "\u{2502}  [C] Rust Native scalar loop      : {:>12?}                \u{2502}",
         rust_dur
     );
-    println!("│                                                                 │");
+    println!("\u{2502}                                                                 \u{2502}");
     println!(
-        "│  JIT compile time (once)          : {:>9} µs                │",
+        "\u{2502}  JIT compile time (once)          : {:>9} \u{00b5}s                \u{2502}",
         compile_us
     );
-    println!("│                                                                 │");
+    println!("\u{2502}                                                                 \u{2502}");
 
     // JIT vs Sandbox
     let jit_vs_sb = sandbox_dur.as_nanos() as f64 / jit_dur.as_nanos().max(1) as f64;
     if jit_vs_sb >= 1.0 {
         println!(
-            "│  JIT speedup vs Interpreter       : {:>8.1}x FASTER             │",
+            "\u{2502}  JIT speedup vs Interpreter       : {:>8.1}x FASTER             \u{2502}",
             jit_vs_sb
         );
     } else {
         println!(
-            "│  JIT vs Interpreter               : {:>8.1}x slower              │",
+            "\u{2502}  JIT vs Interpreter               : {:>8.1}x slower              \u{2502}",
             1.0 / jit_vs_sb
         );
     }
@@ -976,15 +988,15 @@ fn bench_7_scalar_loop_jit() {
     let jit_vs_rust = jit_dur.as_nanos() as f64 / rust_dur.as_nanos().max(1) as f64;
     if jit_vs_rust <= 1.0 {
         println!(
-            "│  JIT vs Rust Native               : {:>8.1}x FASTER ★           │",
+            "\u{2502}  JIT vs Rust Native               : {:>8.1}x FASTER \u{2605}           \u{2502}",
             1.0 / jit_vs_rust
         );
     } else {
         println!(
-            "│  JIT vs Rust Native               : {:>8.1}x slower              │",
+            "\u{2502}  JIT vs Rust Native               : {:>8.1}x slower              \u{2502}",
             jit_vs_rust
         );
     }
-    println!("└─────────────────────────────────────────────────────────────────┘");
+    println!("\u{2514}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2518}");
     println!();
 }

@@ -1,4 +1,4 @@
-use super::types::*;
+﻿use super::types::*;
 use super::VelocityApp;
 use crate::automation::AgentTaskKind;
 use crate::editor::chat_panel::render_chat_panel;
@@ -27,7 +27,7 @@ impl<'a> TabViewer for TabViewerImpl<'a> {
                 .map(|b| b.is_dirty())
                 .unwrap_or(false)
             {
-                title.push_str("  ●");
+                title.push_str("  \u{25cf}");
             }
         }
         title.into()
@@ -230,7 +230,7 @@ impl<'a> TabViewer for TabViewerImpl<'a> {
                         .send(crate::agent::UiToAgentMessage::UserPrompt(prompt));
                     self.app.toggle_panel(TabKind::Chat);
                     self.app.toasts.push(crate::editor::toast::Toast::info(
-                        "Detail request sent to agent — see Chat",
+                        "Detail request sent to agent \u{2014} see Chat",
                     ));
                 }
             }
@@ -342,7 +342,7 @@ impl<'a> TabViewer for TabViewerImpl<'a> {
                     TabKind::Flows => {
                         egui::ScrollArea::vertical().show(ui, |ui| {
                             ui.add_space(8.0);
-                            ui.label(egui::RichText::new("⧉ Automation Flows").size(14.0).strong().color(palette.accent));
+                            ui.label(egui::RichText::new("\u{29c9} Automation Flows").size(14.0).strong().color(palette.accent));
                             ui.add_space(8.0);
                             let tasks = &self.app.orchestrator.graph.tasks;
                             if tasks.is_empty() {
@@ -390,7 +390,7 @@ impl<'a> TabViewer for TabViewerImpl<'a> {
                         egui::ScrollArea::vertical().show(ui, |ui| {
                             ui.add_space(8.0);
                             ui.label(
-                                egui::RichText::new("≣ Execution Logs")
+                                egui::RichText::new("\u{2263} Execution Logs")
                                     .size(14.0)
                                     .strong()
                                     .color(palette.accent),
@@ -408,7 +408,7 @@ impl<'a> TabViewer for TabViewerImpl<'a> {
                         egui::ScrollArea::vertical().show(ui, |ui| {
                             ui.add_space(8.0);
                             ui.label(
-                                egui::RichText::new("⊙ Agent Roster")
+                                egui::RichText::new("\u{2299} Agent Roster")
                                     .size(14.0)
                                     .strong()
                                     .color(palette.accent),
@@ -432,7 +432,7 @@ impl<'a> TabViewer for TabViewerImpl<'a> {
                                         _ => palette.warning,
                                     };
                                     ui.horizontal(|ui| {
-                                        ui.label(egui::RichText::new("●").color(color));
+                                        ui.label(egui::RichText::new("\u{25cf}").color(color));
                                         ui.label(
                                             egui::RichText::new(&t.title)
                                                 .size(11.0)
@@ -452,7 +452,7 @@ impl<'a> TabViewer for TabViewerImpl<'a> {
                         egui::ScrollArea::vertical().show(ui, |ui| {
                             ui.add_space(8.0);
                             ui.label(
-                                egui::RichText::new("⊞ Task Queue")
+                                egui::RichText::new("\u{229e} Task Queue")
                                     .size(14.0)
                                     .strong()
                                     .color(palette.accent),
@@ -461,7 +461,7 @@ impl<'a> TabViewer for TabViewerImpl<'a> {
                             let snapshot = self.app.orchestrator.dashboard_snapshot();
                             ui.label(
                                 egui::RichText::new(format!(
-                                    "{} pending · {} running · {} done · {} failed",
+                                    "{} pending \u{00b7} {} running \u{00b7} {} done \u{00b7} {} failed",
                                     snapshot.pending_tasks,
                                     snapshot.running_tasks,
                                     snapshot.done_tasks,
@@ -503,7 +503,7 @@ impl<'a> TabViewer for TabViewerImpl<'a> {
                         egui::ScrollArea::vertical().show(ui, |ui| {
                             ui.add_space(8.0);
                             ui.label(
-                                egui::RichText::new("⊿ Mission Metrics")
+                                egui::RichText::new("\u{22bf} Mission Metrics")
                                     .size(14.0)
                                     .strong()
                                     .color(palette.accent),
@@ -717,7 +717,7 @@ impl<'a> TabViewerImpl<'a> {
         let palette = self.app.palette();
         let truncate_model = |model: &str| {
             if model.chars().count() > 36 {
-                format!("{}…", model.chars().take(35).collect::<String>())
+                format!("{}\u{2026}", model.chars().take(35).collect::<String>())
             } else {
                 model.to_string()
             }
@@ -734,7 +734,7 @@ impl<'a> TabViewerImpl<'a> {
         // don't have to expand a section to see whether it's set up. The whole
         // header is tinted by status (green = configured, muted = not).
         let provider_header = |name: &str, configured: bool| {
-            egui::RichText::new(format!("●  {}", name))
+            egui::RichText::new(format!("\u{25cf}  {}", name))
                 .strong()
                 .color(if configured {
                     palette.success
@@ -995,9 +995,9 @@ impl<'a> TabViewerImpl<'a> {
 
                             if ui
                                 .button(if self.app.models_loading {
-                                    "Loading…"
+                                    "Loading\u{2026}"
                                 } else {
-                                    "↻ Models"
+                                    "\u{21bb} Models"
                                 })
                                 .clicked()
                                 && !self.app.models_loading
@@ -1364,15 +1364,17 @@ impl<'a> TabViewerImpl<'a> {
                         ui.add_space(16.0);
                         ui.vertical_centered(|ui| {
                             ui.label(
-                                egui::RichText::new("›_")
+                                egui::RichText::new("\u{203a}_")
                                     .monospace()
                                     .size(26.0)
                                     .color(palette.accent.gamma_multiply(0.7)),
                             );
                             ui.add_space(6.0);
                             ui.label(
-                                egui::RichText::new("Run a command below — output appears here")
-                                    .color(palette.text_muted),
+                                egui::RichText::new(
+                                    "Run a command below \u{2014} output appears here",
+                                )
+                                .color(palette.text_muted),
                             );
                         });
                         ui.add_space(12.0);
@@ -1561,7 +1563,7 @@ impl<'a> TabViewerImpl<'a> {
                         ui.group(|ui| {
                             ui.horizontal_wrapped(|ui| {
                                 ui.label(egui::RichText::new(format!("Plan: {}", snapshot.planning_status)).small());
-                                ui.label(egui::RichText::new("·").small().color(palette.text_muted.gamma_multiply(0.6)));
+                                ui.label(egui::RichText::new("\u{00b7}").small().color(palette.text_muted.gamma_multiply(0.6)));
                                 ui.label(egui::RichText::new(format!("Runtime: {}", snapshot.runtime_status)).small());
                             });
                             if let Some(goal) = &snapshot.goal {
@@ -1570,14 +1572,14 @@ impl<'a> TabViewerImpl<'a> {
                             ui.horizontal_wrapped(|ui| {
                                 if let Some(kind) = &snapshot.task_kind {
                                     ui.label(egui::RichText::new(format!("Kind: {}", kind)).small().color(palette.text_muted));
-                                    ui.label(egui::RichText::new("·").small().color(palette.text_muted.gamma_multiply(0.6)));
+                                    ui.label(egui::RichText::new("\u{00b7}").small().color(palette.text_muted.gamma_multiply(0.6)));
                                 }
                                 ui.label(egui::RichText::new(format!("Scope: {}", snapshot.scope_count)).small().color(palette.text_muted));
                                 if snapshot.has_routed_plan {
-                                    ui.label(egui::RichText::new("· Routed plan ready").small().color(palette.success));
+                                    ui.label(egui::RichText::new("\u{00b7} Routed plan ready").small().color(palette.success));
                                 }
                                 if snapshot.has_dependency_cycle {
-                                    ui.label(egui::RichText::new("· ⚠ dependency cycle").small().color(palette.warning));
+                                    ui.label(egui::RichText::new("\u{00b7} \u{26a0} dependency cycle").small().color(palette.warning));
                                 }
                             });
                             ui.horizontal_wrapped(|ui| {
@@ -1651,13 +1653,13 @@ impl<'a> TabViewerImpl<'a> {
                             ui.add_space(16.0);
                             ui.vertical_centered(|ui| {
                                 ui.label(
-                                    egui::RichText::new("◇")
+                                    egui::RichText::new("\u{25c7}")
                                         .size(28.0)
                                         .color(palette.accent.gamma_multiply(0.7)),
                                 );
                                 ui.add_space(6.0);
                                 ui.label(
-                                    egui::RichText::new("No active workers — launch a mission to see them here")
+                                    egui::RichText::new("No active workers \u{2014} launch a mission to see them here")
                                         .color(palette.text_muted),
                                 );
                             });
@@ -1667,11 +1669,11 @@ impl<'a> TabViewerImpl<'a> {
                             ui.push_id(task.id, |ui| {
                                 let is_selected = self.app.mission_control.selected_task_id == Some(task.id);
                                 let (status_color, glyph) = match task.status_label.as_str() {
-                                    "Done" => (palette.success, "✔"),
-                                    "Running" => (palette.accent, "▷"),
-                                    "Blocked" => (palette.warning, "◆"),
-                                    "Failed" => (palette.error, "✖"),
-                                    _ => (palette.text_muted, "○"),
+                                    "Done" => (palette.success, "\u{2714}"),
+                                    "Running" => (palette.accent, "\u{25b7}"),
+                                    "Blocked" => (palette.warning, "\u{25c6}"),
+                                    "Failed" => (palette.error, "\u{2716}"),
+                                    _ => (palette.text_muted, "\u{25cb}"),
                                 };
 
                                 egui::Frame::new()
@@ -1733,7 +1735,7 @@ impl<'a> TabViewerImpl<'a> {
                                     ui.horizontal_wrapped(|ui| {
                                         ui.label(egui::RichText::new(format!("#{}", intervention.id)).monospace().small().color(palette.text_muted));
                                         ui.label(egui::RichText::new(&intervention.note).small());
-                                        ui.label(egui::RichText::new(format!("— {}", intervention.status)).small().color(palette.text_muted));
+                                        ui.label(egui::RichText::new(format!("\u{2014} {}", intervention.status)).small().color(palette.text_muted));
                                     });
                                 }
                             }
@@ -1746,9 +1748,9 @@ impl<'a> TabViewerImpl<'a> {
                         if running_tasks.is_empty() {
                             ui.add_space(16.0);
                             ui.vertical_centered(|ui| {
-                                ui.label(egui::RichText::new("⚡").size(28.0).color(palette.accent.gamma_multiply(0.7)));
+                                ui.label(egui::RichText::new("\u{26a1}").size(28.0).color(palette.accent.gamma_multiply(0.7)));
                                 ui.add_space(6.0);
-                                ui.label(egui::RichText::new("No agents running — launch a mission to see live telemetry").color(palette.text_muted));
+                                ui.label(egui::RichText::new("No agents running \u{2014} launch a mission to see live telemetry").color(palette.text_muted));
                             });
                             ui.add_space(12.0);
                         } else {
@@ -1765,7 +1767,7 @@ impl<'a> TabViewerImpl<'a> {
                                         .inner_margin(egui::Margin::same(8))
                                         .show(ui, |ui| {
                                             ui.horizontal(|ui| {
-                                                ui.label(egui::RichText::new("▷").color(palette.accent));
+                                                ui.label(egui::RichText::new("\u{25b7}").color(palette.accent));
                                                 ui.label(egui::RichText::new(format!("#{} {}", task.id, task.title)).small().strong());
                                                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                                                     if !task.model_label.is_empty() {
@@ -1802,9 +1804,9 @@ impl<'a> TabViewerImpl<'a> {
 
                                                 ui.horizontal(|ui| {
                                                     if let Some(tool) = current_tool {
-                                                        ui.label(egui::RichText::new(format!("⚙ {}", tool)).small().color(palette.warning));
+                                                        ui.label(egui::RichText::new(format!("\u{2699} {}", tool)).small().color(palette.warning));
                                                     } else {
-                                                        ui.label(egui::RichText::new("⚙ thinking…").small().color(palette.text_muted));
+                                                        ui.label(egui::RichText::new("\u{2699} thinking\u{2026}").small().color(palette.text_muted));
                                                     }
                                                 });
 
@@ -1827,9 +1829,9 @@ impl<'a> TabViewerImpl<'a> {
                                                 }
 
                                                 // Event count
-                                                ui.label(egui::RichText::new(format!("{} events · {} notes", thread.events.len(), thread.operator_notes.len())).small().color(palette.text_muted.gamma_multiply(0.7)));
+                                                ui.label(egui::RichText::new(format!("{} events \u{00b7} {} notes", thread.events.len(), thread.operator_notes.len())).small().color(palette.text_muted.gamma_multiply(0.7)));
                                             } else {
-                                                ui.label(egui::RichText::new("Spawning…").small().color(palette.text_muted));
+                                                ui.label(egui::RichText::new("Spawning\u{2026}").small().color(palette.text_muted));
                                             }
                                         });
                                     ui.add_space(4.0);
@@ -1853,12 +1855,12 @@ impl<'a> TabViewerImpl<'a> {
                             // Show most recent events (already in reverse order per worker)
                             for (task_id, ev) in all_events.iter().take(20) {
                                 let (icon, color) = match ev.kind {
-                                    crate::orchestrator::worker::WorkerThreadEventKind::ToolStarted => ("⚙", palette.warning),
-                                    crate::orchestrator::worker::WorkerThreadEventKind::ToolFinished => ("✔", palette.success),
-                                    crate::orchestrator::worker::WorkerThreadEventKind::Status => ("○", palette.text_muted),
-                                    crate::orchestrator::worker::WorkerThreadEventKind::FileChange => ("△", palette.accent),
-                                    crate::orchestrator::worker::WorkerThreadEventKind::OperatorNote => ("✉", palette.accent),
-                                    _ => ("·", palette.text_muted),
+                                    crate::orchestrator::worker::WorkerThreadEventKind::ToolStarted => ("\u{2699}", palette.warning),
+                                    crate::orchestrator::worker::WorkerThreadEventKind::ToolFinished => ("\u{2714}", palette.success),
+                                    crate::orchestrator::worker::WorkerThreadEventKind::Status => ("\u{25cb}", palette.text_muted),
+                                    crate::orchestrator::worker::WorkerThreadEventKind::FileChange => ("\u{25b3}", palette.accent),
+                                    crate::orchestrator::worker::WorkerThreadEventKind::OperatorNote => ("\u{2709}", palette.accent),
+                                    _ => ("\u{00b7}", palette.text_muted),
                                 };
                                 let msg = if ev.message.len() > 100 { &ev.message[..100] } else { &ev.message };
                                 ui.horizontal(|ui| {

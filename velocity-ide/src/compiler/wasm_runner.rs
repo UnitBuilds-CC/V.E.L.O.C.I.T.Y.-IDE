@@ -1,4 +1,4 @@
-//! A small, dependency-free WebAssembly runner.
+﻿//! A small, dependency-free WebAssembly runner.
 //!
 //! It parses a module's sections with correct LEB128 decoding and then
 //! *actually executes* an entry function with a stack-machine interpreter that

@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+﻿use std::collections::HashMap;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum ServiceWorkerState {

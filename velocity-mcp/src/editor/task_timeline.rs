@@ -1,4 +1,4 @@
-#![allow(dead_code)]
+﻿#![allow(dead_code)]
 
 //! Task Timeline - Zero-allocation ring buffer for task history with visual rendering.
 //!
@@ -406,16 +406,16 @@ pub fn render_mission_activity_feed(
         .take(max_items)
     {
         let (icon, color) = match event.event_type {
-            TaskEventType::Started => ("▶", palette.accent),
-            TaskEventType::Completed => ("✓", palette.success),
-            TaskEventType::Failed => ("✕", palette.error),
-            TaskEventType::Cancelled => ("⊘", palette.text_muted),
-            TaskEventType::ToolCall => ("⚙", palette.warning),
-            TaskEventType::ToolResult => ("✓", palette.success),
-            TaskEventType::PhaseChange => ("◆", palette.accent),
+            TaskEventType::Started => ("\u{25b6}", palette.accent),
+            TaskEventType::Completed => ("\u{2713}", palette.success),
+            TaskEventType::Failed => ("\u{2715}", palette.error),
+            TaskEventType::Cancelled => ("\u{2298}", palette.text_muted),
+            TaskEventType::ToolCall => ("\u{2699}", palette.warning),
+            TaskEventType::ToolResult => ("\u{2713}", palette.success),
+            TaskEventType::PhaseChange => ("\u{25c6}", palette.accent),
             TaskEventType::TokenBudgetUpdate => ("$", palette.warning),
-            TaskEventType::SessionMarker => ("║", palette.text_muted),
-            TaskEventType::AgentMarker => ("◉", palette.accent),
+            TaskEventType::SessionMarker => ("\u{2551}", palette.text_muted),
+            TaskEventType::AgentMarker => ("\u{25c9}", palette.accent),
         };
         let name = snapshot.state.get_text(event.name_offset, event.name_len);
         let desc = snapshot
@@ -429,13 +429,13 @@ pub fn render_mission_activity_feed(
                 format!("Task #{}", event.task_id)
             };
             ui.label(
-                egui::RichText::new(format!("{} · {}", task_scope, name))
+                egui::RichText::new(format!("{} \u{00b7} {}", task_scope, name))
                     .small()
                     .strong(),
             );
             if !desc.is_empty() {
                 ui.label(
-                    egui::RichText::new(format!("— {}", desc))
+                    egui::RichText::new(format!("\u{2014} {}", desc))
                         .small()
                         .color(palette.text_muted),
                 );
@@ -509,16 +509,16 @@ pub fn render_task_timeline(
                     };
 
                     let (icon, color) = match event.event_type {
-                        TaskEventType::Started => ("▶", palette.accent),
-                        TaskEventType::Completed => ("✓", palette.success),
-                        TaskEventType::Failed => ("✕", palette.error),
-                        TaskEventType::Cancelled => ("⊘", palette.text_muted),
-                        TaskEventType::ToolCall => ("⚙", palette.warning),
-                        TaskEventType::ToolResult => ("✓", palette.success),
-                        TaskEventType::PhaseChange => ("◆", palette.accent),
+                        TaskEventType::Started => ("\u{25b6}", palette.accent),
+                        TaskEventType::Completed => ("\u{2713}", palette.success),
+                        TaskEventType::Failed => ("\u{2715}", palette.error),
+                        TaskEventType::Cancelled => ("\u{2298}", palette.text_muted),
+                        TaskEventType::ToolCall => ("\u{2699}", palette.warning),
+                        TaskEventType::ToolResult => ("\u{2713}", palette.success),
+                        TaskEventType::PhaseChange => ("\u{25c6}", palette.accent),
                         TaskEventType::TokenBudgetUpdate => ("$", palette.warning),
-                        TaskEventType::SessionMarker => ("║", palette.text_muted),
-                        TaskEventType::AgentMarker => ("◉", palette.accent),
+                        TaskEventType::SessionMarker => ("\u{2551}", palette.text_muted),
+                        TaskEventType::AgentMarker => ("\u{25c9}", palette.accent),
                     };
 
                     let name = snapshot.state.get_text(event.name_offset, event.name_len);
@@ -546,7 +546,7 @@ pub fn render_task_timeline(
                         );
                         if !desc.is_empty() {
                             ui.label(
-                                egui::RichText::new(format!("— {}", desc))
+                                egui::RichText::new(format!("\u{2014} {}", desc))
                                     .size(9.0)
                                     .color(palette.text_muted),
                             );

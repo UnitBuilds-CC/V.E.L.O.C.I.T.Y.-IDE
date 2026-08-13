@@ -1,4 +1,4 @@
-use super::coercion::*;
+﻿use super::coercion::*;
 use super::collections::*;
 use super::core_methods::*;
 use super::function::call_function_with_this;

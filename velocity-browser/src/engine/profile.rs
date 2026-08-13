@@ -1,4 +1,4 @@
-use crate::nda::NdaTriple;
+﻿use crate::nda::NdaTriple;
 
 #[derive(Debug, Clone)]
 pub struct DeviceProfile {

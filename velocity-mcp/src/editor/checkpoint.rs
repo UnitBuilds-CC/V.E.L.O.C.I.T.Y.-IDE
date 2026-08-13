@@ -1,4 +1,4 @@
-#![allow(dead_code)]
+﻿#![allow(dead_code)]
 //! Workspace Checkpointing — git-stash-based snapshots before agent operations.
 //!
 //! Creates named checkpoints (git stash) before agents modify the workspace,
@@ -46,14 +46,14 @@ impl CheckpointManager {
     /// Returns `Ok(checkpoint_index)` or `Err(reason)`.
     pub fn create_checkpoint(&mut self, label: &str) -> Result<usize, String> {
         if !self.enabled {
-            return Err("Not a git repository — checkpointing disabled".into());
+            return Err("Not a git repository \u{2014} checkpointing disabled".into());
         }
 
         // Check if there are any changes to stash
         let status = run_git(&self.workspace_root, &["status", "--porcelain"])?;
         if status.trim().is_empty() {
             // Nothing to checkpoint — workspace is clean
-            return Err("Workspace is clean — no checkpoint needed".into());
+            return Err("Workspace is clean \u{2014} no checkpoint needed".into());
         }
 
         let files_changed = status.lines().count();

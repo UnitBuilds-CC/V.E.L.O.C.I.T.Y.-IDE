@@ -1,4 +1,4 @@
-//! TLS 1.3 `CertificateVerify` signature verification.
+﻿//! TLS 1.3 `CertificateVerify` signature verification.
 //!
 //! This is the piece the from-scratch handshake in [`crate::net::tls_handshake`]
 //! previously lacked: cryptographic proof that the peer holds the private key

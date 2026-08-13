@@ -1,4 +1,4 @@
-//! Velocity Drone CLI — lightweight portable agent endpoint.
+﻿//! Velocity Drone CLI — lightweight portable agent endpoint.
 //!
 //! Usage:
 //!   velocity-drone                              # Start with defaults
@@ -92,7 +92,7 @@ fn main() {
 
 fn print_help() {
     println!(
-        r#"Velocity Drone — Lightweight portable agent endpoint
+        "Velocity Drone \u{2014} Lightweight portable agent endpoint
 
 USAGE:
     velocity-drone [OPTIONS]
@@ -106,10 +106,10 @@ OPTIONS:
 
 EXAMPLES:
     velocity-drone
-    velocity-drone --port 9191 --name "Build Machine"
+    velocity-drone --port 9191 --name \"Build Machine\"
     velocity-drone --workspace /home/user/drone --capabilities file_execution test_runner
 
 PROTOCOL:
-    See DRONE_PROTOCOL.md for the full HTTP/JSON API specification."#,
+    See DRONE_PROTOCOL.md for the full HTTP/JSON API specification.",
     );
 }

@@ -1,4 +1,4 @@
-//! Persisted registry of configured connectors.
+﻿//! Persisted registry of configured connectors.
 //!
 //! Stored as a single JSON document at `.velocity/connectors.json`. Secrets are
 //! never stored here — only the *handle* (`auth_secret`) into the encrypted

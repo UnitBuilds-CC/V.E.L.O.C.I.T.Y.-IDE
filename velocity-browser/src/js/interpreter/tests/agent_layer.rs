@@ -1,4 +1,4 @@
-//! Tests for the agent empowerment layer — interactive elements, content
+﻿//! Tests for the agent empowerment layer — interactive elements, content
 //! extraction, page summary, CSS selectors, and DOM state diffing.
 
 use super::*;

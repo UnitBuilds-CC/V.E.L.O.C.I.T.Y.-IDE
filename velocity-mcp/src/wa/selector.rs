@@ -1,4 +1,4 @@
-//! CSS/XPath selector resolution for Windows Automation node trees.
+﻿//! CSS/XPath selector resolution for Windows Automation node trees.
 //!
 //! NOTE: The CSS/XPath parsing and scoring API is built out ahead of its
 //! wiring into the WA action pipeline, so several parsers and helpers read as

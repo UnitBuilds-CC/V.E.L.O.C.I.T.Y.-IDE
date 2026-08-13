@@ -1,4 +1,4 @@
-#![allow(dead_code)]
+﻿#![allow(dead_code)]
 
 use crate::safety::SafeMutex;
 use std::collections::HashMap;

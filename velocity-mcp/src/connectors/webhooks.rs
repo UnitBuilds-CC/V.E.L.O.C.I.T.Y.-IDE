@@ -1,4 +1,4 @@
-//! Webhook management for incoming and outgoing events.
+﻿//! Webhook management for incoming and outgoing events.
 //!
 //! Supports:
 //! - **Outgoing webhooks**: fire HTTP POST requests when local events occur

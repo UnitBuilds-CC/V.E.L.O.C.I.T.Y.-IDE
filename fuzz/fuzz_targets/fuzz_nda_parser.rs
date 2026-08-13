@@ -1,4 +1,4 @@
-//! Fuzz target: NDA parser.
+﻿//! Fuzz target: NDA parser.
 //!
 //! Feeds arbitrary strings into the NDA compiler pipeline (lexer → parser)
 //! and asserts it never panics.

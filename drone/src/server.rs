@@ -1,4 +1,4 @@
-//! HTTP server for the Velocity Drone.
+﻿//! HTTP server for the Velocity Drone.
 //!
 //! Built on `std::net::TcpListener` — no external HTTP server dependency.
 //! Implements all endpoints from DRONE_PROTOCOL.md.

@@ -1,4 +1,4 @@
-//! Canvas 2D API for the JS interpreter — HTMLCanvasElement, CanvasRenderingContext2D,
+﻿//! Canvas 2D API for the JS interpreter — HTMLCanvasElement, CanvasRenderingContext2D,
 //! ImageData, Path2D.
 //!
 //! Pragmatic in-memory implementation: drawing commands are recorded but not

@@ -1,4 +1,4 @@
-#![allow(dead_code)]
+﻿#![allow(dead_code)]
 //! Deploy Pipeline Integration: manages build → test → deploy stages with
 //! status tracking, artifact management, and rollback capability.
 
@@ -32,10 +32,10 @@ impl PipelineStage {
 
     pub fn icon(&self) -> &'static str {
         match self {
-            Self::Build => "⚙",
-            Self::Test => "✓",
-            Self::Package => "📦",
-            Self::Deploy => "▲",
+            Self::Build => "\u{2699}",
+            Self::Test => "\u{2713}",
+            Self::Package => "\u{1f4e6}",
+            Self::Deploy => "\u{25b2}",
         }
     }
 
@@ -461,7 +461,7 @@ impl PipelineManager {
             .iter()
             .all(|s| matches!(s.status, StageStatus::Passed | StageStatus::Skipped));
         if !all_passed {
-            return Err("Pipeline stages did not pass — aborting ship".into());
+            return Err("Pipeline stages did not pass \u{2014} aborting ship".into());
         }
 
         // Git push

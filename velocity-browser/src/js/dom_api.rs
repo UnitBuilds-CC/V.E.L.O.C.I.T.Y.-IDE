@@ -1,4 +1,4 @@
-//! Native DOM API bridge.
+﻿//! Native DOM API bridge.
 //!
 //! Rather than execute JavaScript to manipulate the DOM, the common DOM
 //! surface (`getElementById`, `querySelector`, `setAttribute`, `getAttribute`,

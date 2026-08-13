@@ -1,4 +1,4 @@
-//! Vulkan NDA (Nested Dissection Architecture) GEMV compute kernel dispatch.
+﻿//! Vulkan NDA (Nested Dissection Architecture) GEMV compute kernel dispatch.
 //!
 //! # Safety Invariants
 //!

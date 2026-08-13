@@ -1,4 +1,4 @@
-//! Temporal frame-differencing monitor for transient captcha states.
+﻿//! Temporal frame-differencing monitor for transient captcha states.
 //!
 //! Many modern challenges hide their answer in motion: tiles flip on a timer,
 //! one letter periodically changes, or an object animates. A single snapshot

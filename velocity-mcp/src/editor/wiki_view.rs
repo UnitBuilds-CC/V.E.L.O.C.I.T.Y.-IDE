@@ -1,4 +1,4 @@
-//! Wiki tab — browses a sitemap-generated wiki and exports it to Markdown.
+﻿//! Wiki tab — browses a sitemap-generated wiki and exports it to Markdown.
 
 use eframe::egui;
 use velocity_ide::wiki::{build_wiki, export_markdown, render_page_markdown, WikiModel, WikiPage};
@@ -84,7 +84,7 @@ impl WikiView {
                 if let Some(model) = &self.model {
                     ui.label(
                         egui::RichText::new(format!(
-                            "{} files · {} symbols",
+                            "{} files \u{00b7} {} symbols",
                             model.file_count(),
                             model.symbol_count()
                         ))
@@ -137,7 +137,7 @@ impl WikiView {
                     ui.spinner();
                     ui.add_space(6.0);
                     ui.label(
-                        egui::RichText::new("Building wiki from site map…")
+                        egui::RichText::new("Building wiki from site map\u{2026}")
                             .color(palette.text_muted),
                     );
                 });
@@ -148,7 +148,7 @@ impl WikiView {
                 ui.add_space(16.0);
                 ui.vertical_centered(|ui| {
                     ui.label(
-                        egui::RichText::new("◇")
+                        egui::RichText::new("\u{25c7}")
                             .size(28.0)
                             .color(palette.accent.gamma_multiply(0.7)),
                     );
@@ -203,7 +203,7 @@ impl WikiView {
         match rx.try_recv() {
             Ok(Ok(model)) => {
                 let summary = format!(
-                    "Wiki refreshed — {} files, {} symbols",
+                    "Wiki refreshed \u{2014} {} files, {} symbols",
                     model.file_count(),
                     model.symbol_count()
                 );
@@ -230,7 +230,7 @@ impl WikiView {
 
     pub fn export(&self, workspace_root: &std::path::Path, toasts: &mut ToastQueue) {
         let Some(model) = &self.model else {
-            toasts.push(Toast::warn("Nothing to export yet — refresh first"));
+            toasts.push(Toast::warn("Nothing to export yet \u{2014} refresh first"));
             return;
         };
         let dir = workspace_root.join(".wiki");
@@ -272,7 +272,7 @@ and any notable relationships. Use Markdown. Do not repeat the raw lists verbati
     fn render_tree(&mut self, ui: &mut egui::Ui, palette: IdePalette) {
         ui.add(
             egui::TextEdit::singleline(&mut self.query)
-                .hint_text("Filter pages…")
+                .hint_text("Filter pages\u{2026}")
                 .desired_width(ui.available_width() - 4.0),
         );
         ui.add_space(4.0);
@@ -289,7 +289,13 @@ and any notable relationships. Use Markdown. Do not repeat the raw lists verbati
             .id_salt("wiki_tree_scroll")
             .show(ui, |ui| {
                 if matches(&model.overview.title) {
-                    self.tree_row(ui, "◇", &model.overview.title, PageRef::Overview, palette);
+                    self.tree_row(
+                        ui,
+                        "\u{25c7}",
+                        &model.overview.title,
+                        PageRef::Overview,
+                        palette,
+                    );
                 }
 
                 let files: Vec<(usize, String)> = model
@@ -302,7 +308,7 @@ and any notable relationships. Use Markdown. Do not repeat the raw lists verbati
                 if !files.is_empty() {
                     self.tree_section(ui, "FILES", palette);
                     for (idx, title) in files {
-                        self.tree_row(ui, "▤", &title, PageRef::File(idx), palette);
+                        self.tree_row(ui, "\u{25a4}", &title, PageRef::File(idx), palette);
                     }
                 }
 
@@ -316,7 +322,7 @@ and any notable relationships. Use Markdown. Do not repeat the raw lists verbati
                 if !symbols.is_empty() {
                     self.tree_section(ui, "SYMBOLS", palette);
                     for (idx, title) in symbols {
-                        self.tree_row(ui, "ƒ", &title, PageRef::Symbol(idx), palette);
+                        self.tree_row(ui, "\u{0192}", &title, PageRef::Symbol(idx), palette);
                     }
                 }
 
@@ -324,7 +330,7 @@ and any notable relationships. Use Markdown. Do not repeat the raw lists verbati
                     ui.add_space(12.0);
                     ui.label(
                         egui::RichText::new(
-                            "No indexed pages yet — index the workspace to build the wiki.",
+                            "No indexed pages yet \u{2014} index the workspace to build the wiki.",
                         )
                         .color(palette.text_muted),
                     );
@@ -387,7 +393,7 @@ and any notable relationships. Use Markdown. Do not repeat the raw lists verbati
             ui.add_space(16.0);
             ui.vertical_centered(|ui| {
                 ui.label(
-                    egui::RichText::new("◌")
+                    egui::RichText::new("\u{25cc}")
                         .size(28.0)
                         .color(palette.accent.gamma_multiply(0.7)),
                 );
@@ -448,7 +454,8 @@ and any notable relationships. Use Markdown. Do not repeat the raw lists verbati
                         if ui
                             .selectable_label(
                                 false,
-                                egui::RichText::new(format!("›  {}", target)).color(palette.text),
+                                egui::RichText::new(format!("\u{203a}  {}", target))
+                                    .color(palette.text),
                             )
                             .clicked()
                         {
@@ -470,7 +477,8 @@ and any notable relationships. Use Markdown. Do not repeat the raw lists verbati
                         if ui
                             .selectable_label(
                                 false,
-                                egui::RichText::new(format!("‹  {}", caller)).color(palette.text),
+                                egui::RichText::new(format!("\u{2039}  {}", caller))
+                                    .color(palette.text),
                             )
                             .clicked()
                         {

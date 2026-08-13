@@ -1,4 +1,4 @@
-// model/weights.rs — V.E.L.O.C.I.T.Y.-IDE
+﻿// model/weights.rs — V.E.L.O.C.I.T.Y.-IDE
 //
 // Loads converted NDA weight files (.nda) and FP32 tensors (.bin)
 // produced by tools/convert_to_nda.py into in-memory structures.

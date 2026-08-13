@@ -293,7 +293,7 @@ pub fn render_find_replace(
             ui.horizontal(|ui| {
                 let resp = ui.add(
                     egui::TextEdit::singleline(&mut state.query)
-                        .hint_text("Find…")
+                        .hint_text("Find\u{2026}")
                         .desired_width(200.0),
                 );
                 if state.just_opened {
@@ -322,24 +322,28 @@ pub fn render_find_replace(
                 };
                 ui.label(match_text);
 
-                if ui.small_button("▲").clicked() {
+                if ui.small_button("\u{25b2}").clicked() {
                     state.prev_match();
                 }
-                if ui.small_button("▼").clicked() {
+                if ui.small_button("\u{25bc}").clicked() {
                     state.next_match();
                 }
                 // Toggles
-                let cs_label = if state.case_sensitive { "Aa✓" } else { "Aa" };
+                let cs_label = if state.case_sensitive {
+                    "Aa\u{2713}"
+                } else {
+                    "Aa"
+                };
                 if ui.small_button(cs_label).clicked() {
                     state.case_sensitive = !state.case_sensitive;
                     state.recompute_matches(content.as_str());
                 }
-                let re_label = if state.use_regex { ".*✓" } else { ".*" };
+                let re_label = if state.use_regex { ".*\u{2713}" } else { ".*" };
                 if ui.small_button(re_label).clicked() {
                     state.use_regex = !state.use_regex;
                     state.recompute_matches(content.as_str());
                 }
-                if ui.small_button("✕").clicked() {
+                if ui.small_button("\u{2715}").clicked() {
                     state.close();
                 }
             });
@@ -349,7 +353,7 @@ pub fn render_find_replace(
                 ui.horizontal(|ui| {
                     ui.add(
                         egui::TextEdit::singleline(&mut state.replacement)
-                            .hint_text("Replace with…")
+                            .hint_text("Replace with\u{2026}")
                             .desired_width(200.0),
                     );
                     if ui.small_button("Replace").clicked() && !state.matches.is_empty() {

@@ -1,4 +1,4 @@
-#![allow(dead_code)]
+﻿#![allow(dead_code)]
 //! Browse Panel - AI-powered web research directly in the sidebar.
 //!
 //! Accepts either a plain-language question ("how much does an iPhone 17 cost?")
@@ -20,7 +20,7 @@ Instructions:
 3. Compile your findings into a clear, concise summary. Include key facts, numbers, dates, and quotes where relevant.
 4. Cite your sources with URLs so the user can verify.
 5. If information is conflicting across sources, mention the discrepancy.
-6. Keep the summary focused — the user wants actionable information, not filler.
+6. Keep the summary focused \u{2014} the user wants actionable information, not filler.
 
 You have browser tools available (navigate, read page content, search). Use them to gather real-time information."#;
 
@@ -84,9 +84,9 @@ impl Default for BrowseState {
                 role: "assistant".to_string(),
                 content: "Ask me anything and I'll browse the web to find the answer.\n\n\
                     Examples:\n\
-                    • \"How much does an iPhone 17 cost?\"\n\
-                    • \"What was announced at AMD's summit?\"\n\
-                    • Paste a URL + question to research a specific page."
+                    \u{2022} \"How much does an iPhone 17 cost?\"\n\
+                    \u{2022} \"What was announced at AMD's summit?\"\n\
+                    \u{2022} Paste a URL + question to research a specific page."
                     .to_string(),
                 timestamp: Instant::now(),
             }],
@@ -120,7 +120,7 @@ impl BrowseState {
         let display_msg = if url.is_empty() {
             query.clone()
         } else {
-            format!("{} — {}", url, query)
+            format!("{} \u{2014} {}", url, query)
         };
 
         self.messages.push(BrowseMessage::user(&display_msg));

@@ -1,4 +1,4 @@
-//! Drone core logic: identity, file transfers, task execution, deployment.
+﻿//! Drone core logic: identity, file transfers, task execution, deployment.
 
 use base64::{engine::general_purpose::STANDARD as B64, Engine};
 use serde::{Deserialize, Serialize};

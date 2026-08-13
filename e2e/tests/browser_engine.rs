@@ -1,4 +1,4 @@
-//! E2E test: Browser engine full pipeline.
+﻿//! E2E test: Browser engine full pipeline.
 //!
 //! Exercises the browser session's full HTML → DOM → query pipeline
 //! by loading real HTML content and verifying DOM operations work

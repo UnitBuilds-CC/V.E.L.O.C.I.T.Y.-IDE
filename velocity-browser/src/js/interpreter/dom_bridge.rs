@@ -1,4 +1,4 @@
-//! Lightweight in-memory DOM bridge for the JS interpreter.
+﻿//! Lightweight in-memory DOM bridge for the JS interpreter.
 //!
 //! Provides `document.*` methods and Element APIs so that page scripts can
 //! create, query, and manipulate DOM nodes entirely within the interpreter.

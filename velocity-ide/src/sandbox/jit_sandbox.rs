@@ -1,4 +1,4 @@
-// sandbox/jit_sandbox.rs — Executing NDA opcode trees with nda_jit compiler
+﻿// sandbox/jit_sandbox.rs — Executing NDA opcode trees with nda_jit compiler
 use crate::compiler::nda_jit::JitProgram;
 use crate::safety::SafeMutex;
 use crate::sandbox::SandboxResult;

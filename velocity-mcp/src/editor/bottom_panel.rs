@@ -1,4 +1,4 @@
-#![allow(dead_code)]
+﻿#![allow(dead_code)]
 
 //! Bottom Panel - Mode-specific bottom panel layouts and renderers.
 //!
@@ -90,7 +90,7 @@ pub fn render_bottom_panel_frame(
     if state.collapsed {
         ui.horizontal(|ui| {
             let expand_btn = ui.small_button(
-                egui::RichText::new("▲ Panel")
+                egui::RichText::new("\u{25b2} Panel")
                     .size(9.0)
                     .color(palette.text_muted),
             );
@@ -138,7 +138,11 @@ fn render_tabbed_bottom(
         }
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             if ui
-                .small_button(egui::RichText::new("▼").size(9.0).color(palette.text_muted))
+                .small_button(
+                    egui::RichText::new("\u{25bc}")
+                        .size(9.0)
+                        .color(palette.text_muted),
+                )
                 .clicked()
             {
                 state.collapsed = true;
@@ -239,7 +243,7 @@ fn render_tabbed_bottom(
                 "Chat" => {
                     ui.label(
                         egui::RichText::new(
-                            "Agent chat — use the main Chat panel for interaction.",
+                            "Agent chat \u{2014} use the main Chat panel for interaction.",
                         )
                         .size(9.0)
                         .color(palette.text_muted),
@@ -293,13 +297,17 @@ fn render_split_bottom(
 ) {
     ui.horizontal(|ui| {
         ui.label(
-            egui::RichText::new(format!("{} │ {}", left_label, right_label))
+            egui::RichText::new(format!("{} \u{2502} {}", left_label, right_label))
                 .size(10.0)
                 .color(palette.text_muted),
         );
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             if ui
-                .small_button(egui::RichText::new("▼").size(9.0).color(palette.text_muted))
+                .small_button(
+                    egui::RichText::new("\u{25bc}")
+                        .size(9.0)
+                        .color(palette.text_muted),
+                )
                 .clicked()
             {
                 state.collapsed = true;
@@ -328,7 +336,7 @@ fn render_split_bottom(
                     .show(ui, |ui| {
                         ui.label(
                             egui::RichText::new(
-                                "Live action preview — actions will appear as they execute.",
+                                "Live action preview \u{2014} actions will appear as they execute.",
                             )
                             .monospace()
                             .size(9.0)
@@ -410,7 +418,11 @@ fn render_dashboard_bottom_impl(
         }
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             if ui
-                .small_button(egui::RichText::new("▼").size(9.0).color(palette.text_muted))
+                .small_button(
+                    egui::RichText::new("\u{25bc}")
+                        .size(9.0)
+                        .color(palette.text_muted),
+                )
                 .clicked()
             {
                 state.collapsed = true;
@@ -443,7 +455,11 @@ fn render_dashboard_bottom_impl(
                 .inner_margin(8.0)
                 .show(ui, |ui| {
                     ui.horizontal(|ui| {
-                        ui.label(egui::RichText::new("●").size(8.0).color(status_color));
+                        ui.label(
+                            egui::RichText::new("\u{25cf}")
+                                .size(8.0)
+                                .color(status_color),
+                        );
                         ui.label(
                             egui::RichText::new(&agent.label)
                                 .size(10.0)
@@ -452,7 +468,7 @@ fn render_dashboard_bottom_impl(
                         );
                     });
                     ui.label(
-                        egui::RichText::new(format!("#{} · {}", agent.id, agent.status))
+                        egui::RichText::new(format!("#{} \u{00b7} {}", agent.id, agent.status))
                             .size(9.0)
                             .color(status_color),
                     );

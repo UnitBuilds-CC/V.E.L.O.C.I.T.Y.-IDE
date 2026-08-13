@@ -1,4 +1,4 @@
-//! Cross-device agent collaboration (peer-to-peer).
+﻿//! Cross-device agent collaboration (peer-to-peer).
 //!
 //! Enables agents on different machines to discover each other, establish
 //! trusted peer links, exchange messages, transfer files, and coordinate

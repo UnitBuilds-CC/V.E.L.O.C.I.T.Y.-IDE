@@ -1,4 +1,4 @@
-#![allow(dead_code)]
+﻿#![allow(dead_code)]
 //! Minimap — provides a zoomed-out overview of the file for quick navigation.
 //!
 //! Renders a condensed view of the source with highlighted regions for the

@@ -1,4 +1,4 @@
-//! Tests for Canvas 2D API: HTMLCanvasElement, CanvasRenderingContext2D,
+﻿//! Tests for Canvas 2D API: HTMLCanvasElement, CanvasRenderingContext2D,
 //! Path2D, OffscreenCanvas, ImageData.
 
 use super::*;

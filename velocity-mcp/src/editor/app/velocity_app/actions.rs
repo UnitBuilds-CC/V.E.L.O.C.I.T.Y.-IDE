@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+﻿use std::path::PathBuf;
 
 use super::super::helpers::*;
 use super::super::types::*;
@@ -54,14 +54,14 @@ impl VelocityApp {
                 modes: &[],
             },
             Command {
-                label: "Open File…",
+                label: "Open File\u{2026}",
                 category: "File",
                 shortcut: Some("Ctrl+O"),
                 action: |a| a.open_file_dialog(),
                 modes: &[],
             },
             Command {
-                label: "Go to File…",
+                label: "Go to File\u{2026}",
                 category: "File",
                 shortcut: Some("Ctrl+P"),
                 action: |a| a.open_quick_open(),
@@ -96,14 +96,14 @@ impl VelocityApp {
                 modes: &[],
             },
             Command {
-                label: "Go to Line…",
+                label: "Go to Line\u{2026}",
                 category: "File",
                 shortcut: Some("Ctrl+G"),
                 action: |a| a.open_goto_line(),
                 modes: &[],
             },
             Command {
-                label: "Go to Symbol…",
+                label: "Go to Symbol\u{2026}",
                 category: "File",
                 shortcut: Some("Ctrl+Shift+O"),
                 action: |a| a.open_goto_symbol(),
@@ -152,7 +152,7 @@ impl VelocityApp {
                 modes: &[],
             },
             Command {
-                label: "Save As…",
+                label: "Save As\u{2026}",
                 category: "File",
                 shortcut: None,
                 action: |a| a.save_active_as(),
@@ -570,7 +570,7 @@ impl VelocityApp {
                     buf.disk_mtime = Some(disk_mtime);
                 }
                 self.toasts.push(crate::editor::toast::Toast::warn(format!(
-                    "{filename} changed on disk — kept your unsaved edits"
+                    "{filename} changed on disk \u{2014} kept your unsaved edits"
                 )));
             } else if let Ok(content) = std::fs::read_to_string(&path) {
                 if let Some(buf) = self.buffers.get_mut(&id) {
@@ -671,7 +671,7 @@ impl VelocityApp {
             self.pending_cursor_line = Some(line);
         }
         self.goto_symbol_open = false;
-        self.status_message = format!("{} → {}", entry.name, entry.file);
+        self.status_message = format!("{} \u{2192} {}", entry.name, entry.file);
     }
 
     /// Resolve a symbol name against the cached workspace index and jump to its
@@ -689,7 +689,7 @@ impl VelocityApp {
         {
             self.jump_to_symbol(&entry);
         } else {
-            self.status_message = format!("No definition found for “{}”", name);
+            self.status_message = format!("No definition found for \u{201c}{}\u{201d}", name);
         }
     }
 

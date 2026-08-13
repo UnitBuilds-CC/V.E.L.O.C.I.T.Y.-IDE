@@ -1,4 +1,4 @@
-use std::collections::hash_map::DefaultHasher;
+﻿use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 
 pub fn hash_str(s: &str) -> u64 {

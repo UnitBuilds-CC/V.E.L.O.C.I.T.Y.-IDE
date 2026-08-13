@@ -1,4 +1,4 @@
-//! Deterministic waiting for the native browser tools.
+﻿//! Deterministic waiting for the native browser tools.
 //!
 //! `browser_native_wait` blocks until a predicate holds on the session
 //! (content move, element appear/disappear, navigation, or content

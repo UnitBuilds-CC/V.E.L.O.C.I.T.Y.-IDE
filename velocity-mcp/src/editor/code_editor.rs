@@ -142,7 +142,7 @@ impl CodeEditor {
             let has_diagnostic = options.diagnostic_lines.iter().find(|(l, _)| *l == i);
 
             // Breakpoint margin (red dot or empty)
-            let bp_glyph = if has_breakpoint { "●" } else { " " };
+            let bp_glyph = if has_breakpoint { "\u{25cf}" } else { " " };
             let bp_color = if has_breakpoint {
                 palette.error
             } else {
@@ -159,7 +159,7 @@ impl CodeEditor {
             );
 
             // Fold toggle
-            let fold_glyph = if is_collapsed { "▶" } else { " " };
+            let fold_glyph = if is_collapsed { "\u{25b6}" } else { " " };
             gutter_job.append(
                 fold_glyph,
                 0.0,
@@ -173,15 +173,15 @@ impl CodeEditor {
             // Change marker vs. the on-disk baseline (added/modified/removed).
             let mark = diff_marks.get(i - 1).copied().unwrap_or(0);
             let (glyph, glyph_color) = match mark {
-                1 => ("▎", palette.success),
-                2 => ("▎", palette.accent),
-                3 => ("▔", palette.error),
+                1 => ("\u{258e}", palette.success),
+                2 => ("\u{258e}", palette.accent),
+                3 => ("\u{2594}", palette.error),
                 _ => {
                     // Diagnostic marker in gutter if no diff mark
                     if let Some((_, severity)) = has_diagnostic {
                         match severity {
-                            1 => ("●", palette.error),
-                            2 => ("●", palette.warning),
+                            1 => ("\u{25cf}", palette.error),
+                            2 => ("\u{25cf}", palette.warning),
                             _ => (" ", palette.text_muted),
                         }
                     } else {
@@ -256,7 +256,10 @@ impl CodeEditor {
                 ui.horizontal(|ui| {
                     ui.colored_label(
                         palette.accent.gamma_multiply(0.7),
-                        format!("Bracket match: line {} ↔ line {}", open_line, close_line),
+                        format!(
+                            "Bracket match: line {} \u{2194} line {}",
+                            open_line, close_line
+                        ),
                     );
                 });
             }

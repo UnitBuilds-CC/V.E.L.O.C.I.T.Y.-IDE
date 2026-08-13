@@ -1,4 +1,4 @@
-#![allow(warnings)]
+﻿#![allow(warnings)]
 #![allow(unused)]
 #![allow(dead_code)]
 
@@ -31,7 +31,7 @@ use serde::{Deserialize, Serialize};
     name    = "velocity_ide",
     version,
     about   = "V.E.L.O.C.I.T.Y.-IDE: Verified, Efficient, Low-latency Optimised Computing \
-               Inference Technology — Intelligent Development Environment",
+               Inference Technology \u{2014} Intelligent Development Environment",
     long_about = None,
 )]
 struct Cli {
@@ -218,7 +218,7 @@ fn run_seed(args: SeedArgs) -> Result<()> {
     let n_files = args.source.len();
 
     for path in &args.source {
-        eprint!("[seed] Compiling {:?} … ", path);
+        eprint!("[seed] Compiling {:?} \u{2026} ", path);
         match seed_from_source(path, &mut site_map) {
             Ok(report) => {
                 eprintln!("{}", report);
@@ -232,7 +232,7 @@ fn run_seed(args: SeedArgs) -> Result<()> {
     }
 
     eprintln!(
-        "\n[seed] Done. {} file(s) → {} functions → {} NDA nodes stored",
+        "\n[seed] Done. {} file(s) \u{2192} {} functions \u{2192} {} NDA nodes stored",
         n_files, total_functions, total_stored,
     );
     eprintln!("[seed] {}", site_map.stats());

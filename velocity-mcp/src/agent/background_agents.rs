@@ -1,4 +1,4 @@
-//! Proactive background agent system.
+﻿//! Proactive background agent system.
 //!
 //! Background agents monitor the workspace and external systems, providing
 //! proactive alerts, suggestions, and autonomous maintenance. They run

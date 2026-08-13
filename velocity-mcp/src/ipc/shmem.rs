@@ -1,4 +1,4 @@
-use memmap2::MmapMut;
+﻿use memmap2::MmapMut;
 use std::error::Error;
 use std::fs::OpenOptions;
 use std::path::Path;

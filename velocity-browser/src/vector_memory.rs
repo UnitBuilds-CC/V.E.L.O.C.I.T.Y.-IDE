@@ -1,4 +1,4 @@
-//! Semantic vector memory with cosine similarity search.
+﻿//! Semantic vector memory with cosine similarity search.
 //!
 //! Stores page state embeddings so the agent can recall past experiences
 //! when encountering structurally similar pages. Uses lightweight TF-IDF

@@ -1,4 +1,4 @@
-use crate::nda::NdaTriple;
+﻿use crate::nda::NdaTriple;
 
 /// PDF document structure and text extraction.
 pub struct PdfMediaExtractor;

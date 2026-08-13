@@ -1,4 +1,4 @@
-//! Rule-based captcha solver with a deterministic fast path and LLM fallback.
+﻿//! Rule-based captcha solver with a deterministic fast path and LLM fallback.
 //!
 //! Most challenges, once their shapes are learned and their transient cells
 //! found, can be solved by a handful of declarative rules — "click every tile

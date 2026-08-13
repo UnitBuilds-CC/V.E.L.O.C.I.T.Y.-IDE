@@ -1,4 +1,4 @@
-//! Vulkan NDA BitNet (1-bit quantized) transformer layer implementation.
+﻿//! Vulkan NDA BitNet (1-bit quantized) transformer layer implementation.
 //!
 //! # Safety Invariants
 //!

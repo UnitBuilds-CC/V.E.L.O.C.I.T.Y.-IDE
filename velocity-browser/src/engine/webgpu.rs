@@ -1,4 +1,4 @@
-/// WebGPU compute buffer for GPU-accelerated computations.
+﻿/// WebGPU compute buffer for GPU-accelerated computations.
 #[derive(Debug, Clone)]
 pub struct WebGpuComputeBuffer {
     pub buffer_id: usize,

@@ -1,4 +1,4 @@
-//! Tests for the in-memory DOM bridge: document methods, element manipulation,
+﻿//! Tests for the in-memory DOM bridge: document methods, element manipulation,
 //! selectors, events, and tree navigation.
 
 use super::*;

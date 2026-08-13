@@ -1,4 +1,4 @@
-#![allow(dead_code)] // Reserved WA automation API surface; awaiting full MCP dispatch wiring.
+﻿#![allow(dead_code)] // Reserved WA automation API surface; awaiting full MCP dispatch wiring.
 //! Recording/Replay engine for Windows desktop automation.
 //!
 //! Records user interactions (clicks, keystrokes, focus changes) by polling the

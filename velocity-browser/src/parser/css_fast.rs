@@ -1,4 +1,4 @@
-use crate::parser::html::DomNode;
+﻿use crate::parser::html::DomNode;
 
 /// A parsed CSS declaration (property: value pair).
 #[derive(Debug, Clone)]

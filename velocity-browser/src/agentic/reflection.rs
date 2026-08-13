@@ -1,4 +1,4 @@
-//! Reflection Engine: detects failure patterns and generates corrective
+﻿//! Reflection Engine: detects failure patterns and generates corrective
 //! system messages to inject before the next LLM reasoning turn.
 //!
 //! Instead of blindly retrying the same action, the reflection engine
@@ -135,7 +135,7 @@ impl ReflectionEngine {
         for (i, r) in reflections.iter().enumerate() {
             msg.push_str(&format!("{}. {}\n", i + 1, r.message));
             if let Some(ref strategy) = r.suggested_strategy {
-                msg.push_str(&format!("   → Strategy: {}\n", strategy));
+                msg.push_str(&format!("   \u{2192} Strategy: {}\n", strategy));
             }
         }
 
@@ -442,7 +442,7 @@ mod tests {
         }];
         let text = engine.format_as_system_message(&reflections).unwrap();
         assert!(text.contains("Something went wrong"));
-        assert!(!text.contains("→ Strategy"));
+        assert!(!text.contains("\u{2192} Strategy"));
     }
 
     #[test]

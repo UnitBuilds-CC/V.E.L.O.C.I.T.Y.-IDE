@@ -1,4 +1,4 @@
-//! Browser environment APIs for the JS interpreter.
+﻿//! Browser environment APIs for the JS interpreter.
 //!
 //! Provides timer scheduling (setTimeout/setInterval), browser global objects
 //! (window, navigator, location, document), and Web Storage (localStorage,

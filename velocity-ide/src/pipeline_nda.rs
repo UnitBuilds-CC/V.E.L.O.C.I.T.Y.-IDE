@@ -1,4 +1,4 @@
-// pipeline_nda.rs — Path 2: Pure NDA native inference pipeline
+﻿// pipeline_nda.rs — Path 2: Pure NDA native inference pipeline
 #![allow(dead_code)]
 //
 // This is the zero-hallucination execution path.
@@ -601,7 +601,7 @@ impl NdaPipeline {
             let open_scopes = self.verifier.stack.len().saturating_sub(1);
             if open_scopes > 0 {
                 eprintln!(
-                    "[pipeline_nda] WARNING: forced termination — \
+                    "[pipeline_nda] WARNING: forced termination \u{2014} \
                     budget exhausted with {open_scopes} unclosed scope(s). \
                     Output is TRUNCATED (structurally valid, semantically incomplete)."
                 );

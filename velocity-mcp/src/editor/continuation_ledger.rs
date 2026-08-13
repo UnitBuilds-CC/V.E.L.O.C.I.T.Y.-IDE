@@ -1,4 +1,4 @@
-#![allow(dead_code, unused_imports, unused_variables)]
+﻿#![allow(dead_code, unused_imports, unused_variables)]
 //! Continuation Ledger: cross-model context handoff system.
 //!
 //! When a model fails mid-edit or gets swapped, the continuation ledger
@@ -412,14 +412,18 @@ impl ContinuationLedger {
         if !self.journal.completed_edits.is_empty() {
             prompt.push_str("## Completed Edits\n");
             for edit in &self.journal.completed_edits {
-                prompt.push_str(&format!("- {} — {}\n", edit.path.display(), edit.intent));
+                prompt.push_str(&format!(
+                    "- {} \u{2014} {}\n",
+                    edit.path.display(),
+                    edit.intent
+                ));
             }
             prompt.push('\n');
         }
 
         // Section 4: Partial edit (critical for continuation)
         if let Some(ref partial) = self.journal.partial_edit {
-            prompt.push_str("## ⚠ Partial Edit In Progress\n");
+            prompt.push_str("## \u{26a0} Partial Edit In Progress\n");
             prompt.push_str(&format!("File: {}\n", partial.path.display()));
             prompt.push_str(&format!("Intent: {}\n", partial.intent));
             if let Some((start, end)) = partial.editing_region {
@@ -427,11 +431,11 @@ impl ContinuationLedger {
             }
             if let Some(false) = partial.compiles {
                 prompt.push_str(
-                    "⚠ Current state does NOT compile. Fix required before continuing.\n",
+                    "\u{26a0} Current state does NOT compile. Fix required before continuing.\n",
                 );
             }
             prompt.push_str("\nThe file is currently in a partially-modified state. ");
-            prompt.push_str("Continue the edit from the current state — do NOT redo work that's already done.\n\n");
+            prompt.push_str("Continue the edit from the current state \u{2014} do NOT redo work that's already done.\n\n");
         }
 
         // Section 5: Progress
@@ -456,7 +460,7 @@ impl ContinuationLedger {
         if let Some(last) = self.provenance.last() {
             prompt.push_str("## Previous Attempt\n");
             prompt.push_str(&format!(
-                "Model {} ({}) ran for {:.1}s — outcome: {}\n",
+                "Model {} ({}) ran for {:.1}s \u{2014} outcome: {}\n",
                 last.model_label,
                 last.provider,
                 last.duration.as_secs_f64(),
@@ -468,7 +472,7 @@ impl ContinuationLedger {
             if !last.key_decisions.is_empty() {
                 prompt.push_str("Key decisions made:\n");
                 for decision in &last.key_decisions {
-                    prompt.push_str(&format!("  • {}\n", decision));
+                    prompt.push_str(&format!("  \u{2022} {}\n", decision));
                 }
             }
         }
@@ -515,7 +519,7 @@ fn build_scope_brief(workspace_root: &Path, scope_files: &[PathBuf]) -> ScopeEnv
 
         let role = infer_file_role(file_path, &symbols);
         narrative_parts.push(format!(
-            "• {} ({} lines) — {}{}",
+            "\u{2022} {} ({} lines) \u{2014} {}{}",
             file_path.display(),
             line_count,
             role,
@@ -965,7 +969,7 @@ mod tests {
         assert!(prompt.contains("Fix the auth bug"));
         assert!(prompt.contains("## Completed Edits"));
         assert!(prompt.contains("Added token expiry check"));
-        assert!(prompt.contains("## ⚠ Partial Edit In Progress"));
+        assert!(prompt.contains("## \u{26a0} Partial Edit In Progress"));
         assert!(prompt.contains("does NOT compile"));
         assert!(prompt.contains("do NOT redo work"));
         assert!(prompt.contains("## Progress"));

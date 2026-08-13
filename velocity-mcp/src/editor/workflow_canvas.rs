@@ -1,4 +1,4 @@
-//! Visual workflow canvas: node-based drag-and-drop workflow designer.
+﻿//! Visual workflow canvas: node-based drag-and-drop workflow designer.
 //!
 //! Provides a visual graph editor where users can place workflow step nodes,
 //! connect them with edges to define execution flow, and see real-time

@@ -1,4 +1,4 @@
-//! ChaCha20-Poly1305 AEAD (RFC 8439), from scratch.
+﻿//! ChaCha20-Poly1305 AEAD (RFC 8439), from scratch.
 //!
 //! `TLS_CHACHA20_POLY1305_SHA256` is one of TLS 1.3's mandatory cipher suites.
 //! This module implements the ChaCha20 stream cipher, the Poly1305 one-time

@@ -1,4 +1,4 @@
-//! Workflows composer and governance policy panels, extracted from
+﻿//! Workflows composer and governance policy panels, extracted from
 //! `tier3_panels.rs` to keep individual modules under the LOC target.
 
 use eframe::egui;
@@ -13,17 +13,15 @@ impl VelocityApp {
         Self::tier3_header(
             ui,
             "Workflows",
-            &format!("{} workflow(s) · visual builder", self.workflows.len()),
+            &format!(
+                "{} workflow(s) \u{00b7} visual builder",
+                self.workflows.len()
+            ),
             palette.accent,
             palette.text_muted,
         );
 
         // Mode tabs: List | Visual | Templates | AI Generate
-        let mut mode: &str = if self.workflow_visual_mode {
-            "Visual"
-        } else {
-            "List"
-        };
         ui.horizontal(|ui| {
             let list_btn =
                 ui.selectable_label(!self.workflow_visual_mode, RichText::new("List").size(9.0));
@@ -33,11 +31,9 @@ impl VelocityApp {
             let ai_btn = ui.selectable_label(false, RichText::new("AI Generate").size(9.0));
             if list_btn.clicked() {
                 self.workflow_visual_mode = false;
-                mode = "List";
             }
             if visual_btn.clicked() {
                 self.workflow_visual_mode = true;
-                mode = "Visual";
             }
             if templates_btn.clicked() { /* render templates inline below */ }
             if ai_btn.clicked() { /* render AI generate inline below */ }
@@ -63,7 +59,7 @@ impl VelocityApp {
         ui.horizontal(|ui| {
             ui.add(
                 egui::TextEdit::singleline(&mut self.workflow_name_input)
-                    .hint_text("new workflow name…")
+                    .hint_text("new workflow name\u{2026}")
                     .desired_width(ui.available_width() - 80.0),
             );
             if ui.button(RichText::new("Create").size(10.0)).clicked() {
@@ -114,7 +110,9 @@ impl VelocityApp {
                                 ui.with_layout(
                                     egui::Layout::right_to_left(egui::Align::Center),
                                     |ui| {
-                                        if ui.small_button(RichText::new("✖").size(8.0)).clicked()
+                                        if ui
+                                            .small_button(RichText::new("\u{2716}").size(8.0))
+                                            .clicked()
                                         {
                                             remove = Some(wf.id.clone());
                                         }
@@ -153,7 +151,7 @@ impl VelocityApp {
                 None => self.workflow_selected = None,
                 Some((wf_name, steps)) => {
                     ui.label(
-                        RichText::new(format!("STEPS · {wf_name}"))
+                        RichText::new(format!("STEPS \u{00b7} {wf_name}"))
                             .small()
                             .strong()
                             .color(palette.accent),
@@ -175,21 +173,25 @@ impl VelocityApp {
                                         egui::Layout::right_to_left(egui::Align::Center),
                                         |ui| {
                                             if ui
-                                                .small_button(RichText::new("✖").size(8.0))
+                                                .small_button(RichText::new("\u{2716}").size(8.0))
                                                 .clicked()
                                             {
                                                 remove_step = Some(i);
                                             }
                                             if i + 1 < step_count
                                                 && ui
-                                                    .small_button(RichText::new("↓").size(8.0))
+                                                    .small_button(
+                                                        RichText::new("\u{2193}").size(8.0),
+                                                    )
                                                     .clicked()
                                             {
                                                 move_down = Some(i);
                                             }
                                             if i > 0
                                                 && ui
-                                                    .small_button(RichText::new("↑").size(8.0))
+                                                    .small_button(
+                                                        RichText::new("\u{2191}").size(8.0),
+                                                    )
                                                     .clicked()
                                             {
                                                 move_up = Some(i);
@@ -245,7 +247,7 @@ impl VelocityApp {
                 RunStatus::Partial => palette.warning,
             };
             ui.label(
-                RichText::new(format!("LAST RUN · {}", runrec.status.label()))
+                RichText::new(format!("LAST RUN \u{00b7} {}", runrec.status.label()))
                     .small()
                     .strong()
                     .color(status_color),
@@ -381,7 +383,7 @@ impl VelocityApp {
             if let Some(wf) = self.workflows.get(&id).cloned() {
                 let runrec = wf.execute(&ws);
                 self.toasts.push(crate::editor::toast::Toast::info(format!(
-                    "Workflow '{}' → {}",
+                    "Workflow '{}' \u{2192} {}",
                     wf.name,
                     runrec.status.label()
                 )));
@@ -398,7 +400,7 @@ impl VelocityApp {
             ui,
             "Governance",
             &format!(
-                "{} rule(s) · {} pending · {} secret(s) · {} connector(s)",
+                "{} rule(s) \u{00b7} {} pending \u{00b7} {} secret(s) \u{00b7} {} connector(s)",
                 self.policy.rules.len(),
                 self.approvals.len(),
                 self.secrets.len(),
@@ -441,9 +443,9 @@ impl VelocityApp {
                 ui.horizontal(|ui| {
                     ui.label(
                         RichText::new(format!(
-                            "Budget: tokens {}, cost {}¢",
-                            self.policy.budget.max_tokens.map(|t| t.to_string()).unwrap_or_else(|| "∞".into()),
-                            self.policy.budget.max_cost_cents.map(|c| c.to_string()).unwrap_or_else(|| "∞".into()),
+                            "Budget: tokens {}, cost {}\u{00a2}",
+                            self.policy.budget.max_tokens.map(|t| t.to_string()).unwrap_or_else(|| "\u{221e}".into()),
+                            self.policy.budget.max_cost_cents.map(|c| c.to_string()).unwrap_or_else(|| "\u{221e}".into()),
                         ))
                         .size(9.0)
                         .color(palette.text_muted),
@@ -451,11 +453,11 @@ impl VelocityApp {
                 });
                 ui.horizontal(|ui| {
                     ui.label(RichText::new("tokens:").size(8.0).color(palette.text_muted));
-                    if ui.small_button(RichText::new("∞").size(8.0)).clicked() { set_tokens = Some(None); }
+                    if ui.small_button(RichText::new("\u{221e}").size(8.0)).clicked() { set_tokens = Some(None); }
                     if ui.small_button(RichText::new("50k").size(8.0)).clicked() { set_tokens = Some(Some(50_000)); }
                     if ui.small_button(RichText::new("200k").size(8.0)).clicked() { set_tokens = Some(Some(200_000)); }
-                    ui.label(RichText::new("cost¢:").size(8.0).color(palette.text_muted));
-                    if ui.small_button(RichText::new("∞").size(8.0)).clicked() { set_cost = Some(None); }
+                    ui.label(RichText::new("cost\u{00a2}:").size(8.0).color(palette.text_muted));
+                    if ui.small_button(RichText::new("\u{221e}").size(8.0)).clicked() { set_cost = Some(None); }
                     if ui.small_button(RichText::new("100").size(8.0)).clicked() { set_cost = Some(Some(100)); }
                     if ui.small_button(RichText::new("500").size(8.0)).clicked() { set_cost = Some(Some(500)); }
                 });
@@ -495,7 +497,7 @@ impl VelocityApp {
                                         .color(palette.text),
                                 );
                                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                    if ui.small_button(RichText::new("✖").size(8.0)).clicked() {
+                                    if ui.small_button(RichText::new("\u{2716}").size(8.0)).clicked() {
                                         remove_rule = Some(i);
                                     }
                                 });
@@ -561,7 +563,7 @@ impl VelocityApp {
                         ui.label(RichText::new(handle).size(9.0).color(palette.text));
                         ui.label(RichText::new(masked).size(8.0).color(palette.text_muted));
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            if ui.small_button(RichText::new("✖").size(8.0)).clicked() {
+                            if ui.small_button(RichText::new("\u{2716}").size(8.0)).clicked() {
                                 remove_secret = Some(handle.clone());
                             }
                         });
@@ -591,13 +593,13 @@ impl VelocityApp {
                                 ui.label(RichText::new(&c.name).size(9.0).strong().color(palette.text));
                                 ui.label(RichText::new(&c.base_url).size(8.0).color(palette.text_muted));
                                 if c.auth_secret.is_some() {
-                                    ui.label(RichText::new("🔑").size(8.0));
+                                    ui.label(RichText::new("\u{1f511}").size(8.0));
                                 }
                                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                    if ui.small_button(RichText::new("✖").size(8.0)).clicked() {
+                                    if ui.small_button(RichText::new("\u{2716}").size(8.0)).clicked() {
                                         remove_connector = Some(c.id.clone());
                                     }
-                                    if ui.small_button(RichText::new("🔑").size(8.0)).clicked() {
+                                    if ui.small_button(RichText::new("\u{1f511}").size(8.0)).clicked() {
                                         update_secret_connector = Some(c.id.clone());
                                     }
                                 });
@@ -745,7 +747,7 @@ impl VelocityApp {
                         .as_deref()
                         .and_then(|id| self.workflow_canvases.get(id))
                         .map(|c| c.name.clone())
-                        .unwrap_or_else(|| "Select workflow…".into()),
+                        .unwrap_or_else(|| "Select workflow\u{2026}".into()),
                 )
                 .show_ui(ui, |ui| {
                     for (id, canvas) in &self.workflow_canvases {
@@ -762,11 +764,14 @@ impl VelocityApp {
             }
 
             egui::ComboBox::from_id_salt("workflow_template_selector")
-                .selected_text("From template…")
+                .selected_text("From template\u{2026}")
                 .show_ui(ui, |ui| {
                     for template in workflow_templates::all_templates() {
                         if ui
-                            .button(format!("{} — {}", template.name, template.description))
+                            .button(format!(
+                                "{} \u{2014} {}",
+                                template.name, template.description
+                            ))
                             .clicked()
                         {
                             let id = format!("wf-{}", crate::editor::triggers::now_secs());
@@ -793,7 +798,7 @@ impl VelocityApp {
                     (
                         "Agent",
                         CanvasNodeKind::AgentTask {
-                            prompt: "Describe task…".into(),
+                            prompt: "Describe task\u{2026}".into(),
                             team: None,
                         },
                     ),
@@ -879,15 +884,15 @@ impl VelocityApp {
                     let mut from_idx: usize = 0;
                     let mut to_idx: usize = 0;
                     egui::ComboBox::from_id_salt("edge_from")
-                        .selected_text("from…")
+                        .selected_text("from\u{2026}")
                         .show_ui(ui, |ui| {
                             for (i, (_, label)) in node_ids.iter().enumerate() {
                                 ui.selectable_value(&mut from_idx, i, label.as_str());
                             }
                         });
-                    ui.label("→");
+                    ui.label("\u{2192}");
                     egui::ComboBox::from_id_salt("edge_to")
-                        .selected_text("to…")
+                        .selected_text("to\u{2026}")
                         .show_ui(ui, |ui| {
                             for (i, (_, label)) in node_ids.iter().enumerate() {
                                 ui.selectable_value(&mut to_idx, i, label.as_str());
@@ -909,7 +914,7 @@ impl VelocityApp {
             ui.add_space(4.0);
             ui.horizontal(|ui| {
                 if ui
-                    .button(RichText::new("▶ Run Workflow").size(10.0))
+                    .button(RichText::new("\u{25b6} Run Workflow").size(10.0))
                     .clicked()
                 {
                     if let Some(canvas) = self.workflow_canvases.get(&sel_id) {
@@ -917,7 +922,7 @@ impl VelocityApp {
                             let ws = self.workspace_root.clone();
                             let runrec = wf.execute(&ws);
                             self.toasts.push(crate::editor::toast::Toast::info(format!(
-                                "Workflow '{}' → {}",
+                                "Workflow '{}' \u{2192} {}",
                                 wf.name,
                                 runrec.status.label()
                             )));

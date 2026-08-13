@@ -1,4 +1,4 @@
-// V.E.L.O.C.I.T.Y.-IDE — NDA (Non-linear Decomposed Attention) core types and GEMV kernels
+﻿// V.E.L.O.C.I.T.Y.-IDE — NDA (Non-linear Decomposed Attention) core types and GEMV kernels
 //
 // NDA v2 uses pure-additive quaternary {-2, -1, +1, +2} weight encoding:
 //   sign bitmap  : 1 bit/elem — 1 = positive weight, 0 = negative weight
@@ -552,10 +552,10 @@ pub fn run_nda_benchmark() {
     let mut rng = rand::thread_rng();
 
     for (label, rows, cols) in [
-        ("QKV proj  3200×3200", 3200_usize, 3200_usize),
-        ("FFN gate  8640×3200", 8640_usize, 3200_usize),
-        ("FFN down  3200×8640", 3200_usize, 8640_usize),
-        ("LM head  32002×3200", 32002_usize, 3200_usize),
+        ("QKV proj  3200\u{00d7}3200", 3200_usize, 3200_usize),
+        ("FFN gate  8640\u{00d7}3200", 8640_usize, 3200_usize),
+        ("FFN down  3200\u{00d7}8640", 3200_usize, 8640_usize),
+        ("LM head  32002\u{00d7}3200", 32002_usize, 3200_usize),
     ] {
         let bitmap_bytes = (rows * cols).div_ceil(8);
 

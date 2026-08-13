@@ -1,4 +1,4 @@
-//! Persistent agent memory backed by NDA files.
+﻿//! Persistent agent memory backed by NDA files.
 //!
 //! Enables cross-session learning: the agent remembers successful strategies,
 //! failed approaches, and domain-specific knowledge between runs.
@@ -164,6 +164,11 @@ impl PersistentMemory {
     /// Check if the store is empty.
     pub fn is_empty(&self) -> bool {
         self.entries.is_empty()
+    }
+
+    /// Iterate over all stored memory entries.
+    pub fn iter(&self) -> impl Iterator<Item = &MemoryEntry> {
+        self.entries.values()
     }
 
     /// Save to disk if there are unsaved changes.

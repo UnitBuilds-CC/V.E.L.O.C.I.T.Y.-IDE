@@ -1,4 +1,4 @@
-//! Tests for web platform APIs: performance, history, observers, WebSocket,
+﻿//! Tests for web platform APIs: performance, history, observers, WebSocket,
 //! getComputedStyle, matchMedia, FileReader, crypto.subtle, caches, DOMRect.
 
 use super::*;

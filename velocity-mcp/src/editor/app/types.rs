@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+﻿use std::path::PathBuf;
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct TabId(pub u64);

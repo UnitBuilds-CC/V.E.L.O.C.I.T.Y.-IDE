@@ -1,4 +1,4 @@
-#![allow(dead_code)]
+﻿#![allow(dead_code)]
 
 //! Mode Configuration - Trait-based specialization for each WorkspaceProfile.
 //!
@@ -72,17 +72,17 @@ static CODER_RIGHT_PANELS: &[RightPanel] = &[
     RightPanel {
         id: "symbol_context",
         label: "Symbol Context",
-        icon: "◎",
+        icon: "\u{25ce}",
     },
     RightPanel {
         id: "active_changes",
         label: "Active Changes",
-        icon: "±",
+        icon: "\u{00b1}",
     },
     RightPanel {
         id: "ai_suggestions",
         label: "AI Suggestions",
-        icon: "✦",
+        icon: "\u{2726}",
     },
 ];
 
@@ -90,42 +90,42 @@ static CODER_TOOLBAR: &[ToolbarAction] = &[
     ToolbarAction {
         id: "file",
         label: "File",
-        icon: "□",
+        icon: "\u{25a1}",
         shortcut: Some("Ctrl+N"),
         category: "File",
     },
     ToolbarAction {
         id: "run",
         label: "Run",
-        icon: "▶",
+        icon: "\u{25b6}",
         shortcut: Some("Ctrl+R"),
         category: "Build",
     },
     ToolbarAction {
         id: "build",
         label: "Build",
-        icon: "⚙",
+        icon: "\u{2699}",
         shortcut: Some("Ctrl+B"),
         category: "Build",
     },
     ToolbarAction {
         id: "debug",
         label: "Debug",
-        icon: "⊘",
+        icon: "\u{2298}",
         shortcut: None,
         category: "Build",
     },
     ToolbarAction {
         id: "test",
         label: "Test",
-        icon: "✓",
+        icon: "\u{2713}",
         shortcut: None,
         category: "Build",
     },
     ToolbarAction {
         id: "git",
         label: "Git",
-        icon: "⑂",
+        icon: "\u{2442}",
         shortcut: None,
         category: "File",
     },
@@ -174,17 +174,17 @@ static OPERATOR_RIGHT_PANELS: &[RightPanel] = &[
     RightPanel {
         id: "flow_inspector",
         label: "Flow Inspector",
-        icon: "⧉",
+        icon: "\u{29c9}",
     },
     RightPanel {
         id: "element_picker",
         label: "Element Picker",
-        icon: "⊞",
+        icon: "\u{229e}",
     },
     RightPanel {
         id: "action_log",
         label: "Action Log",
-        icon: "≡",
+        icon: "\u{2261}",
     },
 ];
 
@@ -192,42 +192,42 @@ static OPERATOR_TOOLBAR: &[ToolbarAction] = &[
     ToolbarAction {
         id: "record",
         label: "Record",
-        icon: "●",
+        icon: "\u{25cf}",
         shortcut: Some("Ctrl+R"),
         category: "Automation",
     },
     ToolbarAction {
         id: "run_flow",
         label: "Run Flow",
-        icon: "▶",
+        icon: "\u{25b6}",
         shortcut: Some("Ctrl+Enter"),
         category: "Automation",
     },
     ToolbarAction {
         id: "stop",
         label: "Stop",
-        icon: "■",
+        icon: "\u{25a0}",
         shortcut: Some("Ctrl+."),
         category: "Automation",
     },
     ToolbarAction {
         id: "schedule",
         label: "Schedule",
-        icon: "⏲",
+        icon: "\u{23f2}",
         shortcut: None,
         category: "Automation",
     },
     ToolbarAction {
         id: "targets",
         label: "Targets",
-        icon: "◎",
+        icon: "\u{25ce}",
         shortcut: None,
         category: "Automation",
     },
     ToolbarAction {
         id: "settings",
         label: "Settings",
-        icon: "⚙",
+        icon: "\u{2699}",
         shortcut: None,
         category: "Panels",
     },
@@ -276,17 +276,17 @@ static MISSION_RIGHT_PANELS: &[RightPanel] = &[
     RightPanel {
         id: "agent_detail",
         label: "Agent Detail",
-        icon: "⊙",
+        icon: "\u{2299}",
     },
     RightPanel {
         id: "task_inspector",
         label: "Task Inspector",
-        icon: "⊟",
+        icon: "\u{229f}",
     },
     RightPanel {
         id: "alerts",
         label: "Alerts",
-        icon: "⚠",
+        icon: "\u{26a0}",
     },
 ];
 
@@ -294,42 +294,42 @@ static MISSION_TOOLBAR: &[ToolbarAction] = &[
     ToolbarAction {
         id: "deploy",
         label: "Deploy",
-        icon: "▲",
+        icon: "\u{25b2}",
         shortcut: Some("Ctrl+D"),
         category: "Agent",
     },
     ToolbarAction {
         id: "pause_all",
         label: "Pause All",
-        icon: "⏸",
+        icon: "\u{23f8}",
         shortcut: None,
         category: "Agent",
     },
     ToolbarAction {
         id: "resume_all",
         label: "Resume All",
-        icon: "▶",
+        icon: "\u{25b6}",
         shortcut: None,
         category: "Agent",
     },
     ToolbarAction {
         id: "scale",
         label: "Scale",
-        icon: "⇅",
+        icon: "\u{21c5}",
         shortcut: None,
         category: "Agent",
     },
     ToolbarAction {
         id: "alerts",
         label: "Alerts",
-        icon: "⚠",
+        icon: "\u{26a0}",
         shortcut: None,
         category: "Agent",
     },
     ToolbarAction {
         id: "reports",
         label: "Reports",
-        icon: "◫",
+        icon: "\u{25eb}",
         shortcut: None,
         category: "Agent",
     },
@@ -375,17 +375,17 @@ static ACCESS_RIGHT_PANELS: &[RightPanel] = &[
     RightPanel {
         id: "a11y_tree",
         label: "Accessibility Tree",
-        icon: "⊿",
+        icon: "\u{22bf}",
     },
     RightPanel {
         id: "contrast_checker",
         label: "Contrast Checker",
-        icon: "◐",
+        icon: "\u{25d0}",
     },
     RightPanel {
         id: "aria_inspector",
         label: "ARIA Inspector",
-        icon: "⊜",
+        icon: "\u{229c}",
     },
 ];
 
@@ -393,35 +393,35 @@ static ACCESS_TOOLBAR: &[ToolbarAction] = &[
     ToolbarAction {
         id: "file",
         label: "File",
-        icon: "□",
+        icon: "\u{25a1}",
         shortcut: Some("Ctrl+N"),
         category: "File",
     },
     ToolbarAction {
         id: "preview",
         label: "Preview",
-        icon: "◉",
+        icon: "\u{25c9}",
         shortcut: None,
         category: "View",
     },
     ToolbarAction {
         id: "audit",
         label: "Audit",
-        icon: "✓",
+        icon: "\u{2713}",
         shortcut: None,
         category: "View",
     },
     ToolbarAction {
         id: "contrast",
         label: "Contrast",
-        icon: "◐",
+        icon: "\u{25d0}",
         shortcut: None,
         category: "View",
     },
     ToolbarAction {
         id: "screen_reader",
         label: "SR Sim",
-        icon: "♿",
+        icon: "\u{267f}",
         shortcut: None,
         category: "View",
     },

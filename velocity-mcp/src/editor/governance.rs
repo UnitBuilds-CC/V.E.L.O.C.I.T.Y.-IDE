@@ -1,4 +1,4 @@
-//! Governance: policy engine + approval queue.
+﻿//! Governance: policy engine + approval queue.
 //!
 //! The [`PolicyEngine`] evaluates a proposed [`ActionContext`] (a tool call with
 //! optional path/domain scope and the run's cumulative token/cost usage) against

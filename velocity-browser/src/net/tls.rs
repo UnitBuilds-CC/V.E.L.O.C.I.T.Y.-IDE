@@ -1,4 +1,4 @@
-//! Real TLS client transport backed by rustls (RFC 8446 TLS 1.3 + TLS 1.2).
+﻿//! Real TLS client transport backed by rustls (RFC 8446 TLS 1.3 + TLS 1.2).
 //!
 //! `NativeTlsStream` performs a genuine handshake and validates the server
 //! certificate chain against the Mozilla root program (`webpki-roots`),

@@ -1,4 +1,4 @@
-//! Tests for browser environment APIs: timers, globals, storage, fetch,
+﻿//! Tests for browser environment APIs: timers, globals, storage, fetch,
 //! Headers, FormData, Event/CustomEvent, URL, URLSearchParams.
 
 use super::*;

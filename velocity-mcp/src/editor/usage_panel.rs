@@ -1,4 +1,4 @@
-use crate::editor::theme::IdePalette;
+﻿use crate::editor::theme::IdePalette;
 use crate::usage::AccountUsageView;
 use eframe::egui;
 
@@ -66,7 +66,7 @@ fn render_header(
 
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             if ui
-                .button("↻ Refresh")
+                .button("\u{21bb} Refresh")
                 .on_hover_text("Reload usage stats")
                 .clicked()
             {
@@ -235,7 +235,7 @@ pub fn render_usage_compact(
 
     ui.label(
         egui::RichText::new(format!(
-            "{total_remaining}/{total_limit} req · {available} acct"
+            "{total_remaining}/{total_limit} req \u{00b7} {available} acct"
         ))
         .size(11.0)
         .color(color)

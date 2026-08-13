@@ -1,4 +1,4 @@
-use crate::registry::types::Tool;
+﻿use crate::registry::types::Tool;
 use serde_json::json;
 
 pub fn get_wa_tools() -> Vec<Tool> {

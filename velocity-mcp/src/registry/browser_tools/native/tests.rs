@@ -1,4 +1,4 @@
-//! Integration tests for the native browser tool family.
+﻿//! Integration tests for the native browser tool family.
 //!
 //! Exercised through `handle_native_tool` end to end: every test loads the
 //! shared form fixture into its own session id and asserts on the readable
@@ -682,7 +682,7 @@ fn page_text_tool_reads_visible_text_with_truncation() {
         "browser_native_page_text",
         json!({ "sessionId": "t24-text", "maxChars": 6 }),
     );
-    assert!(out.starts_with("Signup…"), "{out}");
+    assert!(out.starts_with("Signup\u{2026}"), "{out}");
     assert!(out.contains("(truncated to 6 of"), "{out}");
 }
 
@@ -866,7 +866,10 @@ fn links_tool_lists_navigation_map_with_filter_and_limit() {
         "browser_native_links",
         json!({ "sessionId": "t26-links", "limit": 1 }),
     );
-    assert!(out.contains("… 2 more"), "truncation is reported: {out}");
+    assert!(
+        out.contains("\u{2026} 2 more"),
+        "truncation is reported: {out}"
+    );
 
     let compact = call(
         "browser_native_links",
@@ -1067,7 +1070,7 @@ fn checkpoint_diff_snippets_long_content_facts() {
     );
     assert!(out.contains("content"), "content change surfaces: {out}");
     assert!(
-        out.contains("…(+"),
+        out.contains("\u{2026}(+"),
         "long values collapse to snippets: {out}"
     );
     assert!(
@@ -1091,7 +1094,7 @@ fn checkpoint_diff_snippets_long_content_facts() {
         .expect("content change present");
     let new_value = content_change["new"].as_str().expect("new value");
     assert!(
-        new_value.contains("…(+"),
+        new_value.contains("\u{2026}(+"),
         "compact diff is snippeted too: {compact}"
     );
     assert!(new_value.chars().count() < 250, "{new_value}");

@@ -1,4 +1,4 @@
-//! Velocity Drone — Lightweight portable agent endpoint.
+﻿//! Velocity Drone — Lightweight portable agent endpoint.
 //!
 //! A minimal implementation of the V.E.L.O.C.I.T.Y. peer protocol that can be
 //! deployed on any machine as a single binary without the full IDE.

@@ -1,4 +1,4 @@
-//! Multi-step task planner with validation and confidence scoring.
+﻿//! Multi-step task planner with validation and confidence scoring.
 //!
 //! Provides structured planning before execution:
 //! - Decompose complex tasks into atomic, validated steps

@@ -108,7 +108,9 @@ impl ToastQueue {
                                 ui.with_layout(
                                     egui::Layout::right_to_left(egui::Align::Center),
                                     |ui| {
-                                        if ui.button(egui::RichText::new("✕").size(12.0)).clicked()
+                                        if ui
+                                            .button(egui::RichText::new("\u{2715}").size(12.0))
+                                            .clicked()
                                         {
                                             toast.created = Instant::now() - toast.ttl;
                                         }

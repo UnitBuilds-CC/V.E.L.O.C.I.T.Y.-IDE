@@ -1,4 +1,4 @@
-//! TLS 1.3 record protection (RFC 8446 §5.2–5.3).
+﻿//! TLS 1.3 record protection (RFC 8446 §5.2–5.3).
 //!
 //! This ties the verified primitives together into the operation the record
 //! layer actually performs: given a traffic key/IV (from the key schedule) and

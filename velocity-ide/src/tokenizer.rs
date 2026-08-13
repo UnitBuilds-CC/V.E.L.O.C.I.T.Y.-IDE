@@ -1,4 +1,4 @@
-// src/tokenizer.rs — V.E.L.O.C.I.T.Y.-IDE
+﻿// src/tokenizer.rs — V.E.L.O.C.I.T.Y.-IDE
 //
 // BPE tokenizer supporting both fast zero-copy binary `.nda` format (NDAT)
 // and legacy HuggingFace `tokenizer.json` directly.

@@ -1,4 +1,4 @@
-use crate::safety::SafeMutex;
+﻿use crate::safety::SafeMutex;
 use serde_json::{json, Value};
 use std::error::Error;
 use std::fs;
@@ -872,7 +872,7 @@ fn native_read_nda(root: &Path, arguments: &Value) -> Result<String, Box<dyn Err
     out.push_str(&format!("Kind: {kind:?}\n"));
     out.push_str(&format!("Title: {}\n", doc.title().unwrap_or("(untitled)")));
     out.push_str(&format!(
-        "Triples: {} · Commands: {} · Revisions: {}\n",
+        "Triples: {} \u{00b7} Commands: {} \u{00b7} Revisions: {}\n",
         doc.triples.len(),
         doc.commands.len(),
         doc.revisions().len()
@@ -887,17 +887,17 @@ fn native_read_nda(root: &Path, arguments: &Value) -> Result<String, Box<dyn Err
     ));
     for r in doc.revisions() {
         out.push_str(&format!(
-            "  rev {} — {} <{}> [{}] {} {}\n",
+            "  rev {} \u{2014} {} <{}> [{}] {} {}\n",
             r.id, r.author_name, r.author_email, r.author_source, r.timestamp, r.message
         ));
     }
     out.push_str("Triples:\n");
     for (i, (s, p, o)) in doc.triples.iter().enumerate() {
         if i >= 200 {
-            out.push_str(&format!("  … {} more\n", doc.triples.len() - 200));
+            out.push_str(&format!("  \u{2026} {} more\n", doc.triples.len() - 200));
             break;
         }
-        out.push_str(&format!("  {s} → {p} → {o}\n"));
+        out.push_str(&format!("  {s} \u{2192} {p} \u{2192} {o}\n"));
     }
     Ok(out)
 }

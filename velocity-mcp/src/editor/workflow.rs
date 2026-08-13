@@ -1,4 +1,4 @@
-//! Workflow composer: sequential + branching multi-step automation.
+﻿//! Workflow composer: sequential + branching multi-step automation.
 //!
 //! A [`Workflow`] is an ordered list of [`WorkflowStep`]s. [`Workflow::execute`]
 //! runs them in order, reusing the MCP tool dispatch

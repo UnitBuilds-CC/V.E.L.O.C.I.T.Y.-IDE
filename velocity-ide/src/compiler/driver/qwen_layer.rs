@@ -1,4 +1,4 @@
-//! Vulkan Qwen (RoPE-based) transformer layer dispatch.
+﻿//! Vulkan Qwen (RoPE-based) transformer layer dispatch.
 //!
 //! # Safety Invariants
 //!

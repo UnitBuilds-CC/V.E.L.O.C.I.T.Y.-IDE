@@ -1,4 +1,4 @@
-#![allow(dead_code)]
+﻿#![allow(dead_code)]
 //! Voice-to-Task: processes speech commands into actionable IDE tasks.
 //! Provides intent parsing, command mapping, and a voice command registry
 //! that bridges natural language to IDE actions.

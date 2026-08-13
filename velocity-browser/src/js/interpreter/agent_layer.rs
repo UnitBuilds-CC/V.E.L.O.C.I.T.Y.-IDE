@@ -1,4 +1,4 @@
-//! Agent empowerment layer — zero-alloc primitives that turn the DOM engine
+﻿//! Agent empowerment layer — zero-alloc primitives that turn the DOM engine
 //! into an LLM superpower.
 //!
 //! All functions operate on a [`DomElementSnapshot`] (taken once, no lock held)
@@ -565,7 +565,7 @@ pub(super) fn interactive_elements_to_text(elements: &[InteractiveElement]) -> S
             String::new()
         };
         out.push_str(&format!(
-            "[{}] <{}> {}{}{} → {}\n",
+            "[{}] <{}> {}{}{} \u{2192} {}\n",
             i, el.role, el.name, value_part, disabled_mark, el.selector,
         ));
     }
@@ -1120,7 +1120,7 @@ pub(super) fn get_links() -> Vec<LinkInfo> {
 pub(super) fn links_to_text(links: &[LinkInfo]) -> String {
     let mut out = String::with_capacity(links.len() * 60);
     for (i, link) in links.iter().enumerate() {
-        out.push_str(&format!("[{}] {} → {}\n", i, link.text, link.href));
+        out.push_str(&format!("[{}] {} \u{2192} {}\n", i, link.text, link.href));
     }
     out
 }

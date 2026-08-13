@@ -1,4 +1,4 @@
-// bin/run_nda.rs — Native runner for the NDA programming language
+﻿// bin/run_nda.rs — Native runner for the NDA programming language
 //
 // Usage:
 //   cargo run --bin run_nda -- <file.nda>             # JIT mode (default)
@@ -48,7 +48,7 @@ fn main() {
     };
     log::info!("run_nda: source loaded ({} bytes)", source.len());
 
-    println!("[compiler] Compiling '{}' → NDA AST ...", file_path);
+    println!("[compiler] Compiling '{}' \u{2192} NDA AST ...", file_path);
 
     let (program, final_hashes) = match compile(&source) {
         Ok(r) => {
@@ -139,12 +139,12 @@ fn main() {
         "[runtime] Starting 'main' (hash: {:016x}) with input dim {}...",
         main_hash, dim
     );
-    println!("─────────────────────────────────────────────────────────────");
+    println!("\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}");
 
     if use_sandbox {
         // ── Interpreter path ──────────────────────────────────────────────────
         let res = NdaSandbox::run(&nodes, &conditioning_vec, &site_map);
-        println!("─────────────────────────────────────────────────────────────");
+        println!("\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}");
         if let Some(err) = res.error {
             eprintln!("[runtime] Execution failed: {}", err);
             std::process::exit(1);
@@ -153,7 +153,7 @@ fn main() {
         println!("  Nodes executed : {}", res.executed_nodes);
         println!("  Matrix GEMVs   : {}", res.matrix_count);
         println!("  Norm ops       : {}", res.norm_count);
-        println!("  Duration       : {} µs", res.elapsed_us);
+        println!("  Duration       : {} \u{00b5}s", res.elapsed_us);
         println!("  Output dim     : {}", res.output_dim);
         println!(
             "  Output vector  : {:?}",
@@ -166,7 +166,7 @@ fn main() {
         let program = nda_jit::compile(&nodes);
         let compile_us = t_compile.elapsed().as_micros();
         println!(
-            "[jit] Compiled {} node(s) in {} µs.",
+            "[jit] Compiled {} node(s) in {} \u{00b5}s.",
             program.nodes_compiled, compile_us
         );
         println!(
@@ -180,15 +180,15 @@ fn main() {
 
         let res = program.run(&conditioning_vec, &site_map);
 
-        println!("─────────────────────────────────────────────────────────────");
+        println!("\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}");
         if let Some(err) = res.error {
             eprintln!("[jit] Execution failed: {}", err);
             std::process::exit(1);
         }
         println!("[runtime] Execution completed (JIT):");
         println!("  Nodes compiled : {}", res.nodes_compiled);
-        println!("  Compile time   : {} µs", compile_us);
-        println!("  Run duration   : {} µs", res.elapsed_us);
+        println!("  Compile time   : {} \u{00b5}s", compile_us);
+        println!("  Run duration   : {} \u{00b5}s", res.elapsed_us);
         println!("  Output dim     : {}", res.output_dim);
         println!(
             "  Output vector  : {:?}",

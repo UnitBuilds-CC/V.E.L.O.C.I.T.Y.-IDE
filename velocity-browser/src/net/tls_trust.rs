@@ -1,4 +1,4 @@
-//! Certificate chain validation to a trusted root for the from-scratch TLS 1.3 stack.
+﻿//! Certificate chain validation to a trusted root for the from-scratch TLS 1.3 stack.
 //!
 //! The hand-rolled [`Tls13Handshake`](super::tls_handshake::Tls13Handshake) parses the
 //! leaf certificate itself (see [`x509`](super::x509)) and verifies the

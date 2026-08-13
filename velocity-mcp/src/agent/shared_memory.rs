@@ -1,4 +1,4 @@
-//! Shared memory and knowledge base for team collaboration.
+﻿//! Shared memory and knowledge base for team collaboration.
 //!
 //! Provides a shared knowledge store that team members can read from and
 //! write to, enabling collective intelligence across agent sessions.

@@ -1,4 +1,4 @@
-//! End-to-end integration test for cross-device agent collaboration.
+﻿//! End-to-end integration test for cross-device agent collaboration.
 //!
 //! Simulates a complete workflow: two V.E.L.O.C.I.T.Y. instances discover each
 //! other, pair up, transfer files, delegate tasks, exchange messages, and

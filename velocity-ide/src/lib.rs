@@ -1,4 +1,4 @@
-// V.E.L.O.C.I.T.Y.-IDE — library facade
+﻿// V.E.L.O.C.I.T.Y.-IDE — library facade
 // Re-exports modules so that binaries in src/bin/ can use `velocity_ide::*`.
 
 pub mod compiler;

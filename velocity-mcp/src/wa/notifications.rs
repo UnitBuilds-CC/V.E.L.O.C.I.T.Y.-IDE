@@ -1,4 +1,4 @@
-#![allow(dead_code)] // Reserved WA automation API surface; awaiting full MCP dispatch wiring.
+﻿#![allow(dead_code)] // Reserved WA automation API surface; awaiting full MCP dispatch wiring.
 //! Windows notification and toast interception for desktop automation.
 //!
 //! Detects, reads, and dismisses Windows toast notifications, system tray

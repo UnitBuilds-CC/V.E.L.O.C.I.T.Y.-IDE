@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+﻿use std::collections::HashMap;
 
 use crate::parser::html5::{Html5Tokenizer, TokenKind};
 

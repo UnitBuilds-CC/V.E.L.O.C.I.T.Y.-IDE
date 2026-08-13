@@ -1,4 +1,4 @@
-// pipeline_bridge.rs — DualPathEngine: routes between Path 1 (text) and Path 2 (NDA)
+﻿// pipeline_bridge.rs — DualPathEngine: routes between Path 1 (text) and Path 2 (NDA)
 #![allow(dead_code)]
 //
 // Path 1 (Text):
@@ -169,7 +169,7 @@ impl DualPathEngine {
     // ── Path 2: NDA native generation ────────────────────────────────────────
 
     fn run_path2(&mut self, prompt: &str, max_tokens: usize) -> Result<EngineOutput> {
-        eprintln!("[bridge] Path 2 — NDA native generation");
+        eprintln!("[bridge] Path 2 \u{2014} NDA native generation");
         eprintln!(
             "[bridge] Output vocabulary: {} opcodes (zero-hallucination mode)",
             NdaOpcode::VOCAB_SIZE
@@ -216,7 +216,7 @@ impl DualPathEngine {
                     eprintln!("[bridge] Sandbox    : FAIL ({})", err);
                 } else {
                     eprintln!(
-                        "[bridge] Sandbox    : PASS  {} nodes ({} matrices, {} norms, out_dim={}), {}µs",
+                        "[bridge] Sandbox    : PASS  {} nodes ({} matrices, {} norms, out_dim={}), {}\u{00b5}s",
                         sb.executed_nodes, sb.matrix_count, sb.norm_count, sb.output_dim, sb.elapsed_us
                     );
                 }
@@ -227,10 +227,10 @@ impl DualPathEngine {
                 let comment = if sc.passed {
                     ""
                 } else {
-                    " — not stored (prompt-program misalignment)"
+                    " \u{2014} not stored (prompt-program misalignment)"
                 };
                 eprintln!(
-                    "[bridge] Scope      : {}  sim={:.2} (θ={:.2}){}",
+                    "[bridge] Scope      : {}  sim={:.2} (\u{03b8}={:.2}){}",
                     status, sc.similarity, sc.threshold, comment
                 );
             }
@@ -300,7 +300,7 @@ pub fn run_dual_path(
             let elapsed_s = elapsed_ms as f64 / 1000.0;
             let status = match (valid, force_terminated) {
                 (true, false) => "VALID (complete)",
-                (true, true) => "VALID (truncated — increase --max-tokens)",
+                (true, true) => "VALID (truncated \u{2014} increase --max-tokens)",
                 _ => "INVALID",
             };
             eprintln!(

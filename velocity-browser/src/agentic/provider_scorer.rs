@@ -1,4 +1,4 @@
-//! Provider Success-Rate Scoring: tracks historical success/failure per
+﻿//! Provider Success-Rate Scoring: tracks historical success/failure per
 //! provider+model combination and recommends the best route for a task type.
 //!
 //! Uses a decaying average so recent performance weighs more than old history.

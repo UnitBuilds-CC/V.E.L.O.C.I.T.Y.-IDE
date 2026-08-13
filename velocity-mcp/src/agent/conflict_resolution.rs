@@ -1,4 +1,4 @@
-//! Conflict resolution for concurrent agent and user actions.
+﻿//! Conflict resolution for concurrent agent and user actions.
 //!
 //! When multiple users or agents operate on the same resources simultaneously,
 //! conflicts can arise. This module provides detection, tracking, and

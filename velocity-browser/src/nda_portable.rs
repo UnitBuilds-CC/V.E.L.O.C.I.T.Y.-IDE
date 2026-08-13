@@ -1,4 +1,4 @@
-//! Portable NDA1 document format — the browser-viewable, self-contained
+﻿//! Portable NDA1 document format — the browser-viewable, self-contained
 //! neural-document schema.
 //!
 //! This is the exact binary layout the reference V.E.L.O.C.I.T.Y. NDA PWA
@@ -661,7 +661,7 @@ impl NdaPortableDoc {
             return Err("bad NDA magic");
         }
         if u32::from_le_bytes(bytes[4..8].try_into().unwrap()) != 0 {
-            return Err("not a portable NDA document (flags set — sealed/raw envelope)");
+            return Err("not a portable NDA document (flags set \u{2014} sealed/raw envelope)");
         }
         let mut header_root = [0u8; 32];
         header_root.copy_from_slice(&bytes[8..40]);
@@ -1002,11 +1002,16 @@ mod tests {
     #[test]
     fn round_trip_property() {
         let mut doc = NdaPortableDoc::new();
-        doc.set_title("Prop ✓");
+        doc.set_title("Prop \u{2713}");
         for i in 0..37u16 {
             doc.push_triple(format!("s{i}"), "pred", format!("o{}", i % 5));
         }
-        doc.push_command(DisplayCommand::text("héllo wörld", 4, 8, 0xAABB_CCDD));
+        doc.push_command(DisplayCommand::text(
+            "h\u{00e9}llo w\u{00f6}rld",
+            4,
+            8,
+            0xAABB_CCDD,
+        ));
         doc.push_command(DisplayCommand::rect(1, 2, 30, 40, 0x0011_2233));
         doc.push_command(DisplayCommand::image(
             "data:image/png;base64,AAAA",

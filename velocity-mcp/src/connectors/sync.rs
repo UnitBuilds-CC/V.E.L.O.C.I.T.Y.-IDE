@@ -1,4 +1,4 @@
-//! Bi-directional sync engine for external services.
+﻿//! Bi-directional sync engine for external services.
 //!
 //! Manages synchronization of data between the local workspace and external
 //! services (GitHub issues, Jira tickets, Notion pages, etc.). Supports

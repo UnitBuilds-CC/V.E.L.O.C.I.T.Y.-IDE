@@ -1,4 +1,4 @@
-#![allow(dead_code)] // Reserved WA automation API surface; awaiting full MCP dispatch wiring.
+﻿#![allow(dead_code)] // Reserved WA automation API surface; awaiting full MCP dispatch wiring.
 //! Virtual Desktop management for Windows 10/11.
 //!
 //! Provides detection, enumeration, creation, removal, and switching of

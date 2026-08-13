@@ -1,4 +1,4 @@
-#![allow(dead_code)] // Reserved WA automation API surface; awaiting full MCP dispatch wiring.
+﻿#![allow(dead_code)] // Reserved WA automation API surface; awaiting full MCP dispatch wiring.
 //! Direct COM/UIA FFI bindings for high-performance Windows automation.
 //!
 //! Provides Rust-native bindings to Windows UIAutomation COM interfaces,

@@ -1,4 +1,4 @@
-use super::coercion::*;
+﻿use super::coercion::*;
 use super::eval::{eval_stmt, MAX_PROXY_TRAP_DEPTH, PROXY_TRAP_DEPTH};
 use super::function::{call_function, call_function_with_this};
 use crate::js::scope::{Scope, ScopeRef};

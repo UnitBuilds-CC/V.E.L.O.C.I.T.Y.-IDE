@@ -1,4 +1,4 @@
-//! Report shapes and render helpers shared by the native browser tools.
+﻿//! Report shapes and render helpers shared by the native browser tools.
 //!
 //! Every tool output is either one of these serde reports (compact mode) or
 //! a readable rendering produced here, so acting and observing stay formatted
@@ -163,7 +163,7 @@ pub(super) fn fact_snippet(value: &str) -> String {
         return flat;
     }
     let mut snippet: String = flat.chars().take(LIMIT).collect();
-    snippet.push_str(&format!(" …(+{} chars)", count - LIMIT));
+    snippet.push_str(&format!(" \u{2026}(+{} chars)", count - LIMIT));
     snippet
 }
 
@@ -326,7 +326,7 @@ pub(super) fn tab_json(bridge: &NativeBrowserBridge) -> Value {
 pub(super) fn memory_snippet(text: &str) -> String {
     let mut s: String = text.chars().take(160).collect();
     if text.chars().count() > 160 {
-        s.push('…');
+        s.push('\u{2026}');
     }
     s
 }

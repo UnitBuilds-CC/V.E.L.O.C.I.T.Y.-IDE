@@ -1,4 +1,4 @@
-//! Spline-based shape extraction from rasterized captcha regions.
+﻿//! Spline-based shape extraction from rasterized captcha regions.
 //!
 //! Extends the OCR pixel-scanning approach from `visual_fingerprint` to produce
 //! geometric shape descriptors instead of coarse layout signatures. The pipeline

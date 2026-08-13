@@ -1,4 +1,4 @@
-//! Additional Web APIs: crypto (randomUUID/getRandomValues), base64 (atob/btoa),
+﻿//! Additional Web APIs: crypto (randomUUID/getRandomValues), base64 (atob/btoa),
 //! URL.canParse, MessageChannel/MessagePort, EventTarget, WeakRef,
 //! FinalizationRegistry and Proxy.revocable — plus `call_native_extended`, the
 //! overflow dispatch table for newer global statics (delegated from `call_native`).

@@ -1,4 +1,4 @@
-//! Browser engine integration tests.
+﻿//! Browser engine integration tests.
 //!
 //! Exercises cross-module workflows in the velocity-browser crate:
 //! HTML parsing, DOM construction, AES-GCM crypto, layout, SVG,

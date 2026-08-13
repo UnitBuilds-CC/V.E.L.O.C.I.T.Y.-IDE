@@ -1,4 +1,4 @@
-//! Fuzz target: NDA lexer.
+﻿//! Fuzz target: NDA lexer.
 //!
 //! Feeds arbitrary byte strings into the NDA tokenizer and asserts it
 //! never panics — it must always return `Ok(tokens)` or `Err(msg)`.

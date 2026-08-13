@@ -1,4 +1,4 @@
-//! E2E test: NDA compiler pipeline (source → compile → execute).
+﻿//! E2E test: NDA compiler pipeline (source → compile → execute).
 //!
 //! Spawns the actual `run_nda` binary with a test .nda file and
 //! verifies the full pipeline: lex → parse → JIT/interpret → output.

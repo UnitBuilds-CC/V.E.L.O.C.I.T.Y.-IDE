@@ -1,4 +1,4 @@
-//! Integration tests for the V.E.L.O.C.I.T.Y.-IDE runtime crate.
+﻿//! Integration tests for the V.E.L.O.C.I.T.Y.-IDE runtime crate.
 //!
 //! These tests verify cross-module workflows in the compiler/inference runtime.
 

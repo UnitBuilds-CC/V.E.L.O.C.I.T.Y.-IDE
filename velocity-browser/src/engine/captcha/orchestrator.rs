@@ -1,4 +1,4 @@
-//! Captcha orchestrator — the coordinator with fingerprint-first fast path.
+﻿//! Captcha orchestrator — the coordinator with fingerprint-first fast path.
 //!
 //! Solve loop:
 //! 1. Rasterize challenge region -> PixelBuffer

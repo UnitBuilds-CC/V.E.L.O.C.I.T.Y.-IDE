@@ -1,4 +1,4 @@
-#![allow(dead_code)]
+﻿#![allow(dead_code)]
 //! Bracket matching — highlights the matching bracket for the character under
 //! or adjacent to the cursor.
 

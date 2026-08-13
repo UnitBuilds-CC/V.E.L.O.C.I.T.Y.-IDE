@@ -1,4 +1,4 @@
-//! Multi-user collaboration: identity, sessions, and presence.
+﻿//! Multi-user collaboration: identity, sessions, and presence.
 //!
 //! Manages user identities, shared agent sessions, and real-time presence
 //! tracking so multiple users can collaborate on agent tasks simultaneously.

@@ -1,4 +1,4 @@
-//! Integration tests: full IDE ↔ Drone workflow scenarios.
+﻿//! Integration tests: full IDE ↔ Drone workflow scenarios.
 //!
 //! Tests the complete collaboration pipeline: discovery, pairing,
 //! file transfer, task delegation, and multi-drone coordination.

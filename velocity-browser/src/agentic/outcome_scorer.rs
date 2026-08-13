@@ -1,4 +1,4 @@
-//! Outcome Scoring Engine: evaluates whether an agent action achieved its intent.
+﻿//! Outcome Scoring Engine: evaluates whether an agent action achieved its intent.
 //!
 //! Every action the agent takes produces an observable outcome. This module
 //! scores that outcome on a 0.0..=1.0 scale and stores (state, action, score)

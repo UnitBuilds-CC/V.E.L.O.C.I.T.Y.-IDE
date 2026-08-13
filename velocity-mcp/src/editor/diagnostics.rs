@@ -1,4 +1,4 @@
-#![allow(dead_code)]
+﻿#![allow(dead_code)]
 //! Diagnostics display — manages error/warning squiggles and the problems panel.
 
 use eframe::egui;
@@ -120,10 +120,10 @@ impl DiagnosticsState {
                 ui.set_max_width(400.0);
                 for diag in &diagnostics {
                     let (icon, color) = match diag.severity {
-                        DiagnosticSeverity::Error => ("✖", palette.error),
-                        DiagnosticSeverity::Warning => ("⚠", palette.warning),
-                        DiagnosticSeverity::Info => ("ℹ", palette.accent),
-                        DiagnosticSeverity::Hint => ("💡", palette.text_muted),
+                        DiagnosticSeverity::Error => ("\u{2716}", palette.error),
+                        DiagnosticSeverity::Warning => ("\u{26a0}", palette.warning),
+                        DiagnosticSeverity::Info => ("\u{2139}", palette.accent),
+                        DiagnosticSeverity::Hint => ("\u{1f4a1}", palette.text_muted),
                     };
 
                     ui.horizontal(|ui| {

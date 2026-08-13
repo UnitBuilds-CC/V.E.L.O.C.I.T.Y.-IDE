@@ -1,4 +1,4 @@
-//! Robustness layer for cross-device peer collaboration.
+﻿//! Robustness layer for cross-device peer collaboration.
 //!
 //! Adds production-grade reliability features on top of the base peer system:
 //!

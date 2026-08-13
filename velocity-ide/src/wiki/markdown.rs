@@ -1,4 +1,4 @@
-//! Renders a [`WikiModel`] to interlinked Markdown files.
+﻿//! Renders a [`WikiModel`] to interlinked Markdown files.
 //!
 //! Qodo-style features:
 //! - Table of contents on the index page
@@ -59,7 +59,7 @@ pub fn export_markdown(model: &WikiModel, dir: &Path) -> Result<usize> {
 
 fn generated_header(model: &WikiModel) -> String {
     format!(
-        "_Generated from the Velocity site map · {} · {}_\n",
+        "_Generated from the Velocity site map \u{00b7} {} \u{00b7} {}_\n",
         model.generated_at, model.stats_summary
     )
 }
@@ -104,7 +104,7 @@ fn render_index(model: &WikiModel) -> String {
             out.push_str(&format!("### Module: {}\n\n", module));
             for page in pages {
                 out.push_str(&format!(
-                    "- [{}](files/{}/{}.md) — {}\n",
+                    "- [{}](files/{}/{}.md) \u{2014} {}\n",
                     page.title,
                     slugify_module(module),
                     page.slug,
@@ -120,7 +120,7 @@ fn render_index(model: &WikiModel) -> String {
         out.push_str("## Symbols\n\n");
         for page in &model.symbol_pages {
             out.push_str(&format!(
-                "- [{}](symbols/{}.md) — {}\n",
+                "- [{}](symbols/{}.md) \u{2014} {}\n",
                 page.title, page.slug, page.summary
             ));
         }
@@ -210,7 +210,7 @@ fn render_symbol_index(model: &WikiModel) -> String {
     let letters: Vec<char> = by_letter.keys().cloned().collect();
     for (i, letter) in letters.iter().enumerate() {
         if i > 0 {
-            out.push_str(" · ");
+            out.push_str(" \u{00b7} ");
         }
         out.push_str(&format!("[{}](#{})", letter, letter.to_ascii_lowercase()));
     }
@@ -220,7 +220,7 @@ fn render_symbol_index(model: &WikiModel) -> String {
         out.push_str(&format!("## {}\n\n", letter));
         for page in pages {
             out.push_str(&format!(
-                "- [{}](symbols/{}.md) — {}\n",
+                "- [{}](symbols/{}.md) \u{2014} {}\n",
                 page.title, page.slug, page.summary
             ));
         }

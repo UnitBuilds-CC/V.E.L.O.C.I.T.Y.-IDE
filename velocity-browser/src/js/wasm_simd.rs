@@ -1,4 +1,4 @@
-//! WebAssembly SIMD (v128) pipeline with typed lane operations.
+﻿//! WebAssembly SIMD (v128) pipeline with typed lane operations.
 //!
 //! Implements the Wasm SIMD proposal's v128 vector type with operations
 //! for i8x16, i16x8, i32x4, and i64x2 lane widths.

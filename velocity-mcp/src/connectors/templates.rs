@@ -1,4 +1,4 @@
-//! Pre-built integration templates for common workflows.
+﻿//! Pre-built integration templates for common workflows.
 //!
 //! Templates provide ready-made connector configurations and sync rules
 //! for popular services, reducing setup to a single step.

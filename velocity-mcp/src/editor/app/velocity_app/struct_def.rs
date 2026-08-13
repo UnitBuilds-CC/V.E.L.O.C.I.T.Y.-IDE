@@ -1,4 +1,4 @@
-use crossbeam_channel::{Receiver, Sender};
+﻿use crossbeam_channel::{Receiver, Sender};
 use eframe::egui;
 use egui_dock::DockState;
 use serde::{Deserialize, Serialize};
@@ -288,6 +288,8 @@ pub struct VelocityApp {
     pub minimap_config: crate::editor::minimap::MinimapConfig,
     /// Snippet collection.
     pub snippet_collection: crate::editor::snippets::SnippetCollection,
+    /// Draft filter text in the Snippets panel search box.
+    pub snippet_search_query: String,
     /// Whether to show minimap in editor.
     pub show_minimap: bool,
     /// Whether to show breadcrumbs above editor.
@@ -946,6 +948,7 @@ impl VelocityApp {
             extension_registry: crate::editor::extensions::ExtensionRegistry::default(),
             minimap_config: crate::editor::minimap::MinimapConfig::default(),
             snippet_collection: crate::editor::snippets::SnippetCollection::default(),
+            snippet_search_query: String::new(),
             show_minimap: true,
             show_breadcrumbs: true,
             word_wrap: false,

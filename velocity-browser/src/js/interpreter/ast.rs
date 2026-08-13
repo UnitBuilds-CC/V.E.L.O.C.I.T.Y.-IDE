@@ -1,4 +1,4 @@
-use super::token::*;
+﻿use super::token::*;
 
 /// Variable declaration kind: `var`, `let`, `const`, or `using`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

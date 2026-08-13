@@ -1,4 +1,4 @@
-use eframe::egui::{
+﻿use eframe::egui::{
     self, Color32, CornerRadius, FontData, FontDefinitions, FontFamily, FontId, Style, TextStyle,
     Vec2, Visuals,
 };
@@ -228,10 +228,10 @@ impl WorkspaceProfile {
     /// shapes already known to render in the bundled fonts.
     pub fn glyph(self) -> &'static str {
         match self {
-            Self::Coder => "◧",
-            Self::AutomationOperator => "▶",
-            Self::MissionControl => "◇",
-            Self::Accessibility => "◌",
+            Self::Coder => "\u{25e7}",
+            Self::AutomationOperator => "\u{25b6}",
+            Self::MissionControl => "\u{25c7}",
+            Self::Accessibility => "\u{25cc}",
         }
     }
 }

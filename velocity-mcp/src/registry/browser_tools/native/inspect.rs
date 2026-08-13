@@ -1,4 +1,4 @@
-//! Read-only inspection tools of the native browser family: page reads,
+﻿//! Read-only inspection tools of the native browser family: page reads,
 //! structure digests, search, navigation history, checkpoints, memory
 //! recall and form validation.
 
@@ -68,7 +68,7 @@ pub(super) fn handle_inspect_tool(
         if max_chars > 0 && text.chars().count() > max_chars {
             let truncated: String = text.chars().take(max_chars).collect();
             return Ok(Some(format!(
-                "{truncated}…\n(truncated to {max_chars} of {} chars)",
+                "{truncated}\u{2026}\n(truncated to {max_chars} of {} chars)",
                 text.chars().count()
             )));
         }
@@ -85,7 +85,7 @@ pub(super) fn handle_inspect_tool(
                 let (idx, elements, hash) = bridge.screencast_capture();
                 let total = bridge.screencast_frames().len();
                 format!(
-                "captured frame {idx} ({elements} elements, hash {hash:016x}) — {total} frame{} in timeline\n",
+                "captured frame {idx} ({elements} elements, hash {hash:016x}) \u{2014} {total} frame{} in timeline\n",
                 if total == 1 { "" } else { "s" },
             )
             }
@@ -192,7 +192,7 @@ pub(super) fn handle_inspect_tool(
             }
             if matched > hits.len() {
                 out.push_str(&format!(
-                    "  … {} more (raise limit)\n",
+                    "  \u{2026} {} more (raise limit)\n",
                     matched - hits.len()
                 ));
             }
@@ -251,7 +251,7 @@ pub(super) fn handle_inspect_tool(
             }
             if matched > links.len() {
                 out.push_str(&format!(
-                    "  … {} more (raise limit)\n",
+                    "  \u{2026} {} more (raise limit)\n",
                     matched - links.len()
                 ));
             }
@@ -573,7 +573,7 @@ pub(super) fn handle_inspect_tool(
             .map_err(|e| format!("serialise remember report: {e}"))?
         } else {
             format!(
-            "remembered page as '{}' ({} chars from {}, tags [{}], outcome {:.2}) — {} memor{} stored\n",
+            "remembered page as '{}' ({} chars from {}, tags [{}], outcome {:.2}) \u{2014} {} memor{} stored\n",
             memory_id,
             chars,
             if url.is_empty() { "(no url)" } else { url.as_str() },

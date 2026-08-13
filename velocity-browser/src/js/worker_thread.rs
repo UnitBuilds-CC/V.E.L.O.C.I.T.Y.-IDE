@@ -1,4 +1,4 @@
-//! Web Worker pool with lifecycle management, message passing, and
+﻿//! Web Worker pool with lifecycle management, message passing, and
 //! worker-to-main communication.
 
 use std::collections::VecDeque;

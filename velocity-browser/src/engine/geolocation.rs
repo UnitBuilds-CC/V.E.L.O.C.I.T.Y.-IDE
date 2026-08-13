@@ -1,4 +1,4 @@
-use crate::nda::NdaTriple;
+﻿use crate::nda::NdaTriple;
 use std::path::Path;
 
 /// Per-session geolocation configuration loaded from workspace settings.

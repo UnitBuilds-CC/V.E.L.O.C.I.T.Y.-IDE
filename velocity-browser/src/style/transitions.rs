@@ -1,4 +1,4 @@
-//! CSS Transitions.
+﻿//! CSS Transitions.
 //!
 //! Implements the `transition` property model and a runtime that interpolates
 //! property values when a node's computed style changes. This complements the

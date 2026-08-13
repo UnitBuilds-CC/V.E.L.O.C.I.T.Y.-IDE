@@ -1,4 +1,4 @@
-// compiler/rust_to_nda.rs — Full Rust source → NDA program tree
+﻿// compiler/rust_to_nda.rs — Full Rust source → NDA program tree
 //
 // Philosophy: teach from complete programs, not fragments.
 //
@@ -663,7 +663,7 @@ impl std::fmt::Display for SeedReport {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
-            "Seeded '{}': {} functions → {} NDA nodes stored | root={:016x} | {}ms",
+            "Seeded '{}': {} functions \u{2192} {} NDA nodes stored | root={:016x} | {}ms",
             self.source_path.display(),
             self.functions,
             self.nodes_stored,

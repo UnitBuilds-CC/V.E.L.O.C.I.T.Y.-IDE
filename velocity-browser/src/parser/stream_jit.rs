@@ -1,4 +1,4 @@
-/// Token kinds produced by the streaming JIT tokenizer.
+﻿/// Token kinds produced by the streaming JIT tokenizer.
 #[derive(Debug, Clone, PartialEq)]
 pub enum StreamJitTokenKind {
     OpenTag,

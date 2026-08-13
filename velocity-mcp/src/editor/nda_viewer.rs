@@ -1,4 +1,4 @@
-//! Zero-dependency browser viewer generator for portable NDA1 documents.
+﻿//! Zero-dependency browser viewer generator for portable NDA1 documents.
 //!
 //! Produces standalone HTML that parses the exact 48-byte-header NDA1 layout
 //! (see [`velocity_browser::nda_portable`]) in vanilla JavaScript and renders
@@ -155,7 +155,7 @@ function renderHistory(doc){
   });
   const origin = get("nda:doc", "nda:origin");
   const created = get("nda:doc", "nda:created");
-  let html = "<div class='origin'>Origin: <b>" + esc(origin || "unknown") + "</b>" + (created ? " · created " + esc(created) : "") + "</div>";
+  let html = "<div class='origin'>Origin: <b>" + esc(origin || "unknown") + "</b>" + (created ? " \u{00b7} created " + esc(created) : "") + "</div>";
   if (revs.length === 0) { html += "<p>No revisions recorded.</p>"; }
   revs.forEach((r, i) => {
     let delta = "";
@@ -165,8 +165,8 @@ function renderHistory(doc){
         : " <span class='delta changed'>content changed</span>";
     }
     html += "<div class='rev'><div class='revhead'>#" + i + " <span class='badge'>" + esc(r.source || "?") + "</span> <b>" + esc(r.name || "anonymous") + "</b> <span class='email'>" + esc(r.email) + "</span>" + delta + "</div>";
-    html += "<div class='revmeta'>" + esc(r.ts) + (r.msg ? " — " + esc(r.msg) : "") + "</div>";
-    html += "<div class='revhash'>content " + esc(r.hash.slice(0, 16)) + "… ← parent " + esc(r.parent === "genesis" ? "genesis" : r.parent.slice(0, 16) + "…") + "</div></div>";
+    html += "<div class='revmeta'>" + esc(r.ts) + (r.msg ? " \u{2014} " + esc(r.msg) : "") + "</div>";
+    html += "<div class='revhash'>content " + esc(r.hash.slice(0, 16)) + "\u{2026} \u{2190} parent " + esc(r.parent === "genesis" ? "genesis" : r.parent.slice(0, 16) + "\u{2026}") + "</div></div>";
   });
   el.innerHTML = html;
 }
@@ -196,7 +196,7 @@ function showTab(name){
 function loadBytes(bytes){
   try {
     const doc = parseNda(new Uint8Array(bytes));
-    document.getElementById("status").textContent = "NDA1 · " + doc.tripleCount + " triples · " + doc.commandCount + " commands · merkle " + doc.merkle.slice(0, 16) + "…";
+    document.getElementById("status").textContent = "NDA1 \u{00b7} " + doc.tripleCount + " triples \u{00b7} " + doc.commandCount + " commands \u{00b7} merkle " + doc.merkle.slice(0, 16) + "\u{2026}";
     renderCanvas(doc); renderGraph(doc); renderHistory(doc); renderHex(doc);
     showTab("canvas");
   } catch (e) {
@@ -234,7 +234,7 @@ canvas { border: 1px solid #21262d; border-radius: 6px; max-width: 100%; }
 
 fn shell(title: &str, body: &str, onload: &str) -> String {
     format!(
-        "<!DOCTYPE html>\n<html lang=\"en\">\n<head>\n<meta charset=\"utf-8\">\n<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n<title>{title}</title>\n<style>{css}</style>\n</head>\n<body>\n<header><h1>{title}</h1><div id=\"status\">loading…</div></header>\n<nav>\n<button id=\"tab-canvas\" onclick=\"showTab('canvas')\">Canvas</button>\n<button id=\"tab-graph\" onclick=\"showTab('graph')\">Triples</button>\n<button id=\"tab-history\" onclick=\"showTab('history')\">History</button>\n<button id=\"tab-hex\" onclick=\"showTab('hex')\">Bytes</button>\n</nav>\n<main>\n{body}\n<div id=\"canvas\"></div>\n<div id=\"graph\" style=\"display:none\"></div>\n<div id=\"history\" style=\"display:none\"></div>\n<div id=\"hex\" style=\"display:none\"></div>\n</main>\n<script>{js}\n{onload}\n</script>\n</body>\n</html>\n",
+        "<!DOCTYPE html>\n<html lang=\"en\">\n<head>\n<meta charset=\"utf-8\">\n<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n<title>{title}</title>\n<style>{css}</style>\n</head>\n<body>\n<header><h1>{title}</h1><div id=\"status\">loading\u{2026}</div></header>\n<nav>\n<button id=\"tab-canvas\" onclick=\"showTab('canvas')\">Canvas</button>\n<button id=\"tab-graph\" onclick=\"showTab('graph')\">Triples</button>\n<button id=\"tab-history\" onclick=\"showTab('history')\">History</button>\n<button id=\"tab-hex\" onclick=\"showTab('hex')\">Bytes</button>\n</nav>\n<main>\n{body}\n<div id=\"canvas\"></div>\n<div id=\"graph\" style=\"display:none\"></div>\n<div id=\"history\" style=\"display:none\"></div>\n<div id=\"hex\" style=\"display:none\"></div>\n</main>\n<script>{js}\n{onload}\n</script>\n</body>\n</html>\n",
         title = title,
         css = VIEWER_CSS,
         body = body,
@@ -258,7 +258,7 @@ pub fn self_contained_html(nda_bytes: &[u8], title: &str) -> String {
     } else {
         title
     };
-    shell(&format!("NDA · {doc_title}"), "", &onload)
+    shell(&format!("NDA \u{00b7} {doc_title}"), "", &onload)
 }
 
 /// Build the standalone PWA-style viewer with a file picker (opens any `.nda`).
@@ -295,7 +295,7 @@ mod tests {
     fn self_contained_html_embeds_bytes() {
         let bytes = velocity_browser::nda_portable::NdaPortableDoc::new().to_portable_bytes();
         let html = self_contained_html(&bytes, "Test");
-        assert!(html.contains("NDA · Test"));
+        assert!(html.contains("NDA \u{00b7} Test"));
         assert!(html.contains(&base64_encode(&bytes)));
         assert!(html.contains("function parseNda"));
     }

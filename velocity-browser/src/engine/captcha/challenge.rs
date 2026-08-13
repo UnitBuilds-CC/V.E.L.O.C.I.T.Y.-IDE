@@ -1,4 +1,4 @@
-//! Generic challenge model — replaces the hardcoded `CaptchaType` enum with a
+﻿//! Generic challenge model — replaces the hardcoded `CaptchaType` enum with a
 //! descriptor that can represent ANY captcha provider and variant.
 
 /// Generic challenge descriptor — works for ANY provider.

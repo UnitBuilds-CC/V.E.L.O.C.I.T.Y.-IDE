@@ -37,7 +37,7 @@ impl VelocityApp {
                     ui.set_width(480.0);
                     let response = ui.add(
                         egui::TextEdit::singleline(&mut self.command_palette.query)
-                            .hint_text("Search commands…")
+                            .hint_text("Search commands\u{2026}")
                             .desired_width(480.0),
                     );
                     // Grab focus on the frame the palette opens so you can type
@@ -190,7 +190,7 @@ impl VelocityApp {
                             ui.with_layout(
                                 egui::Layout::right_to_left(egui::Align::Center),
                                 |ui| {
-                                    if ui.button("✕").clicked() {
+                                    if ui.button("\u{2715}").clicked() {
                                         open = false;
                                     }
                                 },
@@ -237,9 +237,13 @@ impl VelocityApp {
                                                 }
                                                 None => {
                                                     ui.label(
-                                                        egui::RichText::new("—").small().color(
-                                                            palette.text_muted.gamma_multiply(0.5),
-                                                        ),
+                                                        egui::RichText::new("\u{2014}")
+                                                            .small()
+                                                            .color(
+                                                                palette
+                                                                    .text_muted
+                                                                    .gamma_multiply(0.5),
+                                                            ),
                                                     );
                                                 }
                                             },
@@ -305,7 +309,7 @@ impl VelocityApp {
                     ui.set_width(520.0);
                     let response = ui.add(
                         egui::TextEdit::singleline(&mut self.quick_open.query)
-                            .hint_text("Go to file… (type to filter)")
+                            .hint_text("Go to file\u{2026} (type to filter)")
                             .desired_width(520.0),
                     );
                     if self.quick_open.just_opened {
@@ -470,7 +474,7 @@ impl VelocityApp {
                                 let selected = row == self.workspace_switcher_selected;
 
                                 ui.horizontal(|ui| {
-                                    let icon = if is_current { "●" } else { "○" };
+                                    let icon = if is_current { "\u{25cf}" } else { "\u{25cb}" };
                                     ui.label(
                                         egui::RichText::new(icon).monospace().size(11.0).color(
                                             if is_current {
@@ -569,7 +573,7 @@ impl VelocityApp {
                     ui.add_space(4.0);
                     let response = ui.add(
                         egui::TextEdit::singleline(&mut self.goto_line_input)
-                            .hint_text("Line number…")
+                            .hint_text("Line number\u{2026}")
                             .desired_width(240.0),
                     );
                     if self.goto_line_just_opened {
@@ -729,7 +733,7 @@ impl VelocityApp {
                     ui.set_width(520.0);
                     let response = ui.add(
                         egui::TextEdit::singleline(&mut self.goto_symbol_query)
-                            .hint_text("Go to symbol… (type to filter)")
+                            .hint_text("Go to symbol\u{2026} (type to filter)")
                             .desired_width(520.0),
                     );
                     if self.goto_symbol_just_opened {
@@ -746,7 +750,7 @@ impl VelocityApp {
                         ui.add_space(18.0);
                         ui.vertical_centered(|ui| {
                             let msg = if self.goto_symbol_entries.is_empty() {
-                                "No symbols indexed yet — run the indexer first"
+                                "No symbols indexed yet \u{2014} run the indexer first"
                             } else {
                                 "No matching symbols"
                             };
@@ -778,7 +782,7 @@ impl VelocityApp {
                             let name = entry.name.clone();
                             ui.horizontal(|ui| {
                                 ui.label(
-                                    egui::RichText::new("ƒ")
+                                    egui::RichText::new("\u{0192}")
                                         .monospace()
                                         .size(12.0)
                                         .color(palette.accent),
@@ -1040,7 +1044,7 @@ impl VelocityApp {
                     node.name.clone()
                 };
                 egui::CollapsingHeader::new(
-                    egui::RichText::new(format!("▸ {}", dir_name))
+                    egui::RichText::new(format!("\u{25b8} {}", dir_name))
                         .size(10.0)
                         .color(palette.text),
                 )
@@ -1149,7 +1153,7 @@ impl VelocityApp {
             .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
             .show(ctx, |ui| {
                 ui.label(
-                    egui::RichText::new(format!("“{name}” has unsaved changes."))
+                    egui::RichText::new(format!("\u{201c}{name}\u{201d} has unsaved changes."))
                         .color(palette.text),
                 );
                 ui.label(

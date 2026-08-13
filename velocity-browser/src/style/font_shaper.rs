@@ -1,4 +1,4 @@
-/// A single shaped glyph with metrics for layout and rendering.
+﻿/// A single shaped glyph with metrics for layout and rendering.
 #[derive(Debug, Clone)]
 pub struct GlyphMetric {
     pub glyph_id: u32,
@@ -206,7 +206,7 @@ mod tests {
     #[test]
     fn test_cjk_fullwidth() {
         let mut shaper = FontShaperEngine::new("Roboto");
-        let glyphs = shaper.shape_text("漢字");
+        let glyphs = shaper.shape_text("\u{6f22}\u{5b57}");
         // CJK characters should be full-width (= font_size)
         assert!((glyphs[0].advance_width - 16.0).abs() < 0.01);
     }

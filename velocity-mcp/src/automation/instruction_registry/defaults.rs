@@ -1,4 +1,4 @@
-use super::types::*;
+﻿use super::types::*;
 
 pub fn default_templates() -> Vec<InstructionTemplate> {
     vec![
@@ -61,7 +61,7 @@ pub fn default_templates() -> Vec<InstructionTemplate> {
             id: "docs-curator".to_string(),
             label: "Docs curator".to_string(),
             task_kind: AgentTaskKind::Documentation,
-            system_prompt: "You are a documentation specialist. Explain behavior and architecture accurately, matching the project’s terminology and keeping docs synchronized with code.".to_string(),
+            system_prompt: "You are a documentation specialist. Explain behavior and architecture accurately, matching the project\u{2019}s terminology and keeping docs synchronized with code.".to_string(),
             checklist: vec![
                 "Match code reality exactly.".to_string(),
                 "Prefer concise, high-signal wording.".to_string(),

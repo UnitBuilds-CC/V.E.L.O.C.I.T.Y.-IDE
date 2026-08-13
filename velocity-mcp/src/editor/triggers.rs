@@ -1,4 +1,4 @@
-//! Unattended execution: triggers.
+﻿//! Unattended execution: triggers.
 //!
 //! A [`TriggerRegistry`] holds named [`Trigger`]s that fire a [`TriggerAction`]
 //! (run a workflow or dispatch an agent prompt) when their [`TriggerKind`]

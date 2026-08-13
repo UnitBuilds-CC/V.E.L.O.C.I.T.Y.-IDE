@@ -1,4 +1,4 @@
-//! Production-safe synchronization primitives with graceful error handling.
+﻿//! Production-safe synchronization primitives with graceful error handling.
 //!
 //! Standard `.lock().unwrap()` causes the entire application to crash if any thread
 //! panics while holding a lock (mutex poisoning). This module provides alternatives

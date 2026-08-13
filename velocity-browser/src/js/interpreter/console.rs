@@ -1,4 +1,4 @@
-//! Console API, performance entries, and related statics.
+﻿//! Console API, performance entries, and related statics.
 
 use crate::js::vm::JsValue;
 use std::collections::HashMap;

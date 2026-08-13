@@ -1,4 +1,4 @@
-// compiler/nda_lexer.rs — Tokenizer for the NDA programming language
+﻿// compiler/nda_lexer.rs — Tokenizer for the NDA programming language
 //
 // Converts raw .nda source text into a stream of tokens.
 // Supports: keywords, identifiers, numbers, operators, delimiters, comments.

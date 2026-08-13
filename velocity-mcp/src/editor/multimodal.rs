@@ -1,4 +1,4 @@
-//! Pillar 6 — Multimodal I/O.
+﻿//! Pillar 6 — Multimodal I/O.
 //!
 //! Attachments (images, documents, audio) that can be threaded through a chat
 //! turn. Images are encoded as `data:` URLs for vision-capable models; when the

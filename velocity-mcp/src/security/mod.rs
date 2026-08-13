@@ -1,4 +1,4 @@
-//! Security subsystem: encrypted secret storage and (Pillar 5b) policy/approval
+﻿//! Security subsystem: encrypted secret storage and (Pillar 5b) policy/approval
 //! governance for agent tool execution.
 //!
 //! Secrets never touch disk in the clear — they are sealed with the workspace

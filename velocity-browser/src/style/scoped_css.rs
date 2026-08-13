@@ -1,4 +1,4 @@
-use crate::parser::html::DomNode;
+﻿use crate::parser::html::DomNode;
 
 /// Scoped CSS matcher for Shadow DOM encapsulation.
 /// Handles :host, :host(), ::slotted(), :defined, and shadow-piercing combinators.

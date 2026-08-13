@@ -1,4 +1,4 @@
-use super::super::checkpoint::CheckpointManager;
+﻿use super::super::checkpoint::CheckpointManager;
 use super::super::coordination::CoordinationBus;
 use super::super::memory_store::PersistentMemory;
 use super::super::models::*;
@@ -100,7 +100,7 @@ pub fn run_agent_reasoning_loop(
         loop_count += 1;
         ui_tx
             .send(AgentToUiMessage::StatusUpdate(format!(
-                "Querying {} (Turn {})…",
+                "Querying {} (Turn {})\u{2026}",
                 current_provider.label(),
                 loop_count
             )))
@@ -1146,7 +1146,7 @@ pub fn run_agent_reasoning_loop(
                             Ok(()) => {
                                 ui_tx
                                     .send(AgentToUiMessage::StatusUpdate(format!(
-                                        "Batch failed — rolled back to checkpoint #{}.",
+                                        "Batch failed \u{2014} rolled back to checkpoint #{}.",
                                         cp_id
                                     )))
                                     .ok();

@@ -1,4 +1,4 @@
-//! Central registry of NDA predicate ids.
+﻿//! Central registry of NDA predicate ids.
 //!
 //! Every fact emitted for agent consumption uses a predicate id from this
 //! registry instead of a magic number sprinkled through the codebase. Ids are

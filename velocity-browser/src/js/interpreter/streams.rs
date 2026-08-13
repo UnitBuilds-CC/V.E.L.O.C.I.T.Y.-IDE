@@ -1,4 +1,4 @@
-//! Streams API for the JS interpreter — ReadableStream, WritableStream,
+﻿//! Streams API for the JS interpreter — ReadableStream, WritableStream,
 //! TransformStream, and their controllers/readers/writers.
 //!
 //! Pragmatic in-memory implementation: data queued into a stream is stored in

@@ -1,4 +1,4 @@
-//! Agent self-improvement loop: failure analysis + prompt refinement.
+﻿//! Agent self-improvement loop: failure analysis + prompt refinement.
 //!
 //! At the end of each agent session (or when errors accumulate), this module:
 //! 1. Analyzes failure patterns from tool execution results

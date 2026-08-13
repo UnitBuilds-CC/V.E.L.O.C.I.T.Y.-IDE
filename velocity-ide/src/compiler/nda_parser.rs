@@ -1,4 +1,4 @@
-// compiler/nda_parser.rs — Parser for the NDA programming language
+﻿// compiler/nda_parser.rs — Parser for the NDA programming language
 //
 // Converts a stream of Located tokens into a compiled NdaNode AST.
 // Resolves function call targets dynamically via Merkle hash propagation.

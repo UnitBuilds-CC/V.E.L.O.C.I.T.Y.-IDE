@@ -1,4 +1,4 @@
-//! Adaptive Action Confidence: per-element learned confidence scores that
+﻿//! Adaptive Action Confidence: per-element learned confidence scores that
 //! replace the hardcoded 0.96 in action_predictor.rs.
 //!
 //! Uses exponential moving average of past outcome scores to predict how

@@ -1,4 +1,4 @@
-//! Multi-step challenge state machine.
+﻿//! Multi-step challenge state machine.
 //!
 //! Models captcha solving as an explicit FSM: states represent observable
 //! challenge phases, transitions represent actions the solver can take.

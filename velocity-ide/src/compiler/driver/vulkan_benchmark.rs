@@ -1,4 +1,4 @@
-//! Vulkan benchmark: NDA attention vs contiguous attention performance comparison.
+﻿//! Vulkan benchmark: NDA attention vs contiguous attention performance comparison.
 //!
 //! # Safety Invariants
 //!

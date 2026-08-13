@@ -1,4 +1,4 @@
-//! Encrypted-at-rest secret store.
+﻿//! Encrypted-at-rest secret store.
 //!
 //! Named secrets (API tokens, webhook URLs, passwords) are held in memory as a
 //! `name -> value` map and persisted to `.velocity/secrets.nda`, sealed under
@@ -125,7 +125,10 @@ impl SecretStore {
         values.sort_by_key(|v| std::cmp::Reverse(v.len()));
         for value in values {
             if out.contains(value.as_str()) {
-                out = out.replace(value.as_str(), "••••••");
+                out = out.replace(
+                    value.as_str(),
+                    "\u{2022}\u{2022}\u{2022}\u{2022}\u{2022}\u{2022}",
+                );
             }
         }
         out
@@ -137,11 +140,11 @@ impl SecretStore {
 fn mask_value(value: &str) -> String {
     let chars: Vec<char> = value.chars().collect();
     if chars.len() <= 4 {
-        return "••••".to_string();
+        return "\u{2022}\u{2022}\u{2022}\u{2022}".to_string();
     }
     let visible: String = chars.iter().take(4).collect();
     let hidden = (chars.len() - 4).min(8);
-    format!("{visible}{}", "•".repeat(hidden))
+    format!("{visible}{}", "\u{2022}".repeat(hidden))
 }
 
 #[cfg(test)]
@@ -202,7 +205,7 @@ mod tests {
         let log = "calling api with Authorization: Bearer supersecrettoken123 now";
         let scrubbed = s.redact(log);
         assert!(!scrubbed.contains("supersecrettoken123"));
-        assert!(scrubbed.contains("••••••"));
+        assert!(scrubbed.contains("\u{2022}\u{2022}\u{2022}\u{2022}\u{2022}\u{2022}"));
     }
 
     #[test]
@@ -218,7 +221,7 @@ mod tests {
         s.set("k", "abcdefghijkl");
         let m = s.masked("k").unwrap();
         assert!(m.starts_with("abcd"));
-        assert!(m.contains('•'));
+        assert!(m.contains('\u{2022}'));
         assert!(!m.contains("efgh"));
         assert!(s.masked("missing").is_none());
     }

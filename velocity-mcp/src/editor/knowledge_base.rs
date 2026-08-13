@@ -1,4 +1,4 @@
-//! Unified Knowledge / RAG layer.
+﻿//! Unified Knowledge / RAG layer.
 //!
 //! A persistent, chunked, multi-source retrieval store that any agent can query
 //! — the workspace's shared long-term memory over arbitrary content (docs,
@@ -359,7 +359,7 @@ fn snippet(text: &str) -> String {
     let collapsed = text.split_whitespace().collect::<Vec<_>>().join(" ");
     if collapsed.chars().count() > 200 {
         let truncated: String = collapsed.chars().take(199).collect();
-        format!("{truncated}…")
+        format!("{truncated}\u{2026}")
     } else {
         collapsed
     }

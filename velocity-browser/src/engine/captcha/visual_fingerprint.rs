@@ -1,4 +1,4 @@
-//! OCR-based visual fingerprinting for zero-token captcha variant detection.
+﻿//! OCR-based visual fingerprinting for zero-token captcha variant detection.
 //!
 //! Extends the `VelocityOcrEngine`'s pixel-scanning approach to produce compact
 //! structural signatures from raw RGBA data. The fingerprint acts as a cache key

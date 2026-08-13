@@ -1,4 +1,4 @@
-use super::coercion::*;
+﻿use super::coercion::*;
 use super::core_methods::is_leap_year;
 use super::signal::*;
 use crate::js::vm::JsValue;
@@ -163,9 +163,9 @@ pub(super) fn call_number_format_method(
                 let symbol = if currency == "USD" {
                     "$"
                 } else if currency == "EUR" {
-                    "€"
+                    "\u{20ac}"
                 } else if currency == "GBP" {
-                    "£"
+                    "\u{00a3}"
                 } else {
                     &currency
                 };

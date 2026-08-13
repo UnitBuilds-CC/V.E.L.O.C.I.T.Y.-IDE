@@ -1,4 +1,4 @@
-use crate::editor::theme::IdePalette;
+﻿use crate::editor::theme::IdePalette;
 use eframe::egui::{self, Panel, Ui};
 
 /// Actions triggered by clicking status bar elements.
@@ -31,7 +31,7 @@ impl StatusBar {
             let dot = |ui: &mut egui::Ui| {
                 ui.add_space(8.0);
                 ui.label(
-                    egui::RichText::new("·")
+                    egui::RichText::new("\u{00b7}")
                         .size(12.0)
                         .color(palette.text_muted.gamma_multiply(0.6)),
                 );
@@ -56,9 +56,9 @@ impl StatusBar {
                 dot(ui);
 
                 let (icon, color) = if build_ok {
-                    ("✔", palette.success)
+                    ("\u{2714}", palette.success)
                 } else {
-                    ("✖", palette.error)
+                    ("\u{2716}", palette.error)
                 };
 
                 let build_response = ui.label(
@@ -76,7 +76,7 @@ impl StatusBar {
                 if let Some(b) = branch {
                     dot(ui);
                     ui.label(
-                        egui::RichText::new(format!("⎇ {}", b))
+                        egui::RichText::new(format!("\u{2387} {}", b))
                             .size(12.0)
                             .color(palette.text_muted),
                     );
@@ -103,7 +103,10 @@ impl StatusBar {
                         // Provider / model — moved here from the toolbar so
                         // the toolbar stays icon-clean.
                         let model_short = if model_label.len() > 24 {
-                            format!("…{}", &model_label[model_label.len().saturating_sub(23)..])
+                            format!(
+                                "\u{2026}{}",
+                                &model_label[model_label.len().saturating_sub(23)..]
+                            )
                         } else {
                             model_label.to_string()
                         };

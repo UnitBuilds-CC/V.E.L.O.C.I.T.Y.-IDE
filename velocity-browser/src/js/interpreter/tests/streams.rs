@@ -1,4 +1,4 @@
-//! Tests for the Streams API: ReadableStream, WritableStream, TransformStream,
+﻿//! Tests for the Streams API: ReadableStream, WritableStream, TransformStream,
 //! queuing strategies.
 
 use super::*;

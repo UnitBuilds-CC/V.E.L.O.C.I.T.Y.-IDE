@@ -1,4 +1,4 @@
-use crate::parser::html::{DomNode, HtmlParser, NodeType};
+﻿use crate::parser::html::{DomNode, HtmlParser, NodeType};
 use std::collections::HashMap;
 
 #[derive(Debug, Clone)]

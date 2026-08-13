@@ -1,4 +1,4 @@
-use super::super::models::*;
+﻿use super::super::models::*;
 use super::super::nda::hash_str;
 use crate::usage::{CloudflareAccount, OpenRouterAccount, UsageTracker};
 use crossbeam_channel::Sender;
@@ -151,7 +151,7 @@ pub fn compress_history(messages: &[ChatMessage], supports_tools: bool) -> Vec<C
             || trimmed_content == "The tool invocation isn't registering the function name. Let me use the proper `read_file` tool:"
             || trimmed_content == "The tool name is still being stripped from my calls, so I can't write the file through the tool right now. But I can give you the exact file to create manually, which will permanently fix the validation error."
             || trimmed_content == "The tool-call parser is consistently dropping the `<function>` tag on my side, so I can't fetch the file right now. However, I already have enough information from the earlier `list_dir` to resolve your build error confidently."
-            || trimmed_content == "Apologies — the tool name field is being dropped in my calls. Let me retry explicitly with `read_file`:"
+            || trimmed_content == "Apologies \u{2014} the tool name field is being dropped in my calls. Let me retry explicitly with `read_file`:"
             || trimmed_content == "My `write_file` tool calls are being rejected because the function name isn't being transmitted correctly on my side. I cannot directly create the file through tools right now."
             || trimmed_content == "My tool calls keep getting stripped of the function name, so I can't browse the files right now. Based on the earlier `list_dir` of `velocity-mcp/src/editor/`, the UI panels live there (e.g. `chat_panel.rs`, `status_bar.rs`, `app.rs`, `top_bar.rs` or similar)."
             || trimmed_content.starts_with("[Tool result for '']: ")

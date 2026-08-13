@@ -1,4 +1,4 @@
-//! JavaScript-facing `RTCPeerConnection` facade.
+﻿//! JavaScript-facing `RTCPeerConnection` facade.
 //!
 //! Exposes the WebRTC transport ([`crate::net::webrtc::WebRtcTransport`]) to the
 //! JS runtime as a spec-shaped `RTCPeerConnection` object: string-valued state

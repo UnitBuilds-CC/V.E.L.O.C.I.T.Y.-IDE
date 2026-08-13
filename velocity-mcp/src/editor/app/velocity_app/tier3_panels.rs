@@ -47,7 +47,7 @@ impl VelocityApp {
         Self::tier3_header(
             ui,
             "Extensions",
-            &format!("{active} active · {total} installed"),
+            &format!("{active} active \u{00b7} {total} installed"),
             palette.accent,
             palette.text_muted,
         );
@@ -56,7 +56,10 @@ impl VelocityApp {
         let mut pending: Option<ExtAction> = None;
 
         ui.horizontal(|ui| {
-            if ui.button(RichText::new("⟳ Rescan").size(10.0)).clicked() {
+            if ui
+                .button(RichText::new("\u{27f3} Rescan").size(10.0))
+                .clicked()
+            {
                 rescan = true;
             }
             ui.label(
@@ -74,7 +77,7 @@ impl VelocityApp {
                 if self.extension_registry.extensions.is_empty() {
                     ui.add_space(16.0);
                     ui.vertical_centered(|ui| {
-                        ui.label(RichText::new("◇").size(26.0).color(palette.text_muted));
+                        ui.label(RichText::new("\u{25c7}").size(26.0).color(palette.text_muted));
                         ui.label(
                             RichText::new("No extensions installed. Drop a manifest folder into .velocity/extensions/ and Rescan.")
                                 .size(10.0)
@@ -86,10 +89,10 @@ impl VelocityApp {
 
                 for ext in &self.extension_registry.extensions {
                     let (badge, badge_color) = match ext.state {
-                        ExtensionState::Active => ("● active", palette.success),
-                        ExtensionState::Installed => ("○ installed", palette.text_muted),
-                        ExtensionState::Disabled => ("○ disabled", palette.warning),
-                        ExtensionState::Error => ("✖ error", palette.error),
+                        ExtensionState::Active => ("\u{25cf} active", palette.success),
+                        ExtensionState::Installed => ("\u{25cb} installed", palette.text_muted),
+                        ExtensionState::Disabled => ("\u{25cb} disabled", palette.warning),
+                        ExtensionState::Error => ("\u{2716} error", palette.error),
                     };
                     egui::Frame::new()
                         .fill(palette.bg_secondary)
@@ -110,7 +113,7 @@ impl VelocityApp {
                             let cmds = ext.manifest.contributes.commands.len();
                             let kbs = ext.manifest.contributes.keybindings.len();
                             ui.label(
-                                RichText::new(format!("{cmds} command(s) · {kbs} keybinding(s)"))
+                                RichText::new(format!("{cmds} command(s) \u{00b7} {kbs} keybinding(s)"))
                                     .size(8.0)
                                     .color(palette.text_muted),
                             );
@@ -161,7 +164,7 @@ impl VelocityApp {
             ui,
             "Live Activity",
             &format!(
-                "up {} · {:.1} tasks/min",
+                "up {} \u{00b7} {:.1} tasks/min",
                 lo.session_uptime(),
                 lo.throughput()
             ),
@@ -172,17 +175,17 @@ impl VelocityApp {
         // Session stat strip.
         ui.horizontal(|ui| {
             ui.label(
-                RichText::new(format!("✔ {}", lo.total_tasks_completed))
+                RichText::new(format!("\u{2714} {}", lo.total_tasks_completed))
                     .size(10.0)
                     .color(palette.success),
             );
             ui.label(
-                RichText::new(format!("✖ {}", lo.total_tasks_failed))
+                RichText::new(format!("\u{2716} {}", lo.total_tasks_failed))
                     .size(10.0)
                     .color(palette.error),
             );
             ui.label(
-                RichText::new(format!("⋯ {} active", lo.worker_progress.len()))
+                RichText::new(format!("\u{22ef} {} active", lo.worker_progress.len()))
                     .size(10.0)
                     .color(palette.warning),
             );
@@ -233,7 +236,7 @@ impl VelocityApp {
                         );
                         ui.label(
                             RichText::new(format!(
-                                "{} · {} file(s) changed",
+                                "{} \u{00b7} {} file(s) changed",
                                 wp.status_text, wp.files_changed
                             ))
                             .size(8.0)
@@ -265,7 +268,7 @@ impl VelocityApp {
         if let Some(result) = self.precomp_cache.peek(0) {
             ui.label(
                 RichText::new(format!(
-                    "{} file(s) · {} symbols · {} lines",
+                    "{} file(s) \u{00b7} {} symbols \u{00b7} {} lines",
                     result.files.len(),
                     result.total_symbols,
                     result.total_lines
@@ -275,7 +278,7 @@ impl VelocityApp {
             );
         } else {
             ui.label(
-                RichText::new("Cache empty — warm it to pre-index open files.")
+                RichText::new("Cache empty \u{2014} warm it to pre-index open files.")
                     .size(9.0)
                     .color(palette.text_muted),
             );
@@ -520,7 +523,7 @@ impl VelocityApp {
         Self::tier3_header(
             ui,
             "Deploy Pipeline",
-            &format!("{status} · target: {target}"),
+            &format!("{status} \u{00b7} target: {target}"),
             palette.accent,
             palette.text_muted,
         );
@@ -530,18 +533,21 @@ impl VelocityApp {
         let mut rollback = false;
         ui.horizontal(|ui| {
             if ui
-                .button(RichText::new("▶ Run build+test").size(10.0))
+                .button(RichText::new("\u{25b6} Run build+test").size(10.0))
                 .clicked()
             {
                 run = true;
             }
-            if ui.button(RichText::new("▲ Deploy").size(10.0)).clicked() {
+            if ui
+                .button(RichText::new("\u{25b2} Deploy").size(10.0))
+                .clicked()
+            {
                 deploy = true;
             }
             if ui
                 .add_enabled(
                     deployments >= 2,
-                    egui::Button::new(RichText::new("⟲ Rollback").size(10.0)),
+                    egui::Button::new(RichText::new("\u{27f2} Rollback").size(10.0)),
                 )
                 .clicked()
             {
@@ -550,66 +556,71 @@ impl VelocityApp {
         });
         ui.add_space(6.0);
 
-        if let Some(pipeline) = &self.deploy_pipeline {
-            for stage in PipelineStage::all() {
-                if let Some(sr) = pipeline.stages.iter().find(|s| s.stage == *stage) {
-                    let (icon, color) = match &sr.status {
-                        StageStatus::Passed => ("✔", palette.success),
-                        StageStatus::Failed(_) => ("✖", palette.error),
-                        StageStatus::Running => ("⋯", palette.warning),
-                        StageStatus::Skipped => ("↷", palette.text_muted),
-                        StageStatus::Pending => ("○", palette.text_muted),
-                    };
-                    ui.horizontal(|ui| {
-                        ui.label(RichText::new(icon).size(11.0).color(color));
-                        ui.label(
-                            RichText::new(stage.label())
-                                .size(10.0)
-                                .strong()
-                                .color(palette.text),
-                        );
-                        if let Some(ms) = sr.duration_ms {
-                            ui.label(
-                                RichText::new(format!("{ms} ms"))
-                                    .size(8.0)
-                                    .color(palette.text_muted),
-                            );
+        egui::ScrollArea::vertical()
+            .id_salt("pipeline_scroll")
+            .show(ui, |ui| {
+                if let Some(pipeline) = &self.deploy_pipeline {
+                    for stage in PipelineStage::all() {
+                        if let Some(sr) = pipeline.stages.iter().find(|s| s.stage == *stage) {
+                            let (icon, color) = match &sr.status {
+                                StageStatus::Passed => ("\u{2714}", palette.success),
+                                StageStatus::Failed(_) => ("\u{2716}", palette.error),
+                                StageStatus::Running => ("\u{22ef}", palette.warning),
+                                StageStatus::Skipped => ("\u{21b7}", palette.text_muted),
+                                StageStatus::Pending => ("\u{25cb}", palette.text_muted),
+                            };
+                            ui.horizontal(|ui| {
+                                ui.label(RichText::new(icon).size(11.0).color(color));
+                                ui.label(
+                                    RichText::new(stage.label())
+                                        .size(10.0)
+                                        .strong()
+                                        .color(palette.text),
+                                );
+                                if let Some(ms) = sr.duration_ms {
+                                    ui.label(
+                                        RichText::new(format!("{ms} ms"))
+                                            .size(8.0)
+                                            .color(palette.text_muted),
+                                    );
+                                }
+                            });
                         }
-                    });
-                }
-            }
-            ui.add_space(6.0);
+                    }
+                    ui.add_space(6.0);
 
-            if !pipeline.deployments.is_empty() {
-                ui.label(
-                    RichText::new("DEPLOYMENTS")
-                        .small()
-                        .strong()
-                        .color(palette.accent),
-                );
-                for dep in pipeline.deployments.iter().rev().take(10) {
-                    let color = match dep.status {
-                        StageStatus::Passed => palette.success,
-                        StageStatus::Failed(_) => palette.error,
-                        _ => palette.text_muted,
-                    };
-                    ui.horizontal(|ui| {
+                    if !pipeline.deployments.is_empty() {
                         ui.label(
-                            RichText::new(format!("#{}", dep.id))
-                                .size(8.0)
-                                .color(palette.text_muted),
+                            RichText::new("DEPLOYMENTS")
+                                .small()
+                                .strong()
+                                .color(palette.accent),
                         );
-                        ui.label(
-                            RichText::new(&dep.version)
-                                .monospace()
-                                .size(9.0)
-                                .color(palette.text),
-                        );
-                        ui.label(RichText::new(&dep.target).size(8.0).color(color));
-                    });
+                        ui.add_space(2.0);
+                        for dep in pipeline.deployments.iter().rev().take(10) {
+                            let color = match dep.status {
+                                StageStatus::Passed => palette.success,
+                                StageStatus::Failed(_) => palette.error,
+                                _ => palette.text_muted,
+                            };
+                            ui.horizontal(|ui| {
+                                ui.label(
+                                    RichText::new(format!("#{}", dep.id))
+                                        .size(8.0)
+                                        .color(palette.text_muted),
+                                );
+                                ui.label(
+                                    RichText::new(&dep.version)
+                                        .monospace()
+                                        .size(9.0)
+                                        .color(palette.text),
+                                );
+                                ui.label(RichText::new(&dep.target).size(8.0).color(color));
+                            });
+                        }
+                    }
                 }
-            }
-        }
+            });
 
         if run {
             self.trigger_deploy();
@@ -639,7 +650,7 @@ impl VelocityApp {
             ui,
             "Voice Commands",
             &format!(
-                "{:.0}% recognized · {} total",
+                "{:.0}% recognized \u{00b7} {} total",
                 self.voice_input.accuracy(),
                 self.voice_input.total_commands
             ),
@@ -649,9 +660,9 @@ impl VelocityApp {
 
         ui.horizontal(|ui| {
             let (label, color) = if listening {
-                ("● Listening", palette.error)
+                ("\u{25cf} Listening", palette.error)
             } else {
-                ("○ Start listening", palette.text_muted)
+                ("\u{25cb} Start listening", palette.text_muted)
             };
             if ui
                 .button(RichText::new(label).size(10.0).color(color))
@@ -667,7 +678,7 @@ impl VelocityApp {
         ui.horizontal(|ui| {
             ui.add(
                 egui::TextEdit::singleline(&mut self.voice_input.last_transcription)
-                    .hint_text("Type a phrase, e.g. 'run tests'…")
+                    .hint_text("Type a phrase, e.g. 'run tests'\u{2026}")
                     .desired_width(ui.available_width() - 70.0),
             );
             if ui.button(RichText::new("Parse").size(10.0)).clicked() {
@@ -765,7 +776,7 @@ impl VelocityApp {
             ui,
             "Knowledge",
             &format!(
-                "{} source(s) · {} chunk(s)",
+                "{} source(s) \u{00b7} {} chunk(s)",
                 sources.len(),
                 self.knowledge_base.chunk_count()
             ),
@@ -779,7 +790,7 @@ impl VelocityApp {
         ui.horizontal(|ui| {
             ui.add(
                 egui::TextEdit::singleline(&mut self.knowledge_ingest_input)
-                    .hint_text("path to a file or folder…")
+                    .hint_text("path to a file or folder\u{2026}")
                     .desired_width(ui.available_width() - 190.0),
             );
             if ui.button(RichText::new("Ingest").size(10.0)).clicked() {
@@ -799,7 +810,7 @@ impl VelocityApp {
         ui.horizontal(|ui| {
             let resp = ui.add(
                 egui::TextEdit::singleline(&mut self.knowledge_query)
-                    .hint_text("search knowledge…")
+                    .hint_text("search knowledge\u{2026}")
                     .desired_width(ui.available_width() - 70.0),
             );
             if ui.button(RichText::new("Search").size(10.0)).clicked()
@@ -892,7 +903,10 @@ impl VelocityApp {
                                 .color(palette.text_muted),
                         );
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            if ui.small_button(RichText::new("✖").size(8.0)).clicked() {
+                            if ui
+                                .small_button(RichText::new("\u{2716}").size(8.0))
+                                .clicked()
+                            {
                                 remove = Some(source.clone());
                             }
                         });
@@ -968,7 +982,10 @@ impl VelocityApp {
         Self::tier3_header(
             ui,
             "Triggers",
-            &format!("{} trigger(s) · headless via --daemon", self.triggers.len()),
+            &format!(
+                "{} trigger(s) \u{00b7} headless via --daemon",
+                self.triggers.len()
+            ),
             palette.accent,
             palette.text_muted,
         );
@@ -978,12 +995,12 @@ impl VelocityApp {
         ui.horizontal(|ui| {
             ui.add(
                 egui::TextEdit::singleline(&mut self.trigger_name_input)
-                    .hint_text("name…")
+                    .hint_text("name\u{2026}")
                     .desired_width(120.0),
             );
             ui.add(
                 egui::TextEdit::singleline(&mut self.trigger_interval_input)
-                    .hint_text("5m · 1h · daily@09:00")
+                    .hint_text("5m \u{00b7} 1h \u{00b7} daily@09:00")
                     .desired_width(140.0),
             );
             if ui.button(RichText::new("Add").size(10.0)).clicked() {
@@ -993,7 +1010,7 @@ impl VelocityApp {
         ui.add_space(4.0);
         ui.add(
             egui::TextEdit::multiline(&mut self.trigger_prompt_input)
-                .hint_text("agent prompt to run when this schedule fires…")
+                .hint_text("agent prompt to run when this schedule fires\u{2026}")
                 .desired_rows(2)
                 .desired_width(ui.available_width()),
         );
@@ -1033,7 +1050,7 @@ impl VelocityApp {
                         .inner_margin(8.0)
                         .show(ui, |ui| {
                             ui.horizontal(|ui| {
-                                let dot = if t.enabled { "●" } else { "○" };
+                                let dot = if t.enabled { "\u{25cf}" } else { "\u{25cb}" };
                                 ui.label(RichText::new(dot).size(10.0).color(if t.enabled {
                                     palette.success
                                 } else {
@@ -1048,7 +1065,9 @@ impl VelocityApp {
                                 ui.with_layout(
                                     egui::Layout::right_to_left(egui::Align::Center),
                                     |ui| {
-                                        if ui.small_button(RichText::new("✖").size(8.0)).clicked()
+                                        if ui
+                                            .small_button(RichText::new("\u{2716}").size(8.0))
+                                            .clicked()
                                         {
                                             remove = Some(t.id.clone());
                                         }
@@ -1152,7 +1171,7 @@ impl VelocityApp {
                         self.triggers.mark_run(&id, now_secs());
                         let _ = self.triggers.save(&ws);
                         self.toasts.push(crate::editor::toast::Toast::info(format!(
-                            "Workflow '{}' → {}",
+                            "Workflow '{}' \u{2192} {}",
                             wf.name,
                             run.status.label()
                         )));
@@ -1180,7 +1199,7 @@ impl VelocityApp {
             ui,
             "Test Generator",
             &format!(
-                "{}/{} functions tested · {:.1}% coverage",
+                "{}/{} functions tested \u{00b7} {:.1}% coverage",
                 tested, total, coverage
             ),
             palette.accent,
@@ -1192,13 +1211,13 @@ impl VelocityApp {
         let mut generate = false;
         ui.horizontal(|ui| {
             if ui
-                .button(RichText::new("🔍 Analyze Coverage").size(10.0))
+                .button(RichText::new("\u{1f50d} Analyze Coverage").size(10.0))
                 .clicked()
             {
                 analyze = true;
             }
             if ui
-                .button(RichText::new("✨ Generate Tests").size(10.0))
+                .button(RichText::new("\u{2728} Generate Tests").size(10.0))
                 .clicked()
             {
                 generate = true;
@@ -1315,11 +1334,12 @@ impl VelocityApp {
                     .strong()
                     .color(palette.success),
             );
+            let mut copy_idx: Option<usize> = None;
             egui::ScrollArea::vertical()
                 .id_salt("test_gen_results_scroll")
                 .max_height(200.0)
                 .show(ui, |ui| {
-                    for test in &self.test_generator.generated_tests {
+                    for (idx, test) in self.test_generator.generated_tests.iter().enumerate() {
                         egui::Frame::new()
                             .fill(palette.bg_secondary)
                             .corner_radius(4.0)
@@ -1352,15 +1372,25 @@ impl VelocityApp {
                                         .color(palette.text_muted),
                                 );
                                 if ui
-                                    .small_button(RichText::new("View code").size(8.0))
+                                    .small_button(RichText::new("Copy code").size(8.0))
                                     .clicked()
                                 {
-                                    // Could open in editor or show modal
+                                    copy_idx = Some(idx);
                                 }
                             });
                         ui.add_space(3.0);
                     }
                 });
+            if let Some(idx) = copy_idx {
+                if let Some(test) = self.test_generator.generated_tests.get(idx) {
+                    ui.ctx().copy_text(test.test_body.clone());
+                    self.toasts
+                        .push(crate::editor::toast::Toast::success(format!(
+                            "Copied {} to clipboard",
+                            test.test_name
+                        )));
+                }
+            }
         }
 
         if analyze {
@@ -1399,7 +1429,10 @@ impl VelocityApp {
         Self::tier3_header(
             ui,
             "Agent Memory",
-            &format!("{} member(s) · {} memories", member_count, total_memories),
+            &format!(
+                "{} member(s) \u{00b7} {} memories",
+                member_count, total_memories
+            ),
             palette.accent,
             palette.text_muted,
         );
@@ -1408,10 +1441,16 @@ impl VelocityApp {
         let mut load = false;
         let mut save = false;
         ui.horizontal(|ui| {
-            if ui.button(RichText::new("🔄 Load All").size(10.0)).clicked() {
+            if ui
+                .button(RichText::new("\u{1f504} Load All").size(10.0))
+                .clicked()
+            {
                 load = true;
             }
-            if ui.button(RichText::new("💾 Save All").size(10.0)).clicked() {
+            if ui
+                .button(RichText::new("\u{1f4be} Save All").size(10.0))
+                .clicked()
+            {
                 save = true;
             }
             ui.label(
@@ -1426,7 +1465,11 @@ impl VelocityApp {
         if self.agent_memory.stores.is_empty() {
             ui.add_space(16.0);
             ui.vertical_centered(|ui| {
-                ui.label(RichText::new("◇").size(26.0).color(palette.text_muted));
+                ui.label(
+                    RichText::new("\u{25c7}")
+                        .size(26.0)
+                        .color(palette.text_muted),
+                );
                 ui.label(
                     RichText::new(
                         "No agent memories yet. Memories are created during agent execution.",
@@ -1442,7 +1485,7 @@ impl VelocityApp {
                     for store in &self.agent_memory.stores {
                         egui::CollapsingHeader::new(
                             RichText::new(format!(
-                                "👤 {} ({} memories)",
+                                "\u{1f464} {} ({} memories)",
                                 store.member_id,
                                 store.memories.len()
                             ))
@@ -1533,7 +1576,7 @@ impl VelocityApp {
             ui,
             "Live Orchestration",
             &format!(
-                "{} active · {} completed · {} failed",
+                "{} active \u{00b7} {} completed \u{00b7} {} failed",
                 active_workers, completed, failed
             ),
             palette.accent,
@@ -1704,14 +1747,20 @@ impl VelocityApp {
         // Controls
         let mut build_index = false;
         ui.horizontal(|ui| {
-            if ui
-                .button(RichText::new("🔨 Build Index").size(10.0))
-                .clicked()
-            {
-                build_index = true;
-            }
-            if ui.button(RichText::new("🔄 Rebuild").size(10.0)).clicked() {
-                build_index = true;
+            if self.semantic_index.is_none() {
+                if ui
+                    .button(RichText::new("\u{1f528} Build Index").size(10.0))
+                    .clicked()
+                {
+                    build_index = true;
+                }
+            } else {
+                if ui
+                    .button(RichText::new("\u{1f504} Rebuild Index").size(10.0))
+                    .clicked()
+                {
+                    build_index = true;
+                }
             }
             ui.label(
                 RichText::new("TF-IDF semantic search")
@@ -1724,7 +1773,11 @@ impl VelocityApp {
         if self.semantic_index.is_none() {
             ui.add_space(16.0);
             ui.vertical_centered(|ui| {
-                ui.label(RichText::new("◇").size(26.0).color(palette.text_muted));
+                ui.label(
+                    RichText::new("\u{25c7}")
+                        .size(26.0)
+                        .color(palette.text_muted),
+                );
                 ui.label(
                     RichText::new(
                         "Semantic index not built. Click 'Build Index' to enable semantic search.",
@@ -1739,7 +1792,7 @@ impl VelocityApp {
                     "Semantic search is active. Use the Search panel with semantic mode enabled.",
                 )
                 .size(9.0)
-                .color(palette.text),
+                .color(palette.text_muted),
             );
         }
 
@@ -1767,11 +1820,10 @@ impl VelocityApp {
         );
 
         // Search box
-        let mut search_query = String::new();
         ui.horizontal(|ui| {
             ui.label(RichText::new("Search:").size(9.0).color(palette.text_muted));
             ui.add(
-                egui::TextEdit::singleline(&mut search_query)
+                egui::TextEdit::singleline(&mut self.snippet_search_query)
                     .hint_text("filter snippets...")
                     .desired_width(ui.available_width() - 60.0),
             );
@@ -1781,7 +1833,11 @@ impl VelocityApp {
         if self.snippet_collection.snippets.is_empty() {
             ui.add_space(16.0);
             ui.vertical_centered(|ui| {
-                ui.label(RichText::new("◇").size(26.0).color(palette.text_muted));
+                ui.label(
+                    RichText::new("\u{25c7}")
+                        .size(26.0)
+                        .color(palette.text_muted),
+                );
                 ui.label(
                     RichText::new(
                         "No snippets loaded. Snippets are loaded from .velocity/snippets.json",
@@ -1794,11 +1850,11 @@ impl VelocityApp {
             egui::ScrollArea::vertical()
                 .id_salt("snippets_scroll")
                 .show(ui, |ui| {
-                    let snippets_to_show: Vec<_> = if search_query.is_empty() {
+                    let snippets_to_show: Vec<_> = if self.snippet_search_query.is_empty() {
                         self.snippet_collection.snippets.iter().collect()
                     } else {
                         self.snippet_collection
-                            .matching(&search_query)
+                            .matching(&self.snippet_search_query)
                             .into_iter()
                             .collect()
                     };
@@ -1869,7 +1925,11 @@ impl VelocityApp {
         if self.lsp_manager.is_none() {
             ui.add_space(16.0);
             ui.vertical_centered(|ui| {
-                ui.label(RichText::new("◇").size(26.0).color(palette.text_muted));
+                ui.label(
+                    RichText::new("\u{25c7}")
+                        .size(26.0)
+                        .color(palette.text_muted),
+                );
                 ui.label(
                     RichText::new("LSP not initialized. LSP servers are configured per-language.")
                         .size(10.0)
@@ -1879,8 +1939,8 @@ impl VelocityApp {
         } else {
             ui.label(
                 RichText::new("LSP servers are running and providing diagnostics, completions, and navigation.")
-                    .size(9.0)
-                    .color(palette.text),
+                .size(9.0)
+                .color(palette.text_muted),
             );
             ui.add_space(6.0);
             ui.label(
@@ -1890,27 +1950,27 @@ impl VelocityApp {
                     .color(palette.text_muted),
             );
             ui.label(
-                RichText::new("  • Real-time diagnostics")
+                RichText::new("  \u{2022} Real-time diagnostics")
                     .size(9.0)
                     .color(palette.text),
             );
             ui.label(
-                RichText::new("  • Code completions")
+                RichText::new("  \u{2022} Code completions")
                     .size(9.0)
                     .color(palette.text),
             );
             ui.label(
-                RichText::new("  • Go to definition")
+                RichText::new("  \u{2022} Go to definition")
                     .size(9.0)
                     .color(palette.text),
             );
             ui.label(
-                RichText::new("  • Find references")
+                RichText::new("  \u{2022} Find references")
                     .size(9.0)
                     .color(palette.text),
             );
             ui.label(
-                RichText::new("  • Hover information")
+                RichText::new("  \u{2022} Hover information")
                     .size(9.0)
                     .color(palette.text),
             );
@@ -1938,7 +1998,11 @@ impl VelocityApp {
         if self.dap_client.is_none() {
             ui.add_space(16.0);
             ui.vertical_centered(|ui| {
-                ui.label(RichText::new("◇").size(26.0).color(palette.text_muted));
+                ui.label(
+                    RichText::new("\u{25c7}")
+                        .size(26.0)
+                        .color(palette.text_muted),
+                );
                 ui.label(
                     RichText::new("Debugger not connected. Use 'Debug: Attach' from the toolbar.")
                         .size(10.0)
@@ -1949,34 +2013,94 @@ impl VelocityApp {
             ui.label(
                 RichText::new("Debugger is connected and ready for debugging.")
                     .size(9.0)
-                    .color(palette.text),
+                    .color(palette.text_muted),
             );
             ui.add_space(6.0);
 
-            // Debug controls
+            // Debug controls — defer DAP calls to avoid borrowing self during render.
+            enum DbgAction {
+                Continue,
+                Pause,
+                StepOver,
+                StepInto,
+                StepOut,
+                Stop,
+            }
+            let mut dbg: Option<DbgAction> = None;
+
             ui.horizontal(|ui| {
-                if ui.button(RichText::new("▶ Continue").size(10.0)).clicked() {
-                    // Send continue command to DAP
+                if ui
+                    .button(RichText::new("\u{25b6} Continue").size(10.0))
+                    .clicked()
+                {
+                    dbg = Some(DbgAction::Continue);
                 }
-                if ui.button(RichText::new("⏸ Pause").size(10.0)).clicked() {
-                    // Send pause command to DAP
+                if ui
+                    .button(RichText::new("\u{23f9} Pause").size(10.0))
+                    .clicked()
+                {
+                    dbg = Some(DbgAction::Pause);
                 }
-                if ui.button(RichText::new("⏭ Step Over").size(10.0)).clicked() {
-                    // Send step over command to DAP
+                if ui
+                    .button(RichText::new("\u{23ed} Step Over").size(10.0))
+                    .clicked()
+                {
+                    dbg = Some(DbgAction::StepOver);
                 }
             });
             ui.add_space(4.0);
             ui.horizontal(|ui| {
-                if ui.button(RichText::new("⤵ Step Into").size(10.0)).clicked() {
-                    // Send step into command to DAP
+                if ui
+                    .button(RichText::new("\u{2935} Step Into").size(10.0))
+                    .clicked()
+                {
+                    dbg = Some(DbgAction::StepInto);
                 }
-                if ui.button(RichText::new("⤴ Step Out").size(10.0)).clicked() {
-                    // Send step out command to DAP
+                if ui
+                    .button(RichText::new("\u{2934} Step Out").size(10.0))
+                    .clicked()
+                {
+                    dbg = Some(DbgAction::StepOut);
                 }
-                if ui.button(RichText::new("⏹ Stop").size(10.0)).clicked() {
-                    // Send stop command to DAP
+                if ui
+                    .button(RichText::new("\u{23f9} Stop").size(10.0))
+                    .clicked()
+                {
+                    dbg = Some(DbgAction::Stop);
                 }
             });
+
+            if let Some(dap) = &mut self.dap_client {
+                if let Some(action) = dbg {
+                    let result = match action {
+                        DbgAction::Continue => dap.continue_execution(),
+                        DbgAction::Pause => dap.pause(),
+                        DbgAction::StepOver => dap.step_over(),
+                        DbgAction::StepInto => dap.step_into(),
+                        DbgAction::StepOut => dap.step_out(),
+                        DbgAction::Stop => dap.stop(),
+                    };
+                    match result {
+                        Ok(()) => {
+                            let label = match action {
+                                DbgAction::Continue => "Continue",
+                                DbgAction::Pause => "Pause",
+                                DbgAction::StepOver => "Step Over",
+                                DbgAction::StepInto => "Step Into",
+                                DbgAction::StepOut => "Step Out",
+                                DbgAction::Stop => "Stop",
+                            };
+                            self.toasts
+                                .push(crate::editor::toast::Toast::success(format!(
+                                    "DAP: {label} sent"
+                                )));
+                        }
+                        Err(e) => {
+                            self.toasts.push(crate::editor::toast::Toast::error(e));
+                        }
+                    }
+                }
+            }
         }
     }
 
@@ -2003,55 +2127,61 @@ impl VelocityApp {
         );
         ui.add_space(6.0);
 
-        ui.label(
-            RichText::new("CACHE STATUS")
-                .small()
-                .strong()
-                .color(palette.accent),
-        );
-        ui.label(
-            RichText::new("  • Automatic: runs before each agent task")
-                .size(9.0)
-                .color(palette.text),
-        );
-        ui.label(
-            RichText::new("  • Background: does not block UI")
-                .size(9.0)
-                .color(palette.text),
-        );
-        ui.label(
-            RichText::new("  • Per-task: keyed by task ID")
-                .size(9.0)
-                .color(palette.text),
-        );
-        ui.add_space(6.0);
+        egui::ScrollArea::vertical()
+            .id_salt("precomp_cache_scroll")
+            .show(ui, |ui| {
+                ui.label(
+                    RichText::new("CACHE STATUS")
+                        .small()
+                        .strong()
+                        .color(palette.accent),
+                );
+                ui.add_space(2.0);
+                ui.label(
+                    RichText::new("\u{2022} Automatic: runs before each agent task")
+                        .size(9.0)
+                        .color(palette.text),
+                );
+                ui.label(
+                    RichText::new("\u{2022} Background: does not block UI")
+                        .size(9.0)
+                        .color(palette.text),
+                );
+                ui.label(
+                    RichText::new("\u{2022} Per-task: keyed by task ID")
+                        .size(9.0)
+                        .color(palette.text),
+                );
+                ui.add_space(6.0);
 
-        ui.label(
-            RichText::new("Each cached entry contains:")
-                .size(9.0)
-                .strong()
-                .color(palette.text_muted),
-        );
-        ui.label(
-            RichText::new("  • File paths and line counts")
-                .size(9.0)
-                .color(palette.text),
-        );
-        ui.label(
-            RichText::new("  • Symbol outlines")
-                .size(9.0)
-                .color(palette.text),
-        );
-        ui.label(
-            RichText::new("  • Import lists")
-                .size(9.0)
-                .color(palette.text),
-        );
-        ui.label(
-            RichText::new("  • Top-level summaries")
-                .size(9.0)
-                .color(palette.text),
-        );
+                ui.label(
+                    RichText::new("Each cached entry contains:")
+                        .size(9.0)
+                        .strong()
+                        .color(palette.text_muted),
+                );
+                ui.add_space(2.0);
+                ui.label(
+                    RichText::new("\u{2022} File paths and line counts")
+                        .size(9.0)
+                        .color(palette.text),
+                );
+                ui.label(
+                    RichText::new("\u{2022} Symbol outlines")
+                        .size(9.0)
+                        .color(palette.text),
+                );
+                ui.label(
+                    RichText::new("\u{2022} Import lists")
+                        .size(9.0)
+                        .color(palette.text),
+                );
+                ui.label(
+                    RichText::new("\u{2022} Top-level summaries")
+                        .size(9.0)
+                        .color(palette.text),
+                );
+            });
     }
 
     // ═══════════════════════════════════════════════════════════════════════
@@ -2098,7 +2228,7 @@ impl VelocityApp {
                         );
                     });
                 } else {
-                    for (i, att) in self.multimodal_attachments.iter().enumerate() {
+                    for att in &self.multimodal_attachments {
                         let kind_color = match att.kind {
                             crate::editor::multimodal::AttachmentKind::Image => palette.success,
                             crate::editor::multimodal::AttachmentKind::Document => palette.accent,
@@ -2133,7 +2263,6 @@ impl VelocityApp {
                                 );
                             });
                         ui.add_space(3.0);
-                        let _ = i;
                     }
                 }
             });
@@ -2260,7 +2389,10 @@ impl VelocityApp {
         Self::tier3_header(
             ui,
             "Plugin Registry",
-            &format!("{plugin_count} plugin(s) · {} tool(s)", all_tools.len()),
+            &format!(
+                "{plugin_count} plugin(s) \u{00b7} {} tool(s)",
+                all_tools.len()
+            ),
             palette.accent,
             palette.text_muted,
         );
@@ -2453,134 +2585,138 @@ impl VelocityApp {
         );
         ui.add_space(6.0);
 
-        // Configuration
-        ui.label(
-            RichText::new("CONFIGURATION")
-                .small()
-                .strong()
-                .color(palette.accent),
-        );
-        ui.horizontal(|ui| {
-            ui.label(
-                RichText::new("Enabled:")
-                    .size(9.0)
-                    .color(palette.text_muted),
-            );
-            if ui
-                .checkbox(&mut self.inline_suggestions.config.enabled, "")
-                .changed()
-            {
-                // config updated
-            }
-        });
-        ui.horizontal(|ui| {
-            ui.label(
-                RichText::new("Trigger delay:")
-                    .size(9.0)
-                    .color(palette.text_muted),
-            );
-            ui.label(
-                RichText::new(format!(
-                    "{}ms",
-                    self.inline_suggestions.config.trigger_delay_ms
-                ))
-                .size(9.0)
-                .color(palette.text),
-            );
-        });
-        ui.horizontal(|ui| {
-            ui.label(
-                RichText::new("Max chars:")
-                    .size(9.0)
-                    .color(palette.text_muted),
-            );
-            ui.label(
-                RichText::new(format!(
-                    "{}",
-                    self.inline_suggestions.config.max_suggestion_chars
-                ))
-                .size(9.0)
-                .color(palette.text),
-            );
-        });
-        ui.horizontal(|ui| {
-            ui.label(
-                RichText::new("Min confidence:")
-                    .size(9.0)
-                    .color(palette.text_muted),
-            );
-            ui.label(
-                RichText::new(format!(
-                    "{:.0}%",
-                    self.inline_suggestions.config.min_confidence * 100.0
-                ))
-                .size(9.0)
-                .color(palette.text),
-            );
-        });
-        ui.add_space(6.0);
+        egui::ScrollArea::vertical()
+            .id_salt("inline_suggestions_scroll")
+            .show(ui, |ui| {
+                // Configuration
+                ui.label(
+                    RichText::new("CONFIGURATION")
+                        .small()
+                        .strong()
+                        .color(palette.accent),
+                );
+                ui.horizontal(|ui| {
+                    ui.label(
+                        RichText::new("Enabled:")
+                            .size(9.0)
+                            .color(palette.text_muted),
+                    );
+                    if ui
+                        .checkbox(&mut self.inline_suggestions.config.enabled, "")
+                        .changed()
+                    {
+                        // config updated
+                    }
+                });
+                ui.horizontal(|ui| {
+                    ui.label(
+                        RichText::new("Trigger delay:")
+                            .size(9.0)
+                            .color(palette.text_muted),
+                    );
+                    ui.label(
+                        RichText::new(format!(
+                            "{}ms",
+                            self.inline_suggestions.config.trigger_delay_ms
+                        ))
+                        .size(9.0)
+                        .color(palette.text),
+                    );
+                });
+                ui.horizontal(|ui| {
+                    ui.label(
+                        RichText::new("Max chars:")
+                            .size(9.0)
+                            .color(palette.text_muted),
+                    );
+                    ui.label(
+                        RichText::new(format!(
+                            "{}",
+                            self.inline_suggestions.config.max_suggestion_chars
+                        ))
+                        .size(9.0)
+                        .color(palette.text),
+                    );
+                });
+                ui.horizontal(|ui| {
+                    ui.label(
+                        RichText::new("Min confidence:")
+                            .size(9.0)
+                            .color(palette.text_muted),
+                    );
+                    ui.label(
+                        RichText::new(format!(
+                            "{:.0}%",
+                            self.inline_suggestions.config.min_confidence * 100.0
+                        ))
+                        .size(9.0)
+                        .color(palette.text),
+                    );
+                });
+                ui.add_space(6.0);
 
-        // Statistics
-        ui.label(
-            RichText::new("STATISTICS")
-                .small()
-                .strong()
-                .color(palette.accent),
-        );
-        ui.label(
-            RichText::new(format!("  • Shown: {total_shown}"))
-                .size(9.0)
-                .color(palette.text),
-        );
-        ui.label(
-            RichText::new(format!("  • Accepted: {total_accepted}"))
-                .size(9.0)
-                .color(palette.success),
-        );
-        ui.label(
-            RichText::new(format!("  • Dismissed: {total_dismissed}"))
-                .size(9.0)
-                .color(palette.warning),
-        );
-        let accept_rate = if total_shown > 0 {
-            (total_accepted as f32 / total_shown as f32) * 100.0
-        } else {
-            0.0
-        };
-        ui.label(
-            RichText::new(format!("  • Accept rate: {accept_rate:.1}%"))
-                .size(9.0)
-                .color(palette.accent),
-        );
-        ui.add_space(4.0);
+                // Statistics
+                ui.label(
+                    RichText::new("STATISTICS")
+                        .small()
+                        .strong()
+                        .color(palette.accent),
+                );
+                ui.label(
+                    RichText::new(format!("  \u{2022} Shown: {total_shown}"))
+                        .size(9.0)
+                        .color(palette.text),
+                );
+                ui.label(
+                    RichText::new(format!("  \u{2022} Accepted: {total_accepted}"))
+                        .size(9.0)
+                        .color(palette.success),
+                );
+                ui.label(
+                    RichText::new(format!("  \u{2022} Dismissed: {total_dismissed}"))
+                        .size(9.0)
+                        .color(palette.warning),
+                );
+                let accept_rate = if total_shown > 0 {
+                    (total_accepted as f32 / total_shown as f32) * 100.0
+                } else {
+                    0.0
+                };
+                ui.label(
+                    RichText::new(format!("  \u{2022} Accept rate: {accept_rate:.1}%"))
+                        .size(9.0)
+                        .color(palette.accent),
+                );
+                ui.add_space(4.0);
 
-        // Cache info
-        ui.label(
-            RichText::new("CACHE")
-                .small()
-                .strong()
-                .color(palette.accent),
-        );
-        ui.label(
-            RichText::new(format!("  • Reuse cache: {cache_entries} entries"))
-                .size(9.0)
-                .color(palette.text),
-        );
-        ui.label(
-            RichText::new(format!("  • Recent: {recent_count} entries"))
-                .size(9.0)
-                .color(palette.text),
-        );
-        let status = if has_current {
-            ("Pending suggestion", palette.warning)
-        } else {
-            ("Idle — waiting for trigger", palette.text_muted)
-        };
-        ui.label(
-            RichText::new(format!("  • Status: {}", status.0))
-                .size(9.0)
-                .color(status.1),
-        );
+                // Cache info
+                ui.label(
+                    RichText::new("CACHE")
+                        .small()
+                        .strong()
+                        .color(palette.accent),
+                );
+                ui.label(
+                    RichText::new(format!("  \u{2022} Reuse cache: {cache_entries} entries"))
+                        .size(9.0)
+                        .color(palette.text),
+                );
+                ui.label(
+                    RichText::new(format!("  \u{2022} Recent: {recent_count} entries"))
+                        .size(9.0)
+                        .color(palette.text),
+                );
+                let status = if has_current {
+                    ("Pending suggestion", palette.warning)
+                } else {
+                    ("Idle \u{2014} waiting for trigger", palette.text_muted)
+                };
+                ui.label(
+                    RichText::new(format!("  \u{2022} Status: {}", status.0))
+                        .size(9.0)
+                        .color(status.1),
+                );
+            });
     }
 
     // ═══════════════════════════════════════════════════════════════════════
@@ -2768,7 +2904,7 @@ impl VelocityApp {
                         );
                     });
                 } else {
-                    for (id, agent) in &self.background_agents.agents {
+                    for agent in self.background_agents.agents.values() {
                         let status_color = if agent.enabled {
                             palette.success
                         } else {
@@ -2795,7 +2931,6 @@ impl VelocityApp {
                                 ui.label(RichText::new(&agent.name).size(9.0).color(palette.text));
                             });
                         ui.add_space(3.0);
-                        let _ = id;
                     }
                 }
 
@@ -2995,6 +3130,61 @@ impl VelocityApp {
                             });
                         ui.add_space(2.0);
                     }
+
+                    // Sessions section
+                    if !self.collaboration.sessions.is_empty() {
+                        ui.add_space(8.0);
+                        ui.label(
+                            RichText::new("SESSIONS")
+                                .small()
+                                .strong()
+                                .color(palette.accent),
+                        );
+                        ui.add_space(2.0);
+                        for session in self.collaboration.sessions.values().take(10) {
+                            let status_color = match session.status {
+                                crate::agent::collaboration::SessionStatus::Active => {
+                                    palette.success
+                                }
+                                crate::agent::collaboration::SessionStatus::Paused => {
+                                    palette.warning
+                                }
+                                crate::agent::collaboration::SessionStatus::Completed => {
+                                    palette.text_muted
+                                }
+                                _ => palette.text_muted,
+                            };
+                            egui::Frame::new()
+                                .fill(palette.bg_tertiary)
+                                .corner_radius(4.0)
+                                .inner_margin(6.0)
+                                .show(ui, |ui| {
+                                    ui.horizontal(|ui| {
+                                        ui.label(RichText::new("\u{25cf}").color(status_color));
+                                        ui.label(
+                                            RichText::new(&session.name)
+                                                .strong()
+                                                .color(palette.text),
+                                        );
+                                        ui.label(
+                                            RichText::new(session.status.label())
+                                                .small()
+                                                .color(status_color),
+                                        );
+                                    });
+                                    ui.label(
+                                        RichText::new(format!(
+                                            "{} participant(s) \u{00b7} {} message(s)",
+                                            session.participants.len(),
+                                            session.messages.len()
+                                        ))
+                                        .size(9.0)
+                                        .color(palette.text_muted),
+                                    );
+                                });
+                            ui.add_space(3.0);
+                        }
+                    }
                 }
             });
     }
@@ -3049,10 +3239,48 @@ impl VelocityApp {
                     });
                 } else {
                     ui.label(
-                        RichText::new("Use the Knowledge panel to query persistent memory.")
-                            .size(9.0)
-                            .color(palette.text),
+                        RichText::new("STORED ENTRIES")
+                            .small()
+                            .strong()
+                            .color(palette.accent),
                     );
+                    ui.add_space(2.0);
+                    for entry in self.persistent_memory.iter().take(30) {
+                        egui::Frame::new()
+                            .fill(palette.bg_tertiary)
+                            .corner_radius(4.0)
+                            .inner_margin(6.0)
+                            .show(ui, |ui| {
+                                ui.horizontal(|ui| {
+                                    ui.label(
+                                        RichText::new("\u{1f512}")
+                                            .size(10.0)
+                                            .color(palette.text_muted),
+                                    );
+                                    ui.label(
+                                        RichText::new(&entry.key).strong().color(palette.text),
+                                    );
+                                    ui.label(
+                                        RichText::new(format!(
+                                            "accessed \u{00d7}{}",
+                                            entry.access_count
+                                        ))
+                                        .small()
+                                        .color(palette.text_muted),
+                                    );
+                                });
+                                let preview: String = entry.content.chars().take(100).collect();
+                                ui.label(RichText::new(preview).size(9.0).color(palette.text));
+                            });
+                        ui.add_space(3.0);
+                    }
+                    if entry_count > 30 {
+                        ui.label(
+                            RichText::new(format!("... and {} more entries", entry_count - 30))
+                                .size(9.0)
+                                .color(palette.text_muted),
+                        );
+                    }
                 }
             });
     }
@@ -3061,8 +3289,8 @@ impl VelocityApp {
 fn trigger_kind_label(kind: &crate::editor::triggers::TriggerKind) -> String {
     use crate::editor::triggers::TriggerKind;
     match kind {
-        TriggerKind::Schedule { interval } => format!("schedule · {interval}"),
-        TriggerKind::FileWatch { path, glob } => format!("file-watch · {path}/{glob}"),
+        TriggerKind::Schedule { interval } => format!("schedule \u{00b7} {interval}"),
+        TriggerKind::FileWatch { path, glob } => format!("file-watch \u{00b7} {path}/{glob}"),
         TriggerKind::Webhook { .. } => "webhook".to_string(),
         TriggerKind::Manual => "manual".to_string(),
     }
@@ -3071,10 +3299,10 @@ fn trigger_kind_label(kind: &crate::editor::triggers::TriggerKind) -> String {
 fn trigger_action_label(action: &crate::editor::triggers::TriggerAction) -> String {
     use crate::editor::triggers::TriggerAction;
     match action {
-        TriggerAction::RunWorkflow { workflow_id } => format!("→ workflow {workflow_id}"),
+        TriggerAction::RunWorkflow { workflow_id } => format!("\u{2192} workflow {workflow_id}"),
         TriggerAction::AgentPrompt { prompt } => {
             let p: String = prompt.chars().take(60).collect();
-            format!("→ agent: {p}")
+            format!("\u{2192} agent: {p}")
         }
     }
 }

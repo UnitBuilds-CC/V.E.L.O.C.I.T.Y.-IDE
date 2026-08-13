@@ -1,4 +1,4 @@
-//! Cross-device peer collaboration panel.
+﻿//! Cross-device peer collaboration panel.
 //!
 //! Shows connected peers, allows adding new peers, chat messaging,
 //! file transfer initiation, task delegation, and peer server control.
@@ -23,7 +23,7 @@ impl VelocityApp {
             ui,
             "Peers",
             &format!(
-                "{} peer(s) · {} online · {} transfer(s) · {} task(s)",
+                "{} peer(s) \u{00b7} {} online \u{00b7} {} transfer(s) \u{00b7} {} task(s)",
                 peer_count, online, active_xfers, active_tasks
             ),
             palette.accent,
@@ -165,7 +165,7 @@ impl VelocityApp {
                     } else {
                         palette.text_muted
                     };
-                    let status_dot = if peer.online { "●" } else { "○" };
+                    let status_dot = if peer.online { "\u{25cf}" } else { "\u{25cb}" };
 
                     ui.horizontal(|ui| {
                         ui.label(RichText::new(status_dot).size(10.0).color(status_color));
@@ -264,9 +264,9 @@ impl VelocityApp {
 
                     for msg in msgs.iter().take(20) {
                         let direction = if &msg.from == selected_id {
-                            "←"
+                            "\u{2190}"
                         } else {
-                            "→"
+                            "\u{2192}"
                         };
                         ui.label(
                             RichText::new(format!(
@@ -326,8 +326,8 @@ impl VelocityApp {
                 }
                 for xfer in &transfers {
                     let dir_label = match xfer.direction {
-                        TransferDirection::Outgoing => "↑ OUT",
-                        TransferDirection::Incoming => "↓ IN",
+                        TransferDirection::Outgoing => "\u{2191} OUT",
+                        TransferDirection::Incoming => "\u{2193} IN",
                     };
                     let progress = if xfer.total_chunks > 0 {
                         xfer.chunks_received as f32 / xfer.total_chunks as f32
@@ -350,7 +350,7 @@ impl VelocityApp {
                                 }),
                         );
                         if xfer.complete {
-                            ui.label(RichText::new("✓").size(9.0).color(palette.success));
+                            ui.label(RichText::new("\u{2713}").size(9.0).color(palette.success));
                         }
                     });
                 }

@@ -1,4 +1,4 @@
-//! Web platform APIs for the JS interpreter — performance, history, observers,
+﻿//! Web platform APIs for the JS interpreter — performance, history, observers,
 //! WebSocket, getComputedStyle, matchMedia, FileReader, crypto.subtle.
 //!
 //! All mutable state is thread-local so each interpreter instance gets its own

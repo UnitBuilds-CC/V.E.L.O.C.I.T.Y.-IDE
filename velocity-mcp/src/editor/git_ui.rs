@@ -1,4 +1,4 @@
-#![allow(dead_code)]
+﻿#![allow(dead_code)]
 //! Git integration — stage, commit, diff, blame, branch UI.
 //!
 //! Provides real git operations by invoking the git CLI and parsing output.
@@ -291,7 +291,7 @@ pub fn render_recent_changes_timeline(
     use eframe::egui;
 
     ui.label(
-        egui::RichText::new("⏱ Recent Changes Timeline")
+        egui::RichText::new("\u{23f1} Recent Changes Timeline")
             .size(11.0)
             .strong()
             .color(palette.text),
@@ -379,7 +379,7 @@ pub fn render_recent_changes_timeline(
                         } else {
                             palette.text_muted
                         };
-                        ui.label(egui::RichText::new("●").size(10.0).color(dot_color));
+                        ui.label(egui::RichText::new("\u{25cf}").size(10.0).color(dot_color));
 
                         // Commit info
                         ui.vertical(|ui| {
@@ -416,7 +416,7 @@ pub fn render_recent_changes_timeline(
                     if i < state.log.len() - 1 {
                         ui.indent("timeline_line", |ui| {
                             ui.label(
-                                egui::RichText::new("│")
+                                egui::RichText::new("\u{2502}")
                                     .size(8.0)
                                     .color(palette.text_muted.gamma_multiply(0.4)),
                             );

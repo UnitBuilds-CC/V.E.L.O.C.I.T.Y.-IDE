@@ -1,4 +1,4 @@
-use super::struct_def::OrchestratorPanel;
+﻿use super::struct_def::OrchestratorPanel;
 use crate::editor::expert_team::ExpertTeam;
 use crate::editor::theme::IdePalette;
 use crate::orchestrator::blueprint::{Task, TaskGraph};
@@ -79,19 +79,19 @@ impl OrchestratorPanel {
                 ui.horizontal_wrapped(|ui| {
                     ui.label(RichText::new(format!("Tasks: {}", self.graph.tasks.len())).small());
                     ui.label(
-                        RichText::new("·")
+                        RichText::new("\u{00b7}")
                             .small()
                             .color(palette.text_muted.gamma_multiply(0.6)),
                     );
                     ui.label(RichText::new(format!("Phases: {}", plan.phases.len())).small());
                     ui.label(
-                        RichText::new("·")
+                        RichText::new("\u{00b7}")
                             .small()
                             .color(palette.text_muted.gamma_multiply(0.6)),
                     );
                     ui.label(RichText::new(format!("BFS order: {}", bfs_order.len())).small());
                     ui.label(
-                        RichText::new("·")
+                        RichText::new("\u{00b7}")
                             .small()
                             .color(palette.text_muted.gamma_multiply(0.6)),
                     );
@@ -102,7 +102,7 @@ impl OrchestratorPanel {
                     );
                     if retryable_blocked > 0 {
                         ui.label(
-                            RichText::new("·")
+                            RichText::new("\u{00b7}")
                                 .small()
                                 .color(palette.text_muted.gamma_multiply(0.6)),
                         );
@@ -114,7 +114,7 @@ impl OrchestratorPanel {
                     }
                     if !self.running_workers.is_empty() {
                         ui.label(
-                            RichText::new("·")
+                            RichText::new("\u{00b7}")
                                 .small()
                                 .color(palette.text_muted.gamma_multiply(0.6)),
                         );
@@ -243,13 +243,13 @@ impl OrchestratorPanel {
                     ui.add_space(16.0);
                     ui.vertical_centered(|ui| {
                         ui.label(
-                            RichText::new("◇")
+                            RichText::new("\u{25c7}")
                                 .size(28.0)
                                 .color(palette.accent.gamma_multiply(0.7)),
                         );
                         ui.add_space(6.0);
                         ui.label(
-                            RichText::new("No tasks yet — route a goal to build the plan")
+                            RichText::new("No tasks yet \u{2014} route a goal to build the plan")
                                 .color(palette.text_muted),
                         );
                     });
@@ -289,11 +289,11 @@ impl OrchestratorPanel {
             .unwrap_or(TaskStatus::Pending);
 
         let (status_text, status_color, glyph) = match &status {
-            TaskStatus::Pending => ("Pending", palette.text_muted, "○"),
-            TaskStatus::Running => ("Running", palette.accent, "▷"),
-            TaskStatus::Done(_) => ("Done", palette.success, "✔"),
-            TaskStatus::Failed(_) => ("Failed", palette.error, "✖"),
-            TaskStatus::Blocked(_) => ("Blocked", palette.warning, "◆"),
+            TaskStatus::Pending => ("Pending", palette.text_muted, "\u{25cb}"),
+            TaskStatus::Running => ("Running", palette.accent, "\u{25b7}"),
+            TaskStatus::Done(_) => ("Done", palette.success, "\u{2714}"),
+            TaskStatus::Failed(_) => ("Failed", palette.error, "\u{2716}"),
+            TaskStatus::Blocked(_) => ("Blocked", palette.warning, "\u{25c6}"),
         };
 
         let assigned_expert =

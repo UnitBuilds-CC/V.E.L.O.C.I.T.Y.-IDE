@@ -1,4 +1,4 @@
-//! Generic CAPTCHA solving module.
+﻿//! Generic CAPTCHA solving module.
 //!
 //! Replaces the old `captcha_solver.rs` with a modular architecture:
 //! - `challenge` — generic challenge descriptor (replaces CaptchaType enum)

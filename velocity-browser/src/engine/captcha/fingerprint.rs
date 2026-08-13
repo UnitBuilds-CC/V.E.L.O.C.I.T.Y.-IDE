@@ -1,4 +1,4 @@
-//! Provider fingerprinting — identifies captcha providers from structural signals.
+﻿//! Provider fingerprinting — identifies captcha providers from structural signals.
 //!
 //! Uses URL patterns, container class patterns, script sources, and data
 //! attributes to identify the captcha provider. Works alongside the visual

@@ -1,4 +1,4 @@
-#![allow(dead_code)]
+﻿#![allow(dead_code)]
 //! Breadcrumb navigation — shows the file path segments and symbol hierarchy
 //! above the editor for quick navigation.
 

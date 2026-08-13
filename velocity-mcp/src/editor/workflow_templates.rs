@@ -1,4 +1,4 @@
-//! Pre-built workflow templates for common automation patterns.
+﻿//! Pre-built workflow templates for common automation patterns.
 //!
 //! Templates provide one-click creation of frequently-used workflows,
 //! lowering the barrier to entry and demonstrating best practices.
@@ -326,7 +326,7 @@ fn build_deploy_check(id: &str, name: &str) -> WorkflowCanvas {
     let deploy = canvas.add_node(
         CanvasNodeKind::Tool {
             name: "run_command".into(),
-            args: serde_json::json!({"command": "echo 'Deploy step — configure for your environment'"}),
+            args: serde_json::json!({"command": "echo 'Deploy step \u{2014} configure for your environment'"}),
         },
         NodePosition { x: 650.0, y: 200.0 },
     );

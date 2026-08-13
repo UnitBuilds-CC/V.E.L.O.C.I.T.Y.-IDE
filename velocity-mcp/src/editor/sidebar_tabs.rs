@@ -1,4 +1,4 @@
-#![allow(dead_code)]
+﻿#![allow(dead_code)]
 
 //! Sidebar Tabs - Mode-specific left sidebar tab definitions and renderers.
 //!
@@ -68,22 +68,22 @@ impl SidebarTab {
     /// Short glyph icon for the sidebar tab.
     pub fn icon(self) -> &'static str {
         match self {
-            Self::Files => "◫",
-            Self::Outline => "≡",
-            Self::Git => "⑂",
-            Self::Search => "⊕",
-            Self::Flows => "⧉",
-            Self::Targets => "◎",
-            Self::Recordings => "●",
-            Self::Logs => "≣",
-            Self::Agents => "⊙",
-            Self::Queue => "⊞",
-            Self::Timeline => "⏤",
-            Self::Metrics => "⊿",
-            Self::Favorites => "★",
-            Self::Bookmarks => "⊛",
-            Self::AccessibilityAudit => "♿",
-            Self::Browse => "⊕",
+            Self::Files => "\u{25eb}",
+            Self::Outline => "\u{2261}",
+            Self::Git => "\u{2442}",
+            Self::Search => "\u{2295}",
+            Self::Flows => "\u{29c9}",
+            Self::Targets => "\u{25ce}",
+            Self::Recordings => "\u{25cf}",
+            Self::Logs => "\u{2263}",
+            Self::Agents => "\u{2299}",
+            Self::Queue => "\u{229e}",
+            Self::Timeline => "\u{23e4}",
+            Self::Metrics => "\u{22bf}",
+            Self::Favorites => "\u{2605}",
+            Self::Bookmarks => "\u{229b}",
+            Self::AccessibilityAudit => "\u{267f}",
+            Self::Browse => "\u{2295}",
         }
     }
 }
@@ -212,7 +212,7 @@ pub fn render_git_content(
 ) -> Option<PathBuf> {
     let mut clicked_file = None;
     ui.label(
-        egui::RichText::new("⑂ Source Control")
+        egui::RichText::new("\u{2442} Source Control")
             .size(11.0)
             .strong()
             .color(palette.text),
@@ -240,7 +240,11 @@ pub fn render_git_content(
     if data.changed_files.is_empty() {
         ui.add_space(8.0);
         ui.vertical_centered(|ui| {
-            ui.label(egui::RichText::new("✔").size(18.0).color(palette.success));
+            ui.label(
+                egui::RichText::new("\u{2714}")
+                    .size(18.0)
+                    .color(palette.success),
+            );
             ui.add_space(4.0);
             ui.label(
                 egui::RichText::new("Working tree clean")
@@ -288,7 +292,7 @@ pub fn render_git_content(
 /// Render the Flows tab with real automation flow data.
 pub fn render_flows_content(ui: &mut egui::Ui, flows: &[FlowEntry], palette: IdePalette) {
     ui.label(
-        egui::RichText::new("⧉ Automation Flows")
+        egui::RichText::new("\u{29c9} Automation Flows")
             .size(11.0)
             .strong()
             .color(palette.text),
@@ -298,7 +302,7 @@ pub fn render_flows_content(ui: &mut egui::Ui, flows: &[FlowEntry], palette: Ide
         ui.add_space(8.0);
         ui.vertical_centered(|ui| {
             ui.label(
-                egui::RichText::new("⧉")
+                egui::RichText::new("\u{29c9}")
                     .size(18.0)
                     .color(palette.text_muted.gamma_multiply(0.6)),
             );
@@ -310,9 +314,11 @@ pub fn render_flows_content(ui: &mut egui::Ui, flows: &[FlowEntry], palette: Ide
             );
             ui.add_space(2.0);
             ui.label(
-                egui::RichText::new("Press the ● Record button in the toolbar to capture one.")
-                    .size(8.0)
-                    .color(palette.accent.gamma_multiply(0.8)),
+                egui::RichText::new(
+                    "Press the \u{25cf} Record button in the toolbar to capture one.",
+                )
+                .size(8.0)
+                .color(palette.accent.gamma_multiply(0.8)),
             );
         });
     } else {
@@ -326,7 +332,11 @@ pub fn render_flows_content(ui: &mut egui::Ui, flows: &[FlowEntry], palette: Ide
                             "failed" => palette.error,
                             _ => palette.text_muted,
                         };
-                        ui.label(egui::RichText::new("●").size(8.0).color(status_color));
+                        ui.label(
+                            egui::RichText::new("\u{25cf}")
+                                .size(8.0)
+                                .color(status_color),
+                        );
                         ui.label(
                             egui::RichText::new(&flow.name)
                                 .size(10.0)
@@ -346,7 +356,7 @@ pub fn render_flows_content(ui: &mut egui::Ui, flows: &[FlowEntry], palette: Ide
 /// Render the Targets tab with registered site targets.
 pub fn render_targets_content(ui: &mut egui::Ui, targets: &[TargetEntry], palette: IdePalette) {
     ui.label(
-        egui::RichText::new("◎ Site Targets")
+        egui::RichText::new("\u{25ce} Site Targets")
             .size(11.0)
             .strong()
             .color(palette.text),
@@ -356,7 +366,7 @@ pub fn render_targets_content(ui: &mut egui::Ui, targets: &[TargetEntry], palett
         ui.add_space(8.0);
         ui.vertical_centered(|ui| {
             ui.label(
-                egui::RichText::new("◎")
+                egui::RichText::new("\u{25ce}")
                     .size(18.0)
                     .color(palette.text_muted.gamma_multiply(0.6)),
             );
@@ -411,7 +421,7 @@ pub fn render_targets_content(ui: &mut egui::Ui, targets: &[TargetEntry], palett
 /// Render the Recordings tab with saved action sequences.
 pub fn render_recordings_content(ui: &mut egui::Ui, recordings: &[String], palette: IdePalette) {
     ui.label(
-        egui::RichText::new("● Recordings")
+        egui::RichText::new("\u{25cf} Recordings")
             .size(11.0)
             .strong()
             .color(palette.text),
@@ -421,7 +431,7 @@ pub fn render_recordings_content(ui: &mut egui::Ui, recordings: &[String], palet
         ui.add_space(8.0);
         ui.vertical_centered(|ui| {
             ui.label(
-                egui::RichText::new("●")
+                egui::RichText::new("\u{25cf}")
                     .size(18.0)
                     .color(palette.text_muted.gamma_multiply(0.6)),
             );
@@ -433,7 +443,7 @@ pub fn render_recordings_content(ui: &mut egui::Ui, recordings: &[String], palet
             );
             ui.add_space(2.0);
             ui.label(
-                egui::RichText::new("Click the ● Record button in the toolbar to start.")
+                egui::RichText::new("Click the \u{25cf} Record button in the toolbar to start.")
                     .size(8.0)
                     .color(palette.accent.gamma_multiply(0.8)),
             );
@@ -464,7 +474,7 @@ pub fn render_logs_content(
     palette: IdePalette,
 ) {
     ui.label(
-        egui::RichText::new("≣ Execution Logs")
+        egui::RichText::new("\u{2263} Execution Logs")
             .size(11.0)
             .strong()
             .color(palette.text),
@@ -480,7 +490,7 @@ pub fn render_logs_content(
         ui.add_space(8.0);
         ui.vertical_centered(|ui| {
             ui.label(
-                egui::RichText::new("≡")
+                egui::RichText::new("\u{2261}")
                     .size(18.0)
                     .color(palette.text_muted.gamma_multiply(0.6)),
             );
@@ -514,7 +524,7 @@ pub fn render_logs_content(
 /// Render the Agents tab with live agent roster.
 pub fn render_agents_content(ui: &mut egui::Ui, agents: &[AgentEntry], palette: IdePalette) {
     ui.label(
-        egui::RichText::new("⊙ Agent Roster")
+        egui::RichText::new("\u{2299} Agent Roster")
             .size(11.0)
             .strong()
             .color(palette.text),
@@ -524,7 +534,7 @@ pub fn render_agents_content(ui: &mut egui::Ui, agents: &[AgentEntry], palette: 
         ui.add_space(8.0);
         ui.vertical_centered(|ui| {
             ui.label(
-                egui::RichText::new("⊙")
+                egui::RichText::new("\u{2299}")
                     .size(18.0)
                     .color(palette.text_muted.gamma_multiply(0.6)),
             );
@@ -559,7 +569,11 @@ pub fn render_agents_content(ui: &mut egui::Ui, agents: &[AgentEntry], palette: 
                                     "blocked" => palette.warning,
                                     _ => palette.text_muted,
                                 };
-                                ui.label(egui::RichText::new("●").size(8.0).color(status_color));
+                                ui.label(
+                                    egui::RichText::new("\u{25cf}")
+                                        .size(8.0)
+                                        .color(status_color),
+                                );
                                 ui.label(
                                     egui::RichText::new(&agent.label)
                                         .size(10.0)
@@ -575,7 +589,7 @@ pub fn render_agents_content(ui: &mut egui::Ui, agents: &[AgentEntry], palette: 
                                 );
                                 ui.label(
                                     egui::RichText::new(format!(
-                                        "· {} tasks done",
+                                        "\u{00b7} {} tasks done",
                                         agent.tasks_done
                                     ))
                                     .size(9.0)
@@ -597,7 +611,7 @@ pub fn render_agents_content(ui: &mut egui::Ui, agents: &[AgentEntry], palette: 
 /// Render the Queue tab with pending tasks.
 pub fn render_queue_content(ui: &mut egui::Ui, queue: &[QueueEntry], palette: IdePalette) {
     ui.label(
-        egui::RichText::new("⊞ Task Queue")
+        egui::RichText::new("\u{229e} Task Queue")
             .size(11.0)
             .strong()
             .color(palette.text),
@@ -606,10 +620,14 @@ pub fn render_queue_content(ui: &mut egui::Ui, queue: &[QueueEntry], palette: Id
     if queue.is_empty() {
         ui.add_space(8.0);
         ui.vertical_centered(|ui| {
-            ui.label(egui::RichText::new("⊞").size(18.0).color(palette.success));
+            ui.label(
+                egui::RichText::new("\u{229e}")
+                    .size(18.0)
+                    .color(palette.success),
+            );
             ui.add_space(4.0);
             ui.label(
-                egui::RichText::new("Queue empty — all tasks dispatched.")
+                egui::RichText::new("Queue empty \u{2014} all tasks dispatched.")
                     .size(9.0)
                     .color(palette.text_muted),
             );
@@ -639,7 +657,11 @@ pub fn render_queue_content(ui: &mut egui::Ui, queue: &[QueueEntry], palette: Id
                             "Follow-up" => palette.warning,
                             _ => palette.text_muted,
                         };
-                        ui.label(egui::RichText::new("▪").size(8.0).color(status_color));
+                        ui.label(
+                            egui::RichText::new("\u{25aa}")
+                                .size(8.0)
+                                .color(status_color),
+                        );
                         ui.label(
                             egui::RichText::new(format!("#{}", entry.id))
                                 .size(9.0)
@@ -664,7 +686,7 @@ pub fn render_queue_content(ui: &mut egui::Ui, queue: &[QueueEntry], palette: Id
 /// Render the Metrics tab with throughput/latency/error data.
 pub fn render_metrics_content(ui: &mut egui::Ui, metrics: &MetricsSnapshot, palette: IdePalette) {
     ui.label(
-        egui::RichText::new("⊿ Metrics")
+        egui::RichText::new("\u{22bf} Metrics")
             .size(11.0)
             .strong()
             .color(palette.text),
@@ -786,7 +808,7 @@ pub fn render_favorites_content(
 ) -> Option<PathBuf> {
     let mut clicked = None;
     ui.label(
-        egui::RichText::new("★ Favorites")
+        egui::RichText::new("\u{2605} Favorites")
             .size(11.0)
             .strong()
             .color(palette.text),
@@ -796,7 +818,7 @@ pub fn render_favorites_content(
         ui.add_space(8.0);
         ui.vertical_centered(|ui| {
             ui.label(
-                egui::RichText::new("★")
+                egui::RichText::new("\u{2605}")
                     .size(18.0)
                     .color(palette.text_muted.gamma_multiply(0.6)),
             );
@@ -808,7 +830,7 @@ pub fn render_favorites_content(
             );
             ui.add_space(2.0);
             ui.label(
-                egui::RichText::new("Open a file and click ★ to pin it for quick access.")
+                egui::RichText::new("Open a file and click \u{2605} to pin it for quick access.")
                     .size(8.0)
                     .color(palette.accent.gamma_multiply(0.8)),
             );
@@ -848,7 +870,7 @@ pub fn render_bookmarks_content(
 ) -> Option<(PathBuf, usize)> {
     let mut jump_to = None;
     ui.label(
-        egui::RichText::new("⊛ Bookmarks")
+        egui::RichText::new("\u{229b} Bookmarks")
             .size(11.0)
             .strong()
             .color(palette.text),
@@ -858,7 +880,7 @@ pub fn render_bookmarks_content(
         ui.add_space(8.0);
         ui.vertical_centered(|ui| {
             ui.label(
-                egui::RichText::new("⊛")
+                egui::RichText::new("\u{229b}")
                     .size(18.0)
                     .color(palette.text_muted.gamma_multiply(0.6)),
             );
@@ -888,7 +910,7 @@ pub fn render_bookmarks_content(
                     if ui
                         .link(
                             egui::RichText::new(format!(
-                                "{}:{} — {}",
+                                "{}:{} \u{2014} {}",
                                 display,
                                 bm.line + 1,
                                 bm.label
@@ -909,7 +931,7 @@ pub fn render_bookmarks_content(
 /// Render the Accessibility Audit tab with WCAG findings.
 pub fn render_audit_content(ui: &mut egui::Ui, findings: &[AuditFinding], palette: IdePalette) {
     ui.label(
-        egui::RichText::new("♿ Accessibility Audit")
+        egui::RichText::new("\u{267f} Accessibility Audit")
             .size(11.0)
             .strong()
             .color(palette.text),
@@ -919,7 +941,7 @@ pub fn render_audit_content(ui: &mut egui::Ui, findings: &[AuditFinding], palett
         ui.add_space(8.0);
         ui.vertical_centered(|ui| {
             ui.label(
-                egui::RichText::new("♿")
+                egui::RichText::new("\u{267f}")
                     .size(18.0)
                     .color(palette.text_muted.gamma_multiply(0.6)),
             );
@@ -932,7 +954,7 @@ pub fn render_audit_content(ui: &mut egui::Ui, findings: &[AuditFinding], palett
             ui.add_space(2.0);
             ui.label(
                 egui::RichText::new(
-                    "Run an audit via the toolbar ✓ button to check WCAG compliance.",
+                    "Run an audit via the toolbar \u{2713} button to check WCAG compliance.",
                 )
                 .size(8.0)
                 .color(palette.accent.gamma_multiply(0.8)),

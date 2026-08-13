@@ -1,4 +1,4 @@
-use super::coercion::*;
+﻿use super::coercion::*;
 use super::signal::*;
 use crate::js::vm::JsValue;
 use std::collections::HashMap;

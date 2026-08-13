@@ -1,4 +1,4 @@
-//! Template store — learned solution cache keyed by visual fingerprint.
+﻿//! Template store — learned solution cache keyed by visual fingerprint.
 //!
 //! The core insight: if we've solved a challenge with a given visual fingerprint
 //! before, we can replay the stored solution sequence without spending any LLM

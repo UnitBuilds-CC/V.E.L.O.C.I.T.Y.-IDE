@@ -1,4 +1,4 @@
-// sandbox/scope_validator.rs — Semantic alignment check via cosine similarity
+﻿// sandbox/scope_validator.rs — Semantic alignment check via cosine similarity
 pub struct ScopeValidation {
     pub similarity: f32, // cosine_sim(output_vec, conditioning_vec)
     pub passed: bool,    // similarity >= threshold

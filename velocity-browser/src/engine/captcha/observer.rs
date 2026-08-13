@@ -1,4 +1,4 @@
-//! DOM-level observation pipeline for captcha challenges.
+﻿//! DOM-level observation pipeline for captcha challenges.
 //!
 //! Complements the pixel-level fingerprinting by extracting structural
 //! information from the DOM: interactive elements, grid layouts, instruction
