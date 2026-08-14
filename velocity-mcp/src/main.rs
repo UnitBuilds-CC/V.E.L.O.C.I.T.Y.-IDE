@@ -19,7 +19,7 @@
 #![allow(clippy::redundant_closure)] // Explicit closures for type inference
 #![allow(clippy::if_same_then_else)] // Identical branches for semantic clarity
 #![allow(clippy::should_implement_trait)] // from_str methods don't always need FromStr trait
-#![allow(dead_code)] // Scaffolding modules for future features
+#![allow(dead_code)] // Binary module tree has scaffolding modules not yet wired into main()
 #![allow(unused_imports)] // Imports retained for API completeness
 #![allow(unused_variables)] // Variables retained for future wiring
 

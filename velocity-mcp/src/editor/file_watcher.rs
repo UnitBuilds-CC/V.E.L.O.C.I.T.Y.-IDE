@@ -129,3 +129,51 @@ impl FileWatcher {
         self.last_event.retain(|_, t| *t > cutoff);
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn file_change_kind_equality() {
+        assert_eq!(FileChangeKind::Created, FileChangeKind::Created);
+        assert_ne!(FileChangeKind::Created, FileChangeKind::Deleted);
+        assert_ne!(FileChangeKind::Modified, FileChangeKind::Renamed);
+    }
+
+    #[test]
+    fn cleanup_stale_removes_old_entries() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mut watcher = FileWatcher::new(tmp.path()).unwrap();
+        // Insert a stale entry manually
+        watcher.last_event.insert(
+            PathBuf::from("old.rs"),
+            Instant::now() - Duration::from_secs(30),
+        );
+        // Insert a fresh entry
+        watcher
+            .last_event
+            .insert(PathBuf::from("new.rs"), Instant::now());
+        assert_eq!(watcher.last_event.len(), 2);
+        watcher.cleanup_stale();
+        assert_eq!(watcher.last_event.len(), 1);
+        assert!(watcher
+            .last_event
+            .contains_key(PathBuf::from("new.rs").as_path().into()));
+    }
+
+    #[test]
+    fn poll_returns_empty_when_no_events() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mut watcher = FileWatcher::new(tmp.path()).unwrap();
+        let events = watcher.poll();
+        assert_eq!(events.len(), 0);
+    }
+
+    #[test]
+    fn watcher_created_successfully_on_valid_path() {
+        let tmp = tempfile::tempdir().unwrap();
+        let watcher = FileWatcher::new(tmp.path());
+        assert!(watcher.is_some());
+    }
+}

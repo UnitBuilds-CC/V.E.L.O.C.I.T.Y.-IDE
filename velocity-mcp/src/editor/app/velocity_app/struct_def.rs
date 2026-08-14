@@ -542,8 +542,8 @@ impl VelocityApp {
         self.status_message = format!("Restored {} workspace", self.appearance.profile.label());
     }
 
-    pub fn persist_mission_activity(&self) {
-        persist_mission_activity_nda(&self.workspace_root, &self.task_timeline);
+    pub fn persist_mission_activity(&self) -> Result<(), String> {
+        persist_mission_activity_nda(&self.workspace_root, &self.task_timeline)
     }
 
     pub fn reload_workspace_provider_settings(&mut self) {
@@ -1061,7 +1061,7 @@ impl VelocityApp {
         app.apply_appearance(&cc.egui_ctx);
         app.task_timeline
             .session_marker("IDE session ready", "agentic workspace initialized");
-        app.persist_mission_activity();
+        let _ = app.persist_mission_activity();
         let _ = app.agent_tx.send(UiToAgentMessage::ApplySessionState {
             provider: app.provider,
             model: app.selected_model.clone(),

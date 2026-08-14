@@ -52,6 +52,41 @@ impl LspServerConfig {
             ],
         }
     }
+
+    pub fn python(workspace_root: &Path) -> Self {
+        Self {
+            language_id: "python".to_string(),
+            command: "pyright-langserver".to_string(),
+            args: vec!["--stdio".to_string()],
+            root_uri: Some(format!("file:///{}", workspace_root.display()).replace('\\', "/")),
+            extensions: vec!["py".to_string(), "pyi".to_string()],
+        }
+    }
+
+    pub fn go(workspace_root: &Path) -> Self {
+        Self {
+            language_id: "go".to_string(),
+            command: "gopls".to_string(),
+            args: Vec::new(),
+            root_uri: Some(format!("file:///{}", workspace_root.display()).replace('\\', "/")),
+            extensions: vec!["go".to_string()],
+        }
+    }
+
+    pub fn clangd(workspace_root: &Path) -> Self {
+        Self {
+            language_id: "cpp".to_string(),
+            command: "clangd".to_string(),
+            args: Vec::new(),
+            root_uri: Some(format!("file:///{}", workspace_root.display()).replace('\\', "/")),
+            extensions: vec![
+                "c".to_string(),
+                "cpp".to_string(),
+                "h".to_string(),
+                "hpp".to_string(),
+            ],
+        }
+    }
 }
 
 /// A running language server process.
@@ -478,6 +513,24 @@ impl LspManager {
             || workspace_root.join("tsconfig.json").exists()
         {
             mgr.register(LspServerConfig::typescript(workspace_root), workspace_root);
+        }
+        // Check for Python project
+        if workspace_root.join("pyproject.toml").exists()
+            || workspace_root.join("setup.py").exists()
+            || workspace_root.join("requirements.txt").exists()
+        {
+            mgr.register(LspServerConfig::python(workspace_root), workspace_root);
+        }
+        // Check for Go project
+        if workspace_root.join("go.mod").exists() {
+            mgr.register(LspServerConfig::go(workspace_root), workspace_root);
+        }
+        // Check for C/C++ project
+        if workspace_root.join("compile_commands.json").exists()
+            || workspace_root.join("CMakeLists.txt").exists()
+            || workspace_root.join(".clangd").exists()
+        {
+            mgr.register(LspServerConfig::clangd(workspace_root), workspace_root);
         }
 
         mgr
@@ -1335,5 +1388,63 @@ mod tests {
         let mut mgr = LspManager::new();
         let path = Path::new("/tmp/does_not_matter.rs");
         assert!(mgr.document_symbols("rs", path, "fn main() {}").is_empty());
+    }
+
+    #[test]
+    fn python_config_has_correct_extensions() {
+        let cfg = LspServerConfig::python(Path::new("/tmp"));
+        assert_eq!(cfg.language_id, "python");
+        assert_eq!(cfg.command, "pyright-langserver");
+        assert!(cfg.extensions.contains(&"py".to_string()));
+        assert!(cfg.extensions.contains(&"pyi".to_string()));
+    }
+
+    #[test]
+    fn go_config_has_correct_extensions() {
+        let cfg = LspServerConfig::go(Path::new("/tmp"));
+        assert_eq!(cfg.language_id, "go");
+        assert_eq!(cfg.command, "gopls");
+        assert!(cfg.extensions.contains(&"go".to_string()));
+    }
+
+    #[test]
+    fn clangd_config_has_correct_extensions() {
+        let cfg = LspServerConfig::clangd(Path::new("/tmp"));
+        assert_eq!(cfg.language_id, "cpp");
+        assert_eq!(cfg.command, "clangd");
+        assert!(cfg.extensions.contains(&"c".to_string()));
+        assert!(cfg.extensions.contains(&"cpp".to_string()));
+        assert!(cfg.extensions.contains(&"h".to_string()));
+    }
+
+    #[test]
+    fn auto_detect_rust_project() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(tmp.path().join("Cargo.toml"), "[package]").unwrap();
+        let mgr = LspManager::auto_detect(tmp.path());
+        assert!(mgr.server_count() >= 1);
+    }
+
+    #[test]
+    fn auto_detect_python_project() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(tmp.path().join("pyproject.toml"), "[tool.pyright]").unwrap();
+        let mgr = LspManager::auto_detect(tmp.path());
+        assert!(mgr.server_count() >= 1);
+    }
+
+    #[test]
+    fn auto_detect_go_project() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(tmp.path().join("go.mod"), "module example.com/m").unwrap();
+        let mgr = LspManager::auto_detect(tmp.path());
+        assert!(mgr.server_count() >= 1);
+    }
+
+    #[test]
+    fn auto_detect_empty_workspace() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mgr = LspManager::auto_detect(tmp.path());
+        assert_eq!(mgr.server_count(), 0);
     }
 }

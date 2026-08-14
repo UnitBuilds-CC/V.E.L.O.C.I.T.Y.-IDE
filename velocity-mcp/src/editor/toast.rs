@@ -131,3 +131,38 @@ impl ToastQueue {
         });
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn toast_info_creates_with_correct_level() {
+        let t = Toast::info("hello");
+        assert_eq!(t.message, "hello");
+        assert!(matches!(t.level, ToastLevel::Info));
+        assert_eq!(t.ttl, Duration::from_secs(4));
+    }
+
+    #[test]
+    fn toast_error_has_error_level() {
+        let t = Toast::error("bad");
+        assert!(matches!(t.level, ToastLevel::Error));
+        assert_eq!(t.message, "bad");
+    }
+
+    #[test]
+    fn toast_queue_push_and_retain() {
+        let mut q = ToastQueue::default();
+        assert_eq!(q.toasts.len(), 0);
+        q.push(Toast::info("one"));
+        q.push(Toast::warn("two"));
+        assert_eq!(q.toasts.len(), 2);
+    }
+
+    #[test]
+    fn toast_remaining_is_positive_for_fresh_toast() {
+        let t = Toast::info("fresh");
+        assert!(t.remaining() > 0.9);
+    }
+}

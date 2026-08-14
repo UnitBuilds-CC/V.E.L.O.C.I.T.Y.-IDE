@@ -139,14 +139,18 @@ pub fn serialize_mission_activity_nda(state: &TaskTimelineState) -> String {
     lines.join("\n") + "\n"
 }
 
-pub fn persist_mission_activity_nda(workspace_root: &Path, state: &TaskTimelineState) {
+pub fn persist_mission_activity_nda(
+    workspace_root: &Path,
+    state: &TaskTimelineState,
+) -> Result<(), String> {
     let agentic_dir = workspace_root.join(".velocity").join("agentic");
-    let _ = std::fs::create_dir_all(&agentic_dir);
+    std::fs::create_dir_all(&agentic_dir).map_err(|e| format!("create agentic dir: {e}"))?;
     let serialized = serialize_mission_activity_nda(state);
     let bytes =
         crate::agent::crypto::seal(workspace_root, b"mission_activity", serialized.as_bytes())
             .unwrap_or_else(|| serialized.into_bytes());
-    let _ = std::fs::write(agentic_dir.join("mission_activity.nda"), bytes);
+    std::fs::write(agentic_dir.join("mission_activity.nda"), bytes)
+        .map_err(|e| format!("write mission activity: {e}"))
 }
 
 impl TaskTimelineState {
@@ -642,7 +646,7 @@ mod tests {
         let mut timeline = TaskTimelineState::default();
         timeline.session_marker("IDE session ready", "agentic workspace initialized");
 
-        persist_mission_activity_nda(tmp.path(), &timeline);
+        persist_mission_activity_nda(tmp.path(), &timeline).unwrap();
 
         let raw = std::fs::read(
             tmp.path()

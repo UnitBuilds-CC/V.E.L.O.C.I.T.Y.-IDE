@@ -9,7 +9,6 @@
 //! commit *without* mutating the working tree or the stash stack. The earlier
 //! implementation used `stash push` + `stash pop`, which dropped the very stash
 //! it created — leaving `restore` with nothing to apply.
-#![allow(dead_code)] // a few entry points (restore_latest, list) are public API used situationally
 
 use std::path::{Path, PathBuf};
 use std::process::Command;

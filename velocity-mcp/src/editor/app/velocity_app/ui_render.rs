@@ -1137,7 +1137,9 @@ impl eframe::App for VelocityApp {
                                 self.toasts.push(crate::editor::toast::Toast::info(
                                     "Mission report generated",
                                 ));
-                                self.persist_mission_activity();
+                                if let Err(e) = self.persist_mission_activity() {
+                                    Self::persist_err(&mut self.toasts, "mission activity", &e);
+                                }
                             }
                             "debug" => {
                                 self.status_message = "Debug: attach to running process.".into();

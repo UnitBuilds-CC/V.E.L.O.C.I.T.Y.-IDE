@@ -60,7 +60,7 @@ impl FileHistory {
         }
     }
 
-    pub fn record(&mut self, file_path: &Path, content: &str) {
+    pub fn record(&mut self, file_path: &Path, content: &str) -> Result<(), String> {
         let snapshot = Snapshot {
             timestamp: Snapshot::now_millis(),
             size: content.len(),
@@ -68,9 +68,9 @@ impl FileHistory {
         };
         let snap_path = self.snapshot_path(file_path, snapshot.timestamp);
         if let Some(parent) = snap_path.parent() {
-            let _ = fs::create_dir_all(parent);
+            fs::create_dir_all(parent).map_err(|e| format!("create snapshot dir: {e}"))?;
         }
-        let _ = fs::write(&snap_path, content);
+        fs::write(&snap_path, content).map_err(|e| format!("write snapshot: {e}"))?;
         let list = self.index.entry(file_path.to_path_buf()).or_default();
         list.push(snapshot);
         if list.len() > MAX_SNAPSHOTS_PER_FILE {
@@ -83,7 +83,7 @@ impl FileHistory {
             }
         }
         Self::sort_index(&mut self.index);
-        let _ = self.persist_index();
+        self.persist_index()
     }
 
     pub fn snapshots(&self, file_path: &Path) -> Vec<Snapshot> {
@@ -304,7 +304,8 @@ mod tests {
     fn records_and_lists_snapshots() {
         let tmp = tempfile::tempdir().unwrap();
         let mut hist = FileHistory::new(tmp.path());
-        hist.record(Path::new("src/main.rs"), "fn main() {}");
+        hist.record(Path::new("src/main.rs"), "fn main() {}")
+            .unwrap();
         let snaps = hist.snapshots(Path::new("src/main.rs"));
         assert_eq!(snaps.len(), 1);
         assert!(snaps[0].age_label().contains("s ago") || snaps[0].age_label().contains("now"));
@@ -314,7 +315,8 @@ mod tests {
     fn writes_nda_history_index() {
         let tmp = tempfile::tempdir().unwrap();
         let mut hist = FileHistory::new(tmp.path());
-        hist.record(Path::new("src/main.rs"), "fn main() {}");
+        hist.record(Path::new("src/main.rs"), "fn main() {}")
+            .unwrap();
 
         let index = fs::read_to_string(
             tmp.path()

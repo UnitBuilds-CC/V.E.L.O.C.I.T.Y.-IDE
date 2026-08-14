@@ -57,7 +57,7 @@ impl VelocityApp {
             mission_control.set_mirrored_worker_event_count(task.id, thread.events.len());
         }
         if self.task_timeline.event_count() != before {
-            self.persist_mission_activity();
+            let _ = self.persist_mission_activity();
         }
     }
 
@@ -699,7 +699,7 @@ impl VelocityApp {
                 }
             }
             if timeline_dirty {
-                self.persist_mission_activity();
+                let _ = self.persist_mission_activity();
             }
         }
         self.cap_logs();

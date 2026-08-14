@@ -3,7 +3,6 @@
 //! NOTE: Some graph query methods (len/is_empty/get/dependents/leaves) are part
 //! of the task-graph API and are exercised by tests ahead of full orchestrator
 //! wiring, so they read as dead in the non-test build.
-#![allow(dead_code)] // task-graph query API awaiting orchestrator integration
 
 use std::collections::{HashMap, HashSet};
 
