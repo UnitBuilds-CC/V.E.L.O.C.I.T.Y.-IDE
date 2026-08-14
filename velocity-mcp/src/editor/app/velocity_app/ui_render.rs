@@ -770,6 +770,31 @@ impl eframe::App for VelocityApp {
                 }
             }
         }
+
+        // Sync active buffer to LSP server when it has unsaved edits (throttled ~1s).
+        let lsp_sync_due = self
+            .last_lsp_sync
+            .map(|at| at.elapsed() >= std::time::Duration::from_secs(1))
+            .unwrap_or(true);
+        if lsp_sync_due {
+            if let Some(active_id) = &self.active_tab {
+                if self.tab_is_dirty(active_id) {
+                    if let Some(path) = self.tab_path(active_id).cloned() {
+                        if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
+                            if let Some(content) =
+                                self.buffers.get(active_id).map(|b| b.content().to_string())
+                            {
+                                if let Some(lsp) = self.lsp_manager.as_mut() {
+                                    lsp.sync_document(ext, &path, &content);
+                                }
+                                self.last_lsp_sync = Some(std::time::Instant::now());
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
         let active_change_preview = self.active_change_preview();
 
         egui::Panel::top("toolbar").show(ui, |ui: &mut egui::Ui| {

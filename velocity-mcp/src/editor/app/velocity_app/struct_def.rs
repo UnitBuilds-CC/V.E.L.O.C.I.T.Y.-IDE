@@ -162,6 +162,8 @@ pub struct VelocityApp {
     pub last_diagnostics_poll: Option<Instant>,
     /// Throttle for scanning open buffers for on-disk changes.
     pub last_external_check: Option<Instant>,
+    /// Throttle for syncing active buffer content to LSP server.
+    pub last_lsp_sync: Option<Instant>,
     pub status_message: String,
     pub appearance: AppearanceSettings,
     pub provider_settings: WorkspaceProviderSettings,
@@ -854,6 +856,7 @@ impl VelocityApp {
             cached_deps: Vec::new(),
             last_diagnostics_poll: None,
             last_external_check: None,
+            last_lsp_sync: None,
             status_message: String::from("Ready"),
             appearance,
             provider_settings,

@@ -1,5 +1,4 @@
-﻿#![allow(dead_code)]
-//! LSP (Language Server Protocol) client implementation.
+﻿//! LSP (Language Server Protocol) client implementation.
 //!
 //! Manages language server processes and provides go-to-definition, hover,
 //! references, rename, and diagnostics via JSON-RPC over stdin/stdout.
@@ -317,6 +316,17 @@ impl LspServer {
         )
     }
 
+    /// Notify the server that a document was closed.
+    pub fn did_close(&mut self, path: &Path) -> Result<(), String> {
+        let uri = path_to_uri(path);
+        self.send_notification(
+            "textDocument/didClose",
+            serde_json::json!({
+                "textDocument": { "uri": uri }
+            }),
+        )
+    }
+
     /// Request go-to-definition.
     pub fn goto_definition(&mut self, path: &Path, line: usize, col: usize) -> Result<i64, String> {
         let uri = path_to_uri(path);
@@ -550,6 +560,19 @@ impl LspManager {
             self.open_docs.insert(path.to_path_buf());
         }
         self.doc_versions.insert(path.to_path_buf(), next_version);
+    }
+
+    /// Notify the matching language server that a document was closed.
+    /// Removes the path from the open-docs tracking set.
+    pub fn close_document(&mut self, ext: &str, path: &Path) {
+        if !self.open_docs.contains(path) {
+            return;
+        }
+        if let Some(server) = self.server_for_extension(ext) {
+            let _ = server.did_close(path);
+        }
+        self.open_docs.remove(path);
+        self.doc_versions.remove(path);
     }
 
     /// Block (bounded) until the response for `id` arrives, or time out.

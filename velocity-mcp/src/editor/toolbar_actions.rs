@@ -1,5 +1,3 @@
-﻿#![allow(dead_code)]
-
 //! Toolbar Actions - Mode-specific toolbar button definitions and renderers.
 //!
 //! Each mode provides its own set of toolbar actions. The toolbar render loop

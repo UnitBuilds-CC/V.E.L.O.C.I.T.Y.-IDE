@@ -1,5 +1,4 @@
-﻿#![allow(dead_code)]
-//! Diagnostics display — manages error/warning squiggles and the problems panel.
+﻿//! Diagnostics display — manages error/warning squiggles and the problems panel.
 
 use eframe::egui;
 use std::path::PathBuf;

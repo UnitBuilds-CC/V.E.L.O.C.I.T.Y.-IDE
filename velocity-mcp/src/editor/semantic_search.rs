@@ -1,4 +1,3 @@
-#![allow(dead_code)]
 //! Semantic Code Search: TF-IDF vector-based search that understands code
 //! meaning beyond literal string matching. Complements the existing
 //! `project_search` with similarity-ranked results.

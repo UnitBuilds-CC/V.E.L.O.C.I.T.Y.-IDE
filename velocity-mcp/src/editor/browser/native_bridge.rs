@@ -1,5 +1,3 @@
-﻿#![allow(dead_code)]
-
 use crate::safety::SafeMutex;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};

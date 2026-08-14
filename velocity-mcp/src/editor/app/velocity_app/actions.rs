@@ -625,7 +625,13 @@ impl VelocityApp {
 
     pub fn close_tab(&mut self, id: &TabId) {
         if let Some(path) = self.tab_path(id).cloned() {
-            self.push_closed_editor_path(path);
+            self.push_closed_editor_path(path.clone());
+            // Notify LSP server that the document is closed.
+            if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
+                if let Some(lsp) = self.lsp_manager.as_mut() {
+                    lsp.close_document(ext, &path);
+                }
+            }
         }
         self.tabs.retain(|t| t.id != *id);
         self.buffers.remove(id);
@@ -651,7 +657,13 @@ impl VelocityApp {
             .collect();
         for id in &removed {
             if let Some(path) = self.tab_path(id).cloned() {
-                self.push_closed_editor_path(path);
+                self.push_closed_editor_path(path.clone());
+                // Notify LSP server that the document is closed.
+                if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
+                    if let Some(lsp) = self.lsp_manager.as_mut() {
+                        lsp.close_document(ext, &path);
+                    }
+                }
             }
             self.buffers.remove(id);
         }
@@ -1042,6 +1054,14 @@ impl VelocityApp {
                     }
                     // Refresh git status after save
                     self.refresh_git_status();
+                    // Notify LSP server of the saved content (ensures server has latest).
+                    if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
+                        if let Some(buf) = self.buffers.get(id) {
+                            if let Some(lsp) = self.lsp_manager.as_mut() {
+                                lsp.sync_document(ext, path, buf.content());
+                            }
+                        }
+                    }
                     true
                 }
                 Err(e) => {

@@ -1,4 +1,3 @@
-#![allow(dead_code)]
 //! Configurable keybindings system.
 //!
 //! Allows users to customize keyboard shortcuts via a JSON configuration file.

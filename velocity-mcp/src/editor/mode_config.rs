@@ -1,5 +1,3 @@
-﻿#![allow(dead_code)]
-
 //! Mode Configuration - Trait-based specialization for each WorkspaceProfile.
 //!
 //! Each mode (Coder, Operator, MissionControl, Accessibility) implements the

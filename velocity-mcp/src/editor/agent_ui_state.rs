@@ -1,5 +1,3 @@
-#![allow(dead_code)]
-
 //! Zero-allocation agentic UI state using ring buffers and message-driven architecture.
 //!
 //! This module manages agent thinking, approvals, and metrics using:

@@ -58,7 +58,7 @@ impl Default for PeerServerConfig {
 struct HttpRequest {
     method: String,
     path: String,
-    headers: Vec<(String, String)>,
+    _headers: Vec<(String, String)>,
     body: String,
 }
 
@@ -152,7 +152,7 @@ fn parse_request(raw: &str) -> Option<HttpRequest> {
     Some(HttpRequest {
         method,
         path,
-        headers,
+        _headers: headers,
         body: body.trim().to_string(),
     })
 }
@@ -457,7 +457,7 @@ mod tests {
         let req = HttpRequest {
             method: "GET".to_string(),
             path: "/peer/health".to_string(),
-            headers: Vec::new(),
+            _headers: Vec::new(),
             body: String::new(),
         };
         let resp = handle_request(&req, &mgr);
@@ -472,7 +472,7 @@ mod tests {
         let req = HttpRequest {
             method: "GET".to_string(),
             path: "/peer/identity".to_string(),
-            headers: Vec::new(),
+            _headers: Vec::new(),
             body: String::new(),
         };
         let resp = handle_request(&req, &mgr);
@@ -486,7 +486,7 @@ mod tests {
         let req = HttpRequest {
             method: "GET".to_string(),
             path: "/unknown".to_string(),
-            headers: Vec::new(),
+            _headers: Vec::new(),
             body: String::new(),
         };
         let resp = handle_request(&req, &mgr);
@@ -499,7 +499,7 @@ mod tests {
         let req = HttpRequest {
             method: "POST".to_string(),
             path: "/peer/pair".to_string(),
-            headers: Vec::new(),
+            _headers: Vec::new(),
             body: r#"{"peer_id":"p1","name":"Remote"}"#.to_string(),
         };
         let resp = handle_request(&req, &mgr);

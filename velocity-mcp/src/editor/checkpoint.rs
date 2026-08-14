@@ -1,5 +1,4 @@
-﻿#![allow(dead_code)]
-//! Workspace Checkpointing — git-stash-based snapshots before agent operations.
+﻿//! Workspace Checkpointing — git-stash-based snapshots before agent operations.
 //!
 //! Creates named checkpoints (git stash) before agents modify the workspace,
 //! allowing one-click rollback if changes are unwanted.

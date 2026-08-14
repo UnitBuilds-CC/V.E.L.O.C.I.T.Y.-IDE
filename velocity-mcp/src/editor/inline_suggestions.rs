@@ -1,5 +1,4 @@
-﻿#![allow(dead_code)]
-//! Inline agent suggestions: ghost text displayed semi-transparently in the
+﻿//! Inline agent suggestions: ghost text displayed semi-transparently in the
 //! editor at the cursor position. Powered by AI completion requests that run
 //! in the background and produce predictive next-edits.
 

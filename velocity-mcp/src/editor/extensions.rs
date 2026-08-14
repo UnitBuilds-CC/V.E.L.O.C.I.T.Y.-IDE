@@ -1,5 +1,4 @@
-﻿#![allow(dead_code)]
-//! Extension/Plugin system — registry, loading, and sandboxed execution.
+﻿//! Extension/Plugin system — registry, loading, and sandboxed execution.
 //!
 //! Extensions are WASM modules or Lua scripts in the .velocity/extensions/ directory.
 

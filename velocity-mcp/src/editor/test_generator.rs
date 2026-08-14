@@ -1,4 +1,3 @@
-#![allow(dead_code)]
 //! Auto-generated Test Coverage: analyzes source code and generates test
 //! skeletons for untested functions, then runs them via the test runner.
 

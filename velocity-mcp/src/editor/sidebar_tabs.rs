@@ -1,5 +1,3 @@
-﻿#![allow(dead_code)]
-
 //! Sidebar Tabs - Mode-specific left sidebar tab definitions and renderers.
 //!
 //! Each mode declares its own set of sidebar tabs. The left sidebar renders

@@ -1,5 +1,3 @@
-#![allow(dead_code)]
-
 use super::*;
 use std::collections::HashMap;
 
@@ -17,7 +15,7 @@ pub fn render_storage_update_report(report: &BrowserStorageUpdateReport) -> Stri
     )
 }
 
-fn summarize_cookie_names(cookies: &[BrowserCookie]) -> Vec<String> {
+fn _summarize_cookie_names(cookies: &[BrowserCookie]) -> Vec<String> {
     let mut names = cookies
         .iter()
         .map(|cookie| cookie.name.clone())
@@ -27,7 +25,7 @@ fn summarize_cookie_names(cookies: &[BrowserCookie]) -> Vec<String> {
     names
 }
 
-fn summarize_runtime_cookie_names(cookies: &[RuntimeBrowserCookie]) -> Vec<String> {
+fn _summarize_runtime_cookie_names(cookies: &[RuntimeBrowserCookie]) -> Vec<String> {
     let mut names = cookies
         .iter()
         .map(|cookie| cookie.name.clone())
@@ -51,7 +49,7 @@ pub fn is_csrf_key(name: &str) -> bool {
     contains_any_case_insensitive(name, &["csrf", "xsrf"])
 }
 
-fn summarize_sorted_keys(entries: &HashMap<String, String>) -> Vec<String> {
+fn _summarize_sorted_keys(entries: &HashMap<String, String>) -> Vec<String> {
     let mut keys = entries.keys().cloned().collect::<Vec<_>>();
     keys.sort();
     keys.dedup();

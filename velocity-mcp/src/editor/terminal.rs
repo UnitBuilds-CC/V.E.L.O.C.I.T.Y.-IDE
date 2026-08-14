@@ -1,4 +1,3 @@
-#![allow(dead_code)]
 //! Interactive terminal emulator with PTY support.
 //!
 //! Provides a real pseudo-terminal (conpty on Windows, pty on Unix) for

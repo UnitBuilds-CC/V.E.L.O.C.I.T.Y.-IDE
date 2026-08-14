@@ -1,4 +1,3 @@
-#![allow(dead_code)]
 //! Auto-indentation and smart editing helpers.
 //!
 //! Provides indent-on-Enter, dedent-on-closing-brace, and Tab/Shift+Tab

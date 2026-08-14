@@ -1,4 +1,3 @@
-#![allow(dead_code)]
 //! Debug Adapter Protocol (DAP) client for IDE debugger integration.
 //!
 //! Communicates with debug adapters (e.g., codelldb for Rust, node-debug for JS)

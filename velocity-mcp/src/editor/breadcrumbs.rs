@@ -1,5 +1,4 @@
-﻿#![allow(dead_code)]
-//! Breadcrumb navigation — shows the file path segments and symbol hierarchy
+﻿//! Breadcrumb navigation — shows the file path segments and symbol hierarchy
 //! above the editor for quick navigation.
 
 use eframe::egui;

@@ -1,5 +1,3 @@
-#![allow(dead_code)]
-
 //! Smart Sidebar - Zero-allocation context-aware sidebar with suggestions and quick actions.
 //!
 //! Provides a ring-buffer based sidebar that tracks context, file references,

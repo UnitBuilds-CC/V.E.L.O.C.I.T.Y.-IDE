@@ -1,4 +1,3 @@
-#![allow(dead_code)]
 //! Speculative pre-computation: pre-indexes scoped files before agent workers
 //! spawn, providing warm context caches that accelerate agent execution.
 

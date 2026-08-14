@@ -1,5 +1,3 @@
-﻿#![allow(dead_code)]
-
 //! Bottom Panel - Mode-specific bottom panel layouts and renderers.
 //!
 //! The bottom panel can be Tabbed (multiple tabs), Split (two panes), or a

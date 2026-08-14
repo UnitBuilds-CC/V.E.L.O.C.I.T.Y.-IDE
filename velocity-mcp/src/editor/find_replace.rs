@@ -1,4 +1,3 @@
-#![allow(dead_code)]
 //! In-file Find & Replace (Ctrl+F / Ctrl+H).
 //!
 //! Provides incremental search with match highlighting, case sensitivity toggle,
