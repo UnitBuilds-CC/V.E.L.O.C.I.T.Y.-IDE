@@ -295,6 +295,94 @@ impl TerminalBuffer {
     }
 }
 
+/// A named terminal shell profile.
+/// Users can create multiple profiles (e.g. PowerShell, cmd, WSL, bash)
+/// and switch between them when opening new terminal tabs.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct TerminalProfile {
+    pub name: String,
+    pub program: String,
+    pub args: Vec<String>,
+    /// Optional working directory override.
+    pub cwd: Option<String>,
+    /// Optional environment variable overrides (KEY=VALUE).
+    pub env: std::collections::HashMap<String, String>,
+}
+
+impl TerminalProfile {
+    /// Default profile for the current platform.
+    #[cfg(target_os = "windows")]
+    pub fn default_platform() -> Self {
+        Self {
+            name: "PowerShell".to_string(),
+            program: "powershell.exe".to_string(),
+            args: vec!["-NoLogo".to_string()],
+            cwd: None,
+            env: std::collections::HashMap::new(),
+        }
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    pub fn default_platform() -> Self {
+        let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/bash".to_string());
+        let name = std::path::Path::new(&shell)
+            .file_name()
+            .map(|n| n.to_string_lossy().to_string())
+            .unwrap_or_else(|| "Shell".to_string());
+        Self {
+            name,
+            program: shell,
+            args: vec![],
+            cwd: None,
+            env: std::collections::HashMap::new(),
+        }
+    }
+
+    /// Built-in profiles for Windows.
+    #[cfg(target_os = "windows")]
+    pub fn builtin_profiles() -> Vec<Self> {
+        vec![
+            Self {
+                name: "PowerShell".to_string(),
+                program: "powershell.exe".to_string(),
+                args: vec!["-NoLogo".to_string()],
+                cwd: None,
+                env: std::collections::HashMap::new(),
+            },
+            Self {
+                name: "Command Prompt".to_string(),
+                program: "cmd.exe".to_string(),
+                args: vec![],
+                cwd: None,
+                env: std::collections::HashMap::new(),
+            },
+        ]
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    pub fn builtin_profiles() -> Vec<Self> {
+        let mut profiles = vec![Self::default_platform()];
+        for shell in &["/bin/bash", "/bin/sh", "/bin/zsh"] {
+            if std::path::Path::new(shell).exists() {
+                let name = std::path::Path::new(shell)
+                    .file_name()
+                    .map(|n| n.to_string_lossy().to_string())
+                    .unwrap_or_default();
+                if !profiles.iter().any(|p| p.name == name) {
+                    profiles.push(Self {
+                        name: name.clone(),
+                        program: shell.to_string(),
+                        args: vec![],
+                        cwd: None,
+                        env: std::collections::HashMap::new(),
+                    });
+                }
+            }
+        }
+        profiles
+    }
+}
+
 /// Terminal session state.
 #[derive(Clone)]
 pub struct TerminalState {
@@ -384,6 +472,12 @@ impl TerminalState {
     pub fn spawn_shell(&mut self) {
         let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/bash".to_string());
         self.spawn_process(&shell, &[]);
+    }
+
+    /// Spawn a shell from a named profile.
+    pub fn spawn_from_profile(&mut self, profile: &TerminalProfile) {
+        let args: Vec<&str> = profile.args.iter().map(|s| s.as_str()).collect();
+        self.spawn_process(&profile.program, &args);
     }
 
     /// Spawn a process with a real PTY (ConPTY on Windows, posix pty on Unix).
@@ -649,5 +743,39 @@ mod tests {
         let mut buf = TerminalBuffer::new(80, 24);
         buf.process_output(b"\x1b[38;5;200mZ");
         assert_eq!(buf.cells[0][0].attrs.fg_color, Some(200));
+    }
+
+    #[test]
+    fn terminal_profile_default_has_name() {
+        let profile = TerminalProfile::default_platform();
+        assert!(!profile.name.is_empty());
+        assert!(!profile.program.is_empty());
+    }
+
+    #[test]
+    fn terminal_profile_builtin_not_empty() {
+        let profiles = TerminalProfile::builtin_profiles();
+        assert!(!profiles.is_empty());
+        for p in &profiles {
+            assert!(!p.name.is_empty());
+            assert!(!p.program.is_empty());
+        }
+    }
+
+    #[test]
+    fn terminal_profile_roundtrip_json() {
+        let profile = TerminalProfile {
+            name: "Test".to_string(),
+            program: "/bin/bash".to_string(),
+            args: vec!["-l".to_string()],
+            cwd: Some("/tmp".to_string()),
+            env: std::collections::HashMap::new(),
+        };
+        let json = serde_json::to_string(&profile).unwrap();
+        let back: TerminalProfile = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.name, "Test");
+        assert_eq!(back.program, "/bin/bash");
+        assert_eq!(back.args, vec!["-l"]);
+        assert_eq!(back.cwd, Some("/tmp".to_string()));
     }
 }
