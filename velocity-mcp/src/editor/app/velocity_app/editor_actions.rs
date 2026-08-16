@@ -1,4 +1,4 @@
-﻿use std::path::PathBuf;
+use std::path::PathBuf;
 
 use super::super::types::*;
 use super::struct_def::VelocityApp;
@@ -760,6 +760,82 @@ impl VelocityApp {
                             .size(9.0)
                             .color(palette.text_muted),
                     );
+                }
+            }
+        });
+
+        // Breakpoints list
+        ui.add_space(4.0);
+        ui.separator();
+        ui.horizontal(|ui| {
+            ui.label(
+                egui::RichText::new("Breakpoints")
+                    .size(9.0)
+                    .strong()
+                    .color(palette.accent),
+            );
+            if let Some(dap) = &self.dap_client {
+                ui.label(
+                    egui::RichText::new(format!("({})", dap.breakpoints.len()))
+                        .size(9.0)
+                        .color(palette.text_muted),
+                );
+            }
+        });
+        if let Some(dap) = &self.dap_client {
+            if dap.breakpoints.is_empty() {
+                ui.label(
+                    egui::RichText::new("  No breakpoints set. Click in the gutter to toggle.")
+                        .size(8.0)
+                        .color(palette.text_muted),
+                );
+            } else {
+                egui::ScrollArea::vertical()
+                    .max_height(80.0)
+                    .show(ui, |ui| {
+                        for bp in &dap.breakpoints {
+                            let file_name =
+                                bp.file.file_name().unwrap_or_default().to_string_lossy();
+                            let enabled_mark = if bp.enabled { "\u{2611}" } else { "\u{2610}" };
+                            ui.label(
+                                egui::RichText::new(format!(
+                                    "  {} {}:{}",
+                                    enabled_mark, file_name, bp.line
+                                ))
+                                .monospace()
+                                .size(9.0)
+                                .color(if bp.enabled {
+                                    palette.text
+                                } else {
+                                    palette.text_muted
+                                }),
+                            );
+                        }
+                    });
+            }
+        }
+
+        // Watch expression input
+        ui.add_space(4.0);
+        ui.horizontal(|ui| {
+            ui.label(
+                egui::RichText::new("Add Watch:")
+                    .size(9.0)
+                    .color(palette.text_muted),
+            );
+            let mut new_watch = String::new();
+            if ui
+                .add(
+                    egui::TextEdit::singleline(&mut new_watch)
+                        .hint_text("expression\u{2026}")
+                        .desired_width(150.0),
+                )
+                .lost_focus()
+                && ui.input(|i| i.key_pressed(egui::Key::Enter))
+                && !new_watch.trim().is_empty()
+            {
+                if let Some(dap) = &mut self.dap_client {
+                    dap.add_watch(new_watch.trim().to_string());
                 }
             }
         });
