@@ -476,7 +476,7 @@ impl VelocityApp {
                                 ui.horizontal(|ui| {
                                     let icon = if is_current { "\u{25cf}" } else { "\u{25cb}" };
                                     ui.label(
-                                        egui::RichText::new(icon).monospace().size(11.0).color(
+                                        egui::RichText::new(icon).size(11.0).color(
                                             if is_current {
                                                 palette.success
                                             } else {

@@ -294,11 +294,11 @@ impl AppearanceSettings {
     }
 
     pub fn ui_font_id(self) -> FontId {
-        FontId::new(13.0 * self.ui_scale, FontFamily::Proportional)
+        FontId::new(14.0 * self.ui_scale, FontFamily::Proportional)
     }
 
     pub fn code_font_id(self) -> FontId {
-        FontId::new(13.0 * self.code_scale, FontFamily::Monospace)
+        FontId::new(14.0 * self.code_scale, FontFamily::Monospace)
     }
 
     fn item_spacing(self) -> Vec2 {
@@ -327,8 +327,8 @@ impl AppearanceSettings {
 }
 
 pub fn setup_fonts(fonts: &mut FontDefinitions) -> FontId {
-    let data = include_font();
-    if let Some(data) = data {
+    // Prefer an embedded bundled font when available for consistent rendering.
+    if let Some(data) = include_font() {
         fonts
             .font_data
             .insert("code".into(), Arc::new(FontData::from_owned(data)));
@@ -337,8 +337,35 @@ pub fn setup_fonts(fonts: &mut FontDefinitions) -> FontId {
             .entry(FontFamily::Monospace)
             .or_default()
             .insert(0, "code".into());
+        return FontId::new(14.0, FontFamily::Monospace);
     }
-    FontId::new(13.0, FontFamily::Monospace)
+
+    // At runtime, attempt to load common system fonts on Windows so glyph coverage
+    // (symbols, emoji, UI glyphs) is available even when no embedded font is shipped.
+    #[cfg(target_os = "windows")]
+    {
+        let candidates: &[(&str, &str)] = &[
+            ("consola", r"C:\\Windows\\Fonts\\consola.ttf"),
+            ("segoe_ui_symbol", r"C:\\Windows\\Fonts\\seguisym.ttf"),
+            ("segoe_ui", r"C:\\Windows\\Fonts\\segoeui.ttf"),
+            ("segoe_ui_emoji", r"C:\\Windows\\Fonts\\SegoeUIEmoji.ttf"),
+        ];
+        for (name, path) in candidates.iter() {
+            if std::path::Path::new(path).exists() {
+                if let Ok(data) = std::fs::read(path) {
+                    // insert under a stable key and prefer it for monospace/proportional families
+                    fonts.font_data.insert((*name).to_string(), Arc::new(FontData::from_owned(data)));
+                    // Prefer Consolas or the found monospace as the monospace first family entry
+                    fonts.families.entry(FontFamily::Monospace).or_default().insert(0, (*name).to_string());
+                    // Also add symbol font to proportional family to cover UI glyphs.
+                    fonts.families.entry(FontFamily::Proportional).or_default().push((*name).to_string());
+                }
+            }
+        }
+    }
+
+    // Default to a slightly larger monospace font id for readability.
+    FontId::new(14.0, FontFamily::Monospace)
 }
 
 fn include_font() -> Option<Vec<u8>> {
