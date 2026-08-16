@@ -166,6 +166,8 @@ pub struct VelocityApp {
     pub last_lsp_sync: Option<Instant>,
     pub status_message: String,
     pub appearance: AppearanceSettings,
+    /// Last-applied appearance snapshot; used to avoid re-applying theme/style every frame.
+    pub last_applied_appearance: Option<AppearanceSettings>,
     pub provider_settings: WorkspaceProviderSettings,
     pub left_sidebar_visible: bool,
     pub left_sidebar_width: f32,
@@ -585,8 +587,13 @@ impl VelocityApp {
         self.appearance.palette()
     }
 
-    pub fn apply_appearance(&self, ctx: &egui::Context) {
-        apply_theme(ctx, self.appearance);
+    pub fn apply_appearance(&mut self, ctx: &egui::Context) {
+        // Avoid rebuilding and reapplying the full egui Style every frame. Only
+        // re-apply when the appearance settings actually change.
+        if self.last_applied_appearance != Some(self.appearance) {
+            apply_theme(ctx, self.appearance);
+            self.last_applied_appearance = Some(self.appearance);
+        }
     }
 
     fn find_tab_by_kind(tabs: &[Tab], kind: &TabKind) -> Option<Tab> {
@@ -876,6 +883,7 @@ impl VelocityApp {
             last_lsp_sync: None,
             status_message: String::from("Ready"),
             appearance,
+            last_applied_appearance: Some(appearance),
             provider_settings,
             left_sidebar_visible: true,
             left_sidebar_width: 240.0,
