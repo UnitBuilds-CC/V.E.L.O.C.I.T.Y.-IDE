@@ -94,9 +94,9 @@ fn hash_str(s: &str) -> u64 {
     u64::from_le_bytes(d[..8].try_into().unwrap())
 }
 
-/// Install a global panic hook that logs diagnostic context before the process exits.
-/// This ensures that any unhandled panic produces actionable output rather than a
-/// silent crash.
+/// Install a global panic hook that writes structured crash dumps and logs
+/// diagnostic context before the process exits. This ensures that any unhandled
+/// panic produces actionable output rather than a silent crash.
 fn install_panic_hook() {
     std::panic::set_hook(Box::new(|info| {
         let location = info
@@ -116,7 +116,43 @@ fn install_panic_hook() {
              \x20  Detail:   {payload}\n\
              Please report this crash with the above details."
         );
+
+        // Write a JSON crash dump to .velocity/crashes/ for later analysis.
+        let dump = serde_json::json!({
+            "timestamp": chrono_like_timestamp(),
+            "app_name": "V.E.L.O.C.I.T.Y. IDE",
+            "app_version": env!("CARGO_PKG_VERSION"),
+            "panic_message": payload,
+            "panic_location": location,
+            "os": std::env::consts::OS,
+            "arch": std::env::consts::ARCH,
+        });
+        if let Ok(cwd) = std::env::current_dir() {
+            let crash_dir = cwd.join(".velocity").join("crashes");
+            if std::fs::create_dir_all(&crash_dir).is_ok() {
+                let filename = format!(
+                    "crash_{}.json",
+                    std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .map(|d| d.as_secs())
+                        .unwrap_or(0)
+                );
+                let _ = std::fs::write(
+                    crash_dir.join(filename),
+                    serde_json::to_string_pretty(&dump).unwrap_or_default(),
+                );
+            }
+        }
     }));
+}
+
+/// Produce a rough ISO-8601 timestamp without pulling in chrono.
+fn chrono_like_timestamp() -> String {
+    let secs = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    format!("{}Z", secs)
 }
 
 fn main() {
