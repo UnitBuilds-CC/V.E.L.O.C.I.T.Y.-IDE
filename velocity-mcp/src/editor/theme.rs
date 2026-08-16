@@ -349,6 +349,47 @@ pub fn setup_fonts(fonts: &mut FontDefinitions) -> FontId {
         return FontId::new(16.0, FontFamily::Monospace);
     }
 
+    // First, check for repository-bundled free fonts in assets/fonts/*. If the
+    // user (or our font fetch script) placed JetBrainsMono/Inter here, prefer
+    // those for deterministic cross-platform rendering.
+    if let Ok(current_exe) = std::env::current_exe() {
+        if let Some(exe_dir) = current_exe.parent() {
+            let assets_fonts = exe_dir.join("assets").join("fonts");
+            if assets_fonts.exists() {
+                let jb = assets_fonts.join("JetBrainsMono-Regular.ttf");
+                let jb_bold = assets_fonts.join("JetBrainsMono-Bold.ttf");
+                let inter = assets_fonts.join("Inter-Regular.ttf");
+                let inter_bold = assets_fonts.join("Inter-Bold.ttf");
+
+                if jb.exists() {
+                    if let Ok(data) = std::fs::read(&jb) {
+                        fonts.font_data.insert("jbmono".to_string(), Arc::new(FontData::from_owned(data)));
+                        fonts.families.entry(FontFamily::Monospace).or_default().insert(0, "jbmono".to_string());
+                    }
+                }
+                if jb_bold.exists() {
+                    if let Ok(data) = std::fs::read(&jb_bold) {
+                        fonts.font_data.insert("jbmono_bold".to_string(), Arc::new(FontData::from_owned(data)));
+                        // prefer bold variant when available
+                        fonts.families.entry(FontFamily::Monospace).or_default().insert(0, "jbmono_bold".to_string());
+                    }
+                }
+                if inter.exists() {
+                    if let Ok(data) = std::fs::read(&inter) {
+                        fonts.font_data.insert("inter".to_string(), Arc::new(FontData::from_owned(data)));
+                        fonts.families.entry(FontFamily::Proportional).or_default().insert(0, "inter".to_string());
+                    }
+                }
+                if inter_bold.exists() {
+                    if let Ok(data) = std::fs::read(&inter_bold) {
+                        fonts.font_data.insert("inter_bold".to_string(), Arc::new(FontData::from_owned(data)));
+                        fonts.families.entry(FontFamily::Proportional).or_default().insert(0, "inter_bold".to_string());
+                    }
+                }
+            }
+        }
+    }
+
     // At runtime, attempt to load common system fonts on Windows so glyph coverage
     // (symbols, emoji, UI glyphs) is available even when no embedded font is shipped.
     #[cfg(target_os = "windows")]
