@@ -294,11 +294,13 @@ impl AppearanceSettings {
     }
 
     pub fn ui_font_id(self) -> FontId {
-        FontId::new(14.0 * self.ui_scale, FontFamily::Proportional)
+        // Increase base UI size by 2pt for better readability.
+        FontId::new(16.0 * self.ui_scale, FontFamily::Proportional)
     }
 
     pub fn code_font_id(self) -> FontId {
-        FontId::new(14.0 * self.code_scale, FontFamily::Monospace)
+        // Increase base code font size by 2pt; prefer monospace bold if available at runtime.
+        FontId::new(16.0 * self.code_scale, FontFamily::Monospace)
     }
 
     fn item_spacing(self) -> Vec2 {
@@ -332,12 +334,19 @@ pub fn setup_fonts(fonts: &mut FontDefinitions) -> FontId {
         fonts
             .font_data
             .insert("code".into(), Arc::new(FontData::from_owned(data)));
+        // Prefer the embedded font for both code and proportional fallbacks.
         fonts
             .families
             .entry(FontFamily::Monospace)
             .or_default()
             .insert(0, "code".into());
-        return FontId::new(14.0, FontFamily::Monospace);
+        fonts
+            .families
+            .entry(FontFamily::Proportional)
+            .or_default()
+            .push("code".into());
+        // Return bumped base size (16pt) for improved readability.
+        return FontId::new(16.0, FontFamily::Monospace);
     }
 
     // At runtime, attempt to load common system fonts on Windows so glyph coverage
@@ -355,17 +364,37 @@ pub fn setup_fonts(fonts: &mut FontDefinitions) -> FontId {
                 if let Ok(data) = std::fs::read(path) {
                     // insert under a stable key and prefer it for monospace/proportional families
                     fonts.font_data.insert((*name).to_string(), Arc::new(FontData::from_owned(data)));
-                    // Prefer Consolas or the found monospace as the monospace first family entry
-                    fonts.families.entry(FontFamily::Monospace).or_default().insert(0, (*name).to_string());
-                    // Also add symbol font to proportional family to cover UI glyphs.
+                    // Prefer the found monospace as the monospace first family entry (regular)
+                    fonts.families.entry(FontFamily::Monospace).or_default().push((*name).to_string());
+                    // Also add to proportional family to improve glyph coverage for UI icons.
                     fonts.families.entry(FontFamily::Proportional).or_default().push((*name).to_string());
+
+                    // Attempt to locate and prefer a bold variant where present. This
+                    // increases perceived weight without requiring an embedded bold TTF.
+                    let bold_candidates = [
+                        path.replace(".ttf", "Bold.ttf"),
+                        path.replace(".ttf", "bd.ttf"),
+                        path.replace(".ttf", "b.ttf"),
+                    ];
+                    for bpath in bold_candidates.iter() {
+                        if std::path::Path::new(bpath).exists() {
+                            if let Ok(bdata) = std::fs::read(bpath) {
+                                let bold_key = format!("{}_bold", name);
+                                fonts.font_data.insert(bold_key.clone(), Arc::new(FontData::from_owned(bdata)));
+                                // Insert bold variant at the front of the family lists so it's preferred.
+                                fonts.families.entry(FontFamily::Monospace).or_default().insert(0, bold_key.clone());
+                                fonts.families.entry(FontFamily::Proportional).or_default().insert(0, bold_key);
+                                break;
+                            }
+                        }
+                    }
                 }
             }
         }
     }
 
-    // Default to a slightly larger monospace font id for readability.
-    FontId::new(14.0, FontFamily::Monospace)
+    // Default to a slightly larger monospace font id for readability (bumped +2pt).
+    FontId::new(16.0, FontFamily::Monospace)
 }
 
 fn include_font() -> Option<Vec<u8>> {
@@ -467,7 +496,7 @@ pub fn apply_theme(ctx: &egui::Context, appearance: AppearanceSettings) {
 
     style.text_styles.insert(
         TextStyle::Heading,
-        FontId::new(18.0 * appearance.ui_scale, FontFamily::Proportional),
+        FontId::new(20.0 * appearance.ui_scale, FontFamily::Proportional),
     );
     style
         .text_styles
@@ -477,7 +506,7 @@ pub fn apply_theme(ctx: &egui::Context, appearance: AppearanceSettings) {
         .insert(TextStyle::Button, appearance.ui_font_id());
     style.text_styles.insert(
         TextStyle::Small,
-        FontId::new(11.0 * appearance.ui_scale, FontFamily::Proportional),
+        FontId::new(13.0 * appearance.ui_scale, FontFamily::Proportional),
     );
     style
         .text_styles
