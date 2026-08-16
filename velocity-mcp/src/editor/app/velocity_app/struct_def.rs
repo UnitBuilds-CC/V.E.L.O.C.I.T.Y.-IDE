@@ -188,6 +188,8 @@ pub struct VelocityApp {
     pub team_gallery_expanded: Option<usize>,
     /// Chat state for the team builder sub-chat.
     pub team_builder_chat: crate::editor::team_builder_chat::TeamBuilderChat,
+    /// UI-facing manager that bridges Team Studio controls to the agent runtime.
+    pub team_manager: crate::editor::app::team_manager::TeamManager,
 
     pub agent_ui_state: AgentUiState,
     pub task_timeline: TTState,
@@ -826,7 +828,7 @@ impl VelocityApp {
         let (file_io_tx, file_io_rx) = crossbeam_channel::unbounded();
 
         let mut app = Self {
-            agent_tx,
+            agent_tx: agent_tx.clone(),
             agent_rx,
             workspace_root: workspace_root.clone(),
             tabs: tabs.clone(),
@@ -897,7 +899,7 @@ impl VelocityApp {
             selected_member_id: None,
             team_gallery_expanded: None,
             team_builder_chat: crate::editor::team_builder_chat::TeamBuilderChat::default(),
-            // Lightweight UI manager that forwards team actions to the agent runtime
+            // UI-facing manager that bridges Team Studio controls to the agent runtime.
             team_manager: crate::editor::app::team_manager::TeamManager::new(agent_tx.clone()),
             agent_ui_state: AgentUiState::default(),
             task_timeline: TTState::default(),

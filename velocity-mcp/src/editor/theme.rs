@@ -258,22 +258,25 @@ impl AppearanceSettings {
                 profile,
                 theme: ThemeVariant::Midnight,
                 density: Density::Comfortable,
-                ui_scale: 1.0,
-                code_scale: 1.0,
+                // Match Accessibility scale for consistent readability across panels
+                ui_scale: 1.15,
+                code_scale: 1.12,
             },
             WorkspaceProfile::AutomationOperator => Self {
                 profile,
                 theme: ThemeVariant::Operator,
                 density: Density::Compact,
-                ui_scale: 0.98,
-                code_scale: 0.96,
+                // Larger UI for better legibility like Accessibility preset
+                ui_scale: 1.15,
+                code_scale: 1.12,
             },
             WorkspaceProfile::MissionControl => Self {
                 profile,
                 theme: ThemeVariant::Mission,
                 density: Density::Spacious,
-                ui_scale: 1.05,
-                code_scale: 1.0,
+                // Match Accessibility preset scale for consistency
+                ui_scale: 1.15,
+                code_scale: 1.12,
             },
             WorkspaceProfile::Accessibility => Self {
                 profile,

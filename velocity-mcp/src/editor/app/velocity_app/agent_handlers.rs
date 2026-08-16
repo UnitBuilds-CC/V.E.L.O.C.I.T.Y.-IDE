@@ -537,6 +537,8 @@ impl VelocityApp {
                     }
                 }
                 AgentToUiMessage::ToolExecutionStarted { tool_name } => {
+                    // Surface to Team Studio activity log
+                    self.team_manager.push_log(format!("Tool started: {}", tool_name));
                     self.agent_ui_state.metrics.state =
                         crate::editor::agent_ui_state::AgentState::Running;
                     self.agent_ui_state.metrics.tool_call_count += 1;
@@ -576,6 +578,8 @@ impl VelocityApp {
                     )));
                 }
                 AgentToUiMessage::ToolExecutionFinished { tool_name, result } => {
+                    // Surface to Team Studio activity log
+                    self.team_manager.push_log(format!("Tool finished: {} -> {}", tool_name, result));
                     self.agent_ui_state.metrics.state =
                         crate::editor::agent_ui_state::AgentState::Running;
                     // Record metrics snapshot for the history ring buffer.
@@ -601,6 +605,8 @@ impl VelocityApp {
                     self.chat.agent_active = true;
                 }
                 AgentToUiMessage::StatusUpdate(message) => {
+                    // Surface status updates into Team Studio log as well.
+                    self.team_manager.push_log(format!("Status: {}", message));
                     if message.to_lowercase().contains("model catalog") {
                         self.models_loading = false;
                         self.chat.models_loading = false;
@@ -622,6 +628,7 @@ impl VelocityApp {
                     self.status_message = message;
                 }
                 AgentToUiMessage::AgentFinished => {
+                    self.team_manager.push_log("Agent finished".to_string());
                     self.agent_ui_state.metrics.state =
                         crate::editor::agent_ui_state::AgentState::Idle;
                     if self.current_agent_task_id != 0 {
