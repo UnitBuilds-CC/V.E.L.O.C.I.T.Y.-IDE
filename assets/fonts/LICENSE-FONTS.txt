@@ -1,0 +1,13 @@
+This repository includes the following freely-licensed fonts for deterministic rendering and distribution:
+
+1) JetBrains Mono (included TTFs)
+   - License: Apache License 2.0
+   - Source: https://github.com/JetBrains/JetBrainsMono
+   - Notes: Bundled font files were downloaded from JetBrains release archive. Redistribution permitted under Apache-2.0.
+
+2) Inter (included TTFs / variable fonts)
+   - License: SIL Open Font License 1.1 (OFL)
+   - Source: https://github.com/rsms/inter
+   - Notes: Bundled font files were downloaded from the Inter release archive. Redistribution permitted under the SIL OFL.
+
+Ensure downstream redistributions preserve the corresponding license texts when required by the licenses (see included AUTHORS.txt / OFL.txt files where applicable).
