@@ -142,6 +142,24 @@ pub struct GitTabData<'a> {
     pub branch: Option<&'a str>,
     pub changed_files: &'a [PathBuf],
     pub workspace_root: &'a Path,
+    /// Full status entries for staging UI (if available).
+    pub status_entries: &'a [crate::editor::git_ui::GitStatusEntry],
+}
+
+/// Action returned by the git tab UI.
+pub enum GitTabAction {
+    /// Open a file in the editor.
+    OpenFile(PathBuf),
+    /// Stage a specific file.
+    StageFile(PathBuf),
+    /// Unstage a specific file.
+    UnstageFile(PathBuf),
+    /// Stage all files.
+    StageAll,
+    /// Unstage all files.
+    UnstageAll,
+    /// No action.
+    None,
 }
 
 /// Flow entry for the Flows sidebar tab.
@@ -207,8 +225,8 @@ pub fn render_git_content(
     ui: &mut egui::Ui,
     data: &GitTabData,
     palette: IdePalette,
-) -> Option<PathBuf> {
-    let mut clicked_file = None;
+) -> GitTabAction {
+    let mut action = GitTabAction::None;
     ui.label(
         egui::RichText::new("\u{2442} Source Control")
             .size(11.0)
@@ -234,8 +252,11 @@ pub fn render_git_content(
     });
     ui.add_space(6.0);
 
-    // Changed files
-    if data.changed_files.is_empty() {
+    // Use full status entries if available, otherwise fall back to flat file list
+    let has_entries = !data.status_entries.is_empty();
+    let has_files = !data.changed_files.is_empty();
+
+    if !has_entries && !has_files {
         ui.add_space(8.0);
         ui.vertical_centered(|ui| {
             ui.label(
@@ -256,7 +277,131 @@ pub fn render_git_content(
                     .color(palette.text_muted.gamma_multiply(0.7)),
             );
         });
+    } else if has_entries {
+        // Full staging UI with staged/unstaged sections
+        let staged: Vec<_> = data.status_entries.iter().filter(|e| e.staged).collect();
+        let unstaged: Vec<_> = data.status_entries.iter().filter(|e| !e.staged).collect();
+
+        // Staged changes section
+        ui.horizontal(|ui| {
+            ui.label(
+                egui::RichText::new(format!("Staged ({})", staged.len()))
+                    .size(10.0)
+                    .strong()
+                    .color(palette.success),
+            );
+            if !staged.is_empty() {
+                if ui.small_button("Unstage All").clicked() {
+                    action = GitTabAction::UnstageAll;
+                }
+            }
+        });
+        if staged.is_empty() {
+            ui.label(
+                egui::RichText::new("  No staged changes")
+                    .size(8.0)
+                    .color(palette.text_muted),
+            );
+        } else {
+            egui::ScrollArea::vertical()
+                .max_height(120.0)
+                .show(ui, |ui| {
+                    for entry in &staged {
+                        let name = entry.path.to_string_lossy();
+                        let status_color = match entry.status {
+                            crate::editor::git_ui::GitFileStatus::Modified => palette.warning,
+                            crate::editor::git_ui::GitFileStatus::Added => palette.success,
+                            crate::editor::git_ui::GitFileStatus::Deleted => palette.error,
+                            _ => palette.text_muted,
+                        };
+                        ui.horizontal(|ui| {
+                            if ui.small_button("\u{2212}").clicked() {
+                                action = GitTabAction::UnstageFile(entry.path.clone());
+                            }
+                            ui.label(
+                                egui::RichText::new(entry.status.icon())
+                                    .monospace()
+                                    .size(9.0)
+                                    .strong()
+                                    .color(status_color),
+                            );
+                            if ui
+                                .link(
+                                    egui::RichText::new(name.as_ref())
+                                        .size(9.0)
+                                        .color(palette.text),
+                                )
+                                .clicked()
+                            {
+                                action = GitTabAction::OpenFile(entry.path.clone());
+                            }
+                        });
+                    }
+                });
+        }
+
+        ui.add_space(6.0);
+
+        // Unstaged changes section
+        ui.horizontal(|ui| {
+            ui.label(
+                egui::RichText::new(format!("Changes ({})", unstaged.len()))
+                    .size(10.0)
+                    .strong()
+                    .color(palette.warning),
+            );
+            if !unstaged.is_empty() {
+                if ui.small_button("Stage All").clicked() {
+                    action = GitTabAction::StageAll;
+                }
+            }
+        });
+        if unstaged.is_empty() {
+            ui.label(
+                egui::RichText::new("  No unstaged changes")
+                    .size(8.0)
+                    .color(palette.text_muted),
+            );
+        } else {
+            egui::ScrollArea::vertical()
+                .max_height(140.0)
+                .show(ui, |ui| {
+                    for entry in &unstaged {
+                        let name = entry.path.to_string_lossy();
+                        let status_color = match entry.status {
+                            crate::editor::git_ui::GitFileStatus::Modified => palette.warning,
+                            crate::editor::git_ui::GitFileStatus::Added => palette.success,
+                            crate::editor::git_ui::GitFileStatus::Deleted => palette.error,
+                            crate::editor::git_ui::GitFileStatus::Untracked => palette.text_muted,
+                            _ => palette.text_muted,
+                        };
+                        ui.horizontal(|ui| {
+                            if ui.small_button("+").clicked() {
+                                action = GitTabAction::StageFile(entry.path.clone());
+                            }
+                            ui.label(
+                                egui::RichText::new(entry.status.icon())
+                                    .monospace()
+                                    .size(9.0)
+                                    .strong()
+                                    .color(status_color),
+                            );
+                            if ui
+                                .link(
+                                    egui::RichText::new(name.as_ref())
+                                        .size(9.0)
+                                        .color(palette.text),
+                                )
+                                .clicked()
+                            {
+                                action = GitTabAction::OpenFile(entry.path.clone());
+                            }
+                        });
+                    }
+                });
+        }
     } else {
+        // Fallback: flat file list (no staging info)
         ui.label(
             egui::RichText::new(format!("Changes ({})", data.changed_files.len()))
                 .size(10.0)
@@ -279,12 +424,12 @@ pub fn render_git_content(
                         )
                         .clicked()
                     {
-                        clicked_file = Some(file.clone());
+                        action = GitTabAction::OpenFile(file.clone());
                     }
                 }
             });
     }
-    clicked_file
+    action
 }
 
 /// Render the Flows tab with real automation flow data.

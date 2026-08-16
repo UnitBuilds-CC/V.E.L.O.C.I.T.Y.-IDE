@@ -1516,11 +1516,38 @@ impl eframe::App for VelocityApp {
                                 branch: branch.as_deref(),
                                 changed_files: &changed,
                                 workspace_root: &self.workspace_root,
+                                status_entries: &self.git_state.entries,
                             };
-                            if let Some(file) =
-                                crate::editor::sidebar_tabs::render_git_content(ui, &data, palette)
-                            {
-                                self.open_editor(Some(file));
+                            let git_action =
+                                crate::editor::sidebar_tabs::render_git_content(ui, &data, palette);
+                            let root = self.workspace_root.clone();
+                            match git_action {
+                                crate::editor::sidebar_tabs::GitTabAction::OpenFile(f) => {
+                                    self.open_editor(Some(f));
+                                }
+                                crate::editor::sidebar_tabs::GitTabAction::StageFile(f) => {
+                                    self.git_state.stage_file(&root, &f);
+                                }
+                                crate::editor::sidebar_tabs::GitTabAction::UnstageFile(f) => {
+                                    self.git_state.unstage_file(&root, &f);
+                                }
+                                crate::editor::sidebar_tabs::GitTabAction::StageAll => {
+                                    self.git_state.stage_all(&root);
+                                }
+                                crate::editor::sidebar_tabs::GitTabAction::UnstageAll => {
+                                    // Unstage each staged file
+                                    let staged: Vec<PathBuf> = self
+                                        .git_state
+                                        .entries
+                                        .iter()
+                                        .filter(|e| e.staged)
+                                        .map(|e| e.path.clone())
+                                        .collect();
+                                    for f in staged {
+                                        self.git_state.unstage_file(&root, &f);
+                                    }
+                                }
+                                crate::editor::sidebar_tabs::GitTabAction::None => {}
                             }
                             // Commit UI
                             ui.separator();
