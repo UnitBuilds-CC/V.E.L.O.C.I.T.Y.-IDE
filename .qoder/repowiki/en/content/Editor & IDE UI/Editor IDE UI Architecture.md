@@ -93,10 +93,22 @@ The editor embeds the browser engine via `editor/browser/`:
 
 ## Work Modes
 
-1. **Code Mode**: File tree + code editor + chat sidebar
-2. **Browser Mode**: Browser panel + agent controls + session list
-3. **Orchestrator Mode**: Task timeline + execution panel + agent status
-4. **Review Mode**: Diff view + agent commentary + approval controls
+Workspace profiles (`WorkspaceProfile` enum in `theme.rs`) with short labels:
+
+| Profile | Short Label | Default Panels |
+|---------|-------------|----------------|
+| `Coder` | "Build" | File tree + code editor + chat |
+| `AutomationOperator` | "Automate" | Orchestrator + chat + output |
+| `MissionControl` | "Mission" | Mission control + chat + output |
+| `Accessibility` | "Access" | Everything visible |
+
+## Team Studio Direct Creation
+
+`team_studio_ui.rs` provides a two-column direct creation layout:
+- **Create a team**: Name + purpose fields, creates empty `ExpertTeam`, auto-expands gallery
+- **Create an agent**: Name, role, scope (comma-separated paths), instructions + team assignment combo box. Creates `ExpertMember` and assigns to selected team
+- Both flows use draft fields on `VelocityApp` and persist via `save_expert_teams()`
+- Toast notifications for success, duplicate names, and save failures
 
 **Section sources**
 - [velocity-mcp/src/editor/app/velocity_app/struct_def.rs](file://velocity-mcp/src/editor/app/velocity_app/struct_def.rs)

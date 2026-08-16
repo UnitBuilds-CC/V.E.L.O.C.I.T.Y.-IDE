@@ -32,4 +32,4 @@ None. This rule applies to all files in all crates.
 
 | File | LOC | Notes |
 |------|-----|-------|
-| `velocity-mcp/src/agent/executor/thread.rs` | 1078 | Agent thread entry, API key resolution, reasoning loop spawn. Needs split. |
+| `velocity-mcp/src/agent/executor/thread.rs` | 1041 | Agent thread entry, API key resolution, reasoning loop spawn, FetchPanelData handler with run_build action. Needs split. |

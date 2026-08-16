@@ -29,7 +29,7 @@ The agent reasoning engine implements a 4-provider automatic failover chain: Clo
 | `agent/models.rs` | Model definitions, UiToAgentMessage, AgentToUiMessage |
 | `agent/memory_store.rs` | Compressed history |
 | `agent/reasoning.rs` | Effort level routing |
-| `agent/executor/thread.rs` | Agent thread entry, API key resolution, reasoning loop spawn (1078 LOC — exceeds sub-1k rule) |
+| `agent/executor/thread.rs` | Agent thread entry, API key resolution, reasoning loop spawn, FetchPanelData handler with run_build cargo check action (1041 LOC — exceeds sub-1k rule) |
 
 ## Agent-UI Message Types
 
