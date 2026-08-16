@@ -718,6 +718,14 @@ impl eframe::App for VelocityApp {
             self.check_external_file_changes();
         }
 
+        // Poll background file-tree build results (non-blocking).
+        while let Ok((tree, mtime)) = self.file_tree_rx.try_recv() {
+            self.file_tree = Some(tree);
+            self.last_tree_mtime = mtime;
+            self.last_tree_update = std::time::Instant::now();
+            self.tree_build_in_flight = false;
+        }
+
         // Poll OS-level file watcher for instant external change detection.
         let watcher_events = if let Some(watcher) = &mut self.file_watcher {
             let evts = watcher.poll();
@@ -726,10 +734,9 @@ impl eframe::App for VelocityApp {
         } else {
             Vec::new()
         };
+        let mut force_refresh = false;
         if !watcher_events.is_empty() {
-            // Force a file tree refresh so new/deleted files appear immediately.
-            self.file_tree = Some(build_file_tree(&self.workspace_root));
-            self.last_tree_update = std::time::Instant::now();
+            force_refresh = true;
             // Reload any open buffers that were externally modified.
             for ev in &watcher_events {
                 self.reload_buffer_if_open(&ev.path);
@@ -739,18 +746,19 @@ impl eframe::App for VelocityApp {
         let now = std::time::Instant::now();
         // Only re-walk the workspace when its top-level mtime changes (a file/dir was
         // added/removed) or, as a safety net for nested changes, every 30 seconds.
-        // This reduces UI stutter from constant directory walking.
-        let root_mtime = std::fs::metadata(&self.workspace_root)
-            .and_then(|m| m.modified())
-            .ok();
-        let mtime_changed = root_mtime != self.last_tree_mtime;
-        if self.file_tree.is_none()
-            || mtime_changed
-            || now.duration_since(self.last_tree_update) > std::time::Duration::from_secs(30)
-        {
-            self.file_tree = Some(build_file_tree(&self.workspace_root));
-            self.last_tree_update = now;
-            self.last_tree_mtime = root_mtime;
+        // The actual walk runs on a background thread to keep the UI responsive.
+        let needs_rebuild = force_refresh
+            || self.file_tree.is_none()
+            || now.duration_since(self.last_tree_update) > std::time::Duration::from_secs(30);
+        if needs_rebuild && !self.tree_build_in_flight {
+            self.tree_build_in_flight = true;
+            let root = self.workspace_root.clone();
+            let tx = self.file_tree_tx.clone();
+            std::thread::spawn(move || {
+                let mtime = std::fs::metadata(&root).and_then(|m| m.modified()).ok();
+                let tree = build_file_tree(&root);
+                let _ = tx.send((tree, mtime));
+            });
         }
 
         let mut cursor_pos = None;

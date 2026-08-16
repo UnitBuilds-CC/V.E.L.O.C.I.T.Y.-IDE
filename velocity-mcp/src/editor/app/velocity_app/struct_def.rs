@@ -251,6 +251,12 @@ pub struct VelocityApp {
     pub last_tree_update: std::time::Instant,
     /// Last observed mtime of the workspace root (skips tree rebuilds when unchanged).
     pub last_tree_mtime: Option<std::time::SystemTime>,
+    /// Channel for receiving completed background file-tree builds.
+    pub file_tree_rx: crossbeam_channel::Receiver<(FileNode, Option<std::time::SystemTime>)>,
+    /// Sending end kept so we can clone it for each background spawn.
+    pub file_tree_tx: crossbeam_channel::Sender<(FileNode, Option<std::time::SystemTime>)>,
+    /// True while a background tree build is running.
+    pub tree_build_in_flight: bool,
     pub toasts: crate::editor::toast::ToastQueue,
     pub orchestrator: OrchestratorPanel,
     pub mission_control: MissionControlState,
@@ -801,6 +807,8 @@ impl VelocityApp {
 
         let provider_settings = load_workspace_provider_settings(&workspace_root);
         let expert_teams = crate::editor::expert_team::load_expert_teams(&workspace_root);
+        let (tree_tx, tree_rx) = crossbeam_channel::unbounded();
+
         let mut app = Self {
             agent_tx,
             agent_rx,
@@ -925,6 +933,9 @@ impl VelocityApp {
             file_tree: None,
             last_tree_update: std::time::Instant::now(),
             last_tree_mtime: None,
+            file_tree_rx: tree_rx,
+            file_tree_tx: tree_tx,
+            tree_build_in_flight: false,
             toasts: crate::editor::toast::ToastQueue::default(),
             orchestrator: OrchestratorPanel::new(),
             mission_control: MissionControlState::new(),

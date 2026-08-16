@@ -604,9 +604,11 @@ impl LspManager {
         let Some(lang) = lang else { return };
         if let Some(server) = self.server_for_extension(ext) {
             if already {
-                let _ = server.did_change(path, content, next_version);
-            } else {
-                let _ = server.did_open(path, content, &lang);
+                if let Err(e) = server.did_change(path, content, next_version) {
+                    log::warn!("LSP did_change failed: {}", e);
+                }
+            } else if let Err(e) = server.did_open(path, content, &lang) {
+                log::warn!("LSP did_open failed: {}", e);
             }
         }
         if !already {
@@ -622,7 +624,9 @@ impl LspManager {
             return;
         }
         if let Some(server) = self.server_for_extension(ext) {
-            let _ = server.did_close(path);
+            if let Err(e) = server.did_close(path) {
+                log::warn!("LSP did_close failed: {}", e);
+            }
         }
         self.open_docs.remove(path);
         self.doc_versions.remove(path);

@@ -386,17 +386,34 @@ impl TerminalState {
         self.spawn_process(&shell, &[]);
     }
 
-    /// Spawn a process with PTY.
+    /// Spawn a process with a real PTY (ConPTY on Windows, posix pty on Unix).
     pub fn spawn_process(&mut self, program: &str, args: &[&str]) {
-        use std::process::{Command, Stdio};
+        use portable_pty::{native_pty_system, CommandBuilder, PtySize};
 
-        let mut child = match Command::new(program)
-            .args(args)
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-        {
+        let pty_system = native_pty_system();
+        let pty_pair = match pty_system.openpty(PtySize {
+            rows: self.buffer.lock().map(|b| b.rows as u16).unwrap_or(24),
+            cols: self.buffer.lock().map(|b| b.cols as u16).unwrap_or(80),
+            pixel_width: 0,
+            pixel_height: 0,
+        }) {
+            Ok(pair) => pair,
+            Err(e) => {
+                if let Ok(mut buf) = self.buffer.lock() {
+                    let msg = format!("Failed to create PTY: {}\r\n", e);
+                    buf.process_output(msg.as_bytes());
+                }
+                return;
+            }
+        };
+
+        let mut cmd = CommandBuilder::new(program);
+        cmd.args(args);
+        if let Ok(cwd) = std::env::current_dir() {
+            cmd.cwd(cwd);
+        }
+
+        let mut child = match pty_pair.slave.spawn_command(cmd) {
             Ok(c) => c,
             Err(e) => {
                 if let Ok(mut buf) = self.buffer.lock() {
@@ -406,21 +423,23 @@ impl TerminalState {
                 return;
             }
         };
+        // Drop the slave so the master side is the only reference
+        drop(pty_pair.slave);
 
         self.running = true;
 
-        // Take stdin for writing
-        if let Some(stdin) = child.stdin.take() {
-            self.pty_writer = Some(Arc::new(Mutex::new(Box::new(stdin))));
+        // Wrap the master's writer for input
+        if let Ok(writer) = pty_pair.master.take_writer() {
+            self.pty_writer = Some(Arc::new(Mutex::new(Box::new(writer))));
         }
 
-        // Spawn reader thread for stdout
+        // Spawn reader thread for PTY output
         let buffer = self.buffer.clone();
-        if let Some(mut stdout) = child.stdout.take() {
+        if let Ok(mut reader) = pty_pair.master.try_clone_reader() {
             std::thread::spawn(move || {
                 let mut buf = [0u8; 4096];
                 loop {
-                    match stdout.read(&mut buf) {
+                    match reader.read(&mut buf) {
                         Ok(0) => break,
                         Ok(n) => {
                             if let Ok(mut term_buf) = buffer.lock() {
@@ -433,24 +452,14 @@ impl TerminalState {
             });
         }
 
-        // Spawn reader thread for stderr
+        // Monitor child exit in a background thread
         let buffer2 = self.buffer.clone();
-        if let Some(mut stderr) = child.stderr.take() {
-            std::thread::spawn(move || {
-                let mut buf = [0u8; 4096];
-                loop {
-                    match stderr.read(&mut buf) {
-                        Ok(0) => break,
-                        Ok(n) => {
-                            if let Ok(mut term_buf) = buffer2.lock() {
-                                term_buf.process_output(&buf[..n]);
-                            }
-                        }
-                        Err(_) => break,
-                    }
-                }
-            });
-        }
+        std::thread::spawn(move || {
+            let _ = child.wait();
+            if let Ok(mut buf) = buffer2.lock() {
+                buf.process_output(b"\r\n[Process exited]\r\n");
+            }
+        });
     }
 
     /// Render the terminal panel in egui.
