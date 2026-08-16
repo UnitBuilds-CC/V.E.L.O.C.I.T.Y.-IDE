@@ -20,7 +20,7 @@ The MCP tool registry (`velocity-mcp/src/registry/`) defines and dispatches all 
 
 | Category | Files | Tools |
 |----------|-------|-------|
-| System | `system_tools.rs`, `tool_definitions/system.rs` | File read/write, shell commands, search, git |
+| System | `system_tools.rs`, `tool_definitions/system.rs` | File read/write, shell commands, search, git, `fetch_panel_data` |
 | Browser | `browser_tools/` (7 files) | Navigation, inspection, rendering, workflows, sessions |
 | Team | `team_tools.rs`, `tool_definitions/team.rs` | Multi-agent coordination, worktree management |
 | WA | `wa_tools.rs`, `tool_definitions/wa.rs` | Desktop automation, UI interaction, screenshots |
@@ -32,6 +32,20 @@ The MCP tool registry (`velocity-mcp/src/registry/`) defines and dispatches all 
 3. Category handler validates parameters
 4. Tool executes and returns result
 5. Result streamed back to agent loop
+
+### System Tools — `fetch_panel_data`
+
+The `fetch_panel_data` tool retrieves structured data for IDE panels via the agent:
+
+| Panel Slug | Data Returned |
+|------------|---------------|
+| `teams` | Expert teams with members, roles, providers, models, skills |
+| `wiki` | Wiki file pages with relationship counts (via `velocity_ide::wiki`) |
+| `graph` | Top 20 workspace files by symbol count |
+| `bookmarks` | User bookmarks from `.velocity/bookmarks.json` |
+| `files` | Directory listing with name, is_dir, size (supports `relativePath`) |
+
+Agent messages: `UiToAgentMessage::FetchPanelData { panel }` → `AgentToUiMessage::PanelData { panel, data }`.
 
 ### Browser Tools (`registry/browser_tools/`)
 

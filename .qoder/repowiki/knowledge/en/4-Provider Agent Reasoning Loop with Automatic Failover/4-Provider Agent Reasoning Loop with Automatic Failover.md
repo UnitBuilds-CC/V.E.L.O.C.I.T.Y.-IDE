@@ -26,9 +26,15 @@ The agent reasoning engine implements a 4-provider automatic failover chain: Clo
 | `agent/executor/dispatch.rs` | Provider selection and failover |
 | `agent/executor/loop_runner.rs` | Reasoning loop execution |
 | `agent/executor/team_routing.rs` | Multi-agent task routing |
-| `agent/models.rs` | Model definitions |
+| `agent/models.rs` | Model definitions, UiToAgentMessage, AgentToUiMessage |
 | `agent/memory_store.rs` | Compressed history |
 | `agent/reasoning.rs` | Effort level routing |
+| `agent/executor/thread.rs` | Agent thread entry, API key resolution, reasoning loop spawn (1078 LOC — exceeds sub-1k rule) |
+
+## Agent-UI Message Types
+
+- `UiToAgentMessage`: UserMessage, RunLocalRun, CancelTask, ReloadTeams, FetchPanelData { panel }
+- `AgentToUiMessage`: ChatHistoryRestored, ProviderChanged, PanelData { panel, data }
 
 ## Multi-Agent Features
 

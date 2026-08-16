@@ -18,11 +18,22 @@ The Velocity IDE is built on `egui 0.35`, a native immediate-mode GUI framework.
 
 The central `VelocityApp` struct (`struct_def.rs`) owns all IDE state:
 - Work mode (code, browser, orchestrator, review)
-- Panel visibility and docking
+- Panel visibility and docking with `mode_layouts` cache to reduce dock rebuild jitter
+- `use_unified_header: bool` — when true, suppresses legacy toolbar top panel
 - Active file buffers and cursor state
 - Agent session and chat history
 - Browser session state
 - Orchestrator task state
+- Team Studio draft fields: `team_name_input`, `team_description_input`, `team_agent_name_input`, `team_agent_role_input`, `team_agent_scope_input`, `team_agent_instructions_input`, `team_agent_target_index`
+- `team_manager: TeamManager` — bridges Team Studio controls to agent runtime
+
+### Workspace Preset Application
+
+`apply_workspace_preset()` uses layout caching to avoid visual jitter:
+- Stores per-profile layouts in `mode_layouts` map
+- Only rebuilds dock when sidebar visibility or tab kinds actually change
+- Constrains sidebar widths per profile (Coder/AutomationOperator: 200-420px left, 240-420px right)
+- Only changes focus panel when dock was rebuilt or focused kind is missing
 
 ## Panel Architecture
 

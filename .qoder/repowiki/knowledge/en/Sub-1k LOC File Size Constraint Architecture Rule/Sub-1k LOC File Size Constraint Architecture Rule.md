@@ -27,3 +27,9 @@ Every source file in the Velocity workspace must remain under 1,000 lines of cod
 ## Exceptions
 
 None. This rule applies to all files in all crates.
+
+## Current Violations (as of 2026-08-17)
+
+| File | LOC | Notes |
+|------|-----|-------|
+| `velocity-mcp/src/agent/executor/thread.rs` | 1078 | Agent thread entry, API key resolution, reasoning loop spawn. Needs split. |
