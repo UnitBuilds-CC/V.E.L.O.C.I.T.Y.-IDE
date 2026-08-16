@@ -257,6 +257,14 @@ pub struct VelocityApp {
     pub file_tree_tx: crossbeam_channel::Sender<(FileNode, Option<std::time::SystemTime>)>,
     /// True while a background tree build is running.
     pub tree_build_in_flight: bool,
+    /// Channel for receiving completed background file I/O results.
+    pub file_io_rx: crossbeam_channel::Receiver<FileIoResult>,
+    /// Sending end cloned for each background file operation.
+    pub file_io_tx: crossbeam_channel::Sender<FileIoResult>,
+    /// Tab IDs with a pending background file load (prevents duplicate spawns).
+    pub pending_file_loads: std::collections::HashSet<TabId>,
+    /// Cached disk content for the active change preview (avoids per-frame reads).
+    pub preview_disk_cache: Option<(std::path::PathBuf, std::time::SystemTime, String)>,
     pub toasts: crate::editor::toast::ToastQueue,
     pub orchestrator: OrchestratorPanel,
     pub mission_control: MissionControlState,
@@ -808,6 +816,7 @@ impl VelocityApp {
         let provider_settings = load_workspace_provider_settings(&workspace_root);
         let expert_teams = crate::editor::expert_team::load_expert_teams(&workspace_root);
         let (tree_tx, tree_rx) = crossbeam_channel::unbounded();
+        let (file_io_tx, file_io_rx) = crossbeam_channel::unbounded();
 
         let mut app = Self {
             agent_tx,
@@ -936,6 +945,10 @@ impl VelocityApp {
             file_tree_rx: tree_rx,
             file_tree_tx: tree_tx,
             tree_build_in_flight: false,
+            file_io_rx,
+            file_io_tx,
+            pending_file_loads: std::collections::HashSet::new(),
+            preview_disk_cache: None,
             toasts: crate::editor::toast::ToastQueue::default(),
             orchestrator: OrchestratorPanel::new(),
             mission_control: MissionControlState::new(),

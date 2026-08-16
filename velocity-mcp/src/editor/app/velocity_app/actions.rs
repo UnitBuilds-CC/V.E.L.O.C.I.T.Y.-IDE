@@ -1,4 +1,4 @@
-﻿use std::path::PathBuf;
+use std::path::PathBuf;
 
 use super::super::helpers::*;
 use super::super::types::*;
@@ -919,14 +919,33 @@ impl VelocityApp {
                 buffer_id: id.clone(),
             },
         };
-        let mut buf = EditorBuffer::default();
+        let buf = EditorBuffer::default();
         if let Some(ref p) = path {
-            if let Ok(content) = std::fs::read_to_string(p) {
-                buf.load_text(&content);
-                buf.disk_mtime = Self::file_mtime(p);
-            } else {
-                self.status_message = format!("Failed to read file: {:?}", p);
-            }
+            // Spawn a background thread to read the file so the UI stays responsive.
+            let tab_id = id.clone();
+            let file_path = p.clone();
+            let tx = self.file_io_tx.clone();
+            self.pending_file_loads.insert(id.clone());
+            std::thread::spawn(move || match std::fs::read_to_string(&file_path) {
+                Ok(content) => {
+                    let mtime = std::fs::metadata(&file_path)
+                        .and_then(|m| m.modified())
+                        .ok();
+                    let _ = tx.send(super::super::types::FileIoResult::FileLoaded {
+                        tab_id,
+                        path: file_path,
+                        content,
+                        mtime,
+                    });
+                }
+                Err(e) => {
+                    let _ = tx.send(super::super::types::FileIoResult::FileLoadFailed {
+                        tab_id,
+                        path: file_path,
+                        error: e.to_string(),
+                    });
+                }
+            });
         }
         self.buffers.insert(id.clone(), buf);
         self.tabs.push(tab.clone());
@@ -935,17 +954,6 @@ impl VelocityApp {
         }
         self.active_tab = Some(id.clone());
         self.touch_mru(&id);
-
-        // Announce the file to the LSP server so it starts providing diagnostics.
-        if let Some(ref p) = path {
-            if let Some(ext) = p.extension().and_then(|e| e.to_str()) {
-                if let Some(content) = self.buffers.get(&id).map(|b| b.content().to_string()) {
-                    if let Some(lsp) = self.lsp_manager.as_mut() {
-                        lsp.sync_document(ext, p, &content);
-                    }
-                }
-            }
-        }
     }
 
     /// Split the current editor view: open the same file in a new tab side-by-side.
@@ -974,12 +982,23 @@ impl VelocityApp {
             },
         };
 
-        // Share the same buffer content by copying it.
-        let mut buf = EditorBuffer::default();
-        if let Ok(content) = std::fs::read_to_string(&path) {
-            buf.load_text(&content);
-            buf.disk_mtime = Self::file_mtime(&path);
-        }
+        // Share the same buffer content by copying from the existing buffer.
+        let active_buf_id = self
+            .active_tab
+            .as_ref()
+            .and_then(|id| self.tabs.iter().find(|t| &t.id == id).map(|t| t.id.clone()));
+        let buf = if let Some(src_id) = active_buf_id {
+            if let Some(src) = self.buffers.get(&src_id) {
+                let mut b = EditorBuffer::default();
+                b.load_text(src.content());
+                b.disk_mtime = src.disk_mtime;
+                b
+            } else {
+                EditorBuffer::default()
+            }
+        } else {
+            EditorBuffer::default()
+        };
         self.buffers.insert(id.clone(), buf);
         self.tabs.push(tab.clone());
 
@@ -1211,5 +1230,61 @@ impl VelocityApp {
             }
         }
         self.status_message = format!("Saved {} buffers", saved);
+    }
+
+    /// Drain all pending background file I/O results and apply them.
+    /// Called once per frame from the render loop.
+    pub fn poll_file_io_results(&mut self) {
+        while let Ok(result) = self.file_io_rx.try_recv() {
+            self.apply_file_io_result(result);
+        }
+    }
+
+    fn apply_file_io_result(&mut self, result: FileIoResult) {
+        match result {
+            FileIoResult::FileLoaded {
+                tab_id,
+                path,
+                content,
+                mtime,
+            } => {
+                self.pending_file_loads.remove(&tab_id);
+                if let Some(buf) = self.buffers.get_mut(&tab_id) {
+                    buf.load_text(&content);
+                    buf.disk_mtime = mtime;
+                }
+                // Announce the file to the LSP server now that content is loaded.
+                if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
+                    if let Some(lsp) = self.lsp_manager.as_mut() {
+                        lsp.sync_document(ext, &path, &content);
+                    }
+                }
+            }
+            FileIoResult::FileLoadFailed {
+                tab_id,
+                path,
+                error,
+            } => {
+                self.pending_file_loads.remove(&tab_id);
+                self.status_message = format!("Failed to read file: {:?}", path);
+                self.toasts.push(crate::editor::toast::Toast::error(format!(
+                    "Failed to open: {}",
+                    path.file_name().unwrap_or_default().to_string_lossy()
+                )));
+            }
+            FileIoResult::FileSaved { path } => {
+                self.toasts
+                    .push(crate::editor::toast::Toast::success(format!(
+                        "Saved {}",
+                        path.file_name().unwrap_or_default().to_string_lossy()
+                    )));
+            }
+            FileIoResult::FileSaveFailed { path, error } => {
+                self.status_message = format!("Error saving {}: {}", path.display(), error);
+                self.toasts.push(crate::editor::toast::Toast::error(format!(
+                    "Failed to save: {error}"
+                )));
+            }
+        }
     }
 }

@@ -1,4 +1,4 @@
-﻿use std::path::PathBuf;
+use std::path::PathBuf;
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct TabId(pub u64);
@@ -294,4 +294,26 @@ pub struct FileNode {
     pub path: PathBuf,
     pub is_dir: bool,
     pub children: Option<Vec<FileNode>>,
+}
+
+/// Result of a background file I/O operation, sent back to the UI thread.
+#[derive(Debug, Clone)]
+pub enum FileIoResult {
+    /// File content was read successfully.
+    FileLoaded {
+        tab_id: TabId,
+        path: PathBuf,
+        content: String,
+        mtime: Option<std::time::SystemTime>,
+    },
+    /// File read failed.
+    FileLoadFailed {
+        tab_id: TabId,
+        path: PathBuf,
+        error: String,
+    },
+    /// File content was written successfully.
+    FileSaved { path: PathBuf },
+    /// File write failed.
+    FileSaveFailed { path: PathBuf, error: String },
 }

@@ -726,6 +726,9 @@ impl eframe::App for VelocityApp {
             self.tree_build_in_flight = false;
         }
 
+        // Poll background file I/O results (non-blocking).
+        self.poll_file_io_results();
+
         // Poll OS-level file watcher for instant external change detection.
         let watcher_events = if let Some(watcher) = &mut self.file_watcher {
             let evts = watcher.poll();
