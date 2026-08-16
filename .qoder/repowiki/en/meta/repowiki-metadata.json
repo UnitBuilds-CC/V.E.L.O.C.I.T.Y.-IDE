@@ -1,0 +1,86 @@
+{
+  "schema_version": 1,
+  "project": "Velocity IDE",
+  "locale": "en-US",
+  "exported_at": "2026-08-17T00:00:00Z",
+  "workspace": {
+    "root": "Kimi-Code/",
+    "crates": [
+      {
+        "name": "velocity-mcp",
+        "path": "velocity-mcp/",
+        "file_count": 220,
+        "role": "MCP server, IDE editor, agent loop, Windows automation"
+      },
+      {
+        "name": "velocity-browser",
+        "path": "velocity-browser/",
+        "file_count": 109,
+        "role": "Pure-Rust browser engine (DOM, layout, JS, net, agentic)"
+      },
+      {
+        "name": "velocity-ide",
+        "path": "velocity-ide/",
+        "file_count": 78,
+        "role": "NDA compiler, JIT, model inference, site map"
+      },
+      {
+        "name": "drone",
+        "path": "drone/",
+        "file_count": 5,
+        "role": "Safety monitor process"
+      },
+      {
+        "name": "e2e",
+        "path": "e2e/",
+        "file_count": 4,
+        "role": "End-to-end integration tests"
+      }
+    ],
+    "total_source_files": 416,
+    "key_constraints": [
+      "Sub-1,000 LOC per file (hard rule)",
+      "NDA binary format is canonical (JSON is adapter only)",
+      "SHA-256 Merkle integrity for all persisted state",
+      "crossbeam channels for inter-thread communication",
+      "egui 0.35 for native GUI (no web tech stack)",
+      "4-provider failover: Cloudflare → OpenRouter → Azure → Ollama"
+    ]
+  },
+  "content_pages": {
+    "count": 10,
+    "categories": [
+      "Getting Started",
+      "Development Guide",
+      "Troubleshooting & FAQ",
+      "Core Concepts & Architecture",
+      "Agent & Orchestration",
+      "Browser Engine & Rendering",
+      "Compiler & NDA Pipeline",
+      "Editor & IDE UI",
+      "API Reference & Development Interface"
+    ]
+  },
+  "knowledge_cards": {
+    "count": 10,
+    "topics": [
+      "Workspace Root Crate",
+      "MCP Server and IDE Editor",
+      "Browser Engine",
+      "Compiler and NDA Pipeline",
+      "4-Provider Agent Reasoning Loop",
+      "NDA Binary Format",
+      "Sub-1k LOC Rule",
+      "egui GUI Theme",
+      "Windows UI Automation FFI",
+      "Cargo Workspace Build"
+    ]
+  },
+  "skills": {
+    "count": 2,
+    "names": [
+      "rust-code-review",
+      "agent-test-writer"
+    ]
+  }
+}

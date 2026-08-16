@@ -1,0 +1,106 @@
+# Knowledge Card Index — Velocity IDE
+schema_version: 1
+locale: en-US
+branch: main
+nodes_managed: true
+exported_at: "2026-08-17T00:00:00Z"
+classification_summary:
+    total_files: 407
+    real: 407
+    generated: 0
+    template: 0
+    stub: 0
+    critical_modules:
+        - module: velocity-mcp/src/agent
+          files: 22
+          status: "4-provider AI reasoning loop"
+        - module: velocity-mcp/src/editor
+          files: 98
+          status: "egui IDE interface"
+        - module: velocity-browser/src
+          files: 109
+          status: "Pure-Rust browser engine"
+        - module: velocity-ide/src/compiler
+          files: 45
+          status: "NDA compiler pipeline"
+modules:
+    "":
+        dir_name: Velocity IDE Workspace Root
+        title: Velocity IDE Workspace Root
+        scope:
+            - README.md
+            - Cargo.toml
+            - AGENTS.md
+            - PRODUCT.md
+            - DELIVERY.md
+        source_files:
+            - Cargo.toml
+    velocity-mcp:
+        dir_name: Velocity MCP Server and IDE Editor
+        title: Velocity MCP Server and IDE Editor
+        scope:
+            - velocity-mcp/Cargo.toml
+            - velocity-mcp/src/main.rs
+            - velocity-mcp/src/lib.rs
+            - velocity-mcp/src/agent/
+            - velocity-mcp/src/editor/
+            - velocity-mcp/src/registry/
+            - velocity-mcp/src/automation/
+            - velocity-mcp/src/orchestrator/
+            - velocity-mcp/src/wa/
+            - velocity-mcp/src/protocol/
+            - velocity-mcp/src/compiler/
+            - velocity-mcp/src/connectors/
+            - velocity-mcp/src/ipc/
+            - velocity-mcp/src/security/
+            - velocity-mcp/src/benchmark/
+        source_files:
+            - velocity-mcp/src/main.rs
+            - velocity-mcp/src/lib.rs
+    velocity-browser:
+        dir_name: Velocity Browser Engine
+        title: Velocity Browser Engine
+        scope:
+            - velocity-browser/Cargo.toml
+            - velocity-browser/src/lib.rs
+            - velocity-browser/src/dom/
+            - velocity-browser/src/layout/
+            - velocity-browser/src/js/
+            - velocity-browser/src/net/
+            - velocity-browser/src/engine/
+            - velocity-browser/src/agentic/
+            - velocity-browser/src/parser/
+            - velocity-browser/src/style/
+        source_files:
+            - velocity-browser/src/lib.rs
+    velocity-ide:
+        dir_name: Velocity IDE Compiler and NDA Pipeline
+        title: Velocity IDE Compiler and NDA Pipeline
+        scope:
+            - velocity-ide/Cargo.toml
+            - velocity-ide/src/lib.rs
+            - velocity-ide/src/compiler/
+            - velocity-ide/src/model/
+            - velocity-ide/src/nda_int/
+            - velocity-ide/src/site_map/
+            - velocity-ide/src/sandbox/
+            - velocity-ide/src/wiki/
+        source_files:
+            - velocity-ide/src/lib.rs
+    drone:
+        dir_name: Drone Safety Monitor
+        title: Drone Safety Monitor
+        scope:
+            - drone/Cargo.toml
+            - drone/src/
+        source_files:
+            - drone/src/main.rs
+            - drone/src/lib.rs
+    e2e:
+        dir_name: End-to-End Test Harness
+        title: End-to-End Test Harness
+        scope:
+            - e2e/Cargo.toml
+            - e2e/tests/
+        source_files:
+            - e2e/src/lib.rs
