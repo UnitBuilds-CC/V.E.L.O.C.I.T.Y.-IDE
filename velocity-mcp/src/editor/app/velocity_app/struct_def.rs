@@ -897,6 +897,8 @@ impl VelocityApp {
             selected_member_id: None,
             team_gallery_expanded: None,
             team_builder_chat: crate::editor::team_builder_chat::TeamBuilderChat::default(),
+            // Lightweight UI manager that forwards team actions to the agent runtime
+            team_manager: crate::editor::app::team_manager::TeamManager::new(agent_tx.clone()),
             agent_ui_state: AgentUiState::default(),
             task_timeline: TTState::default(),
             smart_sidebar: SmartSidebarState::default(),

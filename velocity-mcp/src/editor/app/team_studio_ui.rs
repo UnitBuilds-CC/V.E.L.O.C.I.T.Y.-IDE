@@ -26,6 +26,21 @@ impl VelocityApp {
                         self.expert_teams = load_expert_teams(&self.workspace_root);
                         self.team_gallery_expanded = None;
                     }
+                    ui.add_space(6.0);
+                    if ui.button(RichText::new("Launch Team").small()).clicked() {
+                        if let Some(idx) = self.team_gallery_expanded {
+                            let slug = self.expert_teams[idx].slug();
+                            self.team_manager.launch_team(&slug);
+                            self.toasts.push(crate::editor::toast::Toast::info(format!("Launched team: {}", slug)));
+                        } else {
+                            self.toasts.push(crate::editor::toast::Toast::warn("Open a team card to launch it"));
+                        }
+                    }
+                    ui.add_space(4.0);
+                    if ui.button(RichText::new("Cancel Running").small()).clicked() {
+                        self.team_manager.cancel_running();
+                        self.toasts.push(crate::editor::toast::Toast::warn("Cancel requested"));
+                    }
                 });
             });
             ui.separator();
@@ -198,6 +213,16 @@ impl VelocityApp {
             });
 
             // ═══════════════════════════════════════════════════════════════
+            // TEAM BUILDER CHAT SECTION
+            // Small live log panel showing recent TeamManager entries
+            ui.add_space(6.0);
+            ui.collapsing(RichText::new("Team activity").strong(), |ui| {
+                ui.set_min_height(80.0);
+                for line in &self.team_manager.logs.iter().rev().take(8).cloned().collect::<Vec<_>>() {
+                    ui.label(RichText::new(line).size(9.0).color(palette.text_muted));
+                }
+            });
+
             // TEAM BUILDER CHAT SECTION
             // ═══════════════════════════════════════════════════════════════
             if let Some(sel) = newly_selected {
