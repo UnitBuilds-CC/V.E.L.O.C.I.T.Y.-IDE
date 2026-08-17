@@ -133,7 +133,7 @@ impl TelemetryCollector {
         let mut counters = self.counters.lock().unwrap();
         let counter = counters
             .entry(name.to_string())
-            .or_insert_with(|| AtomicU64::new(0));
+            .or_default();
         counter.fetch_add(amount, Ordering::Relaxed);
     }
 
@@ -165,7 +165,7 @@ impl TelemetryCollector {
     /// Record a value in a histogram
     pub fn histogram_record(&self, name: &str, value: f64) {
         let mut histograms = self.histograms.lock().unwrap();
-        let hist = histograms.entry(name.to_string()).or_insert_with(Vec::new);
+        let hist = histograms.entry(name.to_string()).or_default();
         hist.push(value);
         // Keep only last 1000 values
         if hist.len() > 1000 {
@@ -316,7 +316,7 @@ impl TelemetryCollector {
     pub fn export_to_file(&self, path: &std::path::Path) -> std::io::Result<()> {
         let json = self.export_json();
         let content = serde_json::to_string_pretty(&json)
-            .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
+            .map_err(std::io::Error::other)?;
         std::fs::write(path, content)
     }
 
