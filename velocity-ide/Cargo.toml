@@ -1,6 +1,6 @@
 [package]
 name        = "velocity-ide"
-version     = "0.1.0"
+version     = "1.0.0"
 edition     = "2021"
 description = "V.E.L.O.C.I.T.Y.-IDE — NDA-accelerated inference runtime"
 
