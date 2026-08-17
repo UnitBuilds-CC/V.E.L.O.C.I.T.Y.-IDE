@@ -1072,13 +1072,7 @@ impl eframe::App for VelocityApp {
                                     crate::editor::theme::WorkspaceProfile::MissionControl,
                                 ] {
                                     let selected = mode == active_mode;
-                                    let label = match mode {
-                                        crate::editor::theme::WorkspaceProfile::Coder => "Build",
-                                        crate::editor::theme::WorkspaceProfile::MissionControl => {
-                                            "Mission"
-                                        }
-                                        _ => unreachable!(),
-                                    };
+                                    let label = mode.short_label();
                                     if ui
                                         .selectable_label(
                                             selected,
