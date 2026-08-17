@@ -135,7 +135,7 @@ impl NdaHead {
         anyhow::ensure!(&buf[..4] == b"NDA\x01", "invalid NdaHead magic");
         let floats: Vec<f32> = buf[4..]
             .chunks_exact(4)
-            .map(|c| f32::from_le_bytes(c.try_into().unwrap()))
+            .map(|c| f32::from_le_bytes(c.try_into().expect("chunks_exact(4) always yields 4 bytes")))
             .collect();
         let n1 = Self::MID * Self::IN;
         let n2 = Self::MID;
