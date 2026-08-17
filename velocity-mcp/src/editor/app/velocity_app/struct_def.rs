@@ -544,9 +544,9 @@ impl VelocityApp {
         }
         self.thinking_enabled = preferences.thinking_enabled;
         self.left_sidebar_visible = preferences.left_sidebar_visible;
-        self.left_sidebar_width = preferences.left_sidebar_width.max(180.0);
+        self.left_sidebar_width = preferences.left_sidebar_width.clamp(180.0, 420.0);
         self.right_sidebar_visible = preferences.right_sidebar_visible;
-        self.right_sidebar_width = preferences.right_sidebar_width.max(220.0);
+        self.right_sidebar_width = preferences.right_sidebar_width.clamp(220.0, 600.0);
         self.mode_layouts = preferences.mode_layouts;
         self.chat.auto_approve = self.auto_approve;
         self.chat.show_thoughts = preferences.show_thoughts;
@@ -752,17 +752,10 @@ impl VelocityApp {
         if let Some(layout) = self.mode_layouts.get(&profile) {
             self.left_sidebar_visible = layout.left_visible;
             // keep the stored width but constrain it to reasonable bounds
-            // Tighten bounds for coder/operator profiles to avoid sizing jitter
-            match profile {
-                WorkspaceProfile::Coder | WorkspaceProfile::AutomationOperator => {
-                    self.left_sidebar_width = layout.left_width.clamp(200.0, 420.0);
-                    self.right_sidebar_width = layout.right_width.clamp(240.0, 420.0);
-                }
-                _ => {
-                    self.left_sidebar_width = layout.left_width.clamp(180.0, 600.0);
-                    self.right_sidebar_width = layout.right_width.clamp(220.0, 900.0);
-                }
-            }
+            // Clamp sidebar widths to the same bounds the render loop uses
+            // so switching modes never causes a visible size jump.
+            self.left_sidebar_width = layout.left_width.clamp(180.0, 420.0);
+            self.right_sidebar_width = layout.right_width.clamp(220.0, 600.0);
             self.right_sidebar_visible = layout.right_visible;
         } else {
             self.left_sidebar_visible = new_left_visible;
@@ -858,9 +851,9 @@ impl VelocityApp {
     fn restore_mode_layout(&mut self, profile: WorkspaceProfile) {
         if let Some(layout) = self.mode_layouts.get(&profile).copied() {
             self.left_sidebar_visible = layout.left_visible;
-            self.left_sidebar_width = layout.left_width.max(180.0);
+            self.left_sidebar_width = layout.left_width.clamp(180.0, 420.0);
             self.right_sidebar_visible = layout.right_visible;
-            self.right_sidebar_width = layout.right_width.max(220.0);
+            self.right_sidebar_width = layout.right_width.clamp(220.0, 600.0);
         }
     }
 

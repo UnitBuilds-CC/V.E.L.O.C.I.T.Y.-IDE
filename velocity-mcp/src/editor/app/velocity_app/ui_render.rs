@@ -1764,7 +1764,7 @@ impl eframe::App for VelocityApp {
                 .resizable(true)
                 .default_size(self.right_sidebar_width)
                 .show(ui, |ui: &mut egui::Ui| {
-                    self.right_sidebar_width = ui.available_width().max(220.0);
+                    self.right_sidebar_width = ui.available_width().clamp(220.0, 600.0);
                     ui.add_space(4.0);
 
                     // Mode-specific right panel header
@@ -1923,7 +1923,7 @@ impl eframe::App for VelocityApp {
                     let sidebar_snapshot = crate::editor::smart_sidebar::SmartSidebarSnapshot::new(&self.smart_sidebar);
                     crate::editor::smart_sidebar::render_smart_sidebar(ui, &sidebar_snapshot, palette);
                 });
-            self.right_sidebar_width = panel_response.response.rect.width().max(220.0);
+            self.right_sidebar_width = panel_response.response.rect.width().clamp(220.0, 600.0);
         }
 
         let branch = get_git_branch(&self.workspace_root);
