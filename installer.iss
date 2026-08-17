@@ -1,12 +1,12 @@
 ; ─────────────────────────────────────────────────────────────────────────
 ; V.E.L.O.C.I.T.Y. — Inno Setup Installer
 ; ─────────────────────────────────────────────────────────────────────────
-; Build with:  ISCC.exe /DMyAppVersion=0.1.0 installer.iss
+; Build with:  ISCC.exe /DMyAppVersion=1.0.0 /S"signtool=$qC:\Program Files (x86)\Windows Kits\10\bin\10.0.22621.0\x64\signtool.exe$q /f $q<certificate>$q /p $q<password>$q /tr http://timestamp.digicert.com /td sha256 /fd sha256" installer.iss
 ; Or simply:   .\build_release.ps1
 ; ─────────────────────────────────────────────────────────────────────────
 
 #ifndef MyAppVersion
-  #define MyAppVersion "0.1.0"
+  #define MyAppVersion "1.0.0"
 #endif
 
 #define MyAppName       "V.E.L.O.C.I.T.Y."
@@ -36,6 +36,9 @@ ArchitecturesInstallIn64BitMode=x64compatible
 UninstallDisplayIcon={app}\velocity_mcp.exe
 UninstallDisplayName={#MyAppFullName}
 SetupIconFile=compiler:SetupClassicIcon.ico
+
+; Code signing configuration (requires /S signtool parameter during build)
+; SignTool=sign
 
 ; Detect and reuse previous install directory
 UsePreviousAppDir=yes
