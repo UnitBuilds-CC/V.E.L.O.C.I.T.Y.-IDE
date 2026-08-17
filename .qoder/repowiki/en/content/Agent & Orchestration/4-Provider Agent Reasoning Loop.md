@@ -56,6 +56,7 @@ graph TB
 | Models | `agent/models.rs` | Provider model definitions |
 | Memory Store | `agent/memory_store.rs` | Compressed history and context |
 | Reasoning | `agent/reasoning.rs` | Reasoning effort level routing |
+| Thread Entry | `agent/executor/thread.rs` | Agent thread spawn, API key resolution, FetchPanelData delegation to shared `system_tools::fetch_panel_data_value()` (879 LOC) |
 
 ## Multi-Agent Features
 

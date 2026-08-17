@@ -29,12 +29,13 @@ The agent reasoning engine implements a 4-provider automatic failover chain: Clo
 | `agent/models.rs` | Model definitions, UiToAgentMessage, AgentToUiMessage |
 | `agent/memory_store.rs` | Compressed history |
 | `agent/reasoning.rs` | Effort level routing |
-| `agent/executor/thread.rs` | Agent thread entry, API key resolution, reasoning loop spawn, FetchPanelData handler with run_build cargo check action (1041 LOC — exceeds sub-1k rule) |
+| `agent/executor/thread.rs` | Agent thread entry, API key resolution, reasoning loop spawn. FetchPanelData delegates to shared `system_tools::fetch_panel_data_value()` (879 LOC) |
 
 ## Agent-UI Message Types
 
 - `UiToAgentMessage`: UserMessage, RunLocalRun, CancelTask, ReloadTeams, FetchPanelData { panel }
 - `AgentToUiMessage`: ChatHistoryRestored, ProviderChanged, PanelData { panel, data }
+- FetchPanelData handler delegates to `crate::registry::system_tools::fetch_panel_data_value()` so MCP tools and agent channel share one serialisation path
 
 ## Multi-Agent Features
 

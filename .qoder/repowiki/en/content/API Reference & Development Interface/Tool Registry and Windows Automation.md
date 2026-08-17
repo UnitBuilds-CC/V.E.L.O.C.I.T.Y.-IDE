@@ -47,7 +47,7 @@ The `fetch_panel_data` tool retrieves structured data for IDE panels via the age
 
 Agent messages: `UiToAgentMessage::FetchPanelData { panel }` → `AgentToUiMessage::PanelData { panel, data }`.
 
-The agent thread also handles a `run_build` pseudo-panel via `FetchPanelData` that triggers `cargo check` and streams output back (not exposed as an MCP tool).
+Both the MCP tool and the agent-to-UI channel share a single serialisation path via `pub fn fetch_panel_data_value()` in `system_tools.rs`, which returns a `serde_json::Value`.
 
 ### Browser Tools (`registry/browser_tools/`)
 
