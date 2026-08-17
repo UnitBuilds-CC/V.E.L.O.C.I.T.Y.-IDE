@@ -1,4 +1,4 @@
-﻿// V.E.L.O.C.I.T.Y.-IDE — NDA (Non-linear Decomposed Attention) core types and GEMV kernels
+// V.E.L.O.C.I.T.Y.-IDE — NDA (Non-linear Decomposed Attention) core types and GEMV kernels
 //
 // NDA v2 uses pure-additive quaternary {-2, -1, +1, +2} weight encoding:
 //   sign bitmap  : 1 bit/elem — 1 = positive weight, 0 = negative weight
@@ -103,9 +103,13 @@ impl NdaMatrix {
             if data.len() < HDR {
                 bail!("NDA file too small ({} B): {path:?}", data.len());
             }
-            let rows = u32::from_le_bytes(data[6..10].try_into().expect("slice is exactly 4 bytes")) as usize;
-            let cols = u32::from_le_bytes(data[10..14].try_into().expect("slice is exactly 4 bytes")) as usize;
-            let scale = f32::from_le_bytes(data[14..18].try_into().expect("slice is exactly 4 bytes"));
+            let rows = u32::from_le_bytes(data[6..10].try_into().expect("slice is exactly 4 bytes"))
+                as usize;
+            let cols =
+                u32::from_le_bytes(data[10..14].try_into().expect("slice is exactly 4 bytes"))
+                    as usize;
+            let scale =
+                f32::from_le_bytes(data[14..18].try_into().expect("slice is exactly 4 bytes"));
 
             let bitmap_bytes = (rows * cols).div_ceil(8);
             let expected = HDR + 2 * bitmap_bytes;
@@ -137,11 +141,18 @@ impl NdaMatrix {
             if data.len() < HDR {
                 bail!("NDA file too small ({} B): {path:?}", data.len());
             }
-            let rows = u16::from_le_bytes(data[6..8].try_into().expect("slice is exactly 2 bytes")) as usize;
-            let cols = u32::from_le_bytes(data[8..12].try_into().expect("slice is exactly 4 bytes")) as usize;
-            let block_size = u32::from_le_bytes(data[12..16].try_into().expect("slice is exactly 4 bytes")) as usize;
-            let n_blocks = u32::from_le_bytes(data[16..20].try_into().expect("slice is exactly 4 bytes")) as usize;
-            let global_scale = f32::from_le_bytes(data[20..24].try_into().expect("slice is exactly 4 bytes"));
+            let rows = u16::from_le_bytes(data[6..8].try_into().expect("slice is exactly 2 bytes"))
+                as usize;
+            let cols = u32::from_le_bytes(data[8..12].try_into().expect("slice is exactly 4 bytes"))
+                as usize;
+            let block_size =
+                u32::from_le_bytes(data[12..16].try_into().expect("slice is exactly 4 bytes"))
+                    as usize;
+            let n_blocks =
+                u32::from_le_bytes(data[16..20].try_into().expect("slice is exactly 4 bytes"))
+                    as usize;
+            let global_scale =
+                f32::from_le_bytes(data[20..24].try_into().expect("slice is exactly 4 bytes"));
 
             let q_scales_bytes = n_blocks;
             let codes_bytes = if version == NDA_VERSION_FP4 {
