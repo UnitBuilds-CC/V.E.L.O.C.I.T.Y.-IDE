@@ -31,6 +31,10 @@ pub enum UiToAgentMessage {
     RunLocalRun,
     CancelTask,
     ReloadTeams,
+    /// Fetch panel data for MCP/fetch tools (panel slug, optional params)
+    FetchPanelData {
+        panel: String,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -67,6 +71,11 @@ pub enum AgentToUiMessage {
     },
     ChatHistoryRestored(Vec<(String, String)>),
     ProviderChanged(AiProvider),
+    /// Panel data response for MCP/fetch tools
+    PanelData {
+        panel: String,
+        data: Value,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

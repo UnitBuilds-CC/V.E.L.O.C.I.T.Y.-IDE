@@ -1,5 +1,5 @@
-use crossbeam_channel::Sender;
 use crate::agent::UiToAgentMessage;
+use crossbeam_channel::Sender;
 
 /// Lightweight UI-facing manager that forwards team-related user actions to the
 /// agent runtime and retains a tiny rolling log for display in the Team Studio.

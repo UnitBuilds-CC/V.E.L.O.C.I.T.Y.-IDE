@@ -3,6 +3,7 @@ use std::path::PathBuf;
 use super::super::types::*;
 use super::struct_def::VelocityApp;
 use crate::agent::UiToAgentMessage;
+use crate::editor::mode_config::ModeConfig;
 
 impl VelocityApp {
     pub fn focus_panel(&mut self, kind: TabKind) {
@@ -194,6 +195,20 @@ impl VelocityApp {
             Err(e) => self.toasts.push(crate::editor::toast::Toast::error(format!(
                 "Import failed: {e}"
             ))),
+        }
+    }
+
+    /// Switch to Build and reveal the integrated research browser in its sidebar.
+    /// The browser is a contextual tool, so it does not create a competing dock tab.
+    pub fn open_browse_workspace(&mut self) {
+        self.set_work_mode(crate::editor::theme::WorkspaceProfile::Coder);
+        let tabs = crate::editor::mode_config::mode_config_for(self.appearance.profile).left_tabs();
+        if let Some(index) = tabs
+            .iter()
+            .position(|tab| *tab == crate::editor::sidebar_tabs::SidebarTab::Browse)
+        {
+            self.left_sidebar_visible = true;
+            self.left_sidebar_tab = index;
         }
     }
 

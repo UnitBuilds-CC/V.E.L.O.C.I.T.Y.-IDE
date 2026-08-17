@@ -1,4 +1,4 @@
-﻿use std::collections::HashSet;
+use std::collections::HashSet;
 use std::path::PathBuf;
 
 use super::super::helpers::*;
@@ -268,7 +268,13 @@ impl VelocityApp {
             ));
         }
         self.toggle_mission_control();
-        self.mission_control.active_sub_tab = 1;
+        // Keep focus on the reviewed plan until execution starts. This makes
+        // planning an explicit, reversible handoff rather than a hidden prelude.
+        self.mission_control.active_sub_tab = if self.mission_control.auto_execute {
+            1
+        } else {
+            0
+        };
     }
 
     pub fn current_routing_goal(&self) -> Option<String> {
@@ -538,7 +544,8 @@ impl VelocityApp {
                 }
                 AgentToUiMessage::ToolExecutionStarted { tool_name } => {
                     // Surface to Team Studio activity log
-                    self.team_manager.push_log(format!("Tool started: {}", tool_name));
+                    self.team_manager
+                        .push_log(format!("Tool started: {}", tool_name));
                     self.agent_ui_state.metrics.state =
                         crate::editor::agent_ui_state::AgentState::Running;
                     self.agent_ui_state.metrics.tool_call_count += 1;
@@ -579,7 +586,8 @@ impl VelocityApp {
                 }
                 AgentToUiMessage::ToolExecutionFinished { tool_name, result } => {
                     // Surface to Team Studio activity log
-                    self.team_manager.push_log(format!("Tool finished: {} -> {}", tool_name, result));
+                    self.team_manager
+                        .push_log(format!("Tool finished: {} -> {}", tool_name, result));
                     self.agent_ui_state.metrics.state =
                         crate::editor::agent_ui_state::AgentState::Running;
                     // Record metrics snapshot for the history ring buffer.
@@ -705,6 +713,16 @@ impl VelocityApp {
                             .push_str(&format!("\n{}{}\n", prefix, content));
                     }
                     self.chat.restore_history(history);
+                }
+                AgentToUiMessage::PanelData { panel, data } => {
+                    // Lightweight handling for now: surface to Team Studio log and
+                    // update status so a user seeing this in the UI knows the
+                    // agent fetched the requested panel data. More specific
+                    // routing (populating list views) can be added later.
+                    self.team_manager
+                        .push_log(format!("PanelData {}: {}", panel, data));
+                    self.status_message = format!("Panel data received: {}", panel);
+                    timeline_dirty = true;
                 }
             }
             if timeline_dirty {

@@ -1,4 +1,4 @@
-﻿use crate::safety::SafeMutex;
+use crate::safety::SafeMutex;
 use serde_json::{json, Value};
 use std::error::Error;
 use std::fs;
@@ -144,6 +144,121 @@ fn generate_test_stubs(source: &str, language: &str) -> Vec<String> {
         tests.push("// No testable functions found in source".to_string());
     }
     tests
+}
+
+fn fetch_panel_data(root: &Path, arguments: &Value) -> Result<String, Box<dyn Error>> {
+    let panel = arguments["panel"].as_str().ok_or("panel is required")?;
+    let data = match panel {
+        "teams" => {
+            let teams = crate::editor::expert_team::load_expert_teams(root);
+            let teams: Vec<Value> = teams
+                .into_iter()
+                .map(|team| {
+                    json!({
+                        "id": team.id,
+                        "name": team.name,
+                        "slug": team.slug(),
+                        "description": team.description,
+                        "is_preset": team.is_preset,
+                        "members": team.members.into_iter().map(|member| json!({
+                            "id": member.id,
+                            "name": member.name,
+                            "role": member.role,
+                            "provider": member.provider.label(),
+                            "model_id": member.model_id,
+                            "skills": member.skills,
+                            "scope_patterns": member.scope_patterns,
+                        })).collect::<Vec<_>>(),
+                    })
+                })
+                .collect();
+            json!({"panel": panel, "teams": teams})
+        }
+        "wiki" => match crate::automation::open_workspace_site_map(root) {
+            Ok(site_map) => {
+                let wiki = velocity_ide::wiki::build_wiki(&site_map);
+                let pages: Vec<Value> = wiki
+                    .file_pages
+                    .iter()
+                    .map(|page| {
+                        json!({
+                            "title": page.title,
+                            "slug": page.slug,
+                            "relationship_count": page.relationships.len(),
+                            "called_by_count": page.called_by.len(),
+                        })
+                    })
+                    .collect();
+                json!({
+                    "panel": panel,
+                    "file_count": wiki.file_count(),
+                    "symbol_count": wiki.symbol_count(),
+                    "pages": pages,
+                })
+            }
+            Err(error) => json!({"panel": panel, "error": error}),
+        },
+        "graph" => {
+            let symbols = crate::editor::search::collect_workspace_symbols(root);
+            let mut files = std::collections::BTreeMap::<String, usize>::new();
+            for symbol in symbols {
+                *files.entry(symbol.file).or_default() += 1;
+            }
+            let mut top_files: Vec<(String, usize)> = files.into_iter().collect();
+            top_files
+                .sort_by(|left, right| right.1.cmp(&left.1).then_with(|| left.0.cmp(&right.0)));
+            let symbol_count: usize = top_files.iter().map(|(_, count)| count).sum();
+            json!({
+                "panel": panel,
+                "file_count": top_files.len(),
+                "symbol_count": symbol_count,
+                "top_files": top_files.into_iter().take(20).map(|(file, symbols)| json!({"file": file, "symbols": symbols})).collect::<Vec<_>>(),
+            })
+        }
+        "bookmarks" => {
+            let path = root.join(".velocity").join("bookmarks.json");
+            match fs::read_to_string(path) {
+                Ok(raw) => serde_json::from_str(&raw)
+                    .unwrap_or_else(|_| json!({"error": "invalid bookmarks file"})),
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                    json!({"bookmarks": []})
+                }
+                Err(error) => return Err(error.into()),
+            }
+        }
+        "files" => {
+            let relative_path = arguments["relativePath"].as_str().unwrap_or(".");
+            let directory = if relative_path == "." || relative_path.is_empty() {
+                root.to_path_buf()
+            } else {
+                resolve_workspace_path(root, relative_path, false)?
+            };
+            if !directory.is_dir() {
+                return Err(format!("Not a directory: {}", relative_path).into());
+            }
+            let mut files = fs::read_dir(directory)?
+                .flatten()
+                .filter_map(|entry| {
+                    let metadata = entry.metadata().ok()?;
+                    Some(json!({
+                        "name": entry.file_name().to_string_lossy(),
+                        "is_dir": metadata.is_dir(),
+                        "size": metadata.len(),
+                    }))
+                })
+                .collect::<Vec<_>>();
+            files.sort_by(|left, right| left["name"].as_str().cmp(&right["name"].as_str()));
+            json!({"panel": panel, "relative_path": relative_path, "files": files})
+        }
+        _ => {
+            return Err(format!(
+                "Unknown panel '{}'. Expected teams, wiki, graph, bookmarks, or files.",
+                panel
+            )
+            .into())
+        }
+    };
+    Ok(serde_json::to_string(&data)?)
 }
 
 pub fn handle_system_tool(
@@ -311,6 +426,7 @@ pub fn handle_system_tool(
                 matches.join("\n")
             }
         }
+        "fetch_panel_data" => fetch_panel_data(root, arguments)?,
         "run_command" => {
             let cmd_str = arguments["command"].as_str().ok_or("command is required")?;
 

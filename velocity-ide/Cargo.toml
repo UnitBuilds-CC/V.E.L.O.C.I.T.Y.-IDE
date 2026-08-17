@@ -12,13 +12,14 @@ path = "src/lib.rs"
 name = "velocity_ide"
 path = "src/main.rs"
 
-[[bin]]
-name = "bench_nda_vs_rust"
-path = "src/bin/bench_nda_vs_rust.rs"
+# Removed optional local bins for CI/build environment (non-essential stubs)
+# [[bin]]
+# name = "bench_nda_vs_rust"
+# path = "src/bin/bench_nda_vs_rust.rs"
 
-[[bin]]
-name = "run_nda"
-path = "src/bin/run_nda.rs"
+# [[bin]]
+# name = "run_nda"
+# path = "src/bin/run_nda.rs"
 
 [dependencies]
 anyhow     = "1"

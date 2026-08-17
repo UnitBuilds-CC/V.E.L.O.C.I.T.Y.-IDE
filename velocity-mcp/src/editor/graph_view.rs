@@ -123,7 +123,8 @@ impl MerkleGraphView {
                 cols[0].vertical(|ui| {
                     egui::ScrollArea::vertical()
                         .id_salt("explorer_tree")
-                        .show(ui, |ui| {
+                                            .max_height(ui.available_height())
+                                            .show(ui, |ui| {
                             for (file, symbols) in &model.files {
                                 let file_expanded = self.expanded_files.contains(file);
                                 let is_sel =
@@ -278,7 +279,8 @@ impl MerkleGraphView {
                 cols[1].vertical(|ui| {
                     egui::ScrollArea::vertical()
                         .id_salt("explorer_detail")
-                        .show(ui, |ui| match self.selected.clone() {
+                                            .max_height(ui.available_height())
+                                            .show(ui, |ui| match self.selected.clone() {
                             Some(Selection::Symbol { name, .. }) => {
                                 ui.label(
                                     egui::RichText::new(format!("\u{0192} {}", name))

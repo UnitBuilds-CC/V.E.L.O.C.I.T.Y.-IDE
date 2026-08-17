@@ -1,5 +1,5 @@
 ﻿use super::velocity_app::VelocityApp;
-use crate::editor::expert_team::{load_expert_teams, save_expert_teams};
+use crate::editor::expert_team::{load_expert_teams, save_expert_teams, slugify, ExpertMember};
 use eframe::egui;
 use egui::RichText;
 
@@ -44,6 +44,91 @@ impl VelocityApp {
                 });
             });
             ui.separator();
+            ui.add_space(6.0);
+
+            // Direct creation keeps the common "team first" and "agent first"
+            // workflows separate, while making assignment explicit.
+            ui.columns(2, |columns| {
+                columns[0].group(|ui| {
+                    ui.label(RichText::new("Create a team").strong());
+                    ui.label(RichText::new("Start an empty team, then assign agents below.").small().color(palette.text_muted));
+                    ui.add(egui::TextEdit::singleline(&mut self.team_name_input).hint_text("Team name"));
+                    ui.add(egui::TextEdit::singleline(&mut self.team_description_input).hint_text("Purpose (optional)"));
+                    if ui.add_enabled(!self.team_name_input.trim().is_empty(), egui::Button::new("Create team")).clicked() {
+                        let name = self.team_name_input.trim().to_string();
+                        let slug = slugify(&name);
+                        if slug.is_empty() {
+                            self.toasts.push(crate::editor::toast::Toast::warn("A team name needs letters or numbers"));
+                        } else if self.expert_teams.iter().any(|team| team.slug() == slug) {
+                            self.toasts.push(crate::editor::toast::Toast::warn("A team with that name already exists"));
+                        } else {
+                            self.expert_teams.push(crate::editor::expert_team::ExpertTeam::new(
+                                &format!("team_{}", slug), &name, self.team_description_input.trim(), Vec::new(), false,
+                            ));
+                            let new_index = self.expert_teams.len() - 1;
+                            self.team_gallery_expanded = Some(new_index);
+                            self.team_agent_target_index = Some(new_index);
+                            if save_expert_teams(&self.workspace_root, &self.expert_teams) {
+                                self.team_manager.reload_teams();
+                                self.toasts.push(crate::editor::toast::Toast::info(format!("Created team: {}", name)));
+                                self.team_name_input.clear();
+                                self.team_description_input.clear();
+                            } else {
+                                self.toasts.push(crate::editor::toast::Toast::error("Could not save the team"));
+                            }
+                        }
+                    }
+                });
+                columns[1].group(|ui| {
+                    ui.label(RichText::new("Create an agent").strong());
+                    ui.label(RichText::new("Create a focused agent and assign it to a team.").small().color(palette.text_muted));
+                    ui.add(egui::TextEdit::singleline(&mut self.team_agent_name_input).hint_text("Agent name"));
+                    ui.add(egui::TextEdit::singleline(&mut self.team_agent_role_input).hint_text("Role / specialty"));
+                    ui.add(egui::TextEdit::singleline(&mut self.team_agent_scope_input).hint_text("Scope paths, comma separated"));
+                    ui.add(egui::TextEdit::singleline(&mut self.team_agent_instructions_input).hint_text("Operating instructions (optional)"));
+                    let selected_index = self.team_agent_target_index.or(self.team_gallery_expanded).filter(|index| *index < self.expert_teams.len());
+                    egui::ComboBox::from_id_salt("team_agent_target")
+                        .selected_text(selected_index.and_then(|index| self.expert_teams.get(index)).map(|team| team.name.as_str()).unwrap_or("Assign to team?"))
+                        .show_ui(ui, |ui| {
+                            for (index, team) in self.expert_teams.iter().enumerate() {
+                                ui.selectable_value(&mut self.team_agent_target_index, Some(index), &team.name);
+                            }
+                        });
+                    let can_create = !self.team_agent_name_input.trim().is_empty()
+                        && !self.team_agent_role_input.trim().is_empty()
+                        && selected_index.is_some();
+                    if ui.add_enabled(can_create, egui::Button::new("Create & assign agent")).clicked() {
+                        let target_index = selected_index.expect("enabled only with a selected team");
+                        let name = self.team_agent_name_input.trim().to_string();
+                        let role = self.team_agent_role_input.trim().to_string();
+                        let scopes = self.team_agent_scope_input.split(',').map(str::trim).filter(|scope| !scope.is_empty()).map(str::to_string).collect();
+                        let agent_id = format!("member_{}_{}", self.expert_teams[target_index].slug(), slugify(&name));
+                        self.expert_teams[target_index].members.push(ExpertMember {
+                            id: agent_id,
+                            name: name.clone(),
+                            role,
+                            provider: self.provider,
+                            model_id: self.selected_model.clone(),
+                            skills: Vec::new(),
+                            scope_patterns: scopes,
+                            tools: Vec::new(),
+                            workflow_instructions: self.team_agent_instructions_input.trim().to_string(),
+                        });
+                        self.team_gallery_expanded = Some(target_index);
+                        if save_expert_teams(&self.workspace_root, &self.expert_teams) {
+                            self.team_manager.reload_teams();
+                            self.toasts.push(crate::editor::toast::Toast::info(format!("Assigned {} to {}", name, self.expert_teams[target_index].name)));
+                            self.team_agent_name_input.clear();
+                            self.team_agent_role_input.clear();
+                            self.team_agent_scope_input.clear();
+                            self.team_agent_instructions_input.clear();
+                        } else {
+                            self.toasts.push(crate::editor::toast::Toast::error("Could not save the agent"));
+                        }
+                    }
+                });
+            });
+            ui.add_space(8.0);
 
             // Track which member card is selected across frames.
             let selected_member = self.selected_member_id.clone();

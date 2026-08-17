@@ -125,3 +125,35 @@ fn code_coverage_analyze_is_advertised_in_definitions() {
         "missing tool definition for code_coverage_analyze"
     );
 }
+
+#[test]
+fn fetch_panel_data_lists_files_and_is_advertised() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path().join("project");
+    fs::create_dir_all(&root).unwrap();
+    fs::write(root.join("README.md"), "hello").unwrap();
+
+    let output =
+        call_tool_in_workspace(&root, "fetch_panel_data", &json!({"panel": "files"})).unwrap();
+    let data: serde_json::Value = serde_json::from_str(&output).unwrap();
+    assert_eq!(data["panel"], "files");
+    assert!(data["files"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|entry| entry["name"] == "README.md"));
+
+    let tools = crate::registry::get_tools();
+    assert!(tools.iter().any(|tool| tool.name == "fetch_panel_data"));
+}
+
+#[test]
+fn fetch_panel_data_rejects_unknown_panel() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path().join("project");
+    fs::create_dir_all(&root).unwrap();
+
+    assert!(
+        call_tool_in_workspace(&root, "fetch_panel_data", &json!({"panel": "run_build"}),).is_err()
+    );
+}

@@ -1,4 +1,4 @@
-﻿use super::struct_def::OrchestratorPanel;
+use super::struct_def::OrchestratorPanel;
 use crate::editor::expert_team::ExpertTeam;
 use crate::editor::theme::IdePalette;
 use crate::orchestrator::blueprint::{Task, TaskGraph};
@@ -46,7 +46,7 @@ impl OrchestratorPanel {
                         if ui.button("Policy").clicked() {
                             self.show_policy_editor = !self.show_policy_editor;
                         }
-                        ui.toggle_value(&mut self.expanded, "Graph");
+                        ui.toggle_value(&mut self.expanded, "Show task graph");
                     });
                 });
 
@@ -213,64 +213,114 @@ impl OrchestratorPanel {
                     ui.add_space(6.0);
                 }
 
-                // Task list
-                let active_team = if !expert_teams.is_empty() {
-                    let idx = (*active_team_index).min(expert_teams.len() - 1);
-                    Some(&expert_teams[idx])
-                } else {
-                    None
-                };
+                // Keep the operational list and topology visible together. The task
+                // list owns its own scroll surface, so a long plan never pushes the graph
+                // below the fold.
+                ui.add_space(8.0);
+                ui.horizontal_top(|ui| {
+                    let graph_visible = self.expanded;
+                    let list_width = if graph_visible {
+                        // Bias the split toward topology: task cards remain readable at
+                        // this width while the graph can normally be read without panning.
+                        (ui.available_width() * 0.46).clamp(320.0, 520.0)
+                    } else {
+                        ui.available_width()
+                    };
+                    ui.allocate_ui_with_layout(
+                        Vec2::new(list_width, ui.available_height()),
+                        egui::Layout::top_down(egui::Align::Min),
+                        |ui| {
+                            ScrollArea::vertical()
+                                .id_salt("orchestrator_task_list_scroll")
+                                .auto_shrink([false, false])
+                                .show(ui, |ui| {
+                                    // Task list
+                                    let active_team = if !expert_teams.is_empty() {
+                                        let idx = (*active_team_index).min(expert_teams.len() - 1);
+                                        Some(&expert_teams[idx])
+                                    } else {
+                                        None
+                                    };
 
-                if !has_cycle && !plan.phases.is_empty() {
-                    for (phase_idx, phase) in plan.phases.iter().enumerate() {
-                        ui.group(|ui| {
-                            ui.label(
-                                RichText::new(format!("Phase {}", phase_idx + 1))
-                                    .small()
-                                    .strong()
-                                    .color(palette.accent),
-                            );
-                            ui.add_space(2.0);
-                            for id in phase {
-                                if let Some(task) = self.graph.tasks.get(id) {
-                                    self.render_task_card(ui, task, active_team, palette);
-                                }
-                            }
-                        });
-                        ui.add_space(4.0);
+                                    if !has_cycle && !plan.phases.is_empty() {
+                                        for (phase_idx, phase) in plan.phases.iter().enumerate() {
+                                            ui.group(|ui| {
+                                                ui.label(
+                                                    RichText::new(format!(
+                                                        "Phase {}",
+                                                        phase_idx + 1
+                                                    ))
+                                                    .small()
+                                                    .strong()
+                                                    .color(palette.accent),
+                                                );
+                                                ui.add_space(2.0);
+                                                for id in phase {
+                                                    if let Some(task) = self.graph.tasks.get(id) {
+                                                        self.render_task_card(
+                                                            ui,
+                                                            task,
+                                                            active_team,
+                                                            palette,
+                                                        );
+                                                    }
+                                                }
+                                            });
+                                            ui.add_space(4.0);
+                                        }
+                                    } else if self.graph.tasks.is_empty() {
+                                        ui.add_space(16.0);
+                                        ui.vertical_centered(|ui| {
+                                            ui.label(
+                                                RichText::new("?")
+                                                    .size(28.0)
+                                                    .color(palette.accent.gamma_multiply(0.7)),
+                                            );
+                                            ui.add_space(6.0);
+                                            ui.label(
+                                                RichText::new(
+                                                    "No tasks yet ? route a goal to build the plan",
+                                                )
+                                                .color(palette.text_muted),
+                                            );
+                                        });
+                                    } else {
+                                        ui.group(|ui| {
+                                            ui.label(RichText::new("Tasks").small().strong());
+                                            ui.add_space(2.0);
+                                            for task in self.graph.tasks.values() {
+                                                self.render_task_card(
+                                                    ui,
+                                                    task,
+                                                    active_team,
+                                                    palette,
+                                                );
+                                            }
+                                        });
+                                    }
+                                });
+                        },
+                    );
+
+                    if graph_visible {
+                        ui.add_space(10.0);
+                        egui::Frame::new()
+                            .fill(palette.bg_primary)
+                            .stroke(Stroke::new(1.0, palette.border))
+                            .corner_radius(egui::CornerRadius::same(8))
+                            .inner_margin(egui::Margin::same(10))
+                            .show(ui, |ui| {
+                                ui.label(RichText::new("Task graph").small().strong());
+                                ui.label(
+                                    RichText::new("Dependencies are arranged left to right by execution phase.")
+                                        .small()
+                                        .color(palette.text_muted),
+                                );
+                                ui.add_space(6.0);
+                                self.draw_task_graph(ui, &plan, has_cycle, palette);
+                            });
                     }
-                } else if self.graph.tasks.is_empty() {
-                    ui.add_space(16.0);
-                    ui.vertical_centered(|ui| {
-                        ui.label(
-                            RichText::new("\u{25c7}")
-                                .size(28.0)
-                                .color(palette.accent.gamma_multiply(0.7)),
-                        );
-                        ui.add_space(6.0);
-                        ui.label(
-                            RichText::new("No tasks yet \u{2014} route a goal to build the plan")
-                                .color(palette.text_muted),
-                        );
-                    });
-                    ui.add_space(12.0);
-                } else {
-                    ui.group(|ui| {
-                        ui.label(RichText::new("Tasks").small().strong());
-                        ui.add_space(2.0);
-                        for task in self.graph.tasks.values() {
-                            self.render_task_card(ui, task, active_team, palette);
-                        }
-                    });
-                }
-
-                // Graph visualization (expandable)
-                if self.expanded {
-                    ui.add_space(8.0);
-                    ui.separator();
-                    ui.label(RichText::new("Task Graph").small().strong());
-                    self.draw_task_graph(ui, &plan, has_cycle, palette);
-                }
+                });
             });
     }
 
@@ -321,21 +371,24 @@ impl OrchestratorPanel {
                     });
                 });
 
-                if let Some(expert) = assigned_expert {
-                    ui.label(
-                        RichText::new(format!("    Agent: {}", expert.name))
-                            .small()
-                            .color(palette.text_muted),
-                    );
-                }
-
-                if !task.scope.is_empty() {
-                    ui.label(
-                        RichText::new(format!("    Scope: {}", task.scope.join(", ")))
-                            .small()
-                            .color(palette.text_muted),
-                    );
-                }
+                // Keep operational metadata on one compact line. It improves
+                // scan speed and stops long plans from turning into a wall of cards.
+                ui.horizontal_wrapped(|ui| {
+                    if let Some(expert) = assigned_expert {
+                        ui.label(
+                            RichText::new(format!("Agent: {}", expert.name))
+                                .small()
+                                .color(palette.text_muted),
+                        );
+                    }
+                    if !task.scope.is_empty() {
+                        ui.label(
+                            RichText::new(format!("Scope: {}", task.scope.join(", ")))
+                                .small()
+                                .color(palette.text_muted),
+                        );
+                    }
+                });
             });
         ui.add_space(4.0);
     }
@@ -347,10 +400,10 @@ impl OrchestratorPanel {
         has_cycle: bool,
         palette: IdePalette,
     ) {
-        let node_w = 140.0;
-        let node_h = 44.0;
-        let col_spacing = 175.0;
-        let row_spacing = 60.0;
+        let node_w = 156.0;
+        let node_h = 48.0;
+        let col_spacing = 190.0;
+        let row_spacing = 68.0;
 
         let mut node_positions = HashMap::new();
 
@@ -365,12 +418,13 @@ impl OrchestratorPanel {
             self.graph.tasks.len().max(1)
         };
 
-        let required_w = (num_phases as f32 * col_spacing + 60.0).max(400.0);
-        let required_h = (max_nodes_in_phase as f32 * row_spacing + 60.0).max(300.0);
+        let required_w = (num_phases as f32 * col_spacing + 80.0).max(480.0);
+        let required_h = (max_nodes_in_phase as f32 * row_spacing + 80.0).max(340.0);
+        let viewport_height = ui.available_height().clamp(360.0, 640.0);
 
         ScrollArea::both()
             .id_salt("topology_canvas_scroll")
-            .max_height(360.0)
+            .max_height(viewport_height)
             .show(ui, |ui| {
                 let (rect, _response) =
                     ui.allocate_exact_size(Vec2::new(required_w, required_h), egui::Sense::hover());
@@ -443,12 +497,24 @@ impl OrchestratorPanel {
                             egui::StrokeKind::Inside,
                         );
 
-                        let truncated_title: String = task.title.chars().take(14).collect();
+                        let title: String = task.title.chars().take(20).collect();
+                        let line_width = 18;
+                        let split_at = title
+                            .char_indices()
+                            .nth(line_width)
+                            .map(|(idx, _)| idx)
+                            .unwrap_or(title.len());
+                        let (first_line, second_line) = title.split_at(split_at);
+                        let label = if second_line.is_empty() {
+                            format!("#{} {}", id.0, first_line)
+                        } else {
+                            format!("#{} {}\n{}", id.0, first_line, second_line.trim())
+                        };
                         painter.text(
                             pos,
                             egui::Align2::CENTER_CENTER,
-                            format!("#{} {}", id.0, truncated_title),
-                            egui::FontId::proportional(11.0),
+                            label,
+                            egui::FontId::proportional(11.5),
                             palette.text,
                         );
                     }

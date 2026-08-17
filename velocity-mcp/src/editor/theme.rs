@@ -1,4 +1,4 @@
-﻿use eframe::egui::{
+use eframe::egui::{
     self, Color32, CornerRadius, FontData, FontDefinitions, FontFamily, FontId, Style, TextStyle,
     Vec2, Visuals,
 };
@@ -190,7 +190,9 @@ impl WorkspaceProfile {
 
     pub fn short_label(self) -> &'static str {
         match self {
-            Self::Coder => "Code",
+            // Product-level terms describe the job a person is doing; the
+            // underlying profile variants remain stable for saved preferences.
+            Self::Coder => "Build",
             Self::AutomationOperator => "Automate",
             Self::MissionControl => "Mission",
             Self::Accessibility => "Access",
@@ -366,27 +368,53 @@ pub fn setup_fonts(fonts: &mut FontDefinitions) -> FontId {
 
                 if jb.exists() {
                     if let Ok(data) = std::fs::read(&jb) {
-                        fonts.font_data.insert("jbmono".to_string(), Arc::new(FontData::from_owned(data)));
-                        fonts.families.entry(FontFamily::Monospace).or_default().insert(0, "jbmono".to_string());
+                        fonts
+                            .font_data
+                            .insert("jbmono".to_string(), Arc::new(FontData::from_owned(data)));
+                        fonts
+                            .families
+                            .entry(FontFamily::Monospace)
+                            .or_default()
+                            .insert(0, "jbmono".to_string());
                     }
                 }
                 if jb_bold.exists() {
                     if let Ok(data) = std::fs::read(&jb_bold) {
-                        fonts.font_data.insert("jbmono_bold".to_string(), Arc::new(FontData::from_owned(data)));
+                        fonts.font_data.insert(
+                            "jbmono_bold".to_string(),
+                            Arc::new(FontData::from_owned(data)),
+                        );
                         // prefer bold variant when available
-                        fonts.families.entry(FontFamily::Monospace).or_default().insert(0, "jbmono_bold".to_string());
+                        fonts
+                            .families
+                            .entry(FontFamily::Monospace)
+                            .or_default()
+                            .insert(0, "jbmono_bold".to_string());
                     }
                 }
                 if inter.exists() {
                     if let Ok(data) = std::fs::read(&inter) {
-                        fonts.font_data.insert("inter".to_string(), Arc::new(FontData::from_owned(data)));
-                        fonts.families.entry(FontFamily::Proportional).or_default().insert(0, "inter".to_string());
+                        fonts
+                            .font_data
+                            .insert("inter".to_string(), Arc::new(FontData::from_owned(data)));
+                        fonts
+                            .families
+                            .entry(FontFamily::Proportional)
+                            .or_default()
+                            .insert(0, "inter".to_string());
                     }
                 }
                 if inter_bold.exists() {
                     if let Ok(data) = std::fs::read(&inter_bold) {
-                        fonts.font_data.insert("inter_bold".to_string(), Arc::new(FontData::from_owned(data)));
-                        fonts.families.entry(FontFamily::Proportional).or_default().insert(0, "inter_bold".to_string());
+                        fonts.font_data.insert(
+                            "inter_bold".to_string(),
+                            Arc::new(FontData::from_owned(data)),
+                        );
+                        fonts
+                            .families
+                            .entry(FontFamily::Proportional)
+                            .or_default()
+                            .insert(0, "inter_bold".to_string());
                     }
                 }
             }
@@ -407,11 +435,21 @@ pub fn setup_fonts(fonts: &mut FontDefinitions) -> FontId {
             if std::path::Path::new(path).exists() {
                 if let Ok(data) = std::fs::read(path) {
                     // insert under a stable key and prefer it for monospace/proportional families
-                    fonts.font_data.insert((*name).to_string(), Arc::new(FontData::from_owned(data)));
+                    fonts
+                        .font_data
+                        .insert((*name).to_string(), Arc::new(FontData::from_owned(data)));
                     // Prefer the found monospace as the monospace first family entry (regular)
-                    fonts.families.entry(FontFamily::Monospace).or_default().push((*name).to_string());
+                    fonts
+                        .families
+                        .entry(FontFamily::Monospace)
+                        .or_default()
+                        .push((*name).to_string());
                     // Also add to proportional family to improve glyph coverage for UI icons.
-                    fonts.families.entry(FontFamily::Proportional).or_default().push((*name).to_string());
+                    fonts
+                        .families
+                        .entry(FontFamily::Proportional)
+                        .or_default()
+                        .push((*name).to_string());
 
                     // Attempt to locate and prefer a bold variant where present. This
                     // increases perceived weight without requiring an embedded bold TTF.
@@ -424,10 +462,21 @@ pub fn setup_fonts(fonts: &mut FontDefinitions) -> FontId {
                         if std::path::Path::new(bpath).exists() {
                             if let Ok(bdata) = std::fs::read(bpath) {
                                 let bold_key = format!("{}_bold", name);
-                                fonts.font_data.insert(bold_key.clone(), Arc::new(FontData::from_owned(bdata)));
+                                fonts.font_data.insert(
+                                    bold_key.clone(),
+                                    Arc::new(FontData::from_owned(bdata)),
+                                );
                                 // Insert bold variant at the front of the family lists so it's preferred.
-                                fonts.families.entry(FontFamily::Monospace).or_default().insert(0, bold_key.clone());
-                                fonts.families.entry(FontFamily::Proportional).or_default().insert(0, bold_key);
+                                fonts
+                                    .families
+                                    .entry(FontFamily::Monospace)
+                                    .or_default()
+                                    .insert(0, bold_key.clone());
+                                fonts
+                                    .families
+                                    .entry(FontFamily::Proportional)
+                                    .or_default()
+                                    .insert(0, bold_key);
                                 break;
                             }
                         }

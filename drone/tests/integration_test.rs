@@ -172,7 +172,7 @@ fn e2e_full_collaboration_workflow() {
     let artifact = b"ELF_BINARY_MOCK_"
         .iter()
         .copied()
-        .chain(std::iter::repeat(0).take(100))
+        .chain(std::iter::repeat_n(0, 100))
         .collect::<Vec<u8>>();
     let sha256 = format!("{:x}", Sha256::new().chain_update(&artifact).finalize());
     let b64 = B64.encode(&artifact);

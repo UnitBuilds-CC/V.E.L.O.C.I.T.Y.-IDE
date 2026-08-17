@@ -22,6 +22,8 @@ pub struct MissionControlState {
     pub brief: String,
     pub intervention_input: String,
     pub interventions: Vec<MissionIntervention>,
+    /// True only when a reviewed plan may launch automatically. New missions
+    /// deliberately start in plan-first mode so edits are never surprising.
     pub auto_execute: bool,
     pub active_sub_tab: usize,
     pub selected_task_id: Option<u64>,
@@ -35,7 +37,7 @@ impl MissionControlState {
             brief: String::new(),
             intervention_input: String::new(),
             interventions: Vec::new(),
-            auto_execute: true,
+            auto_execute: false,
             active_sub_tab: 0,
             selected_task_id: None,
             selected_task_note_input: String::new(),

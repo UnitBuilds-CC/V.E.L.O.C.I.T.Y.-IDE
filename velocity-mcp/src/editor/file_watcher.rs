@@ -159,7 +159,7 @@ mod tests {
         assert_eq!(watcher.last_event.len(), 1);
         assert!(watcher
             .last_event
-            .contains_key(PathBuf::from("new.rs").as_path().into()));
+            .contains_key(PathBuf::from("new.rs").as_path()));
     }
 
     #[test]

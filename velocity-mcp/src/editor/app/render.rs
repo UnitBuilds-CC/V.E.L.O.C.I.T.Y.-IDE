@@ -1498,17 +1498,35 @@ impl<'a> TabViewerImpl<'a> {
         self.app.mission_control.sync_selected_task(&valid_task_ids);
         self.app.mirror_worker_events_into_timeline(&snapshot);
 
-        egui::Frame::new().inner_margin(egui::Margin::same(10)).show(ui, |ui| {
-            ui.horizontal(|ui| {
-                ui.heading(egui::RichText::new("Mission Control").color(palette.accent));
-                ui.add_space(12.0);
-                if ui.selectable_label(self.app.mission_control.active_sub_tab == 0, "Brief").clicked() {
+        egui::Frame::new().inner_margin(egui::Margin::same(12)).show(ui, |ui| {
+            ui.horizontal_wrapped(|ui| {
+                ui.heading(egui::RichText::new("Mission").color(palette.accent));
+                ui.label(
+                    egui::RichText::new("Define the outcome, approve a plan, then steer the work.")
+                        .small()
+                        .color(palette.text_muted),
+                );
+            });
+            ui.add_space(6.0);
+            ui.horizontal_wrapped(|ui| {
+                let plan_label = if snapshot.has_routed_plan { "1  Plan ready" } else { "1  Plan" };
+                if ui.selectable_label(self.app.mission_control.active_sub_tab == 0, plan_label).clicked() {
                     self.app.mission_control.active_sub_tab = 0;
                 }
-                if ui.selectable_label(self.app.mission_control.active_sub_tab == 1, "Workers").clicked() {
+                let work_label = if snapshot.execution_running {
+                    format!("2  Work ? {} active", snapshot.running_tasks)
+                } else {
+                    "2  Work".to_string()
+                };
+                if ui.selectable_label(self.app.mission_control.active_sub_tab == 1, work_label).clicked() {
                     self.app.mission_control.active_sub_tab = 1;
                 }
-                if ui.selectable_label(self.app.mission_control.active_sub_tab == 2, "Live").clicked() {
+                let activity_label = if snapshot.blocked_tasks > 0 || snapshot.failed_tasks > 0 {
+                    format!("3  Activity ? {} needs attention", snapshot.blocked_tasks + snapshot.failed_tasks)
+                } else {
+                    "3  Activity".to_string()
+                };
+                if ui.selectable_label(self.app.mission_control.active_sub_tab == 2, activity_label).clicked() {
                     self.app.mission_control.active_sub_tab = 2;
                 }
             });
@@ -1520,90 +1538,123 @@ impl<'a> TabViewerImpl<'a> {
                 .auto_shrink([false, false])
                 .show(ui, |ui| {
                     if self.app.mission_control.active_sub_tab == 0 {
-                        // Brief tab
-                        ui.group(|ui| {
-                            ui.horizontal(|ui| {
-                                ui.label(egui::RichText::new("Mission Brief").strong().color(palette.accent));
-                                ui.checkbox(&mut self.app.mission_control.auto_execute, "Auto-launch");
-                            });
-                            ui.horizontal_wrapped(|ui| {
-                                if ui.small_button("Desktop smoke test").clicked() {
-                                    self.app.apply_mission_brief_preset(desktop_automation_smoke_test_brief(), AgentTaskKind::DesktopAutomation);
-                                }
-                                if ui.small_button("WA validation").clicked() {
-                                    self.app.apply_mission_brief_preset(desktop_automation_runtime_validation_brief(), AgentTaskKind::DesktopAutomation);
-                                }
-                            });
-                            ui.add(
-                                egui::TextEdit::multiline(&mut self.app.mission_control.brief)
-                                    .desired_rows(3)
-                                    .desired_width(f32::INFINITY)
-                                    .hint_text("Describe your mission..."),
+                        if snapshot.has_dependency_cycle {
+                            ui.colored_label(
+                                palette.warning,
+                                "The plan has a dependency cycle. Discard it, revise the outcome, and create a new plan.",
                             );
-                            ui.horizontal(|ui| {
-                                if ui.button("Plan").clicked() {
-                                    self.app.chat.input = self.app.mission_control.brief.clone();
-                                    self.app.plan_routed_subagents();
-                                }
-                                if ui.add_enabled(snapshot.can_launch_routed_tasks, egui::Button::new("Launch")).clicked() {
-                                    self.app.orchestrator.execute_routed_tasks(&self.app.workspace_root, &self.app.mediator);
-                                }
-                                if ui.add_enabled(!snapshot.execution_running && snapshot.retryable_blocked_tasks > 0, egui::Button::new(format!("Retry ({})", snapshot.retryable_blocked_tasks))).clicked() {
-                                    self.app.orchestrator.retry_blocked_tasks_action(&self.app.workspace_root, &self.app.mediator);
-                                }
-                                if ui.add_enabled(snapshot.can_reset_runtime, egui::Button::new("Reset")).clicked() {
-                                    self.app.orchestrator.reset_runtime_action();
-                                }
-                            });
-                        });
+                            ui.add_space(8.0);
+                        }
 
-                        ui.add_space(8.0);
+                        if !snapshot.has_routed_plan {
+                            egui::Frame::new()
+                                .fill(palette.bg_secondary)
+                                .stroke(egui::Stroke::new(1.0, palette.border))
+                                .corner_radius(egui::CornerRadius::same(8))
+                                .inner_margin(egui::Margin::same(12))
+                                .show(ui, |ui| {
+                                    ui.label(egui::RichText::new("What should Velocity accomplish?").strong());
+                                    ui.label(
+                                        egui::RichText::new("Describe the outcome and success criteria. Velocity will propose scoped tasks before anything runs.")
+                                            .small()
+                                            .color(palette.text_muted),
+                                    );
+                                    ui.add_space(6.0);
+                                    ui.horizontal_wrapped(|ui| {
+                                        if ui.small_button("Desktop smoke test").clicked() {
+                                            self.app.apply_mission_brief_preset(desktop_automation_smoke_test_brief(), AgentTaskKind::DesktopAutomation);
+                                        }
+                                        if ui.small_button("WA validation").clicked() {
+                                            self.app.apply_mission_brief_preset(desktop_automation_runtime_validation_brief(), AgentTaskKind::DesktopAutomation);
+                                        }
+                                    });
+                                    ui.add(
+                                        egui::TextEdit::multiline(&mut self.app.mission_control.brief)
+                                            .desired_rows(5)
+                                            .desired_width(f32::INFINITY)
+                                            .hint_text("Outcome, constraints, and acceptance criteria..."),
+                                    );
+                                    ui.add_space(6.0);
+                                    ui.horizontal_wrapped(|ui| {
+                                        if ui.button(egui::RichText::new("Create plan").strong()).clicked() {
+                                            self.app.chat.input = self.app.mission_control.brief.clone();
+                                            self.app.plan_routed_subagents();
+                                        }
+                                        ui.checkbox(&mut self.app.mission_control.auto_execute, "Launch after I review the plan")
+                                            .on_hover_text("This never skips plan review; it only starts work when you explicitly approve the proposed plan.");
+                                    });
+                                });
+                        } else {
+                            let phase_color = if snapshot.execution_running { palette.accent } else { palette.success };
+                            let phase = if snapshot.execution_running { "Work is running" } else { "Plan ready for review" };
+                            egui::Frame::new()
+                                .fill(palette.bg_secondary)
+                                .stroke(egui::Stroke::new(1.0, phase_color.gamma_multiply(0.65)))
+                                .corner_radius(egui::CornerRadius::same(8))
+                                .inner_margin(egui::Margin::same(12))
+                                .show(ui, |ui| {
+                                    ui.horizontal_wrapped(|ui| {
+                                        ui.label(egui::RichText::new(phase).strong().color(phase_color));
+                                        if let Some(goal) = &snapshot.goal {
+                                            ui.label(egui::RichText::new(goal).small().color(palette.text_muted));
+                                        }
+                                    });
+                                    ui.add_space(4.0);
+                                    ui.horizontal_wrapped(|ui| {
+                                        ui.label(egui::RichText::new(format!("{} tasks", snapshot.tasks.len())).small().color(palette.text_muted));
+                                        ui.label(egui::RichText::new(format!("{} scoped files", snapshot.scope_count)).small().color(palette.text_muted));
+                                        if let Some(kind) = &snapshot.task_kind {
+                                            ui.label(egui::RichText::new(kind).small().color(palette.text_muted));
+                                        }
+                                    });
+                                    ui.add_space(8.0);
+                                    ui.horizontal_wrapped(|ui| {
+                                        if ui.add_enabled(
+                                            snapshot.can_launch_routed_tasks,
+                                            egui::Button::new(egui::RichText::new("Approve & launch").strong().color(palette.success)),
+                                        ).clicked() {
+                                            self.app.orchestrator.execute_routed_tasks(&self.app.workspace_root, &self.app.mediator);
+                                            self.app.mission_control.active_sub_tab = 1;
+                                        }
+                                        if snapshot.execution_running && ui.button("Open work").clicked() {
+                                            self.app.mission_control.active_sub_tab = 1;
+                                        }
+                                        if ui.add_enabled(snapshot.can_reset_runtime, egui::Button::new("Discard plan")).clicked() {
+                                            self.app.orchestrator.reset_runtime_action();
+                                        }
+                                    });
+                                });
 
-                        // Status summary
-                        ui.group(|ui| {
-                            ui.horizontal_wrapped(|ui| {
-                                ui.label(egui::RichText::new(format!("Plan: {}", snapshot.planning_status)).small());
-                                ui.label(egui::RichText::new("\u{00b7}").small().color(palette.text_muted.gamma_multiply(0.6)));
-                                ui.label(egui::RichText::new(format!("Runtime: {}", snapshot.runtime_status)).small());
-                            });
-                            if let Some(goal) = &snapshot.goal {
-                                ui.label(egui::RichText::new(format!("Goal: {}", goal)).small().color(palette.text_muted));
+                            ui.add_space(10.0);
+                            ui.label(egui::RichText::new("Review the proposed work").strong());
+                            ui.label(egui::RichText::new("Each worker is constrained to its declared scope.").small().color(palette.text_muted));
+                            ui.add_space(4.0);
+                            for task in &snapshot.tasks {
+                                ui.push_id(("mission_plan_task", task.id), |ui| {
+                                    egui::Frame::new()
+                                        .fill(palette.bg_secondary)
+                                        .stroke(egui::Stroke::new(1.0, palette.border))
+                                        .corner_radius(egui::CornerRadius::same(6))
+                                        .inner_margin(egui::Margin::same(8))
+                                        .show(ui, |ui| {
+                                            ui.horizontal_wrapped(|ui| {
+                                                ui.label(egui::RichText::new(format!("#{}", task.id)).monospace().small().color(palette.text_muted));
+                                                ui.label(egui::RichText::new(&task.title).small().strong());
+                                                ui.label(egui::RichText::new(&task.status_label).small().color(palette.text_muted));
+                                            });
+                                            if !task.scope.is_empty() {
+                                                ui.label(egui::RichText::new(format!("Scope: {}", task.scope.join(", "))).small().color(palette.text_muted));
+                                            }
+                                            if !task.rationale.is_empty() {
+                                                ui.label(egui::RichText::new(&task.rationale).small().color(palette.text_muted));
+                                            }
+                                        });
+                                    ui.add_space(4.0);
+                                });
                             }
-                            ui.horizontal_wrapped(|ui| {
-                                if let Some(kind) = &snapshot.task_kind {
-                                    ui.label(egui::RichText::new(format!("Kind: {}", kind)).small().color(palette.text_muted));
-                                    ui.label(egui::RichText::new("\u{00b7}").small().color(palette.text_muted.gamma_multiply(0.6)));
-                                }
-                                ui.label(egui::RichText::new(format!("Scope: {}", snapshot.scope_count)).small().color(palette.text_muted));
-                                if snapshot.has_routed_plan {
-                                    ui.label(egui::RichText::new("\u{00b7} Routed plan ready").small().color(palette.success));
-                                }
-                                if snapshot.has_dependency_cycle {
-                                    ui.label(egui::RichText::new("\u{00b7} \u{26a0} dependency cycle").small().color(palette.warning));
-                                }
-                            });
-                            ui.horizontal_wrapped(|ui| {
-                                ui.label(egui::RichText::new(format!("Pending: {}", snapshot.pending_tasks)).small());
-                                ui.label(egui::RichText::new(format!("Running: {}", snapshot.running_tasks)).small().color(palette.accent));
-                                ui.label(egui::RichText::new(format!("Active workers: {}", snapshot.active_workers)).small().color(palette.accent));
-                                ui.label(egui::RichText::new(format!("Done: {}", snapshot.done_tasks)).small().color(palette.success));
-                                if snapshot.failed_tasks > 0 {
-                                    ui.label(egui::RichText::new(format!("Failed: {}", snapshot.failed_tasks)).small().color(palette.error));
-                                }
-                                if snapshot.blocked_tasks > 0 {
-                                    ui.label(egui::RichText::new(format!("Blocked: {}", snapshot.blocked_tasks)).small().color(palette.warning));
-                                }
-                            });
-                        });
-
-                        // Activity feed
-                        ui.add_space(8.0);
-                        ui.group(|ui| {
-                            let timeline_snapshot = TaskTimelineSnapshot::new(&self.app.task_timeline);
-                            render_mission_activity_feed(ui, &timeline_snapshot, None, 15, palette);
-                        });
-
+                        }
                     } else if self.app.mission_control.active_sub_tab == 1 {
+
                         // Workers tab
                         let selected_task = self.app.mission_control.selected_task_id
                             .and_then(|id| snapshot.tasks.iter().find(|t| t.id == id));

@@ -475,15 +475,13 @@ impl VelocityApp {
 
                                 ui.horizontal(|ui| {
                                     let icon = if is_current { "\u{25cf}" } else { "\u{25cb}" };
-                                    ui.label(
-                                        egui::RichText::new(icon).size(11.0).color(
-                                            if is_current {
-                                                palette.success
-                                            } else {
-                                                palette.text_muted
-                                            },
-                                        ),
-                                    );
+                                    ui.label(egui::RichText::new(icon).size(11.0).color(
+                                        if is_current {
+                                            palette.success
+                                        } else {
+                                            palette.text_muted
+                                        },
+                                    ));
                                     let text = egui::RichText::new(&name).color(if selected {
                                         palette.accent
                                     } else {

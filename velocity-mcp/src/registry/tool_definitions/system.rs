@@ -100,6 +100,25 @@ pub fn get_system_tools() -> Vec<Tool> {
             }),
         },
         Tool {
+            name: "fetch_panel_data".to_string(),
+            description: "Read structured IDE panel data without navigating the GUI. Supported panels: teams (expert-team roster), wiki (workspace documentation summary), graph (symbol/file summary), bookmarks (saved workspace bookmarks), and files (a workspace directory listing). This is read-only and safe for agents to use for context gathering.".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "panel": {
+                        "type": "string",
+                        "enum": ["teams", "wiki", "graph", "bookmarks", "files"],
+                        "description": "The IDE panel data to fetch."
+                    },
+                    "relativePath": {
+                        "type": "string",
+                        "description": "Optional workspace-relative directory for the files panel. Defaults to the workspace root. Ignored by other panels."
+                    }
+                },
+                "required": ["panel"]
+            }),
+        },
+        Tool {
             name: "delete_file".to_string(),
             description: "Delete a file in the workspace.".to_string(),
             input_schema: json!({

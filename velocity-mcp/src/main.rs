@@ -173,6 +173,7 @@ fn main() {
     let mut editor_mode = args.len() == 1;
     let mut tokenize_prompt = None;
     let mut daemon_mode = false;
+    let mut workspace_arg: Option<std::path::PathBuf> = None;
 
     let mut i = 1;
     while i < args.len() {
@@ -215,6 +216,15 @@ fn main() {
             "--editor" => {
                 editor_mode = true;
                 i += 1;
+            }
+            "--workspace" => {
+                if i + 1 < args.len() {
+                    workspace_arg = Some(std::path::PathBuf::from(&args[i + 1]));
+                    i += 2;
+                } else {
+                    eprintln!("Error: --workspace requires a directory path");
+                    process::exit(1);
+                }
             }
             "--daemon" => {
                 daemon_mode = true;
@@ -282,8 +292,8 @@ fn main() {
         // 1. Command line argument if provided
         // 2. Current directory if writable
         // 3. User's home directory as fallback
-        let workspace_root = if std::env::args().len() > 1 {
-            std::path::PathBuf::from(std::env::args().nth(1).unwrap())
+        let workspace_root = if let Some(workspace) = workspace_arg {
+            workspace
         } else {
             let cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
             // Check if we can write to the current directory
@@ -645,7 +655,8 @@ fn print_help() {
     println!("  velocity_mcp [options]");
     println!();
     println!("Options:");
-    println!("  --editor                    Launch the custom native GUI editor (Default if run without options)");
+    println!("  --editor                    Launch the custom native GUI editor (default with no options)");
+    println!("  --workspace <path>          Open this directory in the native editor");
     println!("  --mode <stdio|shmem>        Protocol mode. stdio (JSON-RPC) or shmem (Shared Memory binary).");
     println!("  --buffer-path <path>        Path to mapped buffer file. Only used in shmem mode.");
     println!("  --benchmark                 Run the performance benchmark suite");

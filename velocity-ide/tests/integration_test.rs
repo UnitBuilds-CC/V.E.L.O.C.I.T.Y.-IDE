@@ -120,7 +120,7 @@ fn tokenizer_type_is_accessible() {
 fn nda_serialization_roundtrip() {
     use velocity_ide::site_map::NdaNode;
 
-    let nodes = vec![
+    let nodes = [
         NdaNode::Int { value: 1 },
         NdaNode::Int { value: 2 },
         NdaNode::Add {

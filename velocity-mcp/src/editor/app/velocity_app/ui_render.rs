@@ -1,4 +1,4 @@
-﻿use eframe::egui;
+use eframe::egui;
 use std::path::PathBuf;
 
 use crate::editor::agent_ui_render::{render_agent_metrics, RenderSnapshot};
@@ -808,442 +808,409 @@ impl eframe::App for VelocityApp {
 
         let active_change_preview = self.active_change_preview();
 
-        egui::Panel::top("toolbar").show(ui, |ui: &mut egui::Ui| {
-            ui.add_space(3.0);
-            ui.horizontal(|ui: &mut egui::Ui| {
-                ui.spacing_mut().item_spacing.x = 8.0;
+        // Keep the application chrome visually distinct from the dock. A fixed
+        // height and opaque frame prevent it from disappearing into a dark workspace.
+        egui::Panel::top("toolbar")
+            .frame(
+                egui::Frame::new()
+                    .fill(palette.bg_secondary)
+                    .stroke(egui::Stroke::new(1.0, palette.border))
+                    .inner_margin(egui::Margin::symmetric(10, 4)),
+            )
+            .show(ui, |ui: &mut egui::Ui| {
+                ui.set_min_height(30.0);
+                ui.horizontal(|ui| {
+                    ui.spacing_mut().item_spacing.x = 6.0;
 
-                // Work-mode switcher: always-visible pills for one-click switching.
-                let current_mode = self.appearance.profile;
-                for mode in crate::editor::theme::WorkspaceProfile::ALL {
-                    let selected = mode == current_mode;
-                    let text =
-                        egui::RichText::new(format!("{} {}", mode.glyph(), mode.short_label()))
-                            .color(if selected {
-                                palette.accent
-                            } else {
-                                palette.text_muted
-                            });
-                    if ui
-                        .selectable_label(selected, text)
-                        .on_hover_text(format!(
-                            "{}  \u{00b7}  {}\n{}",
-                            mode.label(),
-                            mode.shortcut_hint(),
-                            mode.description()
-                        ))
-                        .clicked()
-                    {
-                        self.set_work_mode(mode);
-                    }
-                }
-                ui.add_space(6.0);
-
-                ui.menu_button("File", |ui| {
-                    if ui.button("New File").clicked() {
-                        self.prompt_open_file();
-                        ui.close();
-                    }
-                    if ui.button("Open File\u{2026}").clicked() {
-                        self.open_file_dialog();
-                        ui.close();
-                    }
-                    ui.separator();
-                    if ui.button("Save").clicked() {
-                        self.save_active();
-                        ui.close();
-                    }
-                    if ui.button("Save As\u{2026}").clicked() {
-                        self.save_active_as();
-                        ui.close();
-                    }
-                    if ui.button("Save All").clicked() {
-                        self.save_all();
-                        ui.close();
-                    }
-                });
-
-                ui.menu_button("View", |ui| {
-                    if ui.button("Command Palette  (Ctrl+Shift+P)").clicked() {
-                        self.command_palette.open = true;
-                        self.command_palette.just_opened = true;
-                        ui.close();
-                    }
-                    ui.separator();
-
-                    // ── Core workspace panels ──
-                    ui.menu_button("Core", |ui| {
-                        if ui.button("Chat").clicked() {
-                            self.toggle_panel(TabKind::Chat);
-                            ui.close();
-                        }
-                        if ui.button("Orchestrator").clicked() {
-                            self.toggle_panel(TabKind::Orchestrator);
-                            ui.close();
-                        }
-                        if ui.button("Mission Control").clicked() {
-                            self.toggle_panel(TabKind::MissionControl);
-                            ui.close();
-                        }
-                        if ui.button("Team Studio").clicked() {
-                            self.toggle_panel(TabKind::TeamStudio);
-                            ui.close();
-                        }
-                    });
-
-                    // ── Development tools ──
-                    ui.menu_button("Dev Tools", |ui| {
-                        if ui.button("Search").clicked() {
-                            self.toggle_panel(TabKind::Search);
-                            ui.close();
-                        }
-                        if ui.button("Graph View").clicked() {
-                            self.toggle_panel(TabKind::Graph);
-                            ui.close();
-                        }
-                        if ui.button("Wiki").clicked() {
-                            self.toggle_panel(TabKind::Wiki);
-                            ui.close();
-                        }
+                    if self.use_unified_header {
+                        ui.label(
+                            egui::RichText::new("VELOCITY")
+                                .strong()
+                                .color(palette.accent),
+                        );
                         ui.separator();
-                        if ui.button("Extensions").clicked() {
-                            self.toggle_panel(TabKind::Extensions);
-                            ui.close();
-                        }
-                        if ui.button("Activity").clicked() {
-                            self.toggle_panel(TabKind::Activity);
-                            ui.close();
-                        }
-                        if ui.button("Coverage").clicked() {
-                            self.toggle_panel(TabKind::Coverage);
-                            ui.close();
-                        }
-                        if ui.button("Pipeline").clicked() {
-                            self.toggle_panel(TabKind::Pipeline);
-                            ui.close();
-                        }
-                        ui.separator();
-                        if ui.button("Snippets").clicked() {
-                            self.toggle_panel(TabKind::Snippets);
-                            ui.close();
-                        }
-                        if ui.button("Language Servers").clicked() {
-                            self.toggle_panel(TabKind::LanguageServers);
-                            ui.close();
-                        }
-                        if ui.button("Debugger").clicked() {
-                            self.toggle_panel(TabKind::Debugger);
-                            ui.close();
-                        }
-                        if ui.button("Test Generator").clicked() {
-                            self.toggle_panel(TabKind::TestGenerator);
-                            ui.close();
-                        }
-                    });
-
-                    // ── Agent & AI subsystems ──
-                    ui.menu_button("Agent", |ui| {
-                        if ui.button("Agent Memory").clicked() {
-                            self.toggle_panel(TabKind::AgentMemory);
-                            ui.close();
-                        }
-                        if ui.button("Live Orchestration").clicked() {
-                            self.toggle_panel(TabKind::LiveOrchestration);
-                            ui.close();
-                        }
-                        if ui.button("Semantic Search").clicked() {
-                            self.toggle_panel(TabKind::SemanticSearch);
-                            ui.close();
-                        }
-                        if ui.button("Voice Commands").clicked() {
-                            self.toggle_panel(TabKind::Voice);
-                            ui.close();
-                        }
-                        ui.separator();
-                        if ui.button("Improvement Engine").clicked() {
-                            self.toggle_panel(TabKind::ImprovementEngine);
-                            ui.close();
-                        }
-                        if ui.button("Shared Memory").clicked() {
-                            self.toggle_panel(TabKind::SharedMemory);
-                            ui.close();
-                        }
-                        if ui.button("Background Agents").clicked() {
-                            self.toggle_panel(TabKind::BackgroundAgents);
-                            ui.close();
-                        }
-                        if ui.button("Conflict Resolver").clicked() {
-                            self.toggle_panel(TabKind::ConflictResolver);
-                            ui.close();
-                        }
-                        if ui.button("Collaboration").clicked() {
-                            self.toggle_panel(TabKind::Collaboration);
-                            ui.close();
-                        }
-                        if ui.button("Persistent Memory").clicked() {
-                            self.toggle_panel(TabKind::PersistentMemory);
-                            ui.close();
-                        }
-                    });
-
-                    // ── Editor extension modules ──
-                    ui.menu_button("Modules", |ui| {
-                        if ui.button("Precomp Cache").clicked() {
-                            self.toggle_panel(TabKind::PrecompCache);
-                            ui.close();
-                        }
-                        if ui.button("Multimodal").clicked() {
-                            self.toggle_panel(TabKind::Multimodal);
-                            ui.close();
-                        }
-                        if ui.button("Continuation Ledger").clicked() {
-                            self.toggle_panel(TabKind::ContinuationLedger);
-                            ui.close();
-                        }
-                        if ui.button("Plugin Registry").clicked() {
-                            self.toggle_panel(TabKind::PluginRegistry);
-                            ui.close();
-                        }
-                        if ui.button("Skill Files").clicked() {
-                            self.toggle_panel(TabKind::SkillFiles);
-                            ui.close();
-                        }
-                        if ui.button("Inline Suggestions").clicked() {
-                            self.toggle_panel(TabKind::InlineSuggestions);
-                            ui.close();
-                        }
-                    });
-
-                    // ── Knowledge & automation ──
-                    ui.menu_button("Automation", |ui| {
-                        if ui.button("Knowledge Base").clicked() {
-                            self.toggle_panel(TabKind::Knowledge);
-                            ui.close();
-                        }
-                        if ui.button("Triggers").clicked() {
-                            self.toggle_panel(TabKind::Triggers);
-                            ui.close();
-                        }
-                        if ui.button("Workflows").clicked() {
-                            self.toggle_panel(TabKind::Workflows);
-                            ui.close();
-                        }
-                        if ui.button("Governance").clicked() {
-                            self.toggle_panel(TabKind::Governance);
-                            ui.close();
-                        }
-                        if ui.button("Peers").clicked() {
-                            self.toggle_panel(TabKind::Peers);
-                            ui.close();
-                        }
-                    });
-
-                    // ── Navigation / dock panels ──
-                    ui.menu_button("Navigation", |ui| {
-                        if ui.button("Favorites").clicked() {
-                            self.toggle_panel(TabKind::Favorites);
-                            ui.close();
-                        }
-                        if ui.button("Bookmarks").clicked() {
-                            self.toggle_panel(TabKind::Bookmarks);
-                            ui.close();
-                        }
-                        if ui.button("Recordings").clicked() {
-                            self.toggle_panel(TabKind::Recordings);
-                            ui.close();
-                        }
-                        if ui.button("Targets").clicked() {
-                            self.toggle_panel(TabKind::Targets);
-                            ui.close();
-                        }
-                        if ui.button("Accessibility Audit").clicked() {
-                            self.toggle_panel(TabKind::AccessibilityAudit);
-                            ui.close();
-                        }
-                    });
-
-                    ui.separator();
-                    if ui.button("Settings").clicked() {
-                        self.toggle_panel(TabKind::Settings);
-                        ui.close();
-                    }
-                });
-
-                ui.add_space(8.0);
-
-                // Mode-specific toolbar actions
-                {
-                    let mode_cfg =
-                        crate::editor::mode_config::mode_config_for(self.appearance.profile);
-                    let toolbar_actions = mode_cfg.toolbar_actions();
-                    if let Some(action_id) = crate::editor::toolbar_actions::render_mode_toolbar(
-                        ui,
-                        toolbar_actions,
-                        palette,
-                    ) {
-                        match action_id {
-                            "run" | "run_flow" => self.run_active(),
-                            "build" => self.build_active(),
-                            "file" => self.prompt_open_file(),
-                            "git" => {
-                                self.left_sidebar_tab = 2;
-                                self.left_sidebar_visible = true;
+                        // A fixed set of compact menus avoids controls wrapping or moving when
+                        // profiles change, while every primary surface stays within two clicks.
+                        ui.menu_button(egui::RichText::new("Velocity").strong(), |ui| {
+                            if ui.button("Command Palette  Ctrl+Shift+P").clicked() {
+                                self.open_command_palette();
+                                ui.close();
                             }
-                            "settings" => self.toggle_panel(TabKind::Settings),
-                            "deploy" => self.trigger_deploy(),
-                            "resume_all" => self.run_active(),
-                            "record" => {
-                                self.recording_active = !self.recording_active;
-                                if self.recording_active {
-                                    self.status_message = "Recording actions...".into();
-                                    self.toasts.push(crate::editor::toast::Toast::info(
-                                        "\u{25cf} Recording started",
-                                    ));
-                                } else {
-                                    let name = format!("Recording #{}", self.recordings.len() + 1);
-                                    self.recordings.push(name.clone());
-                                    self.status_message = format!("Saved: {}", name);
-                                    self.toasts.push(crate::editor::toast::Toast::success(
-                                        "Recording saved",
-                                    ));
+                            if ui.button("Keyboard Shortcuts  F1").clicked() {
+                                self.show_shortcuts = true;
+                                ui.close();
+                            }
+                            ui.separator();
+                            if ui.button("Settings  Ctrl+,").clicked() {
+                                self.focus_panel(TabKind::Settings);
+                                ui.close();
+                            }
+                        });
+                        ui.menu_button("File", |ui| {
+                            if ui.button("New File  Ctrl+N").clicked() {
+                                self.open_editor(None);
+                                ui.close();
+                            }
+                            if ui.button("Open File…  Ctrl+O").clicked() {
+                                self.open_file_dialog();
+                                ui.close();
+                            }
+                            if ui.button("Quick Open  Ctrl+P").clicked() {
+                                self.open_quick_open();
+                                ui.close();
+                            }
+                            ui.separator();
+                            if ui.button("Save  Ctrl+S").clicked() {
+                                self.save_active();
+                                ui.close();
+                            }
+                            if ui.button("Save All  Ctrl+Shift+S").clicked() {
+                                self.save_all();
+                                ui.close();
+                            }
+                        });
+                        if ui
+                            .button("Command")
+                            .on_hover_text("Command Palette  (Ctrl+Shift+P)")
+                            .clicked()
+                        {
+                            self.open_command_palette();
+                        }
+                        ui.menu_button("Navigate", |ui| {
+                            if ui.button("Chat  Ctrl+J").clicked() {
+                                self.focus_panel(TabKind::Chat);
+                                ui.close();
+                            }
+                            if ui.button("Search  Ctrl+Shift+F").clicked() {
+                                self.focus_panel(TabKind::Search);
+                                ui.close();
+                            }
+                            if ui
+                                .button("Research browser")
+                                .on_hover_text("Open the native browser and research workspace.")
+                                .clicked()
+                            {
+                                self.open_browse_workspace();
+                                ui.close();
+                            }
+                            if ui
+                                .button("Review changes")
+                                .on_hover_text("Inspect uncommitted work and recent Git history.")
+                                .clicked()
+                            {
+                                self.focus_panel(TabKind::Changes);
+                                ui.close();
+                            }
+                            if ui.button("Mission dashboard").clicked() {
+                                self.set_work_mode(crate::editor::theme::WorkspaceProfile::MissionControl);
+                                self.focus_panel(TabKind::MissionControl);
+                                ui.close();
+                            }
+                            if ui.button("Orchestrator").clicked() {
+                                self.set_work_mode(crate::editor::theme::WorkspaceProfile::MissionControl);
+                                self.focus_panel(TabKind::Orchestrator);
+                                ui.close();
+                            }
+                            if ui.button("Team Studio").clicked() {
+                                self.set_work_mode(crate::editor::theme::WorkspaceProfile::MissionControl);
+                                self.focus_panel(TabKind::TeamStudio);
+                                ui.close();
+                            }
+                            ui.separator();
+                            if ui.button("Output  Ctrl+`").clicked() {
+                                self.focus_panel(TabKind::Output);
+                                ui.close();
+                            }
+                            if ui.button("Terminal").clicked() {
+                                self.focus_panel(TabKind::Terminal);
+                                ui.close();
+                            }
+                            if ui.button("Settings  Ctrl+,").clicked() {
+                                self.focus_panel(TabKind::Settings);
+                                ui.close();
+                            }
+                        });
+                        ui.menu_button("Build", |ui| {
+                            if ui.button("Build  Ctrl+B").clicked() {
+                                self.build_active();
+                                ui.close();
+                            }
+                            if ui.button("Run  Ctrl+R").clicked() {
+                                self.run_active();
+                                ui.close();
+                            }
+                            ui.separator();
+                            for (label, panel) in [
+                                ("Test generator", TabKind::TestGenerator),
+                                ("Test coverage", TabKind::Coverage),
+                                ("Deploy pipeline", TabKind::Pipeline),
+                                ("Debugger", TabKind::Debugger),
+                                ("Language servers", TabKind::LanguageServers),
+                                ("Snippets", TabKind::Snippets),
+                                ("Inline suggestions", TabKind::InlineSuggestions),
+                                ("Precompiled cache", TabKind::PrecompCache),
+                            ] {
+                                if ui.button(label).clicked() {
+                                    self.focus_panel(panel);
+                                    ui.close();
                                 }
                             }
-                            "stop" => {
-                                self.recording_active = false;
-                                self.agent_active = false;
-                                self.status_message = "Stopped.".into();
-                                self.toasts
-                                    .push(crate::editor::toast::Toast::info("\u{25a0} Stopped"));
-                            }
-                            "schedule" => {
-                                self.status_message =
-                                    "Schedule: use the orchestrator to define scheduled runs."
-                                        .into();
-                                self.toasts.push(crate::editor::toast::Toast::info(
-                                    "Open Orchestrator to configure schedules",
-                                ));
-                                self.toggle_panel(TabKind::Orchestrator);
-                            }
-                            "targets" => {
-                                self.left_sidebar_tab = 1; // Targets tab in Operator mode
-                                self.left_sidebar_visible = true;
-                            }
-                            "pause_all" => {
-                                self.status_message = "All agents paused.".into();
-                                self.toasts.push(crate::editor::toast::Toast::info(
-                                    "\u{23f8} All agents paused",
-                                ));
-                            }
-                            "scale" => {
-                                self.status_message =
-                                    "Scale: configure agent pool size in Mission Control.".into();
-                                self.toggle_panel(TabKind::MissionControl);
-                            }
-                            "alerts" => {
-                                self.status_message = "Alerts panel.".into();
-                                self.right_sidebar_visible = true;
-                            }
-                            "reports" => {
-                                self.status_message = "Generating mission report...".into();
-                                self.toasts.push(crate::editor::toast::Toast::info(
-                                    "Mission report generated",
-                                ));
-                                if let Err(e) = self.persist_mission_activity() {
-                                    Self::persist_err(&mut self.toasts, "mission activity", &e);
+                        });
+                        ui.menu_button("Agents", |ui| {
+                            for (label, panel) in [
+                                ("Live activity", TabKind::Activity),
+                                ("Agent roster", TabKind::Agents),
+                                ("Background agents", TabKind::BackgroundAgents),
+                                ("Live orchestration", TabKind::LiveOrchestration),
+                                ("Task queue", TabKind::Queue),
+                                ("Timeline", TabKind::Timeline),
+                                ("Mission metrics", TabKind::Metrics),
+                                ("Conflict resolver", TabKind::ConflictResolver),
+                                ("Improvement engine", TabKind::ImprovementEngine),
+                                ("Continuity ledger", TabKind::ContinuationLedger),
+                            ] {
+                                if ui.button(label).clicked() {
+                                    self.focus_panel(panel);
+                                    ui.close();
                                 }
                             }
-                            "debug" => {
-                                self.status_message = "Debug: attach to running process.".into();
-                                self.toasts
-                                    .push(crate::editor::toast::Toast::info("Debugger attached"));
+                        });
+                        ui.menu_button("Knowledge", |ui| {
+                            for (label, panel) in [
+                                ("Knowledge base", TabKind::Knowledge),
+                                ("Wiki", TabKind::Wiki),
+                                ("Code graph", TabKind::Graph),
+                                ("Semantic search", TabKind::SemanticSearch),
+                                ("Bookmarks", TabKind::Bookmarks),
+                                ("Favorites", TabKind::Favorites),
+                                ("Agent memory", TabKind::AgentMemory),
+                                ("Shared memory", TabKind::SharedMemory),
+                                ("Persistent memory", TabKind::PersistentMemory),
+                                ("Recent changes", TabKind::Changes),
+                            ] {
+                                if ui.button(label).clicked() {
+                                    self.focus_panel(panel);
+                                    ui.close();
+                                }
                             }
-                            "test" => {
-                                self.status_message = "Running tests...".into();
-                                let _ = self
-                                    .agent_tx
-                                    .send(crate::agent::UiToAgentMessage::RunLocalBuild);
-                                self.agent_active = true;
+                        });
+                        ui.menu_button("Automate", |ui| {
+                            for (label, panel) in [
+                                ("Workflows", TabKind::Workflows),
+                                ("Triggers", TabKind::Triggers),
+                                ("Automation flows", TabKind::Flows),
+                                ("Automation targets", TabKind::Targets),
+                                ("Execution logs", TabKind::Logs),
+                                ("Recordings", TabKind::Recordings),
+                                ("Voice commands", TabKind::Voice),
+                                ("Multimodal attachments", TabKind::Multimodal),
+                                ("Accessibility audit", TabKind::AccessibilityAudit),
+                                ("Governance", TabKind::Governance),
+                            ] {
+                                if ui.button(label).clicked() {
+                                    self.focus_panel(panel);
+                                    ui.close();
+                                }
                             }
-                            "preview" => {
-                                self.status_message = "Accessibility preview mode.".into();
-                                self.toasts.push(crate::editor::toast::Toast::info(
-                                    "\u{25c9} Preview: high-contrast overlay active",
-                                ));
+                        });
+                        ui.menu_button("Workspace", |ui| {
+                            if ui.button("Research browser").clicked() {
+                                self.open_browse_workspace();
+                                ui.close();
                             }
-                            "audit" => {
-                                self.status_message = "Running WCAG audit...".into();
-                                self.toasts.push(crate::editor::toast::Toast::info(
-                                    "\u{267f} Accessibility audit complete",
-                                ));
+                            if ui.button("Review changes").clicked() {
+                                self.focus_panel(TabKind::Changes);
+                                ui.close();
                             }
-                            "contrast" => {
-                                self.status_message = "Contrast checker active.".into();
-                                self.toasts.push(crate::editor::toast::Toast::info(
-                                    "\u{25d0} Contrast ratios displayed",
-                                ));
+                            ui.separator();
+                            for (label, panel) in [
+                                ("Extensions", TabKind::Extensions),
+                                ("Plugin registry", TabKind::PluginRegistry),
+                                ("Skills", TabKind::SkillFiles),
+                                ("Collaboration", TabKind::Collaboration),
+                                ("Peers", TabKind::Peers),
+                                ("Usage", TabKind::Usage),
+                            ] {
+                                if ui.button(label).clicked() {
+                                    self.focus_panel(panel);
+                                    ui.close();
+                                }
                             }
-                            "screen_reader" => {
-                                self.status_message = "Screen reader simulation active.".into();
-                                self.toasts.push(crate::editor::toast::Toast::info(
-                                    "\u{267f} SR simulation: focus order traced",
-                                ));
+                            ui.separator();
+                            if ui.button("New NDA document").clicked() {
+                                self.new_nda_document();
+                                ui.close();
                             }
-                            _ => {}
-                        }
-                    }
-                }
-
-                if !self.pending_approvals.is_empty() {
-                    ui.add_space(8.0);
-                    if ui
-                        .button(
+                            if ui.button("Import active file to NDA").clicked() {
+                                self.import_file_to_nda();
+                                ui.close();
+                            }
+                            if ui.button("Open NDA browser viewer").clicked() {
+                                self.open_nda_viewer();
+                                ui.close();
+                            }
+                        });
+                        let active_mode = self.appearance.profile;
+                        ui.menu_button(
                             egui::RichText::new(format!(
-                                "Approve All ({})",
-                                self.pending_approvals.len()
+                                "Layouts: {} {} ▾",
+                                active_mode.glyph(),
+                                active_mode.short_label()
                             ))
-                            .color(palette.success),
-                        )
-                        .clicked()
-                    {
-                        self.approve_all_pending_tools();
+                            .color(palette.accent),
+                            |ui| {
+                                ui.label(
+                                    egui::RichText::new("Workspaces")
+                                        .small()
+                                        .color(palette.text_muted),
+                                );
+                                // Build and Mission are the product-level workspaces.
+                                // Specialized profiles remain available without competing
+                                // with the default mental model.
+                                for mode in [
+                                    crate::editor::theme::WorkspaceProfile::Coder,
+                                    crate::editor::theme::WorkspaceProfile::MissionControl,
+                                ] {
+                                    let selected = mode == active_mode;
+                                    let label = match mode {
+                                        crate::editor::theme::WorkspaceProfile::Coder => "Build",
+                                        crate::editor::theme::WorkspaceProfile::MissionControl => {
+                                            "Mission"
+                                        }
+                                        _ => unreachable!(),
+                                    };
+                                    if ui
+                                        .selectable_label(
+                                            selected,
+                                            format!(
+                                                "{} {}  {}",
+                                                mode.glyph(),
+                                                label,
+                                                mode.shortcut_hint()
+                                            ),
+                                        )
+                                        .on_hover_text(mode.description())
+                                        .clicked()
+                                    {
+                                        self.set_work_mode(mode);
+                                        ui.close();
+                                    }
+                                }
+                                ui.separator();
+                                ui.label(
+                                    egui::RichText::new("Agent workspaces")
+                                        .small()
+                                        .color(palette.text_muted),
+                                );
+                                if ui
+                                    .button("Mission dashboard")
+                                    .on_hover_text("Plan, approve, steer, and review outcome-oriented work.")
+                                    .clicked()
+                                {
+                                    self.set_work_mode(crate::editor::theme::WorkspaceProfile::MissionControl);
+                                    self.focus_panel(TabKind::MissionControl);
+                                    ui.close();
+                                }
+                                if ui
+                                    .button("Orchestrator")
+                                    .on_hover_text("Inspect routed task phases, policies, and execution state.")
+                                    .clicked()
+                                {
+                                    self.set_work_mode(crate::editor::theme::WorkspaceProfile::MissionControl);
+                                    self.focus_panel(TabKind::Orchestrator);
+                                    ui.close();
+                                }
+                                if ui
+                                    .button("Team Studio")
+                                    .on_hover_text("Create and manage specialist agent teams.")
+                                    .clicked()
+                                {
+                                    self.set_work_mode(crate::editor::theme::WorkspaceProfile::MissionControl);
+                                    self.focus_panel(TabKind::TeamStudio);
+                                    ui.close();
+                                }
+                                ui.separator();
+                                ui.label(
+                                    egui::RichText::new("Specialized layouts")
+                                        .small()
+                                        .color(palette.text_muted),
+                                );
+                                for mode in [
+                                    crate::editor::theme::WorkspaceProfile::AutomationOperator,
+                                    crate::editor::theme::WorkspaceProfile::Accessibility,
+                                ] {
+                                    if ui
+                                        .selectable_label(
+                                            mode == active_mode,
+                                            format!(
+                                                "{} {}  {}",
+                                                mode.glyph(),
+                                                mode.label(),
+                                                mode.shortcut_hint()
+                                            ),
+                                        )
+                                        .on_hover_text(mode.description())
+                                        .clicked()
+                                    {
+                                        self.set_work_mode(mode);
+                                        ui.close();
+                                    }
+                                }
+                            },
+                        );
+                    } else {
+                        ui.menu_button("File", |ui| {
+                            if ui.button("New File").clicked() {
+                                self.open_editor(None);
+                                ui.close();
+                            }
+                            if ui.button("Open File…").clicked() {
+                                self.open_file_dialog();
+                                ui.close();
+                            }
+                        });
+                        if ui.button("Command Palette").clicked() {
+                            self.open_command_palette();
+                        }
                     }
-                    if ui
-                        .button(egui::RichText::new("Decline All").color(palette.warning))
-                        .clicked()
-                    {
-                        self.reject_all_pending_tools();
-                    }
-                }
 
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if ui
-                        .small_button(if self.right_sidebar_visible {
-                            "\u{25e7}"
-                        } else {
-                            "\u{25e8}"
-                        })
-                        .on_hover_text("Toggle right panel  (Ctrl+Shift+E)")
-                        .clicked()
-                    {
-                        self.toggle_right_sidebar();
-                    }
-                    if ui
-                        .small_button(if self.left_sidebar_visible {
-                            "\u{25e8}"
-                        } else {
-                            "\u{25e7}"
-                        })
-                        .on_hover_text("Toggle sidebar  (Ctrl+E)")
-                        .clicked()
-                    {
-                        self.toggle_left_sidebar();
-                    }
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if ui
+                            .small_button(if self.right_sidebar_visible {
+                                "▸"
+                            } else {
+                                "◂"
+                            })
+                            .on_hover_text("Toggle right panel  (Ctrl+Shift+E)")
+                            .clicked()
+                        {
+                            self.toggle_right_sidebar();
+                        }
+                        if ui
+                            .small_button(if self.left_sidebar_visible {
+                                "◂"
+                            } else {
+                                "▸"
+                            })
+                            .on_hover_text("Toggle sidebar  (Ctrl+E)")
+                            .clicked()
+                        {
+                            self.toggle_left_sidebar();
+                        }
+                        if ui
+                            .button("Workspace")
+                            .on_hover_text("Switch workspace  (Ctrl+Shift+W)")
+                            .clicked()
+                        {
+                            self.workspace_switcher_open = true;
+                            self.workspace_switcher_selected = 0;
+                            self.workspace_switcher_just_opened = true;
+                        }
+                    });
                 });
-            });
-        });
-
-        // Symbol enclosing the cursor — used to highlight the Outline entry and
-        // to drive the symbol context panel below.
+                ui.add_space(2.0);
+            }); // Symbol enclosing the cursor — used to highlight the Outline entry and
+                // to drive the symbol context panel below.
         let mut active_symbol = None;
         if let Some(active_id) = &self.active_tab {
             if let Some(buf) = self.buffers.get(active_id) {

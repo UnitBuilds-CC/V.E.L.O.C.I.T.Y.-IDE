@@ -168,6 +168,9 @@ pub struct VelocityApp {
     pub appearance: AppearanceSettings,
     /// Last-applied appearance snapshot; used to avoid re-applying theme/style every frame.
     pub last_applied_appearance: Option<AppearanceSettings>,
+    /// When true the unified single-row header is used and the legacy toolbar
+    /// top panel is suppressed to avoid rendering a double header.
+    pub use_unified_header: bool,
     pub provider_settings: WorkspaceProviderSettings,
     pub left_sidebar_visible: bool,
     pub left_sidebar_width: f32,
@@ -188,6 +191,15 @@ pub struct VelocityApp {
     pub team_gallery_expanded: Option<usize>,
     /// Chat state for the team builder sub-chat.
     pub team_builder_chat: crate::editor::team_builder_chat::TeamBuilderChat,
+    /// Draft fields for direct Team Studio creation flows.
+    pub team_name_input: String,
+    pub team_description_input: String,
+    /// Draft fields for creating a reusable agent and assigning it to a team.
+    pub team_agent_name_input: String,
+    pub team_agent_role_input: String,
+    pub team_agent_scope_input: String,
+    pub team_agent_instructions_input: String,
+    pub team_agent_target_index: Option<usize>,
     /// UI-facing manager that bridges Team Studio controls to the agent runtime.
     pub team_manager: crate::editor::app::team_manager::TeamManager,
 
@@ -652,21 +664,18 @@ impl VelocityApp {
         self.appearance.apply_profile(profile);
 
         // Tailor the panel arrangement to the work mode so switching feels
-        // like night and day, not just a recolor.
-        let (left_visible, right_visible) = match profile {
-            // Coding: file tree + symbol inspector both in view.
+        // like night and day, not just a recolor. Avoid unnecessary dock
+        // rebuilds that cause visual jitter by only rebuilding when the set
+        // of primary tabs or sidebar visibility actually change.
+        let (new_left_visible, new_right_visible) = match profile {
             WorkspaceProfile::Coder => (true, true),
-            // Automation: lean on the orchestrator/browser, hide the inspector.
             WorkspaceProfile::AutomationOperator => (true, false),
-            // Mission control: hide the file tree, keep the monitoring rail.
             WorkspaceProfile::MissionControl => (false, true),
-            // Accessibility: everything visible for maximum context.
             WorkspaceProfile::Accessibility => (true, true),
         };
-        self.left_sidebar_visible = left_visible;
-        self.right_sidebar_visible = right_visible;
 
-        let mut tabs: Vec<Tab> = self
+        // Collect current editor tabs (kinds) and prepare the desired set.
+        let mut desired_tabs: Vec<Tab> = self
             .tabs
             .iter()
             .filter(|tab| matches!(tab.kind, TabKind::Editor { .. }))
@@ -688,27 +697,86 @@ impl VelocityApp {
 
         match profile {
             WorkspaceProfile::Coder => {
-                push_unique(TabKind::Chat, &mut tabs, &mut self.tab_counter);
-                push_unique(TabKind::Output, &mut tabs, &mut self.tab_counter);
+                push_unique(TabKind::Chat, &mut desired_tabs, &mut self.tab_counter);
+                push_unique(TabKind::Output, &mut desired_tabs, &mut self.tab_counter);
             }
             WorkspaceProfile::AutomationOperator => {
-                push_unique(TabKind::Orchestrator, &mut tabs, &mut self.tab_counter);
-                push_unique(TabKind::Chat, &mut tabs, &mut self.tab_counter);
-                push_unique(TabKind::Output, &mut tabs, &mut self.tab_counter);
+                push_unique(
+                    TabKind::Orchestrator,
+                    &mut desired_tabs,
+                    &mut self.tab_counter,
+                );
+                push_unique(TabKind::Chat, &mut desired_tabs, &mut self.tab_counter);
+                push_unique(TabKind::Output, &mut desired_tabs, &mut self.tab_counter);
             }
             WorkspaceProfile::MissionControl => {
-                push_unique(TabKind::MissionControl, &mut tabs, &mut self.tab_counter);
-                push_unique(TabKind::Chat, &mut tabs, &mut self.tab_counter);
-                push_unique(TabKind::Output, &mut tabs, &mut self.tab_counter);
+                push_unique(
+                    TabKind::MissionControl,
+                    &mut desired_tabs,
+                    &mut self.tab_counter,
+                );
+                push_unique(TabKind::Chat, &mut desired_tabs, &mut self.tab_counter);
+                push_unique(TabKind::Output, &mut desired_tabs, &mut self.tab_counter);
             }
             WorkspaceProfile::Accessibility => {
-                push_unique(TabKind::Chat, &mut tabs, &mut self.tab_counter);
-                push_unique(TabKind::Output, &mut tabs, &mut self.tab_counter);
+                push_unique(TabKind::Chat, &mut desired_tabs, &mut self.tab_counter);
+                push_unique(TabKind::Output, &mut desired_tabs, &mut self.tab_counter);
             }
         }
 
-        self.tabs = tabs;
-        self.rebuild_dock();
+        // Determine whether visible sidebars or tab kinds changed; only rebuild
+        // dock when those change to reduce layout churn (fixes jitter on mode swap).
+        let sidebars_changed = (self.left_sidebar_visible != new_left_visible)
+            || (self.right_sidebar_visible != new_right_visible);
+
+        let current_kinds: Vec<std::mem::Discriminant<TabKind>> = self
+            .tabs
+            .iter()
+            .map(|t| std::mem::discriminant(&t.kind))
+            .collect();
+        let desired_kinds: Vec<std::mem::Discriminant<TabKind>> = desired_tabs
+            .iter()
+            .map(|t| std::mem::discriminant(&t.kind))
+            .collect();
+
+        let tabs_changed = current_kinds != desired_kinds;
+
+        // Apply visibility and tabs; prefer restoring a previously customized
+        // layout for this profile (avoids sudden size/visibility changes that
+        // cause panels like Code/Automate to 'jitter' when the central area
+        // resizes). If no saved layout exists, fall back to the default mapping.
+        if let Some(layout) = self.mode_layouts.get(&profile) {
+            self.left_sidebar_visible = layout.left_visible;
+            // keep the stored width but constrain it to reasonable bounds
+            // Tighten bounds for coder/operator profiles to avoid sizing jitter
+            match profile {
+                WorkspaceProfile::Coder | WorkspaceProfile::AutomationOperator => {
+                    self.left_sidebar_width = layout.left_width.clamp(200.0, 420.0);
+                    self.right_sidebar_width = layout.right_width.clamp(240.0, 420.0);
+                }
+                _ => {
+                    self.left_sidebar_width = layout.left_width.clamp(180.0, 600.0);
+                    self.right_sidebar_width = layout.right_width.clamp(220.0, 900.0);
+                }
+            }
+            self.right_sidebar_visible = layout.right_visible;
+        } else {
+            self.left_sidebar_visible = new_left_visible;
+            self.right_sidebar_visible = new_right_visible;
+            // Ensure sensible default widths so toggling doesn't aggressively
+            // shrink the central content when panels appear/disappear.
+            if self.left_sidebar_width < 180.0 {
+                self.left_sidebar_width = 220.0;
+            }
+            if self.right_sidebar_width < 220.0 {
+                self.right_sidebar_width = 260.0;
+            }
+        }
+
+        self.tabs = desired_tabs;
+        if sidebars_changed || tabs_changed {
+            self.rebuild_dock();
+        }
 
         let focus_kind = match profile {
             WorkspaceProfile::Coder => TabKind::Chat,
@@ -716,7 +784,12 @@ impl VelocityApp {
             WorkspaceProfile::MissionControl => TabKind::MissionControl,
             WorkspaceProfile::Accessibility => TabKind::Settings,
         };
-        self.focus_panel(focus_kind);
+
+        // Only change focus if we rebuilt or the focused kind is missing.
+        if sidebars_changed || tabs_changed || self.active_tab.is_none() {
+            self.focus_panel(focus_kind);
+        }
+
         self.status_message = format!("Applied {} workspace preset", profile.label());
     }
 
@@ -886,6 +959,7 @@ impl VelocityApp {
             status_message: String::from("Ready"),
             appearance,
             last_applied_appearance: Some(appearance),
+            use_unified_header: true,
             provider_settings,
             left_sidebar_visible: true,
             left_sidebar_width: 240.0,
@@ -899,6 +973,13 @@ impl VelocityApp {
             selected_member_id: None,
             team_gallery_expanded: None,
             team_builder_chat: crate::editor::team_builder_chat::TeamBuilderChat::default(),
+            team_name_input: String::new(),
+            team_description_input: String::new(),
+            team_agent_name_input: String::new(),
+            team_agent_role_input: String::new(),
+            team_agent_scope_input: String::new(),
+            team_agent_instructions_input: String::new(),
+            team_agent_target_index: None,
             // UI-facing manager that bridges Team Studio controls to the agent runtime.
             team_manager: crate::editor::app::team_manager::TeamManager::new(agent_tx.clone()),
             agent_ui_state: AgentUiState::default(),

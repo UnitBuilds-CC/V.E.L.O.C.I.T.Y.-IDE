@@ -62,6 +62,14 @@ fn infers_desktop_automation_task_kind_from_windows_automation_goals() {
 }
 
 #[test]
+fn missions_default_to_review_before_execution() {
+    let mission_control = MissionControlState::new();
+
+    assert!(!mission_control.auto_execute);
+    assert_eq!(mission_control.active_sub_tab, 0);
+}
+
+#[test]
 fn desktop_automation_preset_seeds_brief_and_policy_kind() {
     let mut mission_control = MissionControlState::new();
     let mut orchestrator = OrchestratorPanel::new();
@@ -392,6 +400,8 @@ fn mirror_worker_events_into_timeline_appends_only_new_events() {
         nda_docs: std::collections::HashMap::new(),
         status_message: String::new(),
         appearance: crate::editor::theme::AppearanceSettings::default(),
+        last_applied_appearance: None,
+        use_unified_header: true,
         provider_settings: crate::usage::WorkspaceProviderSettings::default(),
         left_sidebar_visible: true,
         left_sidebar_width: 240.0,
@@ -404,6 +414,16 @@ fn mirror_worker_events_into_timeline_appends_only_new_events() {
         selected_member_id: None,
         team_gallery_expanded: None,
         team_builder_chat: crate::editor::team_builder_chat::TeamBuilderChat::default(),
+        team_name_input: String::new(),
+        team_description_input: String::new(),
+        team_agent_name_input: String::new(),
+        team_agent_role_input: String::new(),
+        team_agent_scope_input: String::new(),
+        team_agent_instructions_input: String::new(),
+        team_agent_target_index: None,
+        team_manager: crate::editor::app::team_manager::TeamManager::new(
+            crossbeam_channel::unbounded().0,
+        ),
         agent_ui_state: AgentUiState::default(),
         task_timeline: timeline,
         smart_sidebar: SmartSidebarState::default(),
@@ -666,6 +686,8 @@ fn clearing_worker_event_tracking_allows_replay_after_replan() {
         nda_docs: std::collections::HashMap::new(),
         status_message: String::new(),
         appearance: crate::editor::theme::AppearanceSettings::default(),
+        last_applied_appearance: None,
+        use_unified_header: true,
         provider_settings: crate::usage::WorkspaceProviderSettings::default(),
         left_sidebar_visible: true,
         left_sidebar_width: 240.0,
@@ -678,6 +700,16 @@ fn clearing_worker_event_tracking_allows_replay_after_replan() {
         selected_member_id: None,
         team_gallery_expanded: None,
         team_builder_chat: crate::editor::team_builder_chat::TeamBuilderChat::default(),
+        team_name_input: String::new(),
+        team_description_input: String::new(),
+        team_agent_name_input: String::new(),
+        team_agent_role_input: String::new(),
+        team_agent_scope_input: String::new(),
+        team_agent_instructions_input: String::new(),
+        team_agent_target_index: None,
+        team_manager: crate::editor::app::team_manager::TeamManager::new(
+            crossbeam_channel::unbounded().0,
+        ),
         agent_ui_state: AgentUiState::default(),
         task_timeline: TTState::default(),
         smart_sidebar: SmartSidebarState::default(),

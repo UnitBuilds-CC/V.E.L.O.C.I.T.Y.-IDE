@@ -733,14 +733,17 @@ fn render_input(
 
                 ui.add_space(6.0);
 
-                // Attachment row (multimodal input).
+                // Keep the composer usable in narrow dock panes: never pass a
+                // negative desired width to egui, and let the input yield space to
+                // the action instead of forcing the panel wider.
                 ui.horizontal(|ui| {
+                    let attachment_input_width = (ui.available_width() - 78.0).max(0.0);
                     ui.add(
                         egui::TextEdit::singleline(&mut state.attach_input)
-                            .hint_text("attach file path\u{2026}")
-                            .desired_width(ui.available_width() - 64.0),
+                            .hint_text("Attach file path…")
+                            .desired_width(attachment_input_width),
                     );
-                    if ui.small_button("\u{1f4ce} Attach").clicked() {
+                    if ui.small_button("Attach").clicked() {
                         let path = state.attach_input.trim().to_string();
                         if !path.is_empty() {
                             match crate::editor::multimodal::Attachment::load(&path) {
@@ -778,14 +781,18 @@ fn render_input(
                 }
 
                 ui.add_space(6.0);
-                ui.horizontal(|ui| {
-                    ui.checkbox(&mut state.auto_approve, "Auto");
+                ui.horizontal_wrapped(|ui| {
+                    ui.checkbox(&mut state.auto_approve, "Auto-approve")
+                        .on_hover_text("Automatically approve agent tool calls for this chat");
                     ui.add_space(4.0);
 
-                    // Floating Provider selector dropdown
+                    let provider_label = state.provider.label();
+                    // Fixed-width selectors keep provider/model changes from resizing the
+                    // composer or pushing Send off-screen in a narrow split.
                     let mut provider_changed = false;
                     egui::ComboBox::from_id_salt("floating_agent_provider")
-                        .selected_text(state.provider.label())
+                        .width(118.0)
+                        .selected_text(provider_label)
                         .show_ui(ui, |ui| {
                             for provider in [
                                 crate::agent::AiProvider::CloudflareWorkersAi,
@@ -824,9 +831,9 @@ fn render_input(
 
                     ui.add_space(4.0);
 
-                    // Floating model pill selector
                     let mut model_changed = false;
                     egui::ComboBox::from_id_salt("floating_agent_model")
+                        .width(156.0)
                         .selected_text(truncate_model_label(&state.selected_model, 22))
                         .show_ui(ui, |ui| {
                             for model in state.available_models.clone() {
@@ -844,26 +851,29 @@ fn render_input(
                             agent_tx.send(UiToAgentMessage::SetModel(state.selected_model.clone()));
                     }
 
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        let send_btn = egui::Button::new(
-                            egui::RichText::new("\u{2794}")
-                                .strong()
-                                .color(egui::Color32::WHITE),
-                        )
-                        .corner_radius(egui::CornerRadius::same(12))
-                        .fill(palette.accent)
-                        .min_size(egui::vec2(28.0, 28.0));
+                    let send_btn = egui::Button::new(
+                        egui::RichText::new("Send")
+                            .strong()
+                            .color(egui::Color32::WHITE),
+                    )
+                    .corner_radius(egui::CornerRadius::same(12))
+                    .fill(palette.accent)
+                    .min_size(egui::vec2(64.0, 30.0));
 
-                        if ui.add(send_btn).clicked() || submit {
-                            let text = state.input.trim().to_string();
-                            state.input.clear();
-                            if !text.is_empty() || !state.attachments.is_empty() {
-                                let prompt = state.compose_and_take_prompt(&text);
-                                state.push_user(text);
-                                let _ = agent_tx.send(UiToAgentMessage::UserPrompt(prompt));
-                            }
+                    if ui
+                        .add(send_btn)
+                        .on_hover_text("Send message (Enter)")
+                        .clicked()
+                        || submit
+                    {
+                        let text = state.input.trim().to_string();
+                        state.input.clear();
+                        if !text.is_empty() || !state.attachments.is_empty() {
+                            let prompt = state.compose_and_take_prompt(&text);
+                            state.push_user(text);
+                            let _ = agent_tx.send(UiToAgentMessage::UserPrompt(prompt));
                         }
-                    });
+                    }
                 });
             });
         });
