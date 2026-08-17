@@ -2,7 +2,7 @@
 
 ## Classification
 - **Category**: Agent Subsystem
-- **Files**: velocity-mcp/src/agent/ (22 files)
+- **Files**: velocity-mcp/src/agent/ (28 files)
 - **Criticality**: Critical — core AI reasoning infrastructure
 
 ## Summary

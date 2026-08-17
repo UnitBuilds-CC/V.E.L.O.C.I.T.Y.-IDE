@@ -32,9 +32,9 @@ The workspace uses `resolver = "2"` and contains five member crates:
 
 | Crate | Purpose | File Count |
 |-------|---------|------------|
-| `velocity-mcp` | MCP server, IDE editor, agent loop, Windows automation | ~220 |
-| `velocity-browser` | Pure-Rust browser engine | ~109 |
-| `velocity-ide` | NDA compiler, JIT, site map, model inference | ~78 |
+| `velocity-mcp` | MCP server, IDE editor, agent loop, Windows automation | ~261 |
+| `velocity-browser` | Pure-Rust browser engine | ~171 |
+| `velocity-ide` | NDA compiler, JIT, site map, model inference | ~77 |
 | `drone` | Safety monitor process | ~5 |
 | `e2e` | End-to-end integration tests | ~4 |
 

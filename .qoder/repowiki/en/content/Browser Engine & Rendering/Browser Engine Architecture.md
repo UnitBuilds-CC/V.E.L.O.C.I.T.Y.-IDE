@@ -14,7 +14,7 @@
 
 ## Overview
 
-`velocity-browser` is a pure-Rust browser control plane with no CDP (Chrome DevTools Protocol) or Chromium dependency. It implements DOM manipulation, layout solving, JavaScript execution, and networking from scratch — totaling 109 source files.
+`velocity-browser` is a pure-Rust browser control plane with no CDP (Chrome DevTools Protocol) or Chromium dependency. It implements DOM manipulation, layout solving, JavaScript execution, and networking from scratch — totaling 171 source files.
 
 ## Subsystem Breakdown
 
@@ -34,7 +34,7 @@
 - Box model calculation
 - Inline layout
 
-### JavaScript Engine (`src/js/` — 13 files)
+### JavaScript Engine (`src/js/` — 56 files)
 - JavaScript VM (ES6+ subset)
 - DOM bindings for JS
 - Web API implementations
@@ -42,7 +42,7 @@
 - WASM SIMD interpreter
 - Web Worker pool
 
-### Networking (`src/net/` — 17 files)
+### Networking (`src/net/` — 19 files)
 - HTTP/2 implementation
 - HTTP/3 (QUIC) support
 - WebSocket protocol
@@ -51,7 +51,7 @@
 - TLS fingerprint rotation
 - Proxy resolver
 
-### Engine Capabilities (`src/engine/` — 25 files)
+### Engine Capabilities (`src/engine/` — 39 files)
 - Session management (auth, cookies, history, storage)
 - Browser workflows and workflow runner
 - Snapshots and snapshot diffing

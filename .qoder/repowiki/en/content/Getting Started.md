@@ -24,7 +24,7 @@
 
 ## Introduction
 
-V.E.L.O.C.I.T.Y. is a high-performance, AI-native developer workspace built entirely in Rust. It combines a native GPU-accelerated IDE interface with a pure-Rust browser control plane, a self-correcting agentic compiler loop, and a 4-provider AI reasoning engine. The project is organized as a Cargo workspace with 3 primary crates, a drone safety module, and end-to-end test harness — totaling over 400 source files.
+V.E.L.O.C.I.T.Y. is a high-performance, AI-native developer workspace built entirely in Rust. It combines a native GPU-accelerated IDE interface with a pure-Rust browser control plane, a self-correcting agentic compiler loop, and a 4-provider AI reasoning engine. The project is organized as a Cargo workspace with 3 primary crates, a drone safety module, and end-to-end test harness — totaling over 520 source files.
 
 This guide walks you through setting up your development environment, building the workspace, launching the IDE, and running validation checks.
 
@@ -34,7 +34,7 @@ The repository is a Rust workspace (`resolver = "2"`) with five member crates:
 
 ```text
 Kimi-Code/
-├── velocity-mcp/          # MCP Server + Native IDE Editor (220 files)
+├── velocity-mcp/          # MCP Server + Native IDE Editor (261 files)
 │   ├── src/
 │   │   ├── agent/         # 4-provider reasoning loop, dispatch, peer bridge
 │   │   ├── editor/        # egui GUI: code editor, chat, browser panel, orchestrator
@@ -49,7 +49,7 @@ Kimi-Code/
 │   │   ├── wa/            # Windows UI Automation (29 files)
 │   │   └── benchmark/     # CPU/GPU benchmark runner
 │   └── Cargo.toml
-├── velocity-browser/      # Pure-Rust Browser Control Plane (109 files)
+├── velocity-browser/      # Pure-Rust Browser Control Plane (171 files)
 │   ├── src/
 │   │   ├── dom/           # Slab DOM tree, shadow slots, mutations
 │   │   ├── layout/        # Flexbox, grid, parallel layout solvers
@@ -61,7 +61,7 @@ Kimi-Code/
 │   │   ├── style/         # CSS style resolution
 │   │   └── session*.rs    # Session management, auth, storage, history
 │   └── Cargo.toml
-├── velocity-ide/          # Compiler & NDA Pipeline (78 files)
+├── velocity-ide/          # Compiler & NDA Pipeline (77 files)
 │   ├── src/
 │   │   ├── compiler/      # NDA lexer, parser, JIT, shaders, driver
 │   │   ├── model/         # Transformer model config, weights, inference

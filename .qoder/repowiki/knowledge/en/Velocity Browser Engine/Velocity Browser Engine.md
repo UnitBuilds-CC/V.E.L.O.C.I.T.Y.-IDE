@@ -2,7 +2,7 @@
 
 ## Classification
 - **Category**: Primary Crate
-- **Files**: ~109 source files
+- **Files**: ~171 source files
 - **Criticality**: Critical — pure-Rust browser with no CDP
 
 ## Summary
@@ -13,13 +13,13 @@
 
 | Module | Files | Purpose |
 |--------|-------|---------|
-| `engine/` | 25 | Browser capabilities (auth, sessions, workflows) |
-| `net/` | 17 | HTTP/2-3, TLS 1.3, WebSocket, WebRTC |
-| `js/` | 13 | JS VM, WASM interpreter, event loop |
+| `engine/` | 39 | Browser capabilities (auth, sessions, workflows) |
+| `net/` | 19 | HTTP/2-3, TLS 1.3, WebSocket, WebRTC |
+| `js/` | 56 | JS VM, WASM interpreter, event loop |
 | `agentic/` | 10 | AOM tree, OCR, action predictor |
 | `dom/` | 9 | Slab DOM tree, shadow slots, mutations |
 | `layout/` | 7 | Flexbox, grid, parallel solvers |
-| `parser/` | 7 | HTML parser |
+| `parser/` | 6 | HTML parser |
 | `style/` | 5 | CSS style resolution |
 
 ## Key Design Decisions

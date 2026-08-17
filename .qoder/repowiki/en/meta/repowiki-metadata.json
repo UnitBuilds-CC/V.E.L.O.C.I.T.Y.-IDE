@@ -9,19 +9,19 @@
       {
         "name": "velocity-mcp",
         "path": "velocity-mcp/",
-        "file_count": 220,
+        "file_count": 261,
         "role": "MCP server, IDE editor, agent loop, Windows automation"
       },
       {
         "name": "velocity-browser",
         "path": "velocity-browser/",
-        "file_count": 109,
+        "file_count": 171,
         "role": "Pure-Rust browser engine (DOM, layout, JS, net, agentic)"
       },
       {
         "name": "velocity-ide",
         "path": "velocity-ide/",
-        "file_count": 78,
+        "file_count": 77,
         "role": "NDA compiler, JIT, model inference, site map"
       },
       {
@@ -37,7 +37,7 @@
         "role": "End-to-end integration tests"
       }
     ],
-    "total_source_files": 416,
+    "total_source_files": 522,
     "key_constraints": [
       "Sub-1,000 LOC per file (hard rule)",
       "NDA binary format is canonical (JSON is adapter only)",

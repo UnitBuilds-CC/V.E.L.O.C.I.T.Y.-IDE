@@ -2,7 +2,7 @@
 
 ## Classification
 - **Category**: Primary Crate
-- **Files**: ~220 source files
+- **Files**: ~261 source files
 - **Criticality**: Critical — user-facing surface
 
 ## Summary
@@ -13,10 +13,10 @@
 
 | Module | Files | Purpose |
 |--------|-------|---------|
-| `editor/` | 98 | egui IDE: code editor, chat, browser, orchestrator panels |
+| `editor/` | 119 | egui IDE: code editor, chat, browser, orchestrator panels |
 | `wa/` | 29 | Windows UI Automation via COM FFI |
-| `registry/` | 22 | MCP tool definitions and dispatch |
-| `agent/` | 22 | 4-provider AI reasoning loop |
+| `registry/` | 29 | MCP tool definitions and dispatch |
+| `agent/` | 28 | 4-provider AI reasoning loop |
 | `compiler/` | 4 | JIT compiler, tokenizer, parser loader |
 | `automation/` | 14 | Task routing, build runner, watchers |
 | `orchestrator/` | 12 | DAG scheduler, worktree isolation |

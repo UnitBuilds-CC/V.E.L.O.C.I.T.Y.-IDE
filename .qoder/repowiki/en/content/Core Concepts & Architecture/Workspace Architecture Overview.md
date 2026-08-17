@@ -22,7 +22,7 @@
 
 Velocity is organized as a Cargo workspace with three primary crates, each owning a distinct domain:
 
-### velocity-mcp (220 files)
+### velocity-mcp (261 files)
 The primary crate and user-facing surface. Contains:
 - **Agent loop** (`src/agent/`): 4-provider AI reasoning with failover
 - **Editor** (`src/editor/`): egui-based IDE with 30+ feature modules
@@ -32,16 +32,16 @@ The primary crate and user-facing surface. Contains:
 - **Windows Automation** (`src/wa/`): UIA FFI, desktop control (29 files)
 - **Protocol** (`src/protocol/`): JSON-RPC and NMCP binary
 
-### velocity-browser (109 files)
+### velocity-browser (171 files)
 A pure-Rust browser engine with no CDP/Chromium dependency:
 - **DOM** (`src/dom/`): Slab-allocated tree, shadow slots, mutation observers
 - **Layout** (`src/layout/`): Flexbox, grid, parallel solvers
 - **JS** (`src/js/`): JavaScript VM, Wasm SIMD interpreter, event loop
 - **Net** (`src/net/`): HTTP/2-3, TLS 1.3, WebSocket, WebRTC
-- **Engine** (`src/engine/`): 25 capability files (auth, sessions, workflows, snapshots)
+- **Engine** (`src/engine/`): 39 capability files (auth, sessions, workflows, snapshots)
 - **Agentic** (`src/agentic/`): AOM tree, OCR, action predictor, reflection
 
-### velocity-ide (78 files)
+### velocity-ide (77 files)
 Compiler pipeline and model inference:
 - **Compiler** (`src/compiler/`): NDA lexer/parser, JIT, shaders, driver (45 files)
 - **Model** (`src/model/`): Transformer config, weights, zero-alloc inference

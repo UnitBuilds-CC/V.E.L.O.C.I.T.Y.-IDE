@@ -12,7 +12,7 @@
 
 ## Overview
 
-The Velocity IDE is built on `egui 0.35`, a native immediate-mode GUI framework. The editor layer (`velocity-mcp/src/editor/`) contains 98 files organized into feature modules, all rendered with hardware-accelerated graphics and a dark HSL color palette.
+The Velocity IDE is built on `egui 0.35`, a native immediate-mode GUI framework. The editor layer (`velocity-mcp/src/editor/`) contains 119 files organized into feature modules, all rendered with hardware-accelerated graphics and a dark HSL color palette.
 
 ## VelocityApp Structure
 

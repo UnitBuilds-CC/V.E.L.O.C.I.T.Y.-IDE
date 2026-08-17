@@ -5,20 +5,20 @@ branch: main
 nodes_managed: true
 exported_at: "2026-08-17T00:00:00Z"
 classification_summary:
-    total_files: 407
-    real: 407
+    total_files: 522
+    real: 522
     generated: 0
     template: 0
     stub: 0
     critical_modules:
         - module: velocity-mcp/src/agent
-          files: 22
+          files: 28
           status: "4-provider AI reasoning loop"
         - module: velocity-mcp/src/editor
-          files: 98
+          files: 119
           status: "egui IDE interface"
         - module: velocity-browser/src
-          files: 109
+          files: 171
           status: "Pure-Rust browser engine"
         - module: velocity-ide/src/compiler
           files: 45
