@@ -8,6 +8,7 @@
 - [velocity-mcp/src/editor/chat_panel.rs](file://velocity-mcp/src/editor/chat_panel.rs)
 - [velocity-mcp/src/editor/browse_panel.rs](file://velocity-mcp/src/editor/browse_panel.rs)
 - [velocity-mcp/src/editor/app/velocity_app/tier3_panels.rs](file://velocity-mcp/src/editor/app/velocity_app/tier3_panels.rs)
+- [velocity-mcp/src/editor/app/velocity_app/editor_actions.rs](file://velocity-mcp/src/editor/app/velocity_app/editor_actions.rs)
 - [velocity-mcp/src/editor/bottom_panel.rs](file://velocity-mcp/src/editor/bottom_panel.rs)
 - [velocity-mcp/src/editor/status_bar.rs](file://velocity-mcp/src/editor/status_bar.rs)
 </cite>
@@ -39,6 +40,13 @@ The central `VelocityApp` struct (`struct_def.rs`) owns all IDE state:
 - Only changes focus panel when dock was rebuilt or focused kind is missing
 
 ## Panel Architecture
+
+### Panel Toggle Behavior
+
+`toggle_panel()` in `editor_actions.rs` implements true toggle semantics:
+- If the target panel is already open **and** is the active tab, it is closed (removed from tabs, buffer cleared, dock rebuilt).
+- Otherwise the panel is opened/focused via `focus_panel()`.
+- This means repeated invocations of the same panel shortcut (e.g. `Ctrl+J` for chat) will open then close the panel.
 
 ### Primary Panels
 
