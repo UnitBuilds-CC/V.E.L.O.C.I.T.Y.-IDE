@@ -22,6 +22,7 @@ The central `VelocityApp` struct (`struct_def.rs`) owns all IDE state:
 - Work mode (code, browser, orchestrator, review)
 - Panel visibility and docking with `mode_layouts` cache to reduce dock rebuild jitter
 - `use_unified_header: bool` — when true, suppresses legacy toolbar top panel
+- Toast notification queue (`toasts`) for transient user feedback — build/run actions push info toasts ("Build started...", "Execute started...")
 - Active file buffers and cursor state
 - Agent session and chat history
 - Browser session state
@@ -48,7 +49,7 @@ The central `VelocityApp` struct (`struct_def.rs`) owns all IDE state:
 | Browse Panel | `browse_panel.rs` | Integrated browser engine view |
 | Orchestrator Panel | `orchestrator/panel/` | Task timeline, execution status, policy controls |
 | Smart Sidebar | `smart_sidebar.rs` | Context-aware file/symbol inspector |
-| Bottom Panel | `bottom_panel.rs` | Terminal output, diagnostics, search results; tab indices exposed as named constants (`TAB_TERMINAL`, `TAB_PROBLEMS`, `TAB_DEBUG`, `TAB_OUTPUT`, `TAB_CHECKPOINTS`) with `MAX_PANEL_HEIGHT` (600px) clamp |
+| Bottom Panel | `bottom_panel.rs` | Terminal output, diagnostics, search results; tab indices exposed as named constants (`TAB_TERMINAL`, `TAB_PROBLEMS`, `TAB_DEBUG`, `TAB_OUTPUT`, `TAB_CHECKPOINTS`) with `MAX_PANEL_HEIGHT` (600px) clamp; tab scroll areas use adaptive `ui.available_height()` instead of fixed 180px |
 
 ### Code Editor Features
 
