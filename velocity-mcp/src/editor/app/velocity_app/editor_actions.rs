@@ -38,6 +38,27 @@ impl VelocityApp {
     }
 
     pub fn toggle_panel(&mut self, kind: TabKind) {
+        // If the panel is already open AND is the active tab, close it (toggle off).
+        // Otherwise, open/focus it (toggle on).
+        let dominated = self
+            .tabs
+            .iter()
+            .find(|t| std::mem::discriminant(&t.kind) == std::mem::discriminant(&kind))
+            .map(|t| t.id.clone());
+
+        if let Some(ref id) = dominated {
+            if self.active_tab.as_ref() == Some(id) {
+                // Panel is active — toggle it off.
+                let id = id.clone();
+                self.tabs.retain(|t| t.id != id);
+                self.buffers.remove(&id);
+                self.active_tab = self.tabs.first().map(|t| t.id.clone());
+                self.rebuild_dock();
+                return;
+            }
+        }
+
+        // Panel is either not open or not active — focus/open it.
         self.focus_panel(kind);
     }
 
