@@ -566,7 +566,7 @@ impl VelocityApp {
                 // Toggle bottom panel (Terminal)
                 self.bottom_panel_state.collapsed = !self.bottom_panel_state.collapsed;
                 if !self.bottom_panel_state.collapsed {
-                    self.bottom_panel_state.active_tab = 0; // Switch to Terminal
+                    self.bottom_panel_state.active_tab = crate::editor::bottom_panel::TAB_TERMINAL;
                 }
             } else if cmd && i.key_pressed(egui::Key::E) {
                 self.toggle_left_sidebar();
@@ -1898,7 +1898,7 @@ impl eframe::App for VelocityApp {
         if sb_actions.clicked_build {
             // Open diagnostics (Problems tab in bottom panel).
             self.bottom_panel_state.collapsed = false;
-            self.bottom_panel_state.active_tab = 1; // Problems tab
+            self.bottom_panel_state.active_tab = crate::editor::bottom_panel::TAB_PROBLEMS;
         }
         if sb_actions.clicked_position {
             // Open go-to-line dialog.
@@ -1927,20 +1927,20 @@ impl eframe::App for VelocityApp {
                 .default_size(self.bottom_panel_state.panel_height)
                 .resizable(true)
                 .show(ui, |ui: &mut egui::Ui| {
-                    self.bottom_panel_state.panel_height = ui.available_height().max(80.0);
+                    self.bottom_panel_state.panel_height =
+                        ui.available_height().clamp(80.0, crate::editor::bottom_panel::MAX_PANEL_HEIGHT);
                     // Tab strip
                     let tab_labels = ["Terminal", "Problems", "Debug", "Output", "Checkpoints"];
                     ui.horizontal(|ui| {
                         for (i, label) in tab_labels.iter().enumerate() {
                             let is_active = i == self.bottom_panel_state.active_tab;
-                            let mut text = egui::RichText::new(*label).size(10.0);
-                            text = if is_active {
-                                text.color(palette.accent).strong()
+                            let color = if is_active {
+                                palette.accent
                             } else {
-                                text.color(palette.text_muted)
+                                palette.text_muted
                             };
-                            // Badge for problems
-                            let display = if i == 1
+                            // Badge for problems tab
+                            let display = if i == crate::editor::bottom_panel::TAB_PROBLEMS
                                 && (self.bottom_panel_state.error_count > 0
                                     || self.bottom_panel_state.warning_count > 0)
                             {
@@ -1953,19 +1953,11 @@ impl eframe::App for VelocityApp {
                             } else {
                                 label.to_string()
                             };
-                            let text_with_badge = if i == 1
-                                && (self.bottom_panel_state.error_count > 0
-                                    || self.bottom_panel_state.warning_count > 0)
-                            {
-                                egui::RichText::new(display).size(10.0).color(if is_active {
-                                    palette.accent
-                                } else {
-                                    palette.text_muted
-                                })
-                            } else {
-                                text
-                            };
-                            if ui.selectable_label(is_active, text_with_badge).clicked() {
+                            let mut text = egui::RichText::new(display).size(10.0).color(color);
+                            if is_active {
+                                text = text.strong();
+                            }
+                            if ui.selectable_label(is_active, text).clicked() {
                                 self.bottom_panel_state.active_tab = i;
                             }
                         }
@@ -1985,7 +1977,7 @@ impl eframe::App for VelocityApp {
                     ui.separator();
 
                     match self.bottom_panel_state.active_tab {
-                        0 => {
+                        crate::editor::bottom_panel::TAB_TERMINAL => {
                             // Terminal tab - use real TerminalState
                             if !self.terminal_spawned {
                                 self.terminal_state.spawn_shell();
@@ -1993,7 +1985,7 @@ impl eframe::App for VelocityApp {
                             }
                             self.terminal_state.show(ui, &palette);
                         }
-                        1 => {
+                        crate::editor::bottom_panel::TAB_PROBLEMS => {
                             // Problems tab
                             egui::ScrollArea::vertical()
                                 .max_height(180.0)
@@ -2032,11 +2024,11 @@ impl eframe::App for VelocityApp {
                                     }
                                 });
                         }
-                        2 => {
+                        crate::editor::bottom_panel::TAB_DEBUG => {
                             // Debug tab
                             self.render_debug_panel(ui, palette);
                         }
-                        3 => {
+                        crate::editor::bottom_panel::TAB_OUTPUT => {
                             // Output tab - agent metrics
                             let has_agent_activity =
                                 self.agent_active || !self.pending_approvals.is_empty();
@@ -2086,7 +2078,7 @@ impl eframe::App for VelocityApp {
                                     });
                             }
                         }
-                        4 => {
+                        crate::editor::bottom_panel::TAB_CHECKPOINTS => {
                             // Checkpoints tab
                             egui::ScrollArea::vertical()
                                 .max_height(180.0)

@@ -49,6 +49,17 @@ pub struct BottomPanelState {
     pub checkpoint_action: Option<CheckpointAction>,
 }
 
+// Named indices for the bottom panel tabs so callers don't rely on magic numbers.
+pub const TAB_TERMINAL: usize = 0;
+pub const TAB_PROBLEMS: usize = 1;
+pub const TAB_DEBUG: usize = 2;
+pub const TAB_OUTPUT: usize = 3;
+pub const TAB_CHECKPOINTS: usize = 4;
+
+/// Maximum height the bottom panel can be resized to (prevents it from
+/// consuming the entire window).
+pub const MAX_PANEL_HEIGHT: f32 = 600.0;
+
 /// Actions that the checkpoint UI can request (processed by VelocityApp).
 #[derive(Debug, Clone)]
 pub enum CheckpointAction {

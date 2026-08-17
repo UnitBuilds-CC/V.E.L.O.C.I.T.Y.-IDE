@@ -53,6 +53,7 @@ impl StatusBar {
                 if mode_response.hovered() {
                     ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
                 }
+                mode_response.on_hover_text("Switch workspace mode");
                 dot(ui);
 
                 let (icon, color) = if build_ok {
@@ -72,6 +73,7 @@ impl StatusBar {
                 if build_response.hovered() {
                     ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
                 }
+                build_response.on_hover_text("View diagnostics");
 
                 if let Some(b) = branch {
                     dot(ui);
@@ -95,6 +97,7 @@ impl StatusBar {
                     if pos_response.hovered() {
                         ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
                     }
+                    pos_response.on_hover_text("Go to line");
                 }
 
                 ui.with_layout(
@@ -122,6 +125,7 @@ impl StatusBar {
                         if provider_response.hovered() {
                             ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
                         }
+                        provider_response.on_hover_text("Open settings");
                         ui.add_space(8.0);
                         ui.label(
                             egui::RichText::new("Ctrl+Shift+P")
