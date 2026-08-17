@@ -186,6 +186,14 @@ Launch the native editor workspace:
 cargo run --manifest-path velocity-mcp/Cargo.toml -- --editor
 ```
 
+Open a specific workspace directory:
+
+```powershell
+cargo run --manifest-path velocity-mcp/Cargo.toml -- --editor --workspace <path>
+```
+
+The `--workspace <path>` flag opens the specified directory in the editor. Without it, the IDE uses the current directory or falls back to the home directory.
+
 ### Configuration
 
 Create a `.env` file at the workspace root:

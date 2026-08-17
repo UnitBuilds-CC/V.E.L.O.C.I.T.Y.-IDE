@@ -61,6 +61,15 @@ The code editor (`code_editor.rs`) includes:
 - **Agent memory** (`agent_memory.rs`): Inline agent context display
 - **Agent UI** (`agent_ui_render.rs`, `agent_ui_state.rs`): Agent status visualization
 
+### Chat Panel UX
+
+The chat panel (`chat_panel.rs`) provides responsive composer layout for narrow dock splits:
+- Input width adapts to available space via `(available_width - 78).max(0.0)` clamping
+- Fixed-width provider (118px) and model (156px) selectors prevent composer resizing
+- "Send" text button (64×30px) with hover text replaces icon-only button
+- "Auto-approve" checkbox with hover explanation
+- Provider/model row uses `horizontal_wrapped` to prevent overflow
+
 ### App Submodules
 
 | Module | Files | Responsibility |
@@ -101,6 +110,13 @@ Workspace profiles (`WorkspaceProfile` enum in `theme.rs`) with short labels:
 | `AutomationOperator` | "Automate" | Orchestrator + chat + output |
 | `MissionControl` | "Mission" | Mission control + chat + output |
 | `Accessibility` | "Access" | Everything visible |
+
+## Mission Control UI
+
+The Mission Control panel (rendered in `app/render.rs`) uses compact labels and dynamic status indicators:
+- **Heading**: "Mission" with subtitle "Define the outcome, approve a plan, then steer the work."
+- **Tab labels**: "1  Plan" (or "1  Plan ready" when routed), "2  Work" (or "2  Work — N active" when tasks running), "3  Review"
+- **Responsive layout**: Uses `horizontal_wrapped` for heading and tab row to prevent overflow in narrow panels
 
 ## Team Studio Direct Creation
 

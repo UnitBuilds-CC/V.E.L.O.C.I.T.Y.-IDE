@@ -28,5 +28,5 @@
 
 ## Entry Points
 
-- `src/main.rs`: Binary entry with `--editor` flag
+- `src/main.rs`: Binary entry with `--editor` flag, `--workspace <path>` to open a specific directory
 - `src/lib.rs`: Library root exposing public APIs
