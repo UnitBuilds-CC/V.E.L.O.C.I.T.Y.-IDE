@@ -5,8 +5,8 @@ branch: main
 nodes_managed: true
 exported_at: "2026-08-17T18:00:00Z"
 classification_summary:
-    total_files: 522
-    real: 522
+    total_files: 527
+    real: 527
     generated: 0
     template: 0
     stub: 0
@@ -23,6 +23,12 @@ classification_summary:
         - module: velocity-ide/src/compiler
           files: 45
           status: "NDA compiler pipeline"
+        - module: velocity-ide/src/model
+          files: 5
+          status: "LLM inference harness (Qwen 2.5 Coder 0.5B, NDA-4bit)"
+        - module: velocity-ide/src
+          files: 8
+          status: "Dual-path engine, tokenizer, pipeline bridge"
 modules:
     "":
         dir_name: Velocity IDE Workspace Root
@@ -85,6 +91,9 @@ modules:
             - velocity-ide/src/site_map/
             - velocity-ide/src/sandbox/
             - velocity-ide/src/wiki/
+            - velocity-ide/src/pipeline_bridge.rs
+            - velocity-ide/src/pipeline_nda.rs
+            - velocity-ide/src/tokenizer.rs
         source_files:
             - velocity-ide/src/lib.rs
     drone:

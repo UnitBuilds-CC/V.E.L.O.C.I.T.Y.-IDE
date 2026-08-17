@@ -76,7 +76,7 @@ Shader modules for GPU-accelerated model inference:
 | `swiglu.rs` | SwiGLU activation |
 | `ternary.rs` | Ternary operations |
 
-## Model Driver (`compiler/driver/` — 11 files)
+## Model Driver (`compiler/driver/` — 12 files)
 
 Orchestrates GPU execution for transformer model inference:
 
@@ -84,11 +84,25 @@ Orchestrates GPU execution for transformer model inference:
 - **Model Pipeline** (`model_pipeline.rs`): Model-specific configuration
 - **BitNet Layer** (`bitnet_layer.rs`, `nda_bitnet_layer.rs`): 1-bit inference layers
 - **Qwen Layer** (`qwen_layer.rs`): Qwen model layers
-- **GEMV** (`gemv.rs`, `nda_gemv.rs`): General matrix-vector multiplication
-- **Layer GPU GEMVs** (`layer_gpu_gemvs.rs`): GPU-dispatched GEMV operations
+- **GEMV** (`gemv.rs`, `nda_gemv.rs`): General matrix-vector multiplication with `scales: [f32; 3]` infrastructure
+- **Layer GPU GEMVs** (`layer_gpu_gemvs.rs`): GPU-dispatched GEMV operations, fused QKV and gate-up projections
 - **Packing** (`packing.rs`): Weight packing for GPU
 - **Vulkan Init** (`vulkan_init.rs`): Vulkan device initialization
 - **Vulkan Benchmark** (`vulkan_benchmark.rs`): GPU performance measurement
+
+## Model Inference (`model/` — 5 files)
+
+The transformer model stack for built-in LLM inference:
+
+- **Config** (`config.rs`): `ModelConfig::qwen_coder_05b()` — 24 layers, hidden=896, GQA 14/2, ALiBi positional encoding
+- **Weights** (`weights.rs`): NDA-4bit (FP4) weight loading from `.nda` files, `concat_gpu_gemv()` for fused Q‖K‖V and gate‖up projections
+- **Transformer** (`transformer.rs`): Zero-alloc `forward_one()` returning `&[f32]`, in-place `lm_head()` writing to `&mut [f32]`, autoregressive generation with temperature/top-p sampling
+
+## Dual-Path Engine (top-level)
+
+- **Pipeline Bridge** (`pipeline_bridge.rs`): `DualPathEngine` routes between Path 1 (text) and Path 2 (NDA)
+- **NDA Pipeline** (`pipeline_nda.rs`): NDA-native pipeline with Merkle-verified output
+- **Tokenizer** (`tokenizer.rs`): BPE tokenizer for Qwen's 151,936-token vocabulary
 
 **Section sources**
 - [velocity-ide/src/compiler/mod.rs](file://velocity-ide/src/compiler/mod.rs)

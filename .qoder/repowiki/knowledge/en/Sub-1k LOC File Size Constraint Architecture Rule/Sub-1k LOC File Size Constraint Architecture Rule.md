@@ -33,9 +33,9 @@ None. This rule applies to all files in all crates.
 | File | LOC | Notes |
 |------|-----|-------|
 | `velocity-mcp/src/registry/system_tools.rs` | 1519 | System tool dispatch including fetch_panel_data_value, file ops, search, git, shell. Needs split into per-category handlers. |
-| `velocity-mcp/src/editor/app/velocity_app/struct_def.rs` | 1135 | VelocityApp struct definition, workspace preset application, layout caching. Needs field grouping extraction. |
-| `velocity-mcp/src/editor/app/velocity_app/ui_render.rs` | 2135 | Primary UI render entry point. Needs split per panel. |
-| `velocity-mcp/src/editor/app/render.rs` | 1874 | App-level render orchestration. Needs split per work mode or panel group. |
+| `velocity-mcp/src/editor/app/velocity_app/struct_def.rs` | 1133 | VelocityApp struct definition, workspace preset application, layout caching. Needs field grouping extraction. |
+| `velocity-mcp/src/editor/app/velocity_app/ui_render.rs` | 2058 | Primary UI render entry point. Needs split per panel. |
+| `velocity-mcp/src/editor/app/render.rs` | 1878 | App-level render orchestration. Needs split per work mode or panel group. |
 
 ### Resolved
 

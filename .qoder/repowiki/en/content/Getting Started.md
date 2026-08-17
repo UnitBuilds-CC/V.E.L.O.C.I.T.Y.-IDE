@@ -24,7 +24,7 @@
 
 ## Introduction
 
-V.E.L.O.C.I.T.Y. is a high-performance, AI-native developer workspace built entirely in Rust. It combines a native GPU-accelerated IDE interface with a pure-Rust browser control plane, a self-correcting agentic compiler loop, and a 4-provider AI reasoning engine. The project is organized as a Cargo workspace with 3 primary crates, a drone safety module, and end-to-end test harness — totaling over 520 source files.
+V.E.L.O.C.I.T.Y. is a high-performance, AI-native developer workspace built entirely in Rust. It combines a native GPU-accelerated IDE interface with a pure-Rust browser control plane, a self-correcting agentic compiler loop, a 4-provider AI reasoning engine, and a built-in LLM inference harness (Qwen 2.5 Coder 0.5B in NDA-4bit format). The project is organized as a Cargo workspace with 3 primary crates, a drone safety module, and end-to-end test harness — totaling over 525 source files.
 
 This guide walks you through setting up your development environment, building the workspace, launching the IDE, and running validation checks.
 
@@ -34,7 +34,7 @@ The repository is a Rust workspace (`resolver = "2"`) with five member crates:
 
 ```text
 Kimi-Code/
-├── velocity-mcp/          # MCP Server + Native IDE Editor (261 files)
+├── velocity-mcp/          # MCP Server + Native IDE Editor (257 files)
 │   ├── src/
 │   │   ├── agent/         # 4-provider reasoning loop, dispatch, peer bridge
 │   │   ├── editor/        # egui GUI: code editor, chat, browser panel, orchestrator
@@ -64,11 +64,14 @@ Kimi-Code/
 ├── velocity-ide/          # Compiler & NDA Pipeline (77 files)
 │   ├── src/
 │   │   ├── compiler/      # NDA lexer, parser, JIT, shaders, driver
-│   │   ├── model/         # Transformer model config, weights, inference
+│   │   ├── model/         # Transformer model config, NDA-4bit weights, zero-alloc inference
 │   │   ├── nda_int/       # NDA interpreter (ops, tables, GEMV)
 │   │   ├── site_map/      # RDF triple store, Merkle verification
 │   │   ├── sandbox/       # JIT sandbox, scope validator
-│   │   └── wiki/          # Automated wiki generator
+│   │   ├── wiki/          # Automated wiki generator
+│   │   ├── pipeline_bridge.rs  # Dual-path engine (text ↔ NDA routing)
+│   │   ├── pipeline_nda.rs     # NDA-native pipeline
+│   │   └── tokenizer.rs        # BPE tokenizer (Qwen 2.5 Coder vocab)
 │   └── Cargo.toml
 ├── drone/                 # Safety monitor (Rust binary)
 ├── e2e/                   # End-to-end integration tests
@@ -108,6 +111,8 @@ Key responsibilities:
 - **Native IDE**: egui-based GUI with code editor, chat panel, browser panel, orchestrator panel
 - **Browser Engine**: Pure-Rust DOM, layout, JS VM, networking — no Chromium/CDP dependency
 - **NDA Compiler**: Binary format pipeline with JIT, shaders, Merkle verification
+- **Built-in LLM**: Qwen 2.5 Coder 0.5B in NDA-4bit format, zero-alloc forward pass, fused GEMV weights
+- **Dual-Path Engine**: Text ↔ NDA routing for deterministic code generation
 - **Windows Automation**: UIA FFI bridge for desktop automation
 
 ## Architecture Overview

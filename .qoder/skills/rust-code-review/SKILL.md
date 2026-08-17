@@ -69,6 +69,13 @@ Review Rust code changes in the Velocity workspace for correctness, safety, perf
 - [ ] State initialization is complete
 - [ ] Work mode transitions are handled
 
+#### LLM Inference Harness (`velocity-ide/src/model/`)
+- [ ] Zero-alloc `forward_one` returns `&[f32]` from scratch buffer
+- [ ] `lm_head` writes in-place to `&mut [f32]`
+- [ ] Fused GEMV weights (`qkv_proj_gpu`, `gate_up_proj_gpu`) created correctly
+- [ ] `VulkanNdaGemv::new_direct` passes `scales: [f32; 3]`
+- [ ] NDA version checks (FP4=3, FP2=4) are consistent across all call sites
+
 ## Severity Levels
 
 | Level | Meaning | Action |

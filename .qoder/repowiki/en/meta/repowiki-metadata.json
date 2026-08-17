@@ -9,7 +9,7 @@
       {
         "name": "velocity-mcp",
         "path": "velocity-mcp/",
-        "file_count": 261,
+        "file_count": 257,
         "role": "MCP server, IDE editor, agent loop, Windows automation"
       },
       {
@@ -37,14 +37,16 @@
         "role": "End-to-end integration tests"
       }
     ],
-    "total_source_files": 522,
+    "total_source_files": 527,
     "key_constraints": [
       "Sub-1,000 LOC per file (hard rule)",
       "NDA binary format is canonical (JSON is adapter only)",
       "SHA-256 Merkle integrity for all persisted state",
       "crossbeam channels for inter-thread communication",
       "egui 0.35 for native GUI (no web tech stack)",
-      "4-provider failover: Cloudflare → OpenRouter → Azure → Ollama"
+      "4-provider failover: Cloudflare → OpenRouter → Azure → Ollama",
+      "NDA-4bit (FP4) LLM weight format for compact model inference",
+      "Dual-path engine: text → hidden_state[896] → NDA program generation"
     ]
   },
   "content_pages": {
@@ -62,7 +64,7 @@
     ]
   },
   "knowledge_cards": {
-    "count": 10,
+    "count": 12,
     "topics": [
       "Workspace Root Crate",
       "MCP Server and IDE Editor",
@@ -73,14 +75,17 @@
       "Sub-1k LOC Rule",
       "egui GUI Theme",
       "Windows UI Automation FFI",
-      "Cargo Workspace Build"
+      "Cargo Workspace Build",
+      "LLM Inference Harness",
+      "Dual-Path Engine"
     ]
   },
   "skills": {
-    "count": 2,
+    "count": 3,
     "names": [
       "rust-code-review",
-      "agent-test-writer"
+      "agent-test-writer",
+      "harness-updater"
     ]
   }
 }

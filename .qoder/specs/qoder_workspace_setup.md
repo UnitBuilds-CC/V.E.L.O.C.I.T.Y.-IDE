@@ -2,7 +2,7 @@
 
 ## Summary
 
-Implement the `.qoder` directory structure for the Velocity IDE workspace, matching the pattern established in the Dwarven Stronghold project. This provides Qoder with project-specific knowledge, skills, and documentation context for all three primary crates (velocity-mcp, velocity-browser, velocity-ide).
+Implement the `.qoder` directory structure for the Velocity IDE workspace, matching the pattern established in the Dwarven Stronghold project. This provides Qoder with project-specific knowledge, skills, and documentation context for all three primary crates (velocity-mcp, velocity-browser, velocity-ide), including the LLM inference harness and dual-path engine.
 
 ---
 
@@ -43,11 +43,15 @@ Implement the `.qoder` directory structure for the Velocity IDE workspace, match
 │   │           ├── Sub-1k LOC File Size Constraint Architecture Rule/
 │   │           ├── egui 0.35 Native Immediate-Mode GUI with Dark HSL Theme/
 │   │           ├── Windows UI Automation FFI via COM Interfaces/
-│   │           └── Rust Cargo Workspace with Dual WASM Target Build/
+│   │           ├── Rust Cargo Workspace with Dual WASM Target Build/
+│   │           ├── LLM Inference Harness with NDA-4bit Weights/
+│   │           └── Dual-Path Engine Text and NDA Routing/
 ├── skills/
 │   ├── rust-code-review/
 │   │   └── SKILL.md
-│   └── agent-test-writer/
+│   ├── agent-test-writer/
+│   │   └── SKILL.md
+│   └── harness-updater/
 │       └── SKILL.md
 └── specs/
     └── qoder_workspace_setup.md (this file)
@@ -57,10 +61,10 @@ Implement the `.qoder` directory structure for the Velocity IDE workspace, match
 
 ## Key Decisions
 
-1. **Content pages cover all major subsystems**: Architecture, agent loop, browser engine, compiler, editor UI, tool registry, WA
-2. **Knowledge cards capture critical constraints**: Sub-1k LOC rule, NDA format, provider chain, build config
-3. **Skills adapted for Velocity**: Rust code review with project-specific high-risk areas, behavior test writer with Velocity patterns
-4. **Up-to-date**: All file paths, module counts, and architectural details verified against current codebase (August 2026)
+1. **Content pages cover all major subsystems**: Architecture, agent loop, browser engine, compiler, editor UI, tool registry, WA, model inference, dual-path engine
+2. **Knowledge cards capture critical constraints**: Sub-1k LOC rule, NDA format, provider chain, build config, LLM harness, dual-path routing
+3. **Skills adapted for Velocity**: Rust code review with project-specific high-risk areas, behavior test writer with Velocity patterns, harness updater for model inference maintenance
+4. **Up-to-date**: All file paths, module counts, and architectural details verified against current codebase (August 2026, post harness upgrade)
 
 ---
 

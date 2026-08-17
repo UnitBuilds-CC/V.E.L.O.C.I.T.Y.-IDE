@@ -2,12 +2,12 @@
 
 ## Classification
 - **Category**: Primary Crate
-- **Files**: ~261 source files
+- **Files**: ~257 source files
 - **Criticality**: Critical — user-facing surface
 
 ## Summary
 
-`velocity-mcp` is the primary crate containing the MCP server, native IDE editor (98 egui files), 4-provider agent loop, tool registry, automation system, orchestrator, and Windows Automation module (29 files).
+`velocity-mcp` is the primary crate containing the MCP server, native IDE editor (119 egui files), 4-provider agent loop, tool registry, automation system, orchestrator, and Windows Automation module (29 files). The fake benchmark module was removed; real LLM inference lives in `velocity-ide/src/model/`.
 
 ## Module Breakdown
 
@@ -23,7 +23,7 @@
 | `connectors/` | 8 | HTTP, OAuth2, webhooks, sync |
 | `protocol/` | 3 | JSON-RPC, NMCP binary |
 | `ipc/` | 3 | Shared memory telemetry |
-| `benchmark/` | 4 | CPU/GPU benchmark runner |
+| `benchmark/` | 0 | Removed — real benchmarks in `velocity-ide/src/compiler/driver/vulkan_benchmark.rs` |
 | `security/` | 2 | Secrets management |
 
 ## Entry Points

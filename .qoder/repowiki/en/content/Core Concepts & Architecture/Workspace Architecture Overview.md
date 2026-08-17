@@ -22,7 +22,7 @@
 
 Velocity is organized as a Cargo workspace with three primary crates, each owning a distinct domain:
 
-### velocity-mcp (261 files)
+### velocity-mcp (257 files)
 The primary crate and user-facing surface. Contains:
 - **Agent loop** (`src/agent/`): 4-provider AI reasoning with failover
 - **Editor** (`src/editor/`): egui-based IDE with 30+ feature modules
@@ -42,9 +42,11 @@ A pure-Rust browser engine with no CDP/Chromium dependency:
 - **Agentic** (`src/agentic/`): AOM tree, OCR, action predictor, reflection
 
 ### velocity-ide (77 files)
-Compiler pipeline and model inference:
+Compiler pipeline, model inference, and dual-path engine:
 - **Compiler** (`src/compiler/`): NDA lexer/parser, JIT, shaders, driver (45 files)
-- **Model** (`src/model/`): Transformer config, weights, zero-alloc inference
+- **Model** (`src/model/`): Transformer config, NDA-4bit weights, zero-alloc inference
+- **Dual-Path Engine** (`pipeline_bridge.rs`): Text ↔ NDA routing, hidden_state[896] conditioning
+- **Tokenizer** (`tokenizer.rs`): BPE tokenizer for Qwen 2.5 Coder vocabulary
 - **NDA Interpreter** (`src/nda_int/`): Ops, tables, GEMV kernels
 - **Site Map** (`src/site_map/`): RDF triple store, Merkle verification
 - **Sandbox** (`src/sandbox/`): JIT sandbox, scope validator
@@ -103,6 +105,11 @@ User prompt to agent response:
 6. Results stream back to agent loop
 7. Response rendered in chat panel
 
+For built-in LLM inference (no external provider):
+1. User prompt → `DualPathEngine` routes to Path 1 (text) or Path 2 (NDA)
+2. Path 1: Transformer forward pass with NDA-4bit weights → hidden_state[896]
+3. Path 2: Hidden state conditions NDA program generation → Merkle-verified output
+
 ## Key Design Decisions
 
 1. **Sub-1,000 LOC rule**: All files strictly under 1,000 lines
@@ -113,6 +120,7 @@ User prompt to agent response:
 6. **crossbeam channels**: Explicit channels, no shared mutable state
 7. **egui 0.35**: Native immediate-mode GUI, no web tech stack for the IDE itself
 8. **No CDP**: Browser engine is pure Rust, not a Chromium wrapper
+9. **Built-in LLM**: Qwen 2.5 Coder 0.5B in NDA-4bit format, zero-alloc forward pass, fused GEMV weights
 
 **Section sources**
 - [Cargo.toml](file://Cargo.toml)
