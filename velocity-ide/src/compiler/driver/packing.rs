@@ -35,6 +35,7 @@ pub fn pack_weights_uvec4(src: &[u8], k: usize, n: usize) -> Vec<u8> {
     }
 }
 
+#[allow(dead_code)]
 pub fn pack_inputs_nda(inputs_ternary_u32: &[u32]) -> (Vec<u32>, Vec<u32>) {
     let num_col_groups = inputs_ternary_u32.len();
     let num_col_groups_128 = num_col_groups / 8;

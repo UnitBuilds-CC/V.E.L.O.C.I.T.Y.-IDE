@@ -1,4 +1,6 @@
-﻿//! Vulkan NDA BitNet (1-bit quantized) transformer layer implementation.
+﻿// GPU infrastructure — retained for future BitNet NDA model support.
+#![allow(dead_code)]
+//! Vulkan NDA BitNet (1-bit quantized) transformer layer implementation.
 //!
 //! # Safety Invariants
 //!

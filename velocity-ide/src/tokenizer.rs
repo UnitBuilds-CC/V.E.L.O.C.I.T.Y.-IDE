@@ -49,6 +49,7 @@ pub struct Tokenizer {
     /// BPE merge pair → rank (lower rank = apply first)
     merges: HashMap<(String, String), u32>,
     pub bos_id: u32,
+    #[allow(dead_code)]
     pub eos_id: u32,
     is_tiktoken: bool,
     /// Owned binary buffer for raw byte slicing
@@ -350,6 +351,7 @@ impl Tokenizer {
     }
 
     /// Decode a slice of token IDs to a single string.
+    #[allow(dead_code)]
     pub fn decode(&self, ids: &[u32]) -> String {
         ids.iter().map(|&id| self.decode_token(id)).collect()
     }

@@ -3,6 +3,7 @@ use ash::{vk, Device, Entry, Instance};
 use std::ffi::CString;
 
 pub struct VulkanDriver {
+    #[allow(dead_code)]
     pub entry: Entry,
     pub instance: Instance,
     pub physical_device: vk::PhysicalDevice,
@@ -135,6 +136,7 @@ impl VulkanDriver {
     }
 
     /// Human-readable name of the physical device the driver bound to.
+    #[allow(dead_code)]
     pub fn device_name(&self) -> String {
         // SAFETY: get_physical_device_properties wraps vkGetPhysicalDeviceProperties.
         // self.instance and self.physical_device are valid handles from init().
@@ -148,6 +150,7 @@ impl VulkanDriver {
             .into_owned()
     }
 
+    #[allow(dead_code)]
     pub fn run_diagnostics(&self) -> Result<(), Box<dyn std::error::Error>> {
         println!("V.E.L.O.C.I.T.Y. V-NCE Diagnostic Run:");
         println!("  - Vulkan logical device handles initialized.");

@@ -18,6 +18,7 @@ pub trait SafeMutex<T> {
     /// Try to acquire the lock without blocking.
     ///
     /// Returns `None` if the lock is currently held by another thread.
+    #[allow(dead_code)]
     fn try_lock_safe(&self) -> Option<MutexGuard<'_, T>>;
 }
 
@@ -58,6 +59,7 @@ impl<T> SafeMutex<T> for Arc<Mutex<T>> {
 }
 
 /// Extension trait for `RwLock<T>` providing poisoning-tolerant locking.
+#[allow(dead_code)]
 pub trait SafeRwLock<T> {
     /// Acquire read access, recovering from poisoning if necessary.
     fn read_safe(&self) -> RwLockReadGuard<'_, T>;

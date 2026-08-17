@@ -197,6 +197,7 @@ impl NdaMatrix {
     }
 
     /// On-disk byte size.
+    #[allow(dead_code)]
     pub fn byte_size(&self) -> usize {
         if self.version == NDA_V1_TERN || self.version == NDA_V2_QUAD {
             18 + self.sign.len() + self.extra.len()

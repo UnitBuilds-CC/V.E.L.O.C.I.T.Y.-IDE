@@ -4,8 +4,10 @@ use ash::vk;
 
 pub struct LayerGpuGemvs<'a> {
     /// Fused QKV projection (Q‖K‖V concatenated). Used by the OS-level pipeline when available.
+    #[allow(dead_code)]
     pub qkv_proj_gpu: &'a Option<VulkanNdaGemv>,
     /// Fused gate-up projection (gate‖up concatenated). Used by the OS-level pipeline when available.
+    #[allow(dead_code)]
     pub gate_up_proj_gpu: &'a Option<VulkanNdaGemv>,
     pub q_proj_gpu: &'a Option<VulkanNdaGemv>,
     pub k_proj_gpu: &'a Option<VulkanNdaGemv>,
@@ -19,6 +21,7 @@ pub struct LayerGpuGemvs<'a> {
 /// Result of a single transformer layer forward pass, holding GPU buffer offsets
 /// and dispatch metadata for the pipeline to continue with attention/FFN.
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub struct LayerForwardResult {
     pub q_dispatched: bool,
     pub k_dispatched: bool,
@@ -38,6 +41,7 @@ impl<'a> LayerGpuGemvs<'a> {
     /// dispatches and inserts barriers between stages.
     ///
     /// Returns a `LayerForwardResult` indicating which projections were dispatched.
+    #[allow(dead_code)]
     pub fn forward(&self, driver: &VulkanDriver, cmd: vk::CommandBuffer) -> LayerForwardResult {
         let mut result = LayerForwardResult {
             q_dispatched: false,
@@ -96,6 +100,7 @@ impl<'a> LayerGpuGemvs<'a> {
     }
 
     /// Check if all attention projections are available.
+    #[allow(dead_code)]
     pub fn has_full_attention(&self) -> bool {
         self.q_proj_gpu.is_some()
             && self.k_proj_gpu.is_some()
@@ -104,11 +109,13 @@ impl<'a> LayerGpuGemvs<'a> {
     }
 
     /// Check if all FFN projections are available.
+    #[allow(dead_code)]
     pub fn has_full_ffn(&self) -> bool {
         self.gate_proj_gpu.is_some() && self.up_proj_gpu.is_some() && self.down_proj_gpu.is_some()
     }
 
     /// Total number of projection GEMVs configured for this layer.
+    #[allow(dead_code)]
     pub fn projection_count(&self) -> usize {
         [
             self.q_proj_gpu,

@@ -87,6 +87,7 @@ impl ModelConfig {
     }
 
     /// Total NDA parameter count (excludes embeddings and norms).
+    #[allow(dead_code)]
     pub fn ternary_param_count(&self) -> usize {
         let kv_dim = self.n_kv_heads * self.head_dim;
         let attn_per_layer = self.hidden_size * self.hidden_size

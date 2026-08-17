@@ -28,6 +28,7 @@ pub struct VulkanNdaGemv {
     /// Per-matrix scales for fused GEMV dispatch.
     /// [0] = primary scale, [1..2] = secondary/tertiary scales (fused projections).
     /// Currently stored for infrastructure; push-constant shader upgrade will use these.
+    #[allow(dead_code)]
     pub scales: [f32; 3],
 
     pub shader_module: vk::ShaderModule,
@@ -96,6 +97,7 @@ impl VulkanNdaGemv {
         }
     }
 
+    #[allow(dead_code)]
     pub fn new(
         driver: &VulkanDriver,
         k: u32,
@@ -801,6 +803,7 @@ impl VulkanNdaGemv {
         Ok(duration_us)
     }
 
+    #[allow(dead_code)]
     pub fn submit_async_float(
         &self,
         input_floats: &[f32],
@@ -864,6 +867,7 @@ impl VulkanNdaGemv {
         Ok(())
     }
 
+    #[allow(dead_code)]
     pub fn run_float_no_copy(
         &self,
         output_floats: &mut [f32],

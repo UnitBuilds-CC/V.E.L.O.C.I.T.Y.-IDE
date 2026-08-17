@@ -1,4 +1,6 @@
-﻿//! Vulkan Qwen (RoPE-based) transformer layer dispatch.
+﻿// GPU infrastructure — retained for future Qwen model support.
+#![allow(dead_code)]
+//! Vulkan Qwen (RoPE-based) transformer layer dispatch.
 //!
 //! # Safety Invariants
 //!

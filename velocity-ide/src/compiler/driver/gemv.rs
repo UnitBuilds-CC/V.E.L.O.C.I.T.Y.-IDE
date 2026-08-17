@@ -1,3 +1,5 @@
+// GPU infrastructure — retained for future use.
+#![allow(dead_code)]
 //! Vulkan GEMV (General Matrix-Vector) compute dispatch for contiguous weight layouts.
 //!
 //! # Safety Invariants

@@ -426,6 +426,7 @@ impl ModelWeights {
     }
 
     /// Total bytes consumed by NDA bitmaps across all layers.
+    #[allow(dead_code)]
     pub fn nda_bytes(&self) -> usize {
         self.layers
             .iter()

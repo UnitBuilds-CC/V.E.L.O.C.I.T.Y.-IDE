@@ -1,6 +1,4 @@
-﻿#![allow(warnings)]
-#![allow(unused)]
-#![allow(dead_code)]
+﻿// V.E.L.O.C.I.T.Y.-IDE — main entry point
 
 mod compiler;
 mod model;
@@ -14,7 +12,7 @@ mod site_map;
 mod tokenizer;
 
 use std::{
-    io::{self, BufRead, BufReader, Write},
+    io::{BufRead, BufReader, Write},
     path::{Path, PathBuf},
     time::Instant,
 };
@@ -435,7 +433,7 @@ fn resolve_tokenizer(tokenizer: &Option<PathBuf>, model_dir: &Path) -> Result<Pa
 }
 
 fn run_generate_zero(args: GenerateArgs) -> Result<()> {
-    use model::config::ModelConfig;
+    
     use model::transformer_zero::ZeroTransformer;
     use model::weights::ModelWeights;
 

@@ -1,4 +1,6 @@
-﻿//! Vulkan BitNet (1-bit quantized) transformer layer dispatch.
+﻿// GPU infrastructure — retained for future BitNet model support.
+#![allow(dead_code)]
+//! Vulkan BitNet (1-bit quantized) transformer layer dispatch.
 //!
 //! # Safety Invariants
 //!
