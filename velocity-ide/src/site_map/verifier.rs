@@ -527,7 +527,7 @@ impl NdaNode {
         let mut h = Sha256::new();
         self.hash_into(&mut h);
         let digest = h.finalize();
-        u64::from_le_bytes(digest[..8].try_into().unwrap())
+        u64::from_le_bytes(digest[..8].try_into().expect("SHA-256 digest is always 32 bytes"))
     }
 
     /// Hash a list of child nodes into a hasher (Merkle tree pattern).
@@ -809,7 +809,7 @@ impl MerkleVerifier {
         if self.stack.len() < 2 {
             return Err("END_SCOPE with no matching SCOPE");
         }
-        let children_hashes = self.stack.pop().unwrap();
+        let children_hashes = self.stack.pop().expect("stack.len() >= 2 checked above");
         // Build a synthetic Scope node from child hashes to compute parent hash.
         let scope_hash = Self::hash_scope(&children_hashes);
         if let Some(level) = self.stack.last_mut() {
@@ -861,7 +861,7 @@ impl MerkleVerifier {
             h.update(ch.to_le_bytes());
         }
         let digest = h.finalize();
-        u64::from_le_bytes(digest[..8].try_into().unwrap())
+        u64::from_le_bytes(digest[..8].try_into().expect("SHA-256 digest is always 32 bytes"))
     }
 }
 

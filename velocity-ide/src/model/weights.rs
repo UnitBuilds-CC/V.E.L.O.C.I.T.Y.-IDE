@@ -17,6 +17,15 @@ use crate::compiler::driver::{VulkanDriver, VulkanNdaGemv};
 use crate::model::config::ModelConfig;
 use crate::nda::NdaMatrix;
 
+/// Interpret a 4-byte slice as `[u8; 4]` for `u32::from_le_bytes`.
+/// Returns an error with context instead of panicking on length mismatch.
+fn read_u32_le_bytes(data: &[u8], ctx: &str) -> Result<u32> {
+    let arr: [u8; 4] = data
+        .try_into()
+        .map_err(|_| anyhow::anyhow!("{ctx}: expected 4 bytes, got {}", data.len()))?;
+    Ok(u32::from_le_bytes(arr))
+}
+
 // ─── FP32 tensor ───────────────────────────────────────────────────────────
 
 /// Load a raw float32 `.bin` file written by convert_to_nda.py.
@@ -32,7 +41,7 @@ pub fn load_fp32_bin(path: &Path) -> Result<Vec<f32>> {
         anyhow::bail!("FP32 bin too small: {path:?}");
     }
 
-    let ndim = u32::from_le_bytes(data[0..4].try_into().unwrap()) as usize;
+    let ndim = read_u32_le_bytes(&data[0..4], "ndim header")? as usize;
     let header_bytes = 4 + ndim * 4;
 
     if data.len() < header_bytes {
@@ -41,7 +50,7 @@ pub fn load_fp32_bin(path: &Path) -> Result<Vec<f32>> {
 
     let mut n_elems: usize = 1;
     for i in 0..ndim {
-        let d = u32::from_le_bytes(data[4 + i * 4..8 + i * 4].try_into().unwrap()) as usize;
+        let d = read_u32_le_bytes(&data[4 + i * 4..8 + i * 4], "dim header")? as usize;
         n_elems *= d;
     }
 
@@ -52,7 +61,10 @@ pub fn load_fp32_bin(path: &Path) -> Result<Vec<f32>> {
 
     let floats: Vec<f32> = data[header_bytes..header_bytes + data_bytes]
         .chunks_exact(4)
-        .map(|b| f32::from_le_bytes(b.try_into().unwrap()))
+        .map(|b| {
+            let arr: [u8; 4] = b.try_into().expect("chunks_exact(4) always yields 4 bytes");
+            f32::from_le_bytes(arr)
+        })
         .collect();
 
     Ok(floats)
@@ -77,12 +89,12 @@ fn tile_weights_nda(matrix: &NdaMatrix) -> (Vec<u8>, Vec<u8>) {
             let act_word = u32::from_le_bytes(
                 matrix.sign[byte_offset..byte_offset + 4]
                     .try_into()
-                    .unwrap(),
+                    .expect("NdaMatrix sign buffer aligned to 4 bytes by construction"),
             );
             let pos_word = u32::from_le_bytes(
                 matrix.extra[byte_offset..byte_offset + 4]
                     .try_into()
-                    .unwrap(),
+                    .expect("NdaMatrix extra buffer aligned to 4 bytes by construction"),
             );
 
             let dest_idx = col_word * rows + row;
@@ -203,7 +215,7 @@ impl ModelWeights {
             ProgressStyle::with_template(
                 "  {spinner:.cyan} [{bar:40.cyan/blue}] {pos}/{len} {msg}",
             )
-            .unwrap()
+            .expect("progress bar template is valid")
             .progress_chars("=> "),
         );
 

@@ -836,7 +836,10 @@ impl Transformer {
             let attn_scale = (cfg.head_dim as f32).sqrt().recip();
             pipeline
                 .record_and_execute_token(
-                    self.weights.vulkan.as_ref().unwrap(),
+                    self.weights
+                        .vulkan
+                        .as_ref()
+                        .expect("gpu_pipeline requires Vulkan driver (invariant: try_build_gpu_pipeline returns None if vulkan is absent)"),
                     cfg.n_layers,
                     h,
                     cfg.ffn_size,
