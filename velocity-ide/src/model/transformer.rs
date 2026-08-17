@@ -668,8 +668,13 @@ impl Transformer {
         // The fused GPU pipeline records a full transformer forward pass as a single
         // Vulkan command buffer. For FP4/FP2 weights, the pipeline shaders don't
         // account for the per-matrix global_scale (applied externally in the
-        // individual GEMV path), so we skip the fused pipeline and use individual
-        // GPU GEMV dispatches via nda_gemv_gpu_or_cpu instead.
+        // individual GEMV path via nda_gemv_gpu_or_cpu), so we skip the fused
+        // pipeline and use individual GPU GEMV dispatches instead.
+        //
+        // TODO(opt): Fix the fused pipeline for FP4/FP2 by either:
+        //   (a) Adding global_scale as a push constant to the GEMV shader, or
+        //   (b) Recording a scale-multiply compute pass after each FP4 GEMV dispatch.
+        // This would enable GPU-side attention for FP4 models (currently CPU-bound).
         let has_fp_weights = !weights.layers.is_empty()
             && weights.layers.iter().any(|l| {
                 l.q_proj.version == crate::nda::NDA_VERSION_FP4
