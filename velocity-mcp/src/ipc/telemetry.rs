@@ -131,9 +131,7 @@ impl TelemetryCollector {
     /// Increment a counter by the given amount
     pub fn counter_increment(&self, name: &str, amount: u64) {
         let mut counters = self.counters.lock().unwrap();
-        let counter = counters
-            .entry(name.to_string())
-            .or_default();
+        let counter = counters.entry(name.to_string()).or_default();
         counter.fetch_add(amount, Ordering::Relaxed);
     }
 
@@ -315,8 +313,7 @@ impl TelemetryCollector {
     /// Export telemetry to a file
     pub fn export_to_file(&self, path: &std::path::Path) -> std::io::Result<()> {
         let json = self.export_json();
-        let content = serde_json::to_string_pretty(&json)
-            .map_err(std::io::Error::other)?;
+        let content = serde_json::to_string_pretty(&json).map_err(std::io::Error::other)?;
         std::fs::write(path, content)
     }
 

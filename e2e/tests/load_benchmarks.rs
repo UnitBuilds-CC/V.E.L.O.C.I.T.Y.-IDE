@@ -60,13 +60,7 @@ fn bench_single_client_throughput() {
 
     // Warm up
     for i in 0..10 {
-        let _ = send_request(
-            stdin,
-            &mut stdout,
-            "list_tools",
-            serde_json::json!({}),
-            i,
-        );
+        let _ = send_request(stdin, &mut stdout, "list_tools", serde_json::json!({}), i);
     }
 
     // Benchmark
@@ -90,7 +84,10 @@ fn bench_single_client_throughput() {
     println!("Iterations: {}", iterations);
     println!("Total time: {:?}", elapsed);
     println!("Requests/sec: {:.2}", rps);
-    println!("Avg latency: {:.2}ms", elapsed.as_millis() as f64 / iterations as f64);
+    println!(
+        "Avg latency: {:.2}ms",
+        elapsed.as_millis() as f64 / iterations as f64
+    );
 
     server.kill().ok();
 }
@@ -178,7 +175,10 @@ fn bench_large_payload() {
     println!("Payload size: 1MB");
     println!("Iterations: {}", iterations);
     println!("Total time: {:?}", elapsed);
-    println!("Avg latency: {:.2}ms", elapsed.as_millis() as f64 / iterations as f64);
+    println!(
+        "Avg latency: {:.2}ms",
+        elapsed.as_millis() as f64 / iterations as f64
+    );
 
     server.kill().ok();
 }
