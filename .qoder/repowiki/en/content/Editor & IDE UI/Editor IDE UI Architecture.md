@@ -8,6 +8,8 @@
 - [velocity-mcp/src/editor/chat_panel.rs](file://velocity-mcp/src/editor/chat_panel.rs)
 - [velocity-mcp/src/editor/browse_panel.rs](file://velocity-mcp/src/editor/browse_panel.rs)
 - [velocity-mcp/src/editor/app/velocity_app/tier3_panels.rs](file://velocity-mcp/src/editor/app/velocity_app/tier3_panels.rs)
+- [velocity-mcp/src/editor/bottom_panel.rs](file://velocity-mcp/src/editor/bottom_panel.rs)
+- [velocity-mcp/src/editor/status_bar.rs](file://velocity-mcp/src/editor/status_bar.rs)
 </cite>
 
 ## Overview
@@ -46,7 +48,7 @@ The central `VelocityApp` struct (`struct_def.rs`) owns all IDE state:
 | Browse Panel | `browse_panel.rs` | Integrated browser engine view |
 | Orchestrator Panel | `orchestrator/panel/` | Task timeline, execution status, policy controls |
 | Smart Sidebar | `smart_sidebar.rs` | Context-aware file/symbol inspector |
-| Bottom Panel | `bottom_panel.rs` | Terminal output, diagnostics, search results |
+| Bottom Panel | `bottom_panel.rs` | Terminal output, diagnostics, search results; tab indices exposed as named constants (`TAB_TERMINAL`, `TAB_PROBLEMS`, `TAB_DEBUG`, `TAB_OUTPUT`, `TAB_CHECKPOINTS`) with `MAX_PANEL_HEIGHT` (600px) clamp |
 
 ### Code Editor Features
 
@@ -117,6 +119,24 @@ The Mission Control panel (rendered in `app/render.rs`) uses compact labels and 
 - **Heading**: "Mission" with subtitle "Define the outcome, approve a plan, then steer the work."
 - **Tab labels**: "1  Plan" (or "1  Plan ready" when routed), "2  Work" (or "2  Work — N active" when tasks running), "3  Review"
 - **Responsive layout**: Uses `horizontal_wrapped` for heading and tab row to prevent overflow in narrow panels
+
+## Keyboard Shortcuts
+
+| Shortcut | Action |
+|----------|--------|
+| `Ctrl+E` | Toggle left sidebar |
+| `Ctrl+Shift+E` | Toggle right sidebar |
+| `Ctrl+J` | Focus chat panel |
+| `Ctrl+\`` | Focus output panel |
+| `Ctrl+PageDown` / `Ctrl+PageUp` | Cycle tabs |
+
+## Status Bar
+
+The status bar (`status_bar.rs`) renders interactive elements with hover tooltips:
+- Mode indicator → "Switch workspace mode"
+- Build status dot → "View diagnostics"
+- Line/column position → "Go to line"
+- Provider label → "Open settings"
 
 ## Team Studio Direct Creation
 
