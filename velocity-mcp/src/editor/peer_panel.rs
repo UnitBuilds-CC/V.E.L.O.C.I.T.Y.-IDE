@@ -80,12 +80,15 @@ impl VelocityApp {
 
                     ui.label(RichText::new("Port:").size(9.0).color(palette.text_muted));
                     let port_edit = ui.add(
-                        egui::TextEdit::singleline(&mut self.peer_port.to_string())
+                        egui::TextEdit::singleline(&mut self.peer_port_input)
                             .desired_width(60.0)
                             .font(egui::TextStyle::Monospace),
                     );
                     if port_edit.changed() {
-                        // Parse is handled below via the text buffer
+                        // Sync the parsed value so Start uses the latest port.
+                        if let Ok(p) = self.peer_port_input.trim().parse::<u16>() {
+                            self.peer_port = p;
+                        }
                     }
                 });
 

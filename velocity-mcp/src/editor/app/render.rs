@@ -690,6 +690,10 @@ impl<'a> TabViewer for TabViewerImpl<'a> {
                             });
                     }
                     _ => {
+                        // All TabKind variants are handled above. This branch
+                        // is unreachable but kept as a safety net for future
+                        // enum additions — show a clear placeholder instead of
+                        // a blank panel so missing implementations are obvious.
                         ui.vertical_centered(|ui| {
                             ui.add_space(32.0);
                             ui.label(
@@ -700,7 +704,7 @@ impl<'a> TabViewer for TabViewerImpl<'a> {
                             );
                             ui.add_space(8.0);
                             ui.label(
-                                egui::RichText::new("Panel active in the current mode.")
+                                egui::RichText::new("Panel content not yet implemented for this mode.")
                                     .size(11.0)
                                     .color(palette.text_muted),
                             );

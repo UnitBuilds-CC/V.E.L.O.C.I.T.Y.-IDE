@@ -836,6 +836,9 @@ pub fn render_metrics_content(ui: &mut egui::Ui, metrics: &MetricsSnapshot, pale
     );
     ui.add_space(6.0);
 
+    egui::ScrollArea::vertical()
+        .max_height(300.0)
+        .show(ui, |ui| {
     let total = metrics.tasks_completed + metrics.tasks_failed + metrics.tasks_pending;
     // Summary cards
     egui::Grid::new("metrics_grid")
@@ -940,6 +943,7 @@ pub fn render_metrics_content(ui: &mut egui::Ui, metrics: &MetricsSnapshot, pale
             );
         });
     }
+        }); // ScrollArea
 }
 
 /// Render the Favorites tab with pinned files.
@@ -1176,6 +1180,7 @@ mod tests {
             SidebarTab::Favorites,
             SidebarTab::Bookmarks,
             SidebarTab::AccessibilityAudit,
+            SidebarTab::Browse,
         ];
         for tab in all {
             assert!(!tab.label().is_empty());

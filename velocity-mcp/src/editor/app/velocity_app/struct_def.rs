@@ -425,6 +425,10 @@ pub struct VelocityApp {
     pub peer_server_running: bool,
     /// Port configured for the peer API server.
     pub peer_port: u16,
+    /// Text buffer for the port field in the peer panel UI (u16 can't be
+    /// bound directly to a TextEdit, so we keep a String mirror and parse
+    /// it back when the server is started).
+    pub peer_port_input: String,
     /// Draft peer host for adding a new peer connection.
     pub peer_add_host: String,
     /// Draft peer port for adding a new peer connection.
@@ -1148,6 +1152,7 @@ impl VelocityApp {
             },
             peer_server_running: false,
             peer_port: 9191,
+            peer_port_input: "9191".into(),
             peer_add_host: String::new(),
             peer_add_port: String::new(),
             peer_add_name: String::new(),
