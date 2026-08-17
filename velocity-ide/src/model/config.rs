@@ -81,7 +81,7 @@ impl ModelConfig {
             rope_theta: 1_000_000.0,
             alibi_shifts,
             rms_eps: 1e-6,
-            eos_token_id: 151_645,
+            eos_token_id: 151_643,
             bos_token_id: 151_643,
         }
     }

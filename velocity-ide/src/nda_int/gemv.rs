@@ -51,7 +51,7 @@ pub fn nda_gemv_nda_to_nda(matrix: &NdaMatrix, x: &NdaVec) -> NdaVec {
                 *out_val = (acc + 128) >> 8;
             });
 
-        let out_log2 = combine_log2_scales(global_scale_log2.saturating_add(12), x.log2_scale);
+        let out_log2 = combine_log2_scales(global_scale_log2.saturating_add(10), x.log2_scale);
         return NdaVec::from_i32_slice(&out_i32, out_log2);
     }
 
@@ -102,7 +102,7 @@ pub fn nda_gemv_nda_to_nda(matrix: &NdaMatrix, x: &NdaVec) -> NdaVec {
                 *out_val = (acc + 128) >> 8;
             });
 
-        let out_log2 = combine_log2_scales(global_scale_log2.saturating_add(14), x.log2_scale);
+        let out_log2 = combine_log2_scales(global_scale_log2.saturating_add(8), x.log2_scale);
         return NdaVec::from_i32_slice(&out_i32, out_log2);
     }
 

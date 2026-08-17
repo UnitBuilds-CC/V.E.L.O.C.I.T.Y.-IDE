@@ -16,6 +16,10 @@ struct HttpRequest {
     body: Vec<u8>,
 }
 
+/// Maximum request body size (16 MB). Prevents memory exhaustion from
+/// malicious or misconfigured clients sending huge Content-Length values.
+const MAX_BODY_SIZE: usize = 16 * 1024 * 1024;
+
 /// Parse a raw HTTP request from a reader.
 fn parse_request(reader: &mut BufReader<&mut dyn IoRead>) -> Option<HttpRequest> {
     let mut request_line = String::new();
@@ -44,6 +48,9 @@ fn parse_request(reader: &mut BufReader<&mut dyn IoRead>) -> Option<HttpRequest>
         }
         if let Some(val) = trimmed.to_lowercase().strip_prefix("content-length:") {
             content_length = val.trim().parse().unwrap_or(0);
+            if content_length > MAX_BODY_SIZE {
+                return None; // Reject oversized requests early.
+            }
         }
     }
 

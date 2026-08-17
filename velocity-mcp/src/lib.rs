@@ -29,7 +29,6 @@
 
 pub mod agent;
 pub mod automation;
-pub mod benchmark;
 pub mod compiler;
 pub mod connectors;
 pub mod editor;

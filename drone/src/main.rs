@@ -14,6 +14,7 @@ fn main() {
     let args: Vec<String> = std::env::args().collect();
 
     let mut port: u16 = 9191;
+    let mut host: String = "127.0.0.1".to_string();
     let mut name: Option<String> = None;
     let mut workspace: Option<PathBuf> = None;
     let mut capabilities: Option<Vec<String>> = None;
@@ -24,6 +25,10 @@ fn main() {
             "--port" => {
                 i += 1;
                 port = args.get(i).and_then(|s| s.parse().ok()).unwrap_or(9191);
+            }
+            "--host" => {
+                i += 1;
+                host = args.get(i).cloned().unwrap_or_else(|| "127.0.0.1".to_string());
             }
             "--name" => {
                 i += 1;
@@ -81,7 +86,7 @@ fn main() {
 
     // Create core and server.
     let core = DroneCore::new(identity, workspace);
-    let server = DroneServer::new(core, "0.0.0.0", port);
+    let server = DroneServer::new(core, &host, port);
 
     // Start serving (blocking).
     if let Err(e) = server.serve() {
@@ -98,6 +103,7 @@ USAGE:
     velocity-drone [OPTIONS]
 
 OPTIONS:
+    --host <ADDR>              Bind address (default: 127.0.0.1)
     --port <PORT>              Port to listen on (default: 9191)
     --name <NAME>              Drone name (default: hostname)
     --workspace <PATH>         Workspace directory (default: ./.velocity_drone)
@@ -107,6 +113,7 @@ OPTIONS:
 EXAMPLES:
     velocity-drone
     velocity-drone --port 9191 --name \"Build Machine\"
+    velocity-drone --host 0.0.0.0 --port 9191   # Listen on all interfaces
     velocity-drone --workspace /home/user/drone --capabilities file_execution test_runner
 
 PROTOCOL:

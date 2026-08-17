@@ -146,6 +146,8 @@ pub struct LayerWeights {
     pub up_proj: NdaMatrix,
     pub down_proj: NdaMatrix,
     // GPU weights (optional)
+    pub qkv_proj_gpu: Option<VulkanNdaGemv>,
+    pub gate_up_proj_gpu: Option<VulkanNdaGemv>,
     pub q_proj_gpu: Option<VulkanNdaGemv>,
     pub k_proj_gpu: Option<VulkanNdaGemv>,
     pub v_proj_gpu: Option<VulkanNdaGemv>,
@@ -190,10 +192,10 @@ impl ModelWeights {
         let vulkan = VulkanDriver::init().ok();
         if vulkan.is_some() {
             log::info!("Vulkan GPU Compute Driver (V-NCE) initialized successfully");
-            println!("Vulkan GPU Compute Driver (V-NCE) initialized successfully!");
+            eprintln!("Vulkan GPU Compute Driver (V-NCE) initialized successfully!");
         } else {
             log::warn!("Vulkan initialization skipped: using CPU fallback");
-            println!("Vulkan initialization skipped: using CPU fallback.");
+            eprintln!("Vulkan initialization skipped: using CPU fallback.");
         }
 
         let pb = ProgressBar::new((cfg.n_layers * 9 + 3) as u64);
@@ -282,6 +284,7 @@ impl ModelWeights {
                             matrix.version as u32,
                             k_padded as u32,
                             matrix.rows as u32,
+                            [matrix.scale, 0.0, 0.0],
                             &act_bytes,
                             &pos_bytes,
                         )
@@ -294,6 +297,7 @@ impl ModelWeights {
                             matrix.version as u32,
                             matrix.cols as u32,
                             matrix.rows as u32,
+                            [matrix.scale, 0.0, 0.0],
                             &matrix.packed_codes,
                             &matrix.q_scales,
                         )
@@ -305,6 +309,65 @@ impl ModelWeights {
                     None
                 }
             };
+
+            // Concatenate multiple NDA matrices into a single fused GPU GEMV.
+            // All matrices must share the same column count, version, and block size.
+            let concat_gpu_gemv = |matrices: &[&NdaMatrix]| -> Option<VulkanNdaGemv> {
+                if let Some(ref driver) = vulkan {
+                    if matrices.is_empty() {
+                        return None;
+                    }
+                    let first = matrices[0];
+                    let cols = first.cols;
+                    let version = first.version;
+                    let block_size = first.block_size;
+
+                    if version != crate::nda::NDA_VERSION_FP4
+                        && version != crate::nda::NDA_VERSION_FP2
+                    {
+                        return None;
+                    }
+
+                    let mut concat_scales = Vec::new();
+                    let mut concat_codes = Vec::new();
+                    let mut total_rows = 0;
+
+                    for m in matrices {
+                        if m.cols != cols || m.version != version || m.block_size != block_size {
+                            return None;
+                        }
+                        total_rows += m.rows;
+                        concat_scales.extend_from_slice(&m.q_scales);
+                        concat_codes.extend_from_slice(&m.packed_codes);
+                    }
+
+                    let scales = [
+                        matrices[0].scale,
+                        matrices[1].scale,
+                        if matrices.len() > 2 {
+                            matrices[2].scale
+                        } else {
+                            0.0
+                        },
+                    ];
+
+                    VulkanNdaGemv::new_direct(
+                        driver,
+                        version as u32,
+                        cols as u32,
+                        total_rows as u32,
+                        scales,
+                        &concat_codes,
+                        &concat_scales,
+                    )
+                    .ok()
+                } else {
+                    None
+                }
+            };
+
+            let qkv_proj_gpu = concat_gpu_gemv(&[&q_proj, &k_proj, &v_proj]);
+            let gate_up_proj_gpu = concat_gpu_gemv(&[&gate_proj, &up_proj]);
 
             let q_proj_gpu = make_gpu_gemv(&q_proj);
             let k_proj_gpu = make_gpu_gemv(&k_proj);
@@ -322,6 +385,8 @@ impl ModelWeights {
                 gate_proj,
                 up_proj,
                 down_proj,
+                qkv_proj_gpu,
+                gate_up_proj_gpu,
                 q_proj_gpu,
                 k_proj_gpu,
                 v_proj_gpu,

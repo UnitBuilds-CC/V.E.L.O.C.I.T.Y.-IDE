@@ -25,6 +25,10 @@ pub struct VulkanNdaGemv {
     pub k: u32,
     pub n: u32,
     pub version: u32,
+    /// Per-matrix scales for fused GEMV dispatch.
+    /// [0] = primary scale, [1..2] = secondary/tertiary scales (fused projections).
+    /// Currently stored for infrastructure; push-constant shader upgrade will use these.
+    pub scales: [f32; 3],
 
     pub shader_module: vk::ShaderModule,
     pub desc_set_layout: vk::DescriptorSetLayout,
@@ -364,6 +368,7 @@ impl VulkanNdaGemv {
             k,
             n,
             version: 2,
+            scales: [1.0, 0.0, 0.0],
             shader_module,
             desc_set_layout,
             pipeline_layout,
@@ -394,6 +399,7 @@ impl VulkanNdaGemv {
         version: u32,
         k: u32,
         n: u32,
+        scales: [f32; 3],
         active_w_bytes: &[u8],
         pos_w_bytes: &[u8],
     ) -> Result<Self, Box<dyn std::error::Error>> {
@@ -725,6 +731,7 @@ impl VulkanNdaGemv {
             k,
             n,
             version,
+            scales,
             shader_module,
             desc_set_layout,
             pipeline_layout,

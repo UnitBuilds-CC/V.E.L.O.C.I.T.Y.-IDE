@@ -460,17 +460,20 @@ fn attention_head_float(
 }
 
 /// LM-head FP32 matmul: logits[v] = weight_row[v] · hidden (parallel over vocab).
-fn lm_head(hidden: &[f32], weights: &[f32], vocab_size: usize, hidden_size: usize) -> Vec<f32> {
-    (0..vocab_size)
-        .into_par_iter()
-        .map(|v| {
-            weights[v * hidden_size..(v + 1) * hidden_size]
-                .iter()
-                .zip(hidden.iter())
-                .map(|(&w, &x)| w * x)
-                .sum::<f32>()
-        })
-        .collect()
+/// Writes results in-place into `out_logits` which must have length `vocab_size`.
+fn lm_head(hidden: &[f32], weights: &[f32], _vocab_size: usize, hidden_size: usize, out_logits: &mut [f32]) {
+    out_logits.par_iter_mut().enumerate().for_each(|(v, logit)| {
+        let offset = v * hidden_size;
+        let mut sum = 0.0f32;
+        unsafe {
+            let w_ptr = weights.as_ptr().add(offset);
+            let h_ptr = hidden.as_ptr();
+            for i in 0..hidden_size {
+                sum += (*w_ptr.add(i)) * (*h_ptr.add(i));
+            }
+        }
+        *logit = sum;
+    });
 }
 
 /// Sample the next token from `logits` given temperature and top-p.
@@ -621,6 +624,7 @@ pub struct TransformerScratch {
     pub gate_out: Vec<f32>,
     pub up_out: Vec<f32>,
     pub gated: Vec<f32>,
+    pub logits: Vec<f32>,
 }
 
 impl TransformerScratch {
@@ -639,6 +643,7 @@ impl TransformerScratch {
             gate_out: vec![0.0; mlp_size],
             up_out: vec![0.0; mlp_size],
             gated: vec![0.0; mlp_size],
+            logits: vec![0.0; cfg.vocab_size],
         }
     }
 }
@@ -660,7 +665,22 @@ impl Transformer {
         // and every layer has its projection weights uploaded to GPU buffers.
         // Any missing piece (no driver, CPU-only weights) falls back to the
         // CPU path in `forward_one`.
-        let gpu_pipeline = Self::try_build_gpu_pipeline(&config, &weights);
+        // The fused GPU pipeline records a full transformer forward pass as a single
+        // Vulkan command buffer. For FP4/FP2 weights, the pipeline shaders don't
+        // account for the per-matrix global_scale (applied externally in the
+        // individual GEMV path), so we skip the fused pipeline and use individual
+        // GPU GEMV dispatches via nda_gemv_gpu_or_cpu instead.
+        let has_fp_weights = !weights.layers.is_empty()
+            && weights.layers.iter().any(|l| {
+                l.q_proj.version == crate::nda::NDA_VERSION_FP4
+                    || l.q_proj.version == crate::nda::NDA_VERSION_FP2
+            });
+        let gpu_pipeline = if has_fp_weights {
+            eprintln!("[transformer] FP4/FP2 weights detected — using individual GPU GEMVs (CPU attention)");
+            None
+        } else {
+            Self::try_build_gpu_pipeline(&config, &weights)
+        };
 
         Self {
             config,
@@ -724,6 +744,8 @@ impl Transformer {
             .layers
             .iter()
             .map(|l| crate::compiler::driver::LayerGpuGemvs {
+                qkv_proj_gpu: &l.qkv_proj_gpu,
+                gate_up_proj_gpu: &l.gate_up_proj_gpu,
                 q_proj_gpu: &l.q_proj_gpu,
                 k_proj_gpu: &l.k_proj_gpu,
                 v_proj_gpu: &l.v_proj_gpu,
@@ -771,8 +793,8 @@ impl Transformer {
         }
     }
 
-    /// Process one token at position `pos` and return the next-token logit vector and the final hidden state.
-    fn forward_one(&mut self, token: u32, pos: usize) -> (Vec<f32>, Vec<f32>) {
+    /// Process one token at position `pos` and return a reference to the logit vector.
+    fn forward_one(&mut self, token: u32, pos: usize) -> &[f32] {
         let cfg = &self.config;
         let h = cfg.hidden_size;
 
@@ -796,6 +818,8 @@ impl Transformer {
                 .layers
                 .iter()
                 .map(|l| crate::compiler::driver::LayerGpuGemvs {
+                    qkv_proj_gpu: &l.qkv_proj_gpu,
+                    gate_up_proj_gpu: &l.gate_up_proj_gpu,
                     q_proj_gpu: &l.q_proj_gpu,
                     k_proj_gpu: &l.k_proj_gpu,
                     v_proj_gpu: &l.v_proj_gpu,
@@ -838,9 +862,9 @@ impl Transformer {
                 );
             }
 
-            // 5. Evaluate the LM Head on the CPU
-            let logits = lm_head(&self.scratch.x, &self.weights.lm_head, cfg.vocab_size, h);
-            return (logits, self.scratch.x.clone());
+            // 5. Evaluate the LM Head on the CPU (in-place into pre-allocated scratch)
+            lm_head(&self.scratch.x, &self.weights.lm_head, cfg.vocab_size, h, &mut self.scratch.logits);
+            return &self.scratch.logits;
         }
 
         // 1. Copy embed tokens to scratch.x in-place (no allocation!)
@@ -1017,9 +1041,9 @@ impl Transformer {
         // ── Final RMSNorm ───────────────────────────────────────────────────
         rms_norm(&mut self.scratch.x, &self.weights.final_norm, cfg.rms_eps);
 
-        // ── LM head (FP32 matmul) ───────────────────────────────────────────
-        let logits = lm_head(&self.scratch.x, &self.weights.lm_head, cfg.vocab_size, h);
-        (logits, self.scratch.x.clone())
+        // ── LM head (FP32 matmul, in-place into pre-allocated scratch) ───────
+        lm_head(&self.scratch.x, &self.weights.lm_head, cfg.vocab_size, h, &mut self.scratch.logits);
+        &self.scratch.logits
     }
 
     /// Run autoregressive generation.
@@ -1047,14 +1071,11 @@ impl Transformer {
         );
         // Clamp max_new_tokens to the model's supported context window
         let max_new_tokens = max_new_tokens.min(self.config.max_seq_len.saturating_sub(n_prompt));
-        let mut logits = Vec::new();
-        for (pos, &tok) in prompt_tokens.iter().enumerate() {
-            let (lg, _) = self.forward_one(tok, pos);
-            logits = lg;
-            // During prefill we discard logits for all but the last token.
+        for (pos, &tok) in prompt_tokens[..n_prompt - 1].iter().enumerate() {
+            self.forward_one(tok, pos);
         }
-
-        let mut next = sample_token(&logits, temperature, top_p, &mut rng);
+        let logits = self.forward_one(prompt_tokens[n_prompt - 1], n_prompt - 1);
+        let mut next = sample_token(logits, temperature, top_p, &mut rng);
 
         // ── Decode ──────────────────────────────────────────────────────────
         for step in 0..max_new_tokens {
@@ -1062,20 +1083,18 @@ impl Transformer {
                 break;
             }
             on_token(next);
-            let (logits, _) = self.forward_one(next, n_prompt + step);
-            next = sample_token(&logits, temperature, top_p, &mut rng);
+            let logits = self.forward_one(next, n_prompt + step);
+            next = sample_token(logits, temperature, top_p, &mut rng);
         }
     }
 
     /// Get the final conditioning hidden state from natural language prompt processing.
     pub fn get_conditioning_hidden_state(&mut self, prompt_tokens: &[u32]) -> Vec<f32> {
         self.reset_cache();
-        let mut last_hidden = vec![0.0f32; self.config.hidden_size];
         for (pos, &tok) in prompt_tokens.iter().enumerate() {
-            let (_, hidden) = self.forward_one(tok, pos);
-            last_hidden = hidden;
+            self.forward_one(tok, pos);
         }
-        last_hidden
+        self.scratch.x.clone()
     }
 }
 
@@ -1199,7 +1218,8 @@ mod tests {
     fn test_lm_head_small() {
         let hidden = vec![1.0, 0.0, 0.0];
         let weights = vec![1.0, 0.0, 0.0, 0.0, 1.0, 0.0];
-        let logits = lm_head(&hidden, &weights, 2, 3);
+        let mut logits = vec![0.0; 2];
+        lm_head(&hidden, &weights, 2, 3, &mut logits);
         assert_eq!(logits.len(), 2);
         assert!((logits[0] - 1.0).abs() < 1e-5);
         assert!((logits[1] - 0.0).abs() < 1e-5);

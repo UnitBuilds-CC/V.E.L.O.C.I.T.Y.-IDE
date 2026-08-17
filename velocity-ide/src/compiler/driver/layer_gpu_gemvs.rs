@@ -3,6 +3,10 @@ use super::vulkan_init::VulkanDriver;
 use ash::vk;
 
 pub struct LayerGpuGemvs<'a> {
+    /// Fused QKV projection (Q‖K‖V concatenated). Used by the OS-level pipeline when available.
+    pub qkv_proj_gpu: &'a Option<VulkanNdaGemv>,
+    /// Fused gate-up projection (gate‖up concatenated). Used by the OS-level pipeline when available.
+    pub gate_up_proj_gpu: &'a Option<VulkanNdaGemv>,
     pub q_proj_gpu: &'a Option<VulkanNdaGemv>,
     pub k_proj_gpu: &'a Option<VulkanNdaGemv>,
     pub v_proj_gpu: &'a Option<VulkanNdaGemv>,
@@ -129,6 +133,8 @@ mod tests {
         // Use a leaked Box to get a 'static reference (test-only, no Sync needed)
         let none: &'static Option<VulkanNdaGemv> = Box::leak(Box::new(None));
         LayerGpuGemvs {
+            qkv_proj_gpu: none,
+            gate_up_proj_gpu: none,
             q_proj_gpu: none,
             k_proj_gpu: none,
             v_proj_gpu: none,

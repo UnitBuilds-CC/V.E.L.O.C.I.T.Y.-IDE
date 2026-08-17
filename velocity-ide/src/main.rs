@@ -15,7 +15,7 @@ mod tokenizer;
 
 use std::{
     io::{self, BufRead, BufReader, Write},
-    path::PathBuf,
+    path::{Path, PathBuf},
     time::Instant,
 };
 
@@ -167,6 +167,9 @@ fn main() -> Result<()> {
                 } else {
                     run_generate_zero(args)
                 }
+            } else if args.arch != "bitnet3b" && args.arch != "bitnet" {
+                // Non-BitNet architectures use local FP32 transformer inference
+                run_generate_local(args)
             } else {
                 run_generate(args)
             }
@@ -379,14 +382,196 @@ fn run_generate(args: GenerateArgs) -> Result<()> {
 
 // ─── Zero-Float Generate ────────────────────────────────────────────────────
 
-fn run_generate_zero(_args: GenerateArgs) -> Result<()> {
-    anyhow::bail!("Local model execution via NDA-Zero is disabled in Kimi mode.");
+fn resolve_config(arch: &str) -> Result<model::config::ModelConfig> {
+    match arch {
+        "qwen05" | "qwen" => Ok(model::config::ModelConfig::qwen_coder_05b()),
+        "bitnet3b" | "bitnet" => Ok(model::config::ModelConfig::bitnet_3b()),
+        other => anyhow::bail!("Unknown --arch '{other}'. Use 'qwen05' or 'bitnet3b'."),
+    }
+}
+
+fn resolve_model_dir(model: &Option<PathBuf>) -> Result<PathBuf> {
+    if let Some(ref d) = model {
+        if d.exists() {
+            return Ok(d.clone());
+        }
+        anyhow::bail!("--model directory does not exist: {d:?}");
+    }
+    // Auto-discover: check relative to workspace
+    let candidates = [
+        PathBuf::from("models/qwen-coder-0.5b/nda"),
+        PathBuf::from("models/bitnet-3b/nda"),
+    ];
+    for c in &candidates {
+        if c.exists() {
+            eprintln!("[auto-discover] Using model directory: {c:?}");
+            return Ok(c.clone());
+        }
+    }
+    anyhow::bail!("No --model specified and no model directory auto-discovered. Use --model <dir>.")
+}
+
+fn resolve_tokenizer(tokenizer: &Option<PathBuf>, model_dir: &Path) -> Result<PathBuf> {
+    if let Some(ref t) = tokenizer {
+        if t.exists() {
+            return Ok(t.clone());
+        }
+        anyhow::bail!("--tokenizer file does not exist: {t:?}");
+    }
+    // Default: look for tokenizer.json next to or above the nda dir
+    let candidates: Vec<PathBuf> = vec![
+        model_dir.join("tokenizer.json"),
+        model_dir.join("../tokenizer.json"),
+        model_dir.join("tokenizer.ndat"),
+        model_dir.join("../tokenizer.ndat"),
+    ];
+    for c in &candidates {
+        if c.exists() {
+            eprintln!("[auto-discover] Using tokenizer: {c:?}");
+            return Ok(c.clone());
+        }
+    }
+    anyhow::bail!("No --tokenizer specified and none auto-discovered. Use --tokenizer <file>.")
+}
+
+fn run_generate_zero(args: GenerateArgs) -> Result<()> {
+    use model::config::ModelConfig;
+    use model::transformer_zero::ZeroTransformer;
+    use model::weights::ModelWeights;
+
+    let cfg = resolve_config(&args.arch)?;
+    let model_dir = resolve_model_dir(&args.model)?;
+    let tokenizer_path = resolve_tokenizer(&args.tokenizer, &model_dir)?;
+
+    eprintln!("[zero-float] Loading model: arch={}, model={:?}", args.arch, model_dir);
+    let weights = ModelWeights::load(&model_dir, &cfg)?;
+    let mut model = ZeroTransformer::new(cfg.clone(), weights);
+
+    let tokenizer = tokenizer::Tokenizer::from_file(&tokenizer_path)?;
+
+    // Resolve prompt
+    let prompt_text = if let Some(p) = args.prompt {
+        p
+    } else if let Some(pf) = args.prompt_file {
+        std::fs::read_to_string(pf).context("Reading prompt file")?
+    } else {
+        // Read from stdin
+        print!("Prompt: ");
+        std::io::stdout().flush().ok();
+        let mut line = String::new();
+        std::io::stdin().lock().read_line(&mut line)?;
+        line.trim().to_string()
+    };
+
+    let prompt_tokens = tokenizer.encode(&prompt_text, true);
+    eprintln!("[zero-float] Prompt: {} tokens", prompt_tokens.len());
+
+    let t_gen = std::time::Instant::now();
+    let mut generated = Vec::new();
+
+    model.generate_greedy(&prompt_tokens, args.max_tokens, |tok_id| {
+        let piece = tokenizer.decode_token(tok_id);
+        print!("{}", piece);
+        std::io::stdout().flush().ok();
+        generated.push(tok_id);
+    });
+
+    let elapsed = t_gen.elapsed();
+    let elapsed_s = elapsed.as_secs_f32();
+    println!();
+    eprintln!(
+        "\n--- Zero-Float Generation ---\nTokens : {}\nTime   : {:.2}s\nTok/s  : {:.2}",
+        generated.len(),
+        elapsed_s,
+        generated.len() as f32 / elapsed_s.max(1e-6),
+    );
+
+    Ok(())
+}
+
+// ─── FP32 Local Generate (GPU float path for FP4/FP2 weights) ────────────────
+
+fn run_generate_local(args: GenerateArgs) -> Result<()> {
+    use model::transformer::Transformer;
+    use model::weights::ModelWeights;
+
+    let cfg = resolve_config(&args.arch)?;
+    let model_dir = resolve_model_dir(&args.model)?;
+    let tokenizer_path = resolve_tokenizer(&args.tokenizer, &model_dir)?;
+
+    eprintln!("[local] Loading model: arch={}, model={:?}", args.arch, model_dir);
+    let weights = ModelWeights::load(&model_dir, &cfg)?;
+    let mut model = Transformer::new(cfg.clone(), weights);
+
+    let tokenizer = tokenizer::Tokenizer::from_file(&tokenizer_path)?;
+
+    // Resolve prompt
+    let prompt_text = if let Some(p) = args.prompt {
+        p
+    } else if let Some(pf) = args.prompt_file {
+        std::fs::read_to_string(pf).context("Reading prompt file")?
+    } else {
+        print!("Prompt: ");
+        std::io::stdout().flush().ok();
+        let mut line = String::new();
+        std::io::stdin().lock().read_line(&mut line)?;
+        line.trim().to_string()
+    };
+
+    let prompt_tokens = tokenizer.encode(&prompt_text, true);
+    eprintln!("[local] Prompt: {} tokens", prompt_tokens.len());
+
+    let t_gen = std::time::Instant::now();
+    let mut generated = Vec::new();
+
+    // Use low temperature for near-greedy sampling (FP32 path supports sampling)
+    let temperature = if args.temperature > 0.0 { args.temperature } else { 0.6 };
+    let top_p = if args.top_p > 0.0 { args.top_p } else { 0.9 };
+
+    model.generate(&prompt_tokens, args.max_tokens, temperature, top_p, |tok_id| {
+        let piece = tokenizer.decode_token(tok_id);
+        print!("{}", piece);
+        std::io::stdout().flush().ok();
+        generated.push(tok_id);
+    });
+
+    let elapsed = t_gen.elapsed();
+    let elapsed_s = elapsed.as_secs_f32();
+    println!();
+    eprintln!(
+        "\n--- Local FP32 Generation ---\nTokens : {}\nTime   : {:.2}s\nTok/s  : {:.2}",
+        generated.len(),
+        elapsed_s,
+        generated.len() as f32 / elapsed_s.max(1e-6),
+    );
+
+    Ok(())
 }
 
 // ─── Dual-Path NDA Generate ─────────────────────────────────────────────────
 
-fn run_generate_zero_nda(_args: GenerateArgs, _mode: pipeline_nda::PipelineMode) -> Result<()> {
-    anyhow::bail!("Local model execution via Dual-Path NDA is disabled in Kimi mode.");
+fn run_generate_zero_nda(args: GenerateArgs, mode: pipeline_nda::PipelineMode) -> Result<()> {
+    let cfg = resolve_config(&args.arch)?;
+    let model_dir = resolve_model_dir(&args.model)?;
+    let tokenizer_path = resolve_tokenizer(&args.tokenizer, &model_dir)?;
+
+    // Resolve prompt
+    let prompt_text = if let Some(p) = args.prompt {
+        p
+    } else if let Some(pf) = args.prompt_file {
+        std::fs::read_to_string(pf).context("Reading prompt file")?
+    } else {
+        anyhow::bail!("Either --prompt or --prompt-file must be provided");
+    };
+
+    pipeline_bridge::run_dual_path(
+        &model_dir,
+        &tokenizer_path,
+        &prompt_text,
+        mode,
+        args.max_tokens,
+        cfg,
+    )
 }
 
 fn run_chat(_args: ChatArgs) -> Result<()> {

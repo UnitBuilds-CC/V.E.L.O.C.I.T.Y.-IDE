@@ -30,7 +30,6 @@ use velocity_ide::site_map::{NdaNode, SiteMap, VcTriple};
 
 mod agent;
 mod automation;
-mod benchmark;
 mod compiler;
 mod connectors;
 mod editor;
@@ -169,7 +168,6 @@ fn main() {
     let args: Vec<String> = env::args().collect();
     let mut mode = "stdio";
     let mut buffer_path = "nmcp_buffer.bin";
-    let mut benchmark_mode = false;
     let mut editor_mode = args.len() == 1;
     let mut tokenize_prompt = None;
     let mut daemon_mode = false;
@@ -197,11 +195,6 @@ fn main() {
                     eprintln!("Error: --buffer-path requires an argument");
                     process::exit(1);
                 }
-            }
-            "--benchmark" => {
-                benchmark_mode = true;
-                editor_mode = false;
-                i += 1;
             }
             "--tokenize" => {
                 editor_mode = false;
@@ -249,11 +242,6 @@ fn main() {
 
     if let Some(prompt) = tokenize_prompt {
         run_tokenizer_demo(&prompt);
-        return;
-    }
-
-    if benchmark_mode {
-        benchmark::run_benchmarks();
         return;
     }
 
@@ -659,7 +647,6 @@ fn print_help() {
     println!("  --workspace <path>          Open this directory in the native editor");
     println!("  --mode <stdio|shmem>        Protocol mode. stdio (JSON-RPC) or shmem (Shared Memory binary).");
     println!("  --buffer-path <path>        Path to mapped buffer file. Only used in shmem mode.");
-    println!("  --benchmark                 Run the performance benchmark suite");
     println!("  --tokenize <prompt>         Run the NDA-embedded tokenizer demonstration on the text prompt");
     println!("  --daemon                    Run headless: evaluate the trigger registry and fire due triggers");
     println!("  --check                     Run `cargo check` and exit with a summary");

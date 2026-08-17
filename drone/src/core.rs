@@ -431,8 +431,19 @@ impl DroneCore {
         // Verify hash.
         let verified = FileTransfer::verify(&file_data, &transfer.sha256);
 
-        // Save to destination.
-        let dest_path = self.drops_dir().join(&transfer.filename);
+        // Save to destination — sanitize filename to prevent path traversal.
+        let safe_name = std::path::Path::new(&transfer.filename)
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("unnamed");
+        let dest_path = self.drops_dir().join(safe_name);
+
+        // Belt-and-suspenders: verify the resolved path is still inside drops.
+        let drops = self.drops_dir();
+        if !dest_path.starts_with(&drops) {
+            return serde_json::json!({ "complete": false, "error": "Invalid file path" });
+        }
+
         if let Some(parent) = dest_path.parent() {
             std::fs::create_dir_all(parent).ok();
         }
@@ -470,6 +481,21 @@ impl DroneCore {
     // ── Tasks ──
 
     pub fn handle_task(&self, data: &serde_json::Value) -> serde_json::Value {
+        // Reject if too many concurrent tasks (prevent thread exhaustion).
+        let running_count = {
+            let tasks = self.tasks.lock_safe();
+            tasks.values().filter(|t| {
+                let t = t.lock_safe();
+                t.status == "running" || t.status == "pending"
+            }).count()
+        };
+        if running_count >= 8 {
+            return serde_json::json!({
+                "accepted": false,
+                "error": "Too many concurrent tasks (limit: 8)",
+            });
+        }
+
         let task_id = data
             .get("task_id")
             .and_then(|v| v.as_str())
