@@ -52,6 +52,7 @@ impl ZeroKvLayer {
         self.entries.push(ZeroKvEntry { k, v });
     }
 
+    #[cfg(test)]
     fn len(&self) -> usize {
         self.entries.len()
     }
