@@ -804,7 +804,7 @@ impl VelocityApp {
         // Apply mode-specific sidebar filter
         self.smart_sidebar.filter_for_mode(profile);
         // Reset bottom panel tab selection for the new mode
-        self.bottom_panel_state.active_tab = 0;
+        self.bottom_panel_state.active_tab = crate::editor::bottom_panel::TAB_TERMINAL;
         self.save_workspace_preferences();
         self.status_message = format!("Switched to {} mode", profile.label());
         // Central, self-dismissing confirmation — useful when the switch came

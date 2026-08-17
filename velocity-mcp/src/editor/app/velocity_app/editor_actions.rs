@@ -48,6 +48,8 @@ impl VelocityApp {
     pub fn build_active(&mut self) {
         self.command_output.clear();
         self.status_message = "Running local build...".into();
+        self.toasts
+            .push(crate::editor::toast::Toast::info("Build started..."));
         self.agent_active = true;
         let _ = self.agent_tx.send(UiToAgentMessage::RunLocalBuild);
     }
@@ -55,6 +57,8 @@ impl VelocityApp {
     pub fn run_active(&mut self) {
         self.command_output.clear();
         self.status_message = "Running local execute...".into();
+        self.toasts
+            .push(crate::editor::toast::Toast::info("Execute started..."));
         self.agent_active = true;
         let _ = self.agent_tx.send(UiToAgentMessage::RunLocalRun);
     }

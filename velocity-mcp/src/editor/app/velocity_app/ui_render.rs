@@ -1987,8 +1987,9 @@ impl eframe::App for VelocityApp {
                         }
                         crate::editor::bottom_panel::TAB_PROBLEMS => {
                             // Problems tab
+                            let content_h = ui.available_height();
                             egui::ScrollArea::vertical()
-                                .max_height(180.0)
+                                .max_height(content_h)
                                 .show(ui, |ui| {
                                     let ec = self.bottom_panel_state.error_count;
                                     let wc = self.bottom_panel_state.warning_count;
@@ -2056,8 +2057,9 @@ impl eframe::App for VelocityApp {
                                 }
                             } else {
                                 // Show build/command output
+                                let content_h = ui.available_height();
                                 egui::ScrollArea::vertical()
-                                    .max_height(180.0)
+                                    .max_height(content_h)
                                     .show(ui, |ui| {
                                         if !self.command_output.is_empty() {
                                             ui.label(
@@ -2080,8 +2082,9 @@ impl eframe::App for VelocityApp {
                         }
                         crate::editor::bottom_panel::TAB_CHECKPOINTS => {
                             // Checkpoints tab
+                            let content_h = ui.available_height();
                             egui::ScrollArea::vertical()
-                                .max_height(180.0)
+                                .max_height(content_h)
                                 .show(ui, |ui| {
                                     self.render_checkpoints(ui);
                                 });
