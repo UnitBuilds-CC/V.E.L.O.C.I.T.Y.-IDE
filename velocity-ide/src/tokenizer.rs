@@ -74,14 +74,14 @@ impl Tokenizer {
         if file_bytes.len() < 24 {
             anyhow::bail!("NDAT file truncated");
         }
-        let version = u16::from_le_bytes(file_bytes[4..6].try_into().unwrap());
+        let version = u16::from_le_bytes(file_bytes[4..6].try_into().expect("slice is exactly 2 bytes"));
         if version != 1 {
             anyhow::bail!("Unsupported NDAT version: {version}");
         }
-        let vocab_size = u32::from_le_bytes(file_bytes[6..10].try_into().unwrap()) as usize;
-        let merges_count = u32::from_le_bytes(file_bytes[10..14].try_into().unwrap()) as usize;
-        let bos_id = u32::from_le_bytes(file_bytes[14..18].try_into().unwrap());
-        let eos_id = u32::from_le_bytes(file_bytes[18..22].try_into().unwrap());
+        let vocab_size = u32::from_le_bytes(file_bytes[6..10].try_into().expect("slice is exactly 4 bytes")) as usize;
+        let merges_count = u32::from_le_bytes(file_bytes[10..14].try_into().expect("slice is exactly 4 bytes")) as usize;
+        let bos_id = u32::from_le_bytes(file_bytes[14..18].try_into().expect("slice is exactly 4 bytes"));
+        let eos_id = u32::from_le_bytes(file_bytes[18..22].try_into().expect("slice is exactly 4 bytes"));
         let is_tiktoken = file_bytes[22] != 0;
 
         let string_data_start = 24 + vocab_size * 8 + merges_count * 20;
@@ -97,12 +97,12 @@ impl Tokenizer {
             let offset = u32::from_le_bytes(
                 file_bytes[entry_offset..entry_offset + 4]
                     .try_into()
-                    .unwrap(),
+                    .expect("slice is exactly 4 bytes"),
             );
             let len = u32::from_le_bytes(
                 file_bytes[entry_offset + 4..entry_offset + 8]
                     .try_into()
-                    .unwrap(),
+                    .expect("slice is exactly 4 bytes"),
             );
 
             id_to_token.push(TokenRef::Slice { offset, len });
@@ -122,27 +122,27 @@ impl Tokenizer {
             let a_off = u32::from_le_bytes(
                 file_bytes[entry_offset..entry_offset + 4]
                     .try_into()
-                    .unwrap(),
+                    .expect("slice is exactly 4 bytes"),
             ) as usize;
             let a_len = u32::from_le_bytes(
                 file_bytes[entry_offset + 4..entry_offset + 8]
                     .try_into()
-                    .unwrap(),
+                    .expect("slice is exactly 4 bytes"),
             ) as usize;
             let b_off = u32::from_le_bytes(
                 file_bytes[entry_offset + 8..entry_offset + 12]
                     .try_into()
-                    .unwrap(),
+                    .expect("slice is exactly 4 bytes"),
             ) as usize;
             let b_len = u32::from_le_bytes(
                 file_bytes[entry_offset + 12..entry_offset + 16]
                     .try_into()
-                    .unwrap(),
+                    .expect("slice is exactly 4 bytes"),
             ) as usize;
             let rank = u32::from_le_bytes(
                 file_bytes[entry_offset + 16..entry_offset + 20]
                     .try_into()
-                    .unwrap(),
+                    .expect("slice is exactly 4 bytes"),
             );
 
             let a_str = std::str::from_utf8(
@@ -375,7 +375,7 @@ fn byte_to_unicode(b: u8) -> char {
                     _ => n += 1,
                 }
             }
-            char::from_u32(256 + n).unwrap()
+            char::from_u32(256 + n).expect("256+n is always a valid Unicode scalar value for n in 0..=33")
         }
     }
 }
