@@ -1514,7 +1514,7 @@ impl<'a> TabViewerImpl<'a> {
                     self.app.mission_control.active_sub_tab = 0;
                 }
                 let work_label = if snapshot.execution_running {
-                    format!("2  Work ? {} active", snapshot.running_tasks)
+                    format!("2  Work \u{2014} {} active", snapshot.running_tasks)
                 } else {
                     "2  Work".to_string()
                 };
@@ -1522,7 +1522,7 @@ impl<'a> TabViewerImpl<'a> {
                     self.app.mission_control.active_sub_tab = 1;
                 }
                 let activity_label = if snapshot.blocked_tasks > 0 || snapshot.failed_tasks > 0 {
-                    format!("3  Activity ? {} needs attention", snapshot.blocked_tasks + snapshot.failed_tasks)
+                    format!("3  Activity \u{2014} {} needs attention", snapshot.blocked_tasks + snapshot.failed_tasks)
                 } else {
                     "3  Activity".to_string()
                 };

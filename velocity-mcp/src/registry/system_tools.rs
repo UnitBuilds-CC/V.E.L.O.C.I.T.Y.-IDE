@@ -146,8 +146,15 @@ fn generate_test_stubs(source: &str, language: &str) -> Vec<String> {
     tests
 }
 
-fn fetch_panel_data(root: &Path, arguments: &Value) -> Result<String, Box<dyn Error>> {
-    let panel = arguments["panel"].as_str().ok_or("panel is required")?;
+/// Read structured IDE panel data without navigating the GUI.
+///
+/// Returns a JSON [`Value`] suitable for both the MCP tool boundary and the
+/// agent-to-UI message channel, so callers share a single serialisation path.
+pub fn fetch_panel_data_value(
+    root: &Path,
+    panel: &str,
+    relative_path: Option<&str>,
+) -> Result<Value, Box<dyn Error>> {
     let data = match panel {
         "teams" => {
             let teams = crate::editor::expert_team::load_expert_teams(root);
@@ -227,14 +234,14 @@ fn fetch_panel_data(root: &Path, arguments: &Value) -> Result<String, Box<dyn Er
             }
         }
         "files" => {
-            let relative_path = arguments["relativePath"].as_str().unwrap_or(".");
-            let directory = if relative_path == "." || relative_path.is_empty() {
+            let rel = relative_path.unwrap_or(".");
+            let directory = if rel == "." || rel.is_empty() {
                 root.to_path_buf()
             } else {
-                resolve_workspace_path(root, relative_path, false)?
+                resolve_workspace_path(root, rel, false)?
             };
             if !directory.is_dir() {
-                return Err(format!("Not a directory: {}", relative_path).into());
+                return Err(format!("Not a directory: {}", rel).into());
             }
             let mut files = fs::read_dir(directory)?
                 .flatten()
@@ -248,7 +255,7 @@ fn fetch_panel_data(root: &Path, arguments: &Value) -> Result<String, Box<dyn Er
                 })
                 .collect::<Vec<_>>();
             files.sort_by(|left, right| left["name"].as_str().cmp(&right["name"].as_str()));
-            json!({"panel": panel, "relative_path": relative_path, "files": files})
+            json!({"panel": panel, "relative_path": rel, "files": files})
         }
         _ => {
             return Err(format!(
@@ -258,6 +265,13 @@ fn fetch_panel_data(root: &Path, arguments: &Value) -> Result<String, Box<dyn Er
             .into())
         }
     };
+    Ok(data)
+}
+
+fn fetch_panel_data(root: &Path, arguments: &Value) -> Result<String, Box<dyn Error>> {
+    let panel = arguments["panel"].as_str().ok_or("panel is required")?;
+    let relative_path = arguments["relativePath"].as_str();
+    let data = fetch_panel_data_value(root, panel, relative_path)?;
     Ok(serde_json::to_string(&data)?)
 }
 

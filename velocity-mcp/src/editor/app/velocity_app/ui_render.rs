@@ -1209,8 +1209,10 @@ impl eframe::App for VelocityApp {
                     });
                 });
                 ui.add_space(2.0);
-            }); // Symbol enclosing the cursor — used to highlight the Outline entry and
-                // to drive the symbol context panel below.
+            });
+
+        // Symbol enclosing the cursor — used to highlight the Outline entry and
+        // to drive the symbol context panel below.
         let mut active_symbol = None;
         if let Some(active_id) = &self.active_tab {
             if let Some(buf) = self.buffers.get(active_id) {

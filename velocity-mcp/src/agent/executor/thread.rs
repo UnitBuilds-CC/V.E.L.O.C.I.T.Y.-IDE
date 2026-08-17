@@ -669,186 +669,24 @@ fn process_ui_message(
                 .ok();
         }
         UiToAgentMessage::FetchPanelData { panel } => {
-            // Support basic panels: "teams", "wiki", "graph", "bookmarks", "files" and a "run_build" action
-            match panel.as_str() {
-                "teams" => {
-                    let teams = load_expert_teams(workspace_root);
-                    let arr: Vec<serde_json::Value> = teams
-                        .into_iter()
-                        .map(|t| {
-                            let members: Vec<serde_json::Value> = t
-                                .members
-                                .iter()
-                                .map(|m| {
-                                    serde_json::json!({
-                                        "name": m.name.clone(),
-                                        "role": m.role.clone(),
-                                        "provider": m.provider.label(),
-                                        "model_id": m.model_id.clone(),
-                                    })
-                                })
-                                .collect();
-                            serde_json::json!({
-                                "name": t.name.clone(),
-                                "slug": t.slug(),
-                                "description": t.description.clone(),
-                                "members": members,
-                            })
-                        })
-                        .collect();
+            // Delegate to the shared panel-data implementation so MCP tools and
+            // the agent channel stay in sync.
+            let data = crate::registry::system_tools::fetch_panel_data_value(
+                workspace_root,
+                panel.as_str(),
+                None,
+            );
+            match data {
+                Ok(value) => {
                     let _ = ui_tx.send(AgentToUiMessage::PanelData {
                         panel: panel.clone(),
-                        data: serde_json::json!({"teams": arr}),
+                        data: value,
                     });
                 }
-                "wiki" => match crate::automation::open_workspace_site_map(workspace_root) {
-                    Ok(sm) => {
-                        let model = velocity_ide::wiki::build_wiki(&sm);
-                        let pages: Vec<serde_json::Value> = model
-                                .file_pages
-                                .iter()
-                                .enumerate()
-                                .map(|(i, p)| serde_json::json!({"index": i, "title": p.title, "slug": p.slug, "relationships": p.relationships.len(), "called_by": p.called_by.len()}))
-                                .collect();
-                        let _ = ui_tx.send(AgentToUiMessage::PanelData {
-                            panel: panel.clone(),
-                            data: serde_json::json!({
-                                "file_count": model.file_count(),
-                                "symbol_count": model.symbol_count(),
-                                "pages": pages,
-                            }),
-                        });
-                    }
-                    Err(err) => {
-                        let _ = ui_tx.send(AgentToUiMessage::PanelData {
-                            panel: panel.clone(),
-                            data: serde_json::json!({"error": err}),
-                        });
-                    }
-                },
-                "graph" => {
-                    // Build a compact graph summary: file_count, symbol_count, and top files by symbol count
-                    let entries = crate::editor::search::collect_workspace_symbols(workspace_root);
-                    let mut file_counts: std::collections::BTreeMap<String, usize> =
-                        std::collections::BTreeMap::new();
-                    for e in entries.iter() {
-                        *file_counts.entry(e.file.clone()).or_insert(0) += 1;
-                    }
-                    let file_count = file_counts.len();
-                    let symbol_count: usize = file_counts.values().sum();
-                    let mut top: Vec<(String, usize)> = file_counts.into_iter().collect();
-                    top.sort_by(|a, b| b.1.cmp(&a.1));
-                    let top_files: Vec<serde_json::Value> = top
-                        .into_iter()
-                        .take(20)
-                        .map(|(f, c)| serde_json::json!({"file": f, "symbols": c}))
-                        .collect();
+                Err(err) => {
                     let _ = ui_tx.send(AgentToUiMessage::PanelData {
                         panel: panel.clone(),
-                        data: serde_json::json!({"file_count": file_count, "symbol_count": symbol_count, "top_files": top_files}),
-                    });
-                }
-                "bookmarks" => {
-                    // Read workspace bookmarks if present
-                    let bm_path = workspace_root.join(".velocity").join("bookmarks.json");
-                    if let Ok(raw) = std::fs::read_to_string(&bm_path) {
-                        if let Ok(json) = serde_json::from_str::<serde_json::Value>(&raw) {
-                            let _ = ui_tx.send(AgentToUiMessage::PanelData {
-                                panel: panel.clone(),
-                                data: json,
-                            });
-                        } else {
-                            let _ = ui_tx.send(AgentToUiMessage::PanelData {
-                                panel: panel.clone(),
-                                data: serde_json::json!({"error":"invalid bookmarks file"}),
-                            });
-                        }
-                    } else {
-                        let _ = ui_tx.send(AgentToUiMessage::PanelData {
-                            panel: panel.clone(),
-                            data: serde_json::json!({"bookmarks": []}),
-                        });
-                    }
-                }
-                "files" => {
-                    let mut list: Vec<serde_json::Value> = Vec::new();
-                    if let Ok(entries) = std::fs::read_dir(workspace_root) {
-                        for e in entries.flatten() {
-                            if let Ok(meta) = e.metadata() {
-                                list.push(serde_json::json!({
-                                    "name": e.file_name().to_string_lossy(),
-                                    "is_dir": meta.is_dir(),
-                                    "size": meta.len()
-                                }));
-                            }
-                        }
-                    }
-                    let _ = ui_tx.send(AgentToUiMessage::PanelData {
-                        panel: panel.clone(),
-                        data: serde_json::json!({"files": list}),
-                    });
-                }
-                "run_build" => {
-                    // Trigger a local build and stream output back
-                    ui_tx
-                        .send(AgentToUiMessage::StatusUpdate(
-                            "Running local cargo check...".to_string(),
-                        ))
-                        .ok();
-                    ui_tx
-                        .send(AgentToUiMessage::OutputToken(
-                            "\n$ cargo check (Local)\n".to_string(),
-                        ))
-                        .ok();
-                    let output = std::process::Command::new("cargo")
-                        .arg("check")
-                        .current_dir(workspace_root as &PathBuf)
-                        .output();
-                    match output {
-                        Ok(out) => {
-                            let stdout = String::from_utf8_lossy(&out.stdout);
-                            let stderr = String::from_utf8_lossy(&out.stderr);
-                            ui_tx
-                                .send(AgentToUiMessage::OutputToken(stdout.into_owned()))
-                                .ok();
-                            ui_tx
-                                .send(AgentToUiMessage::OutputToken(stderr.into_owned()))
-                                .ok();
-                            if out.status.success() {
-                                ui_tx
-                                    .send(AgentToUiMessage::StatusUpdate(
-                                        "Local build succeeded!".to_string(),
-                                    ))
-                                    .ok();
-                            } else {
-                                ui_tx
-                                    .send(AgentToUiMessage::StatusUpdate(
-                                        "Local build failed!".to_string(),
-                                    ))
-                                    .ok();
-                            }
-                        }
-                        Err(e) => {
-                            ui_tx
-                                .send(AgentToUiMessage::OutputToken(format!(
-                                    "Failed to run build: {:?}",
-                                    e
-                                )))
-                                .ok();
-                            ui_tx
-                                .send(AgentToUiMessage::StatusUpdate(
-                                    "Local build failed to launch".to_string(),
-                                ))
-                                .ok();
-                        }
-                    }
-                    let _ = run_compilation_check(workspace_root);
-                    ui_tx.send(AgentToUiMessage::AgentFinished).ok();
-                }
-                other => {
-                    let _ = ui_tx.send(AgentToUiMessage::PanelData {
-                        panel: panel.clone(),
-                        data: serde_json::json!({"error": format!("Unknown panel: {}", other)}),
+                        data: serde_json::json!({"error": err.to_string()}),
                     });
                 }
             }
