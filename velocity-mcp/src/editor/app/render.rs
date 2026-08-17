@@ -1,4 +1,4 @@
-﻿use super::types::*;
+use super::types::*;
 use super::VelocityApp;
 use crate::automation::AgentTaskKind;
 use crate::editor::chat_panel::render_chat_panel;
@@ -704,9 +704,11 @@ impl<'a> TabViewer for TabViewerImpl<'a> {
                             );
                             ui.add_space(8.0);
                             ui.label(
-                                egui::RichText::new("Panel content not yet implemented for this mode.")
-                                    .size(11.0)
-                                    .color(palette.text_muted),
+                                egui::RichText::new(
+                                    "Panel content not yet implemented for this mode.",
+                                )
+                                .size(11.0)
+                                .color(palette.text_muted),
                             );
                         });
                     }

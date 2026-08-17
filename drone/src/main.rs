@@ -1,4 +1,4 @@
-﻿//! Velocity Drone CLI — lightweight portable agent endpoint.
+//! Velocity Drone CLI — lightweight portable agent endpoint.
 //!
 //! Usage:
 //!   velocity-drone                              # Start with defaults
@@ -28,7 +28,10 @@ fn main() {
             }
             "--host" => {
                 i += 1;
-                host = args.get(i).cloned().unwrap_or_else(|| "127.0.0.1".to_string());
+                host = args
+                    .get(i)
+                    .cloned()
+                    .unwrap_or_else(|| "127.0.0.1".to_string());
             }
             "--name" => {
                 i += 1;

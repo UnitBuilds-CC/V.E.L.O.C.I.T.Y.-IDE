@@ -1,4 +1,4 @@
-﻿//! Workflows composer and governance policy panels, extracted from
+//! Workflows composer and governance policy panels, extracted from
 //! `tier3_panels.rs` to keep individual modules under the LOC target.
 
 use eframe::egui;
@@ -27,9 +27,11 @@ impl VelocityApp {
                 ui.selectable_label(!self.workflow_visual_mode, RichText::new("List").size(9.0));
             let visual_btn =
                 ui.selectable_label(self.workflow_visual_mode, RichText::new("Visual").size(9.0));
-            let templates_btn = ui.selectable_label(false, RichText::new("Templates").size(9.0))
+            let templates_btn = ui
+                .selectable_label(false, RichText::new("Templates").size(9.0))
                 .on_hover_text("Browse built-in workflow templates (coming soon)");
-            let ai_btn = ui.selectable_label(false, RichText::new("AI Generate").size(9.0))
+            let ai_btn = ui
+                .selectable_label(false, RichText::new("AI Generate").size(9.0))
                 .on_hover_text("Describe a workflow and let the agent build it (coming soon)");
             if list_btn.clicked() {
                 self.workflow_visual_mode = false;

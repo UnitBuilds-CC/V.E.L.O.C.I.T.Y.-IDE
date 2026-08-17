@@ -1,4 +1,4 @@
-﻿// model/transformer.rs — V.E.L.O.C.I.T.Y.-IDE
+// model/transformer.rs — V.E.L.O.C.I.T.Y.-IDE
 //
 // Full autoregressive transformer forward pass for BitNet b1.58-3B.
 //
@@ -461,19 +461,28 @@ fn attention_head_float(
 
 /// LM-head FP32 matmul: logits[v] = weight_row[v] · hidden (parallel over vocab).
 /// Writes results in-place into `out_logits` which must have length `vocab_size`.
-fn lm_head(hidden: &[f32], weights: &[f32], _vocab_size: usize, hidden_size: usize, out_logits: &mut [f32]) {
-    out_logits.par_iter_mut().enumerate().for_each(|(v, logit)| {
-        let offset = v * hidden_size;
-        let mut sum = 0.0f32;
-        unsafe {
-            let w_ptr = weights.as_ptr().add(offset);
-            let h_ptr = hidden.as_ptr();
-            for i in 0..hidden_size {
-                sum += (*w_ptr.add(i)) * (*h_ptr.add(i));
+fn lm_head(
+    hidden: &[f32],
+    weights: &[f32],
+    _vocab_size: usize,
+    hidden_size: usize,
+    out_logits: &mut [f32],
+) {
+    out_logits
+        .par_iter_mut()
+        .enumerate()
+        .for_each(|(v, logit)| {
+            let offset = v * hidden_size;
+            let mut sum = 0.0f32;
+            unsafe {
+                let w_ptr = weights.as_ptr().add(offset);
+                let h_ptr = hidden.as_ptr();
+                for i in 0..hidden_size {
+                    sum += (*w_ptr.add(i)) * (*h_ptr.add(i));
+                }
             }
-        }
-        *logit = sum;
-    });
+            *logit = sum;
+        });
 }
 
 /// Sample the next token from `logits` given temperature and top-p.
@@ -871,7 +880,13 @@ impl Transformer {
             }
 
             // 5. Evaluate the LM Head on the CPU (in-place into pre-allocated scratch)
-            lm_head(&self.scratch.x, &self.weights.lm_head, cfg.vocab_size, h, &mut self.scratch.logits);
+            lm_head(
+                &self.scratch.x,
+                &self.weights.lm_head,
+                cfg.vocab_size,
+                h,
+                &mut self.scratch.logits,
+            );
             return &self.scratch.logits;
         }
 
@@ -1050,7 +1065,13 @@ impl Transformer {
         rms_norm(&mut self.scratch.x, &self.weights.final_norm, cfg.rms_eps);
 
         // ── LM head (FP32 matmul, in-place into pre-allocated scratch) ───────
-        lm_head(&self.scratch.x, &self.weights.lm_head, cfg.vocab_size, h, &mut self.scratch.logits);
+        lm_head(
+            &self.scratch.x,
+            &self.weights.lm_head,
+            cfg.vocab_size,
+            h,
+            &mut self.scratch.logits,
+        );
         &self.scratch.logits
     }
 

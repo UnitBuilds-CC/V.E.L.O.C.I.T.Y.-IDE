@@ -1,4 +1,4 @@
-﻿// site_map/verifier.rs — Incremental Merkle verifier for NDA program generation
+// site_map/verifier.rs — Incremental Merkle verifier for NDA program generation
 #![allow(dead_code)]
 //
 // During Path 2 generation, every emitted NDA node is hashed as it is produced.
@@ -527,7 +527,11 @@ impl NdaNode {
         let mut h = Sha256::new();
         self.hash_into(&mut h);
         let digest = h.finalize();
-        u64::from_le_bytes(digest[..8].try_into().expect("SHA-256 digest is always 32 bytes"))
+        u64::from_le_bytes(
+            digest[..8]
+                .try_into()
+                .expect("SHA-256 digest is always 32 bytes"),
+        )
     }
 
     /// Hash a list of child nodes into a hasher (Merkle tree pattern).
@@ -861,7 +865,11 @@ impl MerkleVerifier {
             h.update(ch.to_le_bytes());
         }
         let digest = h.finalize();
-        u64::from_le_bytes(digest[..8].try_into().expect("SHA-256 digest is always 32 bytes"))
+        u64::from_le_bytes(
+            digest[..8]
+                .try_into()
+                .expect("SHA-256 digest is always 32 bytes"),
+        )
     }
 }
 

@@ -1927,8 +1927,9 @@ impl eframe::App for VelocityApp {
                 .default_size(self.bottom_panel_state.panel_height)
                 .resizable(true)
                 .show(ui, |ui: &mut egui::Ui| {
-                    self.bottom_panel_state.panel_height =
-                        ui.available_height().clamp(80.0, crate::editor::bottom_panel::MAX_PANEL_HEIGHT);
+                    self.bottom_panel_state.panel_height = ui
+                        .available_height()
+                        .clamp(80.0, crate::editor::bottom_panel::MAX_PANEL_HEIGHT);
                     // Tab strip
                     let tab_labels = ["Terminal", "Problems", "Debug", "Output", "Checkpoints"];
                     ui.horizontal(|ui| {

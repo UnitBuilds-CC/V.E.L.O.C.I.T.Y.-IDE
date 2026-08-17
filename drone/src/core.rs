@@ -1,4 +1,4 @@
-﻿//! Drone core logic: identity, file transfers, task execution, deployment.
+//! Drone core logic: identity, file transfers, task execution, deployment.
 
 use base64::{engine::general_purpose::STANDARD as B64, Engine};
 use serde::{Deserialize, Serialize};
@@ -484,10 +484,13 @@ impl DroneCore {
         // Reject if too many concurrent tasks (prevent thread exhaustion).
         let running_count = {
             let tasks = self.tasks.lock_safe();
-            tasks.values().filter(|t| {
-                let t = t.lock_safe();
-                t.status == "running" || t.status == "pending"
-            }).count()
+            tasks
+                .values()
+                .filter(|t| {
+                    let t = t.lock_safe();
+                    t.status == "running" || t.status == "pending"
+                })
+                .count()
         };
         if running_count >= 8 {
             return serde_json::json!({

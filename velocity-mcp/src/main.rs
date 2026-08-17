@@ -90,7 +90,11 @@ fn hash_str(s: &str) -> u64 {
     let mut h = Sha256::new();
     h.update(s.as_bytes());
     let d = h.finalize();
-    u64::from_le_bytes(d[..8].try_into().expect("SHA-256 digest is always 32 bytes"))
+    u64::from_le_bytes(
+        d[..8]
+            .try_into()
+            .expect("SHA-256 digest is always 32 bytes"),
+    )
 }
 
 /// Install a global panic hook that writes structured crash dumps and logs

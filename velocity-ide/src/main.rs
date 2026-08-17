@@ -1,4 +1,4 @@
-﻿// V.E.L.O.C.I.T.Y.-IDE — main entry point
+// V.E.L.O.C.I.T.Y.-IDE — main entry point
 
 mod compiler;
 mod model;
@@ -310,8 +310,7 @@ fn call_kimi(messages: &[Message], accounts: &[CloudflareAccount]) -> Result<Str
                 line.clear();
                 continue;
             }
-            if cleaned.starts_with("data: ") {
-                let data_str = &cleaned[6..];
+            if let Some(data_str) = cleaned.strip_prefix("data: ") {
                 if let Ok(val) = serde_json::from_str::<serde_json::Value>(data_str) {
                     let mut content_chunk = String::new();
                     if let Some(choices) = val.get("choices") {
@@ -433,7 +432,6 @@ fn resolve_tokenizer(tokenizer: &Option<PathBuf>, model_dir: &Path) -> Result<Pa
 }
 
 fn run_generate_zero(args: GenerateArgs) -> Result<()> {
-    
     use model::transformer_zero::ZeroTransformer;
     use model::weights::ModelWeights;
 
@@ -441,7 +439,10 @@ fn run_generate_zero(args: GenerateArgs) -> Result<()> {
     let model_dir = resolve_model_dir(&args.model)?;
     let tokenizer_path = resolve_tokenizer(&args.tokenizer, &model_dir)?;
 
-    eprintln!("[zero-float] Loading model: arch={}, model={:?}", args.arch, model_dir);
+    eprintln!(
+        "[zero-float] Loading model: arch={}, model={:?}",
+        args.arch, model_dir
+    );
     let weights = ModelWeights::load(&model_dir, &cfg)?;
     let mut model = ZeroTransformer::new(cfg.clone(), weights);
 
@@ -497,7 +498,10 @@ fn run_generate_local(args: GenerateArgs) -> Result<()> {
     let model_dir = resolve_model_dir(&args.model)?;
     let tokenizer_path = resolve_tokenizer(&args.tokenizer, &model_dir)?;
 
-    eprintln!("[local] Loading model: arch={}, model={:?}", args.arch, model_dir);
+    eprintln!(
+        "[local] Loading model: arch={}, model={:?}",
+        args.arch, model_dir
+    );
     let weights = ModelWeights::load(&model_dir, &cfg)?;
     let mut model = Transformer::new(cfg.clone(), weights);
 
@@ -523,15 +527,25 @@ fn run_generate_local(args: GenerateArgs) -> Result<()> {
     let mut generated = Vec::new();
 
     // Use low temperature for near-greedy sampling (FP32 path supports sampling)
-    let temperature = if args.temperature > 0.0 { args.temperature } else { 0.6 };
+    let temperature = if args.temperature > 0.0 {
+        args.temperature
+    } else {
+        0.6
+    };
     let top_p = if args.top_p > 0.0 { args.top_p } else { 0.9 };
 
-    model.generate(&prompt_tokens, args.max_tokens, temperature, top_p, |tok_id| {
-        let piece = tokenizer.decode_token(tok_id);
-        print!("{}", piece);
-        std::io::stdout().flush().ok();
-        generated.push(tok_id);
-    });
+    model.generate(
+        &prompt_tokens,
+        args.max_tokens,
+        temperature,
+        top_p,
+        |tok_id| {
+            let piece = tokenizer.decode_token(tok_id);
+            print!("{}", piece);
+            std::io::stdout().flush().ok();
+            generated.push(tok_id);
+        },
+    );
 
     let elapsed = t_gen.elapsed();
     let elapsed_s = elapsed.as_secs_f32();

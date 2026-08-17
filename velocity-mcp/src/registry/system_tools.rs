@@ -1049,7 +1049,9 @@ fn execute_csharp_mcp_tool(tool_name: &str, arguments: &Value) -> Result<String,
             .spawn()?;
         *daemon_guard = Some(SidecarDaemon { child });
     } else {
-        let daemon = daemon_guard.as_mut().expect("daemon_guard is Some in else branch");
+        let daemon = daemon_guard
+            .as_mut()
+            .expect("daemon_guard is Some in else branch");
         if let Ok(Some(_status)) = daemon.child.try_wait() {
             let child = Command::new(exe_path)
                 .stdin(Stdio::piped())
@@ -1059,7 +1061,9 @@ fn execute_csharp_mcp_tool(tool_name: &str, arguments: &Value) -> Result<String,
         }
     }
 
-    let daemon = daemon_guard.as_mut().expect("daemon_guard is Some after initialization");
+    let daemon = daemon_guard
+        .as_mut()
+        .expect("daemon_guard is Some after initialization");
 
     let request = json!({
         "jsonrpc": "2.0",

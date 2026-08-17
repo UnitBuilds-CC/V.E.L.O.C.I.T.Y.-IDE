@@ -1,4 +1,4 @@
-﻿// pipeline_nda.rs — Path 2: Pure NDA native inference pipeline
+// pipeline_nda.rs — Path 2: Pure NDA native inference pipeline
 #![allow(dead_code)]
 //
 // This is the zero-hallucination execution path.
@@ -135,7 +135,9 @@ impl NdaHead {
         anyhow::ensure!(&buf[..4] == b"NDA\x01", "invalid NdaHead magic");
         let floats: Vec<f32> = buf[4..]
             .chunks_exact(4)
-            .map(|c| f32::from_le_bytes(c.try_into().expect("chunks_exact(4) always yields 4 bytes")))
+            .map(|c| {
+                f32::from_le_bytes(c.try_into().expect("chunks_exact(4) always yields 4 bytes"))
+            })
             .collect();
         let n1 = Self::MID * Self::IN;
         let n2 = Self::MID;

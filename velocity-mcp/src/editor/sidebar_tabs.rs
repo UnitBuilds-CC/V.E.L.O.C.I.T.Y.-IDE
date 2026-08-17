@@ -839,110 +839,112 @@ pub fn render_metrics_content(ui: &mut egui::Ui, metrics: &MetricsSnapshot, pale
     egui::ScrollArea::vertical()
         .max_height(300.0)
         .show(ui, |ui| {
-    let total = metrics.tasks_completed + metrics.tasks_failed + metrics.tasks_pending;
-    // Summary cards
-    egui::Grid::new("metrics_grid")
-        .num_columns(2)
-        .spacing([12.0, 4.0])
-        .show(ui, |ui| {
-            ui.label(
-                egui::RichText::new("Total tasks:")
-                    .size(10.0)
-                    .color(palette.text_muted),
-            );
-            ui.label(
-                egui::RichText::new(format!("{}", total))
-                    .size(10.0)
-                    .strong()
-                    .color(palette.text),
-            );
-            ui.end_row();
+            let total = metrics.tasks_completed + metrics.tasks_failed + metrics.tasks_pending;
+            // Summary cards
+            egui::Grid::new("metrics_grid")
+                .num_columns(2)
+                .spacing([12.0, 4.0])
+                .show(ui, |ui| {
+                    ui.label(
+                        egui::RichText::new("Total tasks:")
+                            .size(10.0)
+                            .color(palette.text_muted),
+                    );
+                    ui.label(
+                        egui::RichText::new(format!("{}", total))
+                            .size(10.0)
+                            .strong()
+                            .color(palette.text),
+                    );
+                    ui.end_row();
 
-            ui.label(
-                egui::RichText::new("Completed:")
-                    .size(10.0)
-                    .color(palette.text_muted),
-            );
-            ui.label(
-                egui::RichText::new(format!("{}", metrics.tasks_completed))
-                    .size(10.0)
-                    .color(palette.success),
-            );
-            ui.end_row();
+                    ui.label(
+                        egui::RichText::new("Completed:")
+                            .size(10.0)
+                            .color(palette.text_muted),
+                    );
+                    ui.label(
+                        egui::RichText::new(format!("{}", metrics.tasks_completed))
+                            .size(10.0)
+                            .color(palette.success),
+                    );
+                    ui.end_row();
 
-            ui.label(
-                egui::RichText::new("Failed:")
-                    .size(10.0)
-                    .color(palette.text_muted),
-            );
-            ui.label(
-                egui::RichText::new(format!("{}", metrics.tasks_failed))
-                    .size(10.0)
-                    .color(palette.error),
-            );
-            ui.end_row();
+                    ui.label(
+                        egui::RichText::new("Failed:")
+                            .size(10.0)
+                            .color(palette.text_muted),
+                    );
+                    ui.label(
+                        egui::RichText::new(format!("{}", metrics.tasks_failed))
+                            .size(10.0)
+                            .color(palette.error),
+                    );
+                    ui.end_row();
 
-            ui.label(
-                egui::RichText::new("Pending:")
-                    .size(10.0)
-                    .color(palette.text_muted),
-            );
-            ui.label(
-                egui::RichText::new(format!("{}", metrics.tasks_pending))
-                    .size(10.0)
-                    .color(palette.warning),
-            );
-            ui.end_row();
+                    ui.label(
+                        egui::RichText::new("Pending:")
+                            .size(10.0)
+                            .color(palette.text_muted),
+                    );
+                    ui.label(
+                        egui::RichText::new(format!("{}", metrics.tasks_pending))
+                            .size(10.0)
+                            .color(palette.warning),
+                    );
+                    ui.end_row();
 
-            ui.label(
-                egui::RichText::new("Avg duration:")
-                    .size(10.0)
-                    .color(palette.text_muted),
-            );
-            ui.label(
-                egui::RichText::new(format!("{}ms", metrics.avg_duration_ms))
-                    .size(10.0)
-                    .color(palette.text),
-            );
-            ui.end_row();
+                    ui.label(
+                        egui::RichText::new("Avg duration:")
+                            .size(10.0)
+                            .color(palette.text_muted),
+                    );
+                    ui.label(
+                        egui::RichText::new(format!("{}ms", metrics.avg_duration_ms))
+                            .size(10.0)
+                            .color(palette.text),
+                    );
+                    ui.end_row();
 
-            ui.label(
-                egui::RichText::new("Total tokens:")
-                    .size(10.0)
-                    .color(palette.text_muted),
-            );
-            ui.label(
-                egui::RichText::new(format!("{}", metrics.total_tokens))
-                    .size(10.0)
-                    .color(palette.accent),
-            );
-            ui.end_row();
-        });
+                    ui.label(
+                        egui::RichText::new("Total tokens:")
+                            .size(10.0)
+                            .color(palette.text_muted),
+                    );
+                    ui.label(
+                        egui::RichText::new(format!("{}", metrics.total_tokens))
+                            .size(10.0)
+                            .color(palette.accent),
+                    );
+                    ui.end_row();
+                });
 
-    // Success rate bar
-    if total > 0 {
-        ui.add_space(8.0);
-        let success_rate = metrics.tasks_completed as f32 / total as f32;
-        ui.horizontal(|ui| {
-            ui.label(
-                egui::RichText::new("Success rate:")
-                    .size(9.0)
-                    .color(palette.text_muted),
-            );
-            let bar_width = 100.0;
-            let (rect, _) =
-                ui.allocate_exact_size(egui::vec2(bar_width, 8.0), egui::Sense::hover());
-            ui.painter().rect_filled(rect, 3.0, palette.bg_tertiary);
-            let filled =
-                egui::Rect::from_min_size(rect.min, egui::vec2(bar_width * success_rate, 8.0));
-            ui.painter().rect_filled(filled, 3.0, palette.success);
-            ui.label(
-                egui::RichText::new(format!(" {:.0}%", success_rate * 100.0))
-                    .size(9.0)
-                    .color(palette.text),
-            );
-        });
-    }
+            // Success rate bar
+            if total > 0 {
+                ui.add_space(8.0);
+                let success_rate = metrics.tasks_completed as f32 / total as f32;
+                ui.horizontal(|ui| {
+                    ui.label(
+                        egui::RichText::new("Success rate:")
+                            .size(9.0)
+                            .color(palette.text_muted),
+                    );
+                    let bar_width = 100.0;
+                    let (rect, _) =
+                        ui.allocate_exact_size(egui::vec2(bar_width, 8.0), egui::Sense::hover());
+                    ui.painter().rect_filled(rect, 3.0, palette.bg_tertiary);
+                    let filled = egui::Rect::from_min_size(
+                        rect.min,
+                        egui::vec2(bar_width * success_rate, 8.0),
+                    );
+                    ui.painter().rect_filled(filled, 3.0, palette.success);
+                    ui.label(
+                        egui::RichText::new(format!(" {:.0}%", success_rate * 100.0))
+                            .size(9.0)
+                            .color(palette.text),
+                    );
+                });
+            }
         }); // ScrollArea
 }
 
