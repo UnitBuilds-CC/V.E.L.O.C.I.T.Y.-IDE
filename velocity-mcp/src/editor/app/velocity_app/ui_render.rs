@@ -570,6 +570,8 @@ impl VelocityApp {
                 }
             } else if cmd && i.key_pressed(egui::Key::E) {
                 self.toggle_left_sidebar();
+            } else if cmd && shift && i.key_pressed(egui::Key::E) {
+                self.toggle_right_sidebar();
             } else if cmd && i.key_pressed(egui::Key::PageDown) {
                 self.cycle_tabs(1);
             } else if cmd && i.key_pressed(egui::Key::PageUp) {
@@ -869,13 +871,6 @@ impl eframe::App for VelocityApp {
                                 ui.close();
                             }
                         });
-                        if ui
-                            .button("Command")
-                            .on_hover_text("Command Palette  (Ctrl+Shift+P)")
-                            .clicked()
-                        {
-                            self.open_command_palette();
-                        }
                         ui.menu_button("Navigate", |ui| {
                             if ui.button("Chat  Ctrl+J").clicked() {
                                 self.focus_panel(TabKind::Chat);
@@ -899,21 +894,6 @@ impl eframe::App for VelocityApp {
                                 .clicked()
                             {
                                 self.focus_panel(TabKind::Changes);
-                                ui.close();
-                            }
-                            if ui.button("Mission dashboard").clicked() {
-                                self.set_work_mode(crate::editor::theme::WorkspaceProfile::MissionControl);
-                                self.focus_panel(TabKind::MissionControl);
-                                ui.close();
-                            }
-                            if ui.button("Orchestrator").clicked() {
-                                self.set_work_mode(crate::editor::theme::WorkspaceProfile::MissionControl);
-                                self.focus_panel(TabKind::Orchestrator);
-                                ui.close();
-                            }
-                            if ui.button("Team Studio").clicked() {
-                                self.set_work_mode(crate::editor::theme::WorkspaceProfile::MissionControl);
-                                self.focus_panel(TabKind::TeamStudio);
                                 ui.close();
                             }
                             ui.separator();
@@ -1014,14 +994,11 @@ impl eframe::App for VelocityApp {
                             }
                         });
                         ui.menu_button("Workspace", |ui| {
-                            if ui.button("Research browser").clicked() {
-                                self.open_browse_workspace();
-                                ui.close();
-                            }
-                            if ui.button("Review changes").clicked() {
-                                self.focus_panel(TabKind::Changes);
-                                ui.close();
-                            }
+                            ui.label(
+                                egui::RichText::new("Workspace tools")
+                                    .small()
+                                    .color(palette.text_muted),
+                            );
                             ui.separator();
                             for (label, panel) in [
                                 ("Extensions", TabKind::Extensions),
@@ -1092,39 +1069,6 @@ impl eframe::App for VelocityApp {
                                 }
                                 ui.separator();
                                 ui.label(
-                                    egui::RichText::new("Agent workspaces")
-                                        .small()
-                                        .color(palette.text_muted),
-                                );
-                                if ui
-                                    .button("Mission dashboard")
-                                    .on_hover_text("Plan, approve, steer, and review outcome-oriented work.")
-                                    .clicked()
-                                {
-                                    self.set_work_mode(crate::editor::theme::WorkspaceProfile::MissionControl);
-                                    self.focus_panel(TabKind::MissionControl);
-                                    ui.close();
-                                }
-                                if ui
-                                    .button("Orchestrator")
-                                    .on_hover_text("Inspect routed task phases, policies, and execution state.")
-                                    .clicked()
-                                {
-                                    self.set_work_mode(crate::editor::theme::WorkspaceProfile::MissionControl);
-                                    self.focus_panel(TabKind::Orchestrator);
-                                    ui.close();
-                                }
-                                if ui
-                                    .button("Team Studio")
-                                    .on_hover_text("Create and manage specialist agent teams.")
-                                    .clicked()
-                                {
-                                    self.set_work_mode(crate::editor::theme::WorkspaceProfile::MissionControl);
-                                    self.focus_panel(TabKind::TeamStudio);
-                                    ui.close();
-                                }
-                                ui.separator();
-                                ui.label(
                                     egui::RichText::new("Specialized layouts")
                                         .small()
                                         .color(palette.text_muted),
@@ -1153,19 +1097,8 @@ impl eframe::App for VelocityApp {
                             },
                         );
                     } else {
-                        ui.menu_button("File", |ui| {
-                            if ui.button("New File").clicked() {
-                                self.open_editor(None);
-                                ui.close();
-                            }
-                            if ui.button("Open File…").clicked() {
-                                self.open_file_dialog();
-                                ui.close();
-                            }
-                        });
-                        if ui.button("Command Palette").clicked() {
-                            self.open_command_palette();
-                        }
+                        // `use_unified_header` is always true; this branch is kept
+                        // as a placeholder for a potential lightweight header mode.
                     }
 
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
