@@ -80,14 +80,13 @@ fn attention_head_zero(
     head_idx: usize,
     alibi: &AliBiSlopes,
 ) -> NdaVec {
-    let _n_cached = kv_layer.len();
     let head_dim = q.len;
 
     // ── Step 1: Q·K dot products → i32 scores (pure bitwise popcount) ────────
-    let _head_bytes = head_dim.div_ceil(8);
+    let head_bytes = head_dim.div_ceil(8);
     let mut q_low = [0usize; 64];
     let mut q_high = [0usize; 64];
-    let limit = _head_bytes.min(64);
+    let limit = head_bytes.min(64);
     for b in 0..limit {
         let qs = q.sign[b];
         let qe = q.extra[b];
@@ -103,7 +102,7 @@ fn attention_head_zero(
             let head_byte_start = h_start / 8;
 
             let mut acc = 0i32;
-            for b in 0.._head_bytes {
+            for b in 0..head_bytes {
                 let ks = entry.k.sign[head_byte_start + b];
                 let ke = entry.k.extra[head_byte_start + b];
                 let k_low = ((ks & 0x0F) | ((ke & 0x0F) << 4)) as usize;
@@ -124,22 +123,6 @@ fn attention_head_zero(
         .unwrap_or(0);
     let scores_log2 = q.log2_scale + k_log2 - 3;
     let scale_shift = (-scores_log2).max(0) as u32;
-
-    if q_pos < 5 && head_idx == 0 {
-        println!(
-            "[Debug Attention] q_pos: {}, q_log2: {}, k_log2: {}, scores_log2: {}, scale_shift: {}",
-            q_pos, q.log2_scale, k_log2, scores_log2, scale_shift
-        );
-        println!("[Debug Attention] raw scores (pre-ALiBi): {:?}", scores);
-        for (i, entry) in kv_layer.entries.iter().enumerate() {
-            println!(
-                "  k_pos {} k.sign: {:?}, k.extra: {:?}",
-                i,
-                &entry.k.sign[..2.min(entry.k.sign.len())],
-                &entry.k.extra[..2.min(entry.k.extra.len())]
-            );
-        }
-    }
 
     // ── Step 2: ALiBi bias — pure bit-shift subtraction ─────────────────────
     apply_alibi_bias_i32(&mut scores, q_pos, alibi.shift(head_idx), scale_shift);
@@ -167,20 +150,11 @@ fn attention_head_zero(
         })
         .collect();
 
-    if q_pos < 5 && head_idx == 0 {
-        println!(
-            "[Debug Softmax] scores: {:?}, weights: {:?}",
-            &scores[..scores.len().min(5)],
-            &weights[..weights.len().min(5)]
-        );
-    }
-
     let weight_sum: i32 = weights.iter().sum::<i32>().max(1);
 
     // ── Step 4: Weighted V accumulation — pure integer add/subtract ──────────
     let mut out_i32 = vec![0i32; head_dim];
     let head_byte_start = h_start / 8;
-    let _head_bytes = head_dim.div_ceil(8);
 
     for (w, entry) in weights.iter().zip(kv_layer.entries.iter()) {
         if *w == 0 {
@@ -221,8 +195,6 @@ pub struct ZeroTransformer {
     config: ModelConfig,
     weights: ModelWeights,
     kv_cache: Vec<ZeroKvLayer>,
-    #[allow(dead_code)]
-    embed: NdaEmbedding,
     /// LM head stored as NdaEmbedding rows (vocab × hidden), reused as matrix.
     lm_head_nda: NdaEmbedding,
     alibi: AliBiSlopes,
@@ -235,10 +207,6 @@ impl ZeroTransformer {
         let alibi = AliBiSlopes::new(config.n_heads);
         let silu = SiluLut::new();
 
-        // Build NDA embedding table from FP32 weights
-        let embed =
-            NdaEmbedding::from_f32(&weights.embed_tokens, config.vocab_size, config.hidden_size);
-
         // Build NDA LM head (vocab × hidden) from FP32 weights
         // lm_head is [vocab_size × hidden_size] — same layout as embed_tokens
         let lm_head_nda =
@@ -248,7 +216,6 @@ impl ZeroTransformer {
             config,
             weights,
             kv_cache,
-            embed,
             lm_head_nda,
             alibi,
             silu,
@@ -293,31 +260,12 @@ impl ZeroTransformer {
         } else {
             NdaVec::from_f32_slice(x_f32)
         };
-        if pos < 5 {
-            println!(
-                "[Debug Embed] pos: {}, token: {}, scale: {}, sign: {:?}",
-                pos,
-                token,
-                x.log2_scale,
-                &x.sign[..2.min(x.sign.len())]
-            );
-        }
-
         // ── 24 transformer layers ─────────────────────────────────────────────
         for layer_idx in 0..cfg.n_layers {
             let lw = &self.weights.layers[layer_idx];
 
             // 1. Attention pre-norm (integer fixed-point RMSNorm)
             let x_norm = rms_norm_nda(&x, &norm_to_ndavec(&lw.attn_norm), 6);
-            if pos < 5 && layer_idx == 0 {
-                println!(
-                    "[Debug Norm] pos: {}, scale: {}, sign: {:?}",
-                    pos,
-                    x_norm.log2_scale,
-                    &x_norm.sign[..2.min(x_norm.sign.len())]
-                );
-            }
-
             // 2. Q/K/V projections — NDA GEMV → NdaVec (pure bitwise popcount)
             let q = nda_gemv_nda_to_nda(&lw.q_proj, &x_norm);
 
@@ -339,14 +287,6 @@ impl ZeroTransformer {
             };
 
             // 3. Store K/V in cache (NDA bitmaps — no float conversion)
-            if pos < 5 && layer_idx == 0 {
-                println!(
-                    "[Debug K] pos: {}, scale: {}, sign: {:?}",
-                    pos,
-                    k.log2_scale,
-                    &k.sign[..2.min(k.sign.len())]
-                );
-            }
             self.kv_cache[layer_idx].push(k, v.clone());
 
             // 4. Multi-head attention with ALiBi + bitwise Q·K popcount
@@ -379,7 +319,6 @@ impl ZeroTransformer {
                     attn_out_i32[hs + i] += head_out.get_raw(i);
                 }
             }
-            let _heads_per_kv = heads_per_kv; // used implicitly via GQA broadcast in KV cache
 
             // 5. Re-encode attention output as NdaVec
             let attn_out_nda = NdaVec::from_i32_slice(&attn_out_i32, v.log2_scale);

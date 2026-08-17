@@ -19,6 +19,12 @@ velocity-mcp/.velocity/
 # Build/test output logs (never tracked; regenerable artifacts)
 *.log
 
+# Telemetry test artifacts
+telemetry*.bin
+
+# Model weights (too large for git; download separately)
+models/
+
 # Python
 __pycache__/
 *.pyc
