@@ -1232,3 +1232,136 @@ pub struct SiteMapSummary {
     pub cache_utilization: String,
     pub validation_clean: bool,
 }
+
+/// Report from a timed store operation.
+#[derive(Debug, Clone, Serialize)]
+pub struct StoreOperationReport {
+    pub operation: String,
+    pub elapsed_us: u64,
+    pub entries_affected: usize,
+    pub total_entries_after: usize,
+}
+
+/// Analysis of triple distribution across predicates.
+#[derive(Debug, Clone, Serialize)]
+pub struct TripleAnalysis {
+    pub total_triples: usize,
+    pub unique_predicates: usize,
+    pub predicate_distribution: Vec<PredicateCount>,
+    pub unique_subjects: usize,
+    pub unique_objects: usize,
+}
+
+/// Count of triples for a specific predicate.
+#[derive(Debug, Clone, Serialize)]
+pub struct PredicateCount {
+    pub predicate_id: u16,
+    pub count: usize,
+}
+
+impl SiteMap {
+    /// Get human-readable name for an entry kind.
+    pub fn entry_kind_name(kind: &EntryKind) -> &'static str {
+        match kind {
+            EntryKind::Kv => "KV",
+            EntryKind::Node => "Node",
+            EntryKind::Program => "Program",
+            EntryKind::Snapshot => "Snapshot",
+        }
+    }
+
+    /// Validate a single entry for consistency.
+    pub fn validate_entry(entry: &SiteMapEntry) -> Vec<String> {
+        let mut issues = Vec::new();
+        if entry.file.is_empty() {
+            issues.push(format!("Entry {:016x} has empty file path", entry.hash));
+        }
+        if entry.file_sha.is_empty() {
+            issues.push(format!("Entry {:016x} has empty file_sha", entry.hash));
+        }
+        if entry.size == 0 {
+            issues.push(format!("Entry {:016x} has zero size", entry.hash));
+        }
+        issues
+    }
+
+    /// Analyse the distribution of triples across predicates.
+    pub fn triple_analysis(&self) -> TripleAnalysis {
+        let triples = self.collect_live_snapshot_triples();
+        let total = triples.len();
+
+        let mut pred_counts: HashMap<u16, usize> = HashMap::new();
+        let mut subjects = std::collections::HashSet::new();
+        let mut objects = std::collections::HashSet::new();
+
+        for t in &triples {
+            *pred_counts.entry(t.predicate_id).or_default() += 1;
+            subjects.insert(t.subject_hash);
+            objects.insert(t.object_hash);
+        }
+
+        let mut distribution: Vec<PredicateCount> = pred_counts
+            .into_iter()
+            .map(|(predicate_id, count)| PredicateCount { predicate_id, count })
+            .collect();
+        distribution.sort_by(|a, b| b.count.cmp(&a.count));
+
+        TripleAnalysis {
+            total_triples: total,
+            unique_predicates: distribution.len(),
+            predicate_distribution: distribution,
+            unique_subjects: subjects.len(),
+            unique_objects: objects.len(),
+        }
+    }
+
+    /// Put a KV pair with a timing report.
+    pub fn put_kv_reported(
+        &mut self,
+        token_id: u32,
+        layer_idx: u32,
+        k: NdaVec,
+        v: NdaVec,
+    ) -> Result<(u64, StoreOperationReport)> {
+        let start = std::time::Instant::now();
+        let key = self.put_kv(token_id, layer_idx, k, v)?;
+        let elapsed = start.elapsed().as_micros() as u64;
+        let report = StoreOperationReport {
+            operation: "put_kv".to_string(),
+            elapsed_us: elapsed.max(1),
+            entries_affected: 1,
+            total_entries_after: self.index.len(),
+        };
+        Ok((key, report))
+    }
+
+    /// Put a node with a timing report.
+    pub fn put_node_reported(
+        &mut self,
+        node: &NdaNode,
+    ) -> Result<(u64, StoreOperationReport)> {
+        let start = std::time::Instant::now();
+        let key = self.put_node(node)?;
+        let elapsed = start.elapsed().as_micros() as u64;
+        let report = StoreOperationReport {
+            operation: "put_node".to_string(),
+            elapsed_us: elapsed.max(1),
+            entries_affected: 1,
+            total_entries_after: self.index.len(),
+        };
+        Ok((key, report))
+    }
+
+    /// Flush with a timing report.
+    pub fn flush_report(&self) -> Result<StoreOperationReport> {
+        let start = std::time::Instant::now();
+        self.flush()?;
+        let elapsed = start.elapsed().as_micros() as u64;
+        Ok(StoreOperationReport {
+            operation: "flush".to_string(),
+            elapsed_us: elapsed.max(1),
+            entries_affected: self.index.len(),
+            total_entries_after: self.index.len(),
+        })
+    }
+}

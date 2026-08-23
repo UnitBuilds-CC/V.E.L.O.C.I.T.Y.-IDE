@@ -448,3 +448,251 @@ fn sitemap_info_serializes() {
     assert!(json.contains("\"kv_count\":1"));
     assert!(json.contains("\"total_entries\":1"));
 }
+
+#[test]
+fn find_live_by_predicate() {
+    let dir = TempDir::new().unwrap();
+    let mut sm = SiteMap::open(dir.path(), 0).unwrap();
+    sm.put_file_snapshot(
+        "src/a.rs",
+        &[
+            VcTriple { subject_hash: 1, predicate_id: 2, object_hash: 10 },
+            VcTriple { subject_hash: 2, predicate_id: 3, object_hash: 20 },
+            VcTriple { subject_hash: 3, predicate_id: 2, object_hash: 30 },
+        ],
+    ).unwrap();
+    let pred2 = sm.find_live_by_predicate(2);
+    assert_eq!(pred2.len(), 2);
+    assert!(pred2.iter().all(|t| t.predicate_id == 2));
+    let pred3 = sm.find_live_by_predicate(3);
+    assert_eq!(pred3.len(), 1);
+    let pred99 = sm.find_live_by_predicate(99);
+    assert!(pred99.is_empty());
+}
+
+#[test]
+fn find_live_by_subjects_batch() {
+    let dir = TempDir::new().unwrap();
+    let mut sm = SiteMap::open(dir.path(), 0).unwrap();
+    sm.put_file_snapshot(
+        "src/a.rs",
+        &[
+            VcTriple { subject_hash: 1, predicate_id: 2, object_hash: 10 },
+            VcTriple { subject_hash: 2, predicate_id: 2, object_hash: 20 },
+            VcTriple { subject_hash: 3, predicate_id: 2, object_hash: 30 },
+        ],
+    ).unwrap();
+    let results = sm.find_live_by_subjects(&[1, 3]);
+    assert_eq!(results.len(), 2);
+    assert!(results.iter().all(|t| t.subject_hash == 1 || t.subject_hash == 3));
+}
+
+#[test]
+fn find_live_by_objects_batch() {
+    let dir = TempDir::new().unwrap();
+    let mut sm = SiteMap::open(dir.path(), 0).unwrap();
+    sm.put_file_snapshot(
+        "src/a.rs",
+        &[
+            VcTriple { subject_hash: 1, predicate_id: 2, object_hash: 10 },
+            VcTriple { subject_hash: 2, predicate_id: 2, object_hash: 20 },
+            VcTriple { subject_hash: 3, predicate_id: 2, object_hash: 10 },
+        ],
+    ).unwrap();
+    let results = sm.find_live_by_objects(&[10]);
+    assert_eq!(results.len(), 2);
+    assert!(results.iter().all(|t| t.object_hash == 10));
+}
+
+#[test]
+fn find_live_by_subject_and_predicate() {
+    let dir = TempDir::new().unwrap();
+    let mut sm = SiteMap::open(dir.path(), 0).unwrap();
+    sm.put_file_snapshot(
+        "src/a.rs",
+        &[
+            VcTriple { subject_hash: 1, predicate_id: 2, object_hash: 10 },
+            VcTriple { subject_hash: 1, predicate_id: 3, object_hash: 20 },
+            VcTriple { subject_hash: 2, predicate_id: 2, object_hash: 30 },
+        ],
+    ).unwrap();
+    let results = sm.find_live_by_subject_and_predicate(1, 2);
+    assert_eq!(results.len(), 1);
+    assert_eq!(results[0].object_hash, 10);
+}
+
+#[test]
+fn find_live_by_predicate_and_object() {
+    let dir = TempDir::new().unwrap();
+    let mut sm = SiteMap::open(dir.path(), 0).unwrap();
+    sm.put_file_snapshot(
+        "src/a.rs",
+        &[
+            VcTriple { subject_hash: 1, predicate_id: 2, object_hash: 10 },
+            VcTriple { subject_hash: 2, predicate_id: 2, object_hash: 10 },
+            VcTriple { subject_hash: 3, predicate_id: 3, object_hash: 10 },
+        ],
+    ).unwrap();
+    let results = sm.find_live_by_predicate_and_object(2, 10);
+    assert_eq!(results.len(), 2);
+    assert!(results.iter().all(|t| t.predicate_id == 2 && t.object_hash == 10));
+}
+
+#[test]
+fn invalidate_predicate_index_works() {
+    let dir = TempDir::new().unwrap();
+    let mut sm = SiteMap::open(dir.path(), 0).unwrap();
+    sm.put_file_snapshot(
+        "src/a.rs",
+        &[VcTriple { subject_hash: 1, predicate_id: 2, object_hash: 10 }],
+    ).unwrap();
+    // Build the index
+    let r1 = sm.find_live_by_predicate(2);
+    assert_eq!(r1.len(), 1);
+    // Invalidate and re-query
+    sm.invalidate_predicate_index();
+    let r2 = sm.find_live_by_predicate(2);
+    assert_eq!(r2.len(), 1);
+}
+
+#[test]
+fn entry_kind_name_works() {
+    assert_eq!(SiteMap::entry_kind_name(&super::types::EntryKind::Kv), "KV");
+    assert_eq!(SiteMap::entry_kind_name(&super::types::EntryKind::Node), "Node");
+    assert_eq!(SiteMap::entry_kind_name(&super::types::EntryKind::Program), "Program");
+    assert_eq!(SiteMap::entry_kind_name(&super::types::EntryKind::Snapshot), "Snapshot");
+}
+
+#[test]
+fn validate_entry_clean() {
+    let entry = super::types::SiteMapEntry {
+        kind: super::types::EntryKind::Kv,
+        hash: 0x1234,
+        file: "kv/0000000000001234.kv".to_string(),
+        file_sha: "abcdef1234567890".to_string(),
+        size: 100,
+    };
+    let issues = SiteMap::validate_entry(&entry);
+    assert!(issues.is_empty());
+}
+
+#[test]
+fn validate_entry_empty_fields() {
+    let entry = super::types::SiteMapEntry {
+        kind: super::types::EntryKind::Kv,
+        hash: 0x1234,
+        file: "".to_string(),
+        file_sha: "".to_string(),
+        size: 0,
+    };
+    let issues = SiteMap::validate_entry(&entry);
+    assert_eq!(issues.len(), 3);
+}
+
+#[test]
+fn triple_analysis_with_snapshots() {
+    let dir = TempDir::new().unwrap();
+    let mut sm = SiteMap::open(dir.path(), 0).unwrap();
+    sm.put_file_snapshot(
+        "src/a.rs",
+        &[
+            VcTriple { subject_hash: 1, predicate_id: 2, object_hash: 10 },
+            VcTriple { subject_hash: 2, predicate_id: 2, object_hash: 20 },
+            VcTriple { subject_hash: 1, predicate_id: 3, object_hash: 30 },
+        ],
+    ).unwrap();
+    let analysis = sm.triple_analysis();
+    assert_eq!(analysis.total_triples, 3);
+    assert_eq!(analysis.unique_predicates, 2);
+    assert_eq!(analysis.unique_subjects, 2);
+    assert_eq!(analysis.unique_objects, 3);
+    // Predicate 2 should have highest count
+    assert_eq!(analysis.predicate_distribution[0].predicate_id, 2);
+    assert_eq!(analysis.predicate_distribution[0].count, 2);
+}
+
+#[test]
+fn triple_analysis_empty() {
+    let dir = TempDir::new().unwrap();
+    let sm = SiteMap::open(dir.path(), 0).unwrap();
+    let analysis = sm.triple_analysis();
+    assert_eq!(analysis.total_triples, 0);
+    assert_eq!(analysis.unique_predicates, 0);
+}
+
+#[test]
+fn put_kv_reported_works() {
+    let dir = TempDir::new().unwrap();
+    let mut sm = SiteMap::open(dir.path(), 0).unwrap();
+    let k = make_ndavec(8, 0xAA);
+    let v = make_ndavec(8, 0xBB);
+    let (key, report) = sm.put_kv_reported(1, 0, k, v).unwrap();
+    assert!(key != 0);
+    assert_eq!(report.operation, "put_kv");
+    assert_eq!(report.entries_affected, 1);
+    assert_eq!(report.total_entries_after, 1);
+    assert!(report.elapsed_us >= 1);
+}
+
+#[test]
+fn put_node_reported_works() {
+    let dir = TempDir::new().unwrap();
+    let mut sm = SiteMap::open(dir.path(), 0).unwrap();
+    let n = NdaNode::Int { value: 42 };
+    let (key, report) = sm.put_node_reported(&n).unwrap();
+    assert!(key != 0);
+    assert_eq!(report.operation, "put_node");
+    assert_eq!(report.total_entries_after, 1);
+}
+
+#[test]
+fn flush_reported_works() {
+    let dir = TempDir::new().unwrap();
+    let mut sm = SiteMap::open(dir.path(), 0).unwrap();
+    sm.put_kv(1, 0, make_ndavec(8, 0), make_ndavec(8, 0)).unwrap();
+    let report = sm.flush_report().unwrap();
+    assert_eq!(report.operation, "flush");
+    assert_eq!(report.entries_affected, 1);
+}
+
+#[test]
+fn store_operation_report_serializes() {
+    let report = super::store::StoreOperationReport {
+        operation: "put_kv".to_string(),
+        elapsed_us: 123,
+        entries_affected: 1,
+        total_entries_after: 10,
+    };
+    let json = serde_json::to_string(&report).unwrap();
+    assert!(json.contains("\"operation\":\"put_kv\""));
+    assert!(json.contains("\"elapsed_us\":123"));
+}
+
+#[test]
+fn triple_analysis_serializes() {
+    let analysis = super::store::TripleAnalysis {
+        total_triples: 10,
+        unique_predicates: 2,
+        predicate_distribution: vec![
+            super::store::PredicateCount { predicate_id: 2, count: 7 },
+            super::store::PredicateCount { predicate_id: 3, count: 3 },
+        ],
+        unique_subjects: 5,
+        unique_objects: 8,
+    };
+    let json = serde_json::to_string(&analysis).unwrap();
+    assert!(json.contains("\"total_triples\":10"));
+    assert!(json.contains("\"unique_predicates\":2"));
+}
+
+#[test]
+fn all_strings_returns_registered() {
+    let dir = TempDir::new().unwrap();
+    let sm = SiteMap::open(dir.path(), 0).unwrap();
+    sm.register_string("hello").unwrap();
+    sm.register_string("world").unwrap();
+    let all = sm.all_strings();
+    assert_eq!(all.len(), 2);
+    assert!(all.values().any(|v| v == "hello"));
+    assert!(all.values().any(|v| v == "world"));
+}
