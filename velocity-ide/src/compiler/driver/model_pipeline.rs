@@ -11,6 +11,93 @@ use super::layer_gpu_gemvs::LayerGpuGemvs;
 use super::vulkan_init::*;
 use ash::vk;
 use ash::Device;
+use serde::Serialize;
+
+/// Model dimensions used to set up the Vulkan pipeline.
+#[derive(Debug, Clone, Serialize)]
+pub struct ModelPipelineConfig {
+    pub n_layers: usize,
+    pub hidden_size: usize,
+    pub ffn_size: usize,
+    pub n_heads: usize,
+    pub n_kv_heads: usize,
+    pub head_dim: usize,
+    pub max_seq_len: usize,
+    pub vocab_size: usize,
+}
+
+/// Diagnostic info about a model pipeline setup.
+#[derive(Debug, Clone, Serialize)]
+pub struct ModelPipelineInfo {
+    pub config: ModelPipelineConfig,
+    pub shader_count: usize,
+    pub pipeline_count: usize,
+    pub buffer_count: usize,
+    pub per_layer_descriptor_sets: usize,
+    pub total_descriptor_sets_estimate: usize,
+    pub validation_issues: Vec<String>,
+}
+
+/// Validate model pipeline configuration.
+pub fn validate_model_pipeline_config(cfg: &ModelPipelineConfig) -> Vec<String> {
+    let mut issues = Vec::new();
+    if cfg.n_layers == 0 {
+        issues.push("n_layers must be > 0".into());
+    }
+    if cfg.hidden_size == 0 {
+        issues.push("hidden_size must be > 0".into());
+    }
+    if cfg.hidden_size % 4 != 0 {
+        issues.push(format!(
+            "hidden_size ({}) must be a multiple of 4 (float buffer alignment)",
+            cfg.hidden_size
+        ));
+    }
+    if cfg.ffn_size == 0 {
+        issues.push("ffn_size must be > 0".into());
+    }
+    if cfg.n_heads == 0 {
+        issues.push("n_heads must be > 0".into());
+    }
+    if cfg.n_kv_heads == 0 {
+        issues.push("n_kv_heads must be > 0".into());
+    }
+    if cfg.head_dim == 0 {
+        issues.push("head_dim must be > 0".into());
+    }
+    if cfg.max_seq_len == 0 {
+        issues.push("max_seq_len must be > 0".into());
+    }
+    if cfg.vocab_size == 0 {
+        issues.push("vocab_size must be > 0".into());
+    }
+    if cfg.n_heads % cfg.n_kv_heads != 0 && cfg.n_kv_heads != 0 && cfg.n_heads != 0 {
+        issues.push(format!(
+            "n_heads ({}) must be divisible by n_kv_heads ({})",
+            cfg.n_heads, cfg.n_kv_heads
+        ));
+    }
+    issues
+}
+
+/// Build diagnostic info for a model pipeline configuration.
+pub fn model_pipeline_info(cfg: &ModelPipelineConfig) -> ModelPipelineInfo {
+    let issues = validate_model_pipeline_config(cfg);
+    let shader_count = 7; // rms_norm, rope, kv_write, attn_softmax, swiglu, residual_add, bias_add
+    let pipeline_count = 7;
+    let buffer_count = 5; // x_residual, attn_out, gated, lm_head, x_final
+    let per_layer_descriptor_sets = 10; // rms_norm_attn, rms_norm_ffn, rope, kv_write, attn_softmax, residual_add_attn, residual_add_ffn, swiglu, bias_q/k/v
+    let total_desc = per_layer_descriptor_sets * cfg.n_layers + 1; // +1 for final norm
+    ModelPipelineInfo {
+        config: cfg.clone(),
+        shader_count,
+        pipeline_count,
+        buffer_count,
+        per_layer_descriptor_sets,
+        total_descriptor_sets_estimate: total_desc,
+        validation_issues: issues,
+    }
+}
 
 pub struct VulkanModelPipeline {
     pub device: Device,
@@ -859,5 +946,92 @@ impl Drop for VulkanModelPipeline {
             self.device
                 .destroy_shader_module(self.shader_bias_add, None);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn default_model_config() -> ModelPipelineConfig {
+        ModelPipelineConfig {
+            n_layers: 4,
+            hidden_size: 256,
+            ffn_size: 1024,
+            n_heads: 8,
+            n_kv_heads: 2,
+            head_dim: 32,
+            max_seq_len: 512,
+            vocab_size: 32000,
+        }
+    }
+
+    #[test]
+    fn validate_model_config_valid() {
+        assert!(validate_model_pipeline_config(&default_model_config()).is_empty());
+    }
+
+    #[test]
+    fn validate_model_config_zero_layers() {
+        let mut cfg = default_model_config();
+        cfg.n_layers = 0;
+        assert!(validate_model_pipeline_config(&cfg).iter().any(|i| i.contains("n_layers")));
+    }
+
+    #[test]
+    fn validate_model_config_bad_hidden() {
+        let mut cfg = default_model_config();
+        cfg.hidden_size = 255; // not multiple of 4
+        assert!(validate_model_pipeline_config(&cfg).iter().any(|i| i.contains("multiple of 4")));
+    }
+
+    #[test]
+    fn validate_model_config_heads_not_divisible() {
+        let mut cfg = default_model_config();
+        cfg.n_heads = 7;
+        cfg.n_kv_heads = 2;
+        assert!(validate_model_pipeline_config(&cfg).iter().any(|i| i.contains("divisible")));
+    }
+
+    #[test]
+    fn validate_model_config_zero_vocab() {
+        let mut cfg = default_model_config();
+        cfg.vocab_size = 0;
+        assert!(validate_model_pipeline_config(&cfg).iter().any(|i| i.contains("vocab_size")));
+    }
+
+    #[test]
+    fn model_pipeline_info_works() {
+        let cfg = default_model_config();
+        let info = model_pipeline_info(&cfg);
+        assert!(info.validation_issues.is_empty());
+        assert_eq!(info.shader_count, 7);
+        assert_eq!(info.pipeline_count, 7);
+        assert_eq!(info.buffer_count, 5);
+        assert_eq!(info.total_descriptor_sets_estimate, 41); // 10*4 + 1
+    }
+
+    #[test]
+    fn model_pipeline_info_with_issues() {
+        let mut cfg = default_model_config();
+        cfg.n_layers = 0;
+        cfg.hidden_size = 0;
+        let info = model_pipeline_info(&cfg);
+        assert!(info.validation_issues.len() >= 2);
+    }
+
+    #[test]
+    fn model_config_serializes() {
+        let json = serde_json::to_string(&default_model_config()).unwrap();
+        assert!(json.contains("n_layers"));
+        assert!(json.contains("hidden_size"));
+    }
+
+    #[test]
+    fn model_pipeline_info_serializes() {
+        let info = model_pipeline_info(&default_model_config());
+        let json = serde_json::to_string(&info).unwrap();
+        assert!(json.contains("shader_count"));
+        assert!(json.contains("total_descriptor_sets_estimate"));
     }
 }
