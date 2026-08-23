@@ -13,6 +13,173 @@ use super::layer_gpu_gemvs::LayerGpuGemvs;
 use super::model_pipeline::VulkanModelPipeline;
 use super::vulkan_init::*;
 use ash::vk;
+use serde::Serialize;
+
+/// Model dimensions used by the pipeline execution.
+#[derive(Debug, Clone, Serialize)]
+pub struct PipelineConfig {
+    pub n_layers: usize,
+    pub hidden_size: usize,
+    pub ffn_size: usize,
+    pub n_heads: usize,
+    pub n_kv_heads: usize,
+    pub head_dim: usize,
+    pub max_seq_len: usize,
+    pub rope_theta: f32,
+    pub scale: f32,
+}
+
+/// Describes the compute dispatches recorded for a single transformer layer.
+#[derive(Debug, Clone, Serialize)]
+pub struct LayerDispatchPlan {
+    pub layer_index: usize,
+    pub buffer_copies: usize,
+    pub rms_norm_dispatches: usize,
+    pub gemv_dispatches: usize,
+    pub bias_add_dispatches: usize,
+    pub rope_dispatches: usize,
+    pub kv_write_dispatches: usize,
+    pub attn_softmax_dispatches: usize,
+    pub residual_add_dispatches: usize,
+    pub swiglu_dispatches: usize,
+    pub total_dispatches: usize,
+}
+
+/// Full execution plan for a token forward pass.
+#[derive(Debug, Clone, Serialize)]
+pub struct PipelineExecutionPlan {
+    pub config: PipelineConfig,
+    pub kv_dim: usize,
+    pub per_layer: Vec<LayerDispatchPlan>,
+    pub final_norm_dispatch: bool,
+    pub total_buffer_copies: usize,
+    pub total_dispatches: usize,
+    pub validation_issues: Vec<String>,
+}
+
+/// Validate model dimensions for consistency.
+pub fn validate_pipeline_config(cfg: &PipelineConfig) -> Vec<String> {
+    let mut issues = Vec::new();
+    if cfg.n_layers == 0 {
+        issues.push("n_layers must be > 0".into());
+    }
+    if cfg.hidden_size == 0 {
+        issues.push("hidden_size must be > 0".into());
+    }
+    if cfg.n_heads == 0 {
+        issues.push("n_heads must be > 0".into());
+    }
+    if cfg.n_kv_heads == 0 {
+        issues.push("n_kv_heads must be > 0".into());
+    }
+    if cfg.head_dim == 0 {
+        issues.push("head_dim must be > 0".into());
+    }
+    if cfg.n_heads % cfg.n_kv_heads != 0 && cfg.n_kv_heads != 0 && cfg.n_heads != 0 {
+        issues.push(format!(
+            "n_heads ({}) must be divisible by n_kv_heads ({})",
+            cfg.n_heads, cfg.n_kv_heads
+        ));
+    }
+    if cfg.hidden_size != cfg.n_heads * cfg.head_dim && cfg.n_heads != 0 && cfg.head_dim != 0 {
+        issues.push(format!(
+            "hidden_size ({}) != n_heads * head_dim ({} * {} = {})",
+            cfg.hidden_size,
+            cfg.n_heads,
+            cfg.head_dim,
+            cfg.n_heads * cfg.head_dim
+        ));
+    }
+    if cfg.max_seq_len == 0 {
+        issues.push("max_seq_len must be > 0".into());
+    }
+    if cfg.rope_theta <= 0.0 {
+        issues.push("rope_theta must be > 0".into());
+    }
+    if cfg.scale <= 0.0 {
+        issues.push("scale must be > 0".into());
+    }
+    issues
+}
+
+/// Compute the dispatch plan for a single layer (pure function, no GPU needed).
+pub fn compute_layer_dispatch_plan(
+    layer_index: usize,
+    has_bias_q: bool,
+    has_bias_k: bool,
+    has_bias_v: bool,
+    has_q_proj: bool,
+    has_k_proj: bool,
+    has_v_proj: bool,
+    has_o_proj: bool,
+    has_gate_proj: bool,
+    has_up_proj: bool,
+    has_down_proj: bool,
+) -> LayerDispatchPlan {
+    let buffer_copies = 3;
+    let rms_norm_dispatches = 2;
+    let mut gemv_dispatches = 0;
+    if has_q_proj { gemv_dispatches += 1; }
+    if has_k_proj { gemv_dispatches += 1; }
+    if has_v_proj { gemv_dispatches += 1; }
+    if has_o_proj { gemv_dispatches += 1; }
+    if has_gate_proj { gemv_dispatches += 1; }
+    if has_up_proj { gemv_dispatches += 1; }
+    if has_down_proj { gemv_dispatches += 1; }
+    let bias_add_dispatches = [has_bias_q, has_bias_k, has_bias_v].iter().filter(|&&b| b).count();
+    let rope_dispatches = 1;
+    let kv_write_dispatches = 1;
+    let attn_softmax_dispatches = 1;
+    let residual_add_dispatches = 2;
+    let swiglu_dispatches = 1;
+    let total_dispatches = rms_norm_dispatches + gemv_dispatches + bias_add_dispatches
+        + rope_dispatches + kv_write_dispatches + attn_softmax_dispatches
+        + residual_add_dispatches + swiglu_dispatches;
+    LayerDispatchPlan {
+        layer_index,
+        buffer_copies,
+        rms_norm_dispatches,
+        gemv_dispatches,
+        bias_add_dispatches,
+        rope_dispatches,
+        kv_write_dispatches,
+        attn_softmax_dispatches,
+        residual_add_dispatches,
+        swiglu_dispatches,
+        total_dispatches,
+    }
+}
+
+/// Build a full execution plan for a token forward pass.
+pub fn build_execution_plan(
+    cfg: &PipelineConfig,
+    layers_has_bias: &[(bool, bool, bool)],
+    layers_has_projs: &[(bool, bool, bool, bool, bool, bool, bool)],
+) -> PipelineExecutionPlan {
+    let kv_dim = cfg.n_kv_heads * cfg.head_dim;
+    let validation_issues = validate_pipeline_config(cfg);
+    let mut per_layer = Vec::new();
+    let mut total_buffer_copies = 0;
+    let mut total_dispatches = 0;
+    for i in 0..cfg.n_layers {
+        let (bq, bk, bv) = if i < layers_has_bias.len() { layers_has_bias[i] } else { (false, false, false) };
+        let (qp, kp, vp, op, gp, up, dp) = if i < layers_has_projs.len() { layers_has_projs[i] } else { (true, true, true, true, true, true, true) };
+        let plan = compute_layer_dispatch_plan(i, bq, bk, bv, qp, kp, vp, op, gp, up, dp);
+        total_buffer_copies += plan.buffer_copies;
+        total_dispatches += plan.total_dispatches;
+        per_layer.push(plan);
+    }
+    total_dispatches += 1; // final RMS norm
+    PipelineExecutionPlan {
+        config: cfg.clone(),
+        kv_dim,
+        per_layer,
+        final_norm_dispatch: true,
+        total_buffer_copies,
+        total_dispatches,
+        validation_issues,
+    }
+}
 
 #[allow(clippy::too_many_arguments, clippy::needless_range_loop)]
 pub fn record_and_execute_token(
@@ -516,4 +683,132 @@ pub fn record_and_execute_token(
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn default_config() -> PipelineConfig {
+        PipelineConfig {
+            n_layers: 2,
+            hidden_size: 64,
+            ffn_size: 256,
+            n_heads: 4,
+            n_kv_heads: 2,
+            head_dim: 16,
+            max_seq_len: 512,
+            rope_theta: 10000.0,
+            scale: 0.125,
+        }
+    }
+
+    #[test]
+    fn validate_config_valid() {
+        assert!(validate_pipeline_config(&default_config()).is_empty());
+    }
+
+    #[test]
+    fn validate_config_zero_layers() {
+        let mut cfg = default_config();
+        cfg.n_layers = 0;
+        assert!(validate_pipeline_config(&cfg).iter().any(|i| i.contains("n_layers")));
+    }
+
+    #[test]
+    fn validate_config_zero_hidden() {
+        let mut cfg = default_config();
+        cfg.hidden_size = 0;
+        assert!(validate_pipeline_config(&cfg).iter().any(|i| i.contains("hidden_size")));
+    }
+
+    #[test]
+    fn validate_config_heads_not_divisible() {
+        let mut cfg = default_config();
+        cfg.n_heads = 5;
+        cfg.n_kv_heads = 2;
+        cfg.hidden_size = 5 * 16;
+        assert!(validate_pipeline_config(&cfg).iter().any(|i| i.contains("divisible")));
+    }
+
+    #[test]
+    fn validate_config_hidden_mismatch() {
+        let mut cfg = default_config();
+        cfg.hidden_size = 128;
+        assert!(validate_pipeline_config(&cfg).iter().any(|i| i.contains("hidden_size")));
+    }
+
+    #[test]
+    fn validate_config_bad_rope_theta() {
+        let mut cfg = default_config();
+        cfg.rope_theta = 0.0;
+        assert!(validate_pipeline_config(&cfg).iter().any(|i| i.contains("rope_theta")));
+    }
+
+    #[test]
+    fn validate_config_bad_scale() {
+        let mut cfg = default_config();
+        cfg.scale = -1.0;
+        assert!(validate_pipeline_config(&cfg).iter().any(|i| i.contains("scale")));
+    }
+
+    #[test]
+    fn layer_dispatch_plan_all_projs() {
+        let plan = compute_layer_dispatch_plan(0, true, true, true, true, true, true, true, true, true, true);
+        assert_eq!(plan.gemv_dispatches, 7);
+        assert_eq!(plan.bias_add_dispatches, 3);
+        assert_eq!(plan.total_dispatches, 18);
+    }
+
+    #[test]
+    fn layer_dispatch_plan_no_bias() {
+        let plan = compute_layer_dispatch_plan(0, false, false, false, true, true, true, true, true, true, true);
+        assert_eq!(plan.bias_add_dispatches, 0);
+        assert_eq!(plan.total_dispatches, 15);
+    }
+
+    #[test]
+    fn layer_dispatch_plan_minimal() {
+        let plan = compute_layer_dispatch_plan(0, false, false, false, false, false, false, false, false, false, false);
+        assert_eq!(plan.gemv_dispatches, 0);
+        assert_eq!(plan.total_dispatches, 8);
+    }
+
+    #[test]
+    fn build_execution_plan_works() {
+        let cfg = default_config();
+        let bias = vec![(true, true, true); 2];
+        let projs = vec![(true, true, true, true, true, true, true); 2];
+        let plan = build_execution_plan(&cfg, &bias, &projs);
+        assert_eq!(plan.per_layer.len(), 2);
+        assert_eq!(plan.kv_dim, 32);
+        assert_eq!(plan.total_buffer_copies, 6);
+        assert!(plan.validation_issues.is_empty());
+        assert_eq!(plan.total_dispatches, 37);
+    }
+
+    #[test]
+    fn build_execution_plan_with_issues() {
+        let mut cfg = default_config();
+        cfg.n_layers = 0;
+        cfg.hidden_size = 0;
+        let plan = build_execution_plan(&cfg, &[], &[]);
+        assert!(plan.validation_issues.len() >= 2);
+    }
+
+    #[test]
+    fn execution_plan_serializes() {
+        let cfg = default_config();
+        let plan = build_execution_plan(&cfg, &[(false, false, false); 2], &[(true, true, true, true, true, true, true); 2]);
+        let json = serde_json::to_string(&plan).unwrap();
+        assert!(json.contains("kv_dim"));
+        assert!(json.contains("per_layer"));
+    }
+
+    #[test]
+    fn pipeline_config_serializes() {
+        let json = serde_json::to_string(&default_config()).unwrap();
+        assert!(json.contains("n_layers"));
+        assert!(json.contains("hidden_size"));
+    }
 }
