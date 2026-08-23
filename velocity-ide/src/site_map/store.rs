@@ -15,6 +15,7 @@ use super::kv::KvRecord;
 use super::serialization::{deserialise_node, serialise_node};
 use super::types::{EntryKind, SiteMapEntry, SiteMapStats, VcTriple};
 use super::verifier::NdaNode;
+use serde::Serialize;
 
 /// Maximum number of token KV records kept in RAM.
 const MAX_KV_CACHE_SIZE: usize = 4096;
@@ -1054,4 +1055,180 @@ impl SiteMap {
         let d = Sha256::digest(data);
         format!("{:x}", d) == expected_hex
     }
+}
+
+/// Diagnostic snapshot of a SiteMap.
+#[derive(Debug, Clone, Serialize)]
+pub struct SiteMapInfo {
+    pub total_entries: usize,
+    pub kv_count: usize,
+    pub node_count: usize,
+    pub program_count: usize,
+    pub snapshot_count: usize,
+    pub total_bytes: u64,
+    pub root: u64,
+    pub weight_root: u64,
+    pub kv_cache_size: usize,
+    pub kv_cache_max: usize,
+    pub string_dict_size: usize,
+    pub validation_issues: Vec<String>,
+}
+
+/// Detailed verification report.
+#[derive(Debug, Clone, Serialize)]
+pub struct SiteMapVerifyReport {
+    pub total_entries: usize,
+    pub checked: usize,
+    pub corrupt: usize,
+    pub missing: usize,
+    pub valid: usize,
+    pub issues: Vec<String>,
+}
+
+impl SiteMap {
+    /// Return a diagnostic snapshot of this SiteMap.
+    pub fn info(&self) -> SiteMapInfo {
+        let stats = self.stats();
+        SiteMapInfo {
+            total_entries: stats.total_entries,
+            kv_count: stats.kv,
+            node_count: stats.nodes,
+            program_count: stats.programs,
+            snapshot_count: stats.snapshots,
+            total_bytes: stats.total_bytes,
+            root: self.root,
+            weight_root: self.weight_root,
+            kv_cache_size: stats.kv_cache_size,
+            kv_cache_max: MAX_KV_CACHE_SIZE,
+            string_dict_size: stats.string_dict_size,
+            validation_issues: self.validate(),
+        }
+    }
+
+    /// Validate the SiteMap for consistency.
+    /// Returns a list of warnings (empty = all good).
+    pub fn validate(&self) -> Vec<String> {
+        let mut warnings = Vec::new();
+
+        if self.index.is_empty() {
+            warnings.push("SiteMap index is empty".to_string());
+        }
+
+        // Check for entries with empty file paths.
+        for entry in self.index.values() {
+            if entry.file.is_empty() {
+                warnings.push(format!("Entry {:016x} has empty file path", entry.hash));
+            }
+            if entry.file_sha.is_empty() {
+                warnings.push(format!("Entry {:016x} has empty file_sha", entry.hash));
+            }
+            if entry.size == 0 {
+                warnings.push(format!("Entry {:016x} has zero size", entry.hash));
+            }
+        }
+
+        // Check for duplicate file paths (shouldn't happen but be safe).
+        let mut file_set = std::collections::HashSet::new();
+        for entry in self.index.values() {
+            if !file_set.insert(&entry.file) {
+                warnings.push(format!("Duplicate file path: {}", entry.file));
+            }
+        }
+
+        warnings
+    }
+
+    /// Detailed verification: check every entry on disk.
+    /// Returns a report with per-entry results.
+    pub fn verify_detailed(&self) -> SiteMapVerifyReport {
+        let mut report = SiteMapVerifyReport {
+            total_entries: self.index.len(),
+            checked: 0,
+            corrupt: 0,
+            missing: 0,
+            valid: 0,
+            issues: Vec::new(),
+        };
+
+        for entry in self.index.values() {
+            report.checked += 1;
+            let path = self.base.join(&entry.file);
+            match fs::read(&path) {
+                Ok(data) => {
+                    if Self::verify_file_sha(&data, &entry.file_sha) {
+                        report.valid += 1;
+                    } else {
+                        report.corrupt += 1;
+                        report.issues.push(format!(
+                            "CORRUPT: {} (SHA mismatch)",
+                            entry.file
+                        ));
+                    }
+                }
+                Err(e) => {
+                    report.missing += 1;
+                    report.issues.push(format!(
+                        "MISSING: {} ({})",
+                        entry.file, e
+                    ));
+                }
+            }
+        }
+
+        report
+    }
+
+    /// Compound query: find triples matching both subject and predicate.
+    pub fn find_live_by_subject_and_predicate(
+        &self,
+        subject: u64,
+        predicate: u16,
+    ) -> Vec<VcTriple> {
+        self.collect_live_snapshot_triples()
+            .into_iter()
+            .filter(|t| t.subject_hash == subject && t.predicate_id == predicate)
+            .collect()
+    }
+
+    /// Compound query: find triples matching both predicate and object.
+    pub fn find_live_by_predicate_and_object(
+        &self,
+        predicate: u16,
+        object: u64,
+    ) -> Vec<VcTriple> {
+        self.collect_live_snapshot_triples()
+            .into_iter()
+            .filter(|t| t.predicate_id == predicate && t.object_hash == object)
+            .collect()
+    }
+
+    /// Cache utilization ratio (0.0 to 1.0).
+    pub fn cache_utilization(&self) -> f64 {
+        if MAX_KV_CACHE_SIZE == 0 {
+            return 0.0;
+        }
+        self.kv_cache.len() as f64 / MAX_KV_CACHE_SIZE as f64
+    }
+
+    /// Export a summary of the SiteMap suitable for JSON output.
+    pub fn export_summary(&self) -> SiteMapSummary {
+        let stats = self.stats();
+        SiteMapSummary {
+            stats: stats.to_string(),
+            root: format!("{:016x}", self.root),
+            weight_root: format!("{:016x}", self.weight_root),
+            cache_utilization: format!("{:.1}%", self.cache_utilization() * 100.0),
+            validation_clean: self.validate().is_empty(),
+        }
+    }
+}
+
+/// JSON-exportable summary of a SiteMap.
+#[derive(Debug, Clone, Serialize)]
+pub struct SiteMapSummary {
+    pub stats: String,
+    pub root: String,
+    pub weight_root: String,
+    pub cache_utilization: String,
+    pub validation_clean: bool,
 }

@@ -380,3 +380,71 @@ fn stats_include_cache_and_dict_sizes() {
     assert!(json.contains("kv_cache_size"));
     assert!(json.contains("string_dict_size"));
 }
+
+#[test]
+fn sitemap_validate_empty() {
+    let dir = tempfile::tempdir().unwrap();
+    let sm = SiteMap::open(dir.path(), 0).unwrap();
+    let w = sm.validate();
+    assert!(!w.is_empty()); // empty index triggers warning
+    assert!(w[0].contains("empty"));
+}
+
+#[test]
+fn sitemap_validate_with_entries() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut sm = SiteMap::open(dir.path(), 0).unwrap();
+    sm.put_kv(1, 0, make_ndavec(8, 0), make_ndavec(8, 0))
+        .unwrap();
+    let w = sm.validate();
+    assert!(w.is_empty(), "expected no warnings, got: {:?}", w);
+}
+
+#[test]
+fn sitemap_info_and_summary() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut sm = SiteMap::open(dir.path(), 0).unwrap();
+    sm.put_kv(1, 0, make_ndavec(8, 0), make_ndavec(8, 0))
+        .unwrap();
+    let info = sm.info();
+    assert_eq!(info.total_entries, 1);
+    assert_eq!(info.kv_count, 1);
+    assert!(info.validation_issues.is_empty());
+
+    let summary = sm.export_summary();
+    assert!(summary.validation_clean);
+    let json = serde_json::to_string(&summary).unwrap();
+    assert!(json.contains("validation_clean"));
+}
+
+#[test]
+fn sitemap_verify_detailed_clean() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut sm = SiteMap::open(dir.path(), 0).unwrap();
+    sm.put_kv(1, 0, make_ndavec(8, 0), make_ndavec(8, 0))
+        .unwrap();
+    let report = sm.verify_detailed();
+    assert_eq!(report.checked, 1);
+    assert_eq!(report.valid, 1);
+    assert_eq!(report.corrupt, 0);
+    assert_eq!(report.missing, 0);
+}
+
+#[test]
+fn sitemap_cache_utilization() {
+    let dir = tempfile::tempdir().unwrap();
+    let sm = SiteMap::open(dir.path(), 0).unwrap();
+    assert_eq!(sm.cache_utilization(), 0.0);
+}
+
+#[test]
+fn sitemap_info_serializes() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut sm = SiteMap::open(dir.path(), 0).unwrap();
+    sm.put_kv(1, 0, make_ndavec(8, 0), make_ndavec(8, 0))
+        .unwrap();
+    let info = sm.info();
+    let json = serde_json::to_string(&info).unwrap();
+    assert!(json.contains("\"kv_count\":1"));
+    assert!(json.contains("\"total_entries\":1"));
+}
