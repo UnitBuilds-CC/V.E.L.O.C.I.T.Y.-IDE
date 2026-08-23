@@ -238,6 +238,14 @@ pub struct NdaJitSandbox;
 impl NdaJitSandbox {
     /// Execute the sequence of NDA nodes using the JIT compiler.
     pub fn run(nodes: &[NdaNode], conditioning_vec: &[f32], site_map: &SiteMap) -> SandboxResult {
+        // Pre-execution credential boundary audit.
+        // JIT code runs with PAGE_EXECUTE_READWRITE in the same address space;
+        // verify that credential-bearing env vars and sockets have been scrubbed.
+        let boundary = crate::credential_guard::CredentialBoundaryAudit::run();
+        if let Some(warning) = boundary.warning_message() {
+            log::warn!("{}", warning);
+        }
+
         // Calculate structural hash of AST nodes using the fast default hasher
         let mut hasher = std::collections::hash_map::DefaultHasher::new();
         for node in nodes {

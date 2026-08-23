@@ -223,6 +223,40 @@ const SENSITIVE_ENV_VARS: &[&str] = &[
     "XAI_API_KEY",
     "GITHUB_TOKEN",
     "GITHUB_API_KEY",
+    // AWS credentials
+    "AWS_ACCESS_KEY_ID",
+    "AWS_SECRET_ACCESS_KEY",
+    "AWS_SESSION_TOKEN",
+    "AWS_SECURITY_TOKEN",
+    // GCP credentials
+    "GCP_SERVICE_ACCOUNT_KEY",
+    "GOOGLE_APPLICATION_CREDENTIALS",
+    // Azure credentials
+    "AZURE_CLIENT_SECRET",
+    "AZURE_CLIENT_ID",
+    "AZURE_TENANT_ID",
+    // Docker / container registries
+    "DOCKER_PASSWORD",
+    "DOCKER_TOKEN",
+    "CR_PAT",
+    // SSH agent socket — allows signing arbitrary data with loaded keys
+    "SSH_AUTH_SOCK",
+    // GPG agent
+    "GPG_AGENT_INFO",
+    // Generic secrets that may appear in CI/dev environments
+    "SECRET_KEY",
+    "PRIVATE_KEY",
+    "JWT_SECRET",
+    "SESSION_SECRET",
+    "ENCRYPTION_KEY",
+];
+
+/// Socket/pipe environment variables that cross sandbox boundaries.
+/// These allow JIT code to communicate with credential-holding agents.
+const SOCKET_ENV_VARS: &[&str] = &[
+    "SSH_AUTH_SOCK",
+    "GPG_AGENT_INFO",
+    "DBUS_SESSION_BUS_ADDRESS",
 ];
 
 /// Remove known sensitive environment variables from the process environment.
@@ -230,6 +264,9 @@ const SENSITIVE_ENV_VARS: &[&str] = &[
 /// Call this AFTER loading credentials into a [`CredentialScope`] or
 /// [`SecretString`]. This prevents any code in the process (including
 /// JIT-compiled closures) from accessing these secrets via `std::env::var`.
+///
+/// Also removes socket environment variables (SSH_AUTH_SOCK, GPG agent)
+/// that allow communication with credential-holding external agents.
 ///
 /// Returns the list of variables that were actually removed.
 pub fn scrub_sensitive_env_vars() -> Vec<String> {
@@ -240,6 +277,16 @@ pub fn scrub_sensitive_env_vars() -> Vec<String> {
         if std::env::var(var).is_ok() {
             std::env::remove_var(var);
             removed.push(var.to_string());
+        }
+    }
+
+    // Remove socket/pipe env vars (SSH agent, GPG agent, D-Bus).
+    for var in SOCKET_ENV_VARS {
+        if std::env::var(var).is_ok() {
+            std::env::remove_var(var);
+            if !removed.contains(&var.to_string()) {
+                removed.push(var.to_string());
+            }
         }
     }
 
@@ -273,6 +320,14 @@ pub fn audit_env_exposure() -> Vec<String> {
         }
     }
 
+    for var in SOCKET_ENV_VARS {
+        if std::env::var(var).is_ok() {
+            if !exposed.contains(&var.to_string()) {
+                exposed.push(var.to_string());
+            }
+        }
+    }
+
     for i in 1..=30 {
         let token_key = format!("CF_ACCOUNT_{}_TOKEN", i);
         if std::env::var(&token_key).is_ok() {
@@ -281,6 +336,153 @@ pub fn audit_env_exposure() -> Vec<String> {
     }
 
     exposed
+}
+
+// ─── Credential Boundary Audit ─────────────────────────────────────────────
+
+/// Result of auditing the credential boundary before sandbox execution.
+///
+/// This captures what credential-bearing resources are still accessible
+/// to the process. The sandbox isolates computation but NOT the environment
+/// the process inherits — env vars, agent sockets, and mounted config
+/// directories all cross the boundary by default.
+#[derive(Clone, Debug)]
+pub struct CredentialBoundaryAudit {
+    /// Sensitive env vars still present (should have been scrubbed).
+    pub exposed_env_vars: Vec<String>,
+    /// Socket paths reachable from the process (SSH agent, GPG agent).
+    pub reachable_sockets: Vec<(String, String)>,
+    /// Config directories that exist and are readable (may contain keys).
+    pub accessible_config_dirs: Vec<String>,
+    /// Whether the audit passed (no credential leaks detected).
+    pub clean: bool,
+}
+
+impl CredentialBoundaryAudit {
+    /// Perform a full credential boundary audit.
+    ///
+    /// Checks:
+    /// 1. Sensitive env vars that should have been scrubbed
+    /// 2. Agent sockets (SSH_AUTH_SOCK, GPG_AGENT_INFO) still in env
+    /// 3. Config directories (~/.ssh, ~/.aws, ~/.config/gcloud) that are readable
+    ///
+    /// Call this BEFORE executing JIT-compiled code in the sandbox.
+    pub fn run() -> Self {
+        let exposed_env_vars = audit_env_exposure();
+
+        // Check for reachable agent sockets.
+        let mut reachable_sockets = Vec::new();
+        for var in SOCKET_ENV_VARS {
+            if let Ok(path) = std::env::var(var) {
+                if !path.is_empty() {
+                    // Check if the socket file actually exists and is accessible.
+                    if std::path::Path::new(&path).exists() {
+                        reachable_sockets.push((var.to_string(), path));
+                    }
+                }
+            }
+        }
+
+        // Check for accessible credential config directories.
+        let mut accessible_config_dirs = Vec::new();
+        let config_dirs = sensitive_config_paths();
+        for dir in config_dirs {
+            if dir.exists() && dir.is_dir() {
+                accessible_config_dirs.push(dir.display().to_string());
+            }
+        }
+
+        let clean = exposed_env_vars.is_empty()
+            && reachable_sockets.is_empty()
+            && accessible_config_dirs.is_empty();
+
+        Self {
+            exposed_env_vars,
+            reachable_sockets,
+            accessible_config_dirs,
+            clean,
+        }
+    }
+
+    /// Format a human-readable warning if the boundary is not clean.
+    pub fn warning_message(&self) -> Option<String> {
+        if self.clean {
+            return None;
+        }
+
+        let mut lines = Vec::new();
+        lines.push("Credential boundary audit detected potential leaks:".to_string());
+
+        if !self.exposed_env_vars.is_empty() {
+            lines.push(format!(
+                "  - {} sensitive env var(s) still present: {:?}",
+                self.exposed_env_vars.len(),
+                self.exposed_env_vars
+            ));
+        }
+
+        if !self.reachable_sockets.is_empty() {
+            lines.push(format!(
+                "  - {} agent socket(s) reachable: {:?}",
+                self.reachable_sockets.len(),
+                self.reachable_sockets
+            ));
+        }
+
+        if !self.accessible_config_dirs.is_empty() {
+            lines.push(format!(
+                "  - {} config dir(s) accessible: {:?}",
+                self.accessible_config_dirs.len(),
+                self.accessible_config_dirs
+            ));
+        }
+
+        lines.push("  JIT code in the sandbox may be able to exfiltrate credentials.".to_string());
+        Some(lines.join("\n"))
+    }
+}
+
+/// Return paths to sensitive config directories that may contain credentials.
+/// These directories, if readable, give sandbox code access to keys/certs.
+fn sensitive_config_paths() -> Vec<std::path::PathBuf> {
+    let mut paths = Vec::new();
+
+    if let Some(home) = home_dir() {
+        // SSH keys and config
+        paths.push(home.join(".ssh"));
+        // AWS credentials (~/.aws/credentials)
+        paths.push(home.join(".aws"));
+        // GCP service account keys
+        paths.push(home.join(".config").join("gcloud"));
+        // Azure credentials
+        paths.push(home.join(".azure"));
+        // Docker config (registry auth)
+        paths.push(home.join(".docker"));
+        // Kubernetes config (cluster credentials)
+        paths.push(home.join(".kube"));
+        // Terraform credentials
+        paths.push(home.join(".terraform.d"));
+        // npm/pip auth tokens
+        paths.push(home.join(".npmrc"));
+        paths.push(home.join(".pypirc"));
+        // Git credentials
+        paths.push(home.join(".git-credentials"));
+    }
+
+    paths
+}
+
+/// Get the user's home directory.
+fn home_dir() -> Option<std::path::PathBuf> {
+    // Check HOME env var first (works on Unix and some Windows setups).
+    if let Ok(home) = std::env::var("HOME") {
+        return Some(std::path::PathBuf::from(home));
+    }
+    // Windows fallback.
+    if let Ok(userprofile) = std::env::var("USERPROFILE") {
+        return Some(std::path::PathBuf::from(userprofile));
+    }
+    None
 }
 
 // ─── Tests ─────────────────────────────────────────────────────────────────
@@ -411,5 +613,60 @@ mod tests {
         scrub_sensitive_env_vars();
         let exposed = audit_env_exposure();
         assert!(!exposed.contains(&"VELOCITY_API_KEY".to_string()));
+    }
+
+    #[test]
+    fn scrub_removes_ssh_auth_sock() {
+        let _g = ENV_LOCK.lock().unwrap();
+        std::env::set_var("SSH_AUTH_SOCK", "/tmp/ssh-agent-sock");
+        let removed = scrub_sensitive_env_vars();
+        assert!(removed.contains(&"SSH_AUTH_SOCK".to_string()));
+        assert!(std::env::var("SSH_AUTH_SOCK").is_err());
+    }
+
+    #[test]
+    fn scrub_removes_aws_credentials() {
+        let _g = ENV_LOCK.lock().unwrap();
+        std::env::set_var("AWS_ACCESS_KEY_ID", "AKIAIOSF000000000000");
+        std::env::set_var("AWS_SECRET_ACCESS_KEY", "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY");
+        let removed = scrub_sensitive_env_vars();
+        assert!(removed.contains(&"AWS_ACCESS_KEY_ID".to_string()));
+        assert!(removed.contains(&"AWS_SECRET_ACCESS_KEY".to_string()));
+        assert!(std::env::var("AWS_ACCESS_KEY_ID").is_err());
+        assert!(std::env::var("AWS_SECRET_ACCESS_KEY").is_err());
+    }
+
+    #[test]
+    fn boundary_audit_detects_exposed_env() {
+        let _g = ENV_LOCK.lock().unwrap();
+        std::env::set_var("VELOCITY_API_KEY", "vr_leaked");
+        let audit = CredentialBoundaryAudit::run();
+        assert!(!audit.clean);
+        assert!(audit.exposed_env_vars.contains(&"VELOCITY_API_KEY".to_string()));
+        let warning = audit.warning_message();
+        assert!(warning.is_some());
+        assert!(warning.unwrap().contains("Credential boundary audit detected"));
+        std::env::remove_var("VELOCITY_API_KEY");
+    }
+
+    #[test]
+    fn boundary_audit_clean_after_scrub() {
+        let _g = ENV_LOCK.lock().unwrap();
+        std::env::set_var("VELOCITY_API_KEY", "vr_will_scrub");
+        scrub_sensitive_env_vars();
+        let audit = CredentialBoundaryAudit::run();
+        // After scrubbing, the env vars should be gone.
+        assert!(!audit.exposed_env_vars.contains(&"VELOCITY_API_KEY".to_string()));
+    }
+
+    #[test]
+    fn sensitive_config_paths_returns_home_relative() {
+        let paths = sensitive_config_paths();
+        // Should include .ssh, .aws, .docker at minimum (if home exists).
+        if home_dir().is_some() {
+            assert!(paths.iter().any(|p| p.ends_with(".ssh")));
+            assert!(paths.iter().any(|p| p.ends_with(".aws")));
+            assert!(paths.iter().any(|p| p.ends_with(".docker")));
+        }
     }
 }

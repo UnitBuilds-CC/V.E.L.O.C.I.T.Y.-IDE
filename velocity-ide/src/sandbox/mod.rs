@@ -29,6 +29,14 @@ impl NdaSandbox {
     pub fn run(nodes: &[NdaNode], conditioning_vec: &[f32], site_map: &SiteMap) -> SandboxResult {
         let t_start = Instant::now();
 
+        // Pre-execution credential boundary audit.
+        // The sandbox isolates computation but NOT the inherited environment.
+        // Log a warning if credentials are still accessible to JIT code.
+        let boundary = crate::credential_guard::CredentialBoundaryAudit::run();
+        if let Some(warning) = boundary.warning_message() {
+            log::warn!("{}", warning);
+        }
+
         let executed_nodes = 0;
         let matrix_count = 0;
         let norm_count = 0;
