@@ -443,6 +443,89 @@ pub fn validate_team_composition(team: &ExpertTeam) -> Vec<ValidationIssue> {
     issues
 }
 
+// ═══════════════════════════════════════════════════════════════════════════
+// Team Cloning
+// ═══════════════════════════════════════════════════════════════════════════
+
+impl ExpertTeam {
+    /// Create a deep copy of this team with a new name and regenerated ids.
+    /// The `is_preset` flag is set to `false` for the clone.
+    pub fn clone_with_name(&self, new_name: &str) -> ExpertTeam {
+        let new_slug = slugify(new_name);
+        let new_id = format!("team_{}", new_slug);
+        let members = self
+            .members
+            .iter()
+            .enumerate()
+            .map(|(i, m)| ExpertMember {
+                id: format!("member_{}_{}", new_slug, i + 1),
+                name: m.name.clone(),
+                role: m.role.clone(),
+                provider: m.provider.clone(),
+                model_id: m.model_id.clone(),
+                skills: m.skills.clone(),
+                scope_patterns: m.scope_patterns.clone(),
+                tools: m.tools.clone(),
+                workflow_instructions: m.workflow_instructions.clone(),
+            })
+            .collect();
+        ExpertTeam {
+            id: new_id,
+            name: new_name.to_string(),
+            description: self.description.clone(),
+            members,
+            is_preset: false,
+        }
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Import / Export
+// ═══════════════════════════════════════════════════════════════════════════
+
+/// Serialize a team to a JSON string for export.
+pub fn export_team_to_json(team: &ExpertTeam) -> Result<String, String> {
+    serde_json::to_string_pretty(team).map_err(|e| format!("failed to serialize team: {}", e))
+}
+
+/// Deserialize a team from a JSON string for import.
+/// Validates required fields and regenerates ids if necessary.
+pub fn import_team_from_json(json_str: &str) -> Result<ExpertTeam, String> {
+    let mut team: ExpertTeam =
+        serde_json::from_str(json_str).map_err(|e| format!("invalid team JSON: {}", e))?;
+
+    // Validate the imported team
+    if team.name.trim().is_empty() {
+        return Err("team name is required".to_string());
+    }
+    if team.members.is_empty() {
+        return Err("team must have at least one member".to_string());
+    }
+
+    // Regenerate team id from name
+    let slug = slugify(&team.name);
+    if slug.is_empty() {
+        return Err("team name must contain alphanumeric characters".to_string());
+    }
+    team.id = format!("team_{}", slug);
+    team.is_preset = false;
+
+    // Regenerate member ids if they're empty
+    for (i, member) in team.members.iter_mut().enumerate() {
+        if member.id.trim().is_empty() {
+            member.id = format!("member_{}_{}", slug, i + 1);
+        }
+        if member.name.trim().is_empty() {
+            return Err(format!("member {} has an empty name", i + 1));
+        }
+        if member.role.trim().is_empty() {
+            return Err(format!("member {} has an empty role", i + 1));
+        }
+    }
+
+    Ok(team)
+}
+
 /// Factory for 3 default common expert teams
 pub fn default_preset_teams() -> Vec<ExpertTeam> {
     vec![

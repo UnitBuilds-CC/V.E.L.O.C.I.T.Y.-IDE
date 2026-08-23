@@ -538,3 +538,172 @@ fn member_update_apply_tracks_changed_fields() {
     assert_eq!(member.role, "Original Role");
     assert_eq!(member.scope_patterns, vec!["src/"]);
 }
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Batch 2: Clone / Import / Export Tests
+// ═══════════════════════════════════════════════════════════════════════════
+
+#[test]
+fn clone_expert_team_creates_editable_copy() {
+    let (_temp, root) = setup_root();
+    // Clone a preset team
+    let output = call_tool_in_workspace(
+        &root,
+        "clone_expert_team",
+        &json!({
+            "team_id": "c-software-team",
+            "new_name": "My C# Team"
+        }),
+    )
+    .unwrap();
+
+    assert!(output.contains("Cloned team"));
+    assert!(output.contains("My C# Team"));
+    assert!(output.contains("my-c-team"));
+
+    let canon = root.canonicalize().unwrap();
+    let teams = load_expert_teams(&canon);
+    let cloned = teams
+        .iter()
+        .find(|t| t.slug() == "my-c-team")
+        .expect("cloned team persisted");
+    assert!(!cloned.is_preset, "clone should not be preset");
+    assert_eq!(cloned.members.len(), 4, "all members copied");
+    assert_eq!(cloned.members[0].name, "Lead C# Architect");
+}
+
+#[test]
+fn clone_expert_team_rejects_duplicate_slug() {
+    let (_temp, root) = setup_root();
+    create_test_team(&root);
+
+    // Try to clone with the same name (same slug)
+    let result = call_tool_in_workspace(
+        &root,
+        "clone_expert_team",
+        &json!({
+            "team_id": "test-team",
+            "new_name": "Test Team"
+        }),
+    );
+    assert!(result.is_err(), "should reject duplicate slug");
+    assert!(result.unwrap_err().to_string().contains("already exists"));
+}
+
+#[test]
+fn export_and_import_team_roundtrip() {
+    let (_temp, root) = setup_root();
+    create_test_team(&root);
+
+    // Export the team
+    let export_output = call_tool_in_workspace(
+        &root,
+        "export_expert_team",
+        &json!({ "team_id": "test-team" }),
+    )
+    .unwrap();
+
+    assert!(export_output.contains("Exported team"));
+    assert!(export_output.contains("Test Team"));
+
+    // Extract the JSON portion (after the first newline)
+    let json_start = export_output.find('\n').unwrap() + 1;
+    let json_str = &export_output[json_start..];
+
+    // Delete the original team by creating a fresh workspace
+    let (_temp2, root2) = setup_root();
+
+    // Import into the fresh workspace
+    let import_output = call_tool_in_workspace(
+        &root2,
+        "import_expert_team",
+        &json!({ "json": json_str }),
+    )
+    .unwrap();
+
+    assert!(import_output.contains("Imported team"));
+    assert!(import_output.contains("Test Team"));
+
+    let canon2 = root2.canonicalize().unwrap();
+    let teams = load_expert_teams(&canon2);
+    let imported = teams
+        .iter()
+        .find(|t| t.slug() == "test-team")
+        .expect("imported team persisted");
+    assert_eq!(imported.name, "Test Team");
+    assert_eq!(imported.members.len(), 2);
+    assert_eq!(imported.members[0].name, "Lead Dev");
+}
+
+#[test]
+fn import_expert_team_replaces_matching_slug() {
+    let (_temp, root) = setup_root();
+    create_test_team(&root);
+
+    // Create a JSON team with the same slug but different content
+    let json = r#"{
+        "id": "team_test-team",
+        "name": "Test Team",
+        "description": "Updated via import",
+        "is_preset": false,
+        "members": [
+            {
+                "id": "member_test_team_1",
+                "name": "Solo Dev",
+                "role": "Everything",
+                "provider": "CloudflareWorkersAi",
+                "model_id": "",
+                "skills": [],
+                "scope_patterns": ["src/"],
+                "tools": [],
+                "workflow_instructions": ""
+            }
+        ]
+    }"#;
+
+    let output = call_tool_in_workspace(
+        &root,
+        "import_expert_team",
+        &json!({ "json": json }),
+    )
+    .unwrap();
+
+    assert!(output.contains("Replaced team"));
+
+    let canon = root.canonicalize().unwrap();
+    let teams = load_expert_teams(&canon);
+    let team = teams.iter().find(|t| t.slug() == "test-team").unwrap();
+    assert_eq!(team.members.len(), 1, "replaced with imported version");
+    assert_eq!(team.members[0].name, "Solo Dev");
+}
+
+#[test]
+fn clone_with_name_unit() {
+    let team = ExpertTeam::new(
+        "team_original",
+        "Original Team",
+        "Original description",
+        vec![ExpertMember::new(
+            "member_orig_1",
+            "Original Member",
+            "Original Role",
+            crate::agent::AiProvider::OpenRouter,
+            "anthropic/claude-3.5-sonnet",
+            vec!["skill1"],
+            vec!["src/"],
+            "original instructions",
+        )],
+        true,
+    );
+
+    let cloned = team.clone_with_name("Cloned Team");
+    assert_eq!(cloned.name, "Cloned Team");
+    assert_eq!(cloned.id, "team_cloned-team");
+    assert_eq!(cloned.slug(), "cloned-team");
+    assert!(!cloned.is_preset, "clone should not be preset");
+    assert_eq!(cloned.members.len(), 1);
+    assert_eq!(cloned.members[0].id, "member_cloned-team_1");
+    assert_eq!(cloned.members[0].name, "Original Member");
+    assert_eq!(cloned.members[0].role, "Original Role");
+    assert_eq!(cloned.description, "Original description");
+}

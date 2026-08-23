@@ -158,5 +158,40 @@ pub fn get_team_tools() -> Vec<Tool> {
                 "required": ["team_id"]
             }),
         },
+        // ── Clone / Import / Export Tools ────────────────────────────────
+        Tool {
+            name: "clone_expert_team".to_string(),
+            description: "Clone an existing expert team (including preset teams) with a new name. All member configurations are preserved. The clone is a non-preset team that can be edited. Use this to customize a preset team.".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "team_id": { "type": "string", "description": "Team id, slug, or name to clone." },
+                    "new_name": { "type": "string", "description": "Name for the cloned team. Must produce a unique slug." }
+                },
+                "required": ["team_id", "new_name"]
+            }),
+        },
+        Tool {
+            name: "export_expert_team".to_string(),
+            description: "Export an expert team to JSON format for sharing, backup, or version control. The JSON can be re-imported with import_expert_team.".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "team_id": { "type": "string", "description": "Team id, slug, or name to export." }
+                },
+                "required": ["team_id"]
+            }),
+        },
+        Tool {
+            name: "import_expert_team".to_string(),
+            description: "Import an expert team from JSON format (as produced by export_expert_team). If a team with the same slug exists, it is replaced; otherwise the team is appended. Member ids are regenerated if empty.".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "json": { "type": "string", "description": "The JSON string representing the team to import." }
+                },
+                "required": ["json"]
+            }),
+        },
     ]
 }

@@ -4,8 +4,9 @@ use std::path::Path;
 
 use crate::agent::AiProvider;
 use crate::editor::expert_team::{
-    detect_scope_overlaps, load_expert_teams, save_expert_teams, slugify, validate_team_composition,
-    ExpertMember, ExpertTeam, MemberUpdate, ValidationSeverity,
+    detect_scope_overlaps, export_team_to_json, import_team_from_json, load_expert_teams,
+    save_expert_teams, slugify, validate_team_composition, ExpertMember, ExpertTeam, MemberUpdate,
+    ValidationSeverity,
 };
 use crate::editor::skill_file::{list_skill_files, save_skill_file, SkillFile};
 
@@ -88,6 +89,9 @@ pub fn handle_team_tool(
         "remove_team_member" => remove_team_member(root, arguments)?,
         "validate_team" => validate_team(root, arguments)?,
         "check_scope_overlaps" => check_scope_overlaps(root, arguments)?,
+        "clone_expert_team" => clone_expert_team(root, arguments)?,
+        "export_expert_team" => export_expert_team(root, arguments)?,
+        "import_expert_team" => import_expert_team(root, arguments)?,
         _ => return Ok(None),
     };
     Ok(Some(result))
@@ -561,4 +565,123 @@ fn check_scope_overlaps(root: &Path, arguments: &Value) -> Result<String, Box<dy
             serde_json::to_string_pretty(&summary)?
         ))
     }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Clone / Import / Export Tools
+// ═══════════════════════════════════════════════════════════════════════════
+
+/// Clone an existing team (including preset teams) with a new name.
+fn clone_expert_team(root: &Path, arguments: &Value) -> Result<String, Box<dyn Error>> {
+    let team_ref = arguments["team_id"]
+        .as_str()
+        .or_else(|| arguments["team"].as_str())
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .ok_or("'team_id' is required")?;
+
+    let new_name = arguments["new_name"]
+        .as_str()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .ok_or("'new_name' is required")?;
+
+    let teams = load_expert_teams(root);
+    let lower = team_ref.to_lowercase();
+    let slug = slugify(team_ref);
+    let source = teams
+        .iter()
+        .find(|t| t.id.to_lowercase() == lower || t.slug() == slug || t.name.to_lowercase() == lower)
+        .ok_or_else(|| format!("team '{}' not found", team_ref))?;
+
+    let source_name = source.name.clone();
+    let cloned = source.clone_with_name(new_name);
+    let member_count = cloned.members.len();
+    let cloned_id = cloned.id.clone();
+
+    // Check for slug collision
+    let new_slug = cloned.slug();
+    if teams.iter().any(|t| t.slug() == new_slug) {
+        return Err(format!(
+            "a team with slug '{}' already exists; choose a different name",
+            new_slug
+        )
+        .into());
+    }
+
+    let mut teams = teams;
+    teams.push(cloned);
+    if !save_expert_teams(root, &teams) {
+        return Err("failed to persist expert_teams.nda".into());
+    }
+
+    Ok(format!(
+        "Cloned team \"{}\" as \"{}\" (id: {}, slug: {}) with {} member(s). Edit the clone with @{}.",
+        source_name, new_name, cloned_id, new_slug, member_count, new_slug
+    ))
+}
+
+/// Export a team to JSON format for sharing or backup.
+fn export_expert_team(root: &Path, arguments: &Value) -> Result<String, Box<dyn Error>> {
+    let team_ref = arguments["team_id"]
+        .as_str()
+        .or_else(|| arguments["team"].as_str())
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .ok_or("'team_id' is required")?;
+
+    let teams = load_expert_teams(root);
+    let lower = team_ref.to_lowercase();
+    let slug = slugify(team_ref);
+    let team = teams
+        .iter()
+        .find(|t| t.id.to_lowercase() == lower || t.slug() == slug || t.name.to_lowercase() == lower)
+        .ok_or_else(|| format!("team '{}' not found", team_ref))?;
+
+    let json = export_team_to_json(team)?;
+    Ok(format!(
+        "Exported team \"{}\" ({} member(s)):\n{}",
+        team.name,
+        team.members.len(),
+        json
+    ))
+}
+
+/// Import a team from JSON format.
+fn import_expert_team(root: &Path, arguments: &Value) -> Result<String, Box<dyn Error>> {
+    let json_str = arguments["json"]
+        .as_str()
+        .or_else(|| arguments["data"].as_str())
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .ok_or("'json' is required")?;
+
+    let imported = import_team_from_json(json_str)?;
+    let member_count = imported.members.len();
+    let team_name = imported.name.clone();
+    let team_slug = imported.slug();
+
+    // Merge: replace if slug matches, otherwise append
+    let mut teams = load_expert_teams(root);
+    let replaced = if let Some(existing) = teams.iter_mut().find(|t| t.slug() == team_slug) {
+        *existing = imported;
+        true
+    } else {
+        teams.push(imported);
+        false
+    };
+
+    if !save_expert_teams(root, &teams) {
+        return Err("failed to persist expert_teams.nda".into());
+    }
+
+    Ok(format!(
+        "{} team \"{}\" (id: team_{}, slug: {}) with {} member(s). Address it with @{}.",
+        if replaced { "Replaced" } else { "Imported" },
+        team_name,
+        team_slug,
+        team_slug,
+        member_count,
+        team_slug
+    ))
 }
