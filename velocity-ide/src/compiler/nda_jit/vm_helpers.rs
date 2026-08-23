@@ -1,3 +1,4 @@
+use serde::Serialize;
 use std::sync::Arc;
 
 use crate::nda_int::{nda_vec_add_inplace, NdaVec};
@@ -377,5 +378,394 @@ pub fn apply_vec_op(op: VecOpKind, val: &JitVal) -> JitVal {
                 JitVal::Vector(Arc::new(NdaVec::from_f32_slice(&result)))
             }
         },
+    }
+}
+
+/// Diagnostic info about a JitVal without requiring full NdaVec expansion.
+#[derive(Debug, Clone, Serialize)]
+pub struct JitValInfo {
+    pub val_type: String,
+    pub is_vector: bool,
+    pub is_scalar: bool,
+    pub is_float: bool,
+    pub vector_len: Option<usize>,
+    pub vector_log2_scale: Option<i8>,
+    pub vector_bytes: Option<usize>,
+    pub scalar_value: Option<i32>,
+    pub scalar_scale: Option<i8>,
+    pub float_value: Option<f32>,
+    pub validation_issues: Vec<String>,
+}
+
+/// Inspect a JitVal and return diagnostic info.
+pub fn jit_val_info(val: &JitVal) -> JitValInfo {
+    let mut issues = Vec::new();
+    match val {
+        JitVal::Vector(v) => {
+            let bytes = v.sign.len() + v.extra.len();
+            if v.len == 0 {
+                issues.push("vector length is 0".into());
+            }
+            if v.sign.is_empty() {
+                issues.push("vector sign buffer is empty".into());
+            }
+            let expected_bytes = v.len.div_ceil(8);
+            if v.sign.len() != expected_bytes {
+                issues.push(format!(
+                    "sign buffer len {} != expected {} for vec len {}",
+                    v.sign.len(), expected_bytes, v.len
+                ));
+            }
+            JitValInfo {
+                val_type: "vector".into(),
+                is_vector: true,
+                is_scalar: false,
+                is_float: false,
+                vector_len: Some(v.len),
+                vector_log2_scale: Some(v.log2_scale),
+                vector_bytes: Some(bytes),
+                scalar_value: None,
+                scalar_scale: None,
+                float_value: None,
+                validation_issues: issues,
+            }
+        }
+        JitVal::Scalar(v, s) => {
+            // Ternary values should be -2, -1, 1, or 2
+            if ![-2, -1, 1, 2].contains(v) {
+                issues.push(format!("scalar value {} outside ternary range [-2,-1,1,2]", v));
+            }
+            JitValInfo {
+                val_type: format!("scalar({}, scale={})", v, s),
+                is_vector: false,
+                is_scalar: true,
+                is_float: false,
+                vector_len: None,
+                vector_log2_scale: None,
+                vector_bytes: None,
+                scalar_value: Some(*v),
+                scalar_scale: Some(*s),
+                float_value: None,
+                validation_issues: issues,
+            }
+        }
+        JitVal::Float(v) => {
+            let issues = if v.is_nan() {
+                vec!["float value is NaN".into()]
+            } else if v.is_infinite() {
+                vec!["float value is infinite".into()]
+            } else {
+                vec![]
+            };
+            JitValInfo {
+                val_type: format!("float({})", v),
+                is_vector: false,
+                is_scalar: false,
+                is_float: true,
+                vector_len: None,
+                vector_log2_scale: None,
+                vector_bytes: None,
+                scalar_value: None,
+                scalar_scale: None,
+                float_value: Some(*v),
+                validation_issues: issues,
+            }
+        }
+    }
+}
+
+/// Validate broadcast parameters.
+pub fn validate_broadcast_params(len: usize, val: i32) -> Vec<String> {
+    let mut issues = Vec::new();
+    if len == 0 {
+        issues.push("broadcast length is 0".into());
+    }
+    if ![-2, -1, 0, 1, 2].contains(&val) && val != 0 {
+        // Non-ternary values are only valid for float broadcast
+        // (they come from NdaVec encoding, so we allow them)
+    }
+    issues
+}
+
+/// Validate parameters for a vector operation.
+pub fn validate_vec_op(op: VecOpKind, val: &JitVal) -> Vec<String> {
+    let mut issues = Vec::new();
+    if let JitVal::Vector(v) = val {
+        if v.len == 0 {
+            issues.push(format!("{:?} on zero-length vector", op));
+        }
+        if v.sign.len() != v.extra.len() {
+            issues.push(format!(
+                "{:?} sign/extra length mismatch: {} vs {}",
+                op, v.sign.len(), v.extra.len()
+            ));
+        }
+    }
+    issues
+}
+
+/// Classify the result type of an add_vals operation.
+pub fn classify_add_result(lhs: &JitVal, rhs: &JitVal) -> &'static str {
+    match (lhs, rhs) {
+        (JitVal::Float(_), JitVal::Float(_)) => "float",
+        (JitVal::Float(_), JitVal::Scalar(_, _)) | (JitVal::Scalar(_, _), JitVal::Float(_)) => {
+            "float"
+        }
+        (JitVal::Scalar(_, _), JitVal::Scalar(_, _)) => "scalar",
+        (JitVal::Vector(_), _) | (_, JitVal::Vector(_)) => "vector",
+        _ => "vector",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn jit_val_info_float() {
+        let val = JitVal::Float(3.14);
+        let info = jit_val_info(&val);
+        assert!(info.is_float);
+        assert!(!info.is_vector);
+        assert!(!info.is_scalar);
+        assert_eq!(info.val_type, "float(3.14)");
+        assert!(info.validation_issues.is_empty());
+    }
+
+    #[test]
+    fn jit_val_info_float_nan() {
+        let val = JitVal::Float(f32::NAN);
+        let info = jit_val_info(&val);
+        assert!(info.is_float);
+        assert!(info.validation_issues.iter().any(|i| i.contains("NaN")));
+    }
+
+    #[test]
+    fn jit_val_info_float_infinite() {
+        let val = JitVal::Float(f32::INFINITY);
+        let info = jit_val_info(&val);
+        assert!(info.validation_issues.iter().any(|i| i.contains("infinite")));
+    }
+
+    #[test]
+    fn jit_val_info_scalar_valid() {
+        let val = JitVal::Scalar(1, 0);
+        let info = jit_val_info(&val);
+        assert!(info.is_scalar);
+        assert_eq!(info.scalar_value, Some(1));
+        assert_eq!(info.scalar_scale, Some(0));
+        assert!(info.validation_issues.is_empty());
+    }
+
+    #[test]
+    fn jit_val_info_scalar_out_of_range() {
+        let val = JitVal::Scalar(5, 0);
+        let info = jit_val_info(&val);
+        assert!(info.validation_issues.iter().any(|i| i.contains("ternary")));
+    }
+
+    #[test]
+    fn jit_val_info_vector() {
+        let v = NdaVec {
+            len: 16,
+            log2_scale: 0,
+            sign: vec![0xFF, 0xAA].into(),
+            extra: vec![0x00, 0x55].into(),
+        };
+        let val = JitVal::Vector(Arc::new(v));
+        let info = jit_val_info(&val);
+        assert!(info.is_vector);
+        assert_eq!(info.vector_len, Some(16));
+        assert_eq!(info.vector_bytes, Some(4)); // 2 + 2
+        assert!(info.validation_issues.is_empty());
+    }
+
+    #[test]
+    fn jit_val_info_vector_zero_len() {
+        let v = NdaVec {
+            len: 0,
+            log2_scale: 0,
+            sign: vec![].into(),
+            extra: vec![].into(),
+        };
+        let val = JitVal::Vector(Arc::new(v));
+        let info = jit_val_info(&val);
+        assert!(info.validation_issues.iter().any(|i| i.contains("length is 0")));
+    }
+
+    #[test]
+    fn jit_val_info_serializes() {
+        let val = JitVal::Float(1.0);
+        let info = jit_val_info(&val);
+        let json = serde_json::to_string(&info).unwrap();
+        assert!(json.contains("\"is_float\":true"));
+        assert!(json.contains("\"val_type\""));
+    }
+
+    #[test]
+    fn validate_broadcast_params_zero_len() {
+        let issues = validate_broadcast_params(0, 1);
+        assert!(issues.iter().any(|i| i.contains("0")));
+    }
+
+    #[test]
+    fn validate_broadcast_params_valid() {
+        let issues = validate_broadcast_params(64, 1);
+        assert!(issues.is_empty());
+    }
+
+    #[test]
+    fn validate_vec_op_valid() {
+        let v = NdaVec {
+            len: 8,
+            log2_scale: 0,
+            sign: vec![0xFF].into(),
+            extra: vec![0x00].into(),
+        };
+        let val = JitVal::Vector(Arc::new(v));
+        let issues = validate_vec_op(VecOpKind::Negate, &val);
+        assert!(issues.is_empty());
+    }
+
+    #[test]
+    fn validate_vec_op_zero_length() {
+        let v = NdaVec {
+            len: 0,
+            log2_scale: 0,
+            sign: vec![].into(),
+            extra: vec![].into(),
+        };
+        let val = JitVal::Vector(Arc::new(v));
+        let issues = validate_vec_op(VecOpKind::Abs, &val);
+        assert!(issues.iter().any(|i| i.contains("zero-length")));
+    }
+
+    #[test]
+    fn validate_vec_op_sign_extra_mismatch() {
+        let v = NdaVec {
+            len: 8,
+            log2_scale: 0,
+            sign: vec![0xFF, 0xAA].into(),
+            extra: vec![0x00].into(),
+        };
+        let val = JitVal::Vector(Arc::new(v));
+        let issues = validate_vec_op(VecOpKind::Negate, &val);
+        assert!(issues.iter().any(|i| i.contains("mismatch")));
+    }
+
+    #[test]
+    fn classify_add_result_float_float() {
+        assert_eq!(
+            classify_add_result(&JitVal::Float(1.0), &JitVal::Float(2.0)),
+            "float"
+        );
+    }
+
+    #[test]
+    fn classify_add_result_scalar_scalar() {
+        assert_eq!(
+            classify_add_result(&JitVal::Scalar(1, 0), &JitVal::Scalar(2, 0)),
+            "scalar"
+        );
+    }
+
+    #[test]
+    fn classify_add_result_vector_scalar() {
+        let v = NdaVec {
+            len: 8,
+            log2_scale: 0,
+            sign: vec![0xFF].into(),
+            extra: vec![0x00].into(),
+        };
+        assert_eq!(
+            classify_add_result(&JitVal::Vector(Arc::new(v)), &JitVal::Scalar(1, 0)),
+            "vector"
+        );
+    }
+
+    #[test]
+    fn broadcast_scalar_produces_valid_vec() {
+        let v = broadcast_scalar(16, 1, 0);
+        assert_eq!(v.len, 16);
+        assert_eq!(v.sign.len(), 2);
+        assert_eq!(v.extra.len(), 2);
+        // val=1 -> sign=0xFF, extra=0x00
+        assert_eq!(v.sign[0], 0xFF);
+        assert_eq!(v.extra[0], 0x00);
+    }
+
+    #[test]
+    fn broadcast_scalar_negative() {
+        let v = broadcast_scalar(8, -1, 0);
+        assert_eq!(v.len, 8);
+        // val=-1 -> sign=0x00, extra=0xFF
+        assert_eq!(v.sign[0], 0x00);
+        assert_eq!(v.extra[0], 0xFF);
+    }
+
+    #[test]
+    fn apply_vec_op_negate_float() {
+        let val = JitVal::Float(3.0);
+        let result = apply_vec_op(VecOpKind::Negate, &val);
+        match result {
+            JitVal::Float(v) => assert!((v - (-3.0)).abs() < 1e-6),
+            _ => panic!("expected Float"),
+        }
+    }
+
+    #[test]
+    fn apply_vec_op_abs_float() {
+        let val = JitVal::Float(-5.0);
+        let result = apply_vec_op(VecOpKind::Abs, &val);
+        match result {
+            JitVal::Float(v) => assert!((v - 5.0).abs() < 1e-6),
+            _ => panic!("expected Float"),
+        }
+    }
+
+    #[test]
+    fn apply_vec_op_silu_float() {
+        let val = JitVal::Float(0.0);
+        let result = apply_vec_op(VecOpKind::SiLU, &val);
+        match result {
+            JitVal::Float(v) => assert!((v - 0.0).abs() < 1e-6), // silu(0) = 0
+            _ => panic!("expected Float"),
+        }
+    }
+
+    #[test]
+    fn add_vals_float_float() {
+        let result = add_vals(&JitVal::Float(1.5), &JitVal::Float(2.5));
+        match result {
+            JitVal::Float(v) => assert!((v - 4.0).abs() < 1e-6),
+            _ => panic!("expected Float"),
+        }
+    }
+
+    #[test]
+    fn compare_vals_float_eq() {
+        let result = compare_vals(CmpOp::Eq, &JitVal::Float(1.0), &JitVal::Float(1.0));
+        match result {
+            JitVal::Scalar(v, _) => assert_eq!(v, 1),
+            _ => panic!("expected Scalar"),
+        }
+    }
+
+    #[test]
+    fn compare_vals_float_ne() {
+        let result = compare_vals(CmpOp::Ne, &JitVal::Float(1.0), &JitVal::Float(2.0));
+        match result {
+            JitVal::Scalar(v, _) => assert_eq!(v, 1),
+            _ => panic!("expected Scalar"),
+        }
+    }
+
+    #[test]
+    fn compare_vals_float_lt() {
+        let result = compare_vals(CmpOp::Lt, &JitVal::Float(1.0), &JitVal::Float(2.0));
+        match result {
+            JitVal::Scalar(v, _) => assert_eq!(v, 1),
+            _ => panic!("expected Scalar"),
+        }
     }
 }
