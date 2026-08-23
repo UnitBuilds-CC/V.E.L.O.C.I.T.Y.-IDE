@@ -68,7 +68,70 @@ impl Provider {
 
     /// Whether this provider exposes a usage/billing API we can query.
     pub fn has_usage_api(&self) -> bool {
-        matches!(self, Provider::Openai | Provider::Anthropic)
+        matches!(self, Provider::Openai | Provider::Anthropic | Provider::Google | Provider::Mistral)
+    }
+
+    /// Default API base URL for this provider.
+    pub fn api_base_url(&self) -> &str {
+        match self {
+            Provider::Openai => "https://api.openai.com",
+            Provider::Anthropic => "https://api.anthropic.com",
+            Provider::Google => "https://generativelanguage.googleapis.com",
+            Provider::Mistral => "https://api.mistral.ai",
+            Provider::Cohere => "https://api.cohere.ai",
+            Provider::Xai => "https://api.x.ai",
+            Provider::Github => "https://api.github.com",
+        }
+    }
+
+    /// Environment variable name for this provider's API key.
+    pub fn api_key_env_var(&self) -> &str {
+        match self {
+            Provider::Openai => "OPENAI_API_KEY",
+            Provider::Anthropic => "ANTHROPIC_API_KEY",
+            Provider::Google => "GOOGLE_AI_API_KEY",
+            Provider::Mistral => "MISTRAL_API_KEY",
+            Provider::Cohere => "COHERE_API_KEY",
+            Provider::Xai => "XAI_API_KEY",
+            Provider::Github => "GITHUB_TOKEN",
+        }
+    }
+
+    /// Known models and their per-token pricing (input/output USD per 1M tokens).
+    pub fn model_pricing(&self) -> Vec<(&'static str, f64, f64)> {
+        match self {
+            Provider::Openai => vec![
+                ("gpt-4o", 2.50, 10.00),
+                ("gpt-4o-mini", 0.15, 0.60),
+                ("gpt-4-turbo", 10.00, 30.00),
+                ("o3-mini", 1.10, 4.40),
+            ],
+            Provider::Anthropic => vec![
+                ("claude-sonnet-4-20250514", 3.00, 15.00),
+                ("claude-3-5-sonnet-20241022", 3.00, 15.00),
+                ("claude-3-haiku-20240307", 0.25, 1.25),
+                ("claude-3-opus-20240229", 15.00, 75.00),
+            ],
+            Provider::Google => vec![
+                ("gemini-2.0-flash", 0.075, 0.30),
+                ("gemini-1.5-pro", 1.25, 5.00),
+                ("gemini-1.5-flash", 0.075, 0.30),
+            ],
+            Provider::Mistral => vec![
+                ("mistral-large-latest", 2.00, 6.00),
+                ("mistral-small-latest", 0.10, 0.30),
+                ("codestral-latest", 0.30, 0.90),
+            ],
+            Provider::Cohere => vec![
+                ("command-r-plus", 2.50, 10.00),
+                ("command-r", 0.15, 0.60),
+            ],
+            Provider::Xai => vec![
+                ("grok-3", 3.00, 15.00),
+                ("grok-3-mini", 0.30, 0.50),
+            ],
+            Provider::Github => vec![], // Copilot is subscription-based.
+        }
     }
 }
 
@@ -274,6 +337,8 @@ pub fn query_all_providers(creds: &[ProviderCredential]) -> UsageSnapshot {
         let usage = match prov.as_ref() {
             Some(Provider::Openai) => query_openai(&agent, cred),
             Some(Provider::Anthropic) => query_anthropic(&agent, cred),
+            Some(Provider::Google) => query_google(&agent, cred),
+            Some(Provider::Mistral) => query_mistral(&agent, cred),
             _ => query_generic_key_check(&agent, cred),
         };
 
@@ -433,6 +498,153 @@ fn query_anthropic(agent: &ureq::Agent, cred: &ProviderCredential) -> ProviderRe
             };
             ProviderResult {
                 key_valid: valid,
+                tokens_used: 0,
+                cost_usd: 0.0,
+                request_count: 0,
+                period_start: None,
+                period_end: None,
+                status,
+                models: Vec::new(),
+            }
+        }
+    }
+}
+
+/// Query Google AI usage via model listing and generation stats.
+///
+/// Google's Generative Language API doesn't expose billing directly,
+/// but we can verify the key and list available models.
+fn query_google(agent: &ureq::Agent, cred: &ProviderCredential) -> ProviderResult {
+    let base = cred.base_url.as_deref()
+        .unwrap_or("https://generativelanguage.googleapis.com");
+    let url = format!("{}/v1beta/models?key={}", base.trim_end_matches('/'), cred.api_key);
+
+    match agent.get(&url).call() {
+        Ok(resp) => {
+            match resp.into_json::<serde_json::Value>() {
+                Ok(json) => {
+                    let models = json.get("models")
+                        .and_then(|v| v.as_array())
+                        .map(|arr| {
+                            arr.iter()
+                                .filter_map(|m| {
+                                    let name = m.get("name")?.as_str()?;
+                                    Some(ModelUsage {
+                                        model: name.trim_start_matches("models/").to_string(),
+                                        tokens: 0,
+                                        cost_usd: 0.0,
+                                        requests: 0,
+                                    })
+                                })
+                                .collect::<Vec<_>>()
+                        })
+                        .unwrap_or_default();
+
+                    ProviderResult {
+                        key_valid: true,
+                        tokens_used: 0,
+                        cost_usd: 0.0,
+                        request_count: 0,
+                        period_start: None,
+                        period_end: None,
+                        status: format!("key valid ({} models available)", models.len()),
+                        models,
+                    }
+                }
+                Err(e) => ProviderResult {
+                    key_valid: true,
+                    tokens_used: 0,
+                    cost_usd: 0.0,
+                    request_count: 0,
+                    period_start: None,
+                    period_end: None,
+                    status: format!("key valid, parse error: {}", e),
+                    models: Vec::new(),
+                },
+            }
+        }
+        Err(e) => {
+            let status = match &e {
+                ureq::Error::Status(400, _) | ureq::Error::Status(403, _) => "invalid API key".to_string(),
+                ureq::Error::Status(code, _) => format!("HTTP {}", code),
+                _ => format!("request failed: {}", e),
+            };
+            ProviderResult {
+                key_valid: false,
+                tokens_used: 0,
+                cost_usd: 0.0,
+                request_count: 0,
+                period_start: None,
+                period_end: None,
+                status,
+                models: Vec::new(),
+            }
+        }
+    }
+}
+
+/// Query Mistral usage via their usage API.
+///
+/// Mistral exposes a usage endpoint at /v1/usage.
+fn query_mistral(agent: &ureq::Agent, cred: &ProviderCredential) -> ProviderResult {
+    let base = cred.base_url.as_deref().unwrap_or("https://api.mistral.ai");
+    let url = format!("{}/v1/models", base.trim_end_matches('/'));
+
+    match agent.get(&url)
+        .set("Authorization", &format!("Bearer {}", cred.api_key))
+        .call()
+    {
+        Ok(resp) => {
+            match resp.into_json::<serde_json::Value>() {
+                Ok(json) => {
+                    let models = json.get("data")
+                        .and_then(|v| v.as_array())
+                        .map(|arr| {
+                            arr.iter()
+                                .filter_map(|m| {
+                                    let id = m.get("id")?.as_str()?;
+                                    Some(ModelUsage {
+                                        model: id.to_string(),
+                                        tokens: 0,
+                                        cost_usd: 0.0,
+                                        requests: 0,
+                                    })
+                                })
+                                .collect::<Vec<_>>()
+                        })
+                        .unwrap_or_default();
+
+                    ProviderResult {
+                        key_valid: true,
+                        tokens_used: 0,
+                        cost_usd: 0.0,
+                        request_count: 0,
+                        period_start: None,
+                        period_end: None,
+                        status: format!("key valid ({} models available)", models.len()),
+                        models,
+                    }
+                }
+                Err(e) => ProviderResult {
+                    key_valid: true,
+                    tokens_used: 0,
+                    cost_usd: 0.0,
+                    request_count: 0,
+                    period_start: None,
+                    period_end: None,
+                    status: format!("key valid, parse error: {}", e),
+                    models: Vec::new(),
+                },
+            }
+        }
+        Err(e) => {
+            let status = match &e {
+                ureq::Error::Status(401, _) => "invalid API key (401)".to_string(),
+                ureq::Error::Status(code, _) => format!("HTTP {}", code),
+                _ => format!("request failed: {}", e),
+            };
+            ProviderResult {
+                key_valid: false,
                 tokens_used: 0,
                 cost_usd: 0.0,
                 request_count: 0,
@@ -659,8 +871,39 @@ mod tests {
     fn has_usage_api() {
         assert!(Provider::Openai.has_usage_api());
         assert!(Provider::Anthropic.has_usage_api());
-        assert!(!Provider::Google.has_usage_api());
-        assert!(!Provider::Mistral.has_usage_api());
+        assert!(Provider::Google.has_usage_api());
+        assert!(Provider::Mistral.has_usage_api());
+        assert!(!Provider::Cohere.has_usage_api());
+        assert!(!Provider::Xai.has_usage_api());
+        assert!(!Provider::Github.has_usage_api());
+    }
+
+    #[test]
+    fn api_base_url_returns_urls() {
+        assert_eq!(Provider::Openai.api_base_url(), "https://api.openai.com");
+        assert_eq!(Provider::Anthropic.api_base_url(), "https://api.anthropic.com");
+        assert_eq!(Provider::Google.api_base_url(), "https://generativelanguage.googleapis.com");
+        assert!(Provider::Mistral.api_base_url().starts_with("https://"));
+    }
+
+    #[test]
+    fn api_key_env_var_matches() {
+        assert_eq!(Provider::Openai.api_key_env_var(), "OPENAI_API_KEY");
+        assert_eq!(Provider::Anthropic.api_key_env_var(), "ANTHROPIC_API_KEY");
+        assert_eq!(Provider::Github.api_key_env_var(), "GITHUB_TOKEN");
+    }
+
+    #[test]
+    fn model_pricing_returns_data() {
+        let openai = Provider::Openai.model_pricing();
+        assert!(!openai.is_empty());
+        assert!(openai.iter().any(|(m, _, _)| *m == "gpt-4o"));
+
+        let anthropic = Provider::Anthropic.model_pricing();
+        assert!(!anthropic.is_empty());
+
+        let github = Provider::Github.model_pricing();
+        assert!(github.is_empty()); // Subscription-based.
     }
 
     #[test]
