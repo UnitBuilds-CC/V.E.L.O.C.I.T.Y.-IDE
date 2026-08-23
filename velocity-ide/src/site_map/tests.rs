@@ -256,3 +256,127 @@ fn file_snapshots_replace_live_semantic_state() {
     assert!(sm.remove_file_snapshot("src/main.rs").unwrap());
     assert!(sm.find_live_triples(Some(10), Some(2), None).is_empty());
 }
+
+#[test]
+fn batch_kv_insert_and_root_recomputed_once() {
+    let dir = TempDir::new().unwrap();
+    let mut sm = SiteMap::open(dir.path(), 0).unwrap();
+    let items: Vec<_> = (0..5)
+        .map(|i| (i as u32, 0u32, make_ndavec(8, i as u8), make_ndavec(8, (i + 10) as u8)))
+        .collect();
+    let keys = sm.put_kv_batch(&items).unwrap();
+    assert_eq!(keys.len(), 5);
+    assert_eq!(sm.stats().kv, 5);
+    // All keys should be retrievable
+    for (i, key) in keys.iter().enumerate() {
+        let (k, v) = sm.get_kv(i as u32, 0).unwrap();
+        assert_eq!(k.sign, items[i].2.sign);
+        assert_eq!(v.sign, items[i].3.sign);
+    }
+    // Root should be non-zero after inserts
+    assert_ne!(sm.root(), 0);
+}
+
+#[test]
+fn batch_nodes_insert() {
+    let dir = TempDir::new().unwrap();
+    let mut sm = SiteMap::open(dir.path(), 0).unwrap();
+    let n1 = NdaNode::Int { value: 1 };
+    let n2 = NdaNode::Int { value: 2 };
+    let n3 = NdaNode::Int { value: 3 };
+    let keys = sm.put_nodes_batch(&[&n1, &n2, &n3]).unwrap();
+    assert_eq!(keys.len(), 3);
+    assert_eq!(sm.len(), 3);
+    // Each node should be retrievable
+    for (i, node) in [&n1, &n2, &n3].iter().enumerate() {
+        let retrieved = sm.get_node(keys[i]).unwrap();
+        match (&retrieved, node) {
+            (NdaNode::Int { value: a }, NdaNode::Int { value: b }) => assert_eq!(a, b),
+            _ => panic!("unexpected node type"),
+        }
+    }
+}
+
+#[test]
+fn batch_register_strings() {
+    let dir = TempDir::new().unwrap();
+    let sm = SiteMap::open(dir.path(), 0).unwrap();
+    let strings = vec!["hello", "world", "foo", "bar"];
+    let hashes = sm.register_strings_batch(&strings).unwrap();
+    assert_eq!(hashes.len(), 4);
+    // Each hash should resolve back
+    let resolved = sm.resolve_strings_batch(&hashes);
+    for (i, opt) in resolved.iter().enumerate() {
+        assert_eq!(opt.as_deref(), Some(strings[i]));
+    }
+    // Re-registering same strings should return same hashes
+    let hashes2 = sm.register_strings_batch(&strings).unwrap();
+    assert_eq!(hashes, hashes2);
+}
+
+#[test]
+fn batch_file_snapshots() {
+    let dir = TempDir::new().unwrap();
+    let mut sm = SiteMap::open(dir.path(), 0).unwrap();
+    let h1 = sm.register_string("src/a.rs").unwrap();
+    let h2 = sm.register_string("src/b.rs").unwrap();
+    let sym1 = sm.register_string("fn_a").unwrap();
+    let sym2 = sm.register_string("fn_b").unwrap();
+    let snap_a = vec![VcTriple {
+        subject_hash: h1,
+        predicate_id: 1,
+        object_hash: sym1,
+    }];
+    let snap_b = vec![VcTriple {
+        subject_hash: h2,
+        predicate_id: 1,
+        object_hash: sym2,
+    }];
+    let keys = sm
+        .put_file_snapshots_batch(&[("src/a.rs", &snap_a), ("src/b.rs", &snap_b)])
+        .unwrap();
+    assert_eq!(keys.len(), 2);
+    assert_eq!(sm.stats().snapshots, 2);
+    // Live triples should include both
+    let live = sm.find_live_triples(None, Some(1), None);
+    assert_eq!(live.len(), 2);
+}
+
+#[test]
+fn entries_by_kind_and_largest() {
+    let dir = TempDir::new().unwrap();
+    let mut sm = SiteMap::open(dir.path(), 0).unwrap();
+    // Insert 2 KV and 1 node
+    sm.put_kv(1, 0, make_ndavec(8, 0xAA), make_ndavec(8, 0xBB))
+        .unwrap();
+    sm.put_kv(2, 0, make_ndavec(8, 0xCC), make_ndavec(8, 0xDD))
+        .unwrap();
+    let n = NdaNode::Int { value: 42 };
+    sm.put_node(&n).unwrap();
+
+    let kv_entries = sm.entries_by_kind(&super::types::EntryKind::Kv);
+    assert_eq!(kv_entries.len(), 2);
+    let node_entries = sm.entries_by_kind(&super::types::EntryKind::Node);
+    assert_eq!(node_entries.len(), 1);
+
+    let top2 = sm.largest_entries(2);
+    assert_eq!(top2.len(), 2);
+    assert!(top2[0].size >= top2[1].size);
+}
+
+#[test]
+fn stats_include_cache_and_dict_sizes() {
+    let dir = TempDir::new().unwrap();
+    let mut sm = SiteMap::open(dir.path(), 0).unwrap();
+    sm.register_string("test_str").unwrap();
+    sm.put_kv(1, 0, make_ndavec(8, 0), make_ndavec(8, 0))
+        .unwrap();
+    let s = sm.stats();
+    assert_eq!(s.kv_cache_size, 1);
+    assert_eq!(s.string_dict_size, 1);
+    assert_eq!(s.total_entries, 1);
+    // Serialisable
+    let json = serde_json::to_string(&s).unwrap();
+    assert!(json.contains("kv_cache_size"));
+    assert!(json.contains("string_dict_size"));
+}

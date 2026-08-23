@@ -593,6 +593,10 @@ impl SiteMap {
                     },
                 );
         let total_bytes: u64 = self.index.values().map(|e| e.size).sum();
+        let string_dict_size = {
+            let dict = self.string_dict.lock_safe();
+            dict.len()
+        };
         SiteMapStats {
             kv,
             nodes,
@@ -601,6 +605,9 @@ impl SiteMap {
             total_bytes,
             root: self.root,
             weight_root: self.weight_root,
+            kv_cache_size: self.kv_cache.len(),
+            string_dict_size,
+            total_entries: self.index.len(),
         }
     }
 
@@ -665,7 +672,213 @@ impl SiteMap {
         u64::from_le_bytes(digest[0..8].try_into().unwrap())
     }
 
-    // ── Internal helpers ──────────────────────────────────────────────────────
+    // ── Batch operations ─────────────────────────────────────────────────────
+
+    /// Insert multiple KV pairs, recomputing the Merkle root only once at the end.
+    /// Returns the list of keys that were inserted (or updated in cache).
+    pub fn put_kv_batch(
+        &mut self,
+        items: &[(u32, u32, NdaVec, NdaVec)],
+    ) -> Result<Vec<u64>> {
+        let mut keys = Vec::with_capacity(items.len());
+        for &(token_id, layer_idx, ref k, ref v) in items {
+            let key = self.token_hash(token_id, layer_idx);
+            if self.index.contains_key(&key) {
+                if !self.kv_cache.contains_key(&key) {
+                    self.enforce_kv_cache_limit();
+                    self.kv_cache.insert(key, (k.clone(), v.clone()));
+                    self.kv_cache_keys.push_back(key);
+                }
+                keys.push(key);
+                continue;
+            }
+            let rec = KvRecord {
+                k: k.clone(),
+                v: v.clone(),
+            };
+            let data = rec.serialise();
+            let sha = Self::file_sha(&data);
+            let name = format!("kv/{:016x}.kv", key);
+            let path = self.base.join(&name);
+            fs::write(&path, &data).with_context(|| format!("writing {}", path.display()))?;
+            let entry = SiteMapEntry {
+                kind: EntryKind::Kv,
+                hash: key,
+                file: name,
+                file_sha: sha,
+                size: data.len() as u64,
+            };
+            self.index.insert(key, entry);
+            self.enforce_kv_cache_limit();
+            self.kv_cache.insert(key, (k.clone(), v.clone()));
+            self.kv_cache_keys.push_back(key);
+            keys.push(key);
+        }
+        self.recompute_root();
+        Ok(keys)
+    }
+
+    /// Insert multiple nodes, recomputing the Merkle root only once at the end.
+    pub fn put_nodes_batch(&mut self, nodes: &[&NdaNode]) -> Result<Vec<u64>> {
+        let mut keys = Vec::with_capacity(nodes.len());
+        for &node in nodes {
+            let key = node.hash();
+            if !self.index.contains_key(&key) {
+                let data = serialise_node(node);
+                let sha = Self::file_sha(&data);
+                let name = format!("nodes/{:016x}.nda", key);
+                let path = self.base.join(&name);
+                fs::write(&path, &data).with_context(|| format!("writing {}", path.display()))?;
+                let entry = SiteMapEntry {
+                    kind: EntryKind::Node,
+                    hash: key,
+                    file: name,
+                    file_sha: sha,
+                    size: data.len() as u64,
+                };
+                self.index.insert(key, entry);
+            }
+            let mut triples = Vec::new();
+            Self::extract_triples_recursive(node, &mut triples);
+            self.node_triples_cache.lock_safe().insert(key, triples);
+            keys.push(key);
+        }
+        self.recompute_root();
+        Ok(keys)
+    }
+
+    /// Register multiple strings, writing dictionary.json only once.
+    pub fn register_strings_batch(&self, strings: &[&str]) -> Result<Vec<u64>> {
+        let mut dict = self.string_dict.lock_safe();
+        if dict.is_empty() {
+            let dict_path = self.base.join("dictionary.json");
+            if dict_path.exists() {
+                if let Ok(raw) = fs::read_to_string(&dict_path) {
+                    if let Ok(loaded) = serde_json::from_str::<HashMap<String, String>>(&raw) {
+                        for (k_str, v_str) in loaded {
+                            if let Ok(k_num) = u64::from_str_radix(&k_str, 16) {
+                                dict.insert(k_num, v_str);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        let mut hashes = Vec::with_capacity(strings.len());
+        let mut any_new = false;
+        for s in strings {
+            let hash = self.hash_string(s);
+            if let std::collections::hash_map::Entry::Vacant(e) = dict.entry(hash) {
+                e.insert(s.to_string());
+                any_new = true;
+            }
+            hashes.push(hash);
+        }
+        if any_new {
+            let dict_path = self.base.join("dictionary.json");
+            let mut serializable = HashMap::new();
+            for (k_num, v_str) in dict.iter() {
+                serializable.insert(format!("{:016x}", k_num), v_str.clone());
+            }
+            if let Ok(updated) = serde_json::to_string_pretty(&serializable) {
+                let _ = fs::write(&dict_path, updated);
+            }
+        }
+        Ok(hashes)
+    }
+
+    /// Register multiple file snapshots, recomputing root and invalidating
+    /// the predicate index only once at the end.
+    pub fn put_file_snapshots_batch(
+        &mut self,
+        snapshots: &[(&str, &[VcTriple])],
+    ) -> Result<Vec<u64>> {
+        let mut keys = Vec::with_capacity(snapshots.len());
+        for &(file_path, triples) in snapshots {
+            let key = self.snapshot_hash(file_path);
+            let data = serde_json::to_vec(triples)?;
+            let sha = Self::file_sha(&data);
+            let name = format!("snapshots/{:016x}.json", key);
+            let path = self.base.join(&name);
+            if let Some(parent) = path.parent() {
+                fs::create_dir_all(parent)?;
+            }
+            fs::write(&path, &data).with_context(|| format!("writing {}", path.display()))?;
+            let entry = SiteMapEntry {
+                kind: EntryKind::Snapshot,
+                hash: key,
+                file: name,
+                file_sha: sha,
+                size: data.len() as u64,
+            };
+            self.index.insert(key, entry);
+            self.snapshot_triples_cache
+                .lock()
+                .unwrap()
+                .insert(key, triples.to_vec());
+            keys.push(key);
+        }
+        self.recompute_root();
+        self.invalidate_predicate_index();
+        Ok(keys)
+    }
+
+    /// Resolve multiple string hashes at once (loads dictionary only once).
+    pub fn resolve_strings_batch(&self, hashes: &[u64]) -> Vec<Option<String>> {
+        let mut dict = self.string_dict.lock_safe();
+        if dict.is_empty() {
+            let dict_path = self.base.join("dictionary.json");
+            if dict_path.exists() {
+                if let Ok(raw) = fs::read_to_string(&dict_path) {
+                    if let Ok(loaded) = serde_json::from_str::<HashMap<String, String>>(&raw) {
+                        for (k_str, v_str) in loaded {
+                            if let Ok(k_num) = u64::from_str_radix(&k_str, 16) {
+                                dict.insert(k_num, v_str);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        hashes.iter().map(|h| dict.get(h).cloned()).collect()
+    }
+
+    // ── Query helpers ─────────────────────────────────────────────────────────
+
+    /// Return all entries of a specific kind.
+    pub fn entries_by_kind(&self, kind: &EntryKind) -> Vec<&SiteMapEntry> {
+        self.index.values().filter(|e| &e.kind == kind).collect()
+    }
+
+    /// Return the top-N largest entries by byte size.
+    pub fn largest_entries(&self, n: usize) -> Vec<&SiteMapEntry> {
+        let mut entries: Vec<&SiteMapEntry> = self.index.values().collect();
+        entries.sort_unstable_by(|a, b| b.size.cmp(&a.size));
+        entries.truncate(n);
+        entries
+    }
+
+    /// Return all string dictionary entries.
+    pub fn all_strings(&self) -> HashMap<u64, String> {
+        let mut dict = self.string_dict.lock_safe();
+        if dict.is_empty() {
+            let dict_path = self.base.join("dictionary.json");
+            if dict_path.exists() {
+                if let Ok(raw) = fs::read_to_string(&dict_path) {
+                    if let Ok(loaded) = serde_json::from_str::<HashMap<String, String>>(&raw) {
+                        for (k_str, v_str) in loaded {
+                            if let Ok(k_num) = u64::from_str_radix(&k_str, 16) {
+                                dict.insert(k_num, v_str);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        dict.clone()
+    }
+
+    // ── Internal helpers ──────────────────────────────────────────────────────────
 
     fn recompute_root(&mut self) {
         self.root = Self::compute_index_root(self.index.values());
