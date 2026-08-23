@@ -258,6 +258,71 @@ pub struct NdaGenerationResult {
     pub node_count: usize,
 }
 
+impl NdaGenerationResult {
+    /// Validate the generation result.
+    /// Returns a list of warnings (empty = all good).
+    pub fn validate(&self) -> Vec<String> {
+        let mut warnings = Vec::new();
+
+        if !self.valid {
+            warnings.push("Program is not valid (Merkle verification failed)".to_string());
+        }
+        if self.force_terminated {
+            warnings.push("Program was force-terminated (budget exhausted)".to_string());
+        }
+        if self.node_count == 0 && self.valid {
+            warnings.push("Valid program has 0 nodes".to_string());
+        }
+        if let Some(ref sb) = self.sandbox {
+            if sb.panicked {
+                warnings.push("Sandbox execution panicked".to_string());
+            }
+            if let Some(ref err) = sb.error {
+                warnings.push(format!("Sandbox execution error: {}", err));
+            }
+        }
+        if let Some(ref sc) = self.scope {
+            if !sc.passed {
+                warnings.push(format!(
+                    "Scope validation failed (similarity={:.2})",
+                    sc.similarity
+                ));
+            }
+        }
+
+        warnings
+    }
+
+    /// Return a structured execution summary.
+    pub fn execution_summary(&self) -> NdaExecutionSummary {
+        NdaExecutionSummary {
+            valid: self.valid,
+            force_terminated: self.force_terminated,
+            node_count: self.node_count,
+            tokens_emitted: self.stats.tokens_emitted,
+            elapsed_ms: self.stats.elapsed_ms as u64,
+            cache_hit_rate: self.stats.cache_hit_rate(),
+            sandbox_passed: self.sandbox.as_ref().map(|s| s.is_success()),
+            scope_passed: self.scope.as_ref().map(|s| s.passed),
+            stored_in_site_map: self.site_map_key.is_some(),
+        }
+    }
+}
+
+/// Structured execution summary for NDA generation.
+#[derive(Debug, Clone, Serialize)]
+pub struct NdaExecutionSummary {
+    pub valid: bool,
+    pub force_terminated: bool,
+    pub node_count: usize,
+    pub tokens_emitted: usize,
+    pub elapsed_ms: u64,
+    pub cache_hit_rate: f64,
+    pub sandbox_passed: Option<bool>,
+    pub scope_passed: Option<bool>,
+    pub stored_in_site_map: bool,
+}
+
 #[derive(Default, Debug, Clone, Serialize)]
 pub struct NdaGenStats {
     pub tokens_emitted: usize,
@@ -306,6 +371,33 @@ impl NdaGenStats {
             .filter_map(|(idx, count)| NdaOpcode::from_u8(idx as u8).map(|op| (op, count)))
             .collect()
     }
+
+    /// Return a serializable snapshot of the stats.
+    pub fn snapshot(&self) -> NdaGenStatsSnapshot {
+        NdaGenStatsSnapshot {
+            tokens_emitted: self.tokens_emitted,
+            site_map_hits: self.site_map_hits,
+            site_map_misses: self.site_map_misses,
+            elapsed_ms: self.elapsed_ms as u64,
+            cache_hit_rate: self.cache_hit_rate(),
+            peak_stack_depth: self.peak_stack_depth,
+            rep_penalty_applications: self.rep_penalty_applications,
+            unique_opcodes_emitted: self.opcode_distribution.iter().filter(|&&c| c > 0).count(),
+        }
+    }
+}
+
+/// Serializable snapshot of generation stats.
+#[derive(Debug, Clone, Serialize)]
+pub struct NdaGenStatsSnapshot {
+    pub tokens_emitted: usize,
+    pub site_map_hits: usize,
+    pub site_map_misses: usize,
+    pub elapsed_ms: u64,
+    pub cache_hit_rate: f64,
+    pub peak_stack_depth: usize,
+    pub rep_penalty_applications: usize,
+    pub unique_opcodes_emitted: usize,
 }
 
 // ─── NdaPipeline ──────────────────────────────────────────────────────────────
@@ -1056,5 +1148,94 @@ mod tests {
         // nodes, sandbox, scope should be skipped
         assert!(!json.contains("\"nodes\""));
         assert!(!json.contains("\"sandbox\""));
+    }
+
+    // ─── Validation & summary tests ────────────────────────────────────────
+
+    #[test]
+    fn generation_result_validate_clean() {
+        let result = NdaGenerationResult {
+            nodes: vec![],
+            root_hash: 123,
+            valid: true,
+            force_terminated: false,
+            site_map_key: Some(42),
+            sandbox: None,
+            scope: None,
+            stats: NdaGenStats::default(),
+            node_count: 5,
+        };
+        let warnings = result.validate();
+        assert!(warnings.is_empty());
+    }
+
+    #[test]
+    fn generation_result_validate_detects_invalid() {
+        let result = NdaGenerationResult {
+            nodes: vec![],
+            root_hash: 0,
+            valid: false,
+            force_terminated: false,
+            site_map_key: None,
+            sandbox: None,
+            scope: None,
+            stats: NdaGenStats::default(),
+            node_count: 0,
+        };
+        let warnings = result.validate();
+        assert!(warnings.iter().any(|w| w.contains("not valid")));
+    }
+
+    #[test]
+    fn generation_result_validate_detects_truncated() {
+        let result = NdaGenerationResult {
+            nodes: vec![],
+            root_hash: 123,
+            valid: true,
+            force_terminated: true,
+            site_map_key: None,
+            sandbox: None,
+            scope: None,
+            stats: NdaGenStats::default(),
+            node_count: 10,
+        };
+        let warnings = result.validate();
+        assert!(warnings.iter().any(|w| w.contains("force-terminated")));
+    }
+
+    #[test]
+    fn nda_execution_summary_serializes() {
+        let summary = NdaExecutionSummary {
+            valid: true,
+            force_terminated: false,
+            node_count: 10,
+            tokens_emitted: 50,
+            elapsed_ms: 100,
+            cache_hit_rate: 0.8,
+            sandbox_passed: Some(true),
+            scope_passed: Some(true),
+            stored_in_site_map: true,
+        };
+        let json = serde_json::to_string(&summary).unwrap();
+        assert!(json.contains("\"valid\":true"));
+        assert!(json.contains("\"node_count\":10"));
+        assert!(json.contains("\"cache_hit_rate\":0.8"));
+    }
+
+    #[test]
+    fn nda_gen_stats_snapshot() {
+        let mut stats = NdaGenStats::default();
+        stats.ensure_distribution();
+        stats.tokens_emitted = 100;
+        stats.site_map_hits = 80;
+        stats.site_map_misses = 20;
+        stats.opcode_distribution[NdaOpcode::Scope as usize] = 50;
+        stats.opcode_distribution[NdaOpcode::Int as usize] = 30;
+
+        let snap = stats.snapshot();
+        let json = serde_json::to_string(&snap).unwrap();
+        assert!(json.contains("\"tokens_emitted\":100"));
+        assert!(json.contains("\"unique_opcodes_emitted\":2"));
+        assert!((snap.cache_hit_rate - 0.8).abs() < 0.01);
     }
 }
