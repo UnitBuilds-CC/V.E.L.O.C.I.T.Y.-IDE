@@ -902,3 +902,89 @@ fn list_providers_returns_all_providers() {
     assert!(output.contains("openai"));
     assert!(output.contains("16")); // 16 providers
 }
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Batch 5: Quick-Create / Bulk Import Tests
+// ═══════════════════════════════════════════════════════════════════════════
+
+#[test]
+fn create_team_quick_with_array() {
+    let (_temp, root) = setup_root();
+
+    let output = call_tool_in_workspace(
+        &root,
+        "create_team_quick",
+        &json!({
+            "name": "Quick Team",
+            "members": ["Alice", "Bob", "Charlie"]
+        }),
+    )
+    .unwrap();
+
+    assert!(output.contains("Created team"));
+    assert!(output.contains("Quick Team"));
+    assert!(output.contains("3 member(s)"));
+
+    let canon = root.canonicalize().unwrap();
+    let teams = load_expert_teams(&canon);
+    let team = teams.iter().find(|t| t.slug() == "quick-team").unwrap();
+    assert_eq!(team.members.len(), 3);
+    assert_eq!(team.members[0].name, "Alice");
+    assert_eq!(team.members[0].role, "Team Lead");
+    assert_eq!(team.members[1].role, "Specialist");
+}
+
+#[test]
+fn create_team_quick_with_comma_string() {
+    let (_temp, root) = setup_root();
+
+    let output = call_tool_in_workspace(
+        &root,
+        "create_team_quick",
+        &json!({
+            "name": "String Team",
+            "members": "Dave, Eve, Frank"
+        }),
+    )
+    .unwrap();
+
+    assert!(output.contains("Created team"));
+    assert!(output.contains("3 member(s)"));
+
+    let canon = root.canonicalize().unwrap();
+    let teams = load_expert_teams(&canon);
+    let team = teams.iter().find(|t| t.slug() == "string-team").unwrap();
+    assert_eq!(team.members.len(), 3);
+    assert_eq!(team.members[0].name, "Dave");
+}
+
+#[test]
+fn bulk_import_members_adds_multiple() {
+    let (_temp, root) = setup_root();
+    create_test_team(&root);
+
+    let output = call_tool_in_workspace(
+        &root,
+        "bulk_import_members",
+        &json!({
+            "team_id": "test-team",
+            "members": [
+                { "name": "QA Engineer", "role": "Testing", "scope_patterns": ["tests/"] },
+                { "name": "DevOps", "role": "CI/CD", "scope_patterns": ["deploy/"] },
+                { "name": "Security", "role": "Auditing" }
+            ]
+        }),
+    )
+    .unwrap();
+
+    assert!(output.contains("Added 3 member(s)"));
+    assert!(output.contains("5 member(s) total"));
+
+    let canon = root.canonicalize().unwrap();
+    let teams = load_expert_teams(&canon);
+    let team = teams.iter().find(|t| t.slug() == "test-team").unwrap();
+    assert_eq!(team.members.len(), 5);
+    assert_eq!(team.members[2].name, "QA Engineer");
+    assert_eq!(team.members[3].name, "DevOps");
+    assert_eq!(team.members[4].name, "Security");
+}

@@ -238,5 +238,54 @@ pub fn get_team_tools() -> Vec<Tool> {
                 "properties": {}
             }),
         },
+        // ── Quick-Create / Bulk Import Tools ─────────────────────────────
+        Tool {
+            name: "create_team_quick".to_string(),
+            description: "Quick-create a team with minimal input. Provide a team name and member names (array or comma-separated string). Members are created with sensible defaults (Cloudflare provider, Team Lead role for first member, Specialist for others). Customize later with update_team_member.".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "name": { "type": "string", "description": "Team name." },
+                    "description": { "type": "string", "description": "Optional team description." },
+                    "members": {
+                        "oneOf": [
+                            { "type": "array", "items": { "type": "string" }, "description": "Array of member names." },
+                            { "type": "string", "description": "Comma-separated member names." }
+                        ],
+                        "description": "Member names (array or comma-separated string)."
+                    }
+                },
+                "required": ["name", "members"]
+            }),
+        },
+        Tool {
+            name: "bulk_import_members".to_string(),
+            description: "Bulk import multiple members to an existing team at once. Each member object follows the same schema as create_expert_team members. More efficient than calling add_team_member multiple times.".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "team_id": { "type": "string", "description": "Team id, slug, or name." },
+                    "members": {
+                        "type": "array",
+                        "description": "Array of member specs to add.",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "name": { "type": "string" },
+                                "role": { "type": "string" },
+                                "provider": { "type": "string" },
+                                "model_id": { "type": "string" },
+                                "skills": { "type": "array", "items": { "type": "string" } },
+                                "scope_patterns": { "type": "array", "items": { "type": "string" } },
+                                "tools": { "type": "array", "items": { "type": "string" } },
+                                "workflow_instructions": { "type": "string" }
+                            },
+                            "required": ["name", "role"]
+                        }
+                    }
+                },
+                "required": ["team_id", "members"]
+            }),
+        },
     ]
 }

@@ -97,6 +97,8 @@ pub fn handle_team_tool(
         "team_analytics" => team_analytics(root, arguments)?,
         "team_health_check" => team_health_check(root, arguments)?,
         "list_providers" => list_providers(root, arguments)?,
+        "create_team_quick" => create_team_quick(root, arguments)?,
+        "bulk_import_members" => bulk_import_members(root, arguments)?,
         _ => return Ok(None),
     };
     Ok(Some(result))
@@ -944,5 +946,152 @@ fn list_providers(_root: &Path, _arguments: &Value) -> Result<String, Box<dyn Er
         "Available AI providers ({}):\n{}",
         providers.len(),
         serde_json::to_string_pretty(&providers)?
+    ))
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Quick-Create / Bulk Import Tools
+// ═══════════════════════════════════════════════════════════════════════════
+
+/// Quick-create a team with minimal required information and sensible defaults.
+fn create_team_quick(root: &Path, arguments: &Value) -> Result<String, Box<dyn Error>> {
+    let team_name = arguments["name"]
+        .as_str()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .ok_or("'name' is required")?;
+
+    let description = arguments["description"]
+        .as_str()
+        .unwrap_or("")
+        .trim()
+        .to_string();
+
+    // Parse member names (comma-separated or array)
+    let member_names: Vec<String> = if let Some(arr) = arguments["members"].as_array() {
+        arr.iter()
+            .filter_map(|v| v.as_str())
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .collect()
+    } else if let Some(names_str) = arguments["members"].as_str() {
+        names_str
+            .split(',')
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .collect()
+    } else {
+        return Err("'members' is required (array or comma-separated string)".into());
+    };
+
+    if member_names.is_empty() {
+        return Err("at least one member name is required".into());
+    }
+
+    let slug = slugify(team_name);
+    if slug.is_empty() {
+        return Err("'name' must contain alphanumeric characters".into());
+    }
+    let team_id = format!("team_{}", slug);
+
+    // Create members with defaults
+    let members: Vec<ExpertMember> = member_names
+        .iter()
+        .enumerate()
+        .map(|(i, name)| ExpertMember {
+            id: format!("member_{}_{}", slug, i + 1),
+            name: name.clone(),
+            role: if i == 0 {
+                "Team Lead".to_string()
+            } else {
+                "Specialist".to_string()
+            },
+            provider: AiProvider::CloudflareWorkersAi,
+            model_id: String::new(),
+            skills: vec!["system_tools".to_string()],
+            scope_patterns: Vec::new(),
+            tools: Vec::new(),
+            workflow_instructions: String::new(),
+        })
+        .collect();
+
+    let member_count = members.len();
+    let new_team = ExpertTeam {
+        id: team_id.clone(),
+        name: team_name.to_string(),
+        description,
+        members,
+        is_preset: false,
+    };
+
+    // Merge with existing teams
+    let mut teams = load_expert_teams(root);
+    let replaced = if let Some(existing) = teams.iter_mut().find(|t| t.id == team_id || t.slug() == slug) {
+        *existing = new_team;
+        true
+    } else {
+        teams.push(new_team);
+        false
+    };
+
+    if !save_expert_teams(root, &teams) {
+        return Err("failed to persist expert_teams.nda".into());
+    }
+
+    Ok(format!(
+        "{} team \"{}\" (id: {}, slug: {}) with {} member(s) using default settings. Customize with update_team_member.",
+        if replaced { "Updated" } else { "Created" },
+        team_name,
+        team_id,
+        slug,
+        member_count
+    ))
+}
+
+/// Bulk import multiple members to an existing team.
+fn bulk_import_members(root: &Path, arguments: &Value) -> Result<String, Box<dyn Error>> {
+    let team_ref = arguments["team_id"]
+        .as_str()
+        .or_else(|| arguments["team"].as_str())
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .ok_or("'team_id' is required")?;
+
+    let members_spec = arguments["members"]
+        .as_array()
+        .ok_or("'members' must be an array")?;
+
+    if members_spec.is_empty() {
+        return Err("'members' array is empty".into());
+    }
+
+    let mut teams = load_expert_teams(root);
+    let team = find_team_mut(&mut teams, team_ref)
+        .ok_or_else(|| format!("team '{}' not found", team_ref))?;
+
+    if team.is_preset {
+        return Err("cannot add members to preset teams; clone first".into());
+    }
+
+    let team_slug = team.slug();
+    let start_index = team.members.len();
+    let mut added_count = 0;
+
+    for (i, spec) in members_spec.iter().enumerate() {
+        let member = parse_member(spec, &team_slug, start_index + i)?;
+        team.add_member(member)?;
+        added_count += 1;
+    }
+
+    let team_name = team.name.clone();
+    let total_members = team.members.len();
+
+    if !save_expert_teams(root, &teams) {
+        return Err("failed to persist expert_teams.nda".into());
+    }
+
+    Ok(format!(
+        "Added {} member(s) to team \"{}\". Team now has {} member(s) total.",
+        added_count, team_name, total_members
     ))
 }
