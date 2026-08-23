@@ -11,6 +11,7 @@
 
 use anyhow::{Context, Result};
 use indicatif::{ProgressBar, ProgressStyle};
+use serde::Serialize;
 use std::{fs, path::Path};
 
 use crate::compiler::driver::{VulkanDriver, VulkanNdaGemv};
@@ -142,6 +143,48 @@ fn tile_weights_nda(matrix: &NdaMatrix) -> (Vec<u8>, Vec<u8>) {
     };
 
     (active_bytes, pos_bytes)
+}
+
+// ─── Weights diagnostics ───────────────────────────────────────────────────
+
+/// Summary statistics about loaded model weights.
+#[derive(Debug, Clone, Serialize)]
+pub struct WeightsSummary {
+    /// Number of transformer layers loaded.
+    pub n_layers: usize,
+    /// Total NDA bitmap memory across all layers (bytes).
+    pub nda_bytes: usize,
+    /// Total FP32 tensor memory (embed + lm_head + norms) (bytes).
+    pub fp32_bytes: usize,
+    /// Number of weight matrices uploaded to GPU.
+    pub gpu_uploads: usize,
+    /// Total possible GPU uploads (layers × 7 projections).
+    pub gpu_upload_capacity: usize,
+    /// Whether the Vulkan driver is active.
+    pub vulkan_active: bool,
+    /// Embedding table dimensions (vocab_size, hidden_size).
+    pub embed_shape: (usize, usize),
+    /// LM head shape (vocab_size, hidden_size) or None if shared with embeddings.
+    pub lm_head_shared: bool,
+    /// Per-layer matrix versions (NDA version IDs).
+    pub layer_versions: Vec<[u16; 7]>,
+}
+
+/// Per-layer weight statistics for diagnostics.
+#[derive(Debug, Clone, Serialize)]
+pub struct LayerStats {
+    /// Layer index.
+    pub layer_idx: usize,
+    /// Matrix dimensions (rows, cols) for each of the 7 projections.
+    pub projection_shapes: Vec<(usize, usize)>,
+    /// NDA version for each projection.
+    pub versions: Vec<u16>,
+    /// Number of GPU-uploaded projections.
+    pub gpu_count: usize,
+    /// Total NDA bitmap bytes for this layer.
+    pub nda_bytes: usize,
+    /// Whether biases are present.
+    pub has_biases: bool,
 }
 
 // ─── Per-layer weights ─────────────────────────────────────────────────────
@@ -444,6 +487,175 @@ impl ModelWeights {
             .map(|m| m.byte_size())
             .sum()
     }
+
+    /// Total bytes consumed by FP32 tensors (embeddings, lm_head, norms).
+    pub fn fp32_bytes(&self) -> usize {
+        let embed = self.embed_tokens.len() * std::mem::size_of::<f32>();
+        let lm_head = self.lm_head.len() * std::mem::size_of::<f32>();
+        let final_norm = self.final_norm.len() * std::mem::size_of::<f32>();
+        let norms: usize = self
+            .layers
+            .iter()
+            .map(|l| (l.attn_norm.len() + l.ffn_norm.len()) * std::mem::size_of::<f32>())
+            .sum();
+        embed + lm_head + final_norm + norms
+    }
+
+    /// Count of weight matrices successfully uploaded to GPU.
+    pub fn gpu_upload_count(&self) -> usize {
+        self.layers
+            .iter()
+            .map(|l| {
+                [&l.q_proj_gpu, &l.k_proj_gpu, &l.v_proj_gpu, &l.o_proj_gpu,
+                 &l.gate_proj_gpu, &l.up_proj_gpu, &l.down_proj_gpu]
+                    .iter()
+                    .filter(|g| g.is_some())
+                    .count()
+            })
+            .sum()
+    }
+
+    /// Whether Vulkan driver is initialized.
+    pub fn vulkan_active(&self) -> bool {
+        self.vulkan.is_some()
+    }
+
+    /// Build a diagnostic summary of loaded weights.
+    pub fn summary(&self, cfg: &ModelConfig) -> WeightsSummary {
+        let layer_versions: Vec<[u16; 7]> = self
+            .layers
+            .iter()
+            .map(|l| {
+                [
+                    l.q_proj.version,
+                    l.k_proj.version,
+                    l.v_proj.version,
+                    l.o_proj.version,
+                    l.gate_proj.version,
+                    l.up_proj.version,
+                    l.down_proj.version,
+                ]
+            })
+            .collect();
+
+        let hidden = cfg.hidden_size;
+        let lm_head_shared = self.lm_head.len() == self.embed_tokens.len()
+            && self.lm_head.first() == self.embed_tokens.first();
+
+        WeightsSummary {
+            n_layers: self.layers.len(),
+            nda_bytes: self.nda_bytes(),
+            fp32_bytes: self.fp32_bytes(),
+            gpu_uploads: self.gpu_upload_count(),
+            gpu_upload_capacity: self.layers.len() * 7,
+            vulkan_active: self.vulkan_active(),
+            embed_shape: (cfg.vocab_size, hidden),
+            lm_head_shared,
+            layer_versions,
+        }
+    }
+
+    /// Get per-layer diagnostic stats.
+    pub fn layer_stats(&self) -> Vec<LayerStats> {
+        self.layers
+            .iter()
+            .enumerate()
+            .map(|(idx, l)| {
+                let projections = [
+                    &l.q_proj, &l.k_proj, &l.v_proj, &l.o_proj,
+                    &l.gate_proj, &l.up_proj, &l.down_proj,
+                ];
+                LayerStats {
+                    layer_idx: idx,
+                    projection_shapes: projections.iter().map(|m| (m.rows, m.cols)).collect(),
+                    versions: projections.iter().map(|m| m.version).collect(),
+                    gpu_count: [
+                        &l.q_proj_gpu, &l.k_proj_gpu, &l.v_proj_gpu, &l.o_proj_gpu,
+                        &l.gate_proj_gpu, &l.up_proj_gpu, &l.down_proj_gpu,
+                    ]
+                        .iter()
+                        .filter(|g| g.is_some())
+                        .count(),
+                    nda_bytes: projections.iter().map(|m| m.byte_size()).sum(),
+                    has_biases: l.q_proj_bias.is_some()
+                        || l.k_proj_bias.is_some()
+                        || l.v_proj_bias.is_some(),
+                }
+            })
+            .collect()
+    }
+
+    /// Validate weight dimensions against the model config.
+    /// Returns a list of human-readable error strings (empty = valid).
+    pub fn validate(&self, cfg: &ModelConfig) -> Vec<String> {
+        let mut errors = Vec::new();
+        let h = cfg.hidden_size;
+        let q_size = cfg.n_heads * cfg.head_dim;
+        let kv_size = cfg.n_kv_heads * cfg.head_dim;
+
+        if self.layers.len() != cfg.n_layers {
+            errors.push(format!(
+                "layer count mismatch: expected {}, got {}",
+                cfg.n_layers,
+                self.layers.len()
+            ));
+        }
+
+        if self.embed_tokens.len() != cfg.vocab_size * h {
+            errors.push(format!(
+                "embed_tokens size mismatch: expected {} ({}×{}), got {}",
+                cfg.vocab_size * h,
+                cfg.vocab_size,
+                h,
+                self.embed_tokens.len()
+            ));
+        }
+
+        if self.final_norm.len() != h {
+            errors.push(format!(
+                "final_norm size mismatch: expected {}, got {}",
+                h,
+                self.final_norm.len()
+            ));
+        }
+
+        for (i, layer) in self.layers.iter().enumerate() {
+            let check_proj = |name: &str, m: &NdaMatrix, exp_rows, exp_cols| {
+                if m.rows != exp_rows || m.cols != exp_cols {
+                    Some(format!(
+                        "layer {i} {name}: expected ({exp_rows},{exp_cols}), got ({},{})",
+                        m.rows, m.cols
+                    ))
+                } else {
+                    None
+                }
+            };
+            errors.extend(check_proj("q_proj", &layer.q_proj, q_size, h));
+            errors.extend(check_proj("k_proj", &layer.k_proj, kv_size, h));
+            errors.extend(check_proj("v_proj", &layer.v_proj, kv_size, h));
+            errors.extend(check_proj("o_proj", &layer.o_proj, h, q_size));
+            errors.extend(check_proj("gate_proj", &layer.gate_proj, cfg.ffn_size, h));
+            errors.extend(check_proj("up_proj", &layer.up_proj, cfg.ffn_size, h));
+            errors.extend(check_proj("down_proj", &layer.down_proj, h, cfg.ffn_size));
+
+            if layer.attn_norm.len() != h {
+                errors.push(format!(
+                    "layer {i} attn_norm: expected {}, got {}",
+                    h,
+                    layer.attn_norm.len()
+                ));
+            }
+            if layer.ffn_norm.len() != h {
+                errors.push(format!(
+                    "layer {i} ffn_norm: expected {}, got {}",
+                    h,
+                    layer.ffn_norm.len()
+                ));
+            }
+        }
+
+        errors
+    }
 }
 
 #[cfg(test)]
@@ -516,5 +728,87 @@ mod tests {
         write_fp32_bin(&path, &[0], &[]);
         let loaded = load_fp32_bin(&path).unwrap();
         assert_eq!(loaded.len(), 0);
+    }
+
+    #[test]
+    fn test_weights_summary_serialize() {
+        let summary = WeightsSummary {
+            n_layers: 26,
+            nda_bytes: 1_500_000,
+            fp32_bytes: 500_000,
+            gpu_uploads: 182,
+            gpu_upload_capacity: 182,
+            vulkan_active: true,
+            embed_shape: (151936, 3200),
+            lm_head_shared: false,
+            layer_versions: vec![[2; 7]; 26],
+        };
+        let json = serde_json::to_string(&summary).unwrap();
+        assert!(json.contains("\"n_layers\":26"));
+        assert!(json.contains("\"vulkan_active\":true"));
+        assert!(json.contains("\"gpu_uploads\":182"));
+    }
+
+    #[test]
+    fn test_layer_stats_serialize() {
+        let stats = LayerStats {
+            layer_idx: 0,
+            projection_shapes: vec![(3200, 3200); 7],
+            versions: vec![2; 7],
+            gpu_count: 7,
+            nda_bytes: 51200,
+            has_biases: false,
+        };
+        let json = serde_json::to_string(&stats).unwrap();
+        assert!(json.contains("\"layer_idx\":0"));
+        assert!(json.contains("\"gpu_count\":7"));
+    }
+
+    #[test]
+    fn test_fp32_bytes_calculation() {
+        // We can't build a full ModelWeights without files, but we can verify
+        // the fp32_bin loader returns correct sizes for byte calculations
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("norm.bin");
+        let data = vec![1.0_f32; 3200]; // hidden_size = 3200
+        write_fp32_bin(&path, &[3200], &data);
+        let loaded = load_fp32_bin(&path).unwrap();
+        let bytes = loaded.len() * std::mem::size_of::<f32>();
+        assert_eq!(bytes, 3200 * 4);
+        assert_eq!(bytes, 12800);
+    }
+
+    #[test]
+    fn test_load_fp32_bin_large_dims() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("big.bin");
+        // 3D tensor: 2 × 3 × 4 = 24 elements
+        let data: Vec<f32> = (0..24).map(|i| i as f32).collect();
+        write_fp32_bin(&path, &[2, 3, 4], &data);
+        let loaded = load_fp32_bin(&path).unwrap();
+        assert_eq!(loaded.len(), 24);
+        assert_eq!(loaded[0], 0.0);
+        assert_eq!(loaded[23], 23.0);
+    }
+
+    #[test]
+    fn test_load_fp32_bin_data_integrity() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("integrity.bin");
+        let data = vec![
+            f32::MIN,
+            f32::MAX,
+            0.0,
+            -0.0,
+            1.0e-10,
+            1.0e10,
+            std::f32::consts::PI,
+        ];
+        write_fp32_bin(&path, &[7], &data);
+        let loaded = load_fp32_bin(&path).unwrap();
+        assert_eq!(loaded.len(), 7);
+        assert_eq!(loaded[0], f32::MIN);
+        assert_eq!(loaded[1], f32::MAX);
+        assert_eq!(loaded[6], std::f32::consts::PI);
     }
 }
