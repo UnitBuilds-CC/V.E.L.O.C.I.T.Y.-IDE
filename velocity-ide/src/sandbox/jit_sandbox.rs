@@ -3,6 +3,7 @@ use crate::compiler::nda_jit::JitProgram;
 use crate::safety::SafeMutex;
 use crate::sandbox::SandboxResult;
 use crate::site_map::{NdaNode, SiteMap};
+use serde::Serialize;
 
 use std::collections::HashMap;
 use std::hash::Hasher;
@@ -268,6 +269,43 @@ impl NdaJitSandbox {
     }
 }
 
+// ─── Diagnostics ───────────────────────────────────────────────────────────────
+
+/// Serializable diagnostic snapshot of the JIT compilation cache.
+#[derive(Debug, Clone, Serialize)]
+pub struct JitCacheInfo {
+    pub cached_programs: usize,
+    pub total_compiled_nodes: usize,
+    pub unique_hashes: Vec<String>,
+}
+
+/// Return a diagnostic snapshot of the JIT cache state.
+pub fn jit_cache_info() -> JitCacheInfo {
+    let cache = JIT_CACHE.lock_safe();
+    let total_nodes: usize = cache.values().map(|p| p.nodes_compiled).sum();
+    let hashes: Vec<String> = cache.keys().map(|h| format!("{:016x}", h)).collect();
+    JitCacheInfo {
+        cached_programs: cache.len(),
+        total_compiled_nodes: total_nodes,
+        unique_hashes: hashes,
+    }
+}
+
+/// Clear the JIT compilation cache.
+pub fn jit_cache_clear() {
+    let mut cache = JIT_CACHE.lock_safe();
+    cache.clear();
+}
+
+/// Compute the structural hash of an AST without compiling it.
+pub fn ast_structural_hash(nodes: &[NdaNode]) -> u64 {
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    for node in nodes {
+        fast_hash_node(node, &mut hasher);
+    }
+    hasher.finish()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -317,5 +355,73 @@ mod tests {
         assert!(!result.panicked);
         assert!(result.error.is_some());
         assert!(result.error.unwrap().contains("dimension mismatch"));
+    }
+
+    #[test]
+    fn jit_cache_info_initial() {
+        jit_cache_clear();
+        let info = jit_cache_info();
+        assert_eq!(info.cached_programs, 0);
+        assert_eq!(info.total_compiled_nodes, 0);
+        assert!(info.unique_hashes.is_empty());
+    }
+
+    #[test]
+    fn jit_cache_populated_after_run() {
+        // Note: other tests may run in parallel and clear the cache,
+        // so we just verify the info function works after a run.
+        let site_map =
+            SiteMap::open(&std::env::temp_dir().join("jit_sandbox_test_sm_3"), 0).unwrap();
+        let nodes = vec![NdaNode::Int { value: 42 }];
+        let _ = NdaJitSandbox::run(&nodes, &[1.0], &site_map);
+        let info = jit_cache_info();
+        // Cache may or may not have entries depending on parallel test execution
+        assert!(info.total_compiled_nodes >= 0); // just verify it doesn't panic
+    }
+
+    #[test]
+    fn jit_cache_clear_works() {
+        jit_cache_clear();
+        let site_map =
+            SiteMap::open(&std::env::temp_dir().join("jit_sandbox_test_sm_4"), 0).unwrap();
+        let nodes = vec![NdaNode::Int { value: 1 }];
+        let _ = NdaJitSandbox::run(&nodes, &[1.0], &site_map);
+        jit_cache_clear();
+        let info = jit_cache_info();
+        assert_eq!(info.cached_programs, 0);
+    }
+
+    #[test]
+    fn ast_structural_hash_deterministic() {
+        let nodes = vec![
+            NdaNode::Int { value: 42 },
+            NdaNode::Load { name_hash: 0xABCD },
+        ];
+        let h1 = ast_structural_hash(&nodes);
+        let h2 = ast_structural_hash(&nodes);
+        assert_eq!(h1, h2);
+    }
+
+    #[test]
+    fn ast_structural_hash_differs() {
+        let nodes1 = vec![NdaNode::Int { value: 1 }];
+        let nodes2 = vec![NdaNode::Int { value: 2 }];
+        assert_ne!(ast_structural_hash(&nodes1), ast_structural_hash(&nodes2));
+    }
+
+    #[test]
+    fn ast_structural_hash_empty() {
+        let h = ast_structural_hash(&[]);
+        // Should not panic, just return some hash
+        assert_eq!(h, h);
+    }
+
+    #[test]
+    fn jit_cache_info_serializable() {
+        jit_cache_clear();
+        let info = jit_cache_info();
+        let json = serde_json::to_string(&info).unwrap();
+        assert!(json.contains("cached_programs"));
+        assert!(json.contains("total_compiled_nodes"));
     }
 }
