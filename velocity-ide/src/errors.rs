@@ -6,11 +6,12 @@
 //! and optional suggestions for self-service recovery.
 
 use std::path::PathBuf;
+use serde::Serialize;
 
 // ─── Error Codes ───────────────────────────────────────────────────────────
 
 /// Machine-readable error codes for documentation lookup and tooling.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 pub enum ErrorCode {
     // Config / setup (E1xx)
     ConfigNotFound,
@@ -118,6 +119,58 @@ impl ErrorCode {
     pub fn doc_url(&self) -> String {
         format!("https://velocity.dev/errors/{}", self.as_str())
     }
+
+    /// Human-readable category name for grouping.
+    pub fn category(&self) -> &'static str {
+        match self {
+            Self::ConfigNotFound | Self::ConfigInvalid | Self::ConfigMissingKey
+            | Self::HomeDirectoryUnavailable => "config",
+
+            Self::RouterUnreachable | Self::RouterTimeout | Self::RouterAuthFailed
+            | Self::RouterRateLimited | Self::RouterServerError | Self::RouterResponseInvalid => "router",
+
+            Self::ModelDirNotFound | Self::TokenizerNotFound | Self::WeightLoadFailed
+            | Self::WeightShapeMismatch | Self::ConfigInvalidArch => "model",
+
+            Self::TokenizerFileInvalid | Self::TokenizerMergeFailed
+            | Self::TokenizerUnknownToken => "tokenizer",
+
+            Self::ProviderKeyInvalid | Self::ProviderRateLimited | Self::ProviderUnavailable
+            | Self::ProviderUsageApiUnsupported => "provider",
+
+            Self::CompileFailed | Self::PipelineExecutionFailed | Self::SandBoxViolation => "pipeline",
+
+            Self::SiteMapCorrupt | Self::SiteMapVersionMismatch | Self::SiteMapIoError => "sitemap",
+
+            Self::AssignmentFailed | Self::AssignmentCostExceeded | Self::AssignmentTimeout => "assignment",
+
+            Self::IoError | Self::InvalidInput | Self::InternalError => "general",
+        }
+    }
+
+    /// Whether this error is transient and retrying may succeed.
+    pub fn is_retryable(&self) -> bool {
+        matches!(
+            self,
+            Self::RouterUnreachable
+                | Self::RouterTimeout
+                | Self::RouterRateLimited
+                | Self::RouterServerError
+                | Self::ProviderRateLimited
+                | Self::ProviderUnavailable
+                | Self::AssignmentTimeout
+        )
+    }
+
+    /// Whether this error indicates a security or credential issue.
+    pub fn is_security(&self) -> bool {
+        matches!(
+            self,
+            Self::RouterAuthFailed
+                | Self::ProviderKeyInvalid
+                | Self::SandBoxViolation
+        )
+    }
 }
 
 impl std::fmt::Display for ErrorCode {
@@ -132,11 +185,11 @@ impl std::fmt::Display for ErrorCode {
 ///
 /// All module-specific errors convert into this type via `From` impls,
 /// enabling uniform error handling at the CLI boundary with `anyhow`.
-#[derive(Debug, thiserror::Error)]
-#[error("{code} — {message}")]
+#[derive(Debug, thiserror::Error, Serialize)]
 pub struct VelocityError {
     pub code: ErrorCode,
     pub message: String,
+    #[serde(skip)]
     #[source]
     pub source: Option<Box<dyn std::error::Error + Send + Sync>>,
     pub suggestion: Option<String>,
@@ -173,6 +226,21 @@ impl VelocityError {
         self
     }
 
+    /// Whether this error is transient and retrying may succeed.
+    pub fn is_retryable(&self) -> bool {
+        self.code.is_retryable()
+    }
+
+    /// Whether this error indicates a security or credential issue.
+    pub fn is_security(&self) -> bool {
+        self.code.is_security()
+    }
+
+    /// The error category (e.g. "router", "model", "pipeline").
+    pub fn category(&self) -> &'static str {
+        self.code.category()
+    }
+
     /// Format the error with all details for CLI display.
     pub fn format_detailed(&self) -> String {
         let mut out = String::new();
@@ -193,6 +261,12 @@ impl VelocityError {
         }
 
         out
+    }
+}
+
+impl std::fmt::Display for VelocityError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{} — {}", self.code, self.message)
     }
 }
 
@@ -341,6 +415,116 @@ impl PipelineError {
     }
 }
 
+/// Errors from the SiteMap module.
+#[derive(Debug, thiserror::Error)]
+pub enum SiteMapError {
+    #[error("site map corrupt: {detail}")]
+    Corrupt { detail: String },
+
+    #[error("site map version mismatch: expected {expected}, got {actual}")]
+    VersionMismatch { expected: String, actual: String },
+
+    #[error("site map I/O error: {detail}")]
+    IoError { detail: String },
+}
+
+impl SiteMapError {
+    pub fn to_velocity_error(&self) -> VelocityError {
+        match self {
+            Self::Corrupt { detail } => VelocityError::new(ErrorCode::SiteMapCorrupt, self.to_string())
+                .with_context("detail", detail.clone())
+                .with_suggestion("Rebuild the site map with `velocity-ide index`."),
+            Self::VersionMismatch { expected, actual } => VelocityError::new(ErrorCode::SiteMapVersionMismatch, self.to_string())
+                .with_context("expected", expected.clone())
+                .with_context("actual", actual.clone()),
+            Self::IoError { detail } => VelocityError::new(ErrorCode::SiteMapIoError, self.to_string())
+                .with_context("detail", detail.clone()),
+        }
+    }
+}
+
+/// Errors from the tokenizer module.
+#[derive(Debug, thiserror::Error)]
+pub enum TokenizerError {
+    #[error("tokenizer file invalid: {detail}")]
+    FileInvalid { detail: String },
+
+    #[error("tokenizer merge failed: {detail}")]
+    MergeFailed { detail: String },
+
+    #[error("unknown token: {token}")]
+    UnknownToken { token: String },
+}
+
+impl TokenizerError {
+    pub fn to_velocity_error(&self) -> VelocityError {
+        match self {
+            Self::FileInvalid { detail } => VelocityError::new(ErrorCode::TokenizerFileInvalid, self.to_string())
+                .with_context("detail", detail.clone()),
+            Self::MergeFailed { detail } => VelocityError::new(ErrorCode::TokenizerMergeFailed, self.to_string())
+                .with_context("detail", detail.clone()),
+            Self::UnknownToken { token } => VelocityError::new(ErrorCode::TokenizerUnknownToken, self.to_string())
+                .with_context("token", token.clone()),
+        }
+    }
+}
+
+/// Errors from the sandbox execution module.
+#[derive(Debug, thiserror::Error)]
+pub enum SandboxError {
+    #[error("sandbox violation: {detail}")]
+    Violation { detail: String },
+
+    #[error("sandbox execution timeout after {secs}s")]
+    Timeout { secs: u64 },
+
+    #[error("sandbox resource limit exceeded: {resource}")]
+    ResourceLimit { resource: String },
+}
+
+impl SandboxError {
+    pub fn to_velocity_error(&self) -> VelocityError {
+        match self {
+            Self::Violation { detail } => VelocityError::new(ErrorCode::SandBoxViolation, self.to_string())
+                .with_context("detail", detail.clone()),
+            Self::Timeout { secs } => VelocityError::new(ErrorCode::PipelineExecutionFailed, self.to_string())
+                .with_context("timeout_secs", secs.to_string())
+                .with_suggestion("The sandbox operation took too long. Consider breaking it into smaller steps."),
+            Self::ResourceLimit { resource } => VelocityError::new(ErrorCode::SandBoxViolation, self.to_string())
+                .with_context("resource", resource.clone()),
+        }
+    }
+}
+
+/// Errors from the credential guard / security boundary.
+#[derive(Debug, thiserror::Error)]
+pub enum CredentialError {
+    #[error("credential not found: {key}")]
+    NotFound { key: String },
+
+    #[error("credential boundary violation: {detail}")]
+    BoundaryViolation { detail: String },
+
+    #[error("credential expired: {key}")]
+    Expired { key: String },
+}
+
+impl CredentialError {
+    pub fn to_velocity_error(&self) -> VelocityError {
+        match self {
+            Self::NotFound { key } => VelocityError::new(ErrorCode::ConfigMissingKey, self.to_string())
+                .with_context("key", key.clone())
+                .with_suggestion("Run `velocity-ide login` to configure credentials."),
+            Self::BoundaryViolation { detail } => VelocityError::new(ErrorCode::SandBoxViolation, self.to_string())
+                .with_context("detail", detail.clone())
+                .with_suggestion("A process attempted to access credentials outside the security boundary."),
+            Self::Expired { key } => VelocityError::new(ErrorCode::RouterAuthFailed, self.to_string())
+                .with_context("key", key.clone())
+                .with_suggestion("Your credentials have expired. Run `velocity-ide login` to refresh."),
+        }
+    }
+}
+
 // ─── From impls for seamless conversion ────────────────────────────────────
 
 impl From<RouterError> for VelocityError {
@@ -363,6 +547,30 @@ impl From<ProviderError> for VelocityError {
 
 impl From<PipelineError> for VelocityError {
     fn from(e: PipelineError) -> Self {
+        e.to_velocity_error()
+    }
+}
+
+impl From<SiteMapError> for VelocityError {
+    fn from(e: SiteMapError) -> Self {
+        e.to_velocity_error()
+    }
+}
+
+impl From<TokenizerError> for VelocityError {
+    fn from(e: TokenizerError) -> Self {
+        e.to_velocity_error()
+    }
+}
+
+impl From<SandboxError> for VelocityError {
+    fn from(e: SandboxError) -> Self {
+        e.to_velocity_error()
+    }
+}
+
+impl From<CredentialError> for VelocityError {
+    fn from(e: CredentialError) -> Self {
         e.to_velocity_error()
     }
 }
@@ -504,5 +712,90 @@ mod tests {
             .with_context("key2", "val2")
             .with_context("key3", "val3");
         assert_eq!(err.context.len(), 3);
+    }
+
+    #[test]
+    fn error_code_category() {
+        assert_eq!(ErrorCode::RouterTimeout.category(), "router");
+        assert_eq!(ErrorCode::ModelDirNotFound.category(), "model");
+        assert_eq!(ErrorCode::CompileFailed.category(), "pipeline");
+        assert_eq!(ErrorCode::IoError.category(), "general");
+    }
+
+    #[test]
+    fn error_code_is_retryable() {
+        assert!(ErrorCode::RouterTimeout.is_retryable());
+        assert!(ErrorCode::RouterRateLimited.is_retryable());
+        assert!(ErrorCode::ProviderUnavailable.is_retryable());
+        assert!(!ErrorCode::ConfigNotFound.is_retryable());
+        assert!(!ErrorCode::CompileFailed.is_retryable());
+    }
+
+    #[test]
+    fn error_code_is_security() {
+        assert!(ErrorCode::RouterAuthFailed.is_security());
+        assert!(ErrorCode::ProviderKeyInvalid.is_security());
+        assert!(ErrorCode::SandBoxViolation.is_security());
+        assert!(!ErrorCode::RouterTimeout.is_security());
+    }
+
+    #[test]
+    fn velocity_error_is_retryable_delegates() {
+        let err = VelocityError::new(ErrorCode::RouterTimeout, "timeout");
+        assert!(err.is_retryable());
+        let err2 = VelocityError::new(ErrorCode::CompileFailed, "fail");
+        assert!(!err2.is_retryable());
+    }
+
+    #[test]
+    fn velocity_error_serializes() {
+        let err = VelocityError::new(ErrorCode::RouterTimeout, "timed out")
+            .with_suggestion("try again")
+            .with_context("url", "http://localhost");
+        let json = serde_json::to_string(&err).unwrap();
+        assert!(json.contains("RouterTimeout"));
+        assert!(json.contains("timed out"));
+        assert!(json.contains("try again"));
+        // source field is skipped via #[serde(skip)]
+        assert!(!json.contains("\"source\""));
+    }
+
+    #[test]
+    fn sitemap_error_converts() {
+        let se = SiteMapError::Corrupt { detail: "checksum mismatch".into() };
+        let ve: VelocityError = se.into();
+        assert_eq!(ve.code, ErrorCode::SiteMapCorrupt);
+        assert!(ve.suggestion.is_some());
+    }
+
+    #[test]
+    fn tokenizer_error_converts() {
+        let te = TokenizerError::UnknownToken { token: "<unk>".into() };
+        let ve: VelocityError = te.into();
+        assert_eq!(ve.code, ErrorCode::TokenizerUnknownToken);
+    }
+
+    #[test]
+    fn sandbox_error_converts() {
+        let se = SandboxError::Timeout { secs: 30 };
+        let ve: VelocityError = se.into();
+        assert_eq!(ve.code, ErrorCode::PipelineExecutionFailed);
+        assert!(ve.suggestion.is_some());
+    }
+
+    #[test]
+    fn credential_error_converts() {
+        let ce = CredentialError::BoundaryViolation { detail: "env var leak".into() };
+        let ve: VelocityError = ce.into();
+        assert_eq!(ve.code, ErrorCode::SandBoxViolation);
+        assert!(ve.is_security());
+    }
+
+    #[test]
+    fn credential_error_expired() {
+        let ce = CredentialError::Expired { key: "api_key".into() };
+        let ve: VelocityError = ce.into();
+        assert_eq!(ve.code, ErrorCode::RouterAuthFailed);
+        assert!(ve.suggestion.is_some());
     }
 }
