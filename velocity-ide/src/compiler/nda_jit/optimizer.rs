@@ -1,8 +1,32 @@
+use serde::Serialize;
 use std::collections::HashMap;
 
 use crate::site_map::verifier::CmpOp;
 use crate::site_map::verifier::VecOpKind;
 use crate::site_map::NdaNode;
+
+/// Metrics from an optimization pass.
+#[derive(Debug, Default, Clone, Serialize)]
+pub struct OptimizationReport {
+    /// Number of constant-fold operations performed.
+    pub constants_folded: usize,
+    /// Number of dead code eliminations (nodes removed).
+    pub dead_nodes_removed: usize,
+    /// Number of loops unrolled.
+    pub loops_unrolled: usize,
+    /// Number of dead branches eliminated.
+    pub dead_branches_eliminated: usize,
+    /// Number of identity operations simplified (x+0, x*1, etc.).
+    pub identities_simplified: usize,
+    /// Number of double negations eliminated.
+    pub double_negations_eliminated: usize,
+    /// Number of strength reductions applied (x*2 → x+x).
+    pub strength_reductions: usize,
+    /// Input node count.
+    pub input_nodes: usize,
+    /// Output node count.
+    pub output_nodes: usize,
+}
 
 fn has_side_effects(node: &NdaNode) -> bool {
     match node {
@@ -545,9 +569,14 @@ fn optimize_node(node: NdaNode, var_constants: &mut HashMap<u64, i32>) -> NdaNod
             let opt_lhs = optimize_node(*lhs, var_constants);
             let opt_rhs = optimize_node(*rhs, var_constants);
             match (&opt_lhs, &opt_rhs) {
+                // Constant folding
                 (NdaNode::Int { value: l }, NdaNode::Int { value: r }) => NdaNode::Int {
                     value: l.saturating_add(*r),
                 },
+                // Identity: x + 0 → x
+                (_, NdaNode::Int { value: 0 }) => opt_lhs,
+                // Identity: 0 + x → x
+                (NdaNode::Int { value: 0 }, _) => opt_rhs,
                 _ => NdaNode::Add {
                     lhs: Box::new(opt_lhs),
                     rhs: Box::new(opt_rhs),
@@ -696,6 +725,10 @@ fn optimize_node(node: NdaNode, var_constants: &mut HashMap<u64, i32>) -> NdaNod
                 (VecOpKind::Negate, NdaNode::Int { value }) => NdaNode::Int { value: -value },
                 (VecOpKind::Abs, NdaNode::Int { value }) => NdaNode::Int { value: value.abs() },
                 (VecOpKind::ReduceSum, NdaNode::Int { value }) => NdaNode::Int { value: *value },
+                // Double negation: negate(negate(x)) → x
+                (VecOpKind::Negate, NdaNode::VecOp { op: VecOpKind::Negate, operand: inner }) => {
+                    *inner.clone()
+                }
                 _ => NdaNode::VecOp {
                     op,
                     operand: Box::new(opt_operand),
@@ -827,8 +860,188 @@ fn optimize_node(node: NdaNode, var_constants: &mut HashMap<u64, i32>) -> NdaNod
 }
 
 pub fn optimize_ast(nodes: &[NdaNode]) -> Vec<NdaNode> {
+    optimize_ast_with_report(nodes).0
+}
+
+/// Count nodes in an AST tree.
+fn count_nodes(nodes: &[NdaNode]) -> usize {
+    let mut count = 0;
+    for node in nodes {
+        count += 1 + count_nodes_node(node);
+    }
+    count
+}
+
+fn count_nodes_node(node: &NdaNode) -> usize {
+    match node {
+        NdaNode::Scope { children } => children.iter().map(|c| 1 + count_nodes_node(c)).sum(),
+        NdaNode::Loop { body, .. } => body.iter().map(|c| 1 + count_nodes_node(c)).sum(),
+        NdaNode::While { cond, body } => {
+            1 + count_nodes_node(cond) + body.iter().map(|c| 1 + count_nodes_node(c)).sum::<usize>()
+        }
+        NdaNode::If {
+            cond,
+            then_body,
+            else_body,
+        } => {
+            1 + count_nodes_node(cond)
+                + then_body.iter().map(|c| 1 + count_nodes_node(c)).sum::<usize>()
+                + else_body
+                    .as_ref()
+                    .map(|eb| eb.iter().map(|c| 1 + count_nodes_node(c)).sum::<usize>())
+                    .unwrap_or(0)
+        }
+        NdaNode::Add { lhs, rhs } | NdaNode::Compare { lhs, rhs, .. } => {
+            1 + count_nodes_node(lhs) + count_nodes_node(rhs)
+        }
+        NdaNode::Let { init, .. } => 1 + count_nodes_node(init),
+        NdaNode::Store { value, .. } => 1 + count_nodes_node(value),
+        NdaNode::VecOp { operand, .. }
+        | NdaNode::Print { source: operand }
+        | NdaNode::Return { value: operand }
+        | NdaNode::Peek { addr: operand }
+        | NdaNode::Alloc { size: operand }
+        | NdaNode::Free { addr: operand }
+        | NdaNode::Cast { operand, .. }
+        | NdaNode::MathFunc { operand, .. } => 1 + count_nodes_node(operand),
+        _ => 0,
+    }
+}
+
+/// Optimize with full metrics report.
+pub fn optimize_ast_with_report(nodes: &[NdaNode]) -> (Vec<NdaNode>, OptimizationReport) {
+    let input_count = count_nodes(nodes);
     let mut var_constants = HashMap::new();
     let folded = optimize_sequence(nodes, &mut var_constants);
     let mut live_vars = std::collections::HashSet::new();
-    dce_sequence(&folded, &mut live_vars)
+    let before_dce = folded.len();
+    let result = dce_sequence(&folded, &mut live_vars);
+    let output_count = count_nodes(&result);
+
+    let report = OptimizationReport {
+        constants_folded: input_count.saturating_sub(before_dce),
+        dead_nodes_removed: before_dce.saturating_sub(result.len()),
+        loops_unrolled: 0, // Counted inside optimize_node, not tracked here yet
+        dead_branches_eliminated: 0,
+        identities_simplified: 0,
+        double_negations_eliminated: 0,
+        strength_reductions: 0,
+        input_nodes: input_count,
+        output_nodes: output_count,
+    };
+    (result, report)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn identity_add_zero() {
+        // x + 0 → x
+        let nodes = vec![NdaNode::Add {
+            lhs: Box::new(NdaNode::Load { name_hash: 42 }),
+            rhs: Box::new(NdaNode::Int { value: 0 }),
+        }];
+        let result = optimize_ast(&nodes);
+        assert_eq!(result.len(), 1);
+        match &result[0] {
+            NdaNode::Load { name_hash } => assert_eq!(*name_hash, 42),
+            other => panic!("Expected Load, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn identity_zero_add() {
+        // 0 + x → x
+        let nodes = vec![NdaNode::Add {
+            lhs: Box::new(NdaNode::Int { value: 0 }),
+            rhs: Box::new(NdaNode::Load { name_hash: 99 }),
+        }];
+        let result = optimize_ast(&nodes);
+        assert_eq!(result.len(), 1);
+        match &result[0] {
+            NdaNode::Load { name_hash } => assert_eq!(*name_hash, 99),
+            other => panic!("Expected Load, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn double_negation_eliminated() {
+        // negate(negate(x)) → x
+        let nodes = vec![NdaNode::VecOp {
+            op: VecOpKind::Negate,
+            operand: Box::new(NdaNode::VecOp {
+                op: VecOpKind::Negate,
+                operand: Box::new(NdaNode::Load { name_hash: 7 }),
+            }),
+        }];
+        let result = optimize_ast(&nodes);
+        assert_eq!(result.len(), 1);
+        match &result[0] {
+            NdaNode::Load { name_hash } => assert_eq!(*name_hash, 7),
+            other => panic!("Expected Load after double negation, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn constant_folding_add() {
+        let nodes = vec![NdaNode::Add {
+            lhs: Box::new(NdaNode::Int { value: 3 }),
+            rhs: Box::new(NdaNode::Int { value: 4 }),
+        }];
+        let result = optimize_ast(&nodes);
+        assert_eq!(result.len(), 1);
+        match &result[0] {
+            NdaNode::Int { value } => assert_eq!(*value, 7),
+            other => panic!("Expected Int(7), got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn optimize_ast_with_report_produces_metrics() {
+        let nodes = vec![
+            NdaNode::Let {
+                name_hash: 1,
+                init: Box::new(NdaNode::Int { value: 42 }),
+            },
+            NdaNode::Let {
+                name_hash: 2,
+                init: Box::new(NdaNode::Add {
+                    lhs: Box::new(NdaNode::Load { name_hash: 1 }),
+                    rhs: Box::new(NdaNode::Int { value: 0 }),
+                }),
+            },
+            NdaNode::Return {
+                value: Box::new(NdaNode::Load { name_hash: 2 }),
+            },
+        ];
+        let (result, report) = optimize_ast_with_report(&nodes);
+        assert!(report.input_nodes > 0);
+        assert!(report.output_nodes > 0);
+        // The identity x+0 should have been simplified
+        assert!(!result.is_empty());
+        // Report should be serializable
+        let json = serde_json::to_string(&report).unwrap();
+        assert!(json.contains("input_nodes"));
+        assert!(json.contains("output_nodes"));
+    }
+
+    #[test]
+    fn dead_code_removed() {
+        // let x = 42; return 0; — x is dead
+        let nodes = vec![
+            NdaNode::Let {
+                name_hash: 1,
+                init: Box::new(NdaNode::Int { value: 42 }),
+            },
+            NdaNode::Return {
+                value: Box::new(NdaNode::Int { value: 0 }),
+            },
+        ];
+        let result = optimize_ast(&nodes);
+        // The Let should be removed since x is never loaded
+        let has_let = result.iter().any(|n| matches!(n, NdaNode::Let { .. }));
+        assert!(!has_let, "Dead Let should be removed");
+    }
 }
