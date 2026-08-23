@@ -1317,6 +1317,109 @@ impl Transformer {
         }
         self.scratch.x.clone()
     }
+
+    /// Validate the transformer for consistency.
+    /// Returns a list of warnings (empty = all good).
+    pub fn validate(&self) -> Vec<String> {
+        let mut warnings = Vec::new();
+        let cfg = &self.config;
+
+        if cfg.n_layers == 0 {
+            warnings.push("n_layers is zero".to_string());
+        }
+        if cfg.hidden_size == 0 {
+            warnings.push("hidden_size is zero".to_string());
+        }
+        if cfg.n_heads == 0 {
+            warnings.push("n_heads is zero".to_string());
+        }
+        if cfg.head_dim == 0 {
+            warnings.push("head_dim is zero".to_string());
+        }
+        if cfg.vocab_size == 0 {
+            warnings.push("vocab_size is zero".to_string());
+        }
+        if cfg.hidden_size != cfg.n_heads * cfg.head_dim {
+            warnings.push(format!(
+                "hidden_size ({}) != n_heads * head_dim ({} * {} = {})",
+                cfg.hidden_size,
+                cfg.n_heads,
+                cfg.head_dim,
+                cfg.n_heads * cfg.head_dim
+            ));
+        }
+        if cfg.n_heads % cfg.n_kv_heads != 0 {
+            warnings.push(format!(
+                "n_heads ({}) not divisible by n_kv_heads ({})",
+                cfg.n_heads, cfg.n_kv_heads
+            ));
+        }
+        if self.weights.layers.len() != cfg.n_layers {
+            warnings.push(format!(
+                "weight layers count ({}) != config n_layers ({})",
+                self.weights.layers.len(),
+                cfg.n_layers
+            ));
+        }
+        if self.kv_cache.len() != cfg.n_layers {
+            warnings.push(format!(
+                "kv_cache layers ({}) != config n_layers ({})",
+                self.kv_cache.len(),
+                cfg.n_layers
+            ));
+        }
+
+        warnings
+    }
+
+    /// Return a diagnostic snapshot of the transformer.
+    pub fn info(&self) -> TransformerInfo {
+        TransformerInfo {
+            n_layers: self.config.n_layers,
+            hidden_size: self.config.hidden_size,
+            n_heads: self.config.n_heads,
+            n_kv_heads: self.config.n_kv_heads,
+            head_dim: self.config.head_dim,
+            ffn_size: self.config.ffn_size,
+            vocab_size: self.config.vocab_size,
+            max_seq_len: self.config.max_seq_len,
+            gpu_pipeline_active: self.gpu_pipeline_active(),
+            total_kv_blocks: self.total_kv_blocks(),
+            kv_memory_bytes: self.kv_memory_bytes(),
+            weight_layers: self.weights.layers.len(),
+            validation_issues: self.validate(),
+        }
+    }
+
+    /// Batch forward: process multiple tokens and collect all logit vectors.
+    /// Useful for evaluation or scoring.
+    pub fn forward_batch(&mut self, tokens: &[u32]) -> Vec<Vec<f32>> {
+        self.reset_cache();
+        let mut outputs = Vec::with_capacity(tokens.len());
+        for (pos, &tok) in tokens.iter().enumerate() {
+            let logits = self.forward_one(tok, pos);
+            outputs.push(logits.to_vec());
+        }
+        outputs
+    }
+}
+
+/// Diagnostic snapshot of a Transformer.
+#[derive(Debug, Clone, Serialize)]
+pub struct TransformerInfo {
+    pub n_layers: usize,
+    pub hidden_size: usize,
+    pub n_heads: usize,
+    pub n_kv_heads: usize,
+    pub head_dim: usize,
+    pub ffn_size: usize,
+    pub vocab_size: usize,
+    pub max_seq_len: usize,
+    pub gpu_pipeline_active: bool,
+    pub total_kv_blocks: usize,
+    pub kv_memory_bytes: usize,
+    pub weight_layers: usize,
+    pub validation_issues: Vec<String>,
 }
 
 #[cfg(test)]
@@ -1586,5 +1689,28 @@ mod tests {
         assert_eq!(scratch.up_out.len(), 128);
         assert_eq!(scratch.gated.len(), 128);
         assert_eq!(scratch.logits.len(), 100);
+    }
+
+    #[test]
+    fn test_transformer_info_serializes() {
+        let info = TransformerInfo {
+            n_layers: 26,
+            hidden_size: 3200,
+            n_heads: 32,
+            n_kv_heads: 8,
+            head_dim: 100,
+            ffn_size: 8640,
+            vocab_size: 32002,
+            max_seq_len: 4096,
+            gpu_pipeline_active: false,
+            total_kv_blocks: 0,
+            kv_memory_bytes: 0,
+            weight_layers: 26,
+            validation_issues: vec![],
+        };
+        let json = serde_json::to_string(&info).unwrap();
+        assert!(json.contains("\"n_layers\":26"));
+        assert!(json.contains("\"hidden_size\":3200"));
+        assert!(json.contains("\"gpu_pipeline_active\":false"));
     }
 }
