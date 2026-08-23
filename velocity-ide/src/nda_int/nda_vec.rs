@@ -189,6 +189,118 @@ pub struct NdaVecInfo {
     pub unique_values: usize,
 }
 
+/// Report on f32 → NdaVec conversion accuracy.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct NdaVecConversionReport {
+    pub input_len: usize,
+    pub output_log2_scale: i8,
+    pub memory_bytes: usize,
+    pub compression_ratio: f64,
+    pub max_abs_error: f64,
+    pub mean_abs_error: f64,
+    pub validation_issues: Vec<String>,
+}
+
+/// Convert an f32 slice to NdaVec and produce a conversion accuracy report.
+pub fn from_f32_slice_report(x: &[f32]) -> (NdaVec, NdaVecConversionReport) {
+    let nv = NdaVec::from_f32_slice(x);
+    let roundtrip = nv.to_f32_vec();
+
+    let mut max_abs_error = 0.0f64;
+    let mut sum_abs_error = 0.0f64;
+    for (i, &orig) in x.iter().enumerate() {
+        let err = (orig as f64 - roundtrip[i] as f64).abs();
+        max_abs_error = max_abs_error.max(err);
+        sum_abs_error += err;
+    }
+    let mean_abs_error = if x.is_empty() { 0.0 } else { sum_abs_error / x.len() as f64 };
+    let input_bytes = x.len() * 4;
+    let compression_ratio = if nv.memory_bytes() > 0 {
+        input_bytes as f64 / nv.memory_bytes() as f64
+    } else {
+        0.0
+    };
+
+    let mut issues = Vec::new();
+    if x.is_empty() {
+        issues.push("input slice is empty".into());
+    }
+    if max_abs_error > 1.0 {
+        issues.push(format!("max abs error {:.4} exceeds 1.0", max_abs_error));
+    }
+
+    let report = NdaVecConversionReport {
+        input_len: x.len(),
+        output_log2_scale: nv.log2_scale,
+        memory_bytes: nv.memory_bytes(),
+        compression_ratio,
+        max_abs_error,
+        mean_abs_error,
+        validation_issues: issues,
+    };
+    (nv, report)
+}
+
+/// Batch convert multiple f32 slices to NdaVecs with a summary report.
+pub fn batch_from_f32(vecs: &[Vec<f32>]) -> (Vec<NdaVec>, NdaVecConversionReport) {
+    let mut all_nv = Vec::with_capacity(vecs.len());
+    let mut total_max_err = 0.0f64;
+    let mut total_sum_err = 0.0f64;
+    let mut total_elements = 0usize;
+
+    for v in vecs {
+        let (nv, report) = from_f32_slice_report(v);
+        total_max_err = total_max_err.max(report.max_abs_error);
+        total_sum_err += report.mean_abs_error * v.len() as f64;
+        total_elements += v.len();
+        all_nv.push(nv);
+    }
+
+    let mean_abs_error = if total_elements > 0 {
+        total_sum_err / total_elements as f64
+    } else {
+        0.0
+    };
+
+    let total_input_bytes: usize = vecs.iter().map(|v| v.len() * 4).sum();
+    let total_output_bytes: usize = all_nv.iter().map(|nv| nv.memory_bytes()).sum();
+    let compression_ratio = if total_output_bytes > 0 {
+        total_input_bytes as f64 / total_output_bytes as f64
+    } else {
+        0.0
+    };
+
+    let mut issues = Vec::new();
+    if vecs.is_empty() {
+        issues.push("no vectors to convert".into());
+    }
+
+    let report = NdaVecConversionReport {
+        input_len: total_elements,
+        output_log2_scale: 0,
+        memory_bytes: total_output_bytes,
+        compression_ratio,
+        max_abs_error: total_max_err,
+        mean_abs_error,
+        validation_issues: issues,
+    };
+    (all_nv, report)
+}
+
+/// Validate that two NdaVecs are compatible for dot product.
+pub fn validate_dot_product_params(a: &NdaVec, b: &NdaVec) -> Vec<String> {
+    let mut issues = Vec::new();
+    if a.len != b.len {
+        issues.push(format!("length mismatch: {} vs {}", a.len, b.len));
+    }
+    if a.len == 0 {
+        issues.push("vector length is 0".into());
+    }
+    issues.extend(a.validate());
+    issues.extend(b.validate());
+    issues
+}
+
 #[inline]
 pub fn combine_log2_scales(a: i8, b: i8) -> i8 {
     a.saturating_add(b)
@@ -350,5 +462,77 @@ mod tests {
         let json = serde_json::to_string(&info).unwrap();
         assert!(json.contains("\"len\":4"));
         assert!(json.contains("\"bits_per_element\":2.0"));
+    }
+
+    #[test]
+    fn from_f32_slice_report_basic() {
+        let input = vec![1.0, -1.0, 0.5, -0.5, 2.0, -2.0, 0.0, 0.1];
+        let (nv, report) = from_f32_slice_report(&input);
+        assert_eq!(report.input_len, 8);
+        assert_eq!(nv.len, 8);
+        assert!(report.memory_bytes > 0);
+        assert!(report.compression_ratio > 1.0);
+        assert!(report.validation_issues.is_empty());
+    }
+
+    #[test]
+    fn from_f32_slice_report_empty() {
+        let input: Vec<f32> = vec![];
+        let (_, report) = from_f32_slice_report(&input);
+        assert_eq!(report.input_len, 0);
+        assert!(!report.validation_issues.is_empty());
+    }
+
+    #[test]
+    fn from_f32_slice_report_serializes() {
+        let input = vec![1.0, -1.0, 2.0, -2.0];
+        let (_, report) = from_f32_slice_report(&input);
+        let json = serde_json::to_string(&report).unwrap();
+        assert!(json.contains("\"input_len\":4"));
+        assert!(json.contains("\"compression_ratio\""));
+    }
+
+    #[test]
+    fn batch_from_f32_basic() {
+        let vecs = vec![
+            vec![1.0, -1.0, 0.5, -0.5],
+            vec![2.0, -2.0, 0.0, 0.1],
+            vec![-0.3, 0.3, 1.5, -1.5],
+        ];
+        let (nvs, report) = batch_from_f32(&vecs);
+        assert_eq!(nvs.len(), 3);
+        assert_eq!(report.input_len, 12);
+        assert!(report.compression_ratio > 1.0);
+    }
+
+    #[test]
+    fn batch_from_f32_empty() {
+        let (nvs, report) = batch_from_f32(&[]);
+        assert!(nvs.is_empty());
+        assert!(!report.validation_issues.is_empty());
+    }
+
+    #[test]
+    fn validate_dot_product_params_valid() {
+        let a = NdaVec::from_i32_slice(&[1, 2, -1, -2], 0);
+        let b = NdaVec::from_i32_slice(&[1, -1, 2, -2], 0);
+        let issues = validate_dot_product_params(&a, &b);
+        assert!(issues.is_empty());
+    }
+
+    #[test]
+    fn validate_dot_product_params_length_mismatch() {
+        let a = NdaVec::from_i32_slice(&[1, 2, 3, 4], 0);
+        let b = NdaVec::from_i32_slice(&[1, -1], 0);
+        let issues = validate_dot_product_params(&a, &b);
+        assert!(issues.iter().any(|i| i.contains("mismatch")));
+    }
+
+    #[test]
+    fn validate_dot_product_params_zero_length() {
+        let a = NdaVec { len: 0, log2_scale: 0, sign: vec![].into(), extra: vec![].into() };
+        let b = NdaVec { len: 0, log2_scale: 0, sign: vec![].into(), extra: vec![].into() };
+        let issues = validate_dot_product_params(&a, &b);
+        assert!(issues.iter().any(|i| i.contains("0")));
     }
 }
