@@ -48,6 +48,75 @@ impl SandboxResult {
         pairs.sort_by(|a, b| b.1.cmp(&a.1));
         pairs.into_iter().take(n).collect()
     }
+
+    /// Validate the execution result.
+    /// Returns a list of warnings (empty = all good).
+    pub fn validate(&self) -> Vec<String> {
+        let mut warnings = Vec::new();
+
+        if self.panicked {
+            warnings.push("Execution panicked".to_string());
+        }
+        if let Some(ref err) = self.error {
+            warnings.push(format!("Execution error: {}", err));
+        }
+        if self.executed_nodes == 0 && !self.panicked {
+            warnings.push("No nodes were executed".to_string());
+        }
+        if self.output_dim == 0 && self.is_success() {
+            warnings.push("Output dimension is 0".to_string());
+        }
+        if self.loop_iterations > 1_000_000 {
+            warnings.push(format!(
+                "High loop iteration count: {} (potential infinite loop)",
+                self.loop_iterations
+            ));
+        }
+
+        warnings
+    }
+
+    /// Return a structured execution summary.
+    pub fn execution_summary(&self) -> SandboxExecutionSummary {
+        SandboxExecutionSummary {
+            success: self.is_success(),
+            executed_nodes: self.executed_nodes,
+            matrix_count: self.matrix_count,
+            norm_count: self.norm_count,
+            output_dim: self.output_dim,
+            elapsed_us: self.elapsed_us,
+            loop_iterations: self.loop_iterations,
+            unique_kinds: self.kind_counts.len(),
+            output_log_lines: self.output_log.len(),
+            has_error: self.error.is_some(),
+        }
+    }
+}
+
+/// Structured execution summary (safe to log).
+#[derive(Debug, Clone, Serialize)]
+pub struct SandboxExecutionSummary {
+    pub success: bool,
+    pub executed_nodes: usize,
+    pub matrix_count: usize,
+    pub norm_count: usize,
+    pub output_dim: usize,
+    pub elapsed_us: u64,
+    pub loop_iterations: usize,
+    pub unique_kinds: usize,
+    pub output_log_lines: usize,
+    pub has_error: bool,
+}
+
+/// Report from batch execution of multiple node sequences.
+#[derive(Debug, Clone, Serialize)]
+pub struct SandboxBatchReport {
+    pub total_runs: usize,
+    pub successful: usize,
+    pub failed: usize,
+    pub total_elapsed_us: u64,
+    pub total_nodes_executed: usize,
+    pub per_run_summaries: Vec<SandboxExecutionSummary>,
 }
 
 pub struct NdaSandbox;
@@ -155,6 +224,44 @@ impl NdaSandbox {
                 }
             }
         }
+    }
+
+    /// Execute multiple node sequences in batch and return a structured report.
+    pub fn run_batch(
+        runs: &[(&[NdaNode], &[f32])],
+        site_map: &SiteMap,
+    ) -> (Vec<SandboxResult>, SandboxBatchReport) {
+        let t_start = Instant::now();
+        let mut results = Vec::with_capacity(runs.len());
+        let mut per_run_summaries = Vec::with_capacity(runs.len());
+        let mut successful = 0;
+        let mut failed = 0;
+        let mut total_nodes_executed = 0;
+
+        for (nodes, conditioning_vec) in runs {
+            let result = Self::run(nodes, conditioning_vec, site_map);
+            if result.is_success() {
+                successful += 1;
+            } else {
+                failed += 1;
+            }
+            total_nodes_executed += result.executed_nodes;
+            per_run_summaries.push(result.execution_summary());
+            results.push(result);
+        }
+
+        let total_elapsed_us = t_start.elapsed().as_micros() as u64;
+
+        let report = SandboxBatchReport {
+            total_runs: runs.len(),
+            successful,
+            failed,
+            total_elapsed_us,
+            total_nodes_executed,
+            per_run_summaries,
+        };
+
+        (results, report)
     }
 }
 
@@ -973,5 +1080,128 @@ mod tests {
         assert_eq!(node_kind_name(&NdaNode::Break), "Break");
         let scope = NdaNode::Scope { children: vec![] };
         assert_eq!(node_kind_name(&scope), "Scope");
+    }
+
+    // ─── Sandbox validation & summary tests ────────────────────────────────
+
+    #[test]
+    fn sandbox_result_validate_clean() {
+        let result = SandboxResult {
+            executed_nodes: 5,
+            matrix_count: 2,
+            norm_count: 1,
+            output_vec: vec![1.0, 2.0],
+            output_dim: 2,
+            panicked: false,
+            error: None,
+            elapsed_us: 500,
+            kind_counts: HashMap::new(),
+            output_log: Vec::new(),
+            loop_iterations: 100,
+        };
+        let warnings = result.validate();
+        assert!(warnings.is_empty());
+    }
+
+    #[test]
+    fn sandbox_result_validate_detects_issues() {
+        let result = SandboxResult {
+            executed_nodes: 0,
+            matrix_count: 0,
+            norm_count: 0,
+            output_vec: vec![],
+            output_dim: 0,
+            panicked: false,
+            error: None,
+            elapsed_us: 10,
+            kind_counts: HashMap::new(),
+            output_log: Vec::new(),
+            loop_iterations: 0,
+        };
+        let warnings = result.validate();
+        assert!(!warnings.is_empty());
+        assert!(warnings.iter().any(|w| w.contains("No nodes")));
+    }
+
+    #[test]
+    fn sandbox_result_validate_detects_panic() {
+        let result = SandboxResult {
+            executed_nodes: 1,
+            matrix_count: 0,
+            norm_count: 0,
+            output_vec: vec![],
+            output_dim: 0,
+            panicked: true,
+            error: Some("Panic: test".to_string()),
+            elapsed_us: 10,
+            kind_counts: HashMap::new(),
+            output_log: Vec::new(),
+            loop_iterations: 0,
+        };
+        let warnings = result.validate();
+        assert!(warnings.iter().any(|w| w.contains("panicked")));
+        assert!(warnings.iter().any(|w| w.contains("error")));
+    }
+
+    #[test]
+    fn sandbox_execution_summary_serializes() {
+        let summary = SandboxExecutionSummary {
+            success: true,
+            executed_nodes: 10,
+            matrix_count: 5,
+            norm_count: 3,
+            output_dim: 128,
+            elapsed_us: 1000,
+            loop_iterations: 50,
+            unique_kinds: 4,
+            output_log_lines: 2,
+            has_error: false,
+        };
+        let json = serde_json::to_string(&summary).unwrap();
+        assert!(json.contains("\"success\":true"));
+        assert!(json.contains("\"executed_nodes\":10"));
+    }
+
+    #[test]
+    fn sandbox_batch_report_serializes() {
+        let report = SandboxBatchReport {
+            total_runs: 3,
+            successful: 2,
+            failed: 1,
+            total_elapsed_us: 5000,
+            total_nodes_executed: 30,
+            per_run_summaries: vec![],
+        };
+        let json = serde_json::to_string(&report).unwrap();
+        assert!(json.contains("\"total_runs\":3"));
+        assert!(json.contains("\"successful\":2"));
+        assert!(json.contains("\"failed\":1"));
+    }
+
+    #[test]
+    fn sandbox_execution_summary_from_result() {
+        let result = SandboxResult {
+            executed_nodes: 5,
+            matrix_count: 2,
+            norm_count: 1,
+            output_vec: vec![1.0],
+            output_dim: 1,
+            panicked: false,
+            error: None,
+            elapsed_us: 500,
+            kind_counts: {
+                let mut m = HashMap::new();
+                m.insert("Matrix".into(), 2);
+                m.insert("Norm".into(), 1);
+                m
+            },
+            output_log: vec!["test".into()],
+            loop_iterations: 10,
+        };
+        let summary = result.execution_summary();
+        assert!(summary.success);
+        assert_eq!(summary.executed_nodes, 5);
+        assert_eq!(summary.unique_kinds, 2);
+        assert_eq!(summary.output_log_lines, 1);
     }
 }
