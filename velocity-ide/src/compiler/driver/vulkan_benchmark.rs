@@ -11,8 +11,87 @@ use std::ffi::CString;
 use std::time::Instant;
 
 use ash::vk;
+use serde::Serialize;
 
 use super::vulkan_init::*;
+
+/// Configuration for the attention benchmark.
+#[derive(Debug, Clone, Serialize)]
+pub struct BenchmarkConfig {
+    pub num_tokens: u32,
+    pub head_dim: u32,
+    pub num_heads: u32,
+    pub iterations: u32,
+}
+
+impl Default for BenchmarkConfig {
+    fn default() -> Self {
+        Self {
+            num_tokens: 256,
+            head_dim: 32,
+            num_heads: 32,
+            iterations: 500,
+        }
+    }
+}
+
+/// Results from the attention benchmark comparison.
+#[derive(Debug, Clone, Serialize)]
+pub struct BenchmarkReport {
+    pub config: BenchmarkConfig,
+    pub contig_avg_us: f64,
+    pub ndakv_avg_us: f64,
+    pub speedup_ratio: f64,
+    pub faster_method: String,
+    pub validation_issues: Vec<String>,
+}
+
+/// Validate benchmark configuration.
+pub fn validate_benchmark_config(cfg: &BenchmarkConfig) -> Vec<String> {
+    let mut issues = Vec::new();
+    if cfg.num_tokens == 0 {
+        issues.push("num_tokens must be > 0".into());
+    }
+    if cfg.head_dim == 0 {
+        issues.push("head_dim must be > 0".into());
+    }
+    if cfg.num_heads == 0 {
+        issues.push("num_heads must be > 0".into());
+    }
+    if cfg.iterations == 0 {
+        issues.push("iterations must be > 0".into());
+    }
+    if cfg.iterations < 10 {
+        issues.push("iterations should be >= 10 for meaningful results".into());
+    }
+    issues
+}
+
+/// Build a benchmark report from timing results.
+pub fn build_benchmark_report(
+    cfg: &BenchmarkConfig,
+    contig_avg_us: f64,
+    ndakv_avg_us: f64,
+) -> BenchmarkReport {
+    let issues = validate_benchmark_config(cfg);
+    let (ratio, faster) = if contig_avg_us > 0.0 && ndakv_avg_us > 0.0 {
+        if contig_avg_us < ndakv_avg_us {
+            (ndakv_avg_us / contig_avg_us, "contig".to_string())
+        } else {
+            (contig_avg_us / ndakv_avg_us, "ndakv".to_string())
+        }
+    } else {
+        (0.0, "unknown".to_string())
+    };
+    BenchmarkReport {
+        config: cfg.clone(),
+        contig_avg_us,
+        ndakv_avg_us,
+        speedup_ratio: ratio,
+        faster_method: faster,
+        validation_issues: issues,
+    }
+}
 
 #[allow(clippy::needless_range_loop)]
 pub fn benchmark_attention_nda_vs_contig(
@@ -531,4 +610,80 @@ pub fn benchmark_attention_nda_vs_contig(
     }
 
     Ok((contig_avg_us, ndakv_avg_us))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn default_config_valid() {
+        let cfg = BenchmarkConfig::default();
+        assert!(validate_benchmark_config(&cfg).is_empty());
+    }
+
+    #[test]
+    fn validate_zero_tokens() {
+        let mut cfg = BenchmarkConfig::default();
+        cfg.num_tokens = 0;
+        assert!(validate_benchmark_config(&cfg).iter().any(|i| i.contains("num_tokens")));
+    }
+
+    #[test]
+    fn validate_zero_iterations() {
+        let mut cfg = BenchmarkConfig::default();
+        cfg.iterations = 0;
+        let issues = validate_benchmark_config(&cfg);
+        assert!(issues.iter().any(|i| i.contains("iterations")));
+    }
+
+    #[test]
+    fn validate_low_iterations() {
+        let mut cfg = BenchmarkConfig::default();
+        cfg.iterations = 5;
+        assert!(validate_benchmark_config(&cfg).iter().any(|i| i.contains(">= 10")));
+    }
+
+    #[test]
+    fn benchmark_report_contig_faster() {
+        let cfg = BenchmarkConfig::default();
+        let report = build_benchmark_report(&cfg, 100.0, 200.0);
+        assert_eq!(report.faster_method, "contig");
+        assert!((report.speedup_ratio - 2.0).abs() < 0.01);
+        assert!(report.validation_issues.is_empty());
+    }
+
+    #[test]
+    fn benchmark_report_ndakv_faster() {
+        let cfg = BenchmarkConfig::default();
+        let report = build_benchmark_report(&cfg, 300.0, 100.0);
+        assert_eq!(report.faster_method, "ndakv");
+        assert!((report.speedup_ratio - 3.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn benchmark_report_zero_times() {
+        let cfg = BenchmarkConfig::default();
+        let report = build_benchmark_report(&cfg, 0.0, 0.0);
+        assert_eq!(report.faster_method, "unknown");
+        assert_eq!(report.speedup_ratio, 0.0);
+    }
+
+    #[test]
+    fn benchmark_config_serializes() {
+        let cfg = BenchmarkConfig::default();
+        let json = serde_json::to_string(&cfg).unwrap();
+        assert!(json.contains("num_tokens"));
+        assert!(json.contains("256"));
+    }
+
+    #[test]
+    fn benchmark_report_serializes() {
+        let cfg = BenchmarkConfig::default();
+        let report = build_benchmark_report(&cfg, 100.0, 200.0);
+        let json = serde_json::to_string(&report).unwrap();
+        assert!(json.contains("speedup_ratio"));
+        assert!(json.contains("faster_method"));
+        assert!(json.contains("contig"));
+    }
 }
