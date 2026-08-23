@@ -2,6 +2,8 @@
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
+use serde::Serialize;
+
 use crate::nda_int::NdaVec;
 use crate::safety::SafeMutex;
 use crate::sandbox::SandboxResult;
@@ -328,4 +330,561 @@ pub fn run_sequence(fns: &[JitFn], state: &mut JitState<'_>) -> Result<JitContro
         }
     }
     Ok(JitControlFlow::Continue)
+}
+
+// ─── Diagnostic: JitState snapshot ─────────────────────────────────────────────
+
+/// Serializable diagnostic snapshot of a `JitState`'s runtime status.
+#[derive(Debug, Clone, Serialize)]
+pub struct JitStateInfo {
+    pub stack_depth: usize,
+    pub top_of_stack_type: Option<String>,
+    pub total_variable_slots: usize,
+    pub bound_variables: usize,
+    pub variable_utilization: f64,
+    pub matrix_count: usize,
+    pub norm_count: usize,
+    pub loop_count: usize,
+    pub executed_nodes: usize,
+    pub print_buffer_lines: usize,
+    pub heap_capacity_bytes: usize,
+    pub heap_allocations: usize,
+    pub heap_allocated_bytes: usize,
+    pub mmio_register_count: usize,
+    pub interrupt_handler_count: usize,
+    pub validation_issues: Vec<String>,
+}
+
+/// Produce a diagnostic snapshot of the current JIT state.
+pub fn jit_state_info(state: &JitState<'_>) -> JitStateInfo {
+    let bound = state.variables.iter().filter(|v| v.is_some()).count();
+    let total = state.variables.len();
+    let utilization = if total > 0 {
+        bound as f64 / total as f64
+    } else {
+        0.0
+    };
+    let top_type = state.stack.last().map(|v| match v {
+        JitVal::Vector(_) => "Vector".to_string(),
+        JitVal::Scalar(_, _) => "Scalar".to_string(),
+        JitVal::Float(_) => "Float".to_string(),
+    });
+    let allocated_bytes: usize = state.heap_allocations.values().sum();
+
+    JitStateInfo {
+        stack_depth: state.stack.len(),
+        top_of_stack_type: top_type,
+        total_variable_slots: total,
+        bound_variables: bound,
+        variable_utilization: utilization,
+        matrix_count: state.matrix_count,
+        norm_count: state.norm_count,
+        loop_count: state.loop_count,
+        executed_nodes: state.executed_nodes,
+        print_buffer_lines: state.print_buf.len(),
+        heap_capacity_bytes: state.heap.len(),
+        heap_allocations: state.heap_allocations.len(),
+        heap_allocated_bytes: allocated_bytes,
+        mmio_register_count: state.mmio.len(),
+        interrupt_handler_count: state.interrupts.len(),
+        validation_issues: validate_jit_state(state),
+    }
+}
+
+/// Validate JitState consistency, returning a list of warnings.
+pub fn validate_jit_state(state: &JitState<'_>) -> Vec<String> {
+    let mut issues = Vec::new();
+
+    // Check heap allocation bounds
+    let heap_len = state.heap.len();
+    for (&addr, &size) in &state.heap_allocations {
+        let end = (addr as usize).saturating_add(size);
+        if end > heap_len {
+            issues.push(format!(
+                "heap allocation at {} size {} exceeds heap capacity {}",
+                addr, size, heap_len
+            ));
+        }
+    }
+
+    // Check MMIO address range (32-bit)
+    for &addr in state.mmio.keys() {
+        if addr > 0xFFFF_FFFF {
+            issues.push(format!("MMIO address 0x{:08x} exceeds 32-bit range", addr));
+        }
+    }
+
+    // Check interrupt vector range
+    for &vec in state.interrupts.keys() {
+        if vec > 255 {
+            issues.push(format!("interrupt vector {} exceeds max 255", vec));
+        }
+    }
+
+    // Check stack is not unreasonably deep (potential leak)
+    if state.stack.len() > 10_000 {
+        issues.push(format!(
+            "stack depth {} is unusually deep (possible leak)",
+            state.stack.len()
+        ));
+    }
+
+    issues
+}
+
+// ─── Diagnostic: JitResult info ────────────────────────────────────────────────
+
+/// Serializable diagnostic from a completed `JitResult`.
+#[derive(Debug, Clone, Serialize)]
+pub struct JitResultInfo {
+    pub output_dim: usize,
+    pub output_len: usize,
+    pub elapsed_us: u64,
+    pub nodes_compiled: usize,
+    pub has_error: bool,
+    pub error_message: Option<String>,
+    pub success: bool,
+}
+
+impl JitResultInfo {
+    /// Build a diagnostic from a JitResult.
+    pub fn from_result(result: &JitResult) -> Self {
+        JitResultInfo {
+            output_dim: result.output_dim,
+            output_len: result.output_vec.len(),
+            elapsed_us: result.elapsed_us,
+            nodes_compiled: result.nodes_compiled,
+            has_error: result.error.is_some(),
+            error_message: result.error.clone(),
+            success: result.error.is_none(),
+        }
+    }
+}
+
+// ─── Diagnostic: VarRegistry info ──────────────────────────────────────────────
+
+/// Serializable diagnostic snapshot of a `VarRegistry`.
+#[derive(Debug, Clone, Serialize)]
+pub struct VarRegistryInfo {
+    pub total_slots: usize,
+}
+
+impl VarRegistry {
+    /// Return a diagnostic snapshot of this registry.
+    pub fn info(&self) -> VarRegistryInfo {
+        VarRegistryInfo {
+            total_slots: self.total_slots(),
+        }
+    }
+}
+
+// ─── Diagnostic: JitProgram info ───────────────────────────────────────────────
+
+/// Serializable diagnostic snapshot of a `JitProgram`.
+#[derive(Debug, Clone, Serialize)]
+pub struct JitProgramInfo {
+    pub function_count: usize,
+    pub nodes_compiled: usize,
+    pub has_asm_kernel: bool,
+    pub variable_slots: usize,
+    pub validation_issues: Vec<String>,
+}
+
+/// Produce a diagnostic snapshot of a JitProgram.
+pub fn jit_program_info(prog: &JitProgram) -> JitProgramInfo {
+    let mut issues = Vec::new();
+
+    if prog.fns.is_empty() {
+        issues.push("program has no compiled functions".to_string());
+    }
+
+    if prog.nodes_compiled == 0 && !prog.fns.is_empty() {
+        issues.push("nodes_compiled is 0 but functions exist".to_string());
+    }
+
+    JitProgramInfo {
+        function_count: prog.fns.len(),
+        nodes_compiled: prog.nodes_compiled,
+        has_asm_kernel: prog.has_asm_kernel,
+        variable_slots: prog.registry.total_slots(),
+        validation_issues: issues,
+    }
+}
+
+// ─── Tests ─────────────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn make_test_sitemap() -> (SiteMap, tempfile::TempDir) {
+        let dir = tempfile::tempdir().unwrap();
+        let sm = SiteMap::open(dir.path(), 0).unwrap();
+        (sm, dir)
+    }
+
+    // ── JitStateInfo tests ────────────────────────────────────────────────────
+
+    #[test]
+    fn jit_state_info_empty() {
+        let (sm, _dir) = make_test_sitemap();
+        let state = JitState::new(&[1.0, 2.0, 3.0], &sm, 4);
+        let info = jit_state_info(&state);
+        assert_eq!(info.stack_depth, 1); // input vector on stack
+        assert_eq!(info.top_of_stack_type.as_deref(), Some("Vector"));
+        assert_eq!(info.total_variable_slots, 4);
+        assert_eq!(info.bound_variables, 0);
+        assert!((info.variable_utilization - 0.0).abs() < 1e-9);
+        assert_eq!(info.matrix_count, 0);
+        assert_eq!(info.norm_count, 0);
+        assert_eq!(info.loop_count, 0);
+        assert_eq!(info.executed_nodes, 0);
+        assert_eq!(info.print_buffer_lines, 0);
+        assert_eq!(info.heap_capacity_bytes, 65536);
+        assert_eq!(info.heap_allocations, 0);
+        assert_eq!(info.heap_allocated_bytes, 0);
+        assert_eq!(info.mmio_register_count, 0);
+        assert_eq!(info.interrupt_handler_count, 0);
+        assert!(info.validation_issues.is_empty());
+    }
+
+    #[test]
+    fn jit_state_info_with_bindings() {
+        let (sm, _dir) = make_test_sitemap();
+        let mut state = JitState::new(&[1.0], &sm, 4);
+        state.variables[0] = Some(JitVal::Scalar(42, 0));
+        state.variables[2] = Some(JitVal::Float(3.14));
+        state.matrix_count = 3;
+        state.norm_count = 1;
+        state.loop_count = 2;
+        state.executed_nodes = 10;
+        state.print_buf.push("hello".to_string());
+
+        let info = jit_state_info(&state);
+        assert_eq!(info.bound_variables, 2);
+        assert!((info.variable_utilization - 0.5).abs() < 1e-9);
+        assert_eq!(info.matrix_count, 3);
+        assert_eq!(info.norm_count, 1);
+        assert_eq!(info.loop_count, 2);
+        assert_eq!(info.executed_nodes, 10);
+        assert_eq!(info.print_buffer_lines, 1);
+    }
+
+    #[test]
+    fn jit_state_info_top_of_stack_types() {
+        let (sm, _dir) = make_test_sitemap();
+
+        // Vector on top
+        let state = JitState::new(&[1.0], &sm, 0);
+        assert_eq!(jit_state_info(&state).top_of_stack_type.as_deref(), Some("Vector"));
+
+        // Scalar on top
+        let mut state2 = JitState::new(&[1.0], &sm, 0);
+        state2.stack.push(JitVal::Scalar(5, 1));
+        assert_eq!(jit_state_info(&state2).top_of_stack_type.as_deref(), Some("Scalar"));
+
+        // Float on top
+        let mut state3 = JitState::new(&[1.0], &sm, 0);
+        state3.stack.push(JitVal::Float(2.71));
+        assert_eq!(jit_state_info(&state3).top_of_stack_type.as_deref(), Some("Float"));
+    }
+
+    #[test]
+    fn jit_state_info_heap_allocations() {
+        let (sm, _dir) = make_test_sitemap();
+        let mut state = JitState::new(&[1.0], &sm, 0);
+        state.heap_allocations.insert(0, 1024);
+        state.heap_allocations.insert(1024, 2048);
+        state.mmio.insert(0x1000, JitVal::Float(1.0));
+        state.interrupts.insert(7, 0xDEAD);
+
+        let info = jit_state_info(&state);
+        assert_eq!(info.heap_allocations, 2);
+        assert_eq!(info.heap_allocated_bytes, 3072);
+        assert_eq!(info.mmio_register_count, 1);
+        assert_eq!(info.interrupt_handler_count, 1);
+    }
+
+    // ── validate_jit_state tests ──────────────────────────────────────────────
+
+    #[test]
+    fn validate_jit_state_clean() {
+        let (sm, _dir) = make_test_sitemap();
+        let state = JitState::new(&[1.0], &sm, 2);
+        let issues = validate_jit_state(&state);
+        assert!(issues.is_empty());
+    }
+
+    #[test]
+    fn validate_jit_state_heap_overflow() {
+        let (sm, _dir) = make_test_sitemap();
+        let mut state = JitState::new(&[1.0], &sm, 0);
+        // Heap is 65536 bytes; allocate past the end
+        state.heap_allocations.insert(65000, 1000);
+        let issues = validate_jit_state(&state);
+        assert_eq!(issues.len(), 1);
+        assert!(issues[0].contains("exceeds heap capacity"));
+    }
+
+    #[test]
+    fn validate_jit_state_deep_stack() {
+        let (sm, _dir) = make_test_sitemap();
+        let mut state = JitState::new(&[1.0], &sm, 0);
+        for _ in 0..10_001 {
+            state.stack.push(JitVal::Scalar(1, 0));
+        }
+        let issues = validate_jit_state(&state);
+        assert!(issues.iter().any(|i| i.contains("unusually deep")));
+    }
+
+    #[test]
+    fn validate_jit_state_multiple_issues() {
+        let (sm, _dir) = make_test_sitemap();
+        let mut state = JitState::new(&[1.0], &sm, 0);
+        state.heap_allocations.insert(70000, 1000);
+        state.interrupts.insert(300, 0x01);
+        let issues = validate_jit_state(&state);
+        assert!(issues.len() >= 2);
+        assert!(issues.iter().any(|i| i.contains("heap allocation")));
+        assert!(issues.iter().any(|i| i.contains("interrupt vector")));
+    }
+
+    // ── JitResultInfo tests ───────────────────────────────────────────────────
+
+    #[test]
+    fn jit_result_info_success() {
+        let result = JitResult {
+            output_vec: vec![1.0, 2.0, 3.0],
+            output_dim: 3,
+            elapsed_us: 42,
+            nodes_compiled: 10,
+            error: None,
+        };
+        let info = JitResultInfo::from_result(&result);
+        assert_eq!(info.output_dim, 3);
+        assert_eq!(info.output_len, 3);
+        assert_eq!(info.elapsed_us, 42);
+        assert_eq!(info.nodes_compiled, 10);
+        assert!(!info.has_error);
+        assert!(info.error_message.is_none());
+        assert!(info.success);
+    }
+
+    #[test]
+    fn jit_result_info_error() {
+        let result = JitResult {
+            output_vec: vec![],
+            output_dim: 0,
+            elapsed_us: 5,
+            nodes_compiled: 3,
+            error: Some("division by zero".to_string()),
+        };
+        let info = JitResultInfo::from_result(&result);
+        assert_eq!(info.output_dim, 0);
+        assert_eq!(info.output_len, 0);
+        assert!(info.has_error);
+        assert_eq!(info.error_message.as_deref(), Some("division by zero"));
+        assert!(!info.success);
+    }
+
+    // ── VarRegistry info tests ────────────────────────────────────────────────
+
+    #[test]
+    fn var_registry_info_empty() {
+        let reg = VarRegistry::new();
+        let info = reg.info();
+        assert_eq!(info.total_slots, 0);
+    }
+
+    #[test]
+    fn var_registry_info_with_slots() {
+        let reg = VarRegistry::new();
+        reg.get_or_create_slot(0xAAAA);
+        reg.get_or_create_slot(0xBBBB);
+        reg.get_or_create_slot(0xAAAA); // duplicate
+        let info = reg.info();
+        assert_eq!(info.total_slots, 2);
+    }
+
+    // ── JitProgramInfo tests ──────────────────────────────────────────────────
+
+    #[test]
+    fn jit_program_info_empty() {
+        let reg = VarRegistry::new();
+        let prog = JitProgram {
+            fns: vec![],
+            nodes_compiled: 0,
+            has_asm_kernel: false,
+            registry: reg,
+        };
+        let info = jit_program_info(&prog);
+        assert_eq!(info.function_count, 0);
+        assert_eq!(info.nodes_compiled, 0);
+        assert!(!info.has_asm_kernel);
+        assert_eq!(info.variable_slots, 0);
+        assert!(info.validation_issues.iter().any(|i| i.contains("no compiled functions")));
+    }
+
+    #[test]
+    fn jit_program_info_with_functions() {
+        let reg = VarRegistry::new();
+        reg.get_or_create_slot(0x01);
+        let dummy_fn: JitFn = Arc::new(|state: &mut JitState<'_>| {
+            state.executed_nodes += 1;
+            Ok(JitControlFlow::Continue)
+        });
+        let prog = JitProgram {
+            fns: vec![dummy_fn],
+            nodes_compiled: 5,
+            has_asm_kernel: true,
+            registry: reg,
+        };
+        let info = jit_program_info(&prog);
+        assert_eq!(info.function_count, 1);
+        assert_eq!(info.nodes_compiled, 5);
+        assert!(info.has_asm_kernel);
+        assert_eq!(info.variable_slots, 1);
+        assert!(info.validation_issues.is_empty());
+    }
+
+    #[test]
+    fn jit_program_info_mismatch_warning() {
+        let reg = VarRegistry::new();
+        let dummy_fn: JitFn = Arc::new(|_: &mut JitState<'_>| Ok(JitControlFlow::Continue));
+        let prog = JitProgram {
+            fns: vec![dummy_fn],
+            nodes_compiled: 0, // mismatch: fns exist but count is 0
+            has_asm_kernel: false,
+            registry: reg,
+        };
+        let info = jit_program_info(&prog);
+        assert!(info.validation_issues.iter().any(|i| i.contains("nodes_compiled is 0")));
+    }
+
+    // ── JitControlFlow tests ──────────────────────────────────────────────────
+
+    #[test]
+    fn jit_control_flow_equality() {
+        assert_eq!(JitControlFlow::Continue, JitControlFlow::Continue);
+        assert_eq!(JitControlFlow::Break, JitControlFlow::Break);
+        assert_eq!(JitControlFlow::Return, JitControlFlow::Return);
+        assert_ne!(JitControlFlow::Continue, JitControlFlow::Break);
+        assert_ne!(JitControlFlow::Break, JitControlFlow::Return);
+    }
+
+    // ── JitVal tests ──────────────────────────────────────────────────────────
+
+    #[test]
+    fn jit_val_is_truthy() {
+        assert!(JitVal::Scalar(1, 0).is_truthy());
+        assert!(JitVal::Scalar(100, -5).is_truthy());
+        assert!(!JitVal::Scalar(0, 0).is_truthy());
+        assert!(!JitVal::Scalar(-1, 0).is_truthy());
+
+        assert!(JitVal::Float(1.0).is_truthy());
+        assert!(JitVal::Float(0.001).is_truthy());
+        assert!(!JitVal::Float(0.0).is_truthy());
+        assert!(!JitVal::Float(-1.0).is_truthy());
+    }
+
+    #[test]
+    fn jit_val_to_f32_vec() {
+        let v = JitVal::Float(3.14);
+        let f32v = v.to_f32_vec();
+        assert_eq!(f32v.len(), 1);
+        assert!((f32v[0] - 3.14).abs() < 1e-6);
+
+        let s = JitVal::Scalar(5, 0); // 5 * 2^0 = 5.0
+        let f32s = s.to_f32_vec();
+        assert_eq!(f32s.len(), 1);
+        assert!((f32s[0] - 5.0).abs() < 1e-6);
+
+        let s2 = JitVal::Scalar(3, 2); // 3 * 2^2 = 12.0
+        let f32s2 = s2.to_f32_vec();
+        assert!((f32s2[0] - 12.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn jit_val_vector_to_f32() {
+        let nda = NdaVec::from_f32_slice(&[1.0, 2.0, 3.0, 4.0]);
+        let v = JitVal::Vector(Arc::new(nda));
+        let f32v = v.to_f32_vec();
+        assert_eq!(f32v.len(), 4);
+        // NDA ternary encoding is lossy — just verify length and non-NaN
+        for val in &f32v {
+            assert!(!val.is_nan(), "got NaN in output");
+        }
+    }
+
+    // ── run_sequence tests ────────────────────────────────────────────────────
+
+    #[test]
+    fn run_sequence_empty() {
+        let (sm, _dir) = make_test_sitemap();
+        let mut state = JitState::new(&[1.0], &sm, 0);
+        let result = run_sequence(&[], &mut state);
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), JitControlFlow::Continue);
+    }
+
+    #[test]
+    fn run_sequence_continue() {
+        let (sm, _dir) = make_test_sitemap();
+        let mut state = JitState::new(&[1.0], &sm, 0);
+        let fns: Vec<JitFn> = vec![
+            Arc::new(|s: &mut JitState<'_>| {
+                s.executed_nodes += 1;
+                Ok(JitControlFlow::Continue)
+            }),
+            Arc::new(|s: &mut JitState<'_>| {
+                s.executed_nodes += 1;
+                Ok(JitControlFlow::Continue)
+            }),
+        ];
+        let result = run_sequence(&fns, &mut state);
+        assert!(result.is_ok());
+        assert_eq!(state.executed_nodes, 2);
+    }
+
+    #[test]
+    fn run_sequence_break_stops_early() {
+        let (sm, _dir) = make_test_sitemap();
+        let mut state = JitState::new(&[1.0], &sm, 0);
+        let fns: Vec<JitFn> = vec![
+            Arc::new(|_: &mut JitState<'_>| Ok(JitControlFlow::Break)),
+            Arc::new(|s: &mut JitState<'_>| {
+                s.executed_nodes += 1; // should NOT execute
+                Ok(JitControlFlow::Continue)
+            }),
+        ];
+        let result = run_sequence(&fns, &mut state);
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), JitControlFlow::Break);
+        assert_eq!(state.executed_nodes, 0); // second fn didn't run
+    }
+
+    #[test]
+    fn run_sequence_return_propagates() {
+        let (sm, _dir) = make_test_sitemap();
+        let mut state = JitState::new(&[1.0], &sm, 0);
+        let fns: Vec<JitFn> = vec![
+            Arc::new(|_: &mut JitState<'_>| Ok(JitControlFlow::Return)),
+            Arc::new(|_: &mut JitState<'_>| Ok(JitControlFlow::Continue)),
+        ];
+        let result = run_sequence(&fns, &mut state);
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), JitControlFlow::Return);
+    }
+
+    #[test]
+    fn run_sequence_error_propagates() {
+        let (sm, _dir) = make_test_sitemap();
+        let mut state = JitState::new(&[1.0], &sm, 0);
+        let fns: Vec<JitFn> = vec![
+            Arc::new(|_: &mut JitState<'_>| Err("test error".to_string())),
+        ];
+        let result = run_sequence(&fns, &mut state);
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err(), "test error");
+    }
 }
