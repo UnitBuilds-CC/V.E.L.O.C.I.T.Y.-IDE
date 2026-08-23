@@ -1,4 +1,5 @@
-﻿use std::sync::Arc;
+﻿use serde::Serialize;
+use std::sync::Arc;
 
 use crate::nda::NdaMatrix;
 use crate::nda_int::{nda_gemv_nda_to_nda, rms_norm_nda, NdaVec};
@@ -868,5 +869,308 @@ fn is_pure_scalar(node: &NdaNode) -> bool {
         // cannot propagate JitControlFlow::Return to run_sequence, so sibling
         // nodes would wrongly keep executing after a Return.
         _ => false,
+    }
+}
+
+/// Diagnostic info about a JIT compilation without executing it.
+#[derive(Debug, Clone, Serialize)]
+pub struct CompileDiagnostic {
+    pub node_count: usize,
+    pub native_eligible: usize,
+    pub interpreter_only: usize,
+    pub native_ratio: f64,
+    pub has_loops: bool,
+    pub has_while_loops: bool,
+    pub has_conditionals: bool,
+    pub has_returns: bool,
+    pub has_matrices: bool,
+    pub has_norms: bool,
+    pub asm_available: bool,
+    pub estimated_complexity: String,
+    pub validation_issues: Vec<String>,
+}
+
+/// Analyze nodes for JIT compilation characteristics without compiling.
+pub fn compile_diagnostic(nodes: &[NdaNode]) -> CompileDiagnostic {
+    let node_count = nodes.iter().map(|n| count_nodes(n)).sum::<usize>();
+    let native_eligible = nodes.iter().filter(|n| is_pure_scalar(n)).map(|n| count_nodes(n)).sum::<usize>();
+    let interpreter_only = node_count.saturating_sub(native_eligible);
+    let native_ratio = if node_count > 0 { native_eligible as f64 / node_count as f64 } else { 0.0 };
+
+    let mut has_loops = false;
+    let mut has_while_loops = false;
+    let mut has_conditionals = false;
+    let mut has_returns = false;
+    let mut has_matrices = false;
+    let mut has_norms = false;
+
+    for node in nodes {
+        scan_node_features(node, &mut has_loops, &mut has_while_loops, &mut has_conditionals, &mut has_returns, &mut has_matrices, &mut has_norms);
+    }
+
+    let estimated_complexity = if node_count == 0 {
+        "empty".to_string()
+    } else if node_count < 10 {
+        "trivial".to_string()
+    } else if node_count < 50 {
+        "small".to_string()
+    } else if node_count < 200 {
+        "medium".to_string()
+    } else {
+        "large".to_string()
+    };
+
+    let mut issues = Vec::new();
+    if node_count == 0 {
+        issues.push("empty node list".into());
+    }
+    if has_while_loops {
+        issues.push("while loops have a max iteration safety limit".into());
+    }
+
+    CompileDiagnostic {
+        node_count,
+        native_eligible,
+        interpreter_only,
+        native_ratio,
+        has_loops,
+        has_while_loops,
+        has_conditionals,
+        has_returns,
+        has_matrices,
+        has_norms,
+        asm_available: asm_gemv_available(),
+        estimated_complexity,
+        validation_issues: issues,
+    }
+}
+
+fn scan_node_features(
+    node: &NdaNode,
+    has_loops: &mut bool,
+    has_while_loops: &mut bool,
+    has_conditionals: &mut bool,
+    has_returns: &mut bool,
+    has_matrices: &mut bool,
+    has_norms: &mut bool,
+) {
+    match node {
+        NdaNode::Loop { body, .. } => {
+            *has_loops = true;
+            for child in body { scan_node_features(child, has_loops, has_while_loops, has_conditionals, has_returns, has_matrices, has_norms); }
+        }
+        NdaNode::While { cond, body } => {
+            *has_while_loops = true;
+            *has_loops = true;
+            scan_node_features(cond, has_loops, has_while_loops, has_conditionals, has_returns, has_matrices, has_norms);
+            for child in body { scan_node_features(child, has_loops, has_while_loops, has_conditionals, has_returns, has_matrices, has_norms); }
+        }
+        NdaNode::If { cond, then_body, else_body } => {
+            *has_conditionals = true;
+            scan_node_features(cond, has_loops, has_while_loops, has_conditionals, has_returns, has_matrices, has_norms);
+            for child in then_body { scan_node_features(child, has_loops, has_while_loops, has_conditionals, has_returns, has_matrices, has_norms); }
+            if let Some(eb) = else_body {
+                for child in eb { scan_node_features(child, has_loops, has_while_loops, has_conditionals, has_returns, has_matrices, has_norms); }
+            }
+        }
+        NdaNode::Return { .. } => { *has_returns = true; }
+        NdaNode::Matrix { .. } => { *has_matrices = true; }
+        NdaNode::Norm { .. } => { *has_norms = true; }
+        NdaNode::Scope { children } => {
+            for child in children { scan_node_features(child, has_loops, has_while_loops, has_conditionals, has_returns, has_matrices, has_norms); }
+        }
+        NdaNode::Let { init, .. } | NdaNode::Store { value: init, .. } | NdaNode::Print { source: init } | NdaNode::VecOp { operand: init, .. } => {
+            scan_node_features(init, has_loops, has_while_loops, has_conditionals, has_returns, has_matrices, has_norms);
+        }
+        NdaNode::Add { lhs, rhs } | NdaNode::Compare { lhs, rhs, .. } => {
+            scan_node_features(lhs, has_loops, has_while_loops, has_conditionals, has_returns, has_matrices, has_norms);
+            scan_node_features(rhs, has_loops, has_while_loops, has_conditionals, has_returns, has_matrices, has_norms);
+        }
+        _ => {}
+    }
+}
+
+/// Validate nodes before JIT compilation.
+pub fn validate_compile_sequence(nodes: &[NdaNode]) -> Vec<String> {
+    let mut issues = Vec::new();
+    if nodes.is_empty() {
+        issues.push("empty compilation unit".into());
+    }
+    for (i, node) in nodes.iter().enumerate() {
+        validate_single_node(node, i, &mut issues);
+    }
+    issues
+}
+
+fn validate_single_node(node: &NdaNode, index: usize, issues: &mut Vec<String>) {
+    match node {
+        NdaNode::Loop { count, body } => {
+            if *count == 0 {
+                issues.push(format!("node[{}]: loop has zero iteration count", index));
+            }
+            if body.is_empty() {
+                issues.push(format!("node[{}]: loop has empty body", index));
+            }
+        }
+        NdaNode::While { body, .. } => {
+            if body.is_empty() {
+                issues.push(format!("node[{}]: while loop has empty body", index));
+            }
+        }
+        NdaNode::If { then_body, .. } => {
+            if then_body.is_empty() {
+                issues.push(format!("node[{}]: if has empty then_body", index));
+            }
+        }
+        NdaNode::Scope { children } => {
+            if children.is_empty() {
+                issues.push(format!("node[{}]: scope has no children", index));
+            }
+        }
+        _ => {}
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn compile_diagnostic_empty() {
+        let diag = compile_diagnostic(&[]);
+        assert_eq!(diag.node_count, 0);
+        assert_eq!(diag.estimated_complexity, "empty");
+        assert!(!diag.validation_issues.is_empty());
+    }
+
+    #[test]
+    fn compile_diagnostic_simple_int() {
+        let nodes = vec![NdaNode::Int { value: 42 }];
+        let diag = compile_diagnostic(&nodes);
+        assert_eq!(diag.node_count, 1);
+        assert_eq!(diag.native_eligible, 1);
+        assert!((diag.native_ratio - 1.0).abs() < f64::EPSILON);
+        assert_eq!(diag.estimated_complexity, "trivial");
+    }
+
+    #[test]
+    fn compile_diagnostic_with_loop() {
+        let nodes = vec![NdaNode::Loop {
+            count: 10,
+            body: vec![NdaNode::Int { value: 0 }],
+        }];
+        let diag = compile_diagnostic(&nodes);
+        assert!(diag.has_loops);
+        assert!(!diag.has_while_loops);
+    }
+
+    #[test]
+    fn compile_diagnostic_with_while() {
+        let nodes = vec![NdaNode::While {
+            cond: Box::new(NdaNode::Int { value: 1 }),
+            body: vec![NdaNode::Int { value: 0 }],
+        }];
+        let diag = compile_diagnostic(&nodes);
+        assert!(diag.has_while_loops);
+        assert!(diag.has_loops);
+        assert!(diag.validation_issues.iter().any(|i| i.contains("safety limit")));
+    }
+
+    #[test]
+    fn compile_diagnostic_with_matrix() {
+        let nodes = vec![NdaNode::Matrix {
+            rows: 4,
+            cols: 4,
+            scale: 0,
+            sign: vec![0xAA; 2],
+            extra: vec![0x55; 2],
+        }];
+        let diag = compile_diagnostic(&nodes);
+        assert!(diag.has_matrices);
+    }
+
+    #[test]
+    fn compile_diagnostic_with_norm() {
+        let nodes = vec![NdaNode::Norm {
+            size: 64,
+            weight: vec![0xFF; 8],
+            bias: vec![0x00; 8],
+        }];
+        let diag = compile_diagnostic(&nodes);
+        assert!(diag.has_norms);
+    }
+
+    #[test]
+    fn compile_diagnostic_serializes() {
+        let nodes = vec![NdaNode::Int { value: 1 }];
+        let diag = compile_diagnostic(&nodes);
+        let json = serde_json::to_string(&diag).unwrap();
+        assert!(json.contains("\"node_count\":1"));
+        assert!(json.contains("\"estimated_complexity\""));
+    }
+
+    #[test]
+    fn validate_compile_sequence_empty() {
+        let issues = validate_compile_sequence(&[]);
+        assert!(issues.iter().any(|i| i.contains("empty")));
+    }
+
+    #[test]
+    fn validate_compile_sequence_zero_loop() {
+        let nodes = vec![NdaNode::Loop { count: 0, body: vec![NdaNode::Int { value: 0 }] }];
+        let issues = validate_compile_sequence(&nodes);
+        assert!(issues.iter().any(|i| i.contains("zero iteration")));
+    }
+
+    #[test]
+    fn validate_compile_sequence_empty_loop_body() {
+        let nodes = vec![NdaNode::Loop { count: 5, body: vec![] }];
+        let issues = validate_compile_sequence(&nodes);
+        assert!(issues.iter().any(|i| i.contains("empty body")));
+    }
+
+    #[test]
+    fn validate_compile_sequence_empty_while_body() {
+        let nodes = vec![NdaNode::While {
+            cond: Box::new(NdaNode::Int { value: 1 }),
+            body: vec![],
+        }];
+        let issues = validate_compile_sequence(&nodes);
+        assert!(issues.iter().any(|i| i.contains("empty body")));
+    }
+
+    #[test]
+    fn validate_compile_sequence_empty_if_body() {
+        let nodes = vec![NdaNode::If {
+            cond: Box::new(NdaNode::Int { value: 1 }),
+            then_body: vec![],
+            else_body: None,
+        }];
+        let issues = validate_compile_sequence(&nodes);
+        assert!(issues.iter().any(|i| i.contains("empty then_body")));
+    }
+
+    #[test]
+    fn validate_compile_sequence_empty_scope() {
+        let nodes = vec![NdaNode::Scope { children: vec![] }];
+        let issues = validate_compile_sequence(&nodes);
+        assert!(issues.iter().any(|i| i.contains("no children")));
+    }
+
+    #[test]
+    fn validate_compile_sequence_valid() {
+        let nodes = vec![
+            NdaNode::Int { value: 1 },
+            NdaNode::Loop { count: 5, body: vec![NdaNode::Int { value: 0 }] },
+        ];
+        let issues = validate_compile_sequence(&nodes);
+        assert!(issues.is_empty());
+    }
+
+    #[test]
+    fn jit_tier_info_not_empty() {
+        let info = jit_tier_info();
+        assert!(!info.is_empty());
+        assert!(info.contains("Tier-1"));
     }
 }
