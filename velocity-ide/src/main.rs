@@ -11,6 +11,7 @@ mod sandbox;
 mod site_map;
 mod tokenizer;
 mod velocity_client;
+mod provider_usage;
 
 use std::{
     io::{BufRead, BufReader, Write},
@@ -59,6 +60,9 @@ enum Command {
 
     /// Configure Velocity Router connection (API key and base URL)
     Login(LoginArgs),
+
+    /// Manage provider API keys and query usage
+    Providers(ProvidersArgs),
 }
 
 #[derive(clap::Args)]
@@ -177,6 +181,25 @@ struct LoginArgs {
     key: String,
 }
 
+#[derive(clap::Args)]
+struct ProvidersArgs {
+    /// Subcommand: list, add, remove, refresh
+    #[arg(value_name = "ACTION")]
+    action: String,
+
+    /// Provider name (for add/remove): openai, anthropic, google, mistral, cohere, xai, github
+    #[arg(long)]
+    provider: Option<String>,
+
+    /// API key for the provider (for add)
+    #[arg(long)]
+    api_key: Option<String>,
+
+    /// Optional base URL override (for add, e.g. Azure/proxy endpoints)
+    #[arg(long)]
+    base_url: Option<String>,
+}
+
 // ─── Entry point ───────────────────────────────────────────────────────────
 
 fn main() -> Result<()> {
@@ -223,6 +246,7 @@ fn main() -> Result<()> {
         }
         Command::Usage(args) => run_usage(args),
         Command::Login(args) => run_login(args),
+        Command::Providers(args) => run_providers(args),
     }
 }
 
@@ -829,6 +853,144 @@ fn run_login(args: LoginArgs) -> Result<()> {
         }
     }
     println!();
+
+    Ok(())
+}
+
+// ─── Providers ────────────────────────────────────────────────────────────
+
+fn run_providers(args: ProvidersArgs) -> Result<()> {
+    use provider_usage::{ProviderCredential, load_credentials, save_credentials};
+
+    match args.action.as_str() {
+        "list" => {
+            let creds = load_credentials()?;
+            if creds.is_empty() {
+                println!();
+                println!("No provider API keys configured.");
+                println!("Add one with: velocity-ide providers add --provider openai --api-key sk-...");
+                println!();
+                return Ok(());
+            }
+            println!();
+            println!("=== Configured Provider API Keys ===");
+            println!();
+            println!("  {:<16} {:<20} {}", "Provider", "API Key", "Base URL");
+            println!("  {}", "-".repeat(60));
+            for c in &creds {
+                let masked = if c.api_key.len() > 12 {
+                    format!("{}...{}", &c.api_key[..8], &c.api_key[c.api_key.len()-4..])
+                } else {
+                    "****".to_string()
+                };
+                let base = c.base_url.as_deref().unwrap_or("(default)");
+                println!("  {:<16} {:<20} {}", c.provider, masked, base);
+            }
+            println!();
+        }
+
+        "add" => {
+            let provider = args.provider.as_deref()
+                .ok_or_else(|| anyhow::anyhow!("--provider is required (e.g. --provider openai)"))?;
+            let api_key = args.api_key.as_deref()
+                .ok_or_else(|| anyhow::anyhow!("--api-key is required"))?;
+
+            // Validate provider name.
+            if provider_usage::Provider::from_str_loose(provider).is_none() {
+                println!("Warning: '{}' is not a recognized provider. Adding anyway.", provider);
+            }
+
+            let mut creds = load_credentials()?;
+
+            // Remove existing entry for same provider if present.
+            creds.retain(|c| c.provider.to_lowercase() != provider.to_lowercase());
+
+            creds.push(ProviderCredential {
+                provider: provider.to_lowercase(),
+                api_key: api_key.to_string(),
+                base_url: args.base_url.clone(),
+                model: None,
+            });
+
+            save_credentials(&creds)?;
+            println!();
+            println!("Provider API key saved:");
+            println!("  Provider:  {}", provider);
+            println!("  Key:       {}...{}", &api_key[..4], &api_key[api_key.len().saturating_sub(4)..]);
+            if let Some(ref url) = args.base_url {
+                println!("  Base URL:  {}", url);
+            }
+            println!("  Stored in: ~/.velocity/providers.toml");
+            println!();
+            println!("Run `velocity-ide providers refresh` to query usage.");
+            println!();
+        }
+
+        "remove" => {
+            let provider = args.provider.as_deref()
+                .ok_or_else(|| anyhow::anyhow!("--provider is required"))?;
+
+            let mut creds = load_credentials()?;
+            let before = creds.len();
+            creds.retain(|c| c.provider.to_lowercase() != provider.to_lowercase());
+
+            if creds.len() == before {
+                println!("No provider '{}' found in configuration.", provider);
+            } else {
+                save_credentials(&creds)?;
+                println!("Provider '{}' removed.", provider);
+            }
+            println!();
+        }
+
+        "refresh" => {
+            let creds = load_credentials()?;
+            if creds.is_empty() {
+                println!();
+                println!("No provider API keys configured.");
+                println!("Add one with: velocity-ide providers add --provider openai --api-key sk-...");
+                println!();
+                return Ok(());
+            }
+
+            println!();
+            println!("Querying {} provider(s)...", creds.len());
+            println!();
+
+            let snapshot = provider_usage::query_all_providers(&creds);
+
+            // Print results.
+            println!("  {:<16} {:<8} {:>12} {:>10}  {}", "Provider", "Valid", "Tokens", "Cost", "Status");
+            println!("  {}", "-".repeat(75));
+            for p in &snapshot.providers {
+                let valid = if p.key_valid { "yes" } else { "NO" };
+                println!("  {:<16} {:<8} {:>12} {:>10}  {}",
+                    p.display_name, valid,
+                    velocity_client::fmt_number(p.tokens_used),
+                    velocity_client::fmt_currency(p.cost_usd),
+                    p.status);
+            }
+            println!();
+            println!("  Total: {} tokens, {} across {} requests",
+                velocity_client::fmt_number(snapshot.total_tokens),
+                velocity_client::fmt_currency(snapshot.total_cost_usd),
+                snapshot.total_requests);
+            println!();
+
+            // Write snapshot for the dashboard.
+            provider_usage::write_snapshot(&snapshot)?;
+            println!("Snapshot written to ~/.velocity/usage_snapshot.json");
+            println!("Open the dashboard to see your combined API usage.");
+            println!();
+        }
+
+        other => {
+            anyhow::bail!(
+                "Unknown action '{}'. Use: list, add, remove, refresh",
+                other
+            );
+        }
+    }
 
     Ok(())
 }
