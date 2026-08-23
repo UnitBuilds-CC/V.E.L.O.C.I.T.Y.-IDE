@@ -161,6 +161,23 @@ pub fn save_credentials(creds: &[ProviderCredential]) -> Result<()> {
     }
     std::fs::write(&path, out)
         .with_context(|| format!("failed to write {}", path.display()))?;
+    // Restrict file permissions — owner read/write only.
+    restrict_file_permissions(&path)?;
+    Ok(())
+}
+
+/// Restrict file permissions to owner-only (chmod 600 on Unix).
+fn restrict_file_permissions(path: &std::path::Path) -> Result<()> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let perms = std::fs::Permissions::from_mode(0o600);
+        std::fs::set_permissions(path, perms)
+            .with_context(|| format!("failed to set permissions on {}", path.display()))?;
+    }
+    // On Windows, file permissions are more complex (ACLs).
+    // The file is created in the user's home directory which is typically
+    // accessible only by that user. No additional action needed.
     Ok(())
 }
 
@@ -536,6 +553,7 @@ pub fn write_snapshot(snapshot: &UsageSnapshot) -> Result<()> {
         .context("failed to serialize snapshot")?;
     std::fs::write(&path, json)
         .with_context(|| format!("failed to write {}", path.display()))?;
+    restrict_file_permissions(&path)?;
     Ok(())
 }
 
