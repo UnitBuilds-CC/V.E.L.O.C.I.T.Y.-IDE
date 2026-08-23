@@ -24,6 +24,7 @@
 
 use anyhow::{bail, Context, Result};
 use rayon::prelude::*;
+use serde::Serialize;
 use std::{fs, path::Path};
 
 // ─── Constants ────────────────────────────────────────────────────────────────
@@ -43,7 +44,7 @@ pub const NDA_VERSION_FP2: u16 = 4;
 
 /// A weight matrix packed as either legacy 1-bit/2-bit bitmaps (v1/v2) or
 /// block-wise double-quantized logarithmic representations (v3/v4).
-#[derive(Debug)]
+#[derive(Debug, Serialize)]
 pub struct NdaMatrix {
     pub rows: usize,
     pub cols: usize,
@@ -215,6 +216,255 @@ impl NdaMatrix {
         } else {
             24 + self.q_scales.len() + self.packed_codes.len()
         }
+    }
+
+    /// Human-readable version name.
+    pub fn version_name(&self) -> &'static str {
+        match self.version {
+            NDA_V1_TERN => "v1 ternary {-1,0,+1}",
+            NDA_V2_QUAD => "v2 quad {-2,-1,+1,+2}",
+            NDA_VERSION_FP4 => "v3 FP4 E2M1",
+            NDA_VERSION_FP2 => "v4 FP2 E1M0",
+            _ => "unknown",
+        }
+    }
+
+    /// Validate internal consistency. Returns list of error strings (empty = valid).
+    pub fn validate(&self) -> Vec<String> {
+        let mut errors = Vec::new();
+        let n_elems = self.rows * self.cols;
+
+        if self.rows == 0 || self.cols == 0 {
+            errors.push(format!("zero dimension: rows={}, cols={}", self.rows, self.cols));
+        }
+
+        if self.version == NDA_V1_TERN || self.version == NDA_V2_QUAD {
+            let expected_bytes = n_elems.div_ceil(8);
+            if self.sign.len() != expected_bytes {
+                errors.push(format!(
+                    "sign bitmap size mismatch: expected {}, got {}",
+                    expected_bytes,
+                    self.sign.len()
+                ));
+            }
+            if self.extra.len() != expected_bytes {
+                errors.push(format!(
+                    "extra bitmap size mismatch: expected {}, got {}",
+                    expected_bytes,
+                    self.extra.len()
+                ));
+            }
+        } else if self.version == NDA_VERSION_FP4 || self.version == NDA_VERSION_FP2 {
+            if self.block_size == 0 {
+                errors.push("block_size is zero".to_string());
+            }
+            let expected_codes = if self.version == NDA_VERSION_FP4 {
+                n_elems.div_ceil(2)
+            } else {
+                n_elems.div_ceil(4)
+            };
+            if self.packed_codes.len() != expected_codes {
+                errors.push(format!(
+                    "packed_codes size mismatch: expected {}, got {}",
+                    expected_codes,
+                    self.packed_codes.len()
+                ));
+            }
+            if self.n_blocks > 0 && self.block_size > 0 {
+                let expected_n_blocks = self.cols / self.block_size;
+                let expected_q_scales = self.rows * expected_n_blocks;
+                if self.q_scales.len() != expected_q_scales {
+                    errors.push(format!(
+                        "q_scales size mismatch: expected {}, got {}",
+                        expected_q_scales,
+                        self.q_scales.len()
+                    ));
+                }
+            }
+        } else {
+            errors.push(format!("unknown version: {}", self.version));
+        }
+
+        if self.scale.is_nan() || self.scale.is_infinite() {
+            errors.push(format!("invalid scale: {}", self.scale));
+        }
+
+        errors
+    }
+
+    /// Memory breakdown by component.
+    pub fn memory_breakdown(&self) -> NdaMemoryBreakdown {
+        let (header, data) = if self.version == NDA_V1_TERN || self.version == NDA_V2_QUAD {
+            (18, self.sign.len() + self.extra.len())
+        } else {
+            (24, self.q_scales.len() + self.packed_codes.len())
+        };
+        NdaMemoryBreakdown {
+            header_bytes: header,
+            data_bytes: data,
+            total_bytes: header + data,
+            bits_per_weight: if self.rows * self.cols > 0 {
+                (data as f64 * 8.0) / (self.rows * self.cols) as f64
+            } else {
+                0.0
+            },
+        }
+    }
+
+    /// Weight value distribution for v2 quad matrices.
+    /// Returns counts of {-2, -1, +1, +2}.
+    pub fn quad_distribution(&self) -> [usize; 4] {
+        if self.version != NDA_V2_QUAD {
+            return [0; 4];
+        }
+        let mut counts = [0usize; 4]; // [-2, -1, +1, +2]
+        let n_elems = self.rows * self.cols;
+        for i in 0..n_elems {
+            let byte_idx = i / 8;
+            let bit_idx = i % 8;
+            let s = (self.sign[byte_idx] >> bit_idx) & 1;
+            let e = (self.extra[byte_idx] >> bit_idx) & 1;
+            match (s, e) {
+                (0, 0) => counts[0] += 1, // -2
+                (0, 1) => counts[1] += 1, // -1
+                (1, 0) => counts[2] += 1, // +1
+                (1, 1) => counts[3] += 1, // +2
+                _ => unreachable!(),
+            }
+        }
+        counts
+    }
+
+    /// Save matrix to .nda file format (round-trip with load).
+    pub fn save(&self, path: &Path) -> Result<()> {
+        let mut data = Vec::new();
+
+        if self.version == NDA_V1_TERN || self.version == NDA_V2_QUAD {
+            // Legacy header: magic(4) + version(2) + rows(4) + cols(4) + scale(4) = 18 bytes
+            data.extend_from_slice(&NDA_MAGIC.to_le_bytes());
+            data.extend_from_slice(&self.version.to_le_bytes());
+            data.extend_from_slice(&(self.rows as u32).to_le_bytes());
+            data.extend_from_slice(&(self.cols as u32).to_le_bytes());
+            data.extend_from_slice(&self.scale.to_le_bytes());
+            data.extend_from_slice(&self.sign);
+            data.extend_from_slice(&self.extra);
+        } else if self.version == NDA_VERSION_FP4 || self.version == NDA_VERSION_FP2 {
+            // New header: magic(4) + version(2) + rows(2) + cols(4) + block_size(4) + n_blocks(4) + global_scale(4) = 24 bytes
+            data.extend_from_slice(&NDA_MAGIC.to_le_bytes());
+            data.extend_from_slice(&self.version.to_le_bytes());
+            data.extend_from_slice(&(self.rows as u16).to_le_bytes());
+            data.extend_from_slice(&(self.cols as u32).to_le_bytes());
+            data.extend_from_slice(&(self.block_size as u32).to_le_bytes());
+            data.extend_from_slice(&(self.n_blocks as u32).to_le_bytes());
+            data.extend_from_slice(&self.scale.to_le_bytes());
+            data.extend_from_slice(&self.q_scales);
+            data.extend_from_slice(&self.packed_codes);
+        } else {
+            bail!("Cannot save unsupported NDA version {}", self.version);
+        }
+
+        fs::write(path, &data).with_context(|| format!("Writing NDA file: {path:?}"))?;
+        Ok(())
+    }
+}
+
+/// Memory breakdown for an NDA matrix.
+#[derive(Debug, Clone, Serialize)]
+pub struct NdaMemoryBreakdown {
+    /// Header bytes (18 for v1/v2, 24 for v3/v4).
+    pub header_bytes: usize,
+    /// Data bytes (bitmaps or packed codes).
+    pub data_bytes: usize,
+    /// Total bytes (header + data).
+    pub total_bytes: usize,
+    /// Average bits per weight element.
+    pub bits_per_weight: f64,
+}
+
+/// Statistics from batch-loading multiple NDA matrices.
+#[derive(Debug, Clone, Serialize)]
+pub struct NdaBatchLoadReport {
+    /// Number of matrices loaded.
+    pub count: usize,
+    /// Total bytes across all matrices.
+    pub total_bytes: usize,
+    /// Total weight elements across all matrices.
+    pub total_elements: usize,
+    /// Version distribution: count of v1, v2, v3, v4 matrices.
+    pub version_counts: [usize; 4],
+    /// Validation errors found (empty = all valid).
+    pub validation_errors: Vec<String>,
+    /// Elapsed time to load all matrices (microseconds).
+    pub elapsed_us: u64,
+}
+
+impl NdaMatrix {
+    /// Load multiple .nda files from a directory matching a pattern.
+    /// Returns matrices plus a batch load report.
+    pub fn load_batch(dir: &Path, pattern: &str) -> Result<(Vec<NdaMatrix>, NdaBatchLoadReport)> {
+        use std::time::Instant;
+        let t_start = Instant::now();
+
+        let mut matrices = Vec::new();
+        let mut version_counts = [0usize; 4];
+        let mut validation_errors = Vec::new();
+        let mut total_bytes = 0usize;
+        let mut total_elements = 0usize;
+
+        if !dir.is_dir() {
+            bail!("Not a directory: {dir:?}");
+        }
+
+        let mut entries: Vec<_> = fs::read_dir(dir)
+            .with_context(|| format!("Reading directory: {dir:?}"))?
+            .filter_map(|e| e.ok())
+            .filter(|e| {
+                e.file_name()
+                    .to_str()
+                    .map(|n| n.ends_with(".nda") && n.contains(pattern))
+                    .unwrap_or(false)
+            })
+            .collect();
+        entries.sort_by_key(|e| e.file_name());
+
+        for entry in entries {
+            let path = entry.path();
+            match NdaMatrix::load(&path) {
+                Ok(m) => {
+                    let errors = m.validate();
+                    if !errors.is_empty() {
+                        for err in &errors {
+                            validation_errors.push(format!("{:?}: {}", path, err));
+                        }
+                    }
+                    let v_idx = match m.version {
+                        v if v == NDA_V1_TERN => 0,
+                        v if v == NDA_V2_QUAD => 1,
+                        v if v == NDA_VERSION_FP4 => 2,
+                        v if v == NDA_VERSION_FP2 => 3,
+                        _ => 1, // default to v2 bucket
+                    };
+                    version_counts[v_idx] += 1;
+                    total_bytes += m.byte_size();
+                    total_elements += m.rows * m.cols;
+                    matrices.push(m);
+                }
+                Err(e) => {
+                    validation_errors.push(format!("{:?}: load failed: {}", path, e));
+                }
+            }
+        }
+
+        let elapsed_us = t_start.elapsed().as_micros() as u64;
+        let report = NdaBatchLoadReport {
+            count: matrices.len(),
+            total_bytes,
+            total_elements,
+            version_counts,
+            validation_errors,
+            elapsed_us,
+        };
+        Ok((matrices, report))
     }
 }
 
@@ -609,5 +859,243 @@ pub fn run_nda_benchmark() {
         let ms_i8 = elapsed_i8.as_secs_f64() * 1000.0 / ITERS as f64;
         println!("  {:26}  {:6.2} ms/call  [v2 INT8 acts]", label, ms_i8);
         println!();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Write;
+
+    fn make_quad_matrix(rows: usize, cols: usize) -> NdaMatrix {
+        let bitmap_bytes = (rows * cols).div_ceil(8);
+        let sign = vec![0xAA; bitmap_bytes]; // alternating 10101010
+        let extra = vec![0x55; bitmap_bytes]; // alternating 01010101
+        NdaMatrix::new_quad(rows, cols, 1.0, sign, extra)
+    }
+
+    #[test]
+    fn test_version_name() {
+        let m = make_quad_matrix(8, 8);
+        assert_eq!(m.version_name(), "v2 quad {-2,-1,+1,+2}");
+    }
+
+    #[test]
+    fn test_validate_valid_quad() {
+        let m = make_quad_matrix(16, 32);
+        let errors = m.validate();
+        assert!(errors.is_empty(), "expected no errors, got: {:?}", errors);
+    }
+
+    #[test]
+    fn test_validate_bad_sign_size() {
+        let mut m = make_quad_matrix(8, 8);
+        m.sign.push(0); // corrupt: extra byte
+        let errors = m.validate();
+        assert!(!errors.is_empty());
+        assert!(errors.iter().any(|e| e.contains("sign bitmap size mismatch")));
+    }
+
+    #[test]
+    fn test_validate_zero_dimension() {
+        let m = NdaMatrix::new_quad(0, 8, 1.0, vec![], vec![]);
+        let errors = m.validate();
+        assert!(errors.iter().any(|e| e.contains("zero dimension")));
+    }
+
+    #[test]
+    fn test_validate_nan_scale() {
+        let mut m = make_quad_matrix(8, 8);
+        m.scale = f32::NAN;
+        let errors = m.validate();
+        assert!(errors.iter().any(|e| e.contains("invalid scale")));
+    }
+
+    #[test]
+    fn test_memory_breakdown_quad() {
+        let m = make_quad_matrix(64, 64);
+        let bd = m.memory_breakdown();
+        assert_eq!(bd.header_bytes, 18);
+        assert_eq!(bd.data_bytes, 2 * (64_usize * 64).div_ceil(8));
+        assert_eq!(bd.total_bytes, 18 + bd.data_bytes);
+        assert!((bd.bits_per_weight - 2.0).abs() < 0.1);
+    }
+
+    #[test]
+    fn test_memory_breakdown_serialize() {
+        let bd = NdaMemoryBreakdown {
+            header_bytes: 18,
+            data_bytes: 1024,
+            total_bytes: 1042,
+            bits_per_weight: 2.0,
+        };
+        let json = serde_json::to_string(&bd).unwrap();
+        assert!(json.contains("\"bits_per_weight\":2.0"));
+    }
+
+    #[test]
+    fn test_quad_distribution() {
+        // sign=0xAA=10101010, extra=0x55=01010101
+        // bit pattern: s=0,e=1 -> -1; s=1,e=0 -> +1
+        // So for each byte: 4 bits are (s=0,e=1)=-1, 4 bits are (s=1,e=0)=+1
+        let m = make_quad_matrix(8, 8);
+        let dist = m.quad_distribution();
+        assert_eq!(dist[0], 0); // no -2
+        assert_eq!(dist[1], 32); // half are -1
+        assert_eq!(dist[2], 32); // half are +1
+        assert_eq!(dist[3], 0); // no +2
+    }
+
+    #[test]
+    fn test_quad_distribution_non_quad_returns_zero() {
+        let m = NdaMatrix {
+            rows: 4,
+            cols: 4,
+            scale: 1.0,
+            version: NDA_VERSION_FP4,
+            sign: vec![],
+            extra: vec![],
+            block_size: 64,
+            n_blocks: 0,
+            q_scales: vec![],
+            packed_codes: vec![],
+        };
+        assert_eq!(m.quad_distribution(), [0; 4]);
+    }
+
+    #[test]
+    fn test_save_load_roundtrip_quad() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("test.nda");
+        let original = make_quad_matrix(32, 64);
+        original.save(&path).unwrap();
+        let loaded = NdaMatrix::load(&path).unwrap();
+        assert_eq!(loaded.rows, original.rows);
+        assert_eq!(loaded.cols, original.cols);
+        assert_eq!(loaded.version, original.version);
+        assert_eq!(loaded.scale, original.scale);
+        assert_eq!(loaded.sign, original.sign);
+        assert_eq!(loaded.extra, original.extra);
+    }
+
+    #[test]
+    fn test_save_load_roundtrip_fp4() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("test_fp4.nda");
+        let rows = 4usize;
+        let cols = 64usize;
+        let block_size = 64usize;
+        let n_blocks_per_row = cols / block_size; // 1
+        let total_q_scales = rows * n_blocks_per_row; // 4
+        // The file format's n_blocks field = total q_scale entries
+        let original = NdaMatrix {
+            rows,
+            cols,
+            scale: 0.5,
+            version: NDA_VERSION_FP4,
+            sign: vec![],
+            extra: vec![],
+            block_size,
+            n_blocks: total_q_scales, // file format stores total count
+            q_scales: vec![128; total_q_scales],
+            packed_codes: vec![0xAB; (rows * cols).div_ceil(2)],
+        };
+        original.save(&path).unwrap();
+        let loaded = NdaMatrix::load(&path).unwrap();
+        assert_eq!(loaded.rows, 4);
+        assert_eq!(loaded.cols, 64);
+        assert_eq!(loaded.version, NDA_VERSION_FP4);
+        assert_eq!(loaded.block_size, 64);
+        assert_eq!(loaded.q_scales, original.q_scales);
+        assert_eq!(loaded.packed_codes, original.packed_codes);
+    }
+
+    #[test]
+    fn test_nda_serialization_json() {
+        let m = make_quad_matrix(8, 16);
+        let json = serde_json::to_string(&m).unwrap();
+        assert!(json.contains("\"rows\":8"));
+        assert!(json.contains("\"cols\":16"));
+        assert!(json.contains("\"version\":2"));
+    }
+
+    #[test]
+    fn test_batch_load_empty_dir() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (matrices, report) = NdaMatrix::load_batch(tmp.path(), "model").unwrap();
+        assert_eq!(matrices.len(), 0);
+        assert_eq!(report.count, 0);
+        assert_eq!(report.total_bytes, 0);
+    }
+
+    #[test]
+    fn test_batch_load_with_files() {
+        let tmp = tempfile::tempdir().unwrap();
+        // Create two .nda files
+        let m1 = make_quad_matrix(8, 8);
+        let m2 = make_quad_matrix(16, 16);
+        m1.save(&tmp.path().join("model_layer_0_q.nda")).unwrap();
+        m2.save(&tmp.path().join("model_layer_0_k.nda")).unwrap();
+        // Also create a non-matching file
+        m1.save(&tmp.path().join("other_file.nda")).unwrap();
+
+        let (matrices, report) = NdaMatrix::load_batch(tmp.path(), "model_layer_0").unwrap();
+        assert_eq!(matrices.len(), 2);
+        assert_eq!(report.count, 2);
+        assert!(report.validation_errors.is_empty());
+        assert_eq!(report.version_counts[1], 2); // both v2
+    }
+
+    #[test]
+    fn test_batch_load_report_serialize() {
+        let report = NdaBatchLoadReport {
+            count: 10,
+            total_bytes: 50000,
+            total_elements: 200000,
+            version_counts: [0, 8, 2, 0],
+            validation_errors: vec![],
+            elapsed_us: 5000,
+        };
+        let json = serde_json::to_string(&report).unwrap();
+        assert!(json.contains("\"count\":10"));
+        assert!(json.contains("\"total_elements\":200000"));
+    }
+
+    #[test]
+    fn test_gemv_quad_roundtrip() {
+        let m = make_quad_matrix(4, 8);
+        let x: Vec<f32> = (0..8).map(|i| i as f32 * 0.1).collect();
+        let y = nda_gemv(&m, &x);
+        assert_eq!(y.len(), 4);
+        // Output should be finite
+        for &v in &y {
+            assert!(v.is_finite());
+        }
+    }
+
+    #[test]
+    fn test_quantize_activations_v2_quad() {
+        let x = vec![0.0, 1.0, -1.0, 2.0, -2.0, 0.5, -0.5, 1.5];
+        let (sign, extra, scale) = quantize_activations_v2_quad(&x);
+        assert_eq!(sign.len(), 1);
+        assert_eq!(extra.len(), 1);
+        assert!(scale > 0.0);
+    }
+
+    #[test]
+    fn test_quantize_i8() {
+        let x = vec![0.0, 0.5, -0.5, 1.0, -1.0];
+        let (q, scale) = quantize_activations_i8(&x);
+        assert_eq!(q.len(), 5);
+        assert!(scale > 0.0);
+        assert_eq!(q[0], 0); // zero maps to zero
+    }
+
+    #[test]
+    fn test_quantize_i8_zero_input() {
+        let x = vec![0.0; 4];
+        let (q, scale) = quantize_activations_i8(&x);
+        assert_eq!(q, vec![0i8; 4]);
+        assert_eq!(scale, 1.0); // fallback scale for zero input
     }
 }
