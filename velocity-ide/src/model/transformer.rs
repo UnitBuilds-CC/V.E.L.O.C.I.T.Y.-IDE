@@ -23,6 +23,8 @@
 
 use rand::Rng;
 use rayon::prelude::*;
+use serde::Serialize;
+use std::time::Instant;
 
 use crate::compiler::driver::VulkanNdaGemv;
 use crate::model::{config::ModelConfig, weights::ModelWeights};
@@ -621,6 +623,52 @@ fn apply_presence_penalty(
     }
 }
 
+// ─── FP32 Transformer Metrics & Reports ────────────────────────────────────
+
+/// Metrics from a single FP32 forward pass.
+#[derive(Debug, Default, Clone, Serialize)]
+pub struct Fp32ForwardMetrics {
+    /// Position index of this forward pass.
+    pub position: usize,
+    /// Whether the GPU pipeline was used (true) or CPU fallback (false).
+    pub gpu_active: bool,
+    /// Number of transformer layers executed.
+    pub layers_executed: usize,
+    /// Total KV cache blocks across all layers after this forward.
+    pub total_kv_blocks: usize,
+    /// Elapsed time for this forward pass (microseconds).
+    pub elapsed_us: u64,
+}
+
+/// Structured report from an FP32 autoregressive generation run.
+#[derive(Debug, Clone, Serialize)]
+pub struct Fp32GenerationReport {
+    /// Number of tokens in the prompt.
+    pub prompt_tokens: usize,
+    /// Number of new tokens generated (excluding prompt).
+    pub tokens_generated: usize,
+    /// Whether generation stopped due to EOS token.
+    pub stopped_at_eos: bool,
+    /// Whether generation was truncated at max_seq_len.
+    pub truncated: bool,
+    /// Total KV cache blocks at end of generation (sum across layers).
+    pub final_kv_blocks: usize,
+    /// Per-layer KV cache sizes (blocks per layer).
+    pub kv_cache_sizes: Vec<usize>,
+    /// Estimated KV cache memory footprint in bytes.
+    pub kv_memory_bytes: usize,
+    /// Whether the GPU pipeline was active.
+    pub gpu_pipeline_active: bool,
+    /// Total elapsed time for generation (microseconds).
+    pub elapsed_us: u64,
+    /// Throughput in tokens per second.
+    pub tokens_per_second: f64,
+    /// All generated token IDs (excluding prompt).
+    pub token_ids: Vec<u32>,
+    /// Per-forward metrics (prefill + decode steps).
+    pub forward_metrics: Vec<Fp32ForwardMetrics>,
+}
+
 // ─── Transformer ───────────────────────────────────────────────────────────
 
 pub struct TransformerScratch {
@@ -798,6 +846,51 @@ impl Transformer {
                 None
             }
         }
+    }
+
+    /// Get a reference to the model configuration.
+    pub fn config(&self) -> &ModelConfig {
+        &self.config
+    }
+
+    /// Whether the GPU (Vulkan) pipeline is active.
+    pub fn gpu_pipeline_active(&self) -> bool {
+        self.gpu_pipeline.is_some()
+    }
+
+    /// Get per-layer KV cache sizes (number of blocks per layer).
+    pub fn kv_cache_sizes(&self) -> Vec<usize> {
+        self.kv_cache.iter().map(|layer| layer.blocks.len()).collect()
+    }
+
+    /// Total KV cache blocks across all layers.
+    pub fn total_kv_blocks(&self) -> usize {
+        self.kv_cache.iter().map(|layer| layer.blocks.len()).sum()
+    }
+
+    /// Estimate KV cache memory footprint in bytes.
+    /// Each block stores: k_raw + v_raw (f32 vectors) + k_sign + k_extra + v_sign + v_extra (bitmap vectors).
+    pub fn kv_memory_bytes(&self) -> usize {
+        let kv_dim = self.config.n_kv_heads * self.config.head_dim;
+        let raw_bytes = kv_dim * std::mem::size_of::<f32>(); // per raw vector
+        let bitmap_bytes = kv_dim.div_ceil(8); // per bitmap vector
+        let per_block = 2 * raw_bytes + 4 * bitmap_bytes; // k_raw + v_raw + 4 bitmaps
+        self.total_kv_blocks() * per_block
+    }
+
+    /// Human-readable layer summary for diagnostics.
+    pub fn layer_summary(&self) -> String {
+        let cfg = &self.config;
+        format!(
+            "Transformer: {} layers, hidden={}, heads={}×{}, kv_heads={}, ffn={}, gpu={}",
+            cfg.n_layers,
+            cfg.hidden_size,
+            cfg.n_heads,
+            cfg.head_dim,
+            cfg.n_kv_heads,
+            cfg.ffn_size,
+            if self.gpu_pipeline_active() { "Vulkan" } else { "CPU" },
+        )
     }
 
     /// Reset KV cache (call between independent prompts).
@@ -1117,6 +1210,105 @@ impl Transformer {
         }
     }
 
+    /// Run autoregressive generation and return a structured report with metrics.
+    ///
+    /// Same as `generate()` but collects timing, KV cache stats, and token IDs.
+    pub fn generate_with_report(
+        &mut self,
+        prompt_tokens: &[u32],
+        max_new_tokens: usize,
+        temperature: f32,
+        top_p: f32,
+    ) -> Fp32GenerationReport {
+        let mut rng = rand::thread_rng();
+        self.reset_cache();
+        let t_start = Instant::now();
+
+        let n_prompt = prompt_tokens.len();
+        debug_assert_ne!(n_prompt, 0, "prompt must not be empty");
+        debug_assert_eq!(
+            prompt_tokens[0], self.config.bos_token_id,
+            "first prompt token should be BOS"
+        );
+        let max_new_tokens = max_new_tokens.min(self.config.max_seq_len.saturating_sub(n_prompt));
+        let gpu_active = self.gpu_pipeline_active();
+        let n_layers = self.config.n_layers;
+
+        let mut forward_metrics = Vec::with_capacity(n_prompt + max_new_tokens);
+        let mut token_ids = Vec::with_capacity(max_new_tokens);
+        let mut stopped_at_eos = false;
+        // Track KV blocks manually to avoid borrow conflict with forward_one's return ref
+        let mut kv_blocks = 0usize;
+
+        // ── Prefill ─────────────────────────────────────────────────────────
+        for (pos, &tok) in prompt_tokens[..n_prompt - 1].iter().enumerate() {
+            let step_start = Instant::now();
+            self.forward_one(tok, pos);
+            kv_blocks += n_layers;
+            forward_metrics.push(Fp32ForwardMetrics {
+                position: pos,
+                gpu_active,
+                layers_executed: n_layers,
+                total_kv_blocks: kv_blocks,
+                elapsed_us: step_start.elapsed().as_micros() as u64,
+            });
+        }
+        let step_start = Instant::now();
+        let logits = self.forward_one(prompt_tokens[n_prompt - 1], n_prompt - 1);
+        kv_blocks += n_layers;
+        let mut next = sample_token(logits, temperature, top_p, &mut rng);
+        forward_metrics.push(Fp32ForwardMetrics {
+            position: n_prompt - 1,
+            gpu_active,
+            layers_executed: n_layers,
+            total_kv_blocks: kv_blocks,
+            elapsed_us: step_start.elapsed().as_micros() as u64,
+        });
+
+        // ── Decode ──────────────────────────────────────────────────────────
+        for step in 0..max_new_tokens {
+            if next == self.config.eos_token_id {
+                stopped_at_eos = true;
+                break;
+            }
+            token_ids.push(next);
+            let step_start = Instant::now();
+            let logits = self.forward_one(next, n_prompt + step);
+            kv_blocks += n_layers;
+            next = sample_token(logits, temperature, top_p, &mut rng);
+            forward_metrics.push(Fp32ForwardMetrics {
+                position: n_prompt + step,
+                gpu_active,
+                layers_executed: n_layers,
+                total_kv_blocks: kv_blocks,
+                elapsed_us: step_start.elapsed().as_micros() as u64,
+            });
+        }
+
+        let elapsed_us = t_start.elapsed().as_micros() as u64;
+        let tokens_generated = token_ids.len();
+        let tokens_per_second = if elapsed_us > 0 {
+            tokens_generated as f64 * 1_000_000.0 / elapsed_us as f64
+        } else {
+            0.0
+        };
+
+        Fp32GenerationReport {
+            prompt_tokens: n_prompt,
+            tokens_generated,
+            stopped_at_eos,
+            truncated: !stopped_at_eos && tokens_generated >= max_new_tokens,
+            final_kv_blocks: self.total_kv_blocks(),
+            kv_cache_sizes: self.kv_cache_sizes(),
+            kv_memory_bytes: self.kv_memory_bytes(),
+            gpu_pipeline_active: gpu_active,
+            elapsed_us,
+            tokens_per_second,
+            token_ids,
+            forward_metrics,
+        }
+    }
+
     /// Get the final conditioning hidden state from natural language prompt processing.
     pub fn get_conditioning_hidden_state(&mut self, prompt_tokens: &[u32]) -> Vec<f32> {
         self.reset_cache();
@@ -1260,5 +1452,139 @@ mod tests {
         let (sign, extra) = pack_vector_impl(&v, 2.0, 4);
         assert_eq!(sign.len(), 1);
         assert_eq!(extra.len(), 1);
+    }
+
+    #[test]
+    fn test_fp32_forward_metrics_default() {
+        let m = Fp32ForwardMetrics::default();
+        assert_eq!(m.position, 0);
+        assert!(!m.gpu_active);
+        assert_eq!(m.layers_executed, 0);
+        assert_eq!(m.total_kv_blocks, 0);
+        assert_eq!(m.elapsed_us, 0);
+    }
+
+    #[test]
+    fn test_fp32_forward_metrics_serialize() {
+        let m = Fp32ForwardMetrics {
+            position: 5,
+            gpu_active: true,
+            layers_executed: 26,
+            total_kv_blocks: 130,
+            elapsed_us: 1500,
+        };
+        let json = serde_json::to_string(&m).unwrap();
+        assert!(json.contains("\"gpu_active\":true"));
+        assert!(json.contains("\"layers_executed\":26"));
+    }
+
+    #[test]
+    fn test_fp32_generation_report_serialize() {
+        let report = Fp32GenerationReport {
+            prompt_tokens: 10,
+            tokens_generated: 5,
+            stopped_at_eos: true,
+            truncated: false,
+            final_kv_blocks: 390,
+            kv_cache_sizes: vec![15; 26],
+            kv_memory_bytes: 50000,
+            gpu_pipeline_active: false,
+            elapsed_us: 10000,
+            tokens_per_second: 500.0,
+            token_ids: vec![1, 2, 3, 4, 5],
+            forward_metrics: vec![],
+        };
+        let json = serde_json::to_string(&report).unwrap();
+        assert!(json.contains("\"stopped_at_eos\":true"));
+        assert!(json.contains("\"tokens_generated\":5"));
+        assert!(json.contains("\"tokens_per_second\":500.0"));
+    }
+
+    #[test]
+    fn test_kv_cache_empty_initially() {
+        // Verify KV cache introspection on a fresh transformer
+        // We can't build a full Transformer without weights, but we can test
+        // the KvLayer directly
+        let layer = KvLayer::new();
+        assert_eq!(layer.blocks.len(), 0);
+    }
+
+    #[test]
+    fn test_kv_layer_push_increments_blocks() {
+        let mut layer = KvLayer::new();
+        let k = vec![1.0; 8];
+        let v = vec![0.5; 8];
+        layer.push(&k, &v);
+        assert_eq!(layer.blocks.len(), 1);
+        layer.push(&k, &v);
+        assert_eq!(layer.blocks.len(), 2);
+    }
+
+    #[test]
+    fn test_kv_block_hash_chain() {
+        let mut layer = KvLayer::new();
+        let k1 = vec![1.0, 2.0, 3.0, 4.0];
+        let v1 = vec![0.5, 1.0, 1.5, 2.0];
+        layer.push(&k1, &v1);
+        let k2 = vec![0.1, 0.2, 0.3, 0.4];
+        let v2 = vec![0.05, 0.1, 0.15, 0.2];
+        layer.push(&k2, &v2);
+
+        // First block's prev_hash should be all zeros (genesis)
+        assert_eq!(layer.blocks[0].prev_hash, [0u8; 32]);
+        // Second block's prev_hash should match first block's hash
+        assert_eq!(layer.blocks[1].prev_hash, layer.blocks[0].hash);
+        // Hashes should not be zero (extremely unlikely for SHA-256)
+        assert_ne!(layer.blocks[0].hash, [0u8; 32]);
+        assert_ne!(layer.blocks[1].hash, [0u8; 32]);
+    }
+
+    #[test]
+    fn test_kv_block_compute_hash_deterministic() {
+        let block = NdaKvBlock {
+            prev_hash: [0u8; 32],
+            hash: [0u8; 32],
+            k_scale: 1.0,
+            v_scale: 2.0,
+            k_sign: vec![0xFF],
+            k_extra: vec![0xAA],
+            v_sign: vec![0x55],
+            v_extra: vec![0x00],
+            k_raw: vec![1.0],
+            v_raw: vec![2.0],
+        };
+        let h1 = block.compute_hash();
+        let h2 = block.compute_hash();
+        assert_eq!(h1, h2);
+    }
+
+    #[test]
+    fn test_transformer_scratch_sizes() {
+        let cfg = ModelConfig {
+            n_layers: 2,
+            hidden_size: 64,
+            ffn_size: 128,
+            n_heads: 4,
+            n_kv_heads: 2,
+            head_dim: 16,
+            vocab_size: 100,
+            max_seq_len: 32,
+            rope_theta: 10000.0,
+            alibi_shifts: vec![],
+            rms_eps: 1e-6,
+            eos_token_id: 2,
+            bos_token_id: 1,
+        };
+        let scratch = TransformerScratch::new(&cfg);
+        assert_eq!(scratch.x.len(), 64);
+        assert_eq!(scratch.x_norm.len(), 64);
+        assert_eq!(scratch.q.len(), 64); // n_heads * head_dim = 4*16
+        assert_eq!(scratch.k.len(), 32); // n_kv_heads * head_dim = 2*16
+        assert_eq!(scratch.v.len(), 32);
+        assert_eq!(scratch.attn_out.len(), 64);
+        assert_eq!(scratch.gate_out.len(), 128);
+        assert_eq!(scratch.up_out.len(), 128);
+        assert_eq!(scratch.gated.len(), 128);
+        assert_eq!(scratch.logits.len(), 100);
     }
 }
