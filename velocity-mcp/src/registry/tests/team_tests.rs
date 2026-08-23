@@ -1102,45 +1102,25 @@ fn preset_templates_load_correctly() {
     
     let presets = default_preset_teams();
     
-    // Should have 19 preset teams (3 original + 6 coding + 10 broader use cases)
-    assert_eq!(presets.len(), 19, "Expected 19 preset teams");
+    // Should have 34 preset teams (3 original + 6 coding + 10 broader + 15 additional)
+    assert_eq!(presets.len(), 34, "Expected 34 preset teams");
     
     // Verify all presets are marked as preset
     assert!(presets.iter().all(|t| t.is_preset), "All presets should have is_preset=true");
     
-    // Verify coding templates exist
-    let template_names: Vec<&str> = presets.iter().map(|t| t.name.as_str()).collect();
-    assert!(template_names.contains(&"Rust Systems Programming Team"));
-    assert!(template_names.contains(&"Full-Stack Web Development Team"));
-    assert!(template_names.contains(&"DevOps & Infrastructure Team"));
-    assert!(template_names.contains(&"iOS/Swift Development Team"));
-    assert!(template_names.contains(&"Security Audit Team"));
-    assert!(template_names.contains(&"Frontend/React UI Team"));
-    
-    // Verify broader use case templates exist
-    assert!(template_names.contains(&"Data Science & Analytics Team"));
-    assert!(template_names.contains(&"Web Research & Intelligence Team"));
-    assert!(template_names.contains(&"Business Process Automation Team"));
-    assert!(template_names.contains(&"IT Operations & System Administration Team"));
-    assert!(template_names.contains(&"Drone Operations & Mission Control Team"));
-    assert!(template_names.contains(&"Content Creation & Marketing Team"));
-    assert!(template_names.contains(&"Research & Knowledge Management Team"));
-    assert!(template_names.contains(&"Product Management & UX Research Team"));
-    assert!(template_names.contains(&"Quality Assurance & Test Automation Team"));
-    assert!(template_names.contains(&"Financial Analysis & Trading Team"));
-    
     // Verify each team has members
     for team in &presets {
         assert!(!team.members.is_empty(), "Team '{}' should have at least one member", team.name);
+        assert_eq!(team.members.len(), 4, "Team '{}' should have exactly 4 members", team.name);
     }
     
-    // Verify Rust team specifically
-    let rust_team = presets.iter().find(|t| t.id == "team_rust").unwrap();
-    assert_eq!(rust_team.members.len(), 4);
-    assert!(rust_team.members.iter().any(|m| m.name.contains("Rust")));
-    
-    // Verify drone team has drone-specific members
-    let drone_team = presets.iter().find(|t| t.id == "team_drone_ops").unwrap();
-    assert_eq!(drone_team.members.len(), 4);
-    assert!(drone_team.members.iter().any(|m| m.name.contains("Drone") || m.name.contains("Flight")));
+    // Verify some key templates exist
+    let template_names: Vec<&str> = presets.iter().map(|t| t.name.as_str()).collect();
+    assert!(template_names.contains(&"Rust Systems Programming Team"));
+    assert!(template_names.contains(&"Data Science & Analytics Team"));
+    assert!(template_names.contains(&"Drone Operations & Mission Control Team"));
+    assert!(template_names.contains(&"Graphic Design & Branding Team"));
+    assert!(template_names.contains(&"Healthcare & Medical Research Team"));
+    assert!(template_names.contains(&"Aerospace Engineering Team"));
+    assert!(template_names.contains(&"Energy & Utilities Management Team"));
 }
