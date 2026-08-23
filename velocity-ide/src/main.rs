@@ -254,11 +254,11 @@ fn main() -> Result<()> {
                 if mode != crate::pipeline_nda::PipelineMode::Text {
                     run_generate_zero_nda(args, mode)
                 } else {
-                    run_generate_zero(args)
+                    run_generate_zero(args, cli.json)
                 }
             } else if args.arch != "bitnet3b" && args.arch != "bitnet" {
                 // Non-BitNet architectures use local FP32 transformer inference
-                run_generate_local(args)
+                run_generate_local(args, cli.json)
             } else {
                 run_generate(args)
             }
@@ -344,6 +344,70 @@ fn run_seed(args: SeedArgs) -> Result<()> {
 struct Message {
     role: String,
     content: String,
+}
+
+/// Structured execution report for generation results.
+/// Supports both human-readable and JSON output via --json.
+#[derive(Serialize)]
+struct GenerationReport {
+    mode: String,
+    tokens_generated: usize,
+    elapsed_ms: u64,
+    tokens_per_second: f64,
+    site_map_hits: usize,
+    site_map_misses: usize,
+    merkle_valid: Option<bool>,
+    force_terminated: Option<bool>,
+    sandbox_executed: Option<bool>,
+    sandbox_panicked: Option<bool>,
+    scope_passed: Option<bool>,
+    stored_in_site_map: Option<bool>,
+}
+
+impl GenerationReport {
+    /// Format for human-readable display.
+    fn display(&self) {
+        println!();
+        println!("--- {} Generation Report ---", self.mode);
+        println!("  Tokens:     {}", self.tokens_generated);
+        println!("  Time:       {:.2}s", self.elapsed_ms as f64 / 1000.0);
+        println!("  Speed:      {:.2} tok/s", self.tokens_per_second);
+        if self.site_map_hits > 0 || self.site_map_misses > 0 {
+            let total = self.site_map_hits + self.site_map_misses;
+            let hit_rate = if total > 0 {
+                self.site_map_hits as f64 / total as f64 * 100.0
+            } else {
+                0.0
+            };
+            println!("  SiteMap:    {} hits / {} misses ({:.1}% hit rate)",
+                self.site_map_hits, self.site_map_misses, hit_rate);
+        }
+        if let Some(valid) = self.merkle_valid {
+            println!("  Merkle:     {}", if valid { "VALID" } else { "INVALID" });
+        }
+        if let Some(ft) = self.force_terminated {
+            if ft {
+                println!("  Note:       Force-terminated (budget exhausted before natural close)");
+            }
+        }
+        if let Some(executed) = self.sandbox_executed {
+            println!("  Sandbox:    {}", if executed { "executed" } else { "skipped" });
+        }
+        if let Some(panicked) = self.sandbox_panicked {
+            if panicked {
+                println!("  Sandbox:    PANICKED (invalid memory access caught)");
+            }
+        }
+        if let Some(passed) = self.scope_passed {
+            println!("  Scope:      {}", if passed { "PASSED" } else { "FAILED" });
+        }
+        if let Some(stored) = self.stored_in_site_map {
+            if stored {
+                println!("  Stored:     yes (available for future KV lookups)");
+            }
+        }
+        println!();
+    }
 }
 
 struct CloudflareAccount {
@@ -537,7 +601,7 @@ fn resolve_tokenizer(tokenizer: &Option<PathBuf>, model_dir: &Path) -> Result<Pa
     anyhow::bail!("No --tokenizer specified and none auto-discovered. Use --tokenizer <file>.")
 }
 
-fn run_generate_zero(args: GenerateArgs) -> Result<()> {
+fn run_generate_zero(args: GenerateArgs, json: bool) -> Result<()> {
     use model::transformer_zero::ZeroTransformer;
     use model::weights::ModelWeights;
 
@@ -583,20 +647,36 @@ fn run_generate_zero(args: GenerateArgs) -> Result<()> {
 
     let elapsed = t_gen.elapsed();
     let elapsed_s = elapsed.as_secs_f32();
-    println!();
-    eprintln!(
-        "\n--- Zero-Float Generation ---\nTokens : {}\nTime   : {:.2}s\nTok/s  : {:.2}",
-        generated.len(),
-        elapsed_s,
-        generated.len() as f32 / elapsed_s.max(1e-6),
-    );
+    let elapsed_ms = elapsed.as_millis() as u64;
+    let tok_per_s = generated.len() as f64 / elapsed_s.max(1e-6) as f64;
+
+    let report = GenerationReport {
+        mode: "Zero-Float".to_string(),
+        tokens_generated: generated.len(),
+        elapsed_ms,
+        tokens_per_second: tok_per_s,
+        site_map_hits: 0,
+        site_map_misses: 0,
+        merkle_valid: None,
+        force_terminated: None,
+        sandbox_executed: None,
+        sandbox_panicked: None,
+        scope_passed: None,
+        stored_in_site_map: None,
+    };
+
+    if json {
+        println!("{}", serde_json::to_string_pretty(&report)?);
+    } else {
+        report.display();
+    }
 
     Ok(())
 }
 
 // ─── FP32 Local Generate (GPU float path for FP4/FP2 weights) ────────────────
 
-fn run_generate_local(args: GenerateArgs) -> Result<()> {
+fn run_generate_local(args: GenerateArgs, json: bool) -> Result<()> {
     use model::transformer::Transformer;
     use model::weights::ModelWeights;
 
@@ -655,13 +735,29 @@ fn run_generate_local(args: GenerateArgs) -> Result<()> {
 
     let elapsed = t_gen.elapsed();
     let elapsed_s = elapsed.as_secs_f32();
-    println!();
-    eprintln!(
-        "\n--- Local FP32 Generation ---\nTokens : {}\nTime   : {:.2}s\nTok/s  : {:.2}",
-        generated.len(),
-        elapsed_s,
-        generated.len() as f32 / elapsed_s.max(1e-6),
-    );
+    let elapsed_ms = elapsed.as_millis() as u64;
+    let tok_per_s = generated.len() as f64 / elapsed_s.max(1e-6) as f64;
+
+    let report = GenerationReport {
+        mode: "Local FP32".to_string(),
+        tokens_generated: generated.len(),
+        elapsed_ms,
+        tokens_per_second: tok_per_s,
+        site_map_hits: 0,
+        site_map_misses: 0,
+        merkle_valid: None,
+        force_terminated: None,
+        sandbox_executed: None,
+        sandbox_panicked: None,
+        scope_passed: None,
+        stored_in_site_map: None,
+    };
+
+    if json {
+        println!("{}", serde_json::to_string_pretty(&report)?);
+    } else {
+        report.display();
+    }
 
     Ok(())
 }
