@@ -29,6 +29,7 @@
 //! ```
 
 use std::fmt;
+use serde::Serialize;
 
 // ─── SecretString ──────────────────────────────────────────────────────────
 
@@ -128,13 +129,26 @@ impl Clone for SecretString {
 pub struct CredentialScope {
     secrets: Vec<SecretString>,
     env_vars_scrubbed: Vec<String>,
+    /// Labels for each secret (e.g., env var name or description).
+    labels: Vec<String>,
+    /// Timestamp when the scope was created (seconds since UNIX epoch).
+    created_at: u64,
+    /// Timestamp when scrub() was last called (0 = never).
+    scrubbed_at: u64,
 }
 
 impl CredentialScope {
     pub fn new() -> Self {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
         Self {
             secrets: Vec::new(),
             env_vars_scrubbed: Vec::new(),
+            labels: Vec::new(),
+            created_at: now,
+            scrubbed_at: 0,
         }
     }
 
@@ -142,6 +156,7 @@ impl CredentialScope {
     pub fn load_env(&mut self, var: &str) -> Option<&SecretString> {
         if let Some(secret) = SecretString::from_env(var) {
             self.secrets.push(secret);
+            self.labels.push(var.to_string());
             self.secrets.last()
         } else {
             None
@@ -151,7 +166,25 @@ impl CredentialScope {
     /// Load a secret from a known value and track it.
     pub fn load_value(&mut self, value: String) -> &SecretString {
         self.secrets.push(SecretString::new(value));
+        self.labels.push(format!("secret_{}", self.secrets.len() - 1));
         self.secrets.last().unwrap()
+    }
+
+    /// Load a secret with a custom label.
+    pub fn load_labeled(&mut self, label: &str, value: String) -> &SecretString {
+        self.secrets.push(SecretString::new(value));
+        self.labels.push(label.to_string());
+        self.secrets.last().unwrap()
+    }
+
+    /// Get a specific secret by index.
+    pub fn get(&self, index: usize) -> Option<&SecretString> {
+        self.secrets.get(index)
+    }
+
+    /// Get the label for a secret by index.
+    pub fn label(&self, index: usize) -> Option<&str> {
+        self.labels.get(index).map(|s| s.as_str())
     }
 
     /// Get all loaded secrets.
@@ -165,6 +198,11 @@ impl CredentialScope {
             secret.zeroize();
         }
         self.secrets.clear();
+        self.labels.clear();
+        self.scrubbed_at = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
     }
 
     /// Record that an env var was scrubbed (for auditing).
@@ -180,6 +218,33 @@ impl CredentialScope {
     /// Whether no secrets are tracked.
     pub fn is_empty(&self) -> bool {
         self.secrets.is_empty()
+    }
+
+    /// Timestamp when the scope was created (seconds since UNIX epoch).
+    pub fn created_at(&self) -> u64 {
+        self.created_at
+    }
+
+    /// Timestamp when scrub() was last called (0 = never).
+    pub fn scrubbed_at(&self) -> u64 {
+        self.scrubbed_at
+    }
+
+    /// Number of env vars that were scrubbed.
+    pub fn scrubbed_env_count(&self) -> usize {
+        self.env_vars_scrubbed.len()
+    }
+
+    /// Generate a diagnostic report (safe to log — no secret values).
+    pub fn audit_report(&self) -> CredentialScopeReport {
+        CredentialScopeReport {
+            secret_count: self.secrets.len(),
+            labels: self.labels.clone(),
+            env_vars_scrubbed: self.env_vars_scrubbed.clone(),
+            created_at: self.created_at,
+            scrubbed_at: self.scrubbed_at,
+            is_scrubbed: self.secrets.is_empty() && self.scrubbed_at > 0,
+        }
     }
 }
 
@@ -201,8 +266,27 @@ impl fmt::Debug for CredentialScope {
         f.debug_struct("CredentialScope")
             .field("secrets_count", &self.secrets.len())
             .field("env_vars_scrubbed", &self.env_vars_scrubbed.len())
+            .field("created_at", &self.created_at)
+            .field("scrubbed_at", &self.scrubbed_at)
             .finish()
     }
+}
+
+/// Diagnostic report for a credential scope (safe to log — no secret values).
+#[derive(Debug, Clone, Serialize)]
+pub struct CredentialScopeReport {
+    /// Number of secrets currently tracked.
+    pub secret_count: usize,
+    /// Labels for each secret (env var names or descriptions).
+    pub labels: Vec<String>,
+    /// Environment variables that were scrubbed.
+    pub env_vars_scrubbed: Vec<String>,
+    /// Timestamp when the scope was created (seconds since UNIX epoch).
+    pub created_at: u64,
+    /// Timestamp when scrub() was last called (0 = never).
+    pub scrubbed_at: u64,
+    /// Whether all secrets have been scrubbed.
+    pub is_scrubbed: bool,
 }
 
 // ─── Environment Scrubbing ─────────────────────────────────────────────────
@@ -346,7 +430,7 @@ pub fn audit_env_exposure() -> Vec<String> {
 /// to the process. The sandbox isolates computation but NOT the environment
 /// the process inherits — env vars, agent sockets, and mounted config
 /// directories all cross the boundary by default.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize)]
 pub struct CredentialBoundaryAudit {
     /// Sensitive env vars still present (should have been scrubbed).
     pub exposed_env_vars: Vec<String>,
@@ -668,5 +752,103 @@ mod tests {
             assert!(paths.iter().any(|p| p.ends_with(".aws")));
             assert!(paths.iter().any(|p| p.ends_with(".docker")));
         }
+    }
+
+    #[test]
+    fn credential_scope_labels() {
+        let mut scope = CredentialScope::new();
+        scope.load_value("secret_a".to_string());
+        scope.load_labeled("api_key", "secret_b".to_string());
+        assert_eq!(scope.label(0), Some("secret_0"));
+        assert_eq!(scope.label(1), Some("api_key"));
+        assert_eq!(scope.label(99), None);
+    }
+
+    #[test]
+    fn credential_scope_get_by_index() {
+        let mut scope = CredentialScope::new();
+        scope.load_value("my_secret".to_string());
+        assert!(scope.get(0).is_some());
+        assert_eq!(scope.get(0).unwrap().as_str(), "my_secret");
+        assert!(scope.get(1).is_none());
+    }
+
+    #[test]
+    fn credential_scope_timestamps() {
+        let scope = CredentialScope::new();
+        assert!(scope.created_at() > 0);
+        assert_eq!(scope.scrubbed_at(), 0);
+    }
+
+    #[test]
+    fn credential_scope_scrub_updates_timestamp() {
+        let mut scope = CredentialScope::new();
+        scope.load_value("temp".to_string());
+        assert_eq!(scope.scrubbed_at(), 0);
+        scope.scrub();
+        assert!(scope.scrubbed_at() > 0);
+    }
+
+    #[test]
+    fn credential_scope_audit_report() {
+        let mut scope = CredentialScope::new();
+        scope.load_labeled("test_key", "value".to_string());
+        scope.record_scrubbed_env("TEST_ENV".to_string());
+        let report = scope.audit_report();
+        assert_eq!(report.secret_count, 1);
+        assert_eq!(report.labels, vec!["test_key"]);
+        assert_eq!(report.env_vars_scrubbed, vec!["TEST_ENV"]);
+        assert!(!report.is_scrubbed);
+        assert!(report.created_at > 0);
+    }
+
+    #[test]
+    fn credential_scope_report_after_scrub() {
+        let mut scope = CredentialScope::new();
+        scope.load_value("temp".to_string());
+        scope.scrub();
+        let report = scope.audit_report();
+        assert_eq!(report.secret_count, 0);
+        assert!(report.is_scrubbed);
+    }
+
+    #[test]
+    fn credential_scope_report_serialize() {
+        let report = CredentialScopeReport {
+            secret_count: 2,
+            labels: vec!["api_key".to_string(), "db_pass".to_string()],
+            env_vars_scrubbed: vec!["VELOCITY_API_KEY".to_string()],
+            created_at: 1700000000,
+            scrubbed_at: 0,
+            is_scrubbed: false,
+        };
+        let json = serde_json::to_string(&report).unwrap();
+        assert!(json.contains("\"secret_count\":2"));
+        assert!(json.contains("\"is_scrubbed\":false"));
+        // Ensure no actual secret values in the report
+        assert!(!json.contains("password"));
+        assert!(!json.contains("key_value"));
+    }
+
+    #[test]
+    fn boundary_audit_serialize() {
+        let audit = CredentialBoundaryAudit {
+            exposed_env_vars: vec!["VELOCITY_API_KEY".to_string()],
+            reachable_sockets: vec![],
+            accessible_config_dirs: vec![],
+            clean: false,
+        };
+        let json = serde_json::to_string(&audit).unwrap();
+        assert!(json.contains("\"clean\":false"));
+        assert!(json.contains("VELOCITY_API_KEY"));
+    }
+
+    #[test]
+    fn scrubbed_env_count() {
+        let mut scope = CredentialScope::new();
+        assert_eq!(scope.scrubbed_env_count(), 0);
+        scope.record_scrubbed_env("VAR1".to_string());
+        scope.record_scrubbed_env("VAR2".to_string());
+        assert_eq!(scope.scrubbed_env_count(), 2);
     }
 }
