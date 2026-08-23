@@ -193,5 +193,30 @@ pub fn get_team_tools() -> Vec<Tool> {
                 "required": ["json"]
             }),
         },
+        // ── Routing Debug / Analytics Tools ──────────────────────────────
+        Tool {
+            name: "debug_routing".to_string(),
+            description: "Debug the routing decision for a task without actually routing it. Shows which routing stage matched (file_scope_match, keyword_match, fallback_to_lead), the selected member, and keyword scores for all members. Useful for understanding why a task was routed to a particular member.".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "team_id": { "type": "string", "description": "Team id, slug, or name." },
+                    "task": { "type": "string", "description": "The task description to route." },
+                    "files": { "type": "array", "items": { "type": "string" }, "description": "Optional file paths for scope-based routing." }
+                },
+                "required": ["team_id", "task"]
+            }),
+        },
+        Tool {
+            name: "team_analytics".to_string(),
+            description: "Show analytics and statistics for a team: member count, provider distribution, scope coverage, skills/tools per member. Useful for understanding team composition and identifying gaps.".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "team_id": { "type": "string", "description": "Team id, slug, or name." }
+                },
+                "required": ["team_id"]
+            }),
+        },
     ]
 }

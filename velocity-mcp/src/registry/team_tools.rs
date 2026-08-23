@@ -8,6 +8,7 @@ use crate::editor::expert_team::{
     save_expert_teams, slugify, validate_team_composition, ExpertMember, ExpertTeam, MemberUpdate,
     ValidationSeverity,
 };
+use crate::editor::team_router::debug_routing;
 use crate::editor::skill_file::{list_skill_files, save_skill_file, SkillFile};
 
 /// Collect a JSON string array into owned `String`s, ignoring non-string entries.
@@ -92,6 +93,8 @@ pub fn handle_team_tool(
         "clone_expert_team" => clone_expert_team(root, arguments)?,
         "export_expert_team" => export_expert_team(root, arguments)?,
         "import_expert_team" => import_expert_team(root, arguments)?,
+        "debug_routing" => debug_routing_tool(root, arguments)?,
+        "team_analytics" => team_analytics(root, arguments)?,
         _ => return Ok(None),
     };
     Ok(Some(result))
@@ -683,5 +686,144 @@ fn import_expert_team(root: &Path, arguments: &Value) -> Result<String, Box<dyn 
         team_slug,
         member_count,
         team_slug
+    ))
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Routing Debug / Analytics Tools
+// ═══════════════════════════════════════════════════════════════════════════
+
+/// Debug the routing decision for a task without actually routing it.
+fn debug_routing_tool(root: &Path, arguments: &Value) -> Result<String, Box<dyn Error>> {
+    let team_ref = arguments["team_id"]
+        .as_str()
+        .or_else(|| arguments["team"].as_str())
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .ok_or("'team_id' is required")?;
+
+    let task = arguments["task"]
+        .as_str()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .ok_or("'task' is required")?;
+
+    let files = string_array(&arguments["files"]);
+
+    let teams = load_expert_teams(root);
+    let lower = team_ref.to_lowercase();
+    let slug = slugify(team_ref);
+    let team = teams
+        .iter()
+        .find(|t| t.id.to_lowercase() == lower || t.slug() == slug || t.name.to_lowercase() == lower)
+        .ok_or_else(|| format!("team '{}' not found", team_ref))?;
+
+    let decision = debug_routing(team, task, &files);
+
+    let scores_json: Vec<Value> = decision
+        .scores
+        .iter()
+        .map(|s| {
+            json!({
+                "member_id": s.member_id,
+                "member_name": s.member_name,
+                "score": s.score,
+                "matched_tokens": s.matched_tokens,
+            })
+        })
+        .collect();
+
+    let result = json!({
+        "team": team.name,
+        "team_id": team.id,
+        "task": task,
+        "files": files,
+        "decision": {
+            "stage": decision.stage,
+            "member_id": decision.member_id,
+            "member_name": decision.member_name,
+            "reason": decision.reason,
+        },
+        "all_scores": scores_json,
+    });
+
+    Ok(format!(
+        "Routing debug for team \"{}\":\n{}",
+        team.name,
+        serde_json::to_string_pretty(&result)?
+    ))
+}
+
+/// Show analytics and statistics for a team.
+fn team_analytics(root: &Path, arguments: &Value) -> Result<String, Box<dyn Error>> {
+    let team_ref = arguments["team_id"]
+        .as_str()
+        .or_else(|| arguments["team"].as_str())
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .ok_or("'team_id' is required")?;
+
+    let teams = load_expert_teams(root);
+    let lower = team_ref.to_lowercase();
+    let slug = slugify(team_ref);
+    let team = teams
+        .iter()
+        .find(|t| t.id.to_lowercase() == lower || t.slug() == slug || t.name.to_lowercase() == lower)
+        .ok_or_else(|| format!("team '{}' not found", team_ref))?;
+
+    // Compute basic analytics
+    let member_count = team.members.len();
+    let total_skills: usize = team.members.iter().map(|m| m.skills.len()).sum();
+    let total_scopes: usize = team.members.iter().map(|m| m.scope_patterns.len()).sum();
+    let total_tools: usize = team.members.iter().map(|m| m.tools.len()).sum();
+
+    // Provider distribution
+    let mut provider_counts = std::collections::HashMap::new();
+    for member in &team.members {
+        *provider_counts.entry(member.provider.slug().to_string()).or_insert(0) += 1;
+    }
+
+    // Scope coverage analysis
+    let members_with_scopes = team.members.iter().filter(|m| !m.scope_patterns.is_empty()).count();
+    let members_without_scopes = member_count - members_with_scopes;
+
+    let analytics = json!({
+        "team": team.name,
+        "team_id": team.id,
+        "slug": team.slug(),
+        "is_preset": team.is_preset,
+        "description": team.description,
+        "stats": {
+            "member_count": member_count,
+            "total_skills": total_skills,
+            "total_scope_patterns": total_scopes,
+            "total_tool_restrictions": total_tools,
+        },
+        "provider_distribution": provider_counts,
+        "scope_coverage": {
+            "members_with_scopes": members_with_scopes,
+            "members_without_scopes": members_without_scopes,
+            "coverage_percent": if member_count > 0 {
+                (members_with_scopes * 100) / member_count
+            } else {
+                0
+            },
+        },
+        "members": team.members.iter().map(|m| json!({
+            "id": m.id,
+            "name": m.name,
+            "role": m.role,
+            "provider": m.provider.slug(),
+            "model_id": m.model_id,
+            "skills_count": m.skills.len(),
+            "scopes_count": m.scope_patterns.len(),
+            "tools_count": m.tools.len(),
+        })).collect::<Vec<_>>(),
+    });
+
+    Ok(format!(
+        "Team analytics for \"{}\":\n{}",
+        team.name,
+        serde_json::to_string_pretty(&analytics)?
     ))
 }

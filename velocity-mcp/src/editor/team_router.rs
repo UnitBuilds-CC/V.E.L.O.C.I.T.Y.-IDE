@@ -307,6 +307,136 @@ pub fn route_member(
     })
 }
 
+// ═══════════════════════════════════════════════════════════════════════════
+// Routing Debug / Diagnostics
+// ═══════════════════════════════════════════════════════════════════════════
+
+/// Detailed routing decision information for debugging.
+#[derive(Debug, Clone)]
+pub struct RoutingDecision {
+    pub stage: String,
+    pub member_id: String,
+    pub member_name: String,
+    pub reason: String,
+    pub scores: Vec<MemberScore>,
+}
+
+/// Keyword scoring result for a single member.
+#[derive(Debug, Clone)]
+pub struct MemberScore {
+    pub member_id: String,
+    pub member_name: String,
+    pub score: usize,
+    pub matched_tokens: Vec<String>,
+}
+
+/// Debug the routing decision for a task without actually routing it.
+/// Returns detailed information about which stage matched and the scores.
+pub fn debug_routing(
+    team: &ExpertTeam,
+    task: &str,
+    files: &[String],
+) -> RoutingDecision {
+    if team.members.is_empty() {
+        return RoutingDecision {
+            stage: "error".to_string(),
+            member_id: String::new(),
+            member_name: String::new(),
+            reason: "team has no members".to_string(),
+            scores: Vec::new(),
+        };
+    }
+
+    // Stage 1: File-scope match
+    for file in files {
+        let best_match = team
+            .members
+            .iter()
+            .filter_map(|m| m.scope_match_len(file).map(|len| (len, m)))
+            .max_by_key(|(len, _)| *len);
+        if let Some((_, member)) = best_match {
+            return RoutingDecision {
+                stage: "file_scope_match".to_string(),
+                member_id: member.id.clone(),
+                member_name: member.name.clone(),
+                reason: format!("file scope match on {}", file),
+                scores: compute_keyword_scores(team, task),
+            };
+        }
+    }
+
+    // Stage 2: Keyword scoring
+    let scores = compute_keyword_scores(team, task);
+    if let Some(best) = scores.iter().max_by_key(|s| s.score) {
+        if best.score >= 2 {
+            return RoutingDecision {
+                stage: "keyword_match".to_string(),
+                member_id: best.member_id.clone(),
+                member_name: best.member_name.clone(),
+                reason: format!(
+                    "keyword match: {}",
+                    best.matched_tokens.first().unwrap_or(&String::new())
+                ),
+                scores,
+            };
+        }
+    }
+
+    // Stage 3: LLM router (not simulated in debug)
+    // Stage 4: Fallback to team lead
+    if let Some(lead) = team.members.first() {
+        RoutingDecision {
+            stage: "fallback_to_lead".to_string(),
+            member_id: lead.id.clone(),
+            member_name: lead.name.clone(),
+            reason: "no strong match; routed to team lead".to_string(),
+            scores,
+        }
+    } else {
+        RoutingDecision {
+            stage: "error".to_string(),
+            member_id: String::new(),
+            member_name: String::new(),
+            reason: "no members available".to_string(),
+            scores,
+        }
+    }
+}
+
+/// Compute keyword scores for all members without selecting a winner.
+fn compute_keyword_scores(team: &ExpertTeam, task: &str) -> Vec<MemberScore> {
+    let task_tokens = tokens(task);
+    team.members
+        .iter()
+        .map(|member| {
+            let mut score = 0usize;
+            let mut matched_tokens = Vec::new();
+            let mut consider = |field_tokens: Vec<String>, weight: usize, label: &str| {
+                for token in field_tokens {
+                    if is_meaningful_token(&token) && task_tokens.iter().any(|t| t == &token) {
+                        score += weight;
+                        matched_tokens.push(format!("{} '{}'", label, token));
+                    }
+                }
+            };
+            consider(tokens(&member.role), 2, "role");
+            consider(tokens(&member.name), 2, "name");
+            for scope in &member.scope_patterns {
+                consider(tokens(scope), 1, "scope");
+            }
+            for skill in &member.skills {
+                consider(tokens(skill), 1, "skill");
+            }
+            MemberScore {
+                member_id: member.id.clone(),
+                member_name: member.name.clone(),
+                score,
+                matched_tokens,
+            }
+        })
+        .collect()
+}
+
 /// Resolve a router-provided string (id or name) to a team member.
 fn resolve_member<'a>(
     team: &'a ExpertTeam,

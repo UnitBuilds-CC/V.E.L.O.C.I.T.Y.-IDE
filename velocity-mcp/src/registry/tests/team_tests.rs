@@ -707,3 +707,132 @@ fn clone_with_name_unit() {
     assert_eq!(cloned.members[0].role, "Original Role");
     assert_eq!(cloned.description, "Original description");
 }
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Batch 3: Routing Debug / Analytics Tests
+// ═══════════════════════════════════════════════════════════════════════════
+
+#[test]
+fn debug_routing_shows_file_scope_match() {
+    let (_temp, root) = setup_root();
+    create_test_team(&root);
+
+    let output = call_tool_in_workspace(
+        &root,
+        "debug_routing",
+        &json!({
+            "team_id": "test-team",
+            "task": "Build an API endpoint",
+            "files": ["src/api/handler.rs"]
+        }),
+    )
+    .unwrap();
+
+    assert!(output.contains("Routing debug"));
+    assert!(output.contains("file_scope_match"));
+    assert!(output.contains("API Coder"));
+}
+
+#[test]
+fn debug_routing_shows_keyword_match() {
+    let (_temp, root) = setup_root();
+    create_test_team(&root);
+
+    let output = call_tool_in_workspace(
+        &root,
+        "debug_routing",
+        &json!({
+            "team_id": "test-team",
+            "task": "Design the Architecture",
+            "files": []
+        }),
+    )
+    .unwrap();
+
+    assert!(output.contains("Routing debug"));
+    assert!(output.contains("keyword_match"));
+    assert!(output.contains("Lead Dev"));
+}
+
+#[test]
+fn debug_routing_shows_fallback_to_lead() {
+    let (_temp, root) = setup_root();
+    create_test_team(&root);
+
+    let output = call_tool_in_workspace(
+        &root,
+        "debug_routing",
+        &json!({
+            "team_id": "test-team",
+            "task": "Do something unrelated to any specialty",
+            "files": []
+        }),
+    )
+    .unwrap();
+
+    assert!(output.contains("Routing debug"));
+    assert!(output.contains("fallback_to_lead"));
+}
+
+#[test]
+fn team_analytics_shows_composition_stats() {
+    let (_temp, root) = setup_root();
+    create_test_team(&root);
+
+    let output = call_tool_in_workspace(
+        &root,
+        "team_analytics",
+        &json!({ "team_id": "test-team" }),
+    )
+    .unwrap();
+
+    assert!(output.contains("Team analytics"));
+    assert!(output.contains("Test Team"));
+    assert!(output.contains("member_count"));
+    assert!(output.contains("provider_distribution"));
+    assert!(output.contains("scope_coverage"));
+    assert!(output.contains("Lead Dev"));
+    assert!(output.contains("API Coder"));
+}
+
+#[test]
+fn team_analytics_shows_provider_distribution() {
+    let (_temp, root) = setup_root();
+    // Create a team with multiple providers
+    call_tool_in_workspace(
+        &root,
+        "create_expert_team",
+        &json!({
+            "name": "Multi Provider Team",
+            "members": [
+                {
+                    "name": "Cloud Dev",
+                    "role": "Cloud",
+                    "provider": "cloudflare"
+                },
+                {
+                    "name": "OpenAI Dev",
+                    "role": "AI",
+                    "provider": "openai"
+                },
+                {
+                    "name": "Another Cloud Dev",
+                    "role": "Backend",
+                    "provider": "cloudflare"
+                }
+            ]
+        }),
+    )
+    .unwrap();
+
+    let output = call_tool_in_workspace(
+        &root,
+        "team_analytics",
+        &json!({ "team_id": "multi-provider-team" }),
+    )
+    .unwrap();
+
+    assert!(output.contains("provider_distribution"));
+    assert!(output.contains("cloudflare"));
+    assert!(output.contains("openai"));
+}
