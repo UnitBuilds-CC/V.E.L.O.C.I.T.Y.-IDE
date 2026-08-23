@@ -13,8 +13,110 @@ use super::packing::*;
 use super::vulkan_init::*;
 use ash::vk;
 use ash::Device;
+use serde::Serialize;
 use std::ffi::CString;
 use std::time::Instant;
+
+/// BitNet layer model dimensions.
+#[derive(Debug, Clone, Serialize)]
+pub struct BitNetLayerConfig {
+    pub hidden_size: usize,
+    pub ffn_size: usize,
+    pub n_heads: usize,
+    pub head_dim: usize,
+}
+
+/// Describes the compute dispatches for a BitNet layer.
+#[derive(Debug, Clone, Serialize)]
+pub struct BitNetDispatchPlan {
+    pub ternary_dispatches: usize,
+    pub activation_dispatches: usize,
+    pub total_dispatches: usize,
+    pub descriptor_sets: usize,
+    pub workgroup_sizes: Vec<(u32, u32)>,
+}
+
+/// Diagnostic info about a BitNet layer configuration.
+#[derive(Debug, Clone, Serialize)]
+pub struct BitNetLayerInfo {
+    pub config: BitNetLayerConfig,
+    pub dispatch_plan: BitNetDispatchPlan,
+    pub weight_buffers: usize,
+    pub total_weight_bytes_estimate: usize,
+    pub validation_issues: Vec<String>,
+}
+
+/// Validate BitNet layer dimensions.
+pub fn validate_bitnet_config(cfg: &BitNetLayerConfig) -> Vec<String> {
+    let mut issues = Vec::new();
+    if cfg.hidden_size == 0 {
+        issues.push("hidden_size must be > 0".into());
+    }
+    if cfg.hidden_size % 16 != 0 {
+        issues.push(format!(
+            "hidden_size ({}) must be a multiple of 16 for uvec4 packing",
+            cfg.hidden_size
+        ));
+    }
+    if cfg.ffn_size == 0 {
+        issues.push("ffn_size must be > 0".into());
+    }
+    if cfg.n_heads == 0 {
+        issues.push("n_heads must be > 0".into());
+    }
+    if cfg.head_dim == 0 {
+        issues.push("head_dim must be > 0".into());
+    }
+    if cfg.hidden_size != cfg.n_heads * cfg.head_dim && cfg.n_heads != 0 && cfg.head_dim != 0 {
+        issues.push(format!(
+            "hidden_size ({}) != n_heads * head_dim ({} * {} = {})",
+            cfg.hidden_size, cfg.n_heads, cfg.head_dim, cfg.n_heads * cfg.head_dim
+        ));
+    }
+    issues
+}
+
+/// Compute the dispatch plan for a BitNet layer (pure function).
+pub fn bitnet_dispatch_plan(hidden_size: usize, ffn_size: usize) -> BitNetDispatchPlan {
+    let ternary_dispatches = 7; // Q, K, V, O, gate, up, down
+    let activation_dispatches = 1; // SwiGLU
+    let total_dispatches = ternary_dispatches + activation_dispatches;
+    let descriptor_sets = 8;
+    let workgroup_sizes = vec![
+        ((hidden_size as u32).div_ceil(256), 3200),
+        ((hidden_size as u32).div_ceil(256), 3200),
+        ((hidden_size as u32).div_ceil(256), 3200),
+        ((hidden_size as u32).div_ceil(256), 3200),
+        ((ffn_size as u32).div_ceil(256), 8640),
+        ((ffn_size as u32).div_ceil(256), 8640),
+        ((ffn_size as u32).div_ceil(256), 8640),
+        ((hidden_size as u32).div_ceil(256), 3200),
+    ];
+    BitNetDispatchPlan {
+        ternary_dispatches,
+        activation_dispatches,
+        total_dispatches,
+        descriptor_sets,
+        workgroup_sizes,
+    }
+}
+
+/// Build diagnostic info for a BitNet layer configuration.
+pub fn bitnet_layer_info(cfg: &BitNetLayerConfig) -> BitNetLayerInfo {
+    let issues = validate_bitnet_config(cfg);
+    let plan = bitnet_dispatch_plan(cfg.hidden_size, cfg.ffn_size);
+    let weight_buffers = 7; // Q, K, V, O, gate, up, down
+    let weight_bytes = cfg.hidden_size * cfg.hidden_size * 4 * 4 // 4 attn weights
+        + cfg.hidden_size * cfg.ffn_size * 4 * 2 // gate + up
+        + cfg.ffn_size * cfg.hidden_size * 4; // down
+    BitNetLayerInfo {
+        config: cfg.clone(),
+        dispatch_plan: plan,
+        weight_buffers,
+        total_weight_bytes_estimate: weight_bytes,
+        validation_issues: issues,
+    }
+}
 
 pub struct VulkanBitNetLayer {
     pub device: Device,
@@ -624,5 +726,104 @@ impl Drop for VulkanBitNetLayer {
             self.device.destroy_shader_module(self.shader_ternary, None);
             self.device.destroy_shader_module(self.shader_act, None);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn default_bitnet_config() -> BitNetLayerConfig {
+        BitNetLayerConfig {
+            hidden_size: 3200,
+            ffn_size: 8640,
+            n_heads: 50,
+            head_dim: 64,
+        }
+    }
+
+    #[test]
+    fn validate_bitnet_config_valid() {
+        let cfg = default_bitnet_config();
+        let issues = validate_bitnet_config(&cfg);
+        assert!(issues.is_empty(), "expected no issues, got: {issues:?}");
+    }
+
+    #[test]
+    fn validate_bitnet_config_zero_hidden() {
+        let mut cfg = default_bitnet_config();
+        cfg.hidden_size = 0;
+        let issues = validate_bitnet_config(&cfg);
+        assert!(issues.iter().any(|i| i.contains("hidden_size")));
+    }
+
+    #[test]
+    fn validate_bitnet_config_bad_multiple() {
+        let mut cfg = default_bitnet_config();
+        cfg.hidden_size = 3201;
+        let issues = validate_bitnet_config(&cfg);
+        assert!(issues.iter().any(|i| i.contains("multiple of 16")));
+    }
+
+    #[test]
+    fn validate_bitnet_config_head_mismatch() {
+        let mut cfg = default_bitnet_config();
+        cfg.n_heads = 10;
+        let issues = validate_bitnet_config(&cfg);
+        assert!(issues.iter().any(|i| i.contains("hidden_size")));
+    }
+
+    #[test]
+    fn dispatch_plan_works() {
+        let plan = bitnet_dispatch_plan(3200, 8640);
+        assert_eq!(plan.ternary_dispatches, 7);
+        assert_eq!(plan.activation_dispatches, 1);
+        assert_eq!(plan.total_dispatches, 8);
+        assert_eq!(plan.descriptor_sets, 8);
+        assert_eq!(plan.workgroup_sizes.len(), 8);
+    }
+
+    #[test]
+    fn bitnet_layer_info_works() {
+        let cfg = default_bitnet_config();
+        let info = bitnet_layer_info(&cfg);
+        assert!(info.validation_issues.is_empty());
+        assert_eq!(info.weight_buffers, 7);
+        assert!(info.total_weight_bytes_estimate > 0);
+        assert_eq!(info.dispatch_plan.total_dispatches, 8);
+    }
+
+    #[test]
+    fn bitnet_layer_info_with_issues() {
+        let mut cfg = default_bitnet_config();
+        cfg.hidden_size = 0;
+        cfg.ffn_size = 0;
+        let info = bitnet_layer_info(&cfg);
+        assert!(info.validation_issues.len() >= 2);
+    }
+
+    #[test]
+    fn bitnet_config_serializes() {
+        let cfg = default_bitnet_config();
+        let json = serde_json::to_string(&cfg).unwrap();
+        assert!(json.contains("hidden_size"));
+        assert!(json.contains("3200"));
+    }
+
+    #[test]
+    fn bitnet_layer_info_serializes() {
+        let cfg = default_bitnet_config();
+        let info = bitnet_layer_info(&cfg);
+        let json = serde_json::to_string(&info).unwrap();
+        assert!(json.contains("dispatch_plan"));
+        assert!(json.contains("weight_buffers"));
+    }
+
+    #[test]
+    fn dispatch_plan_serializes() {
+        let plan = bitnet_dispatch_plan(3200, 8640);
+        let json = serde_json::to_string(&plan).unwrap();
+        assert!(json.contains("ternary_dispatches"));
+        assert!(json.contains("workgroup_sizes"));
     }
 }
