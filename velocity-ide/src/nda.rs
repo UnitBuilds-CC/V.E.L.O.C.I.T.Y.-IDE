@@ -967,6 +967,139 @@ pub fn run_nda_benchmark() {
     }
 }
 
+/// Report on quantization quality for an activation vector.
+#[derive(Debug, Clone, Serialize)]
+pub struct NdaQuantizationReport {
+    pub input_len: usize,
+    pub output_scale: f32,
+    pub input_amax: f32,
+    pub max_abs_error: f64,
+    pub mean_abs_error: f64,
+    pub compression_ratio: f64,
+    pub validation_issues: Vec<String>,
+}
+
+/// Quantize an f32 activation vector and produce a quality report.
+pub fn quantize_with_report(x: &[f32]) -> ((Vec<u8>, Vec<u8>, f32), NdaQuantizationReport) {
+    let result = quantize_activations_v2_quad(x);
+    let (sign, extra, scale) = &result;
+
+    // Reconstruct approximate values for error measurement
+    let mut max_abs_error = 0.0f64;
+    let mut sum_abs_error = 0.0f64;
+    for (i, &orig) in x.iter().enumerate() {
+        let byte_idx = i / 8;
+        let bit_idx = i % 8;
+        let mask = 1u8 << bit_idx;
+        let is_pos = (sign[byte_idx] & mask) != 0;
+        let is_large = (sign[byte_idx] & mask) == (extra[byte_idx] & mask);
+        let mag = if is_large { 2.0 } else { 1.0 };
+        let reconstructed = if is_pos { mag } else { -mag };
+        let approx = reconstructed * (*scale) as f64;
+        let err = (orig as f64 - approx).abs();
+        max_abs_error = max_abs_error.max(err);
+        sum_abs_error += err;
+    }
+    let mean_abs_error = if x.is_empty() { 0.0 } else { sum_abs_error / x.len() as f64 };
+
+    let input_bytes = x.len() * 4;
+    let output_bytes = sign.len() + extra.len();
+    let compression_ratio = if output_bytes > 0 {
+        input_bytes as f64 / output_bytes as f64
+    } else {
+        0.0
+    };
+
+    let amax = x.iter().map(|&v| v.abs()).fold(0.0_f32, f32::max);
+
+    let mut issues = Vec::new();
+    if x.is_empty() {
+        issues.push("input is empty".into());
+    }
+    if *scale < 1e-10 {
+        issues.push(format!("scale is near zero: {}", scale));
+    }
+
+    let report = NdaQuantizationReport {
+        input_len: x.len(),
+        output_scale: *scale,
+        input_amax: amax,
+        max_abs_error,
+        mean_abs_error,
+        compression_ratio,
+        validation_issues: issues,
+    };
+    (result, report)
+}
+
+/// Validate that two matrices are compatible for concatenation or chaining.
+pub fn validate_matrix_compatibility(a: &NdaMatrix, b: &NdaMatrix) -> Vec<String> {
+    let mut issues = Vec::new();
+    if a.cols != b.rows {
+        issues.push(format!(
+            "dimension mismatch: a.cols ({}) != b.rows ({})",
+            a.cols, b.rows
+        ));
+    }
+    if a.version != b.version {
+        issues.push(format!(
+            "version mismatch: a.version ({}) != b.version ({})",
+            a.version, b.version
+        ));
+    }
+    issues
+}
+
+/// Aggregate summary of multiple NDA matrices.
+#[derive(Debug, Clone, Serialize)]
+pub struct NdaMatrixSummary {
+    pub matrix_count: usize,
+    pub total_rows: usize,
+    pub total_cols: usize,
+    pub total_memory_bytes: usize,
+    pub versions: Vec<u16>,
+    pub largest_matrix: Option<String>,
+    pub smallest_matrix: Option<String>,
+    pub validation_issues: Vec<String>,
+}
+
+/// Summarize a collection of NDA matrices.
+pub fn summarize_matrices(matrices: &[NdaMatrix]) -> NdaMatrixSummary {
+    let total_rows: usize = matrices.iter().map(|m| m.rows).sum();
+    let total_cols: usize = matrices.iter().map(|m| m.cols).sum();
+    let total_memory: usize = matrices.iter().map(|m| m.memory_breakdown().total_bytes).sum();
+    let versions: Vec<u16> = matrices.iter().map(|m| m.version).collect();
+
+    let mut largest: Option<(usize, String)> = None;
+    let mut smallest: Option<(usize, String)> = None;
+    for (i, m) in matrices.iter().enumerate() {
+        let size = m.rows * m.cols;
+        let label = format!("matrix[{}] ({}x{})", i, m.rows, m.cols);
+        if largest.as_ref().is_none_or(|(s, _)| size > *s) {
+            largest = Some((size, label.clone()));
+        }
+        if smallest.as_ref().is_none_or(|(s, _)| size < *s) {
+            smallest = Some((size, label));
+        }
+    }
+
+    let mut issues = Vec::new();
+    if matrices.is_empty() {
+        issues.push("no matrices to summarize".into());
+    }
+
+    NdaMatrixSummary {
+        matrix_count: matrices.len(),
+        total_rows,
+        total_cols,
+        total_memory_bytes: total_memory,
+        versions,
+        largest_matrix: largest.map(|(_, l)| l),
+        smallest_matrix: smallest.map(|(_, l)| l),
+        validation_issues: issues,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1315,5 +1448,91 @@ mod tests {
         let json = serde_json::to_string(&report).unwrap();
         assert!(json.contains("\"count\":5"));
         assert!(json.contains("\"total_rows\":160"));
+    }
+
+    #[test]
+    fn quantize_with_report_basic() {
+        let input = vec![1.0, -1.0, 0.5, -0.5, 2.0, -2.0, 0.0, 0.1];
+        let ((sign, extra, scale), report) = quantize_with_report(&input);
+        assert_eq!(report.input_len, 8);
+        assert_eq!(sign.len(), 1);
+        assert_eq!(extra.len(), 1);
+        assert!(report.output_scale > 0.0);
+        assert!(report.compression_ratio > 1.0);
+        assert!(report.validation_issues.is_empty());
+    }
+
+    #[test]
+    fn quantize_with_report_empty() {
+        let input: Vec<f32> = vec![];
+        let (_, report) = quantize_with_report(&input);
+        assert_eq!(report.input_len, 0);
+        assert!(!report.validation_issues.is_empty());
+    }
+
+    #[test]
+    fn quantize_with_report_serializes() {
+        let input = vec![1.0, -1.0, 2.0, -2.0];
+        let (_, report) = quantize_with_report(&input);
+        let json = serde_json::to_string(&report).unwrap();
+        assert!(json.contains("\"input_len\":4"));
+        assert!(json.contains("\"compression_ratio\""));
+    }
+
+    #[test]
+    fn validate_matrix_compatibility_compatible() {
+        let a = make_quad_matrix(16, 64);
+        let b = make_quad_matrix(64, 32);
+        let issues = validate_matrix_compatibility(&a, &b);
+        assert!(issues.is_empty());
+    }
+
+    #[test]
+    fn validate_matrix_compatibility_dimension_mismatch() {
+        let a = make_quad_matrix(16, 64);
+        let b = make_quad_matrix(32, 16); // b.rows=32 != a.cols=64
+        let issues = validate_matrix_compatibility(&a, &b);
+        assert!(issues.iter().any(|i| i.contains("dimension mismatch")));
+    }
+
+    #[test]
+    fn validate_matrix_compatibility_version_mismatch() {
+        let a = make_quad_matrix(16, 64);
+        let mut b = make_quad_matrix(64, 32);
+        b.version = NDA_VERSION_FP4;
+        let issues = validate_matrix_compatibility(&a, &b);
+        assert!(issues.iter().any(|i| i.contains("version mismatch")));
+    }
+
+    #[test]
+    fn summarize_matrices_basic() {
+        let matrices = vec![
+            make_quad_matrix(16, 64),
+            make_quad_matrix(32, 128),
+            make_quad_matrix(8, 32),
+        ];
+        let summary = summarize_matrices(&matrices);
+        assert_eq!(summary.matrix_count, 3);
+        assert_eq!(summary.total_rows, 56);
+        assert_eq!(summary.total_cols, 224);
+        assert!(summary.total_memory_bytes > 0);
+        assert!(summary.largest_matrix.is_some());
+        assert!(summary.smallest_matrix.is_some());
+    }
+
+    #[test]
+    fn summarize_matrices_empty() {
+        let summary = summarize_matrices(&[]);
+        assert_eq!(summary.matrix_count, 0);
+        assert!(!summary.validation_issues.is_empty());
+    }
+
+    #[test]
+    fn summarize_matrices_serializes() {
+        let matrices = vec![make_quad_matrix(8, 8)];
+        let summary = summarize_matrices(&matrices);
+        let json = serde_json::to_string(&summary).unwrap();
+        assert!(json.contains("\"matrix_count\":1"));
+        assert!(json.contains("\"total_memory_bytes\""));
     }
 }
