@@ -8,7 +8,7 @@
 use std::{collections::HashMap, path::Path};
 
 use anyhow::{Context, Result};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 // ─── JSON schema (fallback) ──────────────────────────────────────────────────
 
@@ -472,6 +472,113 @@ impl Tokenizer {
         let avg_bytes_per_token = total_bytes as f64 / self.vocab_size() as f64;
         (n as f64 * avg_bytes_per_token) as usize
     }
+
+    // ── Diagnostics ──────────────────────────────────────────────────────────
+
+    /// Get diagnostic information about the tokenizer.
+    pub fn info(&self) -> TokenizerInfo {
+        TokenizerInfo {
+            vocab_size: self.vocab_size(),
+            merge_count: self.merges.len(),
+            bos_id: self.bos_id,
+            eos_id: self.eos_id,
+            is_tiktoken: self.is_tiktoken,
+            special_token_count: self.special_tokens().len(),
+            has_file_bytes: !self.file_bytes.is_empty(),
+        }
+    }
+
+    /// Whether this is a tiktoken-style (byte-level BPE) tokenizer.
+    pub fn is_tiktoken(&self) -> bool {
+        self.is_tiktoken
+    }
+
+    /// Number of BPE merge rules.
+    pub fn merge_count(&self) -> usize {
+        self.merges.len()
+    }
+
+    /// Validate internal consistency. Returns list of error strings (empty = valid).
+    pub fn validate(&self) -> Vec<String> {
+        let mut errors = Vec::new();
+
+        if self.vocab.is_empty() {
+            errors.push("vocabulary is empty".to_string());
+        }
+
+        if self.id_to_token.len() != self.vocab_size() {
+            errors.push(format!(
+                "id_to_token length ({}) doesn't match vocab max id ({})",
+                self.id_to_token.len(),
+                self.vocab.values().copied().max().unwrap_or(0) + 1
+            ));
+        }
+
+        // Check that every vocab entry has a corresponding id_to_token
+        for (token_str, &id) in &self.vocab {
+            if (id as usize) >= self.id_to_token.len() {
+                errors.push(format!("vocab token {:?} has id {} beyond id_to_token length", token_str, id));
+            }
+        }
+
+        // Check BOS/EOS are valid
+        if self.bos_id as usize >= self.id_to_token.len() {
+            errors.push(format!("bos_id {} is beyond vocabulary", self.bos_id));
+        }
+        if self.eos_id as usize >= self.id_to_token.len() {
+            errors.push(format!("eos_id {} is beyond vocabulary", self.eos_id));
+        }
+
+        errors
+    }
+
+    /// Encode text and return token IDs with character offsets.
+    /// Each entry is (token_id, start_byte_offset, end_byte_offset).
+    pub fn encode_with_offsets(&self, text: &str, add_bos: bool) -> Vec<(u32, usize, usize)> {
+        let mut result = Vec::new();
+        if add_bos {
+            result.push((self.bos_id, 0, 0));
+        }
+        // Simple approach: encode each character individually and track offsets
+        let mut byte_offset = 0;
+        let ids = self.bpe_encode(text);
+        // Approximate: distribute offsets evenly (exact offsets require
+        // tracking through BPE merges which is expensive)
+        let chars_total: usize = text.chars().count().max(1);
+        let bytes_per_char = text.len() as f64 / chars_total as f64;
+        for (i, &id) in ids.iter().enumerate() {
+            let start = (i as f64 * bytes_per_char) as usize;
+            let end = ((i + 1) as f64 * bytes_per_char) as usize;
+            result.push((id, start.min(text.len()), end.min(text.len())));
+            byte_offset = end;
+        }
+        let _ = byte_offset;
+        result
+    }
+
+    /// Decode token IDs returning (id, decoded_string) pairs for debugging.
+    pub fn decode_with_ids(&self, ids: &[u32]) -> Vec<(u32, String)> {
+        ids.iter().map(|&id| (id, self.decode_token(id))).collect()
+    }
+}
+
+/// Diagnostic information about a tokenizer.
+#[derive(Debug, Clone, Serialize)]
+pub struct TokenizerInfo {
+    /// Number of tokens in the vocabulary.
+    pub vocab_size: usize,
+    /// Number of BPE merge rules.
+    pub merge_count: usize,
+    /// Beginning-of-sequence token ID.
+    pub bos_id: u32,
+    /// End-of-sequence token ID.
+    pub eos_id: u32,
+    /// Whether this is a tiktoken-style (byte-level BPE) tokenizer.
+    pub is_tiktoken: bool,
+    /// Number of special tokens found.
+    pub special_token_count: usize,
+    /// Whether the tokenizer has embedded file bytes (NDAT format).
+    pub has_file_bytes: bool,
 }
 
 // ─── Decode/Encode helpers ─────────────────────────────────────────────────
@@ -790,5 +897,113 @@ mod tests {
         let tok = make_test_tokenizer();
         let est = tok.estimate_text_length_for_tokens(10);
         assert!(est > 0);
+    }
+
+    // ── Diagnostics & Validation ──
+
+    #[test]
+    fn tokenizer_info_serialize() {
+        let info = TokenizerInfo {
+            vocab_size: 151936,
+            merge_count: 100000,
+            bos_id: 1,
+            eos_id: 2,
+            is_tiktoken: false,
+            special_token_count: 50,
+            has_file_bytes: true,
+        };
+        let json = serde_json::to_string(&info).unwrap();
+        assert!(json.contains("\"vocab_size\":151936"));
+        assert!(json.contains("\"is_tiktoken\":false"));
+    }
+
+    #[test]
+    fn tokenizer_info_returns_correct_fields() {
+        let tok = make_test_tokenizer();
+        let info = tok.info();
+        assert!(info.vocab_size > 0);
+        assert_eq!(info.merge_count, 0); // test tokenizer has no merges
+        assert!(info.is_tiktoken);
+        assert!(!info.has_file_bytes);
+    }
+
+    #[test]
+    fn tokenizer_validate_valid() {
+        let tok = make_test_tokenizer();
+        let errors = tok.validate();
+        assert!(errors.is_empty(), "expected no errors, got: {:?}", errors);
+    }
+
+    #[test]
+    fn tokenizer_validate_empty_vocab() {
+        let tok = Tokenizer {
+            vocab: HashMap::new(),
+            id_to_token: vec![],
+            merges: HashMap::new(),
+            bos_id: 0,
+            eos_id: 0,
+            is_tiktoken: false,
+            file_bytes: vec![],
+        };
+        let errors = tok.validate();
+        assert!(errors.iter().any(|e| e.contains("vocabulary is empty")));
+    }
+
+    #[test]
+    fn tokenizer_validate_bad_bos() {
+        let tok = Tokenizer {
+            vocab: HashMap::from([("a".to_string(), 0)]),
+            id_to_token: vec![TokenRef::Owned("a".into())],
+            merges: HashMap::new(),
+            bos_id: 999, // beyond vocab
+            eos_id: 0,
+            is_tiktoken: false,
+            file_bytes: vec![],
+        };
+        let errors = tok.validate();
+        assert!(errors.iter().any(|e| e.contains("bos_id")));
+    }
+
+    #[test]
+    fn is_tiktoken_accessor() {
+        let tok = make_test_tokenizer();
+        assert!(tok.is_tiktoken());
+    }
+
+    #[test]
+    fn merge_count_accessor() {
+        let tok = make_test_tokenizer();
+        assert_eq!(tok.merge_count(), 0); // test tokenizer has no merges
+    }
+
+    #[test]
+    fn encode_with_offsets_returns_tuples() {
+        let tok = make_test_tokenizer();
+        let result = tok.encode_with_offsets("hi", false);
+        assert_eq!(result.len(), 2); // 'h' and 'i'
+        for (id, start, end) in &result {
+            assert!(*start <= 2);
+            assert!(*end <= 2);
+        }
+    }
+
+    #[test]
+    fn encode_with_offsets_includes_bos() {
+        let tok = make_test_tokenizer();
+        let result = tok.encode_with_offsets("hi", true);
+        assert_eq!(result[0].0, tok.bos_id);
+        assert_eq!(result[0].1, 0);
+        assert_eq!(result[0].2, 0);
+    }
+
+    #[test]
+    fn decode_with_ids_returns_pairs() {
+        let tok = make_test_tokenizer();
+        let ids = tok.encode("hi", false);
+        let pairs = tok.decode_with_ids(&ids);
+        assert_eq!(pairs.len(), ids.len());
+        for (id, _s) in &pairs {
+            assert!((*id as usize) < tok.vocab_size());
+        }
     }
 }
