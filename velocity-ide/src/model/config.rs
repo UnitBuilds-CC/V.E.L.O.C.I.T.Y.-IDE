@@ -2,8 +2,10 @@
 //
 // Static configuration for BitNet b1.58-3B and Qwen2.5-Coder-0.5B (NDA-Zero).
 
+use serde::Serialize;
+
 /// Architecture configuration for a single model variant.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct ModelConfig {
     /// Number of transformer layers
     pub n_layers: usize,
@@ -104,6 +106,78 @@ impl ModelConfig {
     pub fn uses_alibi(&self) -> bool {
         !self.alibi_shifts.is_empty()
     }
+
+    /// Validate config invariants. Returns a list of violations (empty = valid).
+    pub fn validate(&self) -> Vec<String> {
+        let mut issues = Vec::new();
+        if self.hidden_size == 0 {
+            issues.push("hidden_size must be > 0".into());
+        }
+        if self.n_heads == 0 {
+            issues.push("n_heads must be > 0".into());
+        }
+        if self.n_layers == 0 {
+            issues.push("n_layers must be > 0".into());
+        }
+        if self.vocab_size == 0 {
+            issues.push("vocab_size must be > 0".into());
+        }
+        if self.n_heads > 0 && self.hidden_size % self.n_heads != 0 {
+            issues.push(format!(
+                "hidden_size ({}) must be divisible by n_heads ({})",
+                self.hidden_size, self.n_heads
+            ));
+        }
+        if self.n_kv_heads > 0 && self.n_heads % self.n_kv_heads != 0 {
+            issues.push(format!(
+                "n_heads ({}) must be divisible by n_kv_heads ({})",
+                self.n_heads, self.n_kv_heads
+            ));
+        }
+        if self.head_dim != self.hidden_size / self.n_heads.max(1) {
+            issues.push(format!(
+                "head_dim ({}) should equal hidden_size / n_heads ({})",
+                self.head_dim,
+                self.hidden_size / self.n_heads.max(1)
+            ));
+        }
+        if self.n_kv_heads > 0 && self.head_dim > 0 {
+            let kv_dim = self.n_kv_heads * self.head_dim;
+            if kv_dim > self.hidden_size {
+                issues.push(format!(
+                    "KV dim ({} × {} = {}) exceeds hidden_size ({})",
+                    self.n_kv_heads, self.head_dim, kv_dim, self.hidden_size
+                ));
+            }
+        }
+        issues
+    }
+
+    /// Return a human-readable summary of the config.
+    pub fn summary(&self) -> String {
+        format!(
+            "ModelConfig: {} layers, hidden={}, ffn={}, heads={} (kv_heads={}), \
+             head_dim={}, vocab={}, max_seq={}, alibi={}",
+            self.n_layers,
+            self.hidden_size,
+            self.ffn_size,
+            self.n_heads,
+            self.n_kv_heads,
+            self.head_dim,
+            self.vocab_size,
+            self.max_seq_len,
+            self.uses_alibi(),
+        )
+    }
+
+    /// Total number of parameters (ternary weights counted as 1 each).
+    #[allow(dead_code)]
+    pub fn total_param_count(&self) -> usize {
+        self.ternary_param_count()
+            + self.vocab_size * self.hidden_size // embed_tokens
+            + self.hidden_size // final_norm
+            + self.vocab_size * self.hidden_size // lm_head
+    }
 }
 
 #[cfg(test)]
@@ -178,5 +252,56 @@ mod tests {
         let cfg = ModelConfig::bitnet_3b();
         assert!(cfg.alibi_shifts.is_empty());
         assert!(!cfg.uses_alibi());
+    }
+
+    #[test]
+    fn test_config_validate_valid() {
+        let bitnet = ModelConfig::bitnet_3b();
+        assert!(bitnet.validate().is_empty());
+
+        let qwen = ModelConfig::qwen_coder_05b();
+        assert!(qwen.validate().is_empty());
+    }
+
+    #[test]
+    fn test_config_validate_invalid() {
+        let mut cfg = ModelConfig::bitnet_3b();
+        cfg.hidden_size = 0;
+        let issues = cfg.validate();
+        assert!(!issues.is_empty());
+        assert!(issues.iter().any(|i| i.contains("hidden_size")));
+    }
+
+    #[test]
+    fn test_config_validate_bad_divisibility() {
+        let mut cfg = ModelConfig::bitnet_3b();
+        cfg.n_heads = 7; // 3200 / 7 != integer
+        let issues = cfg.validate();
+        assert!(issues.iter().any(|i| i.contains("divisible")));
+    }
+
+    #[test]
+    fn test_config_summary() {
+        let cfg = ModelConfig::qwen_coder_05b();
+        let summary = cfg.summary();
+        assert!(summary.contains("24 layers"));
+        assert!(summary.contains("hidden=896"));
+        assert!(summary.contains("alibi=true"));
+    }
+
+    #[test]
+    fn test_config_serializable() {
+        let cfg = ModelConfig::bitnet_3b();
+        let json = serde_json::to_string(&cfg).unwrap();
+        assert!(json.contains("\"n_layers\":26"));
+        assert!(json.contains("\"hidden_size\":3200"));
+    }
+
+    #[test]
+    fn test_total_param_count() {
+        let cfg = ModelConfig::bitnet_3b();
+        let total = cfg.total_param_count();
+        let ternary = cfg.ternary_param_count();
+        assert!(total > ternary); // includes embeddings + norms
     }
 }

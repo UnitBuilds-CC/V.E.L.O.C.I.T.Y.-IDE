@@ -19,6 +19,8 @@
 // Activated by: `--zero-float` CLI flag.
 
 use rayon::prelude::*;
+use serde::Serialize;
+use std::time::Instant;
 
 use crate::model::{config::ModelConfig, weights::ModelWeights};
 use crate::nda_int::{
@@ -26,6 +28,60 @@ use crate::nda_int::{
     swiglu_nda, AliBiSlopes, NdaEmbedding, NdaVec, SiluLut, DOT_4_LUT,
 };
 use crate::site_map::SiteMap;
+
+// ─── Forward Metrics & Generation Report ──────────────────────────────────────
+
+/// Metrics collected during a single forward pass.
+#[derive(Debug, Default, Clone, Serialize)]
+pub struct ForwardMetrics {
+    /// Site map KV cache hits.
+    pub site_map_hits: usize,
+    /// Site map KV cache misses.
+    pub site_map_misses: usize,
+    /// Total KV cache entries across all layers after this forward pass.
+    pub kv_cache_size: usize,
+}
+
+impl ForwardMetrics {
+    /// Cache hit rate: hits / (hits + misses).
+    pub fn cache_hit_rate(&self) -> f64 {
+        let total = self.site_map_hits + self.site_map_misses;
+        if total == 0 { 0.0 } else { self.site_map_hits as f64 / total as f64 }
+    }
+}
+
+/// Report from a greedy generation run.
+#[derive(Debug, Clone, Serialize)]
+pub struct GenerationReport {
+    /// Total tokens generated (excluding prompt).
+    pub tokens_generated: usize,
+    /// Prompt token count.
+    pub prompt_tokens: usize,
+    /// Whether generation stopped due to EOS.
+    pub stopped_at_eos: bool,
+    /// Whether generation was truncated by max_new_tokens.
+    pub truncated: bool,
+    /// Total site map hits during generation.
+    pub site_map_hits: usize,
+    /// Total site map misses during generation.
+    pub site_map_misses: usize,
+    /// Final KV cache size (total entries across all layers).
+    pub final_kv_cache_size: usize,
+    /// Total elapsed time (microseconds).
+    pub elapsed_us: u64,
+    /// Tokens per second.
+    pub tokens_per_second: f64,
+    /// All generated token IDs.
+    pub token_ids: Vec<u32>,
+}
+
+impl GenerationReport {
+    /// Overall cache hit rate.
+    pub fn cache_hit_rate(&self) -> f64 {
+        let total = self.site_map_hits + self.site_map_misses;
+        if total == 0 { 0.0 } else { self.site_map_hits as f64 / total as f64 }
+    }
+}
 
 // ─── NDA KV cache (zero-float) ─────────────────────────────────────────────
 
@@ -229,6 +285,21 @@ impl ZeroTransformer {
         }
     }
 
+    /// Return the total KV cache size (sum of entries across all layers).
+    pub fn kv_cache_size(&self) -> usize {
+        self.kv_cache.iter().map(|l| l.entries.len()).sum()
+    }
+
+    /// Return per-layer KV cache sizes.
+    pub fn kv_cache_sizes(&self) -> Vec<usize> {
+        self.kv_cache.iter().map(|l| l.entries.len()).collect()
+    }
+
+    /// Return the model config reference.
+    pub fn config(&self) -> &ModelConfig {
+        &self.config
+    }
+
     /// Process one token — returns i32 logit vector (no softmax).
     pub(crate) fn forward_one_zero(
         &mut self,
@@ -401,6 +472,24 @@ impl ZeroTransformer {
         max_new_tokens: usize,
         mut on_token: impl FnMut(u32),
     ) {
+        let report = self.generate_greedy_with_report(prompt_tokens, max_new_tokens, |tok| {
+            on_token(tok);
+        });
+        // Report is discarded here; use generate_greedy_with_report for metrics.
+        let _ = report;
+    }
+
+    /// Greedy generation with full metrics report.
+    ///
+    /// Same as `generate_greedy` but returns a `GenerationReport` with
+    /// timing, cache stats, and token IDs.
+    pub fn generate_greedy_with_report(
+        &mut self,
+        prompt_tokens: &[u32],
+        max_new_tokens: usize,
+        mut on_token: impl FnMut(u32),
+    ) -> GenerationReport {
+        let t_start = Instant::now();
         // ── repetition-penalty config (integer-native, no floats) ──
         const REP_WINDOW: usize = 64; // sliding history window
 
@@ -418,7 +507,6 @@ impl ZeroTransformer {
         }
 
         // History ring buffer for repetition penalty.
-        // Prompt tokens seed the window so we also penalise repeating the prompt.
         let mut history: std::collections::VecDeque<u32> = prompt_tokens.iter().copied().collect();
         if history.len() > REP_WINDOW {
             let excess = history.len() - REP_WINDOW;
@@ -439,12 +527,17 @@ impl ZeroTransformer {
         apply_rep_penalty(&mut logits, &history);
         let mut next = argmax_i32(&logits);
 
+        let mut token_ids = Vec::with_capacity(max_new);
+        let mut stopped_at_eos = false;
+
         // Decode
         for step in 0..max_new {
             if next == self.config.eos_token_id {
+                stopped_at_eos = true;
                 break;
             }
             on_token(next);
+            token_ids.push(next);
 
             // Slide history window
             if history.len() == REP_WINDOW {
@@ -455,6 +548,27 @@ impl ZeroTransformer {
             logits = self.forward_one_zero(next, n_prompt + step, None, None, &mut h, &mut m);
             apply_rep_penalty(&mut logits, &history);
             next = argmax_i32(&logits);
+        }
+
+        let elapsed_us = t_start.elapsed().as_micros() as u64;
+        let tokens_generated = token_ids.len();
+        let tps = if elapsed_us > 0 {
+            tokens_generated as f64 / (elapsed_us as f64 / 1_000_000.0)
+        } else {
+            0.0
+        };
+
+        GenerationReport {
+            tokens_generated,
+            prompt_tokens: n_prompt,
+            stopped_at_eos,
+            truncated: !stopped_at_eos && tokens_generated >= max_new,
+            site_map_hits: h,
+            site_map_misses: m,
+            final_kv_cache_size: self.kv_cache_size(),
+            elapsed_us,
+            tokens_per_second: tps,
+            token_ids,
         }
     }
 }
@@ -565,5 +679,89 @@ mod tests {
         };
         layer.push(k, v);
         assert_eq!(layer.len(), 1);
+    }
+
+    #[test]
+    fn forward_metrics_default() {
+        let m = ForwardMetrics::default();
+        assert_eq!(m.site_map_hits, 0);
+        assert_eq!(m.site_map_misses, 0);
+        assert!((m.cache_hit_rate() - 0.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn forward_metrics_cache_hit_rate() {
+        let m = ForwardMetrics {
+            site_map_hits: 80,
+            site_map_misses: 20,
+            kv_cache_size: 100,
+        };
+        assert!((m.cache_hit_rate() - 0.8).abs() < 1e-9);
+    }
+
+    #[test]
+    fn forward_metrics_serializable() {
+        let m = ForwardMetrics {
+            site_map_hits: 10,
+            site_map_misses: 5,
+            kv_cache_size: 15,
+        };
+        let json = serde_json::to_string(&m).unwrap();
+        assert!(json.contains("\"site_map_hits\":10"));
+        assert!(json.contains("\"kv_cache_size\":15"));
+    }
+
+    #[test]
+    fn generation_report_serializable() {
+        let report = GenerationReport {
+            tokens_generated: 50,
+            prompt_tokens: 10,
+            stopped_at_eos: true,
+            truncated: false,
+            site_map_hits: 100,
+            site_map_misses: 50,
+            final_kv_cache_size: 60,
+            elapsed_us: 5000,
+            tokens_per_second: 10000.0,
+            token_ids: vec![1, 2, 3],
+        };
+        let json = serde_json::to_string(&report).unwrap();
+        assert!(json.contains("\"tokens_generated\":50"));
+        assert!(json.contains("\"stopped_at_eos\":true"));
+        assert!(json.contains("\"token_ids\":[1,2,3]"));
+    }
+
+    #[test]
+    fn generation_report_cache_hit_rate() {
+        let report = GenerationReport {
+            tokens_generated: 0,
+            prompt_tokens: 0,
+            stopped_at_eos: false,
+            truncated: false,
+            site_map_hits: 75,
+            site_map_misses: 25,
+            final_kv_cache_size: 0,
+            elapsed_us: 0,
+            tokens_per_second: 0.0,
+            token_ids: vec![],
+        };
+        assert!((report.cache_hit_rate() - 0.75).abs() < 1e-9);
+    }
+
+    #[test]
+    fn generation_report_no_lookups() {
+        let report = GenerationReport {
+            tokens_generated: 0,
+            prompt_tokens: 0,
+            stopped_at_eos: false,
+            truncated: false,
+            site_map_hits: 0,
+            site_map_misses: 0,
+            final_kv_cache_size: 0,
+            elapsed_us: 0,
+            tokens_per_second: 0.0,
+            token_ids: vec![],
+        };
+        assert!((report.cache_hit_rate() - 0.0).abs() < f64::EPSILON);
     }
 }
