@@ -20,6 +20,7 @@
 use std::{io::Write, path::PathBuf, time::Instant};
 
 use anyhow::Result;
+use serde::Serialize;
 
 use crate::{
     model::{config::ModelConfig, transformer::Transformer, weights::ModelWeights},
@@ -69,6 +70,77 @@ pub enum EngineOutput {
         n_opcodes: usize,
         elapsed_ms: u128,
     },
+}
+
+/// Structured execution report from one engine invocation.
+///
+/// Contains all metrics and diagnostics from a run, suitable for
+/// JSON serialization and programmatic consumption.
+#[derive(Debug, Clone, Serialize)]
+pub struct EngineReport {
+    /// Which path was used (Text or Nda).
+    pub path: String,
+    /// The resolved mode (after Auto detection).
+    pub resolved_mode: String,
+    /// Prompt token count.
+    pub prompt_tokens: usize,
+    /// Output token/opcode count.
+    pub output_count: usize,
+    /// Wall-clock time in microseconds.
+    pub elapsed_us: u64,
+    /// Throughput (tokens or opcodes per second).
+    pub per_second: f64,
+    /// Path 1 text output (if text path was used).
+    pub text: Option<String>,
+    /// Path 2 NDA diagnostics (if NDA path was used).
+    pub nda: Option<NdaRunDiagnostics>,
+    /// Whether Path 1 was already loaded or had to be lazy-initialized.
+    pub path1_lazy_loaded: bool,
+    /// Engine status at time of report.
+    pub engine_status: EngineStatusSnapshot,
+}
+
+/// Diagnostics from an NDA path execution.
+#[derive(Debug, Clone, Serialize)]
+pub struct NdaRunDiagnostics {
+    pub root_hash: u64,
+    pub valid: bool,
+    pub force_terminated: bool,
+    pub site_map_key: Option<u64>,
+    pub opcode_count: usize,
+    pub sandbox_passed: Option<bool>,
+    pub scope_passed: Option<bool>,
+    pub scope_similarity: Option<f64>,
+    pub site_map_hits: usize,
+    pub site_map_misses: usize,
+}
+
+/// Snapshot of engine state for diagnostics.
+#[derive(Debug, Clone, Serialize)]
+pub struct EngineStatusSnapshot {
+    pub path1_loaded: bool,
+    pub path2_active: bool,
+    pub model_dir: String,
+    pub vocab_size: usize,
+    pub n_layers: usize,
+    pub hidden_size: usize,
+}
+
+/// Summary of the engine configuration and current state.
+#[derive(Debug, Clone, Serialize)]
+pub struct EngineInfo {
+    pub model_dir: String,
+    pub vocab_size: usize,
+    pub n_layers: usize,
+    pub hidden_size: usize,
+    pub ffn_size: usize,
+    pub n_heads: usize,
+    pub n_kv_heads: usize,
+    pub head_dim: usize,
+    pub max_seq_len: usize,
+    pub path1_loaded: bool,
+    pub path2_site_map_stats: String,
+    pub tokenizer_merge_count: usize,
 }
 
 impl DualPathEngine {
@@ -125,6 +197,159 @@ impl DualPathEngine {
             PipelineMode::Nda => self.run_path2(prompt, max_tokens),
             PipelineMode::Auto => unreachable!(),
         }
+    }
+
+    /// Return a snapshot of the engine's current status.
+    pub fn status_snapshot(&self) -> EngineStatusSnapshot {
+        EngineStatusSnapshot {
+            path1_loaded: self.path1.is_some(),
+            path2_active: true,
+            model_dir: self.model_dir.display().to_string(),
+            vocab_size: self.cfg.vocab_size,
+            n_layers: self.cfg.n_layers,
+            hidden_size: self.cfg.hidden_size,
+        }
+    }
+
+    /// Return detailed engine info for diagnostics.
+    pub fn info(&self) -> EngineInfo {
+        EngineInfo {
+            model_dir: self.model_dir.display().to_string(),
+            vocab_size: self.cfg.vocab_size,
+            n_layers: self.cfg.n_layers,
+            hidden_size: self.cfg.hidden_size,
+            ffn_size: self.cfg.ffn_size,
+            n_heads: self.cfg.n_heads,
+            n_kv_heads: self.cfg.n_kv_heads,
+            head_dim: self.cfg.head_dim,
+            max_seq_len: self.cfg.max_seq_len,
+            path1_loaded: self.path1.is_some(),
+            path2_site_map_stats: format!("{}", self.path2.site_map_stats()),
+            tokenizer_merge_count: self.tokenizer.merge_count(),
+        }
+    }
+
+    /// Validate the engine configuration.
+    /// Returns a list of warnings (empty = all good).
+    pub fn validate(&self) -> Vec<String> {
+        let mut warnings = Vec::new();
+
+        if self.cfg.vocab_size == 0 {
+            warnings.push("vocab_size is 0".to_string());
+        }
+        if self.cfg.n_layers == 0 {
+            warnings.push("n_layers is 0".to_string());
+        }
+        if self.cfg.hidden_size == 0 {
+            warnings.push("hidden_size is 0".to_string());
+        }
+        if self.cfg.n_heads == 0 {
+            warnings.push("n_heads is 0".to_string());
+        }
+        if self.cfg.max_seq_len == 0 {
+            warnings.push("max_seq_len is 0".to_string());
+        }
+        if self.cfg.n_heads > 0 && self.cfg.hidden_size % self.cfg.n_heads != 0 {
+            warnings.push(format!(
+                "hidden_size ({}) not divisible by n_heads ({})",
+                self.cfg.hidden_size, self.cfg.n_heads
+            ));
+        }
+        if !self.model_dir.exists() {
+            warnings.push(format!(
+                "model_dir does not exist: {}",
+                self.model_dir.display()
+            ));
+        }
+
+        warnings
+    }
+
+    /// Run the engine and return a structured report alongside the output.
+    pub fn run_with_report(
+        &mut self,
+        prompt: &str,
+        mode: PipelineMode,
+        max_tokens: usize,
+    ) -> Result<(EngineOutput, EngineReport)> {
+        let resolved_mode = match mode {
+            PipelineMode::Auto => PipelineMode::detect(prompt),
+            m => m,
+        };
+
+        let path1_was_loaded = self.path1.is_some();
+        let prompt_tokens = self.tokenizer.encode(prompt, true);
+        let prompt_token_count = prompt_tokens.len();
+
+        let t_start = Instant::now();
+        let output = match resolved_mode {
+            PipelineMode::Text => self.run_path1(prompt, max_tokens)?,
+            PipelineMode::Nda => self.run_path2(prompt, max_tokens)?,
+            PipelineMode::Auto => unreachable!(),
+        };
+        let elapsed_us = t_start.elapsed().as_micros() as u64;
+
+        let report = match &output {
+            EngineOutput::Text { text, n_tokens, .. } => {
+                let per_second = if elapsed_us > 0 {
+                    (*n_tokens as f64) / (elapsed_us as f64 / 1_000_000.0)
+                } else {
+                    0.0
+                };
+                EngineReport {
+                    path: "text".to_string(),
+                    resolved_mode: format!("{:?}", resolved_mode),
+                    prompt_tokens: prompt_token_count,
+                    output_count: *n_tokens,
+                    elapsed_us,
+                    per_second,
+                    text: Some(text.clone()),
+                    nda: None,
+                    path1_lazy_loaded: !path1_was_loaded,
+                    engine_status: self.status_snapshot(),
+                }
+            }
+            EngineOutput::Nda {
+                opcodes,
+                root_hash,
+                valid,
+                force_terminated,
+                site_map_key,
+                n_opcodes,
+                ..
+            } => {
+                let per_second = if elapsed_us > 0 {
+                    (*n_opcodes as f64) / (elapsed_us as f64 / 1_000_000.0)
+                } else {
+                    0.0
+                };
+                EngineReport {
+                    path: "nda".to_string(),
+                    resolved_mode: format!("{:?}", resolved_mode),
+                    prompt_tokens: prompt_token_count,
+                    output_count: *n_opcodes,
+                    elapsed_us,
+                    per_second,
+                    text: None,
+                    nda: Some(NdaRunDiagnostics {
+                        root_hash: *root_hash,
+                        valid: *valid,
+                        force_terminated: *force_terminated,
+                        site_map_key: *site_map_key,
+                        opcode_count: opcodes.len(),
+                        sandbox_passed: None,
+                        scope_passed: None,
+                        scope_similarity: None,
+                        site_map_hits: 0,
+                        site_map_misses: 0,
+                    }),
+                    path1_lazy_loaded: !path1_was_loaded,
+                    engine_status: self.status_snapshot(),
+                }
+            }
+        };
+
+        Ok((output, report))
     }
 
     // ── Path 1: text generation ───────────────────────────────────────────────
@@ -315,4 +540,175 @@ pub fn run_dual_path(
     }
 
     Ok(())
+}
+
+// ─── Tests ─────────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn engine_report_serializes() {
+        let report = EngineReport {
+            path: "text".to_string(),
+            resolved_mode: "Text".to_string(),
+            prompt_tokens: 10,
+            output_count: 42,
+            elapsed_us: 500_000,
+            per_second: 84.0,
+            text: Some("Hello world".to_string()),
+            nda: None,
+            path1_lazy_loaded: true,
+            engine_status: EngineStatusSnapshot {
+                path1_loaded: true,
+                path2_active: true,
+                model_dir: "/tmp/model".to_string(),
+                vocab_size: 32000,
+                n_layers: 12,
+                hidden_size: 768,
+            },
+        };
+        let json = serde_json::to_string(&report).unwrap();
+        assert!(json.contains("\"path\":\"text\""));
+        assert!(json.contains("\"output_count\":42"));
+        assert!(json.contains("\"path1_lazy_loaded\":true"));
+    }
+
+    #[test]
+    fn nda_run_diagnostics_serializes() {
+        let diag = NdaRunDiagnostics {
+            root_hash: 0xDEADBEEF,
+            valid: true,
+            force_terminated: false,
+            site_map_key: Some(0x1234),
+            opcode_count: 128,
+            sandbox_passed: Some(true),
+            scope_passed: Some(true),
+            scope_similarity: Some(0.95),
+            site_map_hits: 5,
+            site_map_misses: 3,
+        };
+        let json = serde_json::to_string(&diag).unwrap();
+        assert!(json.contains("\"valid\":true"));
+        assert!(json.contains("\"opcode_count\":128"));
+        assert!(json.contains("\"scope_similarity\":0.95"));
+    }
+
+    #[test]
+    fn engine_status_snapshot_serializes() {
+        let snap = EngineStatusSnapshot {
+            path1_loaded: false,
+            path2_active: true,
+            model_dir: "/models/test".to_string(),
+            vocab_size: 32000,
+            n_layers: 24,
+            hidden_size: 1024,
+        };
+        let json = serde_json::to_string(&snap).unwrap();
+        assert!(json.contains("\"path1_loaded\":false"));
+        assert!(json.contains("\"path2_active\":true"));
+    }
+
+    #[test]
+    fn engine_info_serializes() {
+        let info = EngineInfo {
+            model_dir: "/models/test".to_string(),
+            vocab_size: 32000,
+            n_layers: 12,
+            hidden_size: 768,
+            ffn_size: 2048,
+            n_heads: 12,
+            n_kv_heads: 4,
+            head_dim: 64,
+            max_seq_len: 4096,
+            path1_loaded: false,
+            path2_site_map_stats: "0 entries".to_string(),
+            tokenizer_merge_count: 100,
+        };
+        let json = serde_json::to_string(&info).unwrap();
+        assert!(json.contains("\"vocab_size\":32000"));
+        assert!(json.contains("\"n_heads\":12"));
+    }
+
+    #[test]
+    fn engine_output_text_variant() {
+        let output = EngineOutput::Text {
+            text: "Hello".to_string(),
+            n_tokens: 1,
+            elapsed_ms: 100,
+        };
+        match output {
+            EngineOutput::Text { text, n_tokens, elapsed_ms } => {
+                assert_eq!(text, "Hello");
+                assert_eq!(n_tokens, 1);
+                assert_eq!(elapsed_ms, 100);
+            }
+            _ => panic!("Expected Text variant"),
+        }
+    }
+
+    #[test]
+    fn engine_output_nda_variant() {
+        let output = EngineOutput::Nda {
+            opcodes: vec![],
+            root_hash: 0xABCD,
+            valid: true,
+            force_terminated: false,
+            site_map_key: Some(42),
+            n_opcodes: 0,
+            elapsed_ms: 50,
+        };
+        match output {
+            EngineOutput::Nda { valid, site_map_key, .. } => {
+                assert!(valid);
+                assert_eq!(site_map_key, Some(42));
+            }
+            _ => panic!("Expected Nda variant"),
+        }
+    }
+
+    #[test]
+    fn nda_diagnostics_none_sandbox() {
+        let diag = NdaRunDiagnostics {
+            root_hash: 0,
+            valid: false,
+            force_terminated: false,
+            site_map_key: None,
+            opcode_count: 0,
+            sandbox_passed: None,
+            scope_passed: None,
+            scope_similarity: None,
+            site_map_hits: 0,
+            site_map_misses: 0,
+        };
+        assert!(diag.sandbox_passed.is_none());
+        assert!(diag.scope_passed.is_none());
+        assert!(!diag.valid);
+    }
+
+    #[test]
+    fn engine_report_per_second_calculation() {
+        // 100 tokens in 0.5 seconds = 200 tok/s
+        let elapsed_us = 500_000u64;
+        let output_count = 100usize;
+        let per_second = if elapsed_us > 0 {
+            (output_count as f64) / (elapsed_us as f64 / 1_000_000.0)
+        } else {
+            0.0
+        };
+        assert!((per_second - 200.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn engine_report_zero_elapsed() {
+        let elapsed_us = 0u64;
+        let output_count = 10usize;
+        let per_second = if elapsed_us > 0 {
+            (output_count as f64) / (elapsed_us as f64 / 1_000_000.0)
+        } else {
+            0.0
+        };
+        assert_eq!(per_second, 0.0);
+    }
 }
