@@ -38,6 +38,14 @@ use serde::{Deserialize, Serialize};
 struct Cli {
     #[command(subcommand)]
     command: Command,
+
+    /// Output in JSON format (for scripting and piping)
+    #[arg(long, global = true)]
+    json: bool,
+
+    /// Enable verbose/diagnostic output
+    #[arg(short, long, global = true)]
+    verbose: bool,
 }
 
 #[derive(Subcommand)]
@@ -70,6 +78,9 @@ enum Command {
 
     /// Show routing transparency — why models were chosen, cost flow
     Transparency,
+
+    /// Generate shell completions for bash, zsh, fish, or powershell
+    Completions(CompletionsArgs),
 }
 
 #[derive(clap::Args)]
@@ -215,12 +226,25 @@ struct ProvidersArgs {
     base_url: Option<String>,
 }
 
+#[derive(clap::Args)]
+struct CompletionsArgs {
+    /// Shell to generate completions for
+    #[arg(value_name = "SHELL")]
+    shell: String,
+}
+
 // ─── Entry point ───────────────────────────────────────────────────────────
 
 fn main() -> Result<()> {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
 
     let cli = Cli::parse();
+
+    if cli.verbose {
+        log::info!("Verbose mode enabled");
+        log::info!("velocity-ide v{}", env!("CARGO_PKG_VERSION"));
+    }
+
     match cli.command {
         Command::Chat(args) => run_chat(args),
         Command::Seed(args) => run_seed(args),
@@ -264,6 +288,7 @@ fn main() -> Result<()> {
         Command::Providers(args) => run_providers(args),
         Command::Status => run_status(),
         Command::Transparency => run_transparency(),
+        Command::Completions(args) => run_completions(args),
     }
 }
 
@@ -1226,5 +1251,27 @@ fn run_transparency() -> Result<()> {
         println!();
     }
 
+    Ok(())
+}
+
+// ─── Shell Completions ──────────────────────────────────────────────────────
+
+fn run_completions(args: CompletionsArgs) -> Result<()> {
+    use clap::CommandFactory;
+    use clap_complete::{Shell, generate};
+
+    let shell = match args.shell.to_lowercase().as_str() {
+        "bash"       => Shell::Bash,
+        "zsh"        => Shell::Zsh,
+        "fish"       => Shell::Fish,
+        "powershell" | "pwsh" => Shell::PowerShell,
+        other => anyhow::bail!(
+            "Unknown shell: '{}'. Supported: bash, zsh, fish, powershell",
+            other
+        ),
+    };
+
+    let mut cmd = Cli::command();
+    generate(shell, &mut cmd, "velocity_ide", &mut std::io::stdout());
     Ok(())
 }
