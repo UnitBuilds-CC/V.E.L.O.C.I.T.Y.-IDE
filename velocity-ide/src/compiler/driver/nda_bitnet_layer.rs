@@ -16,8 +16,70 @@ use super::packing::*;
 use super::vulkan_init::*;
 use ash::vk;
 use ash::Device;
+use serde::Serialize;
 use std::ffi::CString;
 use std::time::Instant;
+
+/// NDA BitNet layer model dimensions.
+#[derive(Debug, Clone, Serialize)]
+pub struct NdaBitNetLayerConfig {
+    pub hidden_size: usize,
+    pub ffn_size: usize,
+    pub n_heads: usize,
+    pub head_dim: usize,
+}
+
+/// Diagnostic info about an NDA BitNet layer.
+#[derive(Debug, Clone, Serialize)]
+pub struct NdaBitNetLayerInfo {
+    pub config: NdaBitNetLayerConfig,
+    pub nda_shader_count: usize,
+    pub pipeline_count: usize,
+    pub weight_buffers: usize,
+    pub total_weight_bytes_estimate: usize,
+    pub validation_issues: Vec<String>,
+}
+
+/// Validate NDA BitNet layer dimensions.
+pub fn validate_nda_bitnet_config(cfg: &NdaBitNetLayerConfig) -> Vec<String> {
+    let mut issues = Vec::new();
+    if cfg.hidden_size == 0 {
+        issues.push("hidden_size must be > 0".into());
+    }
+    if cfg.hidden_size % 128 != 0 {
+        issues.push(format!(
+            "hidden_size ({}) must be a multiple of 128 for NDA packing",
+            cfg.hidden_size
+        ));
+    }
+    if cfg.ffn_size == 0 {
+        issues.push("ffn_size must be > 0".into());
+    }
+    if cfg.n_heads == 0 {
+        issues.push("n_heads must be > 0".into());
+    }
+    if cfg.head_dim == 0 {
+        issues.push("head_dim must be > 0".into());
+    }
+    issues
+}
+
+/// Build diagnostic info for an NDA BitNet layer.
+pub fn nda_bitnet_layer_info(cfg: &NdaBitNetLayerConfig) -> NdaBitNetLayerInfo {
+    let issues = validate_nda_bitnet_config(cfg);
+    let weight_buffers = 7; // Q, K, V, O, gate, up, down (each has active + pos = 14 buffers)
+    let weight_bytes = cfg.hidden_size * cfg.hidden_size * 4 * 4
+        + cfg.hidden_size * cfg.ffn_size * 4 * 2
+        + cfg.ffn_size * cfg.hidden_size * 4;
+    NdaBitNetLayerInfo {
+        config: cfg.clone(),
+        nda_shader_count: 2,
+        pipeline_count: 2,
+        weight_buffers,
+        total_weight_bytes_estimate: weight_bytes,
+        validation_issues: issues,
+    }
+}
 
 pub struct VulkanNdaBitNetLayer {
     pub device: Device,
@@ -1017,5 +1079,85 @@ impl Drop for VulkanNdaBitNetLayer {
             self.device.destroy_shader_module(self.shader_nda, None);
             self.device.destroy_shader_module(self.shader_act, None);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn default_nda_bitnet_config() -> NdaBitNetLayerConfig {
+        NdaBitNetLayerConfig {
+            hidden_size: 3200,
+            ffn_size: 8640,
+            n_heads: 50,
+            head_dim: 64,
+        }
+    }
+
+    #[test]
+    fn validate_nda_bitnet_valid() {
+        // 3200 is not multiple of 128, so this should have issues
+        let cfg = default_nda_bitnet_config();
+        let issues = validate_nda_bitnet_config(&cfg);
+        // 3200 % 128 = 0, so it's valid
+        assert!(issues.is_empty(), "expected no issues, got: {issues:?}");
+    }
+
+    #[test]
+    fn validate_nda_bitnet_zero_hidden() {
+        let mut cfg = default_nda_bitnet_config();
+        cfg.hidden_size = 0;
+        assert!(validate_nda_bitnet_config(&cfg).iter().any(|i| i.contains("hidden_size")));
+    }
+
+    #[test]
+    fn validate_nda_bitnet_bad_hidden() {
+        let mut cfg = default_nda_bitnet_config();
+        cfg.hidden_size = 256; // 256 % 128 == 0, valid
+        assert!(validate_nda_bitnet_config(&cfg).is_empty());
+        cfg.hidden_size = 300; // not multiple of 128
+        assert!(validate_nda_bitnet_config(&cfg).iter().any(|i| i.contains("multiple of 128")));
+    }
+
+    #[test]
+    fn validate_nda_bitnet_zero_ffn() {
+        let mut cfg = default_nda_bitnet_config();
+        cfg.ffn_size = 0;
+        assert!(validate_nda_bitnet_config(&cfg).iter().any(|i| i.contains("ffn_size")));
+    }
+
+    #[test]
+    fn nda_bitnet_layer_info_works() {
+        let cfg = default_nda_bitnet_config();
+        let info = nda_bitnet_layer_info(&cfg);
+        assert!(info.validation_issues.is_empty());
+        assert_eq!(info.weight_buffers, 7);
+        assert_eq!(info.nda_shader_count, 2);
+        assert!(info.total_weight_bytes_estimate > 0);
+    }
+
+    #[test]
+    fn nda_bitnet_layer_info_with_issues() {
+        let mut cfg = default_nda_bitnet_config();
+        cfg.hidden_size = 0;
+        cfg.ffn_size = 0;
+        let info = nda_bitnet_layer_info(&cfg);
+        assert!(info.validation_issues.len() >= 2);
+    }
+
+    #[test]
+    fn nda_bitnet_config_serializes() {
+        let json = serde_json::to_string(&default_nda_bitnet_config()).unwrap();
+        assert!(json.contains("hidden_size"));
+        assert!(json.contains("3200"));
+    }
+
+    #[test]
+    fn nda_bitnet_layer_info_serializes() {
+        let info = nda_bitnet_layer_info(&default_nda_bitnet_config());
+        let json = serde_json::to_string(&info).unwrap();
+        assert!(json.contains("nda_shader_count"));
+        assert!(json.contains("weight_buffers"));
     }
 }
