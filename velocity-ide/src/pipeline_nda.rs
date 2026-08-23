@@ -19,6 +19,7 @@
 use std::path::{Path, PathBuf};
 
 use anyhow::Result;
+use serde::Serialize;
 
 use crate::{
     model::{config::ModelConfig, transformer_zero::ZeroTransformer, weights::ModelWeights},
@@ -229,8 +230,10 @@ impl PipelineMode {
 // ─── GenerationResult ─────────────────────────────────────────────────────────
 
 /// Output of a Path 2 generation call.
+#[derive(Serialize)]
 pub struct NdaGenerationResult {
     /// The emitted NDA nodes, in emission order.
+    #[serde(skip)]
     pub nodes: Vec<NdaNode>,
     /// Merkle root of the full program (0 if generation did not complete).
     pub root_hash: u64,
@@ -244,19 +247,65 @@ pub struct NdaGenerationResult {
     /// Hash under which the program was stored in the site map.
     pub site_map_key: Option<u64>,
     /// Sandbox execution result.
+    #[serde(skip)]
     pub sandbox: Option<crate::sandbox::SandboxResult>,
     /// Scope validation result.
+    #[serde(skip)]
     pub scope: Option<crate::sandbox::scope_validator::ScopeValidation>,
     /// Generation statistics.
     pub stats: NdaGenStats,
+    /// Number of nodes in the output program.
+    pub node_count: usize,
 }
 
-#[derive(Default, Debug)]
+#[derive(Default, Debug, Clone, Serialize)]
 pub struct NdaGenStats {
     pub tokens_emitted: usize,
     pub site_map_hits: usize,   // KV lookups that hit the persistent cache
     pub site_map_misses: usize, // KV lookups that required recomputation
     pub elapsed_ms: u128,
+    /// Per-opcode emission counts (indexed by opcode ordinal).
+    pub opcode_distribution: Vec<usize>,
+    /// Peak Merkle verifier stack depth reached during generation.
+    pub peak_stack_depth: usize,
+    /// Number of rep-penalty applications (soft + hard).
+    pub rep_penalty_applications: usize,
+}
+
+impl NdaGenStats {
+    /// Ensure opcode_distribution is sized to VOCAB_SIZE.
+    fn ensure_distribution(&mut self) {
+        if self.opcode_distribution.is_empty() {
+            self.opcode_distribution = vec![0; NdaOpcode::VOCAB_SIZE];
+        }
+    }
+
+    /// Compute cache hit rate: hits / (hits + misses).
+    pub fn cache_hit_rate(&self) -> f64 {
+        let total = self.site_map_hits + self.site_map_misses;
+        if total == 0 {
+            0.0
+        } else {
+            self.site_map_hits as f64 / total as f64
+        }
+    }
+
+    /// Return the top-N most emitted opcodes with counts.
+    pub fn top_opcodes(&self, n: usize) -> Vec<(NdaOpcode, usize)> {
+        let mut pairs: Vec<(usize, usize)> = self
+            .opcode_distribution
+            .iter()
+            .copied()
+            .enumerate()
+            .filter(|(_, c)| *c > 0)
+            .collect();
+        pairs.sort_by(|a, b| b.1.cmp(&a.1));
+        pairs
+            .into_iter()
+            .take(n)
+            .filter_map(|(idx, count)| NdaOpcode::from_u8(idx as u8).map(|op| (op, count)))
+            .collect()
+    }
 }
 
 // ─── NdaPipeline ──────────────────────────────────────────────────────────────
@@ -347,6 +396,7 @@ impl NdaPipeline {
         t_start: std::time::Instant,
     ) -> NdaGenerationResult {
         let mut stats = NdaGenStats::default();
+        stats.ensure_distribution();
         let mut nodes = Vec::new();
         let mut root_hash = 0u64;
         let mut valid = false;
@@ -359,6 +409,8 @@ impl NdaPipeline {
         self.verifier.open_scope();
         on_opcode(NdaOpcode::Scope);
         stats.tokens_emitted += 1;
+        stats.opcode_distribution[NdaOpcode::Scope as usize] += 1;
+        stats.peak_stack_depth = stats.peak_stack_depth.max(self.verifier.stack.len());
 
         // Rep-penalty state: sliding window of recent opcode IDs (mirrors
         // the integer rep-penalty in transformer_zero.rs).
@@ -393,12 +445,17 @@ impl NdaPipeline {
                 std::array::from_fn(|i| (raw_logits[i] * 4096.0) as i32);
 
             // ── Rep penalty (bit-shift right per occurrence) ──────────────────
+            let mut rep_applied = false;
             for &past_op in &recent_ops {
                 let idx = past_op as usize;
                 if idx < NdaOpcode::VOCAB_SIZE {
                     // Halve the logit for each occurrence in the window
                     logits_i32_op[idx] -= logits_i32_op[idx].abs() >> 2;
+                    rep_applied = true;
                 }
+            }
+            if rep_applied {
+                stats.rep_penalty_applications += 1;
             }
 
             // ── Grammar constraint: mask invalid opcodes ──────────────────────
@@ -594,6 +651,10 @@ impl NdaPipeline {
 
             on_opcode(opcode);
             stats.tokens_emitted += 1;
+            if (best_op as usize) < NdaOpcode::VOCAB_SIZE {
+                stats.opcode_distribution[best_op as usize] += 1;
+            }
+            stats.peak_stack_depth = stats.peak_stack_depth.max(self.verifier.stack.len());
             current_opcode_id = best_op as u32;
         }
 
@@ -668,6 +729,7 @@ impl NdaPipeline {
 
         stats.elapsed_ms = t_start.elapsed().as_millis();
 
+        let node_count = nodes.len();
         NdaGenerationResult {
             nodes,
             root_hash,
@@ -677,6 +739,7 @@ impl NdaPipeline {
             sandbox,
             scope,
             stats,
+            node_count,
         }
     }
 
@@ -693,6 +756,115 @@ impl NdaPipeline {
     /// Expose the site map for the bridge layer.
     pub fn site_map_mut(&mut self) -> &mut SiteMap {
         &mut self.site_map
+    }
+
+    /// Expose the site map (immutable).
+    pub fn site_map(&self) -> &SiteMap {
+        &self.site_map
+    }
+}
+
+// ─── Batch Generation ─────────────────────────────────────────────────────────
+
+/// Result of a batch generation run across multiple prompts.
+#[derive(Debug, Serialize)]
+pub struct BatchGenerationReport {
+    /// Number of prompts in the batch.
+    pub prompt_count: usize,
+    /// Per-prompt results.
+    pub results: Vec<BatchItemResult>,
+    /// Total elapsed time for the entire batch (ms).
+    pub total_elapsed_ms: u128,
+    /// Aggregate token count across all prompts.
+    pub total_tokens: usize,
+    /// Number of valid programs produced.
+    pub valid_count: usize,
+    /// Number of force-terminated programs.
+    pub truncated_count: usize,
+    /// Average cache hit rate across all prompts.
+    pub avg_cache_hit_rate: f64,
+}
+
+/// Single item result within a batch generation.
+#[derive(Debug, Serialize)]
+pub struct BatchItemResult {
+    /// Index of this prompt in the batch.
+    pub index: usize,
+    /// Whether the generated program was valid.
+    pub valid: bool,
+    /// Whether the program was force-terminated.
+    pub force_terminated: bool,
+    /// Number of tokens emitted.
+    pub tokens_emitted: usize,
+    /// Number of nodes in the output.
+    pub node_count: usize,
+    /// Generation time (ms).
+    pub elapsed_ms: u128,
+    /// Merkle root hash.
+    pub root_hash: u64,
+    /// Site map key (if stored).
+    pub site_map_key: Option<u64>,
+    /// Cache hit rate for this generation.
+    pub cache_hit_rate: f64,
+}
+
+impl NdaPipeline {
+    /// Generate multiple programs in sequence, returning an aggregated report.
+    ///
+    /// Each prompt is generated independently (the model cache is reset between
+    /// prompts, but the site map accumulates across the batch).
+    pub fn generate_batch(
+        &mut self,
+        conditions: &[Option<Vec<f32>>],
+        max_opcodes: usize,
+    ) -> BatchGenerationReport {
+        let batch_start = std::time::Instant::now();
+        let mut results = Vec::with_capacity(conditions.len());
+        let mut total_tokens = 0usize;
+        let mut valid_count = 0usize;
+        let mut truncated_count = 0usize;
+        let mut total_cache_rate = 0.0f64;
+
+        for (idx, cond) in conditions.iter().enumerate() {
+            let cond_ref = cond.as_deref();
+            let mut emitted = Vec::new();
+            let result = self.generate(cond_ref, max_opcodes, |op| {
+                emitted.push(op);
+            });
+
+            let cache_rate = result.stats.cache_hit_rate();
+            total_cache_rate += cache_rate;
+            total_tokens += result.stats.tokens_emitted;
+            if result.valid {
+                valid_count += 1;
+            }
+            if result.force_terminated {
+                truncated_count += 1;
+            }
+
+            results.push(BatchItemResult {
+                index: idx,
+                valid: result.valid,
+                force_terminated: result.force_terminated,
+                tokens_emitted: result.stats.tokens_emitted,
+                node_count: result.node_count,
+                elapsed_ms: result.stats.elapsed_ms,
+                root_hash: result.root_hash,
+                site_map_key: result.site_map_key,
+                cache_hit_rate: cache_rate,
+            });
+        }
+
+        let count = conditions.len().max(1);
+        BatchGenerationReport {
+            prompt_count: conditions.len(),
+            results,
+            total_elapsed_ms: batch_start.elapsed().as_millis(),
+            total_tokens,
+            valid_count,
+            truncated_count,
+            avg_cache_hit_rate: total_cache_rate / count as f64,
+        }
     }
 }
 
@@ -755,5 +927,134 @@ mod tests {
         assert_eq!(PipelineMode::from_str("auto"), PipelineMode::Auto);
         assert_eq!(PipelineMode::from_str("text"), PipelineMode::Text);
         assert_eq!(PipelineMode::from_str("unknown"), PipelineMode::Text);
+    }
+
+    #[test]
+    fn gen_stats_default_cache_hit_rate() {
+        let stats = NdaGenStats::default();
+        assert!((stats.cache_hit_rate() - 0.0).abs() < f64::EPSILON);
+        assert_eq!(stats.tokens_emitted, 0);
+        assert!(stats.opcode_distribution.is_empty());
+    }
+
+    #[test]
+    fn gen_stats_cache_hit_rate_computation() {
+        let mut stats = NdaGenStats::default();
+        stats.site_map_hits = 7;
+        stats.site_map_misses = 3;
+        let rate = stats.cache_hit_rate();
+        assert!((rate - 0.7).abs() < 1e-9);
+    }
+
+    #[test]
+    fn gen_stats_ensure_distribution() {
+        let mut stats = NdaGenStats::default();
+        assert!(stats.opcode_distribution.is_empty());
+        stats.ensure_distribution();
+        assert_eq!(stats.opcode_distribution.len(), NdaOpcode::VOCAB_SIZE);
+        assert!(stats.opcode_distribution.iter().all(|&v| v == 0));
+        // Calling again should not reset
+        stats.opcode_distribution[0] = 42;
+        stats.ensure_distribution();
+        assert_eq!(stats.opcode_distribution[0], 42);
+    }
+
+    #[test]
+    fn gen_stats_top_opcodes() {
+        let mut stats = NdaGenStats::default();
+        stats.ensure_distribution();
+        stats.opcode_distribution[NdaOpcode::Scope as usize] = 10;
+        stats.opcode_distribution[NdaOpcode::Int as usize] = 25;
+        stats.opcode_distribution[NdaOpcode::Matrix as usize] = 5;
+        let top = stats.top_opcodes(2);
+        assert_eq!(top.len(), 2);
+        assert_eq!(top[0], (NdaOpcode::Int, 25));
+        assert_eq!(top[1], (NdaOpcode::Scope, 10));
+    }
+
+    #[test]
+    fn gen_stats_top_opcodes_empty() {
+        let stats = NdaGenStats::default();
+        let top = stats.top_opcodes(5);
+        assert!(top.is_empty());
+    }
+
+    #[test]
+    fn gen_stats_serializable() {
+        let mut stats = NdaGenStats::default();
+        stats.ensure_distribution();
+        stats.tokens_emitted = 100;
+        stats.site_map_hits = 80;
+        stats.site_map_misses = 20;
+        stats.elapsed_ms = 500;
+        stats.opcode_distribution[NdaOpcode::Scope as usize] = 50;
+        stats.peak_stack_depth = 3;
+        stats.rep_penalty_applications = 15;
+        let json = serde_json::to_string(&stats).unwrap();
+        assert!(json.contains("\"tokens_emitted\":100"));
+        assert!(json.contains("\"peak_stack_depth\":3"));
+        assert!(json.contains("\"rep_penalty_applications\":15"));
+    }
+
+    #[test]
+    fn batch_report_serializable() {
+        let report = BatchGenerationReport {
+            prompt_count: 2,
+            results: vec![
+                BatchItemResult {
+                    index: 0,
+                    valid: true,
+                    force_terminated: false,
+                    tokens_emitted: 50,
+                    node_count: 10,
+                    elapsed_ms: 100,
+                    root_hash: 0xDEAD,
+                    site_map_key: Some(42),
+                    cache_hit_rate: 0.8,
+                },
+                BatchItemResult {
+                    index: 1,
+                    valid: false,
+                    force_terminated: true,
+                    tokens_emitted: 200,
+                    node_count: 0,
+                    elapsed_ms: 300,
+                    root_hash: 0,
+                    site_map_key: None,
+                    cache_hit_rate: 0.5,
+                },
+            ],
+            total_elapsed_ms: 400,
+            total_tokens: 250,
+            valid_count: 1,
+            truncated_count: 1,
+            avg_cache_hit_rate: 0.65,
+        };
+        let json = serde_json::to_string(&report).unwrap();
+        assert!(json.contains("\"prompt_count\":2"));
+        assert!(json.contains("\"valid_count\":1"));
+        assert!(json.contains("\"root_hash\":57005")); // 0xDEAD
+    }
+
+    #[test]
+    fn generation_result_has_node_count() {
+        // Verify NdaGenerationResult serializes node_count
+        let result = NdaGenerationResult {
+            nodes: vec![],
+            root_hash: 123,
+            valid: true,
+            force_terminated: false,
+            site_map_key: None,
+            sandbox: None,
+            scope: None,
+            stats: NdaGenStats::default(),
+            node_count: 0,
+        };
+        let json = serde_json::to_string(&result).unwrap();
+        assert!(json.contains("\"node_count\":0"));
+        assert!(json.contains("\"root_hash\":123"));
+        // nodes, sandbox, scope should be skipped
+        assert!(!json.contains("\"nodes\""));
+        assert!(!json.contains("\"sandbox\""));
     }
 }
