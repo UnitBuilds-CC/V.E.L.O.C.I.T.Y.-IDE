@@ -312,6 +312,153 @@ pub struct ModelUsage {
     pub requests: u64,
 }
 
+// ─── Usage diagnostics ──────────────────────────────────────────────────
+
+/// Diagnostic info about a usage snapshot.
+#[derive(Debug, Clone, Serialize)]
+pub struct UsageSnapshotInfo {
+    pub generated_at: String,
+    pub provider_count: usize,
+    pub total_tokens: u64,
+    pub total_cost_usd: f64,
+    pub total_requests: u64,
+    pub providers_with_valid_keys: usize,
+    pub providers_with_usage_api: usize,
+    pub total_models_tracked: usize,
+    pub validation_issues: Vec<String>,
+}
+
+/// Compact summary of a single provider's status.
+#[derive(Debug, Clone, Serialize)]
+pub struct ProviderSummary {
+    pub provider: String,
+    pub display_name: String,
+    pub key_valid: bool,
+    pub cost_usd: f64,
+    pub tokens_used: u64,
+    pub model_count: usize,
+    pub status: String,
+}
+
+/// Cost breakdown across all providers.
+#[derive(Debug, Clone, Serialize)]
+pub struct CostBreakdown {
+    pub total_cost_usd: f64,
+    pub per_provider: Vec<ProviderCost>,
+    pub highest_cost_provider: Option<String>,
+    pub estimated_monthly_usd: f64,
+}
+
+/// Cost data for a single provider.
+#[derive(Debug, Clone, Serialize)]
+pub struct ProviderCost {
+    pub provider: String,
+    pub display_name: String,
+    pub cost_usd: f64,
+    pub percentage_of_total: f64,
+}
+
+impl UsageSnapshot {
+    /// Validate the snapshot for consistency.
+    pub fn validate(&self) -> Vec<String> {
+        let mut issues = Vec::new();
+        if self.providers.is_empty() {
+            issues.push("No providers configured".to_string());
+        }
+        let computed_tokens: u64 = self.providers.iter().map(|p| p.tokens_used).sum();
+        if computed_tokens != self.total_tokens {
+            issues.push(format!(
+                "total_tokens ({}) doesn't match sum of provider tokens ({})",
+                self.total_tokens, computed_tokens
+            ));
+        }
+        let computed_cost: f64 = self.providers.iter().map(|p| p.cost_usd).sum();
+        if (computed_cost - self.total_cost_usd).abs() > 0.01 {
+            issues.push(format!(
+                "total_cost_usd ({:.2}) doesn't match sum of provider costs ({:.2})",
+                self.total_cost_usd, computed_cost
+            ));
+        }
+        for p in &self.providers {
+            if p.provider.is_empty() {
+                issues.push("Provider has empty provider name".to_string());
+            }
+            if p.display_name.is_empty() {
+                issues.push("Provider has empty display_name".to_string());
+            }
+        }
+        issues
+    }
+
+    /// Build diagnostic info for this snapshot.
+    pub fn info(&self) -> UsageSnapshotInfo {
+        let valid_keys = self.providers.iter().filter(|p| p.key_valid).count();
+        let usage_api = self.providers.iter().filter(|p| p.has_usage_api).count();
+        let models_tracked: usize = self.providers.iter().map(|p| p.models.len()).sum();
+        UsageSnapshotInfo {
+            generated_at: self.generated_at.clone(),
+            provider_count: self.providers.len(),
+            total_tokens: self.total_tokens,
+            total_cost_usd: self.total_cost_usd,
+            total_requests: self.total_requests,
+            providers_with_valid_keys: valid_keys,
+            providers_with_usage_api: usage_api,
+            total_models_tracked: models_tracked,
+            validation_issues: self.validate(),
+        }
+    }
+
+    /// Get compact summaries for each provider.
+    pub fn provider_summaries(&self) -> Vec<ProviderSummary> {
+        self.providers
+            .iter()
+            .map(|p| ProviderSummary {
+                provider: p.provider.clone(),
+                display_name: p.display_name.clone(),
+                key_valid: p.key_valid,
+                cost_usd: p.cost_usd,
+                tokens_used: p.tokens_used,
+                model_count: p.models.len(),
+                status: p.status.clone(),
+            })
+            .collect()
+    }
+
+    /// Build a cost breakdown across all providers.
+    pub fn cost_breakdown(&self) -> CostBreakdown {
+        let total = self.total_cost_usd;
+        let mut per_provider: Vec<ProviderCost> = self
+            .providers
+            .iter()
+            .map(|p| {
+                let pct = if total > 0.0 {
+                    p.cost_usd / total * 100.0
+                } else {
+                    0.0
+                };
+                ProviderCost {
+                    provider: p.provider.clone(),
+                    display_name: p.display_name.clone(),
+                    cost_usd: p.cost_usd,
+                    percentage_of_total: pct,
+                }
+            })
+            .collect();
+        per_provider.sort_by(|a, b| b.cost_usd.partial_cmp(&a.cost_usd).unwrap_or(std::cmp::Ordering::Equal));
+
+        let highest = per_provider.first().map(|p| p.provider.clone());
+        // Extrapolate: if the snapshot covers 30 days, monthly = current total
+        let estimated_monthly = total; // Already roughly monthly from 30-day queries
+
+        CostBreakdown {
+            total_cost_usd: total,
+            per_provider,
+            highest_cost_provider: highest,
+            estimated_monthly_usd: estimated_monthly,
+        }
+    }
+}
+
 // ─── Provider API Clients ────────────────────────────────────────────────
 
 /// Query all configured providers and build a usage snapshot.
@@ -989,5 +1136,196 @@ mod tests {
         assert!(!is_leap(2025));
         assert!(!is_leap(1900));
         assert!(is_leap(2000));
+    }
+
+    fn make_test_snapshot() -> UsageSnapshot {
+        UsageSnapshot {
+            generated_at: "2026-08-23T12:00:00Z".into(),
+            providers: vec![
+                ProviderUsage {
+                    provider: "openai".into(),
+                    display_name: "OpenAI".into(),
+                    key_valid: true,
+                    has_usage_api: true,
+                    tokens_used: 50000,
+                    cost_usd: 1.50,
+                    request_count: 42,
+                    period_start: Some("2026-07-24T00:00:00Z".into()),
+                    period_end: Some("2026-08-23T00:00:00Z".into()),
+                    status: "ok".into(),
+                    models: vec![
+                        ModelUsage { model: "gpt-4o".into(), tokens: 30000, cost_usd: 1.00, requests: 30 },
+                        ModelUsage { model: "gpt-4o-mini".into(), tokens: 20000, cost_usd: 0.50, requests: 12 },
+                    ],
+                },
+                ProviderUsage {
+                    provider: "anthropic".into(),
+                    display_name: "Anthropic".into(),
+                    key_valid: true,
+                    has_usage_api: true,
+                    tokens_used: 10000,
+                    cost_usd: 0.50,
+                    request_count: 10,
+                    period_start: None,
+                    period_end: None,
+                    status: "key valid".into(),
+                    models: vec![],
+                },
+                ProviderUsage {
+                    provider: "cohere".into(),
+                    display_name: "Cohere".into(),
+                    key_valid: false,
+                    has_usage_api: false,
+                    tokens_used: 0,
+                    cost_usd: 0.0,
+                    request_count: 0,
+                    period_start: None,
+                    period_end: None,
+                    status: "invalid key".into(),
+                    models: vec![],
+                },
+            ],
+            total_tokens: 60000,
+            total_cost_usd: 2.00,
+            total_requests: 52,
+        }
+    }
+
+    #[test]
+    fn snapshot_validate_clean() {
+        let snap = make_test_snapshot();
+        let issues = snap.validate();
+        assert!(issues.is_empty(), "expected no issues, got: {:?}", issues);
+    }
+
+    #[test]
+    fn snapshot_validate_empty_providers() {
+        let snap = UsageSnapshot {
+            generated_at: "test".into(),
+            providers: vec![],
+            total_tokens: 0,
+            total_cost_usd: 0.0,
+            total_requests: 0,
+        };
+        let issues = snap.validate();
+        assert!(!issues.is_empty());
+        assert!(issues[0].contains("No providers"));
+    }
+
+    #[test]
+    fn snapshot_validate_mismatched_totals() {
+        let mut snap = make_test_snapshot();
+        snap.total_tokens = 99999; // wrong
+        let issues = snap.validate();
+        assert!(issues.iter().any(|i| i.contains("total_tokens")));
+    }
+
+    #[test]
+    fn snapshot_validate_mismatched_cost() {
+        let mut snap = make_test_snapshot();
+        snap.total_cost_usd = 999.99; // wrong
+        let issues = snap.validate();
+        assert!(issues.iter().any(|i| i.contains("total_cost_usd")));
+    }
+
+    #[test]
+    fn snapshot_info_counts() {
+        let snap = make_test_snapshot();
+        let info = snap.info();
+        assert_eq!(info.provider_count, 3);
+        assert_eq!(info.providers_with_valid_keys, 2);
+        assert_eq!(info.providers_with_usage_api, 2);
+        assert_eq!(info.total_models_tracked, 2);
+        assert!(info.validation_issues.is_empty());
+    }
+
+    #[test]
+    fn snapshot_info_serializes() {
+        let snap = make_test_snapshot();
+        let info = snap.info();
+        let json = serde_json::to_string(&info).unwrap();
+        assert!(json.contains("\"provider_count\":3"));
+        assert!(json.contains("\"total_tokens\":60000"));
+    }
+
+    #[test]
+    fn provider_summaries_count() {
+        let snap = make_test_snapshot();
+        let summaries = snap.provider_summaries();
+        assert_eq!(summaries.len(), 3);
+        assert_eq!(summaries[0].provider, "openai");
+        assert!(summaries[0].key_valid);
+        assert_eq!(summaries[0].model_count, 2);
+        assert!(!summaries[2].key_valid); // cohere
+    }
+
+    #[test]
+    fn cost_breakdown_sorted_by_cost() {
+        let snap = make_test_snapshot();
+        let breakdown = snap.cost_breakdown();
+        assert!((breakdown.total_cost_usd - 2.00).abs() < 0.01);
+        // OpenAI should be first (highest cost)
+        assert_eq!(breakdown.per_provider[0].provider, "openai");
+        assert_eq!(breakdown.highest_cost_provider, Some("openai".to_string()));
+    }
+
+    #[test]
+    fn cost_breakdown_percentages_sum() {
+        let snap = make_test_snapshot();
+        let breakdown = snap.cost_breakdown();
+        let total_pct: f64 = breakdown.per_provider.iter().map(|p| p.percentage_of_total).sum();
+        assert!((total_pct - 100.0).abs() < 0.1);
+    }
+
+    #[test]
+    fn cost_breakdown_zero_total() {
+        let snap = UsageSnapshot {
+            generated_at: "test".into(),
+            providers: vec![ProviderUsage {
+                provider: "test".into(),
+                display_name: "Test".into(),
+                key_valid: true,
+                has_usage_api: false,
+                tokens_used: 0,
+                cost_usd: 0.0,
+                request_count: 0,
+                period_start: None,
+                period_end: None,
+                status: "ok".into(),
+                models: vec![],
+            }],
+            total_tokens: 0,
+            total_cost_usd: 0.0,
+            total_requests: 0,
+        };
+        let breakdown = snap.cost_breakdown();
+        assert_eq!(breakdown.total_cost_usd, 0.0);
+        // Percentages should be 0 when total is 0
+        assert!(breakdown.per_provider.iter().all(|p| p.percentage_of_total == 0.0));
+    }
+
+    #[test]
+    fn cost_breakdown_serializes() {
+        let snap = make_test_snapshot();
+        let breakdown = snap.cost_breakdown();
+        let json = serde_json::to_string(&breakdown).unwrap();
+        assert!(json.contains("\"highest_cost_provider\":\"openai\""));
+        assert!(json.contains("\"total_cost_usd\":2.0"));
+    }
+
+    #[test]
+    fn provider_summary_serializes() {
+        let summary = ProviderSummary {
+            provider: "openai".into(),
+            display_name: "OpenAI".into(),
+            key_valid: true,
+            cost_usd: 1.5,
+            tokens_used: 50000,
+            model_count: 2,
+            status: "ok".into(),
+        };
+        let json = serde_json::to_string(&summary).unwrap();
+        assert!(json.contains("\"key_valid\":true"));
+        assert!(json.contains("\"model_count\":2"));
     }
 }
