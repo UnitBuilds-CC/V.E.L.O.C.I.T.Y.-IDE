@@ -10,5 +10,5 @@ pub mod markdown;
 #[cfg(test)]
 mod tests;
 
-pub use generate::{build_wiki, WikiModel, WikiPage, WikiPageKind};
+pub use generate::{build_wiki, WikiModel, WikiPage, WikiPageKind, WikiSearchResult};
 pub use markdown::{export_markdown, render_page_markdown};

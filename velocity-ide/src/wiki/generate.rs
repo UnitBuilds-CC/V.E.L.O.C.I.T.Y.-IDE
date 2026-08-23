@@ -63,6 +63,129 @@ impl WikiModel {
     pub fn symbol_count(&self) -> usize {
         self.symbol_pages.len()
     }
+
+    /// Total number of pages (overview + files + symbols).
+    pub fn total_pages(&self) -> usize {
+        1 + self.file_pages.len() + self.symbol_pages.len()
+    }
+
+    /// Iterate over all pages: overview first, then files, then symbols.
+    pub fn all_pages(&self) -> impl Iterator<Item = &WikiPage> {
+        std::iter::once(&self.overview)
+            .chain(self.file_pages.iter())
+            .chain(self.symbol_pages.iter())
+    }
+
+    /// Find a page by exact title match.
+    pub fn find_by_title(&self, title: &str) -> Option<&WikiPage> {
+        self.all_pages().find(|p| p.title == title)
+    }
+
+    /// Find a page by slug match.
+    pub fn find_by_slug(&self, slug: &str) -> Option<&WikiPage> {
+        self.all_pages().find(|p| p.slug == slug)
+    }
+
+    /// Search across all pages for keyword matches.
+    ///
+    /// Searches title, summary, and detail fields (case-insensitive).
+    /// Returns results sorted by relevance score (higher = better match).
+    pub fn search(&self, query: &str) -> Vec<WikiSearchResult> {
+        if query.is_empty() {
+            return Vec::new();
+        }
+        let query_lower = query.to_lowercase();
+        let query_terms: Vec<&str> = query_lower.split_whitespace().collect();
+
+        let mut results: Vec<WikiSearchResult> = self
+            .all_pages()
+            .filter_map(|page| {
+                let score = compute_relevance(page, &query_terms);
+                if score > 0 {
+                    Some(WikiSearchResult { page: page.clone(), score })
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        // Sort by score descending, then by title alphabetically.
+        results.sort_by(|a, b| {
+            b.score.cmp(&a.score).then_with(|| a.page.title.cmp(&b.page.title))
+        });
+        results
+    }
+
+    /// Get all symbols defined by a specific file page.
+    pub fn symbols_defined_by(&self, file_title: &str) -> Vec<&WikiPage> {
+        self.symbol_pages
+            .iter()
+            .filter(|sym| {
+                sym.called_by.iter().any(|caller| caller == file_title)
+            })
+            .collect()
+    }
+
+    /// Get all files that reference a specific symbol.
+    pub fn files_referencing(&self, symbol_title: &str) -> Vec<&WikiPage> {
+        self.file_pages
+            .iter()
+            .filter(|file| {
+                file.relationships.iter().any(|(_, targets)| {
+                    targets.iter().any(|t| t == symbol_title)
+                })
+            })
+            .collect()
+    }
+}
+
+/// A single search result with relevance score.
+#[derive(Clone, Debug)]
+pub struct WikiSearchResult {
+    pub page: WikiPage,
+    pub score: u32,
+}
+
+/// Compute relevance score for a page against query terms.
+/// Title matches are weighted highest, then summary, then detail.
+fn compute_relevance(page: &WikiPage, terms: &[&str]) -> u32 {
+    let mut score = 0u32;
+    let title_lower = page.title.to_lowercase();
+    let summary_lower = page.summary.to_lowercase();
+    let detail_lower = page.detail.as_deref().unwrap_or("").to_lowercase();
+
+    for term in terms {
+        // Title match: highest weight.
+        if title_lower.contains(term) {
+            score += 10;
+            if title_lower == *term {
+                score += 20; // Exact title match bonus.
+            }
+        }
+        // Summary match: medium weight.
+        if summary_lower.contains(term) {
+            score += 5;
+        }
+        // Detail match: low weight.
+        if detail_lower.contains(term) {
+            score += 2;
+        }
+        // Relationship target match.
+        for (_, targets) in &page.relationships {
+            for target in targets {
+                if target.to_lowercase().contains(term) {
+                    score += 3;
+                }
+            }
+        }
+        // Called-by match.
+        for caller in &page.called_by {
+            if caller.to_lowercase().contains(term) {
+                score += 3;
+            }
+        }
+    }
+    score
 }
 
 /// Human-readable label for a predicate id. Unknown predicates render
