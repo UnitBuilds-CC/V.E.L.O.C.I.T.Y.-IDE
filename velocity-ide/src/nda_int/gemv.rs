@@ -258,6 +258,81 @@ pub fn nda_gemv_nda_to_i32(matrix: &NdaMatrix, x: &NdaVec) -> Vec<i32> {
     lm_head_nda_to_i32(matrix, x)
 }
 
+/// Validate GEMV parameters without executing the operation.
+pub fn validate_gemv_params(matrix: &NdaMatrix, x: &NdaVec) -> Vec<String> {
+    let mut issues = Vec::new();
+    if x.len != matrix.cols {
+        issues.push(format!(
+            "input length {} != matrix cols {}",
+            x.len, matrix.cols
+        ));
+    }
+    if matrix.rows == 0 {
+        issues.push("matrix has 0 rows".into());
+    }
+    if matrix.cols == 0 {
+        issues.push("matrix has 0 cols".into());
+    }
+    if matrix.packed_codes.is_empty() && matrix.sign.is_empty() {
+        issues.push("matrix has no weight data".into());
+    }
+    issues.extend(x.validate());
+    issues
+}
+
+/// Diagnostic info about a GEMV operation.
+#[derive(Debug, Clone, Serialize)]
+pub struct GemvInfo {
+    pub matrix_rows: usize,
+    pub matrix_cols: usize,
+    pub matrix_version: u16,
+    pub version_name: String,
+    pub matrix_weight_bytes: usize,
+    pub input_len: usize,
+    pub output_len: usize,
+    pub estimated_output_bytes: usize,
+    pub is_parallel: bool,
+    pub validation_issues: Vec<String>,
+}
+
+/// Compute diagnostic info about a GEMV operation without executing it.
+pub fn gemv_info(matrix: &NdaMatrix) -> GemvInfo {
+    let version_name = match matrix.version {
+        v if v == NDA_VERSION_FP2 => "FP2".into(),
+        v if v == NDA_VERSION_FP4 => "FP4".into(),
+        _ => "quad".into(),
+    };
+    let weight_bytes = if !matrix.packed_codes.is_empty() {
+        matrix.packed_codes.len()
+    } else {
+        matrix.sign.len() + matrix.extra.len()
+    };
+    GemvInfo {
+        matrix_rows: matrix.rows,
+        matrix_cols: matrix.cols,
+        matrix_version: matrix.version,
+        version_name,
+        matrix_weight_bytes: weight_bytes,
+        input_len: matrix.cols,
+        output_len: matrix.rows,
+        estimated_output_bytes: matrix.rows.div_ceil(8) * 2,
+        is_parallel: matrix.rows >= 8,
+        validation_issues: Vec::new(),
+    }
+}
+
+/// Validate top-K parameters.
+pub fn validate_topk_params(logits: &[i32], k: usize) -> Vec<String> {
+    let mut issues = Vec::new();
+    if logits.is_empty() {
+        issues.push("logits vector is empty".into());
+    }
+    if k == 0 {
+        issues.push("k is 0".into());
+    }
+    issues
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -347,5 +422,68 @@ mod tests {
         let (results, report) = nda_gemv_batch(&mat, &inputs);
         assert!(results.is_empty());
         assert_eq!(report.operations, 0);
+    }
+
+    #[test]
+    fn validate_gemv_params_valid() {
+        let mat = make_quad_matrix(16, 64);
+        let x = NdaVec::from_f32_slice(&vec![1.0; 64]);
+        let issues = validate_gemv_params(&mat, &x);
+        assert!(issues.is_empty(), "expected no issues, got: {:?}", issues);
+    }
+
+    #[test]
+    fn validate_gemv_params_length_mismatch() {
+        let mat = make_quad_matrix(16, 64);
+        let x = NdaVec::from_f32_slice(&vec![1.0; 32]); // wrong length
+        let issues = validate_gemv_params(&mat, &x);
+        assert!(issues.iter().any(|i| i.contains("!=")));
+    }
+
+    #[test]
+    fn validate_gemv_params_zero_matrix() {
+        let mat = NdaMatrix::new_quad(0, 0, 1.0, vec![].into(), vec![].into());
+        let x = NdaVec::from_f32_slice(&[]);
+        let issues = validate_gemv_params(&mat, &x);
+        assert!(issues.iter().any(|i| i.contains("0 rows") || i.contains("0 cols")));
+    }
+
+    #[test]
+    fn gemv_info_quad() {
+        let mat = make_quad_matrix(128, 256);
+        let info = gemv_info(&mat);
+        assert_eq!(info.matrix_rows, 128);
+        assert_eq!(info.matrix_cols, 256);
+        assert_eq!(info.version_name, "quad");
+        assert_eq!(info.input_len, 256);
+        assert_eq!(info.output_len, 128);
+        assert!(info.is_parallel);
+    }
+
+    #[test]
+    fn gemv_info_serializes() {
+        let mat = make_quad_matrix(32, 64);
+        let info = gemv_info(&mat);
+        let json = serde_json::to_string(&info).unwrap();
+        assert!(json.contains("\"matrix_rows\":32"));
+        assert!(json.contains("\"version_name\":\"quad\""));
+    }
+
+    #[test]
+    fn validate_topk_params_valid() {
+        let issues = validate_topk_params(&[1, 2, 3], 2);
+        assert!(issues.is_empty());
+    }
+
+    #[test]
+    fn validate_topk_params_empty_logits() {
+        let issues = validate_topk_params(&[], 2);
+        assert!(issues.iter().any(|i| i.contains("empty")));
+    }
+
+    #[test]
+    fn validate_topk_params_zero_k() {
+        let issues = validate_topk_params(&[1, 2, 3], 0);
+        assert!(issues.iter().any(|i| i.contains("k is 0")));
     }
 }
