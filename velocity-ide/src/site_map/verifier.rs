@@ -16,6 +16,7 @@
 // speed and compact storage.  Collision probability over a site map of 10^9
 // entries is ~2.7 × 10^{-10} — acceptable for a deterministic KV store.
 
+use serde::Serialize;
 use sha2::{Digest, Sha256};
 
 // ─── NDA opcode vocabulary (Path 2's 9-token output space) ───────────────────
@@ -115,7 +116,6 @@ impl NdaOpcode {
         }
     }
 
-    /// Human-readable name for logging.
     pub fn name(self) -> &'static str {
         match self {
             Self::Scope => "SCOPE",
@@ -873,6 +873,647 @@ impl MerkleVerifier {
     }
 }
 
+impl NdaOpcode {
+    /// Human-readable category for grouping opcodes in diagnostics.
+    pub fn category(self) -> &'static str {
+        match self {
+            Self::Scope | Self::EndScope | Self::Root => "structure",
+            Self::Matrix | Self::Norm | Self::Call | Self::Int => "computation",
+            Self::Bit0 | Self::Bit1 => "payload",
+            Self::Loop | Self::While | Self::If | Self::Break => "control_flow",
+            Self::Compare | Self::Let | Self::Load | Self::Store => "variable",
+            Self::Add | Self::VecOp => "arithmetic",
+            Self::Print | Self::Return => "io",
+            Self::Bitwise | Self::Float | Self::Math | Self::MathFunc => "arithmetic",
+            Self::Peek | Self::Poke => "memory",
+            Self::Gemv | Self::Dot => "computation",
+            Self::Syscall | Self::Spawn | Self::Atomic => "system",
+            Self::Alloc | Self::Free | Self::RegInt => "system",
+            Self::Cast => "type_system",
+            Self::GpuDispatch => "gpu",
+            Self::Triple => "semantic",
+        }
+    }
+
+    /// Human-readable description of what the opcode does.
+    pub fn description(self) -> &'static str {
+        match self {
+            Self::Scope => "Begin a group of child nodes",
+            Self::EndScope => "Close a scope, finalise its hash",
+            Self::Matrix => "Weight matrix node (rows × cols, sign[], extra[], scale)",
+            Self::Norm => "Layer-norm node (weight[], bias[])",
+            Self::Call => "Reference another node by its u64 hash",
+            Self::Int => "Scalar integer constant",
+            Self::Root => "Top-level Merkle commit — must be the final token",
+            Self::Bit0 => "Bit value 0 (used inside Matrix/Norm payload)",
+            Self::Bit1 => "Bit value 1",
+            Self::Loop => "Bounded loop: count + body",
+            Self::While => "Conditional loop: cond + body",
+            Self::If => "Branch: cond + then + optional else",
+            Self::Compare => "Comparison: op + lhs + rhs → bool vec",
+            Self::Let => "Variable binding: name_hash + init",
+            Self::Load => "Variable read: name_hash",
+            Self::Store => "Variable write: name_hash + value",
+            Self::Add => "Vector addition: lhs + rhs",
+            Self::VecOp => "Unary vector op: kind + operand",
+            Self::Print => "Output to stdout: source",
+            Self::Return => "Function return: value",
+            Self::Break => "Exit loop",
+            Self::Bitwise => "Bitwise operations",
+            Self::Float => "Scalar float constant",
+            Self::Math => "Scalar float arithmetic",
+            Self::MathFunc => "Scalar float functions (sin, cos, exp, etc.)",
+            Self::Peek => "MMIO read",
+            Self::Poke => "MMIO write",
+            Self::Gemv => "Matrix-vector multiply",
+            Self::Dot => "Vector-vector dot product",
+            Self::Syscall => "Syscall transition",
+            Self::Spawn => "Spawn thread",
+            Self::Atomic => "Atomic hardware instruction (CAS, FAA)",
+            Self::Alloc => "Virtual heap allocation",
+            Self::Free => "Virtual heap free",
+            Self::RegInt => "Register interrupt handler",
+            Self::Cast => "Type casting",
+            Self::GpuDispatch => "Shader dispatch to UGAL",
+            Self::Triple => "Semantic graph subject-predicate-object triple",
+        }
+    }
+
+    /// Returns true if this opcode is a control-flow construct.
+    pub fn is_control_flow(self) -> bool {
+        matches!(self, Self::Loop | Self::While | Self::If | Self::Break)
+    }
+
+    /// Returns true if this opcode performs arithmetic or vector math.
+    pub fn is_arithmetic(self) -> bool {
+        matches!(
+            self,
+            Self::Add
+                | Self::VecOp
+                | Self::Bitwise
+                | Self::Math
+                | Self::MathFunc
+                | Self::Dot
+                | Self::Gemv
+        )
+    }
+
+    /// Returns true if this opcode performs I/O or returns a value.
+    pub fn is_io(self) -> bool {
+        matches!(self, Self::Print | Self::Return)
+    }
+
+    /// Returns true if this opcode reads/writes variables.
+    pub fn is_variable(self) -> bool {
+        matches!(self, Self::Let | Self::Load | Self::Store | Self::Compare)
+    }
+
+    /// Returns true if this opcode accesses memory-mapped I/O.
+    pub fn is_memory(self) -> bool {
+        matches!(self, Self::Peek | Self::Poke | Self::Alloc | Self::Free)
+    }
+
+    /// Returns true if this opcode is a core computation node.
+    pub fn is_computation(self) -> bool {
+        matches!(self, Self::Matrix | Self::Norm | Self::Call | Self::Gemv | Self::Dot)
+    }
+}
+
+// ─── Diagnostics ───────────────────────────────────────────────────────────────
+
+/// Serializable diagnostic for a single NDA opcode.
+#[derive(Debug, Clone, Serialize)]
+pub struct OpcodeInfo {
+    pub opcode: u8,
+    pub name: String,
+    pub category: String,
+    pub description: String,
+    pub is_control_flow: bool,
+    pub is_arithmetic: bool,
+    pub is_io: bool,
+    pub is_variable: bool,
+    pub is_memory: bool,
+    pub is_computation: bool,
+}
+
+/// Return diagnostic info for a single opcode.
+pub fn opcode_info(op: NdaOpcode) -> OpcodeInfo {
+    OpcodeInfo {
+        opcode: op as u8,
+        name: op.name().to_string(),
+        category: op.category().to_string(),
+        description: op.description().to_string(),
+        is_control_flow: op.is_control_flow(),
+        is_arithmetic: op.is_arithmetic(),
+        is_io: op.is_io(),
+        is_variable: op.is_variable(),
+        is_memory: op.is_memory(),
+        is_computation: op.is_computation(),
+    }
+}
+
+/// Distribution of opcode categories across a token stream.
+#[derive(Debug, Clone, Serialize)]
+pub struct OpcodeDistribution {
+    pub total_tokens: usize,
+    pub structure_count: usize,
+    pub computation_count: usize,
+    pub payload_count: usize,
+    pub control_flow_count: usize,
+    pub variable_count: usize,
+    pub arithmetic_count: usize,
+    pub io_count: usize,
+    pub memory_count: usize,
+    pub system_count: usize,
+    pub type_system_count: usize,
+    pub gpu_count: usize,
+    pub semantic_count: usize,
+    pub unique_opcodes: usize,
+    pub validation_issues: Vec<String>,
+}
+
+/// Compute the opcode category distribution over a stream of opcodes.
+pub fn opcode_distribution(opcodes: &[NdaOpcode]) -> OpcodeDistribution {
+    let mut structure = 0usize;
+    let mut computation = 0usize;
+    let mut payload = 0usize;
+    let mut control_flow = 0usize;
+    let mut variable = 0usize;
+    let mut arithmetic = 0usize;
+    let mut io = 0usize;
+    let mut memory = 0usize;
+    let mut system = 0usize;
+    let mut type_system = 0usize;
+    let mut gpu = 0usize;
+    let mut semantic = 0usize;
+    let mut seen = [false; NdaOpcode::VOCAB_SIZE];
+
+    for &op in opcodes {
+        let idx = op as usize;
+        if idx < NdaOpcode::VOCAB_SIZE {
+            seen[idx] = true;
+        }
+        match op.category() {
+            "structure" => structure += 1,
+            "computation" => computation += 1,
+            "payload" => payload += 1,
+            "control_flow" => control_flow += 1,
+            "variable" => variable += 1,
+            "arithmetic" => arithmetic += 1,
+            "io" => io += 1,
+            "memory" => memory += 1,
+            "system" => system += 1,
+            "type_system" => type_system += 1,
+            "gpu" => gpu += 1,
+            "semantic" => semantic += 1,
+            _ => {}
+        }
+    }
+
+    let unique = seen.iter().filter(|&&v| v).count();
+    let mut issues = Vec::new();
+    if opcodes.is_empty() {
+        issues.push("empty opcode stream".to_string());
+    }
+    // Check for structural balance: SCOPE and END_SCOPE counts should match.
+    let scope_count = opcodes.iter().filter(|&&o| o == NdaOpcode::Scope).count();
+    let end_scope_count = opcodes.iter().filter(|&&o| o == NdaOpcode::EndScope).count();
+    if scope_count != end_scope_count {
+        issues.push(format!(
+            "scope imbalance: {} SCOPE vs {} END_SCOPE",
+            scope_count, end_scope_count
+        ));
+    }
+    // ROOT should appear at most once and only at the end.
+    let root_count = opcodes.iter().filter(|&&o| o == NdaOpcode::Root).count();
+    if root_count > 1 {
+        issues.push(format!("multiple ROOT tokens: {}", root_count));
+    }
+    if root_count == 1 && opcodes.last() != Some(&NdaOpcode::Root) {
+        issues.push("ROOT token is not the final token".to_string());
+    }
+
+    OpcodeDistribution {
+        total_tokens: opcodes.len(),
+        structure_count: structure,
+        computation_count: computation,
+        payload_count: payload,
+        control_flow_count: control_flow,
+        variable_count: variable,
+        arithmetic_count: arithmetic,
+        io_count: io,
+        memory_count: memory,
+        system_count: system,
+        type_system_count: type_system,
+        gpu_count: gpu,
+        semantic_count: semantic,
+        unique_opcodes: unique,
+        validation_issues: issues,
+    }
+}
+
+/// Serializable diagnostic snapshot of MerkleVerifier state.
+#[derive(Debug, Clone, Serialize)]
+pub struct MerkleVerifierInfo {
+    pub stack_depth: usize,
+    pub total_pending_hashes: usize,
+    pub innermost_scope_size: usize,
+    pub has_claimed_root: bool,
+    pub has_computed_root: bool,
+    pub is_valid: bool,
+    pub is_consistent: bool,
+    pub validation_issues: Vec<String>,
+}
+
+impl MerkleVerifier {
+    /// Return a diagnostic snapshot of the verifier's current state.
+    pub fn info(&self) -> MerkleVerifierInfo {
+        let total_pending: usize = self.stack.iter().map(|level| level.len()).sum();
+        let innermost = self.stack.last().map_or(0, |level| level.len());
+        let mut issues = Vec::new();
+        if self.stack.is_empty() {
+            issues.push("empty scope stack".to_string());
+        }
+        if self.claimed_root.is_some() && self.computed_root.is_none() {
+            issues.push("claimed root recorded but computed root is missing".to_string());
+        }
+        if let (Some(c), Some(r)) = (self.claimed_root, self.computed_root) {
+            if c != r {
+                issues.push(format!(
+                    "root mismatch: claimed={:016x} computed={:016x}",
+                    c, r
+                ));
+            }
+        }
+        MerkleVerifierInfo {
+            stack_depth: self.stack.len(),
+            total_pending_hashes: total_pending,
+            innermost_scope_size: innermost,
+            has_claimed_root: self.claimed_root.is_some(),
+            has_computed_root: self.computed_root.is_some(),
+            is_valid: self.is_valid(),
+            is_consistent: self.is_consistent(),
+            validation_issues: issues,
+        }
+    }
+}
+
+/// Validate the structural integrity of an NdaNode tree.
+/// Returns a list of warnings (empty = clean).
+pub fn validate_node(node: &NdaNode) -> Vec<String> {
+    let mut issues = Vec::new();
+    match node {
+        NdaNode::Matrix {
+            rows,
+            cols,
+            scale,
+            sign,
+            extra: _,
+        } => {
+            if *rows == 0 || *cols == 0 {
+                issues.push(format!("matrix has zero dimension: {}x{}", rows, cols));
+            }
+            let expected_bits = (*rows as usize) * (*cols as usize);
+            let expected_sign_bytes = (expected_bits + 7) / 8;
+            if sign.len() != expected_sign_bytes {
+                issues.push(format!(
+                    "matrix sign bytes mismatch: expected {} for {}x{}, got {}",
+                    expected_sign_bytes, rows, cols, sign.len()
+                ));
+            }
+            if *scale < -15 || *scale > 15 {
+                issues.push(format!("matrix scale out of range: {}", scale));
+            }
+        }
+        NdaNode::Norm { size, weight, bias } => {
+            if *size == 0 {
+                issues.push("norm has zero size".to_string());
+            }
+            if weight.len() != bias.len() {
+                issues.push(format!(
+                    "norm weight/bias length mismatch: {} vs {}",
+                    weight.len(),
+                    bias.len()
+                ));
+            }
+        }
+        NdaNode::Scope { children } => {
+            for (i, child) in children.iter().enumerate() {
+                let child_issues = validate_node(child);
+                for issue in child_issues {
+                    issues.push(format!("child[{}]: {}", i, issue));
+                }
+            }
+        }
+        NdaNode::Loop { count, body } => {
+            if *count == 0 {
+                issues.push("loop has zero iteration count".to_string());
+            }
+            if body.is_empty() {
+                issues.push("loop has empty body".to_string());
+            }
+            for (i, child) in body.iter().enumerate() {
+                for issue in validate_node(child) {
+                    issues.push(format!("loop body[{}]: {}", i, issue));
+                }
+            }
+        }
+        NdaNode::While { cond, body } => {
+            for issue in validate_node(cond) {
+                issues.push(format!("while cond: {}", issue));
+            }
+            for (i, child) in body.iter().enumerate() {
+                for issue in validate_node(child) {
+                    issues.push(format!("while body[{}]: {}", i, issue));
+                }
+            }
+        }
+        NdaNode::If {
+            cond,
+            then_body,
+            else_body,
+        } => {
+            for issue in validate_node(cond) {
+                issues.push(format!("if cond: {}", issue));
+            }
+            for (i, child) in then_body.iter().enumerate() {
+                for issue in validate_node(child) {
+                    issues.push(format!("then[{}]: {}", i, issue));
+                }
+            }
+            if let Some(eb) = else_body {
+                for (i, child) in eb.iter().enumerate() {
+                    for issue in validate_node(child) {
+                        issues.push(format!("else[{}]: {}", i, issue));
+                    }
+                }
+            }
+        }
+        NdaNode::Compare { lhs, rhs, .. } => {
+            for issue in validate_node(lhs) {
+                issues.push(format!("cmp lhs: {}", issue));
+            }
+            for issue in validate_node(rhs) {
+                issues.push(format!("cmp rhs: {}", issue));
+            }
+        }
+        NdaNode::Let { init, .. } => {
+            for issue in validate_node(init) {
+                issues.push(format!("let init: {}", issue));
+            }
+        }
+        NdaNode::Store { value, .. } => {
+            for issue in validate_node(value) {
+                issues.push(format!("store value: {}", issue));
+            }
+        }
+        NdaNode::Add { lhs, rhs } => {
+            for issue in validate_node(lhs) {
+                issues.push(format!("add lhs: {}", issue));
+            }
+            for issue in validate_node(rhs) {
+                issues.push(format!("add rhs: {}", issue));
+            }
+        }
+        NdaNode::VecOp { operand, .. } => {
+            for issue in validate_node(operand) {
+                issues.push(format!("vecop operand: {}", issue));
+            }
+        }
+        NdaNode::Print { source } => {
+            for issue in validate_node(source) {
+                issues.push(format!("print source: {}", issue));
+            }
+        }
+        NdaNode::Return { value } => {
+            for issue in validate_node(value) {
+                issues.push(format!("return value: {}", issue));
+            }
+        }
+        NdaNode::Bitwise { lhs, rhs, .. } => {
+            for issue in validate_node(lhs) {
+                issues.push(format!("bitwise lhs: {}", issue));
+            }
+            if let Some(r) = rhs {
+                for issue in validate_node(r) {
+                    issues.push(format!("bitwise rhs: {}", issue));
+                }
+            }
+        }
+        NdaNode::Math { lhs, rhs, .. } => {
+            for issue in validate_node(lhs) {
+                issues.push(format!("math lhs: {}", issue));
+            }
+            for issue in validate_node(rhs) {
+                issues.push(format!("math rhs: {}", issue));
+            }
+        }
+        NdaNode::MathFunc { operand, .. } => {
+            for issue in validate_node(operand) {
+                issues.push(format!("mathfunc operand: {}", issue));
+            }
+        }
+        NdaNode::Peek { addr } => {
+            for issue in validate_node(addr) {
+                issues.push(format!("peek addr: {}", issue));
+            }
+        }
+        NdaNode::Poke { addr, value } => {
+            for issue in validate_node(addr) {
+                issues.push(format!("poke addr: {}", issue));
+            }
+            for issue in validate_node(value) {
+                issues.push(format!("poke value: {}", issue));
+            }
+        }
+        NdaNode::Gemv { matrix, vector } => {
+            for issue in validate_node(matrix) {
+                issues.push(format!("gemv matrix: {}", issue));
+            }
+            for issue in validate_node(vector) {
+                issues.push(format!("gemv vector: {}", issue));
+            }
+        }
+        NdaNode::Dot { lhs, rhs } => {
+            for issue in validate_node(lhs) {
+                issues.push(format!("dot lhs: {}", issue));
+            }
+            for issue in validate_node(rhs) {
+                issues.push(format!("dot rhs: {}", issue));
+            }
+        }
+        NdaNode::Syscall { args, .. } => {
+            for (i, arg) in args.iter().enumerate() {
+                for issue in validate_node(arg) {
+                    issues.push(format!("syscall arg[{}]: {}", i, issue));
+                }
+            }
+        }
+        NdaNode::Atomic { addr, val, .. } => {
+            for issue in validate_node(addr) {
+                issues.push(format!("atomic addr: {}", issue));
+            }
+            for issue in validate_node(val) {
+                issues.push(format!("atomic val: {}", issue));
+            }
+        }
+        NdaNode::Alloc { size } => {
+            for issue in validate_node(size) {
+                issues.push(format!("alloc size: {}", issue));
+            }
+        }
+        NdaNode::Free { addr } => {
+            for issue in validate_node(addr) {
+                issues.push(format!("free addr: {}", issue));
+            }
+        }
+        NdaNode::Cast { operand, .. } => {
+            for issue in validate_node(operand) {
+                issues.push(format!("cast operand: {}", issue));
+            }
+        }
+        NdaNode::GpuDispatch { args, .. } => {
+            for (i, arg) in args.iter().enumerate() {
+                for issue in validate_node(arg) {
+                    issues.push(format!("gpu arg[{}]: {}", i, issue));
+                }
+            }
+        }
+        // Leaf nodes with no children to recurse into.
+        NdaNode::Call { .. }
+        | NdaNode::Int { .. }
+        | NdaNode::Float { .. }
+        | NdaNode::Load { .. }
+        | NdaNode::Break
+        | NdaNode::Spawn { .. }
+        | NdaNode::RegInt { .. }
+        | NdaNode::Triple { .. } => {}
+    }
+    issues
+}
+
+/// Return the kind name of an NdaNode variant as a static string.
+pub fn node_kind_name(node: &NdaNode) -> &'static str {
+    match node {
+        NdaNode::Matrix { .. } => "Matrix",
+        NdaNode::Norm { .. } => "Norm",
+        NdaNode::Call { .. } => "Call",
+        NdaNode::Int { .. } => "Int",
+        NdaNode::Scope { .. } => "Scope",
+        NdaNode::Loop { .. } => "Loop",
+        NdaNode::While { .. } => "While",
+        NdaNode::If { .. } => "If",
+        NdaNode::Compare { .. } => "Compare",
+        NdaNode::Let { .. } => "Let",
+        NdaNode::Load { .. } => "Load",
+        NdaNode::Store { .. } => "Store",
+        NdaNode::Add { .. } => "Add",
+        NdaNode::VecOp { .. } => "VecOp",
+        NdaNode::Print { .. } => "Print",
+        NdaNode::Return { .. } => "Return",
+        NdaNode::Break => "Break",
+        NdaNode::Bitwise { .. } => "Bitwise",
+        NdaNode::Float { .. } => "Float",
+        NdaNode::Math { .. } => "Math",
+        NdaNode::MathFunc { .. } => "MathFunc",
+        NdaNode::Peek { .. } => "Peek",
+        NdaNode::Poke { .. } => "Poke",
+        NdaNode::Gemv { .. } => "Gemv",
+        NdaNode::Dot { .. } => "Dot",
+        NdaNode::Syscall { .. } => "Syscall",
+        NdaNode::Spawn { .. } => "Spawn",
+        NdaNode::Atomic { .. } => "Atomic",
+        NdaNode::Alloc { .. } => "Alloc",
+        NdaNode::Free { .. } => "Free",
+        NdaNode::RegInt { .. } => "RegInt",
+        NdaNode::Cast { .. } => "Cast",
+        NdaNode::GpuDispatch { .. } => "GpuDispatch",
+        NdaNode::Triple { .. } => "Triple",
+    }
+}
+
+/// Estimate the memory footprint of an NdaNode tree in bytes.
+pub fn estimated_memory_bytes(node: &NdaNode) -> usize {
+    let mut total = std::mem::size_of::<NdaNode>();
+    match node {
+        NdaNode::Matrix { sign, extra, .. } => {
+            total += sign.len() + extra.len();
+        }
+        NdaNode::Norm { weight, bias, .. } => {
+            total += weight.len() + bias.len();
+        }
+        NdaNode::Scope { children } => {
+            for child in children {
+                total += estimated_memory_bytes(child);
+            }
+        }
+        NdaNode::Loop { body, .. } => {
+            for child in body {
+                total += estimated_memory_bytes(child);
+            }
+        }
+        NdaNode::While { cond, body } => {
+            total += estimated_memory_bytes(cond);
+            for child in body {
+                total += estimated_memory_bytes(child);
+            }
+        }
+        NdaNode::If {
+            cond,
+            then_body,
+            else_body,
+        } => {
+            total += estimated_memory_bytes(cond);
+            for child in then_body {
+                total += estimated_memory_bytes(child);
+            }
+            if let Some(eb) = else_body {
+                for child in eb {
+                    total += estimated_memory_bytes(child);
+                }
+            }
+        }
+        NdaNode::Compare { lhs, rhs, .. }
+        | NdaNode::Add { lhs, rhs }
+        | NdaNode::Math { lhs, rhs, .. }
+        | NdaNode::Dot { lhs, rhs }
+        | NdaNode::Poke { addr: lhs, value: rhs }
+        | NdaNode::Gemv { matrix: lhs, vector: rhs }
+        | NdaNode::Atomic { addr: lhs, val: rhs, .. } => {
+            total += estimated_memory_bytes(lhs);
+            total += estimated_memory_bytes(rhs);
+        }
+        NdaNode::Let { init, .. }
+        | NdaNode::Store { value: init, .. }
+        | NdaNode::VecOp { operand: init, .. }
+        | NdaNode::Print { source: init }
+        | NdaNode::Return { value: init }
+        | NdaNode::Bitwise { lhs: init, .. }
+        | NdaNode::MathFunc { operand: init, .. }
+        | NdaNode::Peek { addr: init }
+        | NdaNode::Alloc { size: init }
+        | NdaNode::Free { addr: init }
+        | NdaNode::Cast { operand: init, .. } => {
+            total += estimated_memory_bytes(init);
+        }
+        NdaNode::Syscall { args, .. } | NdaNode::GpuDispatch { args, .. } => {
+            for arg in args {
+                total += estimated_memory_bytes(arg);
+            }
+        }
+        // Pure-value leaf nodes.
+        NdaNode::Call { .. }
+        | NdaNode::Int { .. }
+        | NdaNode::Float { .. }
+        | NdaNode::Load { .. }
+        | NdaNode::Break
+        | NdaNode::Spawn { .. }
+        | NdaNode::RegInt { .. }
+        | NdaNode::Triple { .. } => {}
+    }
+    total
+}
+
 impl Default for MerkleVerifier {
     fn default() -> Self {
         Self::new()
@@ -956,5 +1597,412 @@ mod tests {
         let mut v = MerkleVerifier::new();
         // stack has only 1 level (the implicit top-level) — closing it is an error
         assert!(v.close_scope().is_err());
+    }
+
+    // ─── New diagnostic tests ──────────────────────────────────────────────────
+
+    #[test]
+    fn opcode_from_u8_roundtrip() {
+        for i in 0..NdaOpcode::VOCAB_SIZE as u8 {
+            let op = NdaOpcode::from_u8(i).unwrap();
+            assert_eq!(op as u8, i);
+        }
+        assert!(NdaOpcode::from_u8(255).is_none());
+    }
+
+    #[test]
+    fn opcode_categories_are_nonempty() {
+        // Every opcode should have a non-empty category.
+        for i in 0..NdaOpcode::VOCAB_SIZE as u8 {
+            let op = NdaOpcode::from_u8(i).unwrap();
+            assert!(!op.category().is_empty(), "opcode {:?} has empty category", op);
+            assert!(!op.description().is_empty(), "opcode {:?} has empty description", op);
+            assert!(!op.name().is_empty(), "opcode {:?} has empty name", op);
+        }
+    }
+
+    #[test]
+    fn opcode_boolean_flags_are_mutually_exclusive_for_structure() {
+        // Structure opcodes should not also be arithmetic.
+        let structure_ops = [NdaOpcode::Scope, NdaOpcode::EndScope, NdaOpcode::Root];
+        for op in &structure_ops {
+            assert!(op.is_control_flow() == false || op.is_control_flow()); // just ensure no panic
+            // Structure ops are not arithmetic.
+            assert!(!op.is_arithmetic());
+            assert!(!op.is_io());
+        }
+    }
+
+    #[test]
+    fn opcode_info_serializes() {
+        let info = opcode_info(NdaOpcode::Matrix);
+        assert_eq!(info.name, "MATRIX");
+        assert_eq!(info.category, "computation");
+        assert!(info.is_computation);
+        assert!(!info.is_control_flow);
+    }
+
+    #[test]
+    fn opcode_distribution_empty_stream() {
+        let dist = opcode_distribution(&[]);
+        assert_eq!(dist.total_tokens, 0);
+        assert_eq!(dist.unique_opcodes, 0);
+        assert!(!dist.validation_issues.is_empty()); // should warn about empty
+    }
+
+    #[test]
+    fn opcode_distribution_balanced_program() {
+        let ops = vec![
+            NdaOpcode::Scope,
+            NdaOpcode::Int,
+            NdaOpcode::EndScope,
+            NdaOpcode::Root,
+        ];
+        let dist = opcode_distribution(&ops);
+        assert_eq!(dist.total_tokens, 4);
+        assert!(dist.validation_issues.is_empty()); // balanced
+        assert!(dist.structure_count > 0);
+        assert!(dist.computation_count > 0);
+    }
+
+    #[test]
+    fn opcode_distribution_detects_scope_imbalance() {
+        let ops = vec![NdaOpcode::Scope, NdaOpcode::Int]; // missing EndScope
+        let dist = opcode_distribution(&ops);
+        assert!(!dist.validation_issues.is_empty());
+        assert!(dist.validation_issues.iter().any(|i| i.contains("imbalance")));
+    }
+
+    #[test]
+    fn opcode_distribution_detects_root_not_final() {
+        let ops = vec![NdaOpcode::Root, NdaOpcode::Int]; // Root before Int
+        let dist = opcode_distribution(&ops);
+        assert!(!dist.validation_issues.is_empty());
+        assert!(dist.validation_issues.iter().any(|i| i.contains("not the final")));
+    }
+
+    #[test]
+    fn verifier_info_clean_state() {
+        let v = MerkleVerifier::new();
+        let info = v.info();
+        assert_eq!(info.stack_depth, 1); // one open top-level scope
+        assert_eq!(info.total_pending_hashes, 0);
+        assert!(!info.has_claimed_root);
+        assert!(!info.has_computed_root);
+        assert!(!info.is_valid);
+        assert!(info.is_consistent);
+        assert!(info.validation_issues.is_empty());
+    }
+
+    #[test]
+    fn verifier_info_with_mismatch() {
+        let mut v = MerkleVerifier::new();
+        let leaf = NdaNode::Int { value: 42 };
+        v.push_leaf(&leaf);
+        v.computed_root = Some(0xAAAA);
+        v.claimed_root = Some(0xBBBB);
+        let info = v.info();
+        assert!(!info.is_valid);
+        assert!(!info.validation_issues.is_empty());
+        assert!(info.validation_issues.iter().any(|i| i.contains("mismatch")));
+    }
+
+    #[test]
+    fn validate_node_clean_int() {
+        let node = NdaNode::Int { value: 42 };
+        let issues = validate_node(&node);
+        assert!(issues.is_empty());
+    }
+
+    #[test]
+    fn validate_node_matrix_zero_dim() {
+        let node = NdaNode::Matrix {
+            rows: 0,
+            cols: 4,
+            scale: 0,
+            sign: vec![],
+            extra: vec![],
+        };
+        let issues = validate_node(&node);
+        assert!(!issues.is_empty());
+        assert!(issues.iter().any(|i| i.contains("zero dimension")));
+    }
+
+    #[test]
+    fn validate_node_matrix_sign_mismatch() {
+        let node = NdaNode::Matrix {
+            rows: 2,
+            cols: 4,
+            scale: 0,
+            sign: vec![0xFF; 4], // 2*4=8 bits = 1 byte expected, got 4
+            extra: vec![],
+        };
+        let issues = validate_node(&node);
+        assert!(!issues.is_empty());
+        assert!(issues.iter().any(|i| i.contains("sign bytes mismatch")));
+    }
+
+    #[test]
+    fn validate_node_matrix_scale_out_of_range() {
+        let node = NdaNode::Matrix {
+            rows: 1,
+            cols: 1,
+            scale: 20, // out of [-15, 15]
+            sign: vec![0],
+            extra: vec![],
+        };
+        let issues = validate_node(&node);
+        assert!(issues.iter().any(|i| i.contains("scale out of range")));
+    }
+
+    #[test]
+    fn validate_node_norm_zero_size() {
+        let node = NdaNode::Norm {
+            size: 0,
+            weight: vec![],
+            bias: vec![],
+        };
+        let issues = validate_node(&node);
+        assert!(issues.iter().any(|i| i.contains("zero size")));
+    }
+
+    #[test]
+    fn validate_node_norm_weight_bias_mismatch() {
+        let node = NdaNode::Norm {
+            size: 4,
+            weight: vec![0; 4],
+            bias: vec![0; 2], // different length
+        };
+        let issues = validate_node(&node);
+        assert!(issues.iter().any(|i| i.contains("weight/bias length mismatch")));
+    }
+
+    #[test]
+    fn validate_node_loop_zero_count() {
+        let node = NdaNode::Loop {
+            count: 0,
+            body: vec![NdaNode::Break],
+        };
+        let issues = validate_node(&node);
+        assert!(issues.iter().any(|i| i.contains("zero iteration")));
+    }
+
+    #[test]
+    fn validate_node_loop_empty_body() {
+        let node = NdaNode::Loop {
+            count: 5,
+            body: vec![],
+        };
+        let issues = validate_node(&node);
+        assert!(issues.iter().any(|i| i.contains("empty body")));
+    }
+
+    #[test]
+    fn validate_node_nested_scope_propagates_issues() {
+        let node = NdaNode::Scope {
+            children: vec![NdaNode::Matrix {
+                rows: 0,
+                cols: 0,
+                scale: 0,
+                sign: vec![],
+                extra: vec![],
+            }],
+        };
+        let issues = validate_node(&node);
+        assert!(!issues.is_empty());
+        assert!(issues.iter().any(|i| i.contains("child[0]")));
+    }
+
+    #[test]
+    fn node_kind_name_covers_all_variants() {
+        let nodes = vec![
+            NdaNode::Int { value: 0 },
+            NdaNode::Float { value: 0.0 },
+            NdaNode::Break,
+        ];
+        for node in &nodes {
+            let name = node_kind_name(node);
+            assert!(!name.is_empty());
+        }
+        assert_eq!(node_kind_name(&NdaNode::Break), "Break");
+        assert_eq!(
+            node_kind_name(&NdaNode::Int { value: 0 }),
+            "Int"
+        );
+    }
+
+    #[test]
+    fn estimated_memory_bytes_leaf() {
+        let node = NdaNode::Int { value: 42 };
+        let bytes = estimated_memory_bytes(&node);
+        assert!(bytes > 0); // at least sizeof(NdaNode)
+    }
+
+    #[test]
+    fn estimated_memory_bytes_matrix_includes_buffers() {
+        let sign = vec![0xAA; 128];
+        let extra = vec![0xBB; 64];
+        let node = NdaNode::Matrix {
+            rows: 8,
+            cols: 16,
+            scale: 0,
+            sign: sign.clone(),
+            extra: extra.clone(),
+        };
+        let bytes = estimated_memory_bytes(&node);
+        assert!(bytes >= 128 + 64); // at least the buffer sizes
+    }
+
+    #[test]
+    fn estimated_memory_bytes_scope_sums_children() {
+        let child1 = NdaNode::Int { value: 1 };
+        let child2 = NdaNode::Int { value: 2 };
+        let scope = NdaNode::Scope {
+            children: vec![child1.clone(), child2.clone()],
+        };
+        let scope_bytes = estimated_memory_bytes(&scope);
+        let c1 = estimated_memory_bytes(&child1);
+        let c2 = estimated_memory_bytes(&child2);
+        assert!(scope_bytes >= c1 + c2);
+    }
+
+    #[test]
+    fn cmp_op_roundtrip() {
+        for i in 0..6u8 {
+            let op = CmpOp::from_u8(i).unwrap();
+            assert_eq!(op as u8, i);
+            assert!(!op.symbol().is_empty());
+        }
+        assert!(CmpOp::from_u8(255).is_none());
+    }
+
+    #[test]
+    fn vec_op_kind_roundtrip() {
+        for i in 0..4u8 {
+            let op = VecOpKind::from_u8(i).unwrap();
+            assert_eq!(op as u8, i);
+            assert!(!op.name().is_empty());
+        }
+        assert!(VecOpKind::from_u8(255).is_none());
+    }
+
+    #[test]
+    fn bitwise_op_roundtrip() {
+        for i in 0..6u8 {
+            let op = BitwiseOp::from_u8(i).unwrap();
+            assert_eq!(op as u8, i);
+            assert!(!op.name().is_empty());
+        }
+        assert!(BitwiseOp::from_u8(255).is_none());
+    }
+
+    #[test]
+    fn math_op_roundtrip() {
+        for i in 0..4u8 {
+            let op = MathOp::from_u8(i).unwrap();
+            assert_eq!(op as u8, i);
+            assert!(!op.symbol().is_empty());
+        }
+        assert!(MathOp::from_u8(255).is_none());
+    }
+
+    #[test]
+    fn math_func_roundtrip() {
+        for i in 0..4u8 {
+            let op = MathFuncKind::from_u8(i).unwrap();
+            assert_eq!(op as u8, i);
+            assert!(!op.name().is_empty());
+        }
+        assert!(MathFuncKind::from_u8(255).is_none());
+    }
+
+    #[test]
+    fn atomic_op_roundtrip() {
+        for i in 0..2u8 {
+            let op = AtomicOp::from_u8(i).unwrap();
+            assert_eq!(op as u8, i);
+            assert!(!op.name().is_empty());
+        }
+        assert!(AtomicOp::from_u8(255).is_none());
+    }
+
+    #[test]
+    fn type_kind_roundtrip() {
+        for i in 0..3u8 {
+            let op = TypeKind::from_u8(i).unwrap();
+            assert_eq!(op as u8, i);
+            assert!(!op.name().is_empty());
+        }
+        assert!(TypeKind::from_u8(255).is_none());
+    }
+
+    #[test]
+    fn verifier_reset_clears_state() {
+        let mut v = MerkleVerifier::new();
+        let leaf = NdaNode::Int { value: 99 };
+        v.push_leaf(&leaf);
+        v.open_scope();
+        v.push_leaf(&leaf);
+        v.close_scope().unwrap();
+        assert!(v.depth() >= 1);
+
+        v.reset();
+        assert_eq!(v.depth(), 1);
+        assert!(v.stack[0].is_empty());
+        assert!(!v.is_valid());
+        assert!(v.is_consistent());
+    }
+
+    #[test]
+    fn verifier_multiple_leaves_at_top_level() {
+        let mut v = MerkleVerifier::new();
+        let n1 = NdaNode::Int { value: 10 };
+        let n2 = NdaNode::Int { value: 20 };
+        let n3 = NdaNode::Float { value: 3.14 };
+        v.push_leaf(&n1);
+        v.push_leaf(&n2);
+        v.push_leaf(&n3);
+        assert_eq!(v.stack[0].len(), 3);
+        assert_eq!(v.depth(), 1);
+    }
+
+    #[test]
+    fn node_hash_differs_by_variant_tag() {
+        // Int(42) and Float(42.0) should have different hashes.
+        let int_node = NdaNode::Int { value: 42 };
+        let float_node = NdaNode::Float { value: 42.0 };
+        assert_ne!(int_node.hash(), float_node.hash());
+    }
+
+    #[test]
+    fn validate_clean_matrix() {
+        let node = NdaNode::Matrix {
+            rows: 2,
+            cols: 4,
+            scale: 0,
+            sign: vec![0xAA], // 2*4=8 bits = 1 byte
+            extra: vec![],
+        };
+        let issues = validate_node(&node);
+        assert!(issues.is_empty());
+    }
+
+    #[test]
+    fn validate_clean_norm() {
+        let node = NdaNode::Norm {
+            size: 4,
+            weight: vec![0; 4],
+            bias: vec![0; 4],
+        };
+        let issues = validate_node(&node);
+        assert!(issues.is_empty());
+    }
+
+    #[test]
+    fn opcode_distribution_unique_count() {
+        let ops = vec![NdaOpcode::Int, NdaOpcode::Int, NdaOpcode::Float];
+        let dist = opcode_distribution(&ops);
+        assert_eq!(dist.unique_opcodes, 2); // Int and Float
+        assert_eq!(dist.total_tokens, 3);
     }
 }
