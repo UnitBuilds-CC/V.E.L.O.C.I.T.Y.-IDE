@@ -287,5 +287,17 @@ pub fn get_team_tools() -> Vec<Tool> {
                 "required": ["team_id", "members"]
             }),
         },
+        // ── Version Control Tools ───────────────────────────────────────
+        Tool {
+            name: "team_changelog".to_string(),
+            description: "Generate a versioned snapshot of a team for change tracking. Returns a snapshot hash, timestamp, and current team state. Compare hashes to detect changes over time.".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "team_id": { "type": "string", "description": "Team id, slug, or name." }
+                },
+                "required": ["team_id"]
+            }),
+        },
     ]
 }

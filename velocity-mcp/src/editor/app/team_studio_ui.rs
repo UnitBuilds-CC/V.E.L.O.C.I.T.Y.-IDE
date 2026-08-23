@@ -113,6 +113,7 @@ impl VelocityApp {
                             scope_patterns: scopes,
                             tools: Vec::new(),
                             workflow_instructions: self.team_agent_instructions_input.trim().to_string(),
+                            fallback_provider: None,
                         });
                         self.team_gallery_expanded = Some(target_index);
                         if save_expert_teams(&self.workspace_root, &self.expert_teams) {

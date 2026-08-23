@@ -55,6 +55,10 @@ fn parse_member(
         .map(slugify)
         .unwrap_or_else(|| format!("member_{}_{}", team_slug, index + 1));
 
+    let fallback = spec["fallback_provider"]
+        .as_str()
+        .and_then(AiProvider::from_slug);
+
     Ok(ExpertMember {
         id,
         name: name.to_string(),
@@ -69,6 +73,7 @@ fn parse_member(
             .unwrap_or("")
             .trim()
             .to_string(),
+        fallback_provider: fallback,
     })
 }
 
@@ -99,6 +104,7 @@ pub fn handle_team_tool(
         "list_providers" => list_providers(root, arguments)?,
         "create_team_quick" => create_team_quick(root, arguments)?,
         "bulk_import_members" => bulk_import_members(root, arguments)?,
+        "team_changelog" => team_changelog(root, arguments)?,
         _ => return Ok(None),
     };
     Ok(Some(result))
@@ -1012,6 +1018,7 @@ fn create_team_quick(root: &Path, arguments: &Value) -> Result<String, Box<dyn E
             scope_patterns: Vec::new(),
             tools: Vec::new(),
             workflow_instructions: String::new(),
+            fallback_provider: None,
         })
         .collect();
 
@@ -1094,4 +1101,64 @@ fn bulk_import_members(root: &Path, arguments: &Value) -> Result<String, Box<dyn
         "Added {} member(s) to team \"{}\". Team now has {} member(s) total.",
         added_count, team_name, total_members
     ))
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Version Control Tools
+// ═══════════════════════════════════════════════════════════════════════════
+
+/// Generate a versioned snapshot of a team for change tracking.
+fn team_changelog(root: &Path, arguments: &Value) -> Result<String, Box<dyn Error>> {
+    let team_ref = arguments["team_id"]
+        .as_str()
+        .or_else(|| arguments["team"].as_str())
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .ok_or("'team_id' is required")?;
+
+    let teams = load_expert_teams(root);
+    let lower = team_ref.to_lowercase();
+    let slug = slugify(team_ref);
+    let team = teams
+        .iter()
+        .find(|t| t.id.to_lowercase() == lower || t.slug() == slug || t.name.to_lowercase() == lower)
+        .ok_or_else(|| format!("team '{}' not found", team_ref))?;
+
+    // Generate a deterministic snapshot hash
+    let snapshot = serde_json::to_string(team)
+        .map_err(|e| format!("failed to serialize team: {}", e))?;
+    let hash = format!("{:x}", md5_hash(snapshot.as_bytes()));
+
+    let changelog = json!({
+        "team": team.name,
+        "team_id": team.id,
+        "slug": team.slug(),
+        "snapshot_hash": hash,
+        "member_count": team.members.len(),
+        "is_preset": team.is_preset,
+        "members": team.members.iter().map(|m| json!({
+            "id": m.id,
+            "name": m.name,
+            "role": m.role,
+            "provider": m.provider.slug(),
+            "fallback_provider": m.fallback_provider.map(|p| p.slug()),
+        })).collect::<Vec<_>>(),
+    });
+
+    Ok(format!(
+        "Team snapshot for \"{}\" (hash: {}):\n{}",
+        team.name,
+        &hash[..8],
+        serde_json::to_string_pretty(&changelog)?
+    ))
+}
+
+/// Simple MD5-like hash for snapshot identification.
+fn md5_hash(data: &[u8]) -> u128 {
+    let mut hash: u128 = 0;
+    for (i, &byte) in data.iter().enumerate() {
+        hash = hash.wrapping_mul(31).wrapping_add(byte as u128);
+        hash = hash.rotate_left((i % 16) as u32);
+    }
+    hash
 }

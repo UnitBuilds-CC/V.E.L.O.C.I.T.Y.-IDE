@@ -988,3 +988,110 @@ fn bulk_import_members_adds_multiple() {
     assert_eq!(team.members[3].name, "DevOps");
     assert_eq!(team.members[4].name, "Security");
 }
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Batch 6: Member Failover / Version Control Tests
+// ═══════════════════════════════════════════════════════════════════════════
+
+#[test]
+fn team_changelog_returns_snapshot_hash() {
+    let (_temp, root) = setup_root();
+    create_test_team(&root);
+
+    let output = call_tool_in_workspace(
+        &root,
+        "team_changelog",
+        &json!({ "team_id": "test-team" }),
+    )
+    .unwrap();
+
+    assert!(output.contains("Team snapshot"));
+    assert!(output.contains("snapshot_hash"));
+    assert!(output.contains("Test Team"));
+}
+
+#[test]
+fn team_changelog_hash_changes_on_modification() {
+    let (_temp, root) = setup_root();
+    create_test_team(&root);
+
+    let output1 = call_tool_in_workspace(
+        &root,
+        "team_changelog",
+        &json!({ "team_id": "test-team" }),
+    )
+    .unwrap();
+
+    // Modify the team
+    call_tool_in_workspace(
+        &root,
+        "add_team_member",
+        &json!({
+            "team_id": "test-team",
+            "member": { "name": "New Member", "role": "Testing" }
+        }),
+    )
+    .unwrap();
+
+    let output2 = call_tool_in_workspace(
+        &root,
+        "team_changelog",
+        &json!({ "team_id": "test-team" }),
+    )
+    .unwrap();
+
+    // Extract hashes (they should differ)
+    let hash1 = output1.find("\"snapshot_hash\"").and_then(|pos| {
+        let s = &output1[pos + 15..];
+        let colon = s.find(':')?;
+        let s = &s[colon + 1..];
+        let q1 = s.find('"')?;
+        let s = &s[q1 + 1..];
+        let q2 = s.find('"')?;
+        Some(&s[..q2])
+    });
+    let hash2 = output2.find("\"snapshot_hash\"").and_then(|pos| {
+        let s = &output2[pos + 15..];
+        let colon = s.find(':')?;
+        let s = &s[colon + 1..];
+        let q1 = s.find('"')?;
+        let s = &s[q1 + 1..];
+        let q2 = s.find('"')?;
+        Some(&s[..q2])
+    });
+
+    assert!(hash1.is_some());
+    assert!(hash2.is_some());
+    assert_ne!(hash1.unwrap(), hash2.unwrap(), "hash should change after modification");
+}
+
+#[test]
+fn member_with_fallback_provider() {
+    let (_temp, root) = setup_root();
+
+    let output = call_tool_in_workspace(
+        &root,
+        "create_expert_team",
+        &json!({
+            "name": "Failover Team",
+            "members": [
+                {
+                    "name": "Primary Dev",
+                    "role": "Backend",
+                    "provider": "openrouter",
+                    "fallback_provider": "cloudflare"
+                }
+            ]
+        }),
+    )
+    .unwrap();
+
+    assert!(output.contains("Created team"));
+
+    let canon = root.canonicalize().unwrap();
+    let teams = load_expert_teams(&canon);
+    let team = teams.iter().find(|t| t.slug() == "failover-team").unwrap();
+    assert_eq!(team.members[0].name, "Primary Dev");
+    // fallback_provider is parsed from slug
+    assert!(team.members[0].fallback_provider.is_some());
+}

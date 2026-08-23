@@ -18,6 +18,9 @@ pub struct ExpertMember {
     #[serde(default)]
     pub tools: Vec<String>,
     pub workflow_instructions: String,
+    /// Optional fallback provider used when the primary provider is unavailable.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fallback_provider: Option<AiProvider>,
 }
 
 impl ExpertMember {
@@ -41,6 +44,7 @@ impl ExpertMember {
             scope_patterns: scope_patterns.into_iter().map(String::from).collect(),
             tools: Vec::new(),
             workflow_instructions: workflow_instructions.to_string(),
+            fallback_provider: None,
         }
     }
 
@@ -467,6 +471,7 @@ impl ExpertTeam {
                 scope_patterns: m.scope_patterns.clone(),
                 tools: m.tools.clone(),
                 workflow_instructions: m.workflow_instructions.clone(),
+                fallback_provider: m.fallback_provider,
             })
             .collect();
         ExpertTeam {
@@ -796,6 +801,14 @@ pub fn serialize_expert_teams_nda(teams: &[ExpertTeam]) -> String {
                 mi,
                 encode_nda_text(&m.workflow_instructions)
             ));
+            if let Some(fallback) = &m.fallback_provider {
+                lines.push(format!(
+                    "member\t{}\t{}\tfallback_provider\t{}",
+                    ti,
+                    mi,
+                    fallback.slug()
+                ));
+            }
             for skill in &m.skills {
                 lines.push(format!(
                     "member_list\t{}\t{}\tskills\t{}",
@@ -836,6 +849,7 @@ struct MemberBuilder {
     skills: Vec<String>,
     scope_patterns: Vec<String>,
     tools: Vec<String>,
+    fallback_provider: Option<AiProvider>,
 }
 
 #[derive(Default)]
@@ -896,6 +910,7 @@ pub fn parse_expert_teams_nda(text: &str) -> Vec<ExpertTeam> {
                 "provider" => member.provider = AiProvider::from_slug(value),
                 "model_id" => member.model_id = decode_nda_text(value),
                 "workflow_instructions" => member.workflow_instructions = decode_nda_text(value),
+                "fallback_provider" => member.fallback_provider = AiProvider::from_slug(value),
                 _ => {}
             }
             continue;
@@ -943,6 +958,7 @@ pub fn parse_expert_teams_nda(text: &str) -> Vec<ExpertTeam> {
                     scope_patterns: m.scope_patterns,
                     tools: m.tools,
                     workflow_instructions: m.workflow_instructions,
+                    fallback_provider: m.fallback_provider,
                 })
                 .collect(),
         })
