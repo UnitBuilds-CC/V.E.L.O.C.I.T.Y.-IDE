@@ -12,8 +12,96 @@
 use super::vulkan_init::*;
 use ash::vk;
 use ash::Device;
+use serde::Serialize;
 use std::ffi::CString;
 use std::time::Instant;
+
+/// Qwen layer model dimensions.
+#[derive(Debug, Clone, Serialize)]
+pub struct QwenLayerConfig {
+    pub hidden_size: usize,
+    pub ffn_size: usize,
+    pub n_heads: usize,
+    pub n_kv_heads: usize,
+    pub head_dim: usize,
+}
+
+/// Describes the compute dispatches for a Qwen layer.
+#[derive(Debug, Clone, Serialize)]
+pub struct QwenDispatchPlan {
+    pub int4_dispatches: usize,
+    pub activation_dispatches: usize,
+    pub total_dispatches: usize,
+    pub descriptor_sets: usize,
+}
+
+/// Diagnostic info about a Qwen layer configuration.
+#[derive(Debug, Clone, Serialize)]
+pub struct QwenLayerInfo {
+    pub config: QwenLayerConfig,
+    pub dispatch_plan: QwenDispatchPlan,
+    pub weight_buffers: usize,
+    pub total_weight_bytes_estimate: usize,
+    pub validation_issues: Vec<String>,
+}
+
+/// Validate Qwen layer dimensions.
+pub fn validate_qwen_config(cfg: &QwenLayerConfig) -> Vec<String> {
+    let mut issues = Vec::new();
+    if cfg.hidden_size == 0 {
+        issues.push("hidden_size must be > 0".into());
+    }
+    if cfg.ffn_size == 0 {
+        issues.push("ffn_size must be > 0".into());
+    }
+    if cfg.n_heads == 0 {
+        issues.push("n_heads must be > 0".into());
+    }
+    if cfg.n_kv_heads == 0 {
+        issues.push("n_kv_heads must be > 0".into());
+    }
+    if cfg.head_dim == 0 {
+        issues.push("head_dim must be > 0".into());
+    }
+    if cfg.n_heads % cfg.n_kv_heads != 0 && cfg.n_kv_heads != 0 && cfg.n_heads != 0 {
+        issues.push(format!(
+            "n_heads ({}) must be divisible by n_kv_heads ({})",
+            cfg.n_heads, cfg.n_kv_heads
+        ));
+    }
+    issues
+}
+
+/// Compute the dispatch plan for a Qwen layer (pure function).
+pub fn qwen_dispatch_plan() -> QwenDispatchPlan {
+    let int4_dispatches = 7; // Q, K, V, O, gate, up, down
+    let activation_dispatches = 1; // SiLU activation
+    let total_dispatches = int4_dispatches + activation_dispatches;
+    let descriptor_sets = 8;
+    QwenDispatchPlan {
+        int4_dispatches,
+        activation_dispatches,
+        total_dispatches,
+        descriptor_sets,
+    }
+}
+
+/// Build diagnostic info for a Qwen layer configuration.
+pub fn qwen_layer_info(cfg: &QwenLayerConfig) -> QwenLayerInfo {
+    let issues = validate_qwen_config(cfg);
+    let plan = qwen_dispatch_plan();
+    let weight_buffers = 7;
+    let weight_bytes = cfg.hidden_size * cfg.hidden_size * 4 * 4
+        + cfg.hidden_size * cfg.ffn_size * 4 * 2
+        + cfg.ffn_size * cfg.hidden_size * 4;
+    QwenLayerInfo {
+        config: cfg.clone(),
+        dispatch_plan: plan,
+        weight_buffers,
+        total_weight_bytes_estimate: weight_bytes,
+        validation_issues: issues,
+    }
+}
 
 pub struct VulkanQwenLayer {
     pub device: Device,
@@ -614,5 +702,97 @@ impl Drop for VulkanQwenLayer {
             self.device.destroy_shader_module(self.shader_int4, None);
             self.device.destroy_shader_module(self.shader_act, None);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn default_qwen_config() -> QwenLayerConfig {
+        QwenLayerConfig {
+            hidden_size: 2304,
+            ffn_size: 11008,
+            n_heads: 18,
+            n_kv_heads: 2,
+            head_dim: 128,
+        }
+    }
+
+    #[test]
+    fn validate_qwen_config_valid() {
+        let cfg = default_qwen_config();
+        assert!(validate_qwen_config(&cfg).is_empty());
+    }
+
+    #[test]
+    fn validate_qwen_config_zero_hidden() {
+        let mut cfg = default_qwen_config();
+        cfg.hidden_size = 0;
+        assert!(validate_qwen_config(&cfg).iter().any(|i| i.contains("hidden_size")));
+    }
+
+    #[test]
+    fn validate_qwen_config_heads_not_divisible() {
+        let mut cfg = default_qwen_config();
+        cfg.n_heads = 7;
+        cfg.n_kv_heads = 2;
+        assert!(validate_qwen_config(&cfg).iter().any(|i| i.contains("divisible")));
+    }
+
+    #[test]
+    fn validate_qwen_config_zero_ffn() {
+        let mut cfg = default_qwen_config();
+        cfg.ffn_size = 0;
+        assert!(validate_qwen_config(&cfg).iter().any(|i| i.contains("ffn_size")));
+    }
+
+    #[test]
+    fn qwen_dispatch_plan_works() {
+        let plan = qwen_dispatch_plan();
+        assert_eq!(plan.int4_dispatches, 7);
+        assert_eq!(plan.activation_dispatches, 1);
+        assert_eq!(plan.total_dispatches, 8);
+        assert_eq!(plan.descriptor_sets, 8);
+    }
+
+    #[test]
+    fn qwen_layer_info_works() {
+        let cfg = default_qwen_config();
+        let info = qwen_layer_info(&cfg);
+        assert!(info.validation_issues.is_empty());
+        assert_eq!(info.weight_buffers, 7);
+        assert!(info.total_weight_bytes_estimate > 0);
+        assert_eq!(info.dispatch_plan.total_dispatches, 8);
+    }
+
+    #[test]
+    fn qwen_layer_info_with_issues() {
+        let mut cfg = default_qwen_config();
+        cfg.hidden_size = 0;
+        cfg.ffn_size = 0;
+        let info = qwen_layer_info(&cfg);
+        assert!(info.validation_issues.len() >= 2);
+    }
+
+    #[test]
+    fn qwen_config_serializes() {
+        let json = serde_json::to_string(&default_qwen_config()).unwrap();
+        assert!(json.contains("hidden_size"));
+        assert!(json.contains("2304"));
+    }
+
+    #[test]
+    fn qwen_layer_info_serializes() {
+        let info = qwen_layer_info(&default_qwen_config());
+        let json = serde_json::to_string(&info).unwrap();
+        assert!(json.contains("dispatch_plan"));
+        assert!(json.contains("weight_buffers"));
+    }
+
+    #[test]
+    fn qwen_dispatch_plan_serializes() {
+        let json = serde_json::to_string(&qwen_dispatch_plan()).unwrap();
+        assert!(json.contains("int4_dispatches"));
     }
 }
