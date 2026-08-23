@@ -17,6 +17,7 @@
 use std::sync::{Arc, Mutex, MutexGuard, RwLock, RwLockReadGuard, RwLockWriteGuard};
 use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
 use std::time::{Duration, Instant};
+use serde::Serialize;
 
 /// Extension trait for `Mutex<T>` providing poisoning-tolerant locking.
 pub trait SafeMutex<T> {
@@ -279,6 +280,49 @@ impl LockMetrics {
             self.max_hold_time_us(),
         )
     }
+
+    /// Return a serializable snapshot of current metrics.
+    pub fn snapshot(&self) -> LockMetricsSnapshot {
+        LockMetricsSnapshot {
+            acquisitions: self.acquisitions(),
+            contention_events: self.contention_events(),
+            poison_recoveries: self.poison_recoveries(),
+            timeout_events: self.timeout_events(),
+            total_hold_time_us: self.total_hold_time_us(),
+            max_hold_time_us: self.max_hold_time_us(),
+            avg_hold_time_us: self.avg_hold_time_us(),
+        }
+    }
+
+    /// Contention rate as a fraction (0.0 - 1.0).
+    pub fn contention_rate(&self) -> f64 {
+        let acq = self.acquisitions();
+        if acq == 0 { 0.0 } else { self.contention_events() as f64 / acq as f64 }
+    }
+
+    /// Poison recovery rate as a fraction (0.0 - 1.0).
+    pub fn poison_rate(&self) -> f64 {
+        let acq = self.acquisitions();
+        if acq == 0 { 0.0 } else { self.poison_recoveries() as f64 / acq as f64 }
+    }
+
+    /// Timeout rate as a fraction (0.0 - 1.0).
+    pub fn timeout_rate(&self) -> f64 {
+        let acq = self.acquisitions();
+        if acq == 0 { 0.0 } else { self.timeout_events() as f64 / acq as f64 }
+    }
+}
+
+/// Serializable snapshot of lock metrics.
+#[derive(Debug, Clone, Serialize)]
+pub struct LockMetricsSnapshot {
+    pub acquisitions: u64,
+    pub contention_events: u64,
+    pub poison_recoveries: u64,
+    pub timeout_events: u64,
+    pub total_hold_time_us: u64,
+    pub max_hold_time_us: u64,
+    pub avg_hold_time_us: u64,
 }
 
 impl Default for LockMetrics {
@@ -441,6 +485,66 @@ impl LockOrder {
         held.clear();
         self.violations.store(0, AtomicOrdering::Relaxed);
     }
+
+    /// Return a serializable snapshot of the deadlock detector state.
+    pub fn snapshot(&self) -> LockOrderSnapshot {
+        let held = match self.held.lock() {
+            Ok(h) => h,
+            Err(p) => p.into_inner(),
+        };
+        LockOrderSnapshot {
+            held_lock_count: held.len(),
+            violation_count: self.violation_count(),
+            unique_threads: held.iter().map(|(t, _)| *t).collect::<std::collections::HashSet<_>>().len(),
+        }
+    }
+
+    /// Validate that no thread holds locks at non-increasing levels.
+    /// Returns a list of warnings (empty = all good).
+    pub fn validate(&self) -> Vec<String> {
+        let mut warnings = Vec::new();
+        let held = match self.held.lock() {
+            Ok(h) => h,
+            Err(p) => p.into_inner(),
+        };
+
+        // Group by thread.
+        let mut by_thread: std::collections::HashMap<std::thread::ThreadId, Vec<u32>> = std::collections::HashMap::new();
+        for (tid, level) in held.iter() {
+            by_thread.entry(*tid).or_default().push(*level);
+        }
+
+        for (tid, levels) in &by_thread {
+            let mut sorted = levels.clone();
+            sorted.sort();
+            // Check for duplicates (same level held twice by same thread).
+            for window in sorted.windows(2) {
+                if window[0] == window[1] {
+                    warnings.push(format!(
+                        "Thread {:?} holds {} locks at level {} (potential self-deadlock)",
+                        tid, window.len(), window[0]
+                    ));
+                }
+            }
+        }
+
+        if self.violation_count() > 0 {
+            warnings.push(format!(
+                "{} lock ordering violation(s) detected",
+                self.violation_count()
+            ));
+        }
+
+        warnings
+    }
+}
+
+/// Serializable snapshot of the lock order detector.
+#[derive(Debug, Clone, Serialize)]
+pub struct LockOrderSnapshot {
+    pub held_lock_count: usize,
+    pub violation_count: u64,
+    pub unique_threads: usize,
 }
 
 impl Default for LockOrder {
@@ -857,5 +961,100 @@ mod tests {
         // Should recover from poisoning.
         let guard = m.lock();
         assert_eq!(*guard, 42);
+    }
+
+    // ─── LockMetrics snapshot & rate tests ───────────────────────────────
+
+    #[test]
+    fn lock_metrics_snapshot_serializes() {
+        let m = LockMetrics::new();
+        m.record_acquire();
+        m.record_acquire();
+        m.record_contention();
+        m.record_hold_time(1000);
+
+        let snap = m.snapshot();
+        let json = serde_json::to_string(&snap).unwrap();
+        assert!(json.contains("\"acquisitions\":2"));
+        assert!(json.contains("\"contention_events\":1"));
+        // avg = 1000 / 2 acq = 500
+        assert!(json.contains("\"avg_hold_time_us\":500"));
+    }
+
+    #[test]
+    fn lock_metrics_contention_rate() {
+        let m = LockMetrics::new();
+        m.record_acquire();
+        m.record_acquire();
+        m.record_contention();
+        assert!((m.contention_rate() - 0.5).abs() < 0.01);
+    }
+
+    #[test]
+    fn lock_metrics_poison_rate_zero_acquisitions() {
+        let m = LockMetrics::new();
+        assert_eq!(m.poison_rate(), 0.0);
+        assert_eq!(m.timeout_rate(), 0.0);
+    }
+
+    #[test]
+    fn lock_metrics_timeout_rate() {
+        let m = LockMetrics::new();
+        m.record_acquire();
+        m.record_acquire();
+        m.record_acquire();
+        m.record_acquire();
+        m.record_timeout();
+        assert!((m.timeout_rate() - 0.25).abs() < 0.01);
+    }
+
+    // ─── LockOrder snapshot & validate tests ─────────────────────────────
+
+    #[test]
+    fn lock_order_snapshot_basic() {
+        let detector = LockOrder::new();
+        detector.acquire(1);
+        detector.acquire(2);
+
+        let snap = detector.snapshot();
+        let json = serde_json::to_string(&snap).unwrap();
+        assert!(json.contains("\"held_lock_count\":2"));
+        assert!(json.contains("\"violation_count\":0"));
+
+        detector.release(2);
+        detector.release(1);
+    }
+
+    #[test]
+    fn lock_order_validate_clean() {
+        let detector = LockOrder::new();
+        detector.acquire(1);
+        detector.acquire(2);
+        let warnings = detector.validate();
+        assert!(warnings.is_empty());
+        detector.release(2);
+        detector.release(1);
+    }
+
+    #[test]
+    fn lock_order_validate_detects_violations() {
+        let detector = LockOrder::new();
+        detector.acquire(5);
+        detector.acquire(3); // violation
+        let warnings = detector.validate();
+        assert!(!warnings.is_empty());
+        assert!(warnings.iter().any(|w| w.contains("violation")));
+        detector.release(3);
+        detector.release(5);
+    }
+
+    #[test]
+    fn lock_order_snapshot_after_reset() {
+        let detector = LockOrder::new();
+        detector.acquire(1);
+        detector.reset();
+        let snap = detector.snapshot();
+        assert_eq!(snap.held_lock_count, 0);
+        assert_eq!(snap.violation_count, 0);
     }
 }
