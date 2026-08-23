@@ -135,6 +135,58 @@ impl NdaVec {
     pub fn memory_bytes(&self) -> usize {
         self.bitmap_bytes() * 2
     }
+
+    /// Validate the NdaVec for consistency.
+    /// Returns a list of warnings (empty = all good).
+    pub fn validate(&self) -> Vec<String> {
+        let mut warnings = Vec::new();
+
+        if self.len == 0 {
+            warnings.push("NdaVec has zero length".to_string());
+        }
+
+        let expected_bytes = self.len.div_ceil(8);
+        if self.sign.len() != expected_bytes {
+            warnings.push(format!(
+                "sign bitmap size mismatch: expected {} bytes, got {}",
+                expected_bytes,
+                self.sign.len()
+            ));
+        }
+        if self.extra.len() != expected_bytes {
+            warnings.push(format!(
+                "extra bitmap size mismatch: expected {} bytes, got {}",
+                expected_bytes,
+                self.extra.len()
+            ));
+        }
+
+        warnings
+    }
+
+    /// Return diagnostic information about this NdaVec.
+    pub fn info(&self) -> NdaVecInfo {
+        let hist = self.value_histogram();
+        NdaVecInfo {
+            len: self.len,
+            log2_scale: self.log2_scale,
+            memory_bytes: self.memory_bytes(),
+            bits_per_element: 2.0,
+            value_histogram: hist,
+            unique_values: hist.iter().filter(|&&c| c > 0).count(),
+        }
+    }
+}
+
+/// Diagnostic information about an NdaVec.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct NdaVecInfo {
+    pub len: usize,
+    pub log2_scale: i8,
+    pub memory_bytes: usize,
+    pub bits_per_element: f32,
+    pub value_histogram: [usize; 4],
+    pub unique_values: usize,
 }
 
 #[inline]
@@ -244,5 +296,59 @@ mod tests {
         assert_eq!(div_pow2_i64(1024, 3), 128);
         assert_eq!(div_pow2_i64(1024, 0), 1024);
         assert_eq!(div_pow2_i64(1024, 63), 0);
+    }
+
+    #[test]
+    fn nda_vec_validate_clean() {
+        let v = NdaVec::from_i32_slice(&[1, -1, 2, -2], 0);
+        let w = v.validate();
+        assert!(w.is_empty(), "expected no warnings, got: {:?}", w);
+    }
+
+    #[test]
+    fn nda_vec_validate_zero_length() {
+        let v = NdaVec {
+            len: 0,
+            log2_scale: 0,
+            sign: vec![].into(),
+            extra: vec![].into(),
+        };
+        let w = v.validate();
+        assert_eq!(w.len(), 1);
+        assert!(w[0].contains("zero length"));
+    }
+
+    #[test]
+    fn nda_vec_validate_bitmap_mismatch() {
+        let v = NdaVec {
+            len: 16, // expects 2 bytes
+            log2_scale: 0,
+            sign: vec![0xFF; 3].into(), // wrong: 3 bytes
+            extra: vec![0x00; 2].into(),
+        };
+        let w = v.validate();
+        assert_eq!(w.len(), 1);
+        assert!(w[0].contains("sign bitmap size mismatch"));
+    }
+
+    #[test]
+    fn nda_vec_info_basic() {
+        let v = NdaVec::from_i32_slice(&[1, -1, 2, -2, 1], 3);
+        let info = v.info();
+        assert_eq!(info.len, 5);
+        assert_eq!(info.log2_scale, 3);
+        assert_eq!(info.memory_bytes, 2); // ceil(5/8)=1 byte * 2
+        assert_eq!(info.bits_per_element, 2.0);
+        assert!(info.unique_values > 0);
+        assert_eq!(info.value_histogram.iter().sum::<usize>(), 5);
+    }
+
+    #[test]
+    fn nda_vec_info_serializes() {
+        let v = NdaVec::from_i32_slice(&[1, 2, -1, -2], 0);
+        let info = v.info();
+        let json = serde_json::to_string(&info).unwrap();
+        assert!(json.contains("\"len\":4"));
+        assert!(json.contains("\"bits_per_element\":2.0"));
     }
 }

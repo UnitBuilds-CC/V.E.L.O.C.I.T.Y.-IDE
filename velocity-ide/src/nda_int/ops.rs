@@ -1,5 +1,29 @@
 use super::nda_vec::*;
 use super::tables::*;
+use serde::Serialize;
+
+/// Batch operation report for NDA vector operations.
+#[derive(Debug, Clone, Serialize)]
+pub struct NdaOpsReport {
+    pub operation: String,
+    pub count: usize,
+    pub total_elapsed_us: u64,
+    pub per_op_avg_us: f64,
+}
+
+/// Validate that two NdaVecs are compatible for binary operations.
+pub fn validate_binary_op(a: &NdaVec, b: &NdaVec) -> Vec<String> {
+    let mut warnings = Vec::new();
+    if a.len != b.len {
+        warnings.push(format!(
+            "length mismatch: {} vs {}",
+            a.len, b.len
+        ));
+    }
+    warnings.extend(a.validate());
+    warnings.extend(b.validate());
+    warnings
+}
 
 pub fn nda_vec_add_inplace(x: &mut NdaVec, delta: &NdaVec) {
     debug_assert_eq!(x.len, delta.len);
@@ -327,6 +351,71 @@ pub fn swiglu_nda(gate: &NdaVec, up: &NdaVec, silu: &SiluLut) -> NdaVec {
     }
 }
 
+/// Batch in-place addition: add each delta in `deltas` to `x` sequentially.
+/// Returns a report with timing diagnostics.
+pub fn nda_vec_add_batch(x: &mut NdaVec, deltas: &[NdaVec]) -> NdaOpsReport {
+    let start = std::time::Instant::now();
+    for delta in deltas {
+        nda_vec_add_inplace(x, delta);
+    }
+    let elapsed = start.elapsed().as_micros() as u64;
+    NdaOpsReport {
+        operation: "add_batch".to_string(),
+        count: deltas.len(),
+        total_elapsed_us: elapsed,
+        per_op_avg_us: if deltas.is_empty() { 0.0 } else { elapsed as f64 / deltas.len() as f64 },
+    }
+}
+
+/// Batch RMS normalization: normalize each vector in `vecs` with the same weight.
+/// Returns results and a timing report.
+pub fn rms_norm_batch(vecs: &[NdaVec], w: &NdaVec, eps_shift: u32) -> (Vec<NdaVec>, NdaOpsReport) {
+    let start = std::time::Instant::now();
+    let results: Vec<NdaVec> = vecs.iter().map(|x| rms_norm_nda(x, w, eps_shift)).collect();
+    let elapsed = start.elapsed().as_micros() as u64;
+    let report = NdaOpsReport {
+        operation: "rms_norm_batch".to_string(),
+        count: vecs.len(),
+        total_elapsed_us: elapsed,
+        per_op_avg_us: if vecs.is_empty() { 0.0 } else { elapsed as f64 / vecs.len() as f64 },
+    };
+    (results, report)
+}
+
+/// Batch SiLU activation: apply SiLU to each vector.
+pub fn silu_batch(silu: &SiluLut, vecs: &[NdaVec]) -> (Vec<NdaVec>, NdaOpsReport) {
+    let start = std::time::Instant::now();
+    let results: Vec<NdaVec> = vecs.iter().map(|x| silu.apply(x)).collect();
+    let elapsed = start.elapsed().as_micros() as u64;
+    let report = NdaOpsReport {
+        operation: "silu_batch".to_string(),
+        count: vecs.len(),
+        total_elapsed_us: elapsed,
+        per_op_avg_us: if vecs.is_empty() { 0.0 } else { elapsed as f64 / vecs.len() as f64 },
+    };
+    (results, report)
+}
+
+/// Batch SwiGLU: apply SwiGLU to each (gate, up) pair.
+pub fn swiglu_batch(
+    pairs: &[(&NdaVec, &NdaVec)],
+    silu: &SiluLut,
+) -> (Vec<NdaVec>, NdaOpsReport) {
+    let start = std::time::Instant::now();
+    let results: Vec<NdaVec> = pairs
+        .iter()
+        .map(|(gate, up)| swiglu_nda(gate, up, silu))
+        .collect();
+    let elapsed = start.elapsed().as_micros() as u64;
+    let report = NdaOpsReport {
+        operation: "swiglu_batch".to_string(),
+        count: pairs.len(),
+        total_elapsed_us: elapsed,
+        per_op_avg_us: if pairs.is_empty() { 0.0 } else { elapsed as f64 / pairs.len() as f64 },
+    };
+    (results, report)
+}
+
 pub struct NdaEmbedding {
     #[allow(dead_code)]
     pub vocab_size: usize,
@@ -363,6 +452,45 @@ impl NdaEmbedding {
             log2_scale: self.log2_scale,
             sign: self.sign[start..start + stride].to_vec().into(),
             extra: self.extra[start..start + stride].to_vec().into(),
+        }
+    }
+
+    /// Validate the embedding table for consistency.
+    pub fn validate(&self) -> Vec<String> {
+        let mut warnings = Vec::new();
+        let stride = self.stride();
+        let expected_bytes = self.vocab_size * stride;
+        if self.sign.len() != expected_bytes {
+            warnings.push(format!(
+                "sign bytes mismatch: expected {}, got {}",
+                expected_bytes,
+                self.sign.len()
+            ));
+        }
+        if self.extra.len() != expected_bytes {
+            warnings.push(format!(
+                "extra bytes mismatch: expected {}, got {}",
+                expected_bytes,
+                self.extra.len()
+            ));
+        }
+        if self.hidden_size == 0 {
+            warnings.push("hidden_size is zero".to_string());
+        }
+        if self.vocab_size == 0 {
+            warnings.push("vocab_size is zero".to_string());
+        }
+        warnings
+    }
+
+    /// Return diagnostic info about this embedding table.
+    pub fn info(&self) -> NdaEmbeddingInfo {
+        NdaEmbeddingInfo {
+            vocab_size: self.vocab_size,
+            hidden_size: self.hidden_size,
+            log2_scale: self.log2_scale,
+            total_bytes: self.sign.len() + self.extra.len(),
+            bits_per_embedding: (self.hidden_size * 2) as u32,
         }
     }
 
@@ -405,5 +533,120 @@ impl NdaEmbedding {
             sign,
             extra,
         }
+    }
+}
+
+/// Diagnostic information about an NdaEmbedding table.
+#[derive(Debug, Clone, Serialize)]
+pub struct NdaEmbeddingInfo {
+    pub vocab_size: usize,
+    pub hidden_size: usize,
+    pub log2_scale: i8,
+    pub total_bytes: usize,
+    pub bits_per_embedding: u32,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn validate_binary_op_compatible() {
+        let a = NdaVec::from_i32_slice(&[1, 2, 3, 4], 0);
+        let b = NdaVec::from_i32_slice(&[1, -1, 2, -2], 0);
+        let w = validate_binary_op(&a, &b);
+        assert!(w.is_empty());
+    }
+
+    #[test]
+    fn validate_binary_op_length_mismatch() {
+        let a = NdaVec::from_i32_slice(&[1, 2, 3, 4], 0);
+        let b = NdaVec::from_i32_slice(&[1, -1], 0);
+        let w = validate_binary_op(&a, &b);
+        assert!(!w.is_empty());
+        assert!(w[0].contains("length mismatch"));
+    }
+
+    #[test]
+    fn nda_vec_add_batch_report() {
+        let mut x = NdaVec::from_i32_slice(&[1, 1, 1, 1], 0);
+        let deltas = vec![
+            NdaVec::from_i32_slice(&[1, 1, 1, 1], 0),
+            NdaVec::from_i32_slice(&[1, 1, 1, 1], 0),
+        ];
+        let report = nda_vec_add_batch(&mut x, &deltas);
+        assert_eq!(report.count, 2);
+        assert_eq!(report.operation, "add_batch");
+    }
+
+    #[test]
+    fn rms_norm_batch_report() {
+        let vecs = vec![
+            NdaVec::from_i32_slice(&[1, 2, -1, -2], 0),
+            NdaVec::from_i32_slice(&[2, -1, 1, -2], 0),
+        ];
+        let w = NdaVec::from_i32_slice(&[1, 1, 1, 1], 0);
+        let (results, report) = rms_norm_batch(&vecs, &w, 2);
+        assert_eq!(results.len(), 2);
+        assert_eq!(report.count, 2);
+        assert_eq!(report.operation, "rms_norm_batch");
+    }
+
+    #[test]
+    fn silu_batch_report() {
+        let silu = SiluLut::new();
+        let vecs = vec![
+            NdaVec::from_i32_slice(&[1, 2, -1, -2], 0),
+            NdaVec::from_i32_slice(&[2, -1, 1, -2], 0),
+        ];
+        let (results, report) = silu_batch(&silu, &vecs);
+        assert_eq!(results.len(), 2);
+        assert_eq!(report.count, 2);
+    }
+
+    #[test]
+    fn swiglu_batch_report() {
+        let silu = SiluLut::new();
+        let g1 = NdaVec::from_i32_slice(&[1, 2, -1, -2], 0);
+        let u1 = NdaVec::from_i32_slice(&[1, 1, 1, 1], 0);
+        let g2 = NdaVec::from_i32_slice(&[-1, -2, 1, 2], 0);
+        let u2 = NdaVec::from_i32_slice(&[2, 2, 2, 2], 0);
+        let pairs = vec![(&g1, &u1), (&g2, &u2)];
+        let (results, report) = swiglu_batch(&pairs, &silu);
+        assert_eq!(results.len(), 2);
+        assert_eq!(report.count, 2);
+    }
+
+    #[test]
+    fn nda_embedding_validate_and_info() {
+        let embed = NdaEmbedding::from_f32(&[0.1, -0.2, 0.3, -0.4, 0.5, -0.6], 2, 3);
+        let w = embed.validate();
+        assert!(w.is_empty(), "expected no warnings, got: {:?}", w);
+        let info = embed.info();
+        assert_eq!(info.vocab_size, 2);
+        assert_eq!(info.hidden_size, 3);
+        assert!(info.total_bytes > 0);
+    }
+
+    #[test]
+    fn nda_embedding_info_serializes() {
+        let embed = NdaEmbedding::from_f32(&[0.1, -0.2, 0.3, -0.4], 2, 2);
+        let info = embed.info();
+        let json = serde_json::to_string(&info).unwrap();
+        assert!(json.contains("\"vocab_size\":2"));
+        assert!(json.contains("\"hidden_size\":2"));
+    }
+
+    #[test]
+    fn nda_ops_report_serializes() {
+        let report = NdaOpsReport {
+            operation: "test".to_string(),
+            count: 5,
+            total_elapsed_us: 100,
+            per_op_avg_us: 20.0,
+        };
+        let json = serde_json::to_string(&report).unwrap();
+        assert!(json.contains("\"operation\":\"test\""));
+        assert!(json.contains("\"count\":5"));
     }
 }
