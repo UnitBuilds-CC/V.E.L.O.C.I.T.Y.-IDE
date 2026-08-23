@@ -184,6 +184,80 @@ pub fn pack_weights_uvec4_batch(
     (results, report)
 }
 
+/// Summary statistics about a set of packing operations.
+#[derive(Debug, Clone, Serialize)]
+pub struct PackingSummary {
+    pub total_ops: usize,
+    pub valid_ops: usize,
+    pub invalid_ops: usize,
+    pub compression_ratio: f64,
+    pub total_issues: usize,
+    pub heaviest_op: Option<String>,
+    pub heaviest_op_bytes: usize,
+}
+
+impl BatchPackingReport {
+    /// Build a compact summary from this batch report.
+    pub fn summary(&self) -> PackingSummary {
+        let compression = if self.total_input_bytes > 0 {
+            self.total_output_bytes as f64 / self.total_input_bytes as f64
+        } else {
+            0.0
+        };
+        PackingSummary {
+            total_ops: self.operations,
+            valid_ops: if self.all_valid { self.operations } else { 0 },
+            invalid_ops: if self.all_valid { 0 } else { self.issues.len() },
+            compression_ratio: compression,
+            total_issues: self.issues.len(),
+            heaviest_op: None,
+            heaviest_op_bytes: 0,
+        }
+    }
+}
+
+/// Validate that input data is suitable for NDA input packing.
+pub fn validate_inputs_nda(data: &[u32], ctx: &str) -> Vec<String> {
+    let mut issues = Vec::new();
+    if data.is_empty() {
+        issues.push(format!("{ctx}: input is empty"));
+    }
+    if data.len() % 8 != 0 {
+        issues.push(format!(
+            "{ctx}: length {} is not a multiple of 8 (need 8 words per col-group-of-128)",
+            data.len()
+        ));
+    }
+    issues
+}
+
+/// Pack NDA inputs with validation and a diagnostic report.
+pub fn pack_inputs_nda_report(
+    inputs: &[u32],
+) -> ((Vec<u32>, Vec<u32>), PackingReport) {
+    let start = Instant::now();
+    let issues = validate_inputs_nda(inputs, "pack_inputs_nda");
+    let valid = issues.is_empty();
+
+    let result = if valid {
+        pack_inputs_nda(inputs)
+    } else {
+        (Vec::new(), Vec::new())
+    };
+
+    let elapsed = start.elapsed().as_micros() as u64;
+    let out_bytes = (result.0.len() + result.1.len()) * 4;
+    let report = PackingReport {
+        operation: "pack_inputs_nda".to_string(),
+        input_bytes: inputs.len() * 4,
+        output_bytes: out_bytes,
+        elapsed_us: elapsed,
+        validation_issues: issues,
+        valid,
+    };
+    (result, report)
+}
+
 pub fn pack_weights_uvec4(src: &[u8], k: usize, n: usize) -> Vec<u8> {
     // SAFETY: `src` is a weight buffer whose length is guaranteed to be a multiple of 4
     // by the model loader. Pointer cast is valid because the buffer is 4-byte aligned.
@@ -562,5 +636,87 @@ mod tests {
         let json = serde_json::to_string(&report).unwrap();
         assert!(json.contains("\"operations\":26"));
         assert!(json.contains("\"all_valid\":true"));
+    }
+
+    // ─── New diagnostic tests ─────────────────────────────────────────────
+
+    #[test]
+    fn packing_summary_from_valid_batch() {
+        let items = vec![
+            (vec![0u8; 64], 64, 4),
+            (vec![0u8; 64], 64, 4),
+        ];
+        let (_, report) = pack_weights_uvec4_batch(&items);
+        let summary = report.summary();
+        assert_eq!(summary.total_ops, 2);
+        assert_eq!(summary.valid_ops, 2);
+        assert_eq!(summary.invalid_ops, 0);
+        assert_eq!(summary.total_issues, 0);
+        assert!(summary.compression_ratio > 0.0);
+    }
+
+    #[test]
+    fn packing_summary_from_empty_batch() {
+        let items: Vec<(Vec<u8>, usize, usize)> = vec![];
+        let (_, report) = pack_weights_uvec4_batch(&items);
+        let summary = report.summary();
+        assert_eq!(summary.total_ops, 0);
+        assert_eq!(summary.compression_ratio, 0.0);
+    }
+
+    #[test]
+    fn validate_inputs_nda_ok() {
+        let data = vec![0u32; 8];
+        assert!(validate_inputs_nda(&data, "test").is_empty());
+    }
+
+    #[test]
+    fn validate_inputs_nda_empty() {
+        let data: Vec<u32> = vec![];
+        let issues = validate_inputs_nda(&data, "test");
+        assert!(issues.iter().any(|i| i.contains("empty")));
+    }
+
+    #[test]
+    fn validate_inputs_nda_bad_length() {
+        let data = vec![0u32; 7]; // not multiple of 8
+        let issues = validate_inputs_nda(&data, "test");
+        assert!(issues.iter().any(|i| i.contains("multiple of 8")));
+    }
+
+    #[test]
+    fn pack_inputs_nda_report_valid() {
+        let input = vec![0u32; 8];
+        let ((act, pos), report) = pack_inputs_nda_report(&input);
+        assert!(report.valid);
+        assert_eq!(report.operation, "pack_inputs_nda");
+        assert_eq!(report.input_bytes, 32);
+        assert_eq!(act.len(), 4);
+        assert_eq!(pos.len(), 4);
+    }
+
+    #[test]
+    fn pack_inputs_nda_report_invalid() {
+        let input = vec![0u32; 3]; // bad length
+        let ((act, pos), report) = pack_inputs_nda_report(&input);
+        assert!(!report.valid);
+        assert!(act.is_empty());
+        assert!(pos.is_empty());
+    }
+
+    #[test]
+    fn packing_summary_serializes() {
+        let summary = PackingSummary {
+            total_ops: 10,
+            valid_ops: 10,
+            invalid_ops: 0,
+            compression_ratio: 1.0,
+            total_issues: 0,
+            heaviest_op: Some("layer_0_q_proj".to_string()),
+            heaviest_op_bytes: 4096,
+        };
+        let json = serde_json::to_string(&summary).unwrap();
+        assert!(json.contains("compression_ratio"));
+        assert!(json.contains("layer_0_q_proj"));
     }
 }
