@@ -932,6 +932,215 @@ pub fn optimize_ast_with_report(nodes: &[NdaNode]) -> (Vec<NdaNode>, Optimizatio
     (result, report)
 }
 
+/// Higher-level summary of optimization effectiveness.
+#[derive(Debug, Clone, Serialize)]
+pub struct OptimizationSummary {
+    pub compression_ratio: f64,
+    pub total_optimizations: usize,
+    pub effectiveness: String,
+    pub has_side_effects: bool,
+    pub validation_issues: Vec<String>,
+}
+
+/// Compute a high-level summary from an OptimizationReport.
+pub fn optimization_summary(report: &OptimizationReport) -> OptimizationSummary {
+    let total_opts = report.constants_folded
+        + report.dead_nodes_removed
+        + report.loops_unrolled
+        + report.dead_branches_eliminated
+        + report.identities_simplified
+        + report.double_negations_eliminated
+        + report.strength_reductions;
+
+    let ratio = if report.input_nodes > 0 {
+        report.output_nodes as f64 / report.input_nodes as f64
+    } else {
+        1.0
+    };
+
+    let effectiveness = if ratio <= 0.5 {
+        "high"
+    } else if ratio < 0.8 {
+        "moderate"
+    } else if ratio < 1.0 {
+        "low"
+    } else {
+        "none"
+    }
+    .to_string();
+
+    let mut issues = validate_optimization_report(report);
+
+    OptimizationSummary {
+        compression_ratio: ratio,
+        total_optimizations: total_opts,
+        effectiveness,
+        has_side_effects: report.dead_nodes_removed > 0 || report.dead_branches_eliminated > 0,
+        validation_issues: issues,
+    }
+}
+
+/// Validate that an OptimizationReport is internally consistent.
+pub fn validate_optimization_report(report: &OptimizationReport) -> Vec<String> {
+    let mut issues = Vec::new();
+
+    if report.output_nodes > report.input_nodes && report.input_nodes > 0 {
+        issues.push(format!(
+            "output_nodes ({}) > input_nodes ({}) — optimizer should not grow the AST",
+            report.output_nodes, report.input_nodes
+        ));
+    }
+
+    if report.input_nodes == 0 && report.output_nodes > 0 {
+        issues.push("input_nodes is 0 but output_nodes > 0".to_string());
+    }
+
+    issues
+}
+
+/// Distribution of node kinds in an AST.
+#[derive(Debug, Clone, Serialize)]
+pub struct NodeKindDistribution {
+    pub total_nodes: usize,
+    pub int_count: usize,
+    pub load_count: usize,
+    pub store_count: usize,
+    pub let_count: usize,
+    pub add_count: usize,
+    pub compare_count: usize,
+    pub loop_count: usize,
+    pub while_count: usize,
+    pub if_count: usize,
+    pub scope_count: usize,
+    pub return_count: usize,
+    pub print_count: usize,
+    pub matrix_count: usize,
+    pub norm_count: usize,
+    pub call_count: usize,
+    pub vec_op_count: usize,
+    pub other_count: usize,
+    pub max_depth: usize,
+}
+
+/// Analyze AST complexity: node kind distribution and max nesting depth.
+pub fn ast_complexity_info(nodes: &[NdaNode]) -> NodeKindDistribution {
+    let mut dist = NodeKindDistribution {
+        total_nodes: 0,
+        int_count: 0,
+        load_count: 0,
+        store_count: 0,
+        let_count: 0,
+        add_count: 0,
+        compare_count: 0,
+        loop_count: 0,
+        while_count: 0,
+        if_count: 0,
+        scope_count: 0,
+        return_count: 0,
+        print_count: 0,
+        matrix_count: 0,
+        norm_count: 0,
+        call_count: 0,
+        vec_op_count: 0,
+        other_count: 0,
+        max_depth: 0,
+    };
+    count_kinds(nodes, &mut dist, 0);
+    dist.total_nodes = dist.int_count
+        + dist.load_count
+        + dist.store_count
+        + dist.let_count
+        + dist.add_count
+        + dist.compare_count
+        + dist.loop_count
+        + dist.while_count
+        + dist.if_count
+        + dist.scope_count
+        + dist.return_count
+        + dist.print_count
+        + dist.matrix_count
+        + dist.norm_count
+        + dist.call_count
+        + dist.vec_op_count
+        + dist.other_count;
+    dist
+}
+
+fn count_kinds(nodes: &[NdaNode], dist: &mut NodeKindDistribution, depth: usize) {
+    if depth > dist.max_depth {
+        dist.max_depth = depth;
+    }
+    for node in nodes {
+        count_kinds_node(node, dist, depth);
+    }
+}
+
+fn count_kinds_node(node: &NdaNode, dist: &mut NodeKindDistribution, depth: usize) {
+    match node {
+        NdaNode::Int { .. } => dist.int_count += 1,
+        NdaNode::Load { .. } => dist.load_count += 1,
+        NdaNode::Store { value, .. } => {
+            dist.store_count += 1;
+            count_kinds_node(value, dist, depth + 1);
+        }
+        NdaNode::Let { init, .. } => {
+            dist.let_count += 1;
+            count_kinds_node(init, dist, depth + 1);
+        }
+        NdaNode::Add { lhs, rhs } => {
+            dist.add_count += 1;
+            count_kinds_node(lhs, dist, depth + 1);
+            count_kinds_node(rhs, dist, depth + 1);
+        }
+        NdaNode::Compare { lhs, rhs, .. } => {
+            dist.compare_count += 1;
+            count_kinds_node(lhs, dist, depth + 1);
+            count_kinds_node(rhs, dist, depth + 1);
+        }
+        NdaNode::Loop { body, .. } => {
+            dist.loop_count += 1;
+            count_kinds(body, dist, depth + 1);
+        }
+        NdaNode::While { cond, body } => {
+            dist.while_count += 1;
+            count_kinds_node(cond, dist, depth + 1);
+            count_kinds(body, dist, depth + 1);
+        }
+        NdaNode::If {
+            cond,
+            then_body,
+            else_body,
+        } => {
+            dist.if_count += 1;
+            count_kinds_node(cond, dist, depth + 1);
+            count_kinds(then_body, dist, depth + 1);
+            if let Some(eb) = else_body {
+                count_kinds(eb, dist, depth + 1);
+            }
+        }
+        NdaNode::Scope { children } => {
+            dist.scope_count += 1;
+            count_kinds(children, dist, depth + 1);
+        }
+        NdaNode::Return { value } => {
+            dist.return_count += 1;
+            count_kinds_node(value, dist, depth + 1);
+        }
+        NdaNode::Print { source } => {
+            dist.print_count += 1;
+            count_kinds_node(source, dist, depth + 1);
+        }
+        NdaNode::Matrix { .. } => dist.matrix_count += 1,
+        NdaNode::Norm { .. } => dist.norm_count += 1,
+        NdaNode::Call { .. } => dist.call_count += 1,
+        NdaNode::VecOp { operand, .. } => {
+            dist.vec_op_count += 1;
+            count_kinds_node(operand, dist, depth + 1);
+        }
+        _ => dist.other_count += 1,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1043,5 +1252,201 @@ mod tests {
         // The Let should be removed since x is never loaded
         let has_let = result.iter().any(|n| matches!(n, NdaNode::Let { .. }));
         assert!(!has_let, "Dead Let should be removed");
+    }
+
+    // ── OptimizationSummary tests ─────────────────────────────────────────────
+
+    #[test]
+    fn optimization_summary_clean() {
+        let report = OptimizationReport {
+            constants_folded: 3,
+            dead_nodes_removed: 2,
+            loops_unrolled: 1,
+            dead_branches_eliminated: 0,
+            identities_simplified: 4,
+            double_negations_eliminated: 1,
+            strength_reductions: 0,
+            input_nodes: 20,
+            output_nodes: 10,
+        };
+        let summary = optimization_summary(&report);
+        assert!((summary.compression_ratio - 0.5).abs() < 1e-9);
+        assert_eq!(summary.total_optimizations, 11);
+        assert_eq!(summary.effectiveness, "high"); // 0.5 is <= 0.5
+        assert!(summary.has_side_effects); // dead_nodes_removed > 0
+        assert!(summary.validation_issues.is_empty());
+    }
+
+    #[test]
+    fn optimization_summary_no_change() {
+        let report = OptimizationReport {
+            constants_folded: 0,
+            dead_nodes_removed: 0,
+            loops_unrolled: 0,
+            dead_branches_eliminated: 0,
+            identities_simplified: 0,
+            double_negations_eliminated: 0,
+            strength_reductions: 0,
+            input_nodes: 10,
+            output_nodes: 10,
+        };
+        let summary = optimization_summary(&report);
+        assert!((summary.compression_ratio - 1.0).abs() < 1e-9);
+        assert_eq!(summary.effectiveness, "none");
+        assert!(!summary.has_side_effects);
+    }
+
+    #[test]
+    fn optimization_summary_moderate() {
+        let report = OptimizationReport {
+            constants_folded: 2,
+            dead_nodes_removed: 0,
+            loops_unrolled: 0,
+            dead_branches_eliminated: 0,
+            identities_simplified: 0,
+            double_negations_eliminated: 0,
+            strength_reductions: 0,
+            input_nodes: 10,
+            output_nodes: 7,
+        };
+        let summary = optimization_summary(&report);
+        assert_eq!(summary.effectiveness, "moderate");
+    }
+
+    #[test]
+    fn validate_report_output_exceeds_input() {
+        let report = OptimizationReport {
+            constants_folded: 0,
+            dead_nodes_removed: 0,
+            loops_unrolled: 0,
+            dead_branches_eliminated: 0,
+            identities_simplified: 0,
+            double_negations_eliminated: 0,
+            strength_reductions: 0,
+            input_nodes: 5,
+            output_nodes: 10,
+        };
+        let issues = validate_optimization_report(&report);
+        assert!(issues.iter().any(|i| i.contains("should not grow")));
+    }
+
+    #[test]
+    fn validate_report_zero_input() {
+        let report = OptimizationReport {
+            constants_folded: 0,
+            dead_nodes_removed: 0,
+            loops_unrolled: 0,
+            dead_branches_eliminated: 0,
+            identities_simplified: 0,
+            double_negations_eliminated: 0,
+            strength_reductions: 0,
+            input_nodes: 0,
+            output_nodes: 5,
+        };
+        let issues = validate_optimization_report(&report);
+        assert!(issues.iter().any(|i| i.contains("input_nodes is 0")));
+    }
+
+    // ── AST complexity tests ──────────────────────────────────────────────────
+
+    #[test]
+    fn ast_complexity_empty() {
+        let dist = ast_complexity_info(&[]);
+        assert_eq!(dist.total_nodes, 0);
+        assert_eq!(dist.max_depth, 0);
+    }
+
+    #[test]
+    fn ast_complexity_simple() {
+        let nodes = vec![
+            NdaNode::Int { value: 42 },
+            NdaNode::Load { name_hash: 1 },
+            NdaNode::Return { value: Box::new(NdaNode::Int { value: 0 }) },
+        ];
+        let dist = ast_complexity_info(&nodes);
+        assert_eq!(dist.int_count, 2);
+        assert_eq!(dist.load_count, 1);
+        assert_eq!(dist.return_count, 1);
+        assert_eq!(dist.total_nodes, 4);
+    }
+
+    #[test]
+    fn ast_complexity_nested() {
+        let nodes = vec![
+            NdaNode::Loop {
+                count: 5,
+                body: vec![
+                    NdaNode::If {
+                        cond: Box::new(NdaNode::Int { value: 1 }),
+                        then_body: vec![NdaNode::Print { source: Box::new(NdaNode::Int { value: 1 }) }],
+                        else_body: None,
+                    },
+                ],
+            },
+        ];
+        let dist = ast_complexity_info(&nodes);
+        assert_eq!(dist.loop_count, 1);
+        assert_eq!(dist.if_count, 1);
+        assert_eq!(dist.int_count, 2);
+        assert_eq!(dist.print_count, 1);
+        assert!(dist.max_depth >= 2);
+    }
+
+    #[test]
+    fn ast_complexity_with_operations() {
+        let nodes = vec![
+            NdaNode::Add {
+                lhs: Box::new(NdaNode::Load { name_hash: 1 }),
+                rhs: Box::new(NdaNode::Int { value: 5 }),
+            },
+            NdaNode::Compare {
+                op: CmpOp::Gt,
+                lhs: Box::new(NdaNode::Load { name_hash: 1 }),
+                rhs: Box::new(NdaNode::Int { value: 0 }),
+            },
+            NdaNode::VecOp {
+                op: VecOpKind::Negate,
+                operand: Box::new(NdaNode::Load { name_hash: 2 }),
+            },
+            NdaNode::Matrix { rows: 4, cols: 4, scale: 0, sign: vec![], extra: vec![] },
+            NdaNode::Norm { size: 4, weight: vec![], bias: vec![] },
+            NdaNode::Call { target: 0xABCD },
+        ];
+        let dist = ast_complexity_info(&nodes);
+        assert_eq!(dist.add_count, 1);
+        assert_eq!(dist.compare_count, 1);
+        assert_eq!(dist.vec_op_count, 1);
+        assert_eq!(dist.matrix_count, 1);
+        assert_eq!(dist.norm_count, 1);
+        assert_eq!(dist.call_count, 1);
+    }
+
+    #[test]
+    fn optimization_summary_serializable() {
+        let report = OptimizationReport {
+            constants_folded: 5,
+            dead_nodes_removed: 3,
+            loops_unrolled: 1,
+            dead_branches_eliminated: 0,
+            identities_simplified: 2,
+            double_negations_eliminated: 0,
+            strength_reductions: 1,
+            input_nodes: 30,
+            output_nodes: 18,
+        };
+        let summary = optimization_summary(&report);
+        let json = serde_json::to_string(&summary).unwrap();
+        assert!(json.contains("compression_ratio"));
+        assert!(json.contains("effectiveness"));
+        assert!(json.contains("total_optimizations"));
+    }
+
+    #[test]
+    fn ast_complexity_serializable() {
+        let nodes = vec![NdaNode::Int { value: 1 }];
+        let dist = ast_complexity_info(&nodes);
+        let json = serde_json::to_string(&dist).unwrap();
+        assert!(json.contains("total_nodes"));
+        assert!(json.contains("int_count"));
     }
 }

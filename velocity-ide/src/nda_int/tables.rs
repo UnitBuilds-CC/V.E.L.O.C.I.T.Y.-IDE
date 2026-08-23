@@ -218,3 +218,312 @@ pub const FP2_PRODUCT_LUT: [[i32; 4]; 4] = {
     }
     table
 };
+
+// ─── Diagnostics ───────────────────────────────────────────────────────────────
+
+use serde::Serialize;
+
+/// Serializable diagnostic for a lookup table.
+#[derive(Debug, Clone, Serialize)]
+pub struct LutInfo {
+    pub name: String,
+    pub entry_count: usize,
+    pub memory_bytes: usize,
+    pub min_value: i32,
+    pub max_value: i32,
+    pub validation_issues: Vec<String>,
+}
+
+/// Serializable summary of all NDA lookup tables.
+#[derive(Debug, Clone, Serialize)]
+pub struct TablesSummary {
+    pub table_count: usize,
+    pub total_memory_bytes: usize,
+    pub tables: Vec<LutInfo>,
+    pub validation_issues: Vec<String>,
+}
+
+/// Diagnostic info for the DOT_4_LUT.
+pub fn dot_4_lut_info() -> LutInfo {
+    let mut min_val = i8::MAX;
+    let mut max_val = i8::MIN;
+    for row in &DOT_4_LUT {
+        for &val in row {
+            if val < min_val { min_val = val; }
+            if val > max_val { max_val = val; }
+        }
+    }
+    let mut issues = Vec::new();
+    // DOT_4_LUT should be 256x256
+    if DOT_4_LUT.len() != 256 {
+        issues.push(format!("DOT_4_LUT has {} rows, expected 256", DOT_4_LUT.len()));
+    }
+    // Values should be in [-16, 16] for 4-bit dot products
+    if min_val < -16 || max_val > 16 {
+        issues.push(format!("DOT_4_LUT values [{}, {}] outside expected [-16, 16]", min_val, max_val));
+    }
+    LutInfo {
+        name: "DOT_4_LUT".to_string(),
+        entry_count: 256 * 256,
+        memory_bytes: 256 * 256 * std::mem::size_of::<i8>(),
+        min_value: min_val as i32,
+        max_value: max_val as i32,
+        validation_issues: issues,
+    }
+}
+
+/// Diagnostic info for the ADD_LUT_Q16.
+pub fn add_lut_q16_info() -> LutInfo {
+    let mut issues = Vec::new();
+    if ADD_LUT_Q16.len() != 65536 {
+        issues.push(format!("ADD_LUT_Q16 has {} entries, expected 65536", ADD_LUT_Q16.len()));
+    }
+    // Each byte encodes sign+extra nibbles, so max value is 0xFF
+    LutInfo {
+        name: "ADD_LUT_Q16".to_string(),
+        entry_count: ADD_LUT_Q16.len(),
+        memory_bytes: ADD_LUT_Q16.len(),
+        min_value: 0,
+        max_value: 255,
+        validation_issues: issues,
+    }
+}
+
+/// Diagnostic info for the SWIGLU_LUT_Q16.
+pub fn swiglu_lut_q16_info() -> LutInfo {
+    let mut issues = Vec::new();
+    if SWIGLU_LUT_Q16.len() != 65536 {
+        issues.push(format!("SWIGLU_LUT_Q16 has {} entries, expected 65536", SWIGLU_LUT_Q16.len()));
+    }
+    LutInfo {
+        name: "SWIGLU_LUT_Q16".to_string(),
+        entry_count: SWIGLU_LUT_Q16.len(),
+        memory_bytes: SWIGLU_LUT_Q16.len(),
+        min_value: 0,
+        max_value: 255,
+        validation_issues: issues,
+    }
+}
+
+/// Diagnostic info for the FP4_PRODUCT_LUT.
+pub fn fp4_product_lut_info() -> LutInfo {
+    let mut min_val = i32::MAX;
+    let mut max_val = i32::MIN;
+    for row in &FP4_PRODUCT_LUT {
+        for &val in row {
+            if val < min_val { min_val = val; }
+            if val > max_val { max_val = val; }
+        }
+    }
+    let mut issues = Vec::new();
+    if FP4_PRODUCT_LUT.len() != 4 {
+        issues.push(format!("FP4_PRODUCT_LUT has {} rows, expected 4", FP4_PRODUCT_LUT.len()));
+    }
+    LutInfo {
+        name: "FP4_PRODUCT_LUT".to_string(),
+        entry_count: 4 * 16,
+        memory_bytes: 4 * 16 * std::mem::size_of::<i32>(),
+        min_value: min_val,
+        max_value: max_val,
+        validation_issues: issues,
+    }
+}
+
+/// Diagnostic info for the FP2_PRODUCT_LUT.
+pub fn fp2_product_lut_info() -> LutInfo {
+    let mut min_val = i32::MAX;
+    let mut max_val = i32::MIN;
+    for row in &FP2_PRODUCT_LUT {
+        for &val in row {
+            if val < min_val { min_val = val; }
+            if val > max_val { max_val = val; }
+        }
+    }
+    let mut issues = Vec::new();
+    if FP2_PRODUCT_LUT.len() != 4 {
+        issues.push(format!("FP2_PRODUCT_LUT has {} rows, expected 4", FP2_PRODUCT_LUT.len()));
+    }
+    LutInfo {
+        name: "FP2_PRODUCT_LUT".to_string(),
+        entry_count: 4 * 4,
+        memory_bytes: 4 * 4 * std::mem::size_of::<i32>(),
+        min_value: min_val,
+        max_value: max_val,
+        validation_issues: issues,
+    }
+}
+
+/// Summary of all NDA lookup tables.
+pub fn tables_summary() -> TablesSummary {
+    let tables = vec![
+        dot_4_lut_info(),
+        add_lut_q16_info(),
+        swiglu_lut_q16_info(),
+        fp4_product_lut_info(),
+        fp2_product_lut_info(),
+    ];
+    let total_bytes: usize = tables.iter().map(|t| t.memory_bytes).sum();
+    let mut issues = Vec::new();
+    for t in &tables {
+        for issue in &t.validation_issues {
+            issues.push(format!("{}: {}", t.name, issue));
+        }
+    }
+    TablesSummary {
+        table_count: tables.len(),
+        total_memory_bytes: total_bytes,
+        tables,
+        validation_issues: issues,
+    }
+}
+
+/// Validate a DOT_4 lookup by manually computing the expected result.
+pub fn validate_dot4_entry(q: u8, k: u8) -> i8 {
+    let qs = q & 0x0F;
+    let qe = (q >> 4) & 0x0F;
+    let ks = k & 0x0F;
+    let ke = (k >> 4) & 0x0F;
+
+    let mut dot: i8 = 0;
+    for bit in 0..4 {
+        let qs_bit = (qs >> bit) & 1;
+        let qe_bit = (qe >> bit) & 1;
+        let qv: i8 = if qs_bit == 1 {
+            if qe_bit == 1 { 2 } else { 1 }
+        } else if qe_bit == 1 {
+            -1
+        } else {
+            -2
+        };
+
+        let ks_bit = (ks >> bit) & 1;
+        let ke_bit = (ke >> bit) & 1;
+        let kv: i8 = if ks_bit == 1 {
+            if ke_bit == 1 { 2 } else { 1 }
+        } else if ke_bit == 1 {
+            -1
+        } else {
+            -2
+        };
+
+        dot += qv * kv;
+    }
+    dot
+}
+
+// ─── Tests ─────────────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn dot_4_lut_info_valid() {
+        let info = dot_4_lut_info();
+        assert_eq!(info.name, "DOT_4_LUT");
+        assert_eq!(info.entry_count, 65536);
+        assert_eq!(info.memory_bytes, 65536);
+        assert!(info.validation_issues.is_empty());
+    }
+
+    #[test]
+    fn dot_4_lut_matches_manual() {
+        // Verify a few entries match the manual computation
+        for q in [0u8, 1, 0xFF, 0x55, 0xAA] {
+            for k in [0u8, 1, 0xFF, 0x55, 0xAA] {
+                let lut_val = DOT_4_LUT[q as usize][k as usize];
+                let manual_val = validate_dot4_entry(q, k);
+                assert_eq!(lut_val, manual_val, "mismatch at q={}, k={}", q, k);
+            }
+        }
+    }
+
+    #[test]
+    fn dot_4_lut_symmetry() {
+        // DOT(a,b) == DOT(b,a) since multiplication is commutative
+        for q in [0u8, 10, 100, 200] {
+            for k in [0u8, 10, 100, 200] {
+                assert_eq!(
+                    DOT_4_LUT[q as usize][k as usize],
+                    DOT_4_LUT[k as usize][q as usize],
+                    "DOT_4_LUT not symmetric at ({}, {})", q, k
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn add_lut_q16_info_valid() {
+        let info = add_lut_q16_info();
+        assert_eq!(info.name, "ADD_LUT_Q16");
+        assert_eq!(info.entry_count, 65536);
+        assert!(info.validation_issues.is_empty());
+    }
+
+    #[test]
+    fn swiglu_lut_q16_info_valid() {
+        let info = swiglu_lut_q16_info();
+        assert_eq!(info.name, "SWIGLU_LUT_Q16");
+        assert_eq!(info.entry_count, 65536);
+        assert!(info.validation_issues.is_empty());
+    }
+
+    #[test]
+    fn fp4_product_lut_info_valid() {
+        let info = fp4_product_lut_info();
+        assert_eq!(info.name, "FP4_PRODUCT_LUT");
+        assert_eq!(info.entry_count, 64);
+        assert!(info.validation_issues.is_empty());
+    }
+
+    #[test]
+    fn fp4_product_lut_values() {
+        // x_vals = [-2, -1, 1, 2], w_vals = [0, 1, 4, 6, 8, 12, 16, 24, 0, -1, -4, -6, -8, -12, -16, -24]
+        assert_eq!(FP4_PRODUCT_LUT[0][0], 0);   // -2 * 0
+        assert_eq!(FP4_PRODUCT_LUT[0][1], -2);  // -2 * 1
+        assert_eq!(FP4_PRODUCT_LUT[2][3], 6);   // 1 * 6
+        assert_eq!(FP4_PRODUCT_LUT[3][15], -48); // 2 * -24
+    }
+
+    #[test]
+    fn fp2_product_lut_info_valid() {
+        let info = fp2_product_lut_info();
+        assert_eq!(info.name, "FP2_PRODUCT_LUT");
+        assert_eq!(info.entry_count, 16);
+        assert!(info.validation_issues.is_empty());
+    }
+
+    #[test]
+    fn fp2_product_lut_values() {
+        // x_vals = [-2, -1, 1, 2], w_vals = [0, 1, 0, -1]
+        assert_eq!(FP2_PRODUCT_LUT[0][0], 0);   // -2 * 0
+        assert_eq!(FP2_PRODUCT_LUT[0][1], -2);  // -2 * 1
+        assert_eq!(FP2_PRODUCT_LUT[1][3], 1);   // -1 * -1
+        assert_eq!(FP2_PRODUCT_LUT[3][3], -2);  // 2 * -1
+    }
+
+    #[test]
+    fn tables_summary_valid() {
+        let summary = tables_summary();
+        assert_eq!(summary.table_count, 5);
+        assert!(summary.total_memory_bytes > 0);
+        assert!(summary.validation_issues.is_empty());
+        assert_eq!(summary.tables.len(), 5);
+    }
+
+    #[test]
+    fn tables_summary_memory() {
+        let summary = tables_summary();
+        // DOT_4_LUT: 65536, ADD_LUT: 65536, SWIGLU: 65536, FP4: 256, FP2: 64
+        let expected = 65536 + 65536 + 65536 + 256 + 64;
+        assert_eq!(summary.total_memory_bytes, expected);
+    }
+
+    #[test]
+    fn validate_dot4_entry_known_values() {
+        // All zeros: both values encode (-2,-2,-2,-2), dot = 4*4 = 16
+        assert_eq!(validate_dot4_entry(0x00, 0x00), 16);
+        // 0xFF encodes (2,2,2,2), dot = 4*4 = 16
+        assert_eq!(validate_dot4_entry(0xFF, 0xFF), 16);
+    }
+}
