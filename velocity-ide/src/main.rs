@@ -12,6 +12,7 @@ mod site_map;
 mod tokenizer;
 mod velocity_client;
 mod provider_usage;
+mod credential_guard;
 
 use std::{
     io::{BufRead, BufReader, Write},
@@ -333,6 +334,15 @@ fn load_accounts() -> Vec<CloudflareAccount> {
         let token_key = format!("CF_ACCOUNT_{}_TOKEN", i);
         if let (Ok(id), Ok(token)) = (std::env::var(&id_key), std::env::var(&token_key)) {
             accounts.push(CloudflareAccount { id, token });
+        }
+    }
+    // Scrub sensitive env vars after loading credentials into memory.
+    // This prevents JIT-compiled closures and other untrusted code from
+    // reading API keys via std::env::var (defense-in-depth).
+    if !accounts.is_empty() {
+        let scrubbed = credential_guard::scrub_sensitive_env_vars();
+        if !scrubbed.is_empty() {
+            log::debug!("Scrubbed {} sensitive env vars from process", scrubbed.len());
         }
     }
     accounts

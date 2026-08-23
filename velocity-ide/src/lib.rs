@@ -14,4 +14,5 @@ pub mod site_map;
 pub mod tokenizer;
 pub mod velocity_client;
 pub mod provider_usage;
+pub mod credential_guard;
 pub mod wiki;
