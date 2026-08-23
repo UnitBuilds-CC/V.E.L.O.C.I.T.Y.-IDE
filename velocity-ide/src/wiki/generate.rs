@@ -185,6 +185,111 @@ impl WikiModel {
 
         warnings
     }
+
+    /// Build comprehensive diagnostic info for this wiki model.
+    pub fn info(&self) -> WikiModelInfo {
+        let stats = self.stats();
+        let orphans = self.orphan_pages();
+        let top = self.top_symbols(10);
+        let issues = self.validate();
+
+        WikiModelInfo {
+            total_pages: stats.total_pages,
+            file_pages: stats.file_pages,
+            symbol_pages: stats.symbol_pages,
+            total_relationships: stats.total_relationships,
+            total_called_by: stats.total_called_by,
+            pages_with_detail: stats.pages_with_detail,
+            orphan_pages: orphans.len(),
+            top_symbols: top.into_iter().map(|p| p.title.clone()).collect(),
+            validation_issues: issues,
+            generated_at: self.generated_at.clone(),
+        }
+    }
+
+    /// Find pages with no relationships and no incoming calls.
+    pub fn orphan_pages(&self) -> Vec<&WikiPage> {
+        self.all_pages()
+            .filter(|p| {
+                p.relationships.is_empty()
+                    && p.called_by.is_empty()
+                    && p.kind != WikiPageKind::Overview
+            })
+            .collect()
+    }
+
+    /// Find the most-referenced symbol pages (by incoming call count).
+    pub fn top_symbols(&self, limit: usize) -> Vec<&WikiPage> {
+        let mut syms: Vec<&WikiPage> = self.symbol_pages.iter().collect();
+        syms.sort_by(|a, b| b.called_by.len().cmp(&a.called_by.len()));
+        syms.truncate(limit);
+        syms
+    }
+
+    /// Extract all relationship edges as a flat list (for graph visualization).
+    pub fn relationship_edges(&self) -> Vec<WikiEdge> {
+        let mut edges = Vec::new();
+        for page in self.all_pages() {
+            for (label, targets) in &page.relationships {
+                for target in targets {
+                    edges.push(WikiEdge {
+                        source: page.title.clone(),
+                        label: label.clone(),
+                        target: target.clone(),
+                    });
+                }
+            }
+        }
+        edges
+    }
+
+    /// Search for multiple queries at once, merging and deduplicating results.
+    pub fn batch_search(&self, queries: &[&str]) -> Vec<WikiSearchResult> {
+        let mut seen_slugs = std::collections::HashSet::new();
+        let mut merged: Vec<WikiSearchResult> = Vec::new();
+
+        for query in queries {
+            for result in self.search(query) {
+                if seen_slugs.insert(result.page.slug.clone()) {
+                    merged.push(result);
+                }
+            }
+        }
+
+        merged.sort_by(|a, b| {
+            b.score.cmp(&a.score).then_with(|| a.page.title.cmp(&b.page.title))
+        });
+        merged
+    }
+
+    /// Validate a single wiki page for consistency.
+    pub fn validate_page(page: &WikiPage) -> Vec<String> {
+        let mut issues = Vec::new();
+        if page.title.is_empty() {
+            issues.push("Page has empty title".to_string());
+        }
+        if page.slug.is_empty() {
+            issues.push("Page has empty slug".to_string());
+        }
+        if page.summary.is_empty() {
+            issues.push(format!("Page '{}' has empty summary", page.title));
+        }
+        for (label, targets) in &page.relationships {
+            if label.is_empty() {
+                issues.push(format!(
+                    "Page '{}' has relationship with empty label",
+                    page.title
+                ));
+            }
+            if targets.is_empty() {
+                issues.push(format!(
+                    "Page '{}' has empty target list for relationship '{}'",
+                    page.title, label
+                ));
+            }
+        }
+        issues
+    }
 }
 
 /// A single search result with relevance score.
@@ -204,6 +309,40 @@ pub struct WikiStats {
     pub total_called_by: usize,
     pub pages_with_detail: usize,
     pub generated_at: String,
+}
+
+/// Comprehensive wiki model diagnostic info.
+#[derive(Debug, Clone, Serialize)]
+pub struct WikiModelInfo {
+    pub total_pages: usize,
+    pub file_pages: usize,
+    pub symbol_pages: usize,
+    pub total_relationships: usize,
+    pub total_called_by: usize,
+    pub pages_with_detail: usize,
+    pub orphan_pages: usize,
+    pub top_symbols: Vec<String>,
+    pub validation_issues: Vec<String>,
+    pub generated_at: String,
+}
+
+/// Report from wiki generation with timing.
+#[derive(Debug, Clone, Serialize)]
+pub struct WikiGenerationReport {
+    pub elapsed_us: u64,
+    pub triples_processed: usize,
+    pub file_pages_generated: usize,
+    pub symbol_pages_generated: usize,
+    pub total_pages: usize,
+    pub validation_issues: Vec<String>,
+}
+
+/// A relationship edge in the wiki graph.
+#[derive(Debug, Clone, Serialize)]
+pub struct WikiEdge {
+    pub source: String,
+    pub label: String,
+    pub target: String,
 }
 
 /// Compute relevance score for a page against query terms.
@@ -536,5 +675,182 @@ mod inline_tests {
         let kind = WikiPageKind::Overview;
         let json = serde_json::to_string(&kind).unwrap();
         assert_eq!(json, "\"Overview\"");
+    }
+
+    // ─── Block 38: new tests ─────────────────────────────────────────────
+
+    fn make_test_page(kind: WikiPageKind, title: &str, slug: &str) -> WikiPage {
+        WikiPage {
+            kind,
+            title: title.to_string(),
+            slug: slug.to_string(),
+            summary: format!("Summary for {title}"),
+            relationships: vec![],
+            called_by: vec![],
+            detail: None,
+        }
+    }
+
+    fn make_test_model() -> WikiModel {
+        let overview = make_test_page(WikiPageKind::Overview, "Overview", "index");
+        let mut file1 = make_test_page(WikiPageKind::File, "src/main.rs", "src-main-rs");
+        file1.relationships = vec![("Defines".to_string(), vec!["main_fn".to_string()])];
+
+        let mut sym1 = make_test_page(WikiPageKind::Symbol, "main_fn", "main_fn");
+        sym1.called_by = vec!["src/main.rs".to_string()];
+
+        let mut sym2 = make_test_page(WikiPageKind::Symbol, "helper_fn", "helper_fn");
+        sym2.called_by = vec!["src/main.rs".to_string(), "src/lib.rs".to_string()];
+
+        let orphan = make_test_page(WikiPageKind::Symbol, "unused_fn", "unused_fn");
+
+        WikiModel {
+            generated_at: "1234567890".to_string(),
+            stats_summary: "test".to_string(),
+            overview,
+            file_pages: vec![file1],
+            symbol_pages: vec![sym1, sym2, orphan],
+        }
+    }
+
+    #[test]
+    fn wiki_model_info_basic() {
+        let model = make_test_model();
+        let info = model.info();
+        assert_eq!(info.total_pages, 5); // 1 overview + 1 file + 3 symbols
+        assert_eq!(info.file_pages, 1);
+        assert_eq!(info.symbol_pages, 3);
+        assert_eq!(info.orphan_pages, 1); // unused_fn
+        assert!(!info.top_symbols.is_empty());
+        assert!(info.validation_issues.is_empty());
+    }
+
+    #[test]
+    fn wiki_model_info_serializes() {
+        let info = WikiModelInfo {
+            total_pages: 10,
+            file_pages: 3,
+            symbol_pages: 6,
+            total_relationships: 25,
+            total_called_by: 15,
+            pages_with_detail: 2,
+            orphan_pages: 1,
+            top_symbols: vec!["main".to_string()],
+            validation_issues: vec![],
+            generated_at: "1234567890".to_string(),
+        };
+        let json = serde_json::to_string(&info).unwrap();
+        assert!(json.contains("\"orphan_pages\":1"));
+        assert!(json.contains("\"top_symbols\":[\"main\"]"));
+    }
+
+    #[test]
+    fn wiki_orphan_pages() {
+        let model = make_test_model();
+        let orphans = model.orphan_pages();
+        assert_eq!(orphans.len(), 1);
+        assert_eq!(orphans[0].title, "unused_fn");
+    }
+
+    #[test]
+    fn wiki_top_symbols() {
+        let model = make_test_model();
+        let top = model.top_symbols(2);
+        assert_eq!(top.len(), 2);
+        // helper_fn has 2 callers, main_fn has 1
+        assert_eq!(top[0].title, "helper_fn");
+        assert_eq!(top[1].title, "main_fn");
+    }
+
+    #[test]
+    fn wiki_relationship_edges() {
+        let model = make_test_model();
+        let edges = model.relationship_edges();
+        assert_eq!(edges.len(), 1); // file1 -> Defines -> main_fn
+        assert_eq!(edges[0].source, "src/main.rs");
+        assert_eq!(edges[0].label, "Defines");
+        assert_eq!(edges[0].target, "main_fn");
+    }
+
+    #[test]
+    fn wiki_edge_serializes() {
+        let edge = WikiEdge {
+            source: "a.rs".to_string(),
+            label: "Calls".to_string(),
+            target: "b_fn".to_string(),
+        };
+        let json = serde_json::to_string(&edge).unwrap();
+        assert!(json.contains("\"source\":\"a.rs\""));
+        assert!(json.contains("\"label\":\"Calls\""));
+    }
+
+    #[test]
+    fn wiki_batch_search() {
+        let model = make_test_model();
+        let results = model.batch_search(&["main", "helper"]);
+        assert!(!results.is_empty());
+        // Should find pages matching "main" or "helper"
+        let titles: Vec<&str> = results.iter().map(|r| r.page.title.as_str()).collect();
+        assert!(titles.contains(&"main_fn") || titles.contains(&"src/main.rs"));
+    }
+
+    #[test]
+    fn wiki_batch_search_empty() {
+        let model = make_test_model();
+        let results = model.batch_search(&[]);
+        assert!(results.is_empty());
+    }
+
+    #[test]
+    fn wiki_validate_page_clean() {
+        let page = make_test_page(WikiPageKind::Symbol, "test_fn", "test_fn");
+        let issues = WikiModel::validate_page(&page);
+        assert!(issues.is_empty());
+    }
+
+    #[test]
+    fn wiki_validate_page_empty_title() {
+        let page = make_test_page(WikiPageKind::Symbol, "", "test");
+        let issues = WikiModel::validate_page(&page);
+        assert!(!issues.is_empty());
+        assert!(issues[0].contains("empty title"));
+    }
+
+    #[test]
+    fn wiki_validate_page_empty_slug() {
+        let page = WikiPage {
+            kind: WikiPageKind::Symbol,
+            title: "test".to_string(),
+            slug: "".to_string(),
+            summary: "test".to_string(),
+            relationships: vec![],
+            called_by: vec![],
+            detail: None,
+        };
+        let issues = WikiModel::validate_page(&page);
+        assert!(issues.iter().any(|i| i.contains("empty slug")));
+    }
+
+    #[test]
+    fn wiki_validate_page_empty_relationship_targets() {
+        let mut page = make_test_page(WikiPageKind::File, "test.rs", "test-rs");
+        page.relationships = vec![("Calls".to_string(), vec![])];
+        let issues = WikiModel::validate_page(&page);
+        assert!(issues.iter().any(|i| i.contains("empty target list")));
+    }
+
+    #[test]
+    fn wiki_generation_report_serializes() {
+        let report = WikiGenerationReport {
+            elapsed_us: 5000,
+            triples_processed: 100,
+            file_pages_generated: 10,
+            symbol_pages_generated: 50,
+            total_pages: 61,
+            validation_issues: vec![],
+        };
+        let json = serde_json::to_string(&report).unwrap();
+        assert!(json.contains("\"triples_processed\":100"));
+        assert!(json.contains("\"total_pages\":61"));
     }
 }
