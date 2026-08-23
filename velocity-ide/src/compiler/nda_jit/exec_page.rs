@@ -9,6 +9,8 @@ extern "system" {
     fn VirtualFree(lpAddress: *mut std::ffi::c_void, dwSize: usize, dwFreeType: u32) -> i32;
 }
 
+use serde::Serialize;
+
 #[cfg(windows)]
 const MEM_COMMIT: u32 = 0x1000;
 #[cfg(windows)]
@@ -119,5 +121,210 @@ impl Drop for ExecPage {
         unsafe {
             libc::munmap(self.ptr as *mut _, self.size);
         }
+    }
+}
+
+// ─── Diagnostics ───────────────────────────────────────────────────────────────
+
+/// Serializable diagnostic snapshot of an ExecPage allocation.
+#[derive(Debug, Clone, Serialize)]
+pub struct ExecPageInfo {
+    pub size_bytes: usize,
+    pub pointer_address: usize,
+    pub is_null: bool,
+    pub page_aligned: bool,
+    pub validation_issues: Vec<String>,
+}
+
+impl ExecPage {
+    /// Return a diagnostic snapshot of this executable page.
+    pub fn info(&self) -> ExecPageInfo {
+        let addr = self.ptr as usize;
+        let mut issues = Vec::new();
+
+        if self.ptr.is_null() {
+            issues.push("exec page pointer is null".to_string());
+        }
+
+        if self.size == 0 {
+            issues.push("exec page has zero size".to_string());
+        }
+
+        // Check page alignment (4KB pages)
+        let page_aligned = addr % 4096 == 0;
+        if !page_aligned && !self.ptr.is_null() {
+            issues.push(format!(
+                "exec page address 0x{:x} is not page-aligned",
+                addr
+            ));
+        }
+
+        // Check for unreasonably large allocation
+        if self.size > 256 * 1024 * 1024 {
+            issues.push(format!(
+                "exec page size {} bytes exceeds 256MB (possible leak)",
+                self.size
+            ));
+        }
+
+        ExecPageInfo {
+            size_bytes: self.size,
+            pointer_address: addr,
+            is_null: self.ptr.is_null(),
+            page_aligned,
+            validation_issues: issues,
+        }
+    }
+}
+
+/// Validate that an exec page allocation size is reasonable.
+pub fn validate_exec_page_size(size: usize) -> Vec<String> {
+    let mut issues = Vec::new();
+
+    if size == 0 {
+        issues.push("allocation size must be > 0".to_string());
+    }
+
+    if size > 256 * 1024 * 1024 {
+        issues.push(format!(
+            "allocation size {} bytes exceeds 256MB limit",
+            size
+        ));
+    }
+
+    // Warn about non-page-aligned sizes (wastes memory)
+    if size % 4096 != 0 && size > 0 {
+        let rounded = (size + 4095) & !4095;
+        issues.push(format!(
+            "allocation size {} is not page-aligned; OS will round up to {}",
+            size, rounded
+        ));
+    }
+
+    issues
+}
+
+/// Validate that a write operation at `offset` with `data_len` bytes fits within `page_size`.
+pub fn validate_write_bounds(page_size: usize, offset: usize, data_len: usize) -> Vec<String> {
+    let mut issues = Vec::new();
+
+    let end = offset.saturating_add(data_len);
+    if end > page_size {
+        issues.push(format!(
+            "write at offset {} length {} (end={}) exceeds page size {}",
+            offset, data_len, end, page_size
+        ));
+    }
+
+    if data_len == 0 {
+        issues.push("write has zero-length data".to_string());
+    }
+
+    issues
+}
+
+// ─── Tests ─────────────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn exec_page_allocate_and_info() {
+        let page = ExecPage::allocate(4096);
+        assert!(page.is_some());
+        let page = page.unwrap();
+        let info = page.info();
+        assert_eq!(info.size_bytes, 4096);
+        assert!(!info.is_null);
+        assert!(info.page_aligned);
+        assert!(info.validation_issues.is_empty());
+    }
+
+    #[test]
+    fn exec_page_write_in_bounds() {
+        let mut page = ExecPage::allocate(4096).unwrap();
+        let code = [0x90u8, 0x90, 0xC3]; // nop; nop; ret
+        page.write(0, &code);
+        // No panic = success
+    }
+
+    #[test]
+    #[should_panic(expected = "write out of bounds")]
+    fn exec_page_write_out_of_bounds() {
+        let mut page = ExecPage::allocate(4).unwrap();
+        let code = [0x90u8; 8]; // 8 bytes into a 4-byte page
+        page.write(0, &code);
+    }
+
+    #[test]
+    fn exec_page_write_at_offset() {
+        let mut page = ExecPage::allocate(4096).unwrap();
+        let code = [0xC3u8]; // ret
+        page.write(100, &code);
+        // No panic = success
+    }
+
+    #[test]
+    fn validate_exec_page_size_zero() {
+        let issues = validate_exec_page_size(0);
+        assert!(issues.iter().any(|i| i.contains("> 0")));
+    }
+
+    #[test]
+    fn validate_exec_page_size_huge() {
+        let issues = validate_exec_page_size(512 * 1024 * 1024);
+        assert!(issues.iter().any(|i| i.contains("256MB")));
+    }
+
+    #[test]
+    fn validate_exec_page_size_unaligned() {
+        let issues = validate_exec_page_size(5000);
+        assert!(issues.iter().any(|i| i.contains("not page-aligned")));
+    }
+
+    #[test]
+    fn validate_exec_page_size_clean() {
+        let issues = validate_exec_page_size(8192);
+        assert!(issues.is_empty());
+    }
+
+    #[test]
+    fn validate_write_bounds_clean() {
+        let issues = validate_write_bounds(4096, 0, 100);
+        assert!(issues.is_empty());
+    }
+
+    #[test]
+    fn validate_write_bounds_overflow() {
+        let issues = validate_write_bounds(4096, 4000, 200);
+        assert!(issues.iter().any(|i| i.contains("exceeds page size")));
+    }
+
+    #[test]
+    fn validate_write_bounds_zero_length() {
+        let issues = validate_write_bounds(4096, 0, 0);
+        assert!(issues.iter().any(|i| i.contains("zero-length")));
+    }
+
+    #[test]
+    fn validate_write_bounds_at_end() {
+        let issues = validate_write_bounds(4096, 4096, 1);
+        assert!(issues.iter().any(|i| i.contains("exceeds page size")));
+    }
+
+    #[test]
+    fn exec_page_as_ptr_not_null() {
+        let page = ExecPage::allocate(4096).unwrap();
+        assert!(!page.as_ptr().is_null());
+    }
+
+    #[test]
+    fn exec_page_large_allocation() {
+        let page = ExecPage::allocate(65536);
+        assert!(page.is_some());
+        let info = page.unwrap().info();
+        assert_eq!(info.size_bytes, 65536);
+        assert!(info.validation_issues.is_empty());
     }
 }

@@ -407,10 +407,11 @@ pub fn validate_jit_state(state: &JitState<'_>) -> Vec<String> {
         }
     }
 
-    // Check MMIO address range (32-bit)
+    // Check MMIO address range — keys are u32 so always valid,
+    // but flag addresses in the top page (reserved on most platforms)
     for &addr in state.mmio.keys() {
-        if addr > 0xFFFF_FFFF {
-            issues.push(format!("MMIO address 0x{:08x} exceeds 32-bit range", addr));
+        if addr >= 0xFFFF_F000 {
+            issues.push(format!("MMIO address 0x{:08x} is in reserved high page", addr));
         }
     }
 
