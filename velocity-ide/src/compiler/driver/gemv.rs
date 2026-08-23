@@ -13,8 +13,108 @@ use super::packing::*;
 use super::vulkan_init::*;
 use ash::vk;
 use ash::Device;
+use serde::Serialize;
 use std::ffi::CString;
 use std::time::Instant;
+
+/// Configuration for a GEMV dispatch.
+#[derive(Debug, Clone, Serialize)]
+pub struct GemvConfig {
+    /// Number of columns (input vector length / weight matrix columns).
+    pub k: usize,
+    /// Number of rows (output vector length / weight matrix rows).
+    pub n: usize,
+    /// Whether this is a ternary (1.58-bit) weight matrix.
+    pub is_ternary: bool,
+    /// Total weight bytes to upload.
+    pub weight_bytes: usize,
+}
+
+/// Diagnostic info about a GEMV dispatch without requiring Vulkan.
+#[derive(Debug, Clone, Serialize)]
+pub struct GemvDispatchInfo {
+    pub config: GemvConfig,
+    pub input_buffer_bytes: usize,
+    pub weight_buffer_bytes: usize,
+    pub output_buffer_bytes: usize,
+    pub total_gpu_buffer_bytes: usize,
+    pub workgroup_count: u32,
+    pub workgroup_size: u32,
+    pub descriptor_set_count: usize,
+    pub push_constant_bytes: usize,
+    pub validation_issues: Vec<String>,
+}
+
+/// Validate a GEMV configuration for correctness.
+pub fn validate_gemv_config(cfg: &GemvConfig) -> Vec<String> {
+    let mut issues = Vec::new();
+    if cfg.k == 0 {
+        issues.push("k (columns) is 0".into());
+    }
+    if cfg.n == 0 {
+        issues.push("n (rows) is 0".into());
+    }
+    if cfg.is_ternary && cfg.k % 16 != 0 {
+        issues.push(format!("ternary mode requires k ({}) to be a multiple of 16", cfg.k));
+    }
+    if cfg.weight_bytes == 0 {
+        issues.push("weight_bytes is 0".into());
+    }
+    if cfg.is_ternary {
+        // Ternary packs 16 weights into one u32 (4 bytes), so expected = (k/16)*4*n
+        let expected = (cfg.k / 16) * 4 * cfg.n;
+        if cfg.weight_bytes != expected && expected > 0 {
+            issues.push(format!(
+                "ternary weight_bytes {} != expected {} for k={}, n={}",
+                cfg.weight_bytes, expected, cfg.k, cfg.n
+            ));
+        }
+    } else {
+        // INT4 packs 8 weights per byte, k values per row, n rows
+        let expected = (cfg.k / 2) * cfg.n;
+        if cfg.weight_bytes != expected && expected > 0 {
+            issues.push(format!(
+                "int4 weight_bytes {} != expected {} for k={}, n={}",
+                cfg.weight_bytes, expected, cfg.k, cfg.n
+            ));
+        }
+    }
+    issues
+}
+
+/// Compute dispatch info for a GEMV operation without requiring Vulkan.
+pub fn gemv_dispatch_info(cfg: &GemvConfig) -> GemvDispatchInfo {
+    let validation_issues = validate_gemv_config(cfg);
+
+    let input_buffer_bytes = if cfg.is_ternary {
+        (cfg.k / 16) * 4
+    } else {
+        cfg.k * 4
+    };
+
+    let weight_buffer_bytes = cfg.weight_bytes;
+    let output_buffer_bytes = cfg.n * 4;
+    let total_gpu_buffer_bytes = input_buffer_bytes + weight_buffer_bytes + output_buffer_bytes;
+
+    let (workgroup_size, workgroup_count) = if cfg.is_ternary {
+        (256u32, (cfg.n as u32).div_ceil(256))
+    } else {
+        (64u32, (cfg.n as u32).div_ceil(64))
+    };
+
+    GemvDispatchInfo {
+        config: cfg.clone(),
+        input_buffer_bytes,
+        weight_buffer_bytes,
+        output_buffer_bytes,
+        total_gpu_buffer_bytes,
+        workgroup_count,
+        workgroup_size,
+        descriptor_set_count: 3,
+        push_constant_bytes: 8,
+        validation_issues,
+    }
+}
 
 pub struct VulkanGemv {
     pub device: Device,
@@ -391,5 +491,147 @@ impl Drop for VulkanGemv {
                 .destroy_descriptor_set_layout(self.desc_set_layout, None);
             self.device.destroy_shader_module(self.shader_module, None);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn validate_gemv_config_valid_ternary() {
+        let cfg = GemvConfig {
+            k: 256,
+            n: 128,
+            is_ternary: true,
+            weight_bytes: (256 / 16) * 4 * 128,
+        };
+        let issues = validate_gemv_config(&cfg);
+        assert!(issues.is_empty(), "expected no issues, got: {:?}", issues);
+    }
+
+    #[test]
+    fn validate_gemv_config_valid_int4() {
+        let cfg = GemvConfig {
+            k: 512,
+            n: 256,
+            is_ternary: false,
+            weight_bytes: (512 / 2) * 256,
+        };
+        let issues = validate_gemv_config(&cfg);
+        assert!(issues.is_empty(), "expected no issues, got: {:?}", issues);
+    }
+
+    #[test]
+    fn validate_gemv_config_zero_k() {
+        let cfg = GemvConfig {
+            k: 0,
+            n: 128,
+            is_ternary: false,
+            weight_bytes: 1024,
+        };
+        let issues = validate_gemv_config(&cfg);
+        assert!(issues.iter().any(|i| i.contains("k")));
+    }
+
+    #[test]
+    fn validate_gemv_config_zero_n() {
+        let cfg = GemvConfig {
+            k: 256,
+            n: 0,
+            is_ternary: false,
+            weight_bytes: 1024,
+        };
+        let issues = validate_gemv_config(&cfg);
+        assert!(issues.iter().any(|i| i.contains("n")));
+    }
+
+    #[test]
+    fn validate_gemv_config_ternary_k_not_multiple_of_16() {
+        let cfg = GemvConfig {
+            k: 100, // not multiple of 16
+            n: 64,
+            is_ternary: true,
+            weight_bytes: 1024,
+        };
+        let issues = validate_gemv_config(&cfg);
+        assert!(issues.iter().any(|i| i.contains("multiple of 16")));
+    }
+
+    #[test]
+    fn validate_gemv_config_wrong_weight_bytes() {
+        let cfg = GemvConfig {
+            k: 256,
+            n: 128,
+            is_ternary: true,
+            weight_bytes: 999, // wrong
+        };
+        let issues = validate_gemv_config(&cfg);
+        assert!(issues.iter().any(|i| i.contains("weight_bytes")));
+    }
+
+    #[test]
+    fn dispatch_info_ternary() {
+        let cfg = GemvConfig {
+            k: 256,
+            n: 512,
+            is_ternary: true,
+            weight_bytes: (256 / 16) * 4 * 512,
+        };
+        let info = gemv_dispatch_info(&cfg);
+        assert_eq!(info.input_buffer_bytes, (256 / 16) * 4);
+        assert_eq!(info.output_buffer_bytes, 512 * 4);
+        assert_eq!(info.workgroup_size, 256);
+        assert_eq!(info.workgroup_count, 512u32.div_ceil(256));
+        assert_eq!(info.descriptor_set_count, 3);
+        assert_eq!(info.push_constant_bytes, 8);
+        assert!(info.validation_issues.is_empty());
+    }
+
+    #[test]
+    fn dispatch_info_int4() {
+        let cfg = GemvConfig {
+            k: 512,
+            n: 300,
+            is_ternary: false,
+            weight_bytes: (512 / 2) * 300,
+        };
+        let info = gemv_dispatch_info(&cfg);
+        assert_eq!(info.input_buffer_bytes, 512 * 4);
+        assert_eq!(info.output_buffer_bytes, 300 * 4);
+        assert_eq!(info.workgroup_size, 64);
+        assert_eq!(info.workgroup_count, 300u32.div_ceil(64));
+        assert_eq!(info.descriptor_set_count, 3);
+        assert!(info.validation_issues.is_empty());
+    }
+
+    #[test]
+    fn dispatch_info_total_buffer_bytes() {
+        let cfg = GemvConfig {
+            k: 128,
+            n: 64,
+            is_ternary: false,
+            weight_bytes: 1000,
+        };
+        let info = gemv_dispatch_info(&cfg);
+        assert_eq!(
+            info.total_gpu_buffer_bytes,
+            info.input_buffer_bytes + info.weight_buffer_bytes + info.output_buffer_bytes
+        );
+    }
+
+    #[test]
+    fn dispatch_info_serializes() {
+        let cfg = GemvConfig {
+            k: 256,
+            n: 128,
+            is_ternary: true,
+            weight_bytes: (256 / 16) * 4 * 128,
+        };
+        let info = gemv_dispatch_info(&cfg);
+        let json = serde_json::to_string(&info).unwrap();
+        assert!(json.contains("\"workgroup_count\""));
+        assert!(json.contains("\"input_buffer_bytes\""));
+        assert!(json.contains("\"total_gpu_buffer_bytes\""));
     }
 }
