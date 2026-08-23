@@ -220,6 +220,28 @@ pub struct HealthResponse {
 pub struct VelocityClient {
     config: VelocityConfig,
     agent: ureq::Agent,
+    retry_config: RetryConfig,
+}
+
+/// Retry configuration for HTTP requests.
+#[derive(Debug, Clone)]
+pub struct RetryConfig {
+    /// Maximum number of retry attempts (not counting the initial request).
+    pub max_retries: u32,
+    /// Initial backoff duration.
+    pub initial_backoff_ms: u64,
+    /// Maximum backoff duration.
+    pub max_backoff_ms: u64,
+}
+
+impl Default for RetryConfig {
+    fn default() -> Self {
+        Self {
+            max_retries: 3,
+            initial_backoff_ms: 200,
+            max_backoff_ms: 5000,
+        }
+    }
 }
 
 impl VelocityClient {
@@ -227,12 +249,19 @@ impl VelocityClient {
         Self {
             config,
             agent: ureq::Agent::new(),
+            retry_config: RetryConfig::default(),
         }
     }
 
     pub fn from_env() -> Result<Self> {
         let config = VelocityConfig::load()?;
         Ok(Self::new(config))
+    }
+
+    /// Set custom retry configuration.
+    pub fn with_retry_config(mut self, config: RetryConfig) -> Self {
+        self.retry_config = config;
+        self
     }
 
     fn auth_header(&self) -> String {
@@ -243,12 +272,45 @@ impl VelocityClient {
         format!("{}{}", self.config.base_url.trim_end_matches('/'), path)
     }
 
+    /// Execute a GET request with exponential backoff retry.
+    /// Retries on 5xx errors and transport failures.
+    fn get_with_retry(&self, url: &str, auth: bool) -> Result<ureq::Response> {
+        let mut last_error = None;
+        let mut backoff = self.retry_config.initial_backoff_ms;
+
+        for attempt in 0..=self.retry_config.max_retries {
+            let mut req = self.agent.get(url);
+            if auth {
+                req = req.set("Authorization", &self.auth_header());
+            }
+
+            match req.call() {
+                Ok(resp) => return Ok(resp),
+                Err(ureq::Error::Status(code, resp)) if code >= 500 => {
+                    last_error = Some(anyhow::anyhow!("server error: HTTP {}", code));
+                    if attempt < self.retry_config.max_retries {
+                        std::thread::sleep(std::time::Duration::from_millis(backoff));
+                        backoff = (backoff * 2).min(self.retry_config.max_backoff_ms);
+                    }
+                }
+                Err(ureq::Error::Transport(_)) => {
+                    last_error = Some(anyhow::anyhow!("transport error (connection failed)"));
+                    if attempt < self.retry_config.max_retries {
+                        std::thread::sleep(std::time::Duration::from_millis(backoff));
+                        backoff = (backoff * 2).min(self.retry_config.max_backoff_ms);
+                    }
+                }
+                Err(e) => return Err(anyhow::anyhow!("{}", e)),
+            }
+        }
+
+        Err(last_error.unwrap_or_else(|| anyhow::anyhow!("max retries exceeded")))
+    }
+
     /// GET /health — check if the router is reachable.
     pub fn health(&self) -> Result<HealthResponse> {
         let resp = self
-            .agent
-            .get(&self.url("/health"))
-            .call()
+            .get_with_retry(&self.url("/health"), false)
             .context("failed to reach velocity router")?;
         resp.into_json()
             .context("failed to parse health response")
@@ -257,10 +319,7 @@ impl VelocityClient {
     /// GET /v1/usage — current usage summary.
     pub fn get_usage(&self) -> Result<UsageResponse> {
         let resp = self
-            .agent
-            .get(&self.url("/v1/usage"))
-            .set("Authorization", &self.auth_header())
-            .call()
+            .get_with_retry(&self.url("/v1/usage"), true)
             .context("failed to fetch usage")?;
         resp.into_json()
             .context("failed to parse usage response")
@@ -269,10 +328,7 @@ impl VelocityClient {
     /// GET /v1/usage/detailed — per-model and per-domain breakdown.
     pub fn get_usage_detailed(&self) -> Result<UsageDetailed> {
         let resp = self
-            .agent
-            .get(&self.url("/v1/usage/detailed"))
-            .set("Authorization", &self.auth_header())
-            .call()
+            .get_with_retry(&self.url("/v1/usage/detailed"), true)
             .context("failed to fetch detailed usage")?;
         resp.into_json()
             .context("failed to parse detailed usage response")
@@ -281,10 +337,7 @@ impl VelocityClient {
     /// GET /v1/usage/rate-limit — rate limit and quota status.
     pub fn get_rate_limit(&self) -> Result<RateLimitResponse> {
         let resp = self
-            .agent
-            .get(&self.url("/v1/usage/rate-limit"))
-            .set("Authorization", &self.auth_header())
-            .call()
+            .get_with_retry(&self.url("/v1/usage/rate-limit"), true)
             .context("failed to fetch rate limit status")?;
         resp.into_json()
             .context("failed to parse rate limit response")
@@ -306,10 +359,7 @@ impl VelocityClient {
     /// GET /v1/assignments/:id — poll assignment status.
     pub fn get_assignment(&self, id: &str) -> Result<AssignmentResponse> {
         let resp = self
-            .agent
-            .get(&self.url(&format!("/v1/assignments/{}", id)))
-            .set("Authorization", &self.auth_header())
-            .call()
+            .get_with_retry(&self.url(&format!("/v1/assignments/{}", id)), true)
             .context("failed to fetch assignment")?;
         resp.into_json()
             .context("failed to parse assignment response")
