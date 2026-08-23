@@ -380,6 +380,98 @@ impl Tokenizer {
     pub fn vocab_size(&self) -> usize {
         self.id_to_token.len()
     }
+
+    // ── Batch & Counting ──────────────────────────────────────────────────
+
+    /// Encode multiple texts in sequence.
+    pub fn encode_batch(&self, texts: &[&str], add_bos: bool) -> Vec<Vec<u32>> {
+        texts.iter().map(|text| self.encode(text, add_bos)).collect()
+    }
+
+    /// Count the number of tokens in `text`.
+    pub fn count_tokens(&self, text: &str) -> usize {
+        self.bpe_encode(text).len()
+    }
+
+    /// Count tokens for multiple texts, returning individual counts.
+    pub fn count_tokens_batch(&self, texts: &[&str]) -> Vec<usize> {
+        texts.iter().map(|t| self.count_tokens(t)).collect()
+    }
+
+    /// Total token count across a batch of texts.
+    pub fn total_tokens(&self, texts: &[&str]) -> usize {
+        texts.iter().map(|t| self.count_tokens(t)).sum()
+    }
+
+    /// Check if a text would exceed a token budget.
+    pub fn exceeds_budget(&self, text: &str, max_tokens: usize) -> bool {
+        self.bpe_encode(text).len() > max_tokens
+    }
+
+    // ── Special Tokens ─────────────────────────────────────────────────────
+
+    /// Look up the ID for a special token by name.
+    pub fn special_token_id(&self, name: &str) -> Option<u32> {
+        self.vocab.get(name).copied()
+    }
+
+    /// List all special tokens (starting with '<' or containing '|>').
+    pub fn special_tokens(&self) -> Vec<(u32, &str)> {
+        self.vocab.iter()
+            .filter(|(k, _)| k.starts_with('<') || k.contains("|>"))
+            .map(|(k, &v)| (v, k.as_str()))
+            .collect()
+    }
+
+    // ── Text Chunking ──────────────────────────────────────────────────────
+
+    /// Split text into chunks that each fit within `max_tokens` tokens.
+    /// Splits on whitespace boundaries to avoid breaking words.
+    pub fn chunk_text<'a>(&self, text: &'a str, max_tokens: usize) -> Vec<&'a str> {
+        if text.is_empty() || max_tokens == 0 {
+            return vec![];
+        }
+        if self.count_tokens(text) <= max_tokens {
+            return vec![text];
+        }
+        let mut chunks = Vec::new();
+        let mut remaining = text;
+        while !remaining.is_empty() {
+            if self.count_tokens(remaining) <= max_tokens {
+                chunks.push(remaining);
+                break;
+            }
+            let mut split_idx = remaining.len() / 2;
+            while split_idx > 0 && !remaining.is_char_boundary(split_idx) {
+                split_idx -= 1;
+            }
+            let search_start = split_idx.saturating_sub(50);
+            let search_end = (split_idx + 50).min(remaining.len());
+            if let Some(ws_pos) = remaining[search_start..search_end].rfind(|c: char| c.is_whitespace()) {
+                split_idx = search_start + ws_pos + 1;
+            }
+            if split_idx == 0 {
+                split_idx = remaining.len();
+            }
+            let (chunk, rest) = remaining.split_at(split_idx);
+            let trimmed = chunk.trim_end();
+            if !trimmed.is_empty() {
+                chunks.push(trimmed);
+            }
+            remaining = rest.trim_start();
+        }
+        chunks
+    }
+
+    /// Estimate the byte size of text that would produce approximately `n` tokens.
+    pub fn estimate_text_length_for_tokens(&self, n: usize) -> usize {
+        if self.vocab_size() == 0 {
+            return 0;
+        }
+        let total_bytes: usize = self.vocab.keys().map(|k| k.len()).sum();
+        let avg_bytes_per_token = total_bytes as f64 / self.vocab_size() as f64;
+        (n as f64 * avg_bytes_per_token) as usize
+    }
 }
 
 // ─── Decode/Encode helpers ─────────────────────────────────────────────────
@@ -563,5 +655,140 @@ mod tests {
             file_bytes: vec![],
         };
         assert_eq!(tok.vocab_size(), 2);
+    }
+
+    // ── Batch & Counting ──
+
+    fn make_test_tokenizer() -> Tokenizer {
+        // Build a tiktoken-mode tokenizer with byte-to-unicode mappings.
+        let mut vocab = HashMap::new();
+        let mut id_to_token = Vec::new();
+        for b in 33u8..=126 {
+            let ch = (b as char).to_string();
+            vocab.insert(ch.clone(), id_to_token.len() as u32);
+            id_to_token.push(TokenRef::Owned(ch));
+        }
+        let space_ch = byte_to_unicode(32).to_string();
+        vocab.insert(space_ch.clone(), id_to_token.len() as u32);
+        id_to_token.push(TokenRef::Owned(space_ch));
+        let special_names = vec!["<s>", "</s>", "<|endoftext|>"];
+        for name in &special_names {
+            let n = name.to_string();
+            vocab.insert(n.clone(), id_to_token.len() as u32);
+            id_to_token.push(TokenRef::Owned(n));
+        }
+        let bos_id = vocab["<s>"];
+        let eos_id = vocab["</s>"];
+        Tokenizer {
+            vocab,
+            id_to_token,
+            merges: HashMap::new(),
+            bos_id,
+            eos_id,
+            is_tiktoken: true,
+            file_bytes: vec![],
+        }
+    }
+
+    #[test]
+    fn encode_batch_multiple_texts() {
+        let tok = make_test_tokenizer();
+        let results = tok.encode_batch(&["hi", "hi!"], false);
+        assert_eq!(results.len(), 2);
+        assert_eq!(results[0].len(), tok.encode("hi", false).len());
+        assert_eq!(results[1].len(), tok.encode("hi!", false).len());
+    }
+
+    #[test]
+    fn encode_batch_with_bos() {
+        let tok = make_test_tokenizer();
+        let results = tok.encode_batch(&["hi", "hi"], true);
+        assert_eq!(results.len(), 2);
+        assert_eq!(results[0][0], tok.bos_id);
+        assert_eq!(results[1][0], tok.bos_id);
+        assert_eq!(results[0].len(), tok.encode("hi", false).len() + 1);
+    }
+
+    #[test]
+    fn count_tokens_returns_correct_count() {
+        let tok = make_test_tokenizer();
+        assert_eq!(tok.count_tokens("hi"), 2);
+        assert_eq!(tok.count_tokens("hello"), 5);
+    }
+
+    #[test]
+    fn count_tokens_batch_returns_individual_counts() {
+        let tok = make_test_tokenizer();
+        let counts = tok.count_tokens_batch(&["hi", "hello", ""]);
+        assert_eq!(counts, vec![2, 5, 0]);
+    }
+
+    #[test]
+    fn total_tokens_sums_batch() {
+        let tok = make_test_tokenizer();
+        assert_eq!(tok.total_tokens(&["hi", "hello"]), 7);
+    }
+
+    #[test]
+    fn exceeds_budget_detects_overflow() {
+        let tok = make_test_tokenizer();
+        assert!(!tok.exceeds_budget("hi", 5));
+        assert!(tok.exceeds_budget("hello", 3));
+    }
+
+    #[test]
+    fn special_token_id_lookup() {
+        let tok = make_test_tokenizer();
+        assert!(tok.special_token_id("<s>").is_some());
+        assert!(tok.special_token_id("</s>").is_some());
+        assert!(tok.special_token_id("<|endoftext|>").is_some());
+        assert_eq!(tok.special_token_id("<nonexistent>"), None);
+    }
+
+    #[test]
+    fn special_tokens_lists_all() {
+        let tok = make_test_tokenizer();
+        let specials = tok.special_tokens();
+        assert!(specials.len() >= 3);
+        let names: Vec<&str> = specials.iter().map(|(_, n)| *n).collect();
+        assert!(names.contains(&"<s>"));
+        assert!(names.contains(&"</s>"));
+        assert!(names.contains(&"<|endoftext|>"));
+    }
+
+    #[test]
+    fn chunk_text_empty_input() {
+        let tok = make_test_tokenizer();
+        assert!(tok.chunk_text("", 10).is_empty());
+        assert!(tok.chunk_text("hi", 0).is_empty());
+    }
+
+    #[test]
+    fn chunk_text_single_chunk() {
+        let tok = make_test_tokenizer();
+        let chunks = tok.chunk_text("hi", 100);
+        assert_eq!(chunks.len(), 1);
+        assert_eq!(chunks[0], "hi");
+    }
+
+    #[test]
+    fn estimate_text_length_for_tokens_zero_vocab() {
+        let tok = Tokenizer {
+            vocab: HashMap::new(),
+            id_to_token: vec![],
+            merges: HashMap::new(),
+            bos_id: 0,
+            eos_id: 0,
+            is_tiktoken: false,
+            file_bytes: vec![],
+        };
+        assert_eq!(tok.estimate_text_length_for_tokens(10), 0);
+    }
+
+    #[test]
+    fn estimate_text_length_for_tokens_returns_nonzero() {
+        let tok = make_test_tokenizer();
+        let est = tok.estimate_text_length_for_tokens(10);
+        assert!(est > 0);
     }
 }
