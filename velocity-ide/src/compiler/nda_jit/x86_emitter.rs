@@ -1,3 +1,4 @@
+use serde::Serialize;
 use std::sync::{Arc, Mutex};
 
 use crate::nda::NdaMatrix;
@@ -134,6 +135,158 @@ pub fn count_nodes(node: &NdaNode) -> usize {
         NdaNode::Return { value } => 1 + count_nodes(value),
         _ => 1,
     }
+}
+
+/// Diagnostic info about the x86 emitter state.
+#[derive(Debug, Clone, Serialize)]
+pub struct EmitterDiagnostic {
+    pub code_bytes: usize,
+    pub has_prologue: bool,
+    pub has_ret: bool,
+    pub validation_issues: Vec<String>,
+}
+
+/// Analyze an emitter's buffer for structural correctness.
+pub fn emitter_diagnostic(emitter: &X86Emitter) -> EmitterDiagnostic {
+    let mut issues = Vec::new();
+    let buf = &emitter.buf;
+
+    let has_prologue = buf.len() >= 4 && buf[0] == 0x55 && buf[1..4] == [0x48, 0x89, 0xE5];
+    let has_ret = buf.last() == Some(&0xC3);
+
+    if buf.is_empty() {
+        issues.push("emitter buffer is empty".into());
+    }
+    if !buf.is_empty() && !has_prologue {
+        issues.push("missing standard prologue (push rbp; mov rbp, rsp)".into());
+    }
+    if !has_ret {
+        issues.push("missing ret (0xC3) at end of buffer".into());
+    }
+
+    EmitterDiagnostic {
+        code_bytes: buf.len(),
+        has_prologue,
+        has_ret,
+        validation_issues: issues,
+    }
+}
+
+/// Classification of a node for native compilation eligibility.
+#[derive(Debug, Clone, Serialize)]
+pub struct NativeCompileInfo {
+    pub total_nodes: usize,
+    pub native_eligible_nodes: usize,
+    pub interpreter_only_nodes: usize,
+    pub native_ratio: f64,
+    pub is_fully_native: bool,
+    pub has_loops: bool,
+    pub has_while_loops: bool,
+    pub has_conditionals: bool,
+    pub has_returns: bool,
+    pub variable_count: usize,
+    pub validation_issues: Vec<String>,
+}
+
+/// Analyze an AST tree for native compilation potential without emitting code.
+pub fn native_compile_info(nodes: &[NdaNode]) -> NativeCompileInfo {
+    let total = nodes.iter().map(|n| count_nodes(n)).sum::<usize>();
+    let native_eligible = nodes.iter().filter(|n| is_pure_scalar(n)).map(|n| count_nodes(n)).sum::<usize>();
+    let interpreter_only = total.saturating_sub(native_eligible);
+    let native_ratio = if total > 0 { native_eligible as f64 / total as f64 } else { 0.0 };
+
+    let mut has_loops = false;
+    let mut has_while_loops = false;
+    let mut has_conditionals = false;
+    let mut has_returns = false;
+    let mut var_names = std::collections::HashSet::new();
+
+    for node in nodes {
+        collect_node_stats(node, &mut has_loops, &mut has_while_loops, &mut has_conditionals, &mut has_returns, &mut var_names);
+    }
+
+    let mut issues = Vec::new();
+    if total == 0 {
+        issues.push("empty node list".into());
+    }
+    if has_returns && nodes.len() > 1 {
+        issues.push("return node in multi-node block may prevent sibling execution".into());
+    }
+
+    NativeCompileInfo {
+        total_nodes: total,
+        native_eligible_nodes: native_eligible,
+        interpreter_only_nodes: interpreter_only,
+        native_ratio,
+        is_fully_native: nodes.iter().all(|n| is_pure_scalar(n)),
+        has_loops,
+        has_while_loops,
+        has_conditionals,
+        has_returns,
+        variable_count: var_names.len(),
+        validation_issues: issues,
+    }
+}
+
+fn collect_node_stats(
+    node: &NdaNode,
+    has_loops: &mut bool,
+    has_while_loops: &mut bool,
+    has_conditionals: &mut bool,
+    has_returns: &mut bool,
+    var_names: &mut std::collections::HashSet<String>,
+) {
+    match node {
+        NdaNode::Loop { .. } => { *has_loops = true; }
+        NdaNode::While { .. } => { *has_while_loops = true; *has_loops = true; }
+        NdaNode::If { then_body, else_body, .. } => {
+            *has_conditionals = true;
+            for child in then_body { collect_node_stats(child, has_loops, has_while_loops, has_conditionals, has_returns, var_names); }
+            if let Some(eb) = else_body {
+                for child in eb { collect_node_stats(child, has_loops, has_while_loops, has_conditionals, has_returns, var_names); }
+            }
+        }
+        NdaNode::Return { .. } => { *has_returns = true; }
+        NdaNode::Let { name_hash, init, .. } => {
+            var_names.insert(name_hash.to_string());
+            collect_node_stats(init, has_loops, has_while_loops, has_conditionals, has_returns, var_names);
+        }
+        NdaNode::Store { name_hash, value, .. } => {
+            var_names.insert(name_hash.to_string());
+            collect_node_stats(value, has_loops, has_while_loops, has_conditionals, has_returns, var_names);
+        }
+        NdaNode::Scope { children } => {
+            for child in children { collect_node_stats(child, has_loops, has_while_loops, has_conditionals, has_returns, var_names); }
+        }
+        NdaNode::Add { lhs, rhs } | NdaNode::Compare { lhs, rhs, .. } => {
+            collect_node_stats(lhs, has_loops, has_while_loops, has_conditionals, has_returns, var_names);
+            collect_node_stats(rhs, has_loops, has_while_loops, has_conditionals, has_returns, var_names);
+        }
+        NdaNode::VecOp { operand, .. } | NdaNode::Print { source: operand } => {
+            collect_node_stats(operand, has_loops, has_while_loops, has_conditionals, has_returns, var_names);
+        }
+        _ => {}
+    }
+}
+
+/// Validate that an emitter's code size is within safe bounds for JIT execution.
+pub fn validate_emitter_size(emitter: &X86Emitter, max_bytes: usize) -> Vec<String> {
+    let mut issues = Vec::new();
+    if emitter.buf.is_empty() {
+        issues.push("emitter buffer is empty".into());
+    }
+    if emitter.buf.len() > max_bytes {
+        issues.push(format!(
+            "code size {} exceeds maximum {} bytes",
+            emitter.buf.len(),
+            max_bytes
+        ));
+    }
+    // Check for unreasonably large code (potential infinite emission bug)
+    if emitter.buf.len() > 1_000_000 {
+        issues.push("code size exceeds 1MB, likely an emission bug".into());
+    }
+    issues
 }
 
 #[cfg(target_os = "windows")]
@@ -1149,5 +1302,189 @@ pub fn compile_scalar_block(nodes: &[NdaNode], registry: &VarRegistry) -> Option
                 Ok(JitControlFlow::Continue)
             },
         ))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn emitter_diagnostic_empty() {
+        let emitter = X86Emitter::new();
+        let diag = emitter_diagnostic(&emitter);
+        assert_eq!(diag.code_bytes, 0);
+        assert!(!diag.has_prologue);
+        assert!(!diag.has_ret);
+        assert!(!diag.validation_issues.is_empty());
+    }
+
+    #[test]
+    fn emitter_diagnostic_valid_minimal() {
+        let mut emitter = X86Emitter::new();
+        emitter.push_rbp();
+        emitter.mov_rbp_rsp();
+        emitter.ret();
+        let diag = emitter_diagnostic(&emitter);
+        assert_eq!(diag.code_bytes, 5); // push_rbp(1) + mov_rbp_rsp(3) + ret(1)
+        assert!(diag.has_prologue);
+        assert!(diag.has_ret);
+        assert!(diag.validation_issues.is_empty());
+    }
+
+    #[test]
+    fn emitter_diagnostic_missing_ret() {
+        let mut emitter = X86Emitter::new();
+        emitter.push_rbp();
+        emitter.mov_rbp_rsp();
+        let diag = emitter_diagnostic(&emitter);
+        assert!(!diag.has_ret);
+        assert!(diag.validation_issues.iter().any(|i| i.contains("ret")));
+    }
+
+    #[test]
+    fn emitter_diagnostic_missing_prologue() {
+        let mut emitter = X86Emitter::new();
+        emitter.emit(0x90); // NOP
+        emitter.ret();
+        let diag = emitter_diagnostic(&emitter);
+        assert!(!diag.has_prologue);
+        assert!(diag.validation_issues.iter().any(|i| i.contains("prologue")));
+    }
+
+    #[test]
+    fn emitter_diagnostic_serializes() {
+        let emitter = X86Emitter::new();
+        let diag = emitter_diagnostic(&emitter);
+        let json = serde_json::to_string(&diag).unwrap();
+        assert!(json.contains("\"code_bytes\":0"));
+        assert!(json.contains("\"has_prologue\":false"));
+    }
+
+    #[test]
+    fn native_compile_info_empty() {
+        let info = native_compile_info(&[]);
+        assert_eq!(info.total_nodes, 0);
+        assert_eq!(info.native_eligible_nodes, 0);
+        assert!(!info.validation_issues.is_empty());
+    }
+
+    #[test]
+    fn native_compile_info_pure_scalar() {
+        let node = NdaNode::Int { value: 42 };
+        let info = native_compile_info(&[node]);
+        assert_eq!(info.total_nodes, 1);
+        assert_eq!(info.native_eligible_nodes, 1);
+        assert!(info.is_fully_native);
+        assert!((info.native_ratio - 1.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn native_compile_info_mixed() {
+        let nodes = vec![
+            NdaNode::Int { value: 1 },
+            NdaNode::Print { source: Box::new(NdaNode::Int { value: 2 }) },
+        ];
+        let info = native_compile_info(&nodes);
+        assert_eq!(info.total_nodes, 3); // Int(1) + Print(1+Int(1))
+        assert_eq!(info.native_eligible_nodes, 1); // only top-level Int is pure scalar
+        assert!(!info.is_fully_native);
+        assert!((info.native_ratio - 1.0 / 3.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn native_compile_info_detects_loops() {
+        let node = NdaNode::Loop {
+            count: 10,
+            body: vec![NdaNode::Int { value: 0 }],
+        };
+        let info = native_compile_info(&[node]);
+        assert!(info.has_loops);
+        assert!(!info.has_while_loops);
+    }
+
+    #[test]
+    fn native_compile_info_detects_while() {
+        let node = NdaNode::While {
+            cond: Box::new(NdaNode::Int { value: 1 }),
+            body: vec![NdaNode::Int { value: 0 }],
+        };
+        let info = native_compile_info(&[node]);
+        assert!(info.has_while_loops);
+        assert!(info.has_loops);
+    }
+
+    #[test]
+    fn native_compile_info_detects_conditionals() {
+        let node = NdaNode::If {
+            cond: Box::new(NdaNode::Int { value: 1 }),
+            then_body: vec![NdaNode::Int { value: 2 }],
+            else_body: None,
+        };
+        let info = native_compile_info(&[node]);
+        assert!(info.has_conditionals);
+    }
+
+    #[test]
+    fn native_compile_info_detects_returns() {
+        let node = NdaNode::Return {
+            value: Box::new(NdaNode::Int { value: 0 }),
+        };
+        let info = native_compile_info(&[node]);
+        assert!(info.has_returns);
+    }
+
+    #[test]
+    fn native_compile_info_counts_variables() {
+        let nodes = vec![
+            NdaNode::Let {
+                name_hash: 1,
+                init: Box::new(NdaNode::Int { value: 1 }),
+            },
+            NdaNode::Let {
+                name_hash: 2,
+                init: Box::new(NdaNode::Int { value: 2 }),
+            },
+            NdaNode::Let {
+                name_hash: 1, // duplicate
+                init: Box::new(NdaNode::Int { value: 3 }),
+            },
+        ];
+        let info = native_compile_info(&nodes);
+        assert_eq!(info.variable_count, 2); // hash 1 and 2
+    }
+
+    #[test]
+    fn validate_emitter_size_empty() {
+        let emitter = X86Emitter::new();
+        let issues = validate_emitter_size(&emitter, 1024);
+        assert!(issues.iter().any(|i| i.contains("empty")));
+    }
+
+    #[test]
+    fn validate_emitter_size_valid() {
+        let mut emitter = X86Emitter::new();
+        emitter.push_rbp();
+        emitter.ret();
+        let issues = validate_emitter_size(&emitter, 1024);
+        assert!(issues.is_empty());
+    }
+
+    #[test]
+    fn validate_emitter_size_too_large() {
+        let mut emitter = X86Emitter::new();
+        for _ in 0..2000 {
+            emitter.emit(0x90);
+        }
+        let issues = validate_emitter_size(&emitter, 1024);
+        assert!(issues.iter().any(|i| i.contains("exceeds maximum")));
+    }
+
+    #[test]
+    fn validate_emitter_size_huge() {
+        let mut emitter = X86Emitter::new();
+        emitter.buf.resize(1_000_001, 0x90);
+        let issues = validate_emitter_size(&emitter, 2_000_000);
+        assert!(issues.iter().any(|i| i.contains("1MB")));
     }
 }
