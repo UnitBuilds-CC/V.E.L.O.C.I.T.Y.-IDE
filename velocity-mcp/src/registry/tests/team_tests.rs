@@ -1095,3 +1095,35 @@ fn member_with_fallback_provider() {
     // fallback_provider is parsed from slug
     assert!(team.members[0].fallback_provider.is_some());
 }
+
+#[test]
+fn preset_templates_load_correctly() {
+    use crate::editor::expert_team::default_preset_teams;
+    
+    let presets = default_preset_teams();
+    
+    // Should have 9 preset teams (3 original + 6 new)
+    assert_eq!(presets.len(), 9, "Expected 9 preset teams");
+    
+    // Verify all presets are marked as preset
+    assert!(presets.iter().all(|t| t.is_preset), "All presets should have is_preset=true");
+    
+    // Verify new templates exist
+    let template_names: Vec<&str> = presets.iter().map(|t| t.name.as_str()).collect();
+    assert!(template_names.contains(&"Rust Systems Programming Team"));
+    assert!(template_names.contains(&"Full-Stack Web Development Team"));
+    assert!(template_names.contains(&"DevOps & Infrastructure Team"));
+    assert!(template_names.contains(&"iOS/Swift Development Team"));
+    assert!(template_names.contains(&"Security Audit Team"));
+    assert!(template_names.contains(&"Frontend/React UI Team"));
+    
+    // Verify each team has members
+    for team in &presets {
+        assert!(!team.members.is_empty(), "Team '{}' should have at least one member", team.name);
+    }
+    
+    // Verify Rust team specifically
+    let rust_team = presets.iter().find(|t| t.id == "team_rust").unwrap();
+    assert_eq!(rust_team.members.len(), 4);
+    assert!(rust_team.members.iter().any(|m| m.name.contains("Rust")));
+}
