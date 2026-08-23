@@ -32,6 +32,7 @@ pub enum Token {
     Ident(String),
     IntLit(i64),
     FloatLit(f64),
+    StringLit(String),
     // Operators
     Eq,     // ==
     Ne,     // !=
@@ -43,7 +44,10 @@ pub enum Token {
     Plus,   // +
     Minus,  // -
     Star,   // *
+    Slash,  // /
+    Percent,// %
     Arrow,  // ->
+    Dot,    // .
     // Delimiters
     LParen,   // (
     RParen,   // )
@@ -54,8 +58,66 @@ pub enum Token {
     Comma,    // ,
     Semi,     // ;
     Colon,    // :
+    Pipe,     // |
+    Amp,      // &
     // End
     Eof,
+}
+
+impl Token {
+    /// Human-readable name for error messages.
+    pub fn display_name(&self) -> &'static str {
+        match self {
+            Token::Fn => "'fn'",
+            Token::Let => "'let'",
+            Token::Loop => "'loop'",
+            Token::While => "'while'",
+            Token::If => "'if'",
+            Token::Else => "'else'",
+            Token::Return => "'return'",
+            Token::Break => "'break'",
+            Token::Print => "'print'",
+            Token::Vec => "'vec'",
+            Token::Matrix => "'matrix'",
+            Token::Norm => "'norm'",
+            Token::Int => "'int'",
+            Token::Add => "'add'",
+            Token::Silu => "'silu'",
+            Token::Negate => "'negate'",
+            Token::Abs => "'abs'",
+            Token::ReduceSum => "'reduce_sum'",
+            Token::Ident(_) => "identifier",
+            Token::IntLit(_) => "integer literal",
+            Token::FloatLit(_) => "float literal",
+            Token::StringLit(_) => "string literal",
+            Token::Eq => "'=='",
+            Token::Ne => "'!='",
+            Token::Lt => "'<'",
+            Token::Gt => "'>'",
+            Token::Le => "'<='",
+            Token::Ge => "'>='",
+            Token::Assign => "'='",
+            Token::Plus => "'+'",
+            Token::Minus => "'-'",
+            Token::Star => "'*'",
+            Token::Slash => "'/'",
+            Token::Percent => "'%'",
+            Token::Arrow => "'->'",
+            Token::Dot => "'.'",
+            Token::LParen => "'('",
+            Token::RParen => "')'",
+            Token::LBrace => "'{'",
+            Token::RBrace => "'}'",
+            Token::LBracket => "'['",
+            Token::RBracket => "']'",
+            Token::Comma => "','",
+            Token::Semi => "';'",
+            Token::Colon => "':'",
+            Token::Pipe => "'|'",
+            Token::Amp => "'&'",
+            Token::Eof => "end of file",
+        }
+    }
 }
 
 /// A token with its source location.
@@ -96,6 +158,38 @@ impl NdaLexer {
             }
         }
         Ok(tokens)
+    }
+
+    /// Error-recovering tokenization: collects errors instead of stopping.
+    /// Returns the tokens that were successfully lexed plus any errors.
+    pub fn tokenize_with_errors(&mut self) -> (Vec<Located>, Vec<String>) {
+        let mut tokens = Vec::new();
+        let mut errors = Vec::new();
+        loop {
+            match self.next_token() {
+                Ok(tok) => {
+                    let is_eof = tok.token == Token::Eof;
+                    tokens.push(tok);
+                    if is_eof {
+                        break;
+                    }
+                }
+                Err(e) => {
+                    errors.push(e);
+                    // Skip the offending character and continue
+                    self.advance();
+                    if self.peek().is_none() {
+                        tokens.push(Located {
+                            token: Token::Eof,
+                            line: self.line,
+                            col: self.col,
+                        });
+                        break;
+                    }
+                }
+            }
+        }
+        (tokens, errors)
     }
 
     fn peek(&self) -> Option<char> {
@@ -241,6 +335,46 @@ impl NdaLexer {
                     col,
                 });
             }
+            '/' => {
+                self.advance();
+                return Ok(Located {
+                    token: Token::Slash,
+                    line,
+                    col,
+                });
+            }
+            '%' => {
+                self.advance();
+                return Ok(Located {
+                    token: Token::Percent,
+                    line,
+                    col,
+                });
+            }
+            '.' => {
+                self.advance();
+                return Ok(Located {
+                    token: Token::Dot,
+                    line,
+                    col,
+                });
+            }
+            '|' => {
+                self.advance();
+                return Ok(Located {
+                    token: Token::Pipe,
+                    line,
+                    col,
+                });
+            }
+            '&' => {
+                self.advance();
+                return Ok(Located {
+                    token: Token::Amp,
+                    line,
+                    col,
+                });
+            }
             '-' => {
                 self.advance();
                 if self.peek() == Some('>') {
@@ -320,11 +454,16 @@ impl NdaLexer {
             _ => {}
         }
 
-        // Numbers (integers and floats)
+        // Numbers (integers and floats, including hex)
         if ch.is_ascii_digit()
             || (ch == '.' && self.peek_next().is_some_and(|c| c.is_ascii_digit()))
         {
             return self.lex_number(line, col);
+        }
+
+        // String literals
+        if ch == '"' {
+            return self.lex_string(line, col);
         }
 
         // Identifiers and keywords
@@ -338,6 +477,43 @@ impl NdaLexer {
     fn lex_number(&mut self, line: usize, col: usize) -> Result<Located, String> {
         let mut s = String::new();
         let mut is_float = false;
+
+        // Check for hex literal: 0x or 0X
+        if self.peek() == Some('0')
+            && self.peek_next().is_some_and(|c| c == 'x' || c == 'X')
+        {
+            s.push('0');
+            self.advance();
+            s.push('x');
+            self.advance();
+            while let Some(ch) = self.peek() {
+                if ch.is_ascii_hexdigit() || ch == '_' {
+                    if ch != '_' {
+                        s.push(ch);
+                    }
+                    self.advance();
+                } else {
+                    break;
+                }
+            }
+            let hex_str = s.trim_start_matches("0x");
+            match i64::from_str_radix(hex_str, 16) {
+                Ok(v) => {
+                    return Ok(Located {
+                        token: Token::IntLit(v),
+                        line,
+                        col,
+                    })
+                }
+                Err(_) => {
+                    return Err(format!(
+                        "{}:{}: Invalid hex literal '{}'",
+                        line, col, s
+                    ))
+                }
+            }
+        }
+
         while let Some(ch) = self.peek() {
             if ch.is_ascii_digit() || ch == '.' || ch == 'e' || ch == 'E' {
                 if ch == '.' || ch == 'e' || ch == 'E' {
@@ -368,6 +544,50 @@ impl NdaLexer {
                 Err(_) => Err(format!("{}:{}: Invalid integer literal '{}'", line, col, s)),
             }
         }
+    }
+
+    fn lex_string(&mut self, line: usize, col: usize) -> Result<Located, String> {
+        self.advance(); // consume opening quote
+        let mut s = String::new();
+        loop {
+            match self.advance() {
+                Some('"') => break,
+                Some('\\') => {
+                    // Escape sequences
+                    match self.advance() {
+                        Some('n') => s.push('\n'),
+                        Some('t') => s.push('\t'),
+                        Some('\\') => s.push('\\'),
+                        Some('"') => s.push('"'),
+                        Some('0') => s.push('\0'),
+                        Some(c) => {
+                            return Err(format!(
+                                "{}:{}: Unknown escape sequence '\\{}'",
+                                line, col, c
+                            ))
+                        }
+                        None => {
+                            return Err(format!(
+                                "{}:{}: Unterminated string literal",
+                                line, col
+                            ))
+                        }
+                    }
+                }
+                Some(c) => s.push(c),
+                None => {
+                    return Err(format!(
+                        "{}:{}: Unterminated string literal",
+                        line, col
+                    ))
+                }
+            }
+        }
+        Ok(Located {
+            token: Token::StringLit(s),
+            line,
+            col,
+        })
     }
 
     fn lex_ident(&mut self, line: usize, col: usize) -> Result<Located, String> {
@@ -464,5 +684,75 @@ mod tests {
         let tokens = lexer.tokenize().unwrap();
         // Should have: let x = 1 let y = 2 Eof
         assert_eq!(tokens.len(), 9); // let x = 1 let y = 2 Eof
+    }
+
+    #[test]
+    fn lex_hex_literal() {
+        let src = "0xFF";
+        let mut lexer = NdaLexer::new(src);
+        let tokens = lexer.tokenize().unwrap();
+        assert_eq!(tokens[0].token, Token::IntLit(255));
+    }
+
+    #[test]
+    fn lex_hex_literal_with_underscores() {
+        let src = "0xDEAD_BEEF";
+        let mut lexer = NdaLexer::new(src);
+        let tokens = lexer.tokenize().unwrap();
+        assert_eq!(tokens[0].token, Token::IntLit(0xDEAD_BEEF));
+    }
+
+    #[test]
+    fn lex_string_literal() {
+        let src = r#""hello world""#;
+        let mut lexer = NdaLexer::new(src);
+        let tokens = lexer.tokenize().unwrap();
+        assert_eq!(
+            tokens[0].token,
+            Token::StringLit("hello world".to_string())
+        );
+    }
+
+    #[test]
+    fn lex_string_with_escapes() {
+        let src = r#""line\n\ttab""#;
+        let mut lexer = NdaLexer::new(src);
+        let tokens = lexer.tokenize().unwrap();
+        assert_eq!(
+            tokens[0].token,
+            Token::StringLit("line\n\ttab".to_string())
+        );
+    }
+
+    #[test]
+    fn lex_new_operators() {
+        let src = "a / b % c . d | e & f";
+        let mut lexer = NdaLexer::new(src);
+        let tokens = lexer.tokenize().unwrap();
+        assert_eq!(tokens[1].token, Token::Slash);
+        assert_eq!(tokens[3].token, Token::Percent);
+        assert_eq!(tokens[5].token, Token::Dot);
+        assert_eq!(tokens[7].token, Token::Pipe);
+        assert_eq!(tokens[9].token, Token::Amp);
+    }
+
+    #[test]
+    fn error_recovery_skips_bad_chars() {
+        let src = "let x = 1\nlet y = @2";
+        let mut lexer = NdaLexer::new(src);
+        let (tokens, errors) = lexer.tokenize_with_errors();
+        assert!(!errors.is_empty(), "should have at least one error");
+        // Should still produce tokens for the valid parts
+        assert!(tokens.len() > 3, "should produce tokens despite error");
+        // Last token should be Eof
+        assert_eq!(tokens.last().unwrap().token, Token::Eof);
+    }
+
+    #[test]
+    fn token_display_names() {
+        assert_eq!(Token::Fn.display_name(), "'fn'");
+        assert_eq!(Token::Plus.display_name(), "'+'");
+        assert_eq!(Token::Ident("x".into()).display_name(), "identifier");
+        assert_eq!(Token::Eof.display_name(), "end of file");
     }
 }

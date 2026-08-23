@@ -129,8 +129,47 @@ pub fn resolve_calls(
 }
 
 pub fn compile(source: &str) -> Result<(NdaNode, HashMap<String, u64>), String> {
+    let report = compile_with_report(source)?;
+    Ok((report.program, report.fn_hashes))
+}
+
+/// Compile NDA source with full diagnostics.
+#[derive(Debug)]
+pub struct ParseReport {
+    /// The compiled program AST.
+    pub program: NdaNode,
+    /// Function name → final hash.
+    pub fn_hashes: HashMap<String, u64>,
+    /// Number of functions compiled.
+    pub function_count: usize,
+    /// Total call edges found.
+    pub call_edges: usize,
+    /// Total call edges resolved to known functions.
+    pub call_edges_resolved: usize,
+    /// Lexer errors encountered (if any).
+    pub lexer_errors: Vec<String>,
+    /// Names of compiled functions.
+    pub function_names: Vec<String>,
+}
+
+impl ParseReport {
+    /// Serialize to JSON-friendly struct.
+    pub fn to_json(&self) -> serde_json::Value {
+        serde_json::json!({
+            "function_count": self.function_count,
+            "function_names": self.function_names,
+            "call_edges": self.call_edges,
+            "call_edges_resolved": self.call_edges_resolved,
+            "lexer_errors": self.lexer_errors,
+            "program_hash": format!("{:016x}", self.program.hash()),
+        })
+    }
+}
+
+/// Compile NDA source with full diagnostics.
+pub fn compile_with_report(source: &str) -> Result<ParseReport, String> {
     let mut lexer = NdaLexer::new(source);
-    let tokens = lexer.tokenize()?;
+    let (tokens, lexer_errors) = lexer.tokenize_with_errors();
     let mut parser = NdaParser::new(tokens);
 
     let mut functions = HashMap::new();
@@ -147,8 +186,8 @@ pub fn compile(source: &str) -> Result<(NdaNode, HashMap<String, u64>), String> 
         } else {
             let loc = parser.peek_loc().unwrap();
             return Err(format!(
-                "{}:{}: Expected 'fn' keyword at top level",
-                loc.line, loc.col
+                "{}:{}: Expected 'fn' keyword at top level, found {}",
+                loc.line, loc.col, loc.token.display_name()
             ));
         }
     }
@@ -173,15 +212,38 @@ pub fn compile(source: &str) -> Result<(NdaNode, HashMap<String, u64>), String> 
 
     let mut children = Vec::new();
     let mut final_hashes = HashMap::new();
-    for name in sorted_names {
-        let node = functions.get(&name).unwrap();
-        let calls = all_calls.get(&name).unwrap();
+    let mut total_edges = 0;
+    let mut resolved_edges = 0;
+    for name in &sorted_names {
+        let node = functions.get(name).unwrap();
+        let calls = all_calls.get(name).unwrap();
+        total_edges += calls.len();
         let resolved = resolve_calls(node, &fn_hashes, calls);
         final_hashes.insert(name.clone(), resolved.hash());
         children.push(resolved);
     }
 
-    Ok((NdaNode::Scope { children }, final_hashes))
+    // Count resolved edges (calls whose target matches a known function hash)
+    let known_hashes: std::collections::HashSet<u64> = final_hashes.values().cloned().collect();
+    for calls in all_calls.values() {
+        for (target, call_name) in calls {
+            if let Some(&hash) = fn_hashes.get(call_name) {
+                if known_hashes.contains(&hash) {
+                    resolved_edges += 1;
+                }
+            }
+        }
+    }
+
+    Ok(ParseReport {
+        program: NdaNode::Scope { children },
+        fn_hashes: final_hashes,
+        function_count: functions.len(),
+        call_edges: total_edges,
+        call_edges_resolved: resolved_edges,
+        lexer_errors,
+        function_names: sorted_names,
+    })
 }
 
 pub struct NdaParser {
@@ -218,14 +280,14 @@ impl NdaParser {
             } else {
                 let loc = self.peek_loc().unwrap();
                 Err(format!(
-                    "{}:{}: Expected token {:?}, found {:?}",
-                    loc.line, loc.col, expected, tok
+                    "{}:{}: Expected {}, found {}",
+                    loc.line, loc.col, expected.display_name(), loc.token.display_name()
                 ))
             }
         } else {
             Err(format!(
-                "Expected token {:?}, reached End of File",
-                expected
+                "Expected {}, reached end of file",
+                expected.display_name()
             ))
         }
     }
@@ -794,8 +856,8 @@ impl NdaParser {
                     col: 0,
                 });
                 Err(format!(
-                    "{}:{}: Unexpected token in expression: {:?}",
-                    loc.line, loc.col, tok
+                    "{}:{}: Unexpected {} in expression",
+                    loc.line, loc.col, loc.token.display_name()
                 ))
             }
         }
@@ -881,5 +943,47 @@ mod tests {
             has_while(&program),
             "Dynamic loop should have been translated to a While loop"
         );
+    }
+
+    #[test]
+    fn test_compile_with_report() {
+        let src = r#"
+            fn helper(x: int) -> int {
+                return x
+            }
+            fn main() {
+                let x = helper(1)
+                print(x)
+            }
+        "#;
+        let report = compile_with_report(src).unwrap();
+        assert_eq!(report.function_count, 2);
+        assert!(report.function_names.contains(&"helper".to_string()));
+        assert!(report.function_names.contains(&"main".to_string()));
+        assert!(report.call_edges > 0);
+        assert!(report.lexer_errors.is_empty());
+    }
+
+    #[test]
+    fn test_parse_report_json() {
+        let src = "fn main() { print(42) }";
+        let report = compile_with_report(src).unwrap();
+        let json = report.to_json();
+        assert_eq!(json["function_count"], 1);
+        assert!(json["program_hash"].as_str().unwrap().len() > 0);
+    }
+
+    #[test]
+    fn test_improved_error_messages() {
+        // Trailing incomplete expression — parser sees '}' where it expects an expression
+        let src = "fn main() {\n  let x = \n}";
+        let result = compile(src);
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        // Should use display_name() format (contains quotes around token)
+        // and NOT contain Debug format like "Token::..."
+        assert!(!err.contains("Token::"), "error should not contain Debug format, got: {}", err);
+        // Should contain a line:col prefix
+        assert!(err.contains(':'), "error should contain line:col, got: {}", err);
     }
 }
