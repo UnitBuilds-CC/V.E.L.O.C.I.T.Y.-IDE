@@ -337,6 +337,18 @@ pub struct NdaEmbedding {
     pub extra: Vec<u8>,
 }
 
+impl std::fmt::Debug for NdaEmbedding {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("NdaEmbedding")
+            .field("vocab_size", &self.vocab_size)
+            .field("hidden_size", &self.hidden_size)
+            .field("log2_scale", &self.log2_scale)
+            .field("sign_bytes", &self.sign.len())
+            .field("extra_bytes", &self.extra.len())
+            .finish()
+    }
+}
+
 impl NdaEmbedding {
     pub fn stride(&self) -> usize {
         self.hidden_size.div_ceil(8)
