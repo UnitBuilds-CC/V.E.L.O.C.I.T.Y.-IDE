@@ -63,5 +63,100 @@ pub fn get_team_tools() -> Vec<Tool> {
                 "properties": {}
             }),
         },
+        // ── Edit / Update Tools ──────────────────────────────────────────
+        Tool {
+            name: "update_expert_team".to_string(),
+            description: "Update an existing expert team's name and/or description. Cannot edit preset teams (clone first). The team id is regenerated from the new name.".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "team_id": { "type": "string", "description": "Team id, slug, or name to identify the team." },
+                    "name": { "type": "string", "description": "New team name. Updates the slug and id." },
+                    "description": { "type": "string", "description": "New team description." }
+                },
+                "required": ["team_id"]
+            }),
+        },
+        Tool {
+            name: "update_team_member".to_string(),
+            description: "Apply a partial update to a team member. Only the fields you provide are changed; all other fields remain unchanged. Cannot edit preset team members.".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "team_id": { "type": "string", "description": "Team id, slug, or name." },
+                    "member_id": { "type": "string", "description": "The member's id to update." },
+                    "name": { "type": "string", "description": "New display name." },
+                    "role": { "type": "string", "description": "New role/specialty." },
+                    "provider": { "type": "string", "description": "New provider slug (cloudflare, openrouter, azure, ollama, etc.)." },
+                    "model_id": { "type": "string", "description": "New model identifier." },
+                    "skills": { "type": "array", "items": { "type": "string" }, "description": "Replace the skills list." },
+                    "scope_patterns": { "type": "array", "items": { "type": "string" }, "description": "Replace the scope patterns." },
+                    "tools": { "type": "array", "items": { "type": "string" }, "description": "Replace the tool allow-list." },
+                    "workflow_instructions": { "type": "string", "description": "Replace the workflow instructions." }
+                },
+                "required": ["team_id", "member_id"]
+            }),
+        },
+        Tool {
+            name: "add_team_member".to_string(),
+            description: "Add a new member to an existing expert team. The member object follows the same schema as create_expert_team members. Cannot add to preset teams.".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "team_id": { "type": "string", "description": "Team id, slug, or name." },
+                    "member": {
+                        "type": "object",
+                        "description": "The new member specification.",
+                        "properties": {
+                            "name": { "type": "string" },
+                            "role": { "type": "string" },
+                            "provider": { "type": "string" },
+                            "model_id": { "type": "string" },
+                            "skills": { "type": "array", "items": { "type": "string" } },
+                            "scope_patterns": { "type": "array", "items": { "type": "string" } },
+                            "tools": { "type": "array", "items": { "type": "string" } },
+                            "workflow_instructions": { "type": "string" }
+                        },
+                        "required": ["name", "role"]
+                    }
+                },
+                "required": ["team_id", "member"]
+            }),
+        },
+        Tool {
+            name: "remove_team_member".to_string(),
+            description: "Remove a member from an expert team by member id. Cannot remove from preset teams.".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "team_id": { "type": "string", "description": "Team id, slug, or name." },
+                    "member_id": { "type": "string", "description": "The id of the member to remove." }
+                },
+                "required": ["team_id", "member_id"]
+            }),
+        },
+        // ── Validation Tools ─────────────────────────────────────────────
+        Tool {
+            name: "validate_team".to_string(),
+            description: "Run composition validation on a team. Checks for: empty teams, team lead scope coverage, duplicate names/ids, empty fields, default model usage, and scope overlaps. Returns errors, warnings, info, and a health score (0-100).".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "team_id": { "type": "string", "description": "Team id, slug, or name to validate." }
+                },
+                "required": ["team_id"]
+            }),
+        },
+        Tool {
+            name: "check_scope_overlaps".to_string(),
+            description: "Detect scope pattern overlaps between members of a team. Overlaps occur when one member's scope pattern contains another's (e.g. 'src/' and 'src/api/'). Returns detailed overlap pairs.".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "team_id": { "type": "string", "description": "Team id, slug, or name to check." }
+                },
+                "required": ["team_id"]
+            }),
+        },
     ]
 }

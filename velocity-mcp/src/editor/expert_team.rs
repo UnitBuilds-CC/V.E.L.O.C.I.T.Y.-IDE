@@ -82,6 +82,71 @@ impl ExpertMember {
     }
 }
 
+/// Partial update for an `ExpertMember`. Each `Option` field, when `Some`,
+/// replaces the corresponding field on the target member.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct MemberUpdate {
+    pub name: Option<String>,
+    pub role: Option<String>,
+    pub provider: Option<String>,
+    pub model_id: Option<String>,
+    pub skills: Option<Vec<String>>,
+    pub scope_patterns: Option<Vec<String>>,
+    pub tools: Option<Vec<String>>,
+    pub workflow_instructions: Option<String>,
+}
+
+impl MemberUpdate {
+    /// Apply this update to a member, returning the list of fields that changed.
+    pub fn apply(&self, member: &mut ExpertMember) -> Vec<&'static str> {
+        let mut changed = Vec::new();
+        if let Some(ref name) = self.name {
+            if !name.trim().is_empty() && name != &member.name {
+                member.name = name.trim().to_string();
+                changed.push("name");
+            }
+        }
+        if let Some(ref role) = self.role {
+            if !role.trim().is_empty() && role != &member.role {
+                member.role = role.trim().to_string();
+                changed.push("role");
+            }
+        }
+        if let Some(ref provider) = self.provider {
+            if let Some(p) = AiProvider::from_slug(provider) {
+                member.provider = p;
+                changed.push("provider");
+            }
+        }
+        if let Some(ref model_id) = self.model_id {
+            let trimmed = model_id.trim().to_string();
+            if trimmed != member.model_id {
+                member.model_id = trimmed;
+                changed.push("model_id");
+            }
+        }
+        if let Some(ref skills) = self.skills {
+            member.skills = skills.clone();
+            changed.push("skills");
+        }
+        if let Some(ref scope_patterns) = self.scope_patterns {
+            member.scope_patterns = scope_patterns.clone();
+            changed.push("scope_patterns");
+        }
+        if let Some(ref tools) = self.tools {
+            member.tools = tools.clone();
+            changed.push("tools");
+        }
+        if let Some(ref instructions) = self.workflow_instructions {
+            if instructions != &member.workflow_instructions {
+                member.workflow_instructions = instructions.to_string();
+                changed.push("workflow_instructions");
+            }
+        }
+        changed
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ExpertTeam {
     pub id: String,
@@ -133,6 +198,249 @@ impl ExpertTeam {
         // 3. Fall back to lead member (first member)
         self.members.first()
     }
+
+    /// Update the team name. Returns the old slug and new slug for change tracking.
+    pub fn update_name(&mut self, new_name: &str) -> Option<(String, String)> {
+        let trimmed = new_name.trim();
+        if trimmed.is_empty() || trimmed == self.name {
+            return None;
+        }
+        let old_slug = self.slug();
+        self.name = trimmed.to_string();
+        // Regenerate the team id from the new name
+        self.id = format!("team_{}", self.slug());
+        Some((old_slug, self.slug()))
+    }
+
+    /// Update the team description.
+    pub fn update_description(&mut self, new_description: &str) -> bool {
+        let trimmed = new_description.trim();
+        if trimmed == self.description {
+            return false;
+        }
+        self.description = trimmed.to_string();
+        true
+    }
+
+    /// Add a member to the team. Returns `Err` if a member with the same id exists.
+    pub fn add_member(&mut self, member: ExpertMember) -> Result<(), String> {
+        if self.members.iter().any(|m| m.id == member.id) {
+            return Err(format!("member id '{}' already exists", member.id));
+        }
+        self.members.push(member);
+        Ok(())
+    }
+
+    /// Remove a member by id. Returns the removed member, or `None` if not found.
+    pub fn remove_member(&mut self, member_id: &str) -> Option<ExpertMember> {
+        if let Some(pos) = self.members.iter().position(|m| m.id == member_id) {
+            Some(self.members.remove(pos))
+        } else {
+            None
+        }
+    }
+
+    /// Apply a partial update to a member identified by `member_id`.
+    /// Returns the list of fields that changed, or `Err` if member not found.
+    pub fn update_member(
+        &mut self,
+        member_id: &str,
+        update: &MemberUpdate,
+    ) -> Result<Vec<&'static str>, String> {
+        let member = self
+            .members
+            .iter_mut()
+            .find(|m| m.id == member_id)
+            .ok_or_else(|| format!("member '{}' not found", member_id))?;
+        Ok(update.apply(member))
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Scope Overlap Detection
+// ═══════════════════════════════════════════════════════════════════════════
+
+/// A detected overlap between two members' scope patterns.
+#[derive(Debug, Clone)]
+pub struct ScopeOverlap {
+    pub member_a_id: String,
+    pub member_a_name: String,
+    pub member_b_id: String,
+    pub member_b_name: String,
+    pub pattern_a: String,
+    pub pattern_b: String,
+}
+
+/// Detect pairs of members whose scope patterns overlap (one contains the other).
+/// Returns an empty vec when no overlaps exist.
+pub fn detect_scope_overlaps(team: &ExpertTeam) -> Vec<ScopeOverlap> {
+    let mut overlaps = Vec::new();
+    for (i, a) in team.members.iter().enumerate() {
+        for b in team.members.iter().skip(i + 1) {
+            for pa in &a.scope_patterns {
+                for pb in &b.scope_patterns {
+                    if patterns_overlap(pa, pb) {
+                        overlaps.push(ScopeOverlap {
+                            member_a_id: a.id.clone(),
+                            member_a_name: a.name.clone(),
+                            member_b_id: b.id.clone(),
+                            member_b_name: b.name.clone(),
+                            pattern_a: pa.clone(),
+                            pattern_b: pb.clone(),
+                        });
+                    }
+                }
+            }
+        }
+    }
+    overlaps
+}
+
+/// True when two scope patterns overlap (one contains the other, case-insensitive).
+fn patterns_overlap(a: &str, b: &str) -> bool {
+    let al = a.to_lowercase();
+    let bl = b.to_lowercase();
+    al.contains(&bl) || bl.contains(&al)
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Team Composition Validation
+// ═══════════════════════════════════════════════════════════════════════════
+
+/// Severity of a validation issue.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ValidationSeverity {
+    Error,
+    Warning,
+    Info,
+}
+
+/// A single validation issue found during team composition checks.
+#[derive(Debug, Clone)]
+pub struct ValidationIssue {
+    pub severity: ValidationSeverity,
+    pub code: String,
+    pub message: String,
+}
+
+/// Validate the composition of a team. Returns a list of issues found.
+/// An empty list means the team is well-formed.
+pub fn validate_team_composition(team: &ExpertTeam) -> Vec<ValidationIssue> {
+    let mut issues = Vec::new();
+
+    // Rule 1: At least one member
+    if team.members.is_empty() {
+        issues.push(ValidationIssue {
+            severity: ValidationSeverity::Error,
+            code: "NO_MEMBERS".to_string(),
+            message: "Team must have at least one member".to_string(),
+        });
+        return issues;
+    }
+
+    // Rule 2: First member (team lead) should have a broad scope
+    if let Some(lead) = team.members.first() {
+        let has_broad_scope = lead.scope_patterns.iter().any(|p| {
+            let pl = p.to_lowercase();
+            pl == "src/" || pl == "./" || pl == "*" || pl.is_empty()
+        });
+        if !has_broad_scope && !lead.scope_patterns.is_empty() {
+            issues.push(ValidationIssue {
+                severity: ValidationSeverity::Warning,
+                code: "LEAD_NARROW_SCOPE".to_string(),
+                message: format!(
+                    "Team lead '{}' has a narrow scope. Consider adding a broad scope (e.g. 'src/') for fallback routing.",
+                    lead.name
+                ),
+            });
+        }
+        if lead.scope_patterns.is_empty() {
+            issues.push(ValidationIssue {
+                severity: ValidationSeverity::Warning,
+                code: "LEAD_NO_SCOPE".to_string(),
+                message: format!(
+                    "Team lead '{}' has no scope patterns. Tasks with no file match will still route here, but explicit scopes improve routing accuracy.",
+                    lead.name
+                ),
+            });
+        }
+    }
+
+    // Rule 3: No duplicate member names
+    let mut names = std::collections::HashSet::new();
+    for m in &team.members {
+        if !names.insert(m.name.to_lowercase()) {
+            issues.push(ValidationIssue {
+                severity: ValidationSeverity::Error,
+                code: "DUPLICATE_NAME".to_string(),
+                message: format!("Duplicate member name: '{}'", m.name),
+            });
+        }
+    }
+
+    // Rule 4: No duplicate member ids
+    let mut ids = std::collections::HashSet::new();
+    for m in &team.members {
+        if !ids.insert(m.id.to_lowercase()) {
+            issues.push(ValidationIssue {
+                severity: ValidationSeverity::Error,
+                code: "DUPLICATE_ID".to_string(),
+                message: format!("Duplicate member id: '{}'", m.id),
+            });
+        }
+    }
+
+    // Rule 5: All members must have a non-empty name and role
+    for m in &team.members {
+        if m.name.trim().is_empty() {
+            issues.push(ValidationIssue {
+                severity: ValidationSeverity::Error,
+                code: "EMPTY_NAME".to_string(),
+                message: format!("Member '{}' has an empty name", m.id),
+            });
+        }
+        if m.role.trim().is_empty() {
+            issues.push(ValidationIssue {
+                severity: ValidationSeverity::Error,
+                code: "EMPTY_ROLE".to_string(),
+                message: format!("Member '{}' has an empty role", m.name),
+            });
+        }
+    }
+
+    // Rule 6: Members with empty model_id will use session defaults (info)
+    for m in &team.members {
+        if m.model_id.trim().is_empty() {
+            issues.push(ValidationIssue {
+                severity: ValidationSeverity::Info,
+                code: "DEFAULT_MODEL".to_string(),
+                message: format!(
+                    "Member '{}' will use the session default provider/model",
+                    m.name
+                ),
+            });
+        }
+    }
+
+    // Rule 7: Scope overlap warnings
+    let overlaps = detect_scope_overlaps(team);
+    for overlap in &overlaps {
+        issues.push(ValidationIssue {
+            severity: ValidationSeverity::Warning,
+            code: "SCOPE_OVERLAP".to_string(),
+            message: format!(
+                "Scope overlap between '{}' ({}) and '{}' ({}): '{}' ↔ '{}'",
+                overlap.member_a_name,
+                overlap.member_a_id,
+                overlap.member_b_name,
+                overlap.member_b_id,
+                overlap.pattern_a,
+                overlap.pattern_b,
+            ),
+        });
+    }
+
+    issues
 }
 
 /// Factory for 3 default common expert teams
