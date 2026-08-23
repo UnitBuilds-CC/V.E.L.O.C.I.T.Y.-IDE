@@ -546,6 +546,118 @@ pub struct NdaEmbeddingInfo {
     pub bits_per_embedding: u32,
 }
 
+/// Validate RMS normalization parameters.
+pub fn validate_rms_norm_params(x: &NdaVec, w: &NdaVec, eps_shift: u32) -> Vec<String> {
+    let mut issues = Vec::new();
+    if x.len != w.len {
+        issues.push(format!("x.len ({}) != w.len ({})", x.len, w.len));
+    }
+    if x.len == 0 {
+        issues.push("vector length is 0".into());
+    }
+    if x.sign.len() != x.extra.len() {
+        issues.push(format!("x sign/extra length mismatch: {} vs {}", x.sign.len(), x.extra.len()));
+    }
+    if w.sign.len() != w.extra.len() {
+        issues.push(format!("w sign/extra length mismatch: {} vs {}", w.sign.len(), w.extra.len()));
+    }
+    if eps_shift > 14 {
+        issues.push(format!("eps_shift {} exceeds maximum 14", eps_shift));
+    }
+    issues
+}
+
+/// Diagnostic info about ALiBi slopes configuration.
+#[derive(Debug, Clone, Serialize)]
+pub struct AliBiSlopesInfo {
+    pub n_heads: usize,
+    pub min_shift: u8,
+    pub max_shift: u8,
+    pub unique_shifts: usize,
+    pub validation_issues: Vec<String>,
+}
+
+impl AliBiSlopes {
+    /// Return diagnostic info about this ALiBi configuration.
+    pub fn info(&self) -> AliBiSlopesInfo {
+        let mut issues = Vec::new();
+        if self.n_heads == 0 {
+            issues.push("n_heads is 0".into());
+        }
+        if self.shifts.is_empty() {
+            issues.push("shifts buffer is empty".into());
+        }
+        if self.shifts.len() != self.n_heads {
+            issues.push(format!(
+                "shifts len {} != n_heads {}",
+                self.shifts.len(),
+                self.n_heads
+            ));
+        }
+        let min_shift = self.shifts.iter().copied().min().unwrap_or(0);
+        let max_shift = self.shifts.iter().copied().max().unwrap_or(0);
+        let unique = {
+            let mut s = std::collections::HashSet::new();
+            for &v in &self.shifts { s.insert(v); }
+            s.len()
+        };
+        AliBiSlopesInfo {
+            n_heads: self.n_heads,
+            min_shift,
+            max_shift,
+            unique_shifts: unique,
+            validation_issues: issues,
+        }
+    }
+}
+
+/// Validate ALiBi configuration parameters.
+pub fn validate_alibi_config(n_heads: usize) -> Vec<String> {
+    let mut issues = Vec::new();
+    if n_heads == 0 {
+        issues.push("n_heads is 0".into());
+    }
+    if n_heads > 128 {
+        issues.push(format!("n_heads {} exceeds typical maximum of 128", n_heads));
+    }
+    issues
+}
+
+/// Aggregate summary of multiple batch operation reports.
+#[derive(Debug, Clone, Serialize)]
+pub struct NdaOpsSummary {
+    pub total_operations: usize,
+    pub total_ops_count: usize,
+    pub total_elapsed_us: u64,
+    pub overall_avg_us: f64,
+    pub slowest_operation: Option<String>,
+    pub fastest_operation: Option<String>,
+}
+
+/// Summarize multiple batch operation reports into an aggregate.
+pub fn summarize_ops(reports: &[NdaOpsReport]) -> NdaOpsSummary {
+    let total_operations = reports.len();
+    let total_ops_count: usize = reports.iter().map(|r| r.count).sum();
+    let total_elapsed_us: u64 = reports.iter().map(|r| r.total_elapsed_us).sum();
+    let overall_avg_us = if total_ops_count > 0 {
+        total_elapsed_us as f64 / total_ops_count as f64
+    } else {
+        0.0
+    };
+
+    let slowest = reports.iter().max_by(|a, b| a.per_op_avg_us.partial_cmp(&b.per_op_avg_us).unwrap_or(std::cmp::Ordering::Equal));
+    let fastest = reports.iter().min_by(|a, b| a.per_op_avg_us.partial_cmp(&b.per_op_avg_us).unwrap_or(std::cmp::Ordering::Equal));
+
+    NdaOpsSummary {
+        total_operations,
+        total_ops_count,
+        total_elapsed_us,
+        overall_avg_us,
+        slowest_operation: slowest.map(|r| r.operation.clone()),
+        fastest_operation: fastest.map(|r| r.operation.clone()),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -648,5 +760,113 @@ mod tests {
         let json = serde_json::to_string(&report).unwrap();
         assert!(json.contains("\"operation\":\"test\""));
         assert!(json.contains("\"count\":5"));
+    }
+
+    #[test]
+    fn validate_rms_norm_params_valid() {
+        let x = NdaVec::from_i32_slice(&[1, 2, -1, -2], 0);
+        let w = NdaVec::from_i32_slice(&[1, 1, 1, 1], 0);
+        let issues = validate_rms_norm_params(&x, &w, 2);
+        assert!(issues.is_empty(), "expected no issues, got: {:?}", issues);
+    }
+
+    #[test]
+    fn validate_rms_norm_params_length_mismatch() {
+        let x = NdaVec::from_i32_slice(&[1, 2, 3, 4], 0);
+        let w = NdaVec::from_i32_slice(&[1, 1], 0);
+        let issues = validate_rms_norm_params(&x, &w, 2);
+        assert!(issues.iter().any(|i| i.contains("!=")));
+    }
+
+    #[test]
+    fn validate_rms_norm_params_zero_length() {
+        let x = NdaVec { len: 0, log2_scale: 0, sign: vec![].into(), extra: vec![].into() };
+        let w = NdaVec { len: 0, log2_scale: 0, sign: vec![].into(), extra: vec![].into() };
+        let issues = validate_rms_norm_params(&x, &w, 2);
+        assert!(issues.iter().any(|i| i.contains("0")));
+    }
+
+    #[test]
+    fn validate_rms_norm_params_large_eps() {
+        let x = NdaVec::from_i32_slice(&[1, 2, -1, -2], 0);
+        let w = NdaVec::from_i32_slice(&[1, 1, 1, 1], 0);
+        let issues = validate_rms_norm_params(&x, &w, 20);
+        assert!(issues.iter().any(|i| i.contains("eps_shift")));
+    }
+
+    #[test]
+    fn alibi_slopes_info_valid() {
+        let slopes = AliBiSlopes::new(8);
+        let info = slopes.info();
+        assert_eq!(info.n_heads, 8);
+        assert!(info.min_shift >= 1);
+        assert!(info.max_shift <= 30);
+        assert!(info.validation_issues.is_empty());
+    }
+
+    #[test]
+    fn alibi_slopes_info_serializes() {
+        let slopes = AliBiSlopes::new(4);
+        let info = slopes.info();
+        let json = serde_json::to_string(&info).unwrap();
+        assert!(json.contains("\"n_heads\":4"));
+        assert!(json.contains("\"min_shift\""));
+    }
+
+    #[test]
+    fn validate_alibi_config_valid() {
+        let issues = validate_alibi_config(8);
+        assert!(issues.is_empty());
+    }
+
+    #[test]
+    fn validate_alibi_config_zero_heads() {
+        let issues = validate_alibi_config(0);
+        assert!(issues.iter().any(|i| i.contains("0")));
+    }
+
+    #[test]
+    fn validate_alibi_config_too_many_heads() {
+        let issues = validate_alibi_config(256);
+        assert!(issues.iter().any(|i| i.contains("exceeds")));
+    }
+
+    #[test]
+    fn summarize_ops_empty() {
+        let summary = summarize_ops(&[]);
+        assert_eq!(summary.total_operations, 0);
+        assert_eq!(summary.total_ops_count, 0);
+        assert!(summary.slowest_operation.is_none());
+        assert!(summary.fastest_operation.is_none());
+    }
+
+    #[test]
+    fn summarize_ops_multiple() {
+        let reports = vec![
+            NdaOpsReport { operation: "add".into(), count: 10, total_elapsed_us: 100, per_op_avg_us: 10.0 },
+            NdaOpsReport { operation: "norm".into(), count: 5, total_elapsed_us: 200, per_op_avg_us: 40.0 },
+            NdaOpsReport { operation: "silu".into(), count: 8, total_elapsed_us: 40, per_op_avg_us: 5.0 },
+        ];
+        let summary = summarize_ops(&reports);
+        assert_eq!(summary.total_operations, 3);
+        assert_eq!(summary.total_ops_count, 23);
+        assert_eq!(summary.total_elapsed_us, 340);
+        assert_eq!(summary.slowest_operation.as_deref(), Some("norm"));
+        assert_eq!(summary.fastest_operation.as_deref(), Some("silu"));
+    }
+
+    #[test]
+    fn summarize_ops_serializes() {
+        let summary = NdaOpsSummary {
+            total_operations: 2,
+            total_ops_count: 10,
+            total_elapsed_us: 100,
+            overall_avg_us: 10.0,
+            slowest_operation: Some("norm".into()),
+            fastest_operation: Some("add".into()),
+        };
+        let json = serde_json::to_string(&summary).unwrap();
+        assert!(json.contains("\"total_operations\":2"));
+        assert!(json.contains("\"slowest_operation\":\"norm\""));
     }
 }
