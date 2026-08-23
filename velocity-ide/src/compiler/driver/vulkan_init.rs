@@ -1,6 +1,37 @@
 ﻿use ash::vk::Handle;
 use ash::{vk, Device, Entry, Instance};
+use serde::Serialize;
 use std::ffi::CString;
+
+/// Diagnostic info about the Vulkan device and driver.
+#[derive(Debug, Clone, Serialize)]
+pub struct VulkanDeviceInfo {
+    pub device_name: String,
+    pub device_type: String,
+    pub api_version: String,
+    pub driver_version: u32,
+    pub queue_family_index: u32,
+    pub compute_queue_supported: bool,
+    pub max_compute_work_group_count: [u32; 3],
+    pub max_compute_work_group_size: [u32; 3],
+    pub max_compute_work_group_invocations: u32,
+    pub validation_issues: Vec<String>,
+}
+
+/// Validate that a Vulkan device meets minimum requirements.
+pub fn validate_vulkan_device_info(info: &VulkanDeviceInfo) -> Vec<String> {
+    let mut issues = Vec::new();
+    if info.device_name.is_empty() {
+        issues.push("device name is empty".into());
+    }
+    if !info.compute_queue_supported {
+        issues.push("no compute queue family available".into());
+    }
+    if info.max_compute_work_group_invocations == 0 {
+        issues.push("max compute work group invocations is 0".into());
+    }
+    issues
+}
 
 pub struct VulkanDriver {
     #[allow(dead_code)]
@@ -644,5 +675,61 @@ pub fn cmd_compute_to_host_barrier(device: &Device, cmd: vk::CommandBuffer) {
             &[],
             &[],
         );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn sample_device_info() -> VulkanDeviceInfo {
+        VulkanDeviceInfo {
+            device_name: "NVIDIA GeForce RTX 3080".to_string(),
+            device_type: "Discrete GPU".to_string(),
+            api_version: "1.2.0".to_string(),
+            driver_version: 47000,
+            queue_family_index: 0,
+            compute_queue_supported: true,
+            max_compute_work_group_count: [65536, 65536, 65536],
+            max_compute_work_group_size: [1024, 1024, 64],
+            max_compute_work_group_invocations: 1024,
+            validation_issues: vec![],
+        }
+    }
+
+    #[test]
+    fn validate_device_info_valid() {
+        let info = sample_device_info();
+        assert!(validate_vulkan_device_info(&info).is_empty());
+    }
+
+    #[test]
+    fn validate_device_info_empty_name() {
+        let mut info = sample_device_info();
+        info.device_name = String::new();
+        assert!(validate_vulkan_device_info(&info).iter().any(|i| i.contains("name")));
+    }
+
+    #[test]
+    fn validate_device_info_no_compute() {
+        let mut info = sample_device_info();
+        info.compute_queue_supported = false;
+        assert!(validate_vulkan_device_info(&info).iter().any(|i| i.contains("compute")));
+    }
+
+    #[test]
+    fn validate_device_info_zero_invocations() {
+        let mut info = sample_device_info();
+        info.max_compute_work_group_invocations = 0;
+        assert!(validate_vulkan_device_info(&info).iter().any(|i| i.contains("invocations")));
+    }
+
+    #[test]
+    fn device_info_serializes() {
+        let info = sample_device_info();
+        let json = serde_json::to_string(&info).unwrap();
+        assert!(json.contains("device_name"));
+        assert!(json.contains("RTX 3080"));
+        assert!(json.contains("compute_queue_supported"));
     }
 }
