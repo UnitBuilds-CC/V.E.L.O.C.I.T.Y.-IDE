@@ -81,6 +81,66 @@ impl GenerationReport {
         let total = self.site_map_hits + self.site_map_misses;
         if total == 0 { 0.0 } else { self.site_map_hits as f64 / total as f64 }
     }
+
+    /// Average microseconds per generated token.
+    pub fn us_per_token(&self) -> f64 {
+        if self.tokens_generated == 0 {
+            0.0
+        } else {
+            self.elapsed_us as f64 / self.tokens_generated as f64
+        }
+    }
+
+    /// Total tokens processed (prompt + generated).
+    pub fn total_tokens(&self) -> usize {
+        self.prompt_tokens + self.tokens_generated
+    }
+}
+
+// ─── Transformer diagnostics ──────────────────────────────────────────────
+
+/// Comprehensive diagnostic info for the ZeroTransformer.
+#[derive(Debug, Clone, Serialize)]
+pub struct ZeroTransformerInfo {
+    pub n_layers: usize,
+    pub n_heads: usize,
+    pub n_kv_heads: usize,
+    pub hidden_size: usize,
+    pub head_dim: usize,
+    pub vocab_size: usize,
+    pub max_seq_len: usize,
+    pub eos_token_id: u32,
+    pub total_kv_cached: usize,
+    pub per_layer_kv: Vec<usize>,
+    pub lm_head_rows: usize,
+    pub lm_head_stride: usize,
+    pub embed_tokens_bytes: usize,
+    pub validation_issues: Vec<String>,
+}
+
+/// Report from norm_to_ndavec conversion with diagnostics.
+#[derive(Debug, Clone, Serialize)]
+pub struct NormConversionReport {
+    pub input_len: usize,
+    pub output_len: usize,
+    pub log2_scale: i8,
+    pub abs_max: f64,
+    pub all_positive: bool,
+    pub all_negative: bool,
+}
+
+/// Summary of a generation run for logging/display.
+#[derive(Debug, Clone, Serialize)]
+pub struct GenerationSummary {
+    pub tokens_generated: usize,
+    pub prompt_tokens: usize,
+    pub stopped_at_eos: bool,
+    pub truncated: bool,
+    pub tokens_per_second: f64,
+    pub cache_hit_rate: f64,
+    pub elapsed_ms: f64,
+    pub first_token_id: Option<u32>,
+    pub last_token_id: Option<u32>,
 }
 
 // ─── NDA KV cache (zero-float) ─────────────────────────────────────────────
@@ -298,6 +358,88 @@ impl ZeroTransformer {
     /// Return the model config reference.
     pub fn config(&self) -> &ModelConfig {
         &self.config
+    }
+
+    /// Build comprehensive diagnostic info for this transformer.
+    pub fn info(&self) -> ZeroTransformerInfo {
+        let per_layer_kv = self.kv_cache_sizes();
+        let issues = self.validate();
+        ZeroTransformerInfo {
+            n_layers: self.config.n_layers,
+            n_heads: self.config.n_heads,
+            n_kv_heads: self.config.n_kv_heads,
+            hidden_size: self.config.hidden_size,
+            head_dim: self.config.head_dim,
+            vocab_size: self.config.vocab_size,
+            max_seq_len: self.config.max_seq_len,
+            eos_token_id: self.config.eos_token_id,
+            total_kv_cached: self.kv_cache_size(),
+            per_layer_kv,
+            lm_head_rows: self.config.vocab_size,
+            lm_head_stride: self.lm_head_nda.stride(),
+            embed_tokens_bytes: self.weights.embed_tokens.len() * std::mem::size_of::<f32>(),
+            validation_issues: issues,
+        }
+    }
+
+    /// Validate config consistency. Returns list of warnings (empty = clean).
+    pub fn validate(&self) -> Vec<String> {
+        let mut issues = Vec::new();
+        let cfg = &self.config;
+
+        if cfg.hidden_size == 0 {
+            issues.push("hidden_size is 0".to_string());
+        }
+        if cfg.n_heads == 0 {
+            issues.push("n_heads is 0".to_string());
+        }
+        if cfg.n_layers == 0 {
+            issues.push("n_layers is 0".to_string());
+        }
+        if cfg.n_kv_heads == 0 {
+            issues.push("n_kv_heads is 0".to_string());
+        }
+        if cfg.n_heads % cfg.n_kv_heads != 0 {
+            issues.push(format!(
+                "n_heads ({}) not divisible by n_kv_heads ({})",
+                cfg.n_heads, cfg.n_kv_heads
+            ));
+        }
+        if cfg.hidden_size % cfg.n_heads != 0 {
+            issues.push(format!(
+                "hidden_size ({}) not divisible by n_heads ({})",
+                cfg.hidden_size, cfg.n_heads
+            ));
+        }
+        if cfg.vocab_size == 0 {
+            issues.push("vocab_size is 0".to_string());
+        }
+        if self.weights.layers.len() != cfg.n_layers {
+            issues.push(format!(
+                "weight layers ({}) != config n_layers ({})",
+                self.weights.layers.len(),
+                cfg.n_layers
+            ));
+        }
+        if self.weights.embed_tokens.is_empty() {
+            issues.push("embed_tokens weights are empty".to_string());
+        }
+        issues
+    }
+
+    /// Convert a GenerationReport into a compact GenerationSummary.
+    pub fn summarize_report(report: &GenerationReport) -> GenerationSummary {
+        GenerationSummary {
+            tokens_generated: report.tokens_generated,
+            prompt_tokens: report.prompt_tokens,
+            stopped_at_eos: report.stopped_at_eos,
+            truncated: report.truncated,
+            tokens_per_second: report.tokens_per_second,
+            cache_hit_rate: report.cache_hit_rate(),
+            elapsed_ms: report.elapsed_us as f64 / 1000.0,
+            first_token_id: report.token_ids.first().copied(),
+            last_token_id: report.token_ids.last().copied(),
+        }
     }
 
     /// Process one token — returns i32 logit vector (no softmax).
@@ -577,7 +719,7 @@ impl ZeroTransformer {
 
 /// Convert an FP32 norm weight vector (values near 1.0) to NdaVec.
 /// Norm weights are small 1D vectors; the conversion is done once at forward time.
-fn norm_to_ndavec(w: &[f32]) -> NdaVec {
+pub fn norm_to_ndavec(w: &[f32]) -> NdaVec {
     let amax = w.iter().map(|v| v.abs()).fold(0.0_f32, f32::max);
     let log2_scale = if amax > 1e-8 {
         (amax / 2.0).log2().floor() as i8
@@ -611,6 +753,23 @@ fn norm_to_ndavec(w: &[f32]) -> NdaVec {
         sign: sign.into(),
         extra: extra.into(),
     }
+}
+
+/// Convert FP32 norm weights to NdaVec with diagnostic report.
+pub fn norm_to_ndavec_report(w: &[f32]) -> (NdaVec, NormConversionReport) {
+    let abs_max = w.iter().map(|v| (*v as f64).abs()).fold(0.0_f64, f64::max);
+    let all_positive = w.iter().all(|v| *v >= 0.0);
+    let all_negative = w.iter().all(|v| *v < 0.0);
+    let vec = norm_to_ndavec(w);
+    let report = NormConversionReport {
+        input_len: w.len(),
+        output_len: vec.len,
+        log2_scale: vec.log2_scale,
+        abs_max,
+        all_positive,
+        all_negative,
+    };
+    (vec, report)
 }
 
 #[cfg(test)]
@@ -763,5 +922,181 @@ mod tests {
             token_ids: vec![],
         };
         assert!((report.cache_hit_rate() - 0.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn generation_report_us_per_token() {
+        let report = GenerationReport {
+            tokens_generated: 10,
+            prompt_tokens: 5,
+            stopped_at_eos: false,
+            truncated: true,
+            site_map_hits: 0,
+            site_map_misses: 0,
+            final_kv_cache_size: 0,
+            elapsed_us: 5000,
+            tokens_per_second: 2000.0,
+            token_ids: vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10],
+        };
+        assert!((report.us_per_token() - 500.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn generation_report_us_per_token_zero_tokens() {
+        let report = GenerationReport {
+            tokens_generated: 0,
+            prompt_tokens: 5,
+            stopped_at_eos: false,
+            truncated: false,
+            site_map_hits: 0,
+            site_map_misses: 0,
+            final_kv_cache_size: 0,
+            elapsed_us: 0,
+            tokens_per_second: 0.0,
+            token_ids: vec![],
+        };
+        assert!((report.us_per_token() - 0.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn generation_report_total_tokens() {
+        let report = GenerationReport {
+            tokens_generated: 10,
+            prompt_tokens: 5,
+            stopped_at_eos: false,
+            truncated: true,
+            site_map_hits: 0,
+            site_map_misses: 0,
+            final_kv_cache_size: 0,
+            elapsed_us: 0,
+            tokens_per_second: 0.0,
+            token_ids: vec![],
+        };
+        assert_eq!(report.total_tokens(), 15);
+    }
+
+    #[test]
+    fn zero_transformer_info_serializes() {
+        let info = ZeroTransformerInfo {
+            n_layers: 24,
+            n_heads: 32,
+            n_kv_heads: 8,
+            hidden_size: 4096,
+            head_dim: 128,
+            vocab_size: 32000,
+            max_seq_len: 2048,
+            eos_token_id: 2,
+            total_kv_cached: 100,
+            per_layer_kv: vec![4; 24],
+            lm_head_rows: 32000,
+            lm_head_stride: 512,
+            embed_tokens_bytes: 32000 * 4096 * 4,
+            validation_issues: vec![],
+        };
+        let json = serde_json::to_string(&info).unwrap();
+        assert!(json.contains("\"n_layers\":24"));
+        assert!(json.contains("\"hidden_size\":4096"));
+        assert!(json.contains("\"validation_issues\":[]"));
+    }
+
+    #[test]
+    fn norm_conversion_report_basic() {
+        let w = vec![1.0, -2.0, 3.0, -4.0];
+        let (vec, report) = norm_to_ndavec_report(&w);
+        assert_eq!(report.input_len, 4);
+        assert_eq!(report.output_len, vec.len);
+        assert!((report.abs_max - 4.0).abs() < 1e-9);
+        assert!(!report.all_positive);
+        assert!(!report.all_negative);
+    }
+
+    #[test]
+    fn norm_conversion_report_all_positive() {
+        let w = vec![1.0, 2.0, 3.0];
+        let (_, report) = norm_to_ndavec_report(&w);
+        assert!(report.all_positive);
+        assert!(!report.all_negative);
+    }
+
+    #[test]
+    fn norm_conversion_report_all_negative() {
+        let w = vec![-1.0, -2.0, -3.0];
+        let (_, report) = norm_to_ndavec_report(&w);
+        assert!(!report.all_positive);
+        assert!(report.all_negative);
+    }
+
+    #[test]
+    fn norm_conversion_report_serializes() {
+        let w = vec![1.0, 2.0];
+        let (_, report) = norm_to_ndavec_report(&w);
+        let json = serde_json::to_string(&report).unwrap();
+        assert!(json.contains("\"input_len\":2"));
+        assert!(json.contains("\"all_positive\":true"));
+    }
+
+    #[test]
+    fn generation_summary_from_report() {
+        let report = GenerationReport {
+            tokens_generated: 50,
+            prompt_tokens: 10,
+            stopped_at_eos: true,
+            truncated: false,
+            site_map_hits: 80,
+            site_map_misses: 20,
+            final_kv_cache_size: 60,
+            elapsed_us: 50000,
+            tokens_per_second: 1000.0,
+            token_ids: vec![1, 2, 3, 4, 5],
+        };
+        let summary = ZeroTransformer::summarize_report(&report);
+        assert_eq!(summary.tokens_generated, 50);
+        assert_eq!(summary.prompt_tokens, 10);
+        assert!(summary.stopped_at_eos);
+        assert!(!summary.truncated);
+        assert!((summary.tokens_per_second - 1000.0).abs() < 1e-9);
+        assert!((summary.cache_hit_rate - 0.8).abs() < 1e-9);
+        assert!((summary.elapsed_ms - 50.0).abs() < 1e-9);
+        assert_eq!(summary.first_token_id, Some(1));
+        assert_eq!(summary.last_token_id, Some(5));
+    }
+
+    #[test]
+    fn generation_summary_empty_tokens() {
+        let report = GenerationReport {
+            tokens_generated: 0,
+            prompt_tokens: 5,
+            stopped_at_eos: false,
+            truncated: false,
+            site_map_hits: 0,
+            site_map_misses: 0,
+            final_kv_cache_size: 0,
+            elapsed_us: 0,
+            tokens_per_second: 0.0,
+            token_ids: vec![],
+        };
+        let summary = ZeroTransformer::summarize_report(&report);
+        assert_eq!(summary.first_token_id, None);
+        assert_eq!(summary.last_token_id, None);
+        assert_eq!(summary.tokens_generated, 0);
+    }
+
+    #[test]
+    fn generation_summary_serializes() {
+        let summary = GenerationSummary {
+            tokens_generated: 25,
+            prompt_tokens: 8,
+            stopped_at_eos: false,
+            truncated: true,
+            tokens_per_second: 500.0,
+            cache_hit_rate: 0.6,
+            elapsed_ms: 50.0,
+            first_token_id: Some(42),
+            last_token_id: Some(99),
+        };
+        let json = serde_json::to_string(&summary).unwrap();
+        assert!(json.contains("\"tokens_generated\":25"));
+        assert!(json.contains("\"truncated\":true"));
+        assert!(json.contains("\"first_token_id\":42"));
     }
 }
