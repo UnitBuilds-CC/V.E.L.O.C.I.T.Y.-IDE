@@ -125,7 +125,7 @@ fn dirs_next() -> Option<std::path::PathBuf> {
 
 // ─── API Response Types ─────────────────────────────────────────────────
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct UsageResponse {
     pub tier: String,
     pub tokens_used: u64,
@@ -136,13 +136,13 @@ pub struct UsageResponse {
     pub period: UsagePeriod,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct UsagePeriod {
     pub start: String,
     pub end: String,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct UsageDetailed {
     pub label: String,
     pub tier: String,
@@ -153,7 +153,7 @@ pub struct UsageDetailed {
     pub by_domain: Vec<DomainUsage>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct ModelUsage {
     pub model_id: String,
     pub assignments: u64,
@@ -161,7 +161,7 @@ pub struct ModelUsage {
     pub cost_usd: f64,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct DomainUsage {
     pub domain: String,
     pub assignments: u64,
@@ -169,7 +169,7 @@ pub struct DomainUsage {
     pub cost_usd: f64,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct RateLimitResponse {
     pub key_label: String,
     pub tier: String,
@@ -179,13 +179,13 @@ pub struct RateLimitResponse {
     pub billing_period: BillingPeriodInfo,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct RateLimitInfo {
     pub max_requests_per_minute: u32,
     pub resets_in_secs: u64,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct QuotaInfo {
     pub used: u64,
     pub limit: u64,
@@ -193,7 +193,7 @@ pub struct QuotaInfo {
     pub projected_monthly: u64,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct CostInfo {
     pub used_usd: f64,
     pub limit_usd: f64,
@@ -201,7 +201,7 @@ pub struct CostInfo {
     pub projected_monthly_usd: f64,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct BillingPeriodInfo {
     pub start: String,
     pub resets_in_days: i64,
@@ -219,7 +219,7 @@ pub struct AssignmentRequest {
     pub max_cost_usd: Option<f64>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct AssignmentResponse {
     pub id: String,
     pub status: String,
@@ -230,13 +230,13 @@ pub struct AssignmentResponse {
     pub error: Option<String>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct AssignmentCost {
     pub total_tokens: u64,
     pub total_cost_usd: f64,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct HealthResponse {
     pub status: String,
     pub version: String,
@@ -246,7 +246,7 @@ pub struct HealthResponse {
 // ─── Transparency Types ──────────────────────────────────────────────────
 
 /// Response from GET /v1/transparency — full routing transparency.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct TransparencyResponse {
     pub summary: TransparencySummary,
     pub cost_flow: CostFlow,
@@ -256,7 +256,7 @@ pub struct TransparencyResponse {
     pub available_models: Vec<AvailableModel>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct TransparencySummary {
     pub total_assignments: usize,
     pub total_errors: usize,
@@ -267,7 +267,7 @@ pub struct TransparencySummary {
     pub models_available: usize,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct CostFlow {
     pub input_tokens: u64,
     pub output_tokens: u64,
@@ -275,7 +275,7 @@ pub struct CostFlow {
     pub total_cost_usd: f64,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct RoutingDecision {
     pub timestamp: String,
     pub assignment_id: String,
@@ -291,7 +291,7 @@ pub struct RoutingDecision {
     pub routing_rationale: Option<String>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct ModelSelectionStat {
     pub model_id: String,
     pub total_requests: u64,
@@ -302,7 +302,7 @@ pub struct ModelSelectionStat {
     pub top_domain: Option<String>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct DomainDistribution {
     pub domain: String,
     pub requests: u64,
@@ -310,7 +310,7 @@ pub struct DomainDistribution {
     pub cost_usd: f64,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct AvailableModel {
     pub id: String,
     pub label: String,
@@ -323,14 +323,14 @@ pub struct AvailableModel {
 // ─── TIMESERIES TYPES ────────────────────────────────────────────────────
 
 /// Response from GET /v1/usage/timeseries.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct TimeseriesResponse {
     pub granularity: String,
     pub range: String,
     pub buckets: Vec<TimeseriesBucket>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct TimeseriesBucket {
     pub label: String,
     pub tokens: u64,
@@ -341,7 +341,7 @@ pub struct TimeseriesBucket {
 // ─── USAGE SUMMARY (ENHANCED) ────────────────────────────────────────────
 
 /// Response from GET /v1/usage/summary — enhanced usage with projections.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct UsageSummaryResponse {
     pub tier: String,
     pub tokens_used: u64,
@@ -357,7 +357,7 @@ pub struct UsageSummaryResponse {
     pub sparkline: Vec<TimeseriesBucket>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct BillingPeriodDetail {
     pub start: String,
     pub end: String,
@@ -367,13 +367,13 @@ pub struct BillingPeriodDetail {
 // ─── AUDIT LOG ───────────────────────────────────────────────────────────
 
 /// Response from GET /v1/audit-log.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct AuditLogResponse {
     pub total: usize,
     pub entries: Vec<AuditLogEntry>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct AuditLogEntry {
     pub timestamp: String,
     pub assignment_id: String,
@@ -384,7 +384,7 @@ pub struct AuditLogEntry {
     pub model_breakdown: Vec<AuditModelBreakdown>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct AuditModelBreakdown {
     pub model_id: String,
     pub provider: String,
@@ -401,13 +401,13 @@ pub struct AuditModelBreakdown {
 // ─── ANALYTICS ───────────────────────────────────────────────────────────
 
 /// Response from GET /v1/analytics/latency.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct LatencyResponse {
     pub overall: LatencyPercentiles,
     pub by_model: Vec<ModelLatency>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct LatencyPercentiles {
     pub p50_ms: u64,
     pub p90_ms: u64,
@@ -415,7 +415,7 @@ pub struct LatencyPercentiles {
     pub p99_ms: u64,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct ModelLatency {
     pub model_id: String,
     pub p50_ms: u64,
@@ -428,7 +428,7 @@ pub struct ModelLatency {
 // ─── KEY MANAGEMENT ──────────────────────────────────────────────────────
 
 /// Response from GET /admin/keys/:hash.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct KeyDetailResponse {
     pub hash: String,
     pub label: String,
@@ -442,7 +442,7 @@ pub struct KeyDetailResponse {
 }
 
 /// Response from POST /admin/keys/:hash/rotate.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct RotateKeyResponse {
     pub hash: String,
     pub new_key: String,

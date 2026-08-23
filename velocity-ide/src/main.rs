@@ -283,11 +283,11 @@ fn main() -> Result<()> {
             }
             Ok(())
         }
-        Command::Usage(args) => run_usage(args),
+        Command::Usage(args) => run_usage(args, cli.json),
         Command::Login(args) => run_login(args),
-        Command::Providers(args) => run_providers(args),
-        Command::Status => run_status(),
-        Command::Transparency => run_transparency(),
+        Command::Providers(args) => run_providers(args, cli.json),
+        Command::Status => run_status(cli.json),
+        Command::Transparency => run_transparency(cli.json),
         Command::Completions(args) => run_completions(args),
     }
 }
@@ -776,13 +776,17 @@ fn run_chat(_args: ChatArgs) -> Result<()> {
 
 // ─── Usage ────────────────────────────────────────────────────────────────
 
-fn run_usage(args: UsageArgs) -> Result<()> {
+fn run_usage(args: UsageArgs, json: bool) -> Result<()> {
     use velocity_client::{VelocityClient, fmt_number, fmt_currency, fmt_percent};
 
     let client = VelocityClient::from_env()?;
 
     if args.rate_limit {
         let rl = client.get_rate_limit()?;
+        if json {
+            println!("{}", serde_json::to_string_pretty(&rl)?);
+            return Ok(());
+        }
         println!();
         println!("=== Velocity Rate Limit & Quota ===");
         println!();
@@ -812,6 +816,10 @@ fn run_usage(args: UsageArgs) -> Result<()> {
 
     if args.detailed {
         let detail = client.get_usage_detailed()?;
+        if json {
+            println!("{}", serde_json::to_string_pretty(&detail)?);
+            return Ok(());
+        }
         println!();
         println!("=== Velocity Usage Breakdown ===");
         println!();
@@ -842,6 +850,10 @@ fn run_usage(args: UsageArgs) -> Result<()> {
 
     if args.summary {
         let s = client.get_usage_summary()?;
+        if json {
+            println!("{}", serde_json::to_string_pretty(&s)?);
+            return Ok(());
+        }
         println!();
         println!("=== Velocity Usage Summary (Enhanced) ===");
         println!();
@@ -879,6 +891,10 @@ fn run_usage(args: UsageArgs) -> Result<()> {
         // Determine granularity from range.
         let granularity = if range.ends_with('d') { "daily" } else { "hourly" };
         let ts = client.get_timeseries(granularity, range)?;
+        if json {
+            println!("{}", serde_json::to_string_pretty(&ts)?);
+            return Ok(());
+        }
         println!();
         println!("=== Velocity Timeseries ({}, {}) ===", ts.granularity, ts.range);
         println!();
@@ -895,6 +911,10 @@ fn run_usage(args: UsageArgs) -> Result<()> {
 
     // Default: summary view.
     let usage = client.get_usage()?;
+    if json {
+        println!("{}", serde_json::to_string_pretty(&usage)?);
+        return Ok(());
+    }
     let token_pct = if usage.tokens_limit > 0 {
         (usage.tokens_used as f64 / usage.tokens_limit as f64) * 100.0
     } else {
@@ -963,12 +983,29 @@ fn run_login(args: LoginArgs) -> Result<()> {
 
 // ─── Providers ────────────────────────────────────────────────────────────
 
-fn run_providers(args: ProvidersArgs) -> Result<()> {
+fn run_providers(args: ProvidersArgs, json: bool) -> Result<()> {
     use provider_usage::{ProviderCredential, load_credentials, save_credentials};
 
     match args.action.as_str() {
         "list" => {
             let creds = load_credentials()?;
+            if json {
+                // Mask API keys in JSON output.
+                let masked: Vec<serde_json::Value> = creds.iter().map(|c| {
+                    let masked_key = if c.api_key.len() > 12 {
+                        format!("{}...{}", &c.api_key[..8], &c.api_key[c.api_key.len()-4..])
+                    } else {
+                        "****".to_string()
+                    };
+                    serde_json::json!({
+                        "provider": c.provider,
+                        "api_key": masked_key,
+                        "base_url": c.base_url,
+                    })
+                }).collect();
+                println!("{}", serde_json::to_string_pretty(&masked)?);
+                return Ok(());
+            }
             if creds.is_empty() {
                 println!();
                 println!("No provider API keys configured.");
@@ -1050,6 +1087,10 @@ fn run_providers(args: ProvidersArgs) -> Result<()> {
         "refresh" => {
             let creds = load_credentials()?;
             if creds.is_empty() {
+                if json {
+                    println!("{{}}");
+                    return Ok(());
+                }
                 println!();
                 println!("No provider API keys configured.");
                 println!("Add one with: velocity-ide providers add --provider openai --api-key sk-...");
@@ -1057,11 +1098,16 @@ fn run_providers(args: ProvidersArgs) -> Result<()> {
                 return Ok(());
             }
 
+            let snapshot = provider_usage::query_all_providers(&creds);
+
+            if json {
+                println!("{}", serde_json::to_string_pretty(&snapshot)?);
+                return Ok(());
+            }
+
             println!();
             println!("Querying {} provider(s)...", creds.len());
             println!();
-
-            let snapshot = provider_usage::query_all_providers(&creds);
 
             // Print results.
             println!("  {:<16} {:<8} {:>12} {:>10}  {}", "Provider", "Valid", "Tokens", "Cost", "Status");
@@ -1101,10 +1147,24 @@ fn run_providers(args: ProvidersArgs) -> Result<()> {
 
 // ─── Status ──────────────────────────────────────────────────────────────
 
-fn run_status() -> Result<()> {
+fn run_status(json: bool) -> Result<()> {
     use velocity_client::VelocityClient;
 
     let client = VelocityClient::from_env()?;
+
+    // JSON mode: collect all data and serialize.
+    if json {
+        let health = client.health().ok();
+        let usage = client.get_usage().ok();
+        let rate = client.get_rate_limit().ok();
+        let out = serde_json::json!({
+            "health": health,
+            "usage": usage,
+            "rate_limit": rate,
+        });
+        println!("{}", serde_json::to_string_pretty(&out)?);
+        return Ok(());
+    }
 
     // Health check.
     match client.health() {
@@ -1175,11 +1235,17 @@ fn run_status() -> Result<()> {
 
 // ─── Transparency ────────────────────────────────────────────────────────
 
-fn run_transparency() -> Result<()> {
+fn run_transparency(json: bool) -> Result<()> {
     use velocity_client::{VelocityClient, fmt_number, fmt_currency};
 
     let client = VelocityClient::from_env()?;
     let t = client.get_transparency()?;
+
+    // JSON mode: serialize the full transparency response.
+    if json {
+        println!("{}", serde_json::to_string_pretty(&t)?);
+        return Ok(());
+    }
 
     println!();
     println!("=== Velocity Routing Transparency ===");
