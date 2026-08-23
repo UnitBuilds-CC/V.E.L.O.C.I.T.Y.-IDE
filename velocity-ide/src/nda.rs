@@ -730,6 +730,111 @@ pub fn nda_gemv_v1_tern(matrix: &NdaMatrix, x: &[f32]) -> Vec<f32> {
     out
 }
 
+/// Diagnostic snapshot of an NdaMatrix.
+#[derive(Debug, Clone, Serialize)]
+pub struct NdaMatrixInfo {
+    pub rows: usize,
+    pub cols: usize,
+    pub version: u16,
+    pub version_name: String,
+    pub scale: f32,
+    pub memory: NdaMemoryBreakdown,
+    pub validation_issues: usize,
+    pub is_quad: bool,
+}
+
+/// Timing report for a GEMV operation.
+#[derive(Debug, Clone, Serialize)]
+pub struct GemvReport {
+    pub rows: usize,
+    pub cols: usize,
+    pub version: u16,
+    pub elapsed_us: u64,
+    pub output_len: usize,
+}
+
+/// Timing report for a batch GEMV operation.
+#[derive(Debug, Clone, Serialize)]
+pub struct BatchGemvReport {
+    pub count: usize,
+    pub total_elapsed_us: u64,
+    pub per_op_avg_us: f64,
+    pub total_rows: usize,
+}
+
+impl NdaMatrix {
+    /// Return a diagnostic snapshot of this matrix.
+    pub fn info(&self) -> NdaMatrixInfo {
+        NdaMatrixInfo {
+            rows: self.rows,
+            cols: self.cols,
+            version: self.version,
+            version_name: self.version_name().to_string(),
+            scale: self.scale,
+            memory: self.memory_breakdown(),
+            validation_issues: self.validate().len(),
+            is_quad: self.is_quad(),
+        }
+    }
+}
+
+/// Batch GEMV: compute `y_i = W · x_i` for multiple input vectors.
+/// Returns outputs and a timing report.
+pub fn nda_gemv_batch(
+    matrix: &NdaMatrix,
+    xs: &[Vec<f32>],
+) -> (Vec<Vec<f32>>, BatchGemvReport) {
+    use std::time::Instant;
+    let start = Instant::now();
+    let outputs: Vec<Vec<f32>> = xs.iter().map(|x| nda_gemv(matrix, x)).collect();
+    let elapsed = start.elapsed().as_micros() as u64;
+    let report = BatchGemvReport {
+        count: xs.len(),
+        total_elapsed_us: elapsed,
+        per_op_avg_us: if xs.is_empty() {
+            0.0
+        } else {
+            elapsed as f64 / xs.len() as f64
+        },
+        total_rows: matrix.rows * xs.len(),
+    };
+    (outputs, report)
+}
+
+/// GEMV with timing diagnostics.
+/// Returns the output vector and a report.
+pub fn nda_gemv_with_report(matrix: &NdaMatrix, x: &[f32]) -> (Vec<f32>, GemvReport) {
+    use std::time::Instant;
+    let start = Instant::now();
+    let out = nda_gemv(matrix, x);
+    let elapsed = start.elapsed().as_micros() as u64;
+    let report = GemvReport {
+        rows: matrix.rows,
+        cols: matrix.cols,
+        version: matrix.version,
+        elapsed_us: elapsed,
+        output_len: out.len(),
+    };
+    (out, report)
+}
+
+/// Batch quantize multiple activation vectors to v2 quad format.
+/// Returns (sign_bitmaps, extra_bitmaps, scales) for each input.
+pub fn quantize_activations_v2_quad_batch(
+    xs: &[Vec<f32>],
+) -> Vec<(Vec<u8>, Vec<u8>, f32)> {
+    xs.iter()
+        .map(|x| quantize_activations_v2_quad(x))
+        .collect()
+}
+
+/// Batch quantize multiple activation vectors to INT8 format.
+pub fn quantize_activations_i8_batch(xs: &[Vec<f32>]) -> Vec<(Vec<i8>, f32)> {
+    xs.iter()
+        .map(|x| quantize_activations_i8(x))
+        .collect()
+}
+
 // ─── INT8 activation variant (for GPU prep / future INT4 SIMD) ────────────────
 
 /// Quantize a f32 activation vector to INT8, returning (quantized, scale).
@@ -1097,5 +1202,118 @@ mod tests {
         let (q, scale) = quantize_activations_i8(&x);
         assert_eq!(q, vec![0i8; 4]);
         assert_eq!(scale, 1.0); // fallback scale for zero input
+    }
+
+    #[test]
+    fn test_nda_matrix_info() {
+        let m = make_quad_matrix(16, 32);
+        let info = m.info();
+        assert_eq!(info.rows, 16);
+        assert_eq!(info.cols, 32);
+        assert!(info.is_quad);
+        assert_eq!(info.version, 2);
+        assert_eq!(info.validation_issues, 0);
+        assert!(info.memory.total_bytes > 0);
+    }
+
+    #[test]
+    fn test_nda_matrix_info_serializes() {
+        let m = make_quad_matrix(8, 8);
+        let info = m.info();
+        let json = serde_json::to_string(&info).unwrap();
+        assert!(json.contains("\"rows\":8"));
+        assert!(json.contains("\"is_quad\":true"));
+    }
+
+    #[test]
+    fn test_gemv_with_report() {
+        let m = make_quad_matrix(4, 8);
+        let x: Vec<f32> = (0..8).map(|i| i as f32 * 0.1).collect();
+        let (out, report) = nda_gemv_with_report(&m, &x);
+        assert_eq!(out.len(), 4);
+        assert_eq!(report.rows, 4);
+        assert_eq!(report.cols, 8);
+        assert_eq!(report.version, 2);
+        assert_eq!(report.output_len, 4);
+    }
+
+    #[test]
+    fn test_gemv_batch() {
+        let m = make_quad_matrix(4, 8);
+        let xs: Vec<Vec<f32>> = (0..3)
+            .map(|k| (0..8).map(|i| (i + k) as f32 * 0.1).collect())
+            .collect();
+        let (outputs, report) = nda_gemv_batch(&m, &xs);
+        assert_eq!(outputs.len(), 3);
+        for out in &outputs {
+            assert_eq!(out.len(), 4);
+        }
+        assert_eq!(report.count, 3);
+        assert_eq!(report.total_rows, 12); // 4 rows * 3 inputs
+    }
+
+    #[test]
+    fn test_gemv_batch_empty() {
+        let m = make_quad_matrix(4, 8);
+        let (outputs, report) = nda_gemv_batch(&m, &[]);
+        assert_eq!(outputs.len(), 0);
+        assert_eq!(report.count, 0);
+        assert_eq!(report.per_op_avg_us, 0.0);
+    }
+
+    #[test]
+    fn test_quantize_batch_v2() {
+        let xs = vec![
+            vec![0.0, 1.0, -1.0, 2.0],
+            vec![0.5, -0.5, 1.5, -1.5],
+        ];
+        let results = quantize_activations_v2_quad_batch(&xs);
+        assert_eq!(results.len(), 2);
+        for (sign, extra, scale) in &results {
+            assert_eq!(sign.len(), 1);
+            assert_eq!(extra.len(), 1);
+            assert!(*scale > 0.0);
+        }
+    }
+
+    #[test]
+    fn test_quantize_batch_i8() {
+        let xs = vec![
+            vec![0.0, 0.5, -0.5, 1.0],
+            vec![1.0, -1.0, 0.0, 0.5],
+        ];
+        let results = quantize_activations_i8_batch(&xs);
+        assert_eq!(results.len(), 2);
+        for (q, scale) in &results {
+            assert_eq!(q.len(), 4);
+            assert!(*scale > 0.0);
+        }
+    }
+
+    #[test]
+    fn test_gemv_report_serializes() {
+        let report = GemvReport {
+            rows: 32,
+            cols: 64,
+            version: 2,
+            elapsed_us: 150,
+            output_len: 32,
+        };
+        let json = serde_json::to_string(&report).unwrap();
+        assert!(json.contains("\"rows\":32"));
+        assert!(json.contains("\"elapsed_us\":150"));
+    }
+
+    #[test]
+    fn test_batch_gemv_report_serializes() {
+        let report = BatchGemvReport {
+            count: 5,
+            total_elapsed_us: 1000,
+            per_op_avg_us: 200.0,
+            total_rows: 160,
+        };
+        let json = serde_json::to_string(&report).unwrap();
+        assert!(json.contains("\"count\":5"));
+        assert!(json.contains("\"total_rows\":160"));
     }
 }
