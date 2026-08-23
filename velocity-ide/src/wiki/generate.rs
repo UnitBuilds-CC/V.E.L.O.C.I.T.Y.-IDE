@@ -2,11 +2,12 @@
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::time::{SystemTime, UNIX_EPOCH};
+use serde::Serialize;
 
 use crate::site_map::SiteMap;
 
 /// The flavour of a wiki page.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 pub enum WikiPageKind {
     Overview,
     File,
@@ -24,7 +25,7 @@ impl WikiPageKind {
 }
 
 /// A single wiki page derived from sitemap triples.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize)]
 pub struct WikiPage {
     pub kind: WikiPageKind,
     /// Resolved human-readable name (or a hex hash fallback).
@@ -137,13 +138,72 @@ impl WikiModel {
             })
             .collect()
     }
+
+    /// Return diagnostic statistics for this wiki model.
+    pub fn stats(&self) -> WikiStats {
+        let total_relationships: usize = self
+            .all_pages()
+            .map(|p| p.relationships.iter().map(|(_, t)| t.len()).sum::<usize>())
+            .sum();
+        let total_called_by: usize = self.all_pages().map(|p| p.called_by.len()).sum();
+        let pages_with_detail: usize = self.all_pages().filter(|p| p.detail.is_some()).count();
+
+        WikiStats {
+            total_pages: self.total_pages(),
+            file_pages: self.file_pages.len(),
+            symbol_pages: self.symbol_pages.len(),
+            total_relationships,
+            total_called_by,
+            pages_with_detail,
+            generated_at: self.generated_at.clone(),
+        }
+    }
+
+    /// Validate the wiki model for consistency.
+    /// Returns a list of warnings (empty = all good).
+    pub fn validate(&self) -> Vec<String> {
+        let mut warnings = Vec::new();
+
+        if self.is_empty() {
+            warnings.push("Wiki has no file or symbol pages".to_string());
+        }
+
+        // Check for duplicate slugs.
+        let mut slugs = std::collections::HashSet::new();
+        for page in self.all_pages() {
+            if !slugs.insert(&page.slug) {
+                warnings.push(format!("Duplicate slug: {}", page.slug));
+            }
+        }
+
+        // Check for empty titles.
+        for page in self.all_pages() {
+            if page.title.is_empty() {
+                warnings.push("Page has empty title".to_string());
+            }
+        }
+
+        warnings
+    }
 }
 
 /// A single search result with relevance score.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize)]
 pub struct WikiSearchResult {
     pub page: WikiPage,
     pub score: u32,
+}
+
+/// Diagnostic statistics for a wiki model.
+#[derive(Debug, Clone, Serialize)]
+pub struct WikiStats {
+    pub total_pages: usize,
+    pub file_pages: usize,
+    pub symbol_pages: usize,
+    pub total_relationships: usize,
+    pub total_called_by: usize,
+    pub pages_with_detail: usize,
+    pub generated_at: String,
 }
 
 /// Compute relevance score for a page against query terms.
@@ -419,5 +479,62 @@ mod inline_tests {
         assert_eq!(predicate_label(1), "Defines");
         assert_eq!(predicate_label(2), "Calls");
         assert_eq!(predicate_label(9), "Relates (predicate 9)");
+    }
+
+    #[test]
+    fn wiki_page_serializes() {
+        let page = WikiPage {
+            kind: WikiPageKind::Symbol,
+            title: "test_fn".to_string(),
+            slug: "test_fn".to_string(),
+            summary: "A test function.".to_string(),
+            relationships: vec![("Calls".to_string(), vec!["other_fn".to_string()])],
+            called_by: vec!["main".to_string()],
+            detail: Some("Detailed description.".to_string()),
+        };
+        let json = serde_json::to_string(&page).unwrap();
+        assert!(json.contains("\"title\":\"test_fn\""));
+        assert!(json.contains("\"kind\":\"Symbol\""));
+    }
+
+    #[test]
+    fn wiki_search_result_serializes() {
+        let result = WikiSearchResult {
+            page: WikiPage {
+                kind: WikiPageKind::File,
+                title: "test.rs".to_string(),
+                slug: "test-rs".to_string(),
+                summary: "Test file.".to_string(),
+                relationships: vec![],
+                called_by: vec![],
+                detail: None,
+            },
+            score: 15,
+        };
+        let json = serde_json::to_string(&result).unwrap();
+        assert!(json.contains("\"score\":15"));
+    }
+
+    #[test]
+    fn wiki_stats_serializes() {
+        let stats = WikiStats {
+            total_pages: 10,
+            file_pages: 3,
+            symbol_pages: 6,
+            total_relationships: 25,
+            total_called_by: 15,
+            pages_with_detail: 2,
+            generated_at: "1234567890".to_string(),
+        };
+        let json = serde_json::to_string(&stats).unwrap();
+        assert!(json.contains("\"total_pages\":10"));
+        assert!(json.contains("\"file_pages\":3"));
+    }
+
+    #[test]
+    fn wiki_page_kind_serializes() {
+        let kind = WikiPageKind::Overview;
+        let json = serde_json::to_string(&kind).unwrap();
+        assert_eq!(json, "\"Overview\"");
     }
 }
