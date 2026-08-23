@@ -5,13 +5,16 @@ pub mod scope_validator;
 
 pub use jit_sandbox::NdaJitSandbox;
 
+use serde::Serialize;
+
 use crate::nda::NdaMatrix;
 use crate::nda_int::NdaVec;
 use crate::site_map::verifier::{BitwiseOp, MathFuncKind, MathOp};
 use crate::site_map::{NdaNode, SiteMap};
+use std::collections::HashMap;
 use std::time::Instant;
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize)]
 pub struct SandboxResult {
     pub executed_nodes: usize,
     pub matrix_count: usize,
@@ -21,6 +24,30 @@ pub struct SandboxResult {
     pub panicked: bool,
     pub error: Option<String>,
     pub elapsed_us: u64,
+    /// Per-node-kind execution counts (e.g. "Matrix" => 5, "Norm" => 3).
+    pub kind_counts: HashMap<String, usize>,
+    /// Captured print output from Print nodes.
+    pub output_log: Vec<String>,
+    /// Number of loop iterations executed.
+    pub loop_iterations: usize,
+}
+
+impl SandboxResult {
+    /// Whether execution completed without panic or error.
+    pub fn is_success(&self) -> bool {
+        !self.panicked && self.error.is_none()
+    }
+
+    /// Return the top-N most executed node kinds.
+    pub fn top_kinds(&self, n: usize) -> Vec<(&str, usize)> {
+        let mut pairs: Vec<(&str, usize)> = self
+            .kind_counts
+            .iter()
+            .map(|(k, &v)| (k.as_str(), v))
+            .collect();
+        pairs.sort_by(|a, b| b.1.cmp(&a.1));
+        pairs.into_iter().take(n).collect()
+    }
 }
 
 pub struct NdaSandbox;
@@ -63,6 +90,8 @@ impl NdaSandbox {
                 norm_count: 0,
                 loop_count: 0,
                 output_log: Vec::new(),
+                kind_counts: HashMap::new(),
+                loop_iterations: 0,
             };
             match state.execute_sequence(nodes, site_map) {
                 Ok(_) => Ok(state),
@@ -85,6 +114,9 @@ impl NdaSandbox {
                     panicked: false,
                     error: None,
                     elapsed_us,
+                    kind_counts: state.kind_counts,
+                    output_log: state.output_log,
+                    loop_iterations: state.loop_iterations,
                 }
             }
             Ok(Err(err_msg)) => SandboxResult {
@@ -96,6 +128,9 @@ impl NdaSandbox {
                 panicked: false,
                 error: Some(err_msg),
                 elapsed_us,
+                kind_counts: HashMap::new(),
+                output_log: Vec::new(),
+                loop_iterations: 0,
             },
             Err(panic_err) => {
                 let err_msg = if let Some(s) = panic_err.downcast_ref::<&str>() {
@@ -114,6 +149,9 @@ impl NdaSandbox {
                     panicked: true,
                     error: Some(format!("Panic: {}", err_msg)),
                     elapsed_us,
+                    kind_counts: HashMap::new(),
+                    output_log: Vec::new(),
+                    loop_iterations: 0,
                 }
             }
         }
@@ -142,6 +180,10 @@ struct ExecutionState {
     loop_count: usize,
     /// Accumulated print output (collected, not printed during sandbox execution).
     output_log: Vec<String>,
+    /// Per-node-kind execution counts.
+    kind_counts: HashMap<String, usize>,
+    /// Total loop iterations executed.
+    loop_iterations: usize,
 }
 
 fn jit_val_to_nda_vec(jv: crate::compiler::nda_jit::JitVal) -> NdaVec {
@@ -189,6 +231,8 @@ impl ExecutionState {
 
     fn execute_node(&mut self, node: &NdaNode, site_map: &SiteMap) -> Result<ControlFlow, String> {
         self.executed_nodes += 1;
+        let kind = node_kind_name(node);
+        *self.kind_counts.entry(kind).or_insert(0) += 1;
         match node {
             // ── Original computation nodes ────────────────────────────────
             NdaNode::Matrix {
@@ -253,6 +297,7 @@ impl ExecutionState {
                 self.loop_count += 1;
                 for _ in 0..*count {
                     let cf = self.execute_sequence(body, site_map)?;
+                    self.loop_iterations += 1;
                     match cf {
                         ControlFlow::Break => break,
                         ControlFlow::Return => return Ok(ControlFlow::Return),
@@ -271,6 +316,7 @@ impl ExecutionState {
                     }
                     // Execute body
                     let cf = self.execute_sequence(body, site_map)?;
+                    self.loop_iterations += 1;
                     match cf {
                         ControlFlow::Break => break,
                         ControlFlow::Return => return Ok(ControlFlow::Return),
@@ -538,6 +584,48 @@ impl ExecutionState {
     }
 }
 
+// ─── Node kind classification ──────────────────────────────────────────────────
+
+/// Return a human-readable kind name for a node (used in profiling counts).
+fn node_kind_name(node: &NdaNode) -> String {
+    match node {
+        NdaNode::Matrix { .. } => "Matrix".into(),
+        NdaNode::Norm { .. } => "Norm".into(),
+        NdaNode::Call { .. } => "Call".into(),
+        NdaNode::Int { .. } => "Int".into(),
+        NdaNode::Scope { .. } => "Scope".into(),
+        NdaNode::Loop { .. } => "Loop".into(),
+        NdaNode::While { .. } => "While".into(),
+        NdaNode::If { .. } => "If".into(),
+        NdaNode::Compare { .. } => "Compare".into(),
+        NdaNode::Let { .. } => "Let".into(),
+        NdaNode::Load { .. } => "Load".into(),
+        NdaNode::Store { .. } => "Store".into(),
+        NdaNode::Add { .. } => "Add".into(),
+        NdaNode::VecOp { .. } => "VecOp".into(),
+        NdaNode::Print { .. } => "Print".into(),
+        NdaNode::Return { .. } => "Return".into(),
+        NdaNode::Break => "Break".into(),
+        NdaNode::Bitwise { .. } => "Bitwise".into(),
+        NdaNode::Float { .. } => "Float".into(),
+        NdaNode::Math { .. } => "Math".into(),
+        NdaNode::MathFunc { .. } => "MathFunc".into(),
+        NdaNode::Peek { .. } => "Peek".into(),
+        NdaNode::Poke { .. } => "Poke".into(),
+        NdaNode::Gemv { .. } => "Gemv".into(),
+        NdaNode::Dot { .. } => "Dot".into(),
+        NdaNode::Syscall { .. } => "Syscall".into(),
+        NdaNode::Spawn { .. } => "Spawn".into(),
+        NdaNode::Atomic { .. } => "Atomic".into(),
+        NdaNode::Alloc { .. } => "Alloc".into(),
+        NdaNode::Free { .. } => "Free".into(),
+        NdaNode::RegInt { .. } => "RegInt".into(),
+        NdaNode::Cast { .. } => "Cast".into(),
+        NdaNode::GpuDispatch { .. } => "GpuDispatch".into(),
+        NdaNode::Triple { .. } => "Triple".into(),
+    }
+}
+
 // ─── Tests ────────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
@@ -730,5 +818,160 @@ mod tests {
             f32_duration.as_nanos() as f64 / native_duration.as_nanos() as f64
         );
         println!();
+    }
+
+    #[test]
+    fn sandbox_result_tracks_kind_counts() {
+        let input = vec![1.0f32; 896];
+        let site_map = SiteMap::open(&std::env::temp_dir().join("sandbox_kind_sm"), 0).unwrap();
+
+        let m1 = NdaNode::Matrix {
+            rows: 128,
+            cols: 896,
+            scale: 0,
+            sign: vec![0xAA; 128 * 112],
+            extra: vec![0x55; 128 * 112],
+        };
+        let n1 = NdaNode::Norm {
+            size: 128,
+            weight: vec![0xFF; 16],
+            bias: vec![0x00; 16],
+        };
+
+        let result = NdaSandbox::run(&[m1, n1], &input, &site_map);
+        assert!(result.is_success());
+        assert_eq!(*result.kind_counts.get("Matrix").unwrap_or(&0), 1);
+        assert_eq!(*result.kind_counts.get("Norm").unwrap_or(&0), 1);
+        assert_eq!(result.executed_nodes, 2);
+    }
+
+    #[test]
+    fn sandbox_result_top_kinds() {
+        let mut result = SandboxResult {
+            executed_nodes: 10,
+            matrix_count: 3,
+            norm_count: 2,
+            output_vec: vec![],
+            output_dim: 0,
+            panicked: false,
+            error: None,
+            elapsed_us: 100,
+            kind_counts: HashMap::new(),
+            output_log: Vec::new(),
+            loop_iterations: 0,
+        };
+        result.kind_counts.insert("Matrix".into(), 5);
+        result.kind_counts.insert("Norm".into(), 3);
+        result.kind_counts.insert("Int".into(), 2);
+
+        let top = result.top_kinds(2);
+        assert_eq!(top.len(), 2);
+        assert_eq!(top[0].0, "Matrix");
+        assert_eq!(top[0].1, 5);
+        assert_eq!(top[1].0, "Norm");
+        assert_eq!(top[1].1, 3);
+    }
+
+    #[test]
+    fn sandbox_result_is_success() {
+        let ok = SandboxResult {
+            executed_nodes: 1,
+            matrix_count: 0,
+            norm_count: 0,
+            output_vec: vec![1.0],
+            output_dim: 1,
+            panicked: false,
+            error: None,
+            elapsed_us: 10,
+            kind_counts: HashMap::new(),
+            output_log: Vec::new(),
+            loop_iterations: 0,
+        };
+        assert!(ok.is_success());
+
+        let panicked = SandboxResult {
+            panicked: true,
+            error: Some("Panic: test".into()),
+            ..ok.clone()
+        };
+        assert!(!panicked.is_success());
+
+        let errored = SandboxResult {
+            panicked: false,
+            error: Some("Dimension mismatch".into()),
+            ..ok.clone()
+        };
+        assert!(!errored.is_success());
+    }
+
+    #[test]
+    fn sandbox_result_serializable() {
+        let result = SandboxResult {
+            executed_nodes: 5,
+            matrix_count: 2,
+            norm_count: 1,
+            output_vec: vec![1.0, 2.0],
+            output_dim: 2,
+            panicked: false,
+            error: None,
+            elapsed_us: 500,
+            kind_counts: {
+                let mut m = HashMap::new();
+                m.insert("Matrix".into(), 2);
+                m.insert("Norm".into(), 1);
+                m
+            },
+            output_log: vec!["42".into()],
+            loop_iterations: 0,
+        };
+        let json = serde_json::to_string(&result).unwrap();
+        assert!(json.contains("\"executed_nodes\":5"));
+        assert!(json.contains("\"output_log\":[\"42\"]"));
+    }
+
+    #[test]
+    fn scope_validation_has_distance_metrics() {
+        use super::scope_validator::ScopeValidator;
+        let cond = vec![1.0f32, 2.0, 3.0];
+        let out = vec![1.0f32, 2.0, 3.0];
+        let val = ScopeValidator::validate(&out, &cond, 0.5);
+        assert!(val.passed);
+        assert!((val.euclidean_distance - 0.0).abs() < 1e-5);
+        assert!((val.manhattan_distance - 0.0).abs() < 1e-5);
+        assert_eq!(val.vector_dim, 3);
+    }
+
+    #[test]
+    fn scope_validation_distance_for_different_vecs() {
+        use super::scope_validator::ScopeValidator;
+        let cond = vec![0.0f32; 4];
+        let out = vec![1.0f32, 0.0, 0.0, 0.0];
+        let val = ScopeValidator::validate(&out, &cond, 0.5);
+        // Euclidean: sqrt(1) = 1.0
+        assert!((val.euclidean_distance - 1.0).abs() < 1e-5);
+        // Manhattan: |1| + |0| + |0| + |0| = 1.0
+        assert!((val.manhattan_distance - 1.0).abs() < 1e-5);
+        assert_eq!(val.vector_dim, 4);
+    }
+
+    #[test]
+    fn scope_validation_serializable() {
+        use super::scope_validator::ScopeValidator;
+        let cond = vec![1.0f32, 2.0];
+        let out = vec![1.0f32, 2.0];
+        let val = ScopeValidator::validate(&out, &cond, 0.5);
+        let json = serde_json::to_string(&val).unwrap();
+        assert!(json.contains("\"euclidean_distance\""));
+        assert!(json.contains("\"manhattan_distance\""));
+        assert!(json.contains("\"vector_dim\":2"));
+    }
+
+    #[test]
+    fn node_kind_name_covers_all_variants() {
+        // Spot-check a few key kinds
+        assert_eq!(node_kind_name(&NdaNode::Int { value: 0 }), "Int");
+        assert_eq!(node_kind_name(&NdaNode::Break), "Break");
+        let scope = NdaNode::Scope { children: vec![] };
+        assert_eq!(node_kind_name(&scope), "Scope");
     }
 }

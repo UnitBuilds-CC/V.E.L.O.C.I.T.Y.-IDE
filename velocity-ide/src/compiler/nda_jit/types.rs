@@ -273,6 +273,9 @@ impl JitProgram {
                     panicked: false,
                     error: None,
                     elapsed_us,
+                    kind_counts: std::collections::HashMap::new(),
+                    output_log: state.print_buf,
+                    loop_iterations: state.loop_count,
                 }
             }
             Ok(Err(e)) => SandboxResult {
@@ -284,6 +287,9 @@ impl JitProgram {
                 panicked: false,
                 error: Some(e),
                 elapsed_us,
+                kind_counts: std::collections::HashMap::new(),
+                output_log: Vec::new(),
+                loop_iterations: 0,
             },
             Err(panic_val) => {
                 let msg = if let Some(s) = panic_val.downcast_ref::<&str>() {
@@ -302,6 +308,9 @@ impl JitProgram {
                     panicked: true,
                     error: Some(format!("panic: {}", msg)),
                     elapsed_us,
+                    kind_counts: std::collections::HashMap::new(),
+                    output_log: Vec::new(),
+                    loop_iterations: 0,
                 }
             }
         }
