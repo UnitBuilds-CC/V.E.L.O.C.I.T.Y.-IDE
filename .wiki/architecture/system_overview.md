@@ -1,6 +1,6 @@
 # System Overview
 
-High-level architecture of the Velocity workspace: a 3-crate Rust cargo workspace forming an AI-native IDE, a pure-Rust browser engine, and a compiler/indexer runtime.
+High-level architecture of the Velocity workspace: a 5-crate Rust cargo workspace forming an AI-native IDE, a pure-Rust browser engine, a compiler/indexer runtime, a portable drone agent endpoint, and an end-to-end test harness.
 
 ---
 
@@ -10,7 +10,7 @@ High-level architecture of the Velocity workspace: a 3-crate Rust cargo workspac
 ┌─────────────────────────────────────────────────────────────────────┐
 │                        velocity-mcp                                  │
 │  (MCP Server · egui Native IDE · 4-Provider Agent Loop · WA)        │
-│  220 source files                                                    │
+│  258 source files                                                    │
 └──────────┬──────────────────────────────────────┬────────────────────┘
            │                                      │
            │ direct Rust dependency               │ direct Rust dependency
@@ -20,7 +20,7 @@ High-level architecture of the Velocity workspace: a 3-crate Rust cargo workspac
 │      velocity-ide         │       │        velocity-browser           │
 │  (Compiler · SiteMap ·   │       │  (DOM · Layout · JS VM · Net ·   │
 │   Wiki · Sandbox · NDA)  │       │   Agentic AOM · Engine · Session) │
-│  78 source files          │       │  109 source files                 │
+│  75 source files          │       │  171 source files                 │
 └──────────────────────────┘       └──────────┬───────────────────────┘
                                               │
                                               │ direct Rust dependency
@@ -30,6 +30,13 @@ High-level architecture of the Velocity workspace: a 3-crate Rust cargo workspac
                                    │      velocity-ide         │
                                    │  (shared dependency)      │
                                    └──────────────────────────┘
+
+┌──────────────────────────┐       ┌──────────────────────────────────┐
+│     velocity-drone        │       │           e2e                     │
+│  (Portable Agent · HTTP  │       │  (Integration Tests · Browser ·   │
+│   Server · File Xfer)    │       │   Load Bench · MCP · NDA)         │
+│  5 source files           │       │  5 source files                   │
+└──────────────────────────┘       └──────────────────────────────────┘
 ```
 
 **Dependency direction is strictly one-way**: `velocity-mcp` depends on both `velocity-ide` and `velocity-browser`. `velocity-browser` depends on `velocity-ide`. `velocity-ide` has no intra-workspace dependencies.
@@ -38,31 +45,35 @@ High-level architecture of the Velocity workspace: a 3-crate Rust cargo workspac
 
 | Crate | Module | Files | Purpose |
 |-------|--------|-------|---------|
-| velocity-mcp | `editor/` | 98 | egui native IDE: app shell, panels, browser UI, orchestrator UI |
+| velocity-mcp | `editor/` | 119 | egui native IDE: app shell, panels, browser UI, orchestrator UI |
+| velocity-mcp | `agent/` | 28 | 4-provider loop, dispatch, headless subagents, team routing, reasoning, planning, peer-to-peer |
 | velocity-mcp | `wa/` | 29 | Windows Automation: UIA FFI, execution, screenshots, recording |
-| velocity-mcp | `registry/` | 22 | MCP tool definitions, dispatch, system/browser/team/WA tools |
-| velocity-mcp | `compiler/` | 20 | Vulkan driver, BitNet/Qwen kernels, JIT, tokenizer |
-| velocity-mcp | `automation/` | 14 | Build watcher, AST watcher, mediator, task router, coordinator |
-| velocity-mcp | `agent/` | 13 | 4-provider loop, dispatch, headless subagents, team routing |
+| velocity-mcp | `registry/` | 29 | MCP tool definitions, dispatch, system/browser/team/WA tools |
+| velocity-mcp | `automation/` | 14 | Build watcher, AST watcher, mediator, task router, coordinator, instruction registry |
 | velocity-mcp | `orchestrator/` | 12 | DAG scheduler, blueprint, reconcile, worker, validator |
-| velocity-mcp | `benchmark/` | 4 | Performance benchmark suite |
+| velocity-mcp | `connectors/` | 8 | External service connectors, OAuth2, webhooks, sync |
+| velocity-mcp | `compiler/` | 4 | Vulkan driver, BitNet/Qwen kernels, JIT, tokenizer |
 | velocity-mcp | `protocol/` | 3 | JSON-RPC stdio loop, shared-memory binary protocol |
-| velocity-mcp | `ipc/` | 3 | Telemetry shared memory server/client |
-| velocity-browser | `engine/` | 25 | Canvas, WebGPU, GPU compositor, crypto, service workers, stealth |
-| velocity-browser | `net/` | 17 | HTTP/2, QUIC, TLS fingerprint rotator, WebSocket, WebRTC, Bluetooth |
-| velocity-browser | `js/` | 13 | JS VM, event loop, WASM SIMD, web worker pool, DOM bindings |
+| velocity-mcp | `ipc/` | 4 | Telemetry shared memory server/client |
+| velocity-mcp | `security/` | 2 | Encrypted secret storage (DPAPI-backed) |
+| velocity-browser | `engine/` | 39 | Canvas, WebGPU, GPU compositor, crypto, service workers, stealth, CAPTCHA solver (14) |
+| velocity-browser | `net/` | 19 | HTTP/2, QUIC, TLS fingerprint rotator, WebSocket, WebRTC, Bluetooth |
+| velocity-browser | `js/` | 56 | JS VM, interpreter (27), interpreter tests (16), event loop, WASM SIMD, web worker pool |
 | velocity-browser | `agentic/` | 10 | AOM tree, action predictor, OCR, reflection, vector memory |
 | velocity-browser | `dom/` | 9 | Slab DOM tree, mutation batcher, custom elements, shadow slots |
+| velocity-browser | `session*` | 10 | Session management, cookies, history, storage, IndexedDB, swarm |
 | velocity-browser | `layout/` | 7 | Flexbox, grid track solver, parallel layout engine |
 | velocity-browser | `parser/` | 6 | HTML5 tokenizer, CSS parser, stream JIT tokenizer |
-| velocity-browser | `style/` | 4 | CSS cascade, animations, font shaper, specificity |
-| velocity-ide | `compiler/` | 45 | Rust lexer/parser, NDA JIT, Vulkan driver, property fuzzer |
+| velocity-browser | `style/` | 5 | CSS cascade, animations, font shaper, transitions |
+| velocity-browser | root | 20 | Top-level modules: session, nda, aom, screencast, vector_memory, etc. |
+| velocity-ide | `compiler/` | 43 | Rust lexer/parser, NDA JIT (9), Vulkan driver (12), SPIR-V shaders (18) |
 | velocity-ide | `site_map/` | 7 | RDF triple store, string hash registry, Merkle verifier |
 | velocity-ide | `model/` | 5 | Data model types |
 | velocity-ide | `nda_int/` | 5 | NDA interpreter/runtime |
 | velocity-ide | `wiki/` | 4 | Automated Markdown wiki generator |
 | velocity-ide | `sandbox/` | 3 | JIT sandbox, Wasm plugin runner |
-| velocity-ide | `bin/` | 3 | Binary entry points (bench_nda_vs_rust, run_nda, test_tok) |
+| velocity-drone | `src/` | 5 | Drone core, HTTP server, safety, lib |
+| e2e | `tests/` | 5 | Browser engine, load benchmarks, MCP stdio, NDA pipeline |
 
 ---
 

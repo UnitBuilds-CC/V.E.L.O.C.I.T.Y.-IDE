@@ -13,8 +13,8 @@ The workspace root is `velocity-workspace/Cargo.toml`:
 ```toml
 [workspace]
 resolver = "2"
-members = ["velocity-mcp", "velocity-ide", "velocity-browser"]
-exclude = ["archive", "bin", "scratch", "memory", ".velocity", "browsing"]
+members = ["velocity-mcp", "velocity-ide", "velocity-browser", "drone", "e2e"]
+exclude = ["archive", "bin", "scratch", "memory", ".velocity", "browsing", "fuzz"]
 ```
 
 ### Crate Dependencies
@@ -23,6 +23,8 @@ exclude = ["archive", "bin", "scratch", "memory", ".velocity", "browsing"]
 velocity-mcp → velocity-ide (path dependency)
 velocity-mcp → velocity-browser (path dependency)
 velocity-browser → velocity-ide (path dependency)
+velocity-drone (standalone, no workspace dependencies)
+e2e (standalone test harness)
 ```
 
 ### Key External Dependencies

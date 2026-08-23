@@ -1,6 +1,6 @@
 # API Reference
 
-Summary of key public Rust types and functions across all three crates. All signatures are verified against actual source code.
+Summary of key public Rust types and functions across all five crates. All signatures are verified against actual source code.
 
 ---
 

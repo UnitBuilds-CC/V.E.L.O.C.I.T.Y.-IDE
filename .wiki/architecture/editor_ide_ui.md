@@ -1,6 +1,6 @@
 # velocity-mcp: Editor & IDE UI
 
-The `editor/` module (98 files) is the largest subsystem in `velocity-mcp`. It implements a complete native IDE using `egui` 0.35 and `eframe`, with docking, code editing, AI chat, browser panel, orchestrator UI, and mode-specialized workflows.
+The `editor/` module (119 files) is the largest subsystem in `velocity-mcp`. It implements a complete native IDE using `egui` 0.35 and `eframe`, with docking, code editing, AI chat, browser panel, orchestrator UI, and mode-specialized workflows.
 
 ---
 
@@ -232,14 +232,14 @@ Multi-agent task management UI:
 ```
 orchestrator/
 ├── mod.rs          # Panel entry point
-├── types.rs        # Orchestrator UI types
+├── types.rs        # RoutedPlanState, OrchestratorDashboardSnapshot
 ├── tests.rs        # Panel tests
 └── panel/
     ├── mod.rs          # Panel module root
-    ├── struct_def.rs   # OrchestratorPanel struct
-    ├── execution.rs    # Task execution controls
+    ├── struct_def.rs   # OrchestratorPanel struct, set_routed_tasks()
+    ├── execution.rs    # poll_live_workers(), retry_blocked_tasks(), stop_task()
     ├── policy_controls.rs # Worktree policy UI
-    └── ui_render.rs    # Panel rendering
+    └── ui_render.rs    # render_task_card() with expert team assignment display
 ```
 
 Displays:
@@ -247,14 +247,58 @@ Displays:
 - Worker status and progress
 - Worktree lock state
 - Policy controls for file scope
+- **Expert team assignment** on each task card via `active_team.find_expert_for_task()`
 
 ### MissionControlState (`mission_control.rs`)
+
+```rust
+pub struct MissionControlState {
+    pub brief: Option<String>,
+    pub interventions: Vec<Intervention>,
+    pub auto_execute: bool,
+    pub selected_task_id: Option<TaskId>,
+}
+```
 
 High-level multi-agent supervision view:
 - Real-time agent status monitoring
 - Intervention queue (`next_intervention_id` for approval flow)
 - Task timeline with NDA-persisted activity log
 - Build error count display
+- Auto-execute mode for hands-off operation
+
+---
+
+## Team Studio & Expert Team Management
+
+### Team Studio UI (`app/team_studio_ui.rs`)
+
+Full team management interface (402 lines):
+
+**Gallery View**: Expandable team cards showing:
+- Team name, description, member count
+- Per-member cards: name, role, provider/model, skills, workflow instructions
+- Preset vs custom team indicator
+
+**Team Builder Chat**: Natural language team creation:
+- Headless sub-agent with `TEAM_BUILDER_SYSTEM_PROMPT`
+- Supports `create_expert_team` and `create_skill_file` tools
+- Conversational team definition
+
+**Team Activity Log**: Tracks team operations and routing decisions
+
+### TeamManager (`app/team_manager.rs`)
+
+Lightweight UI-facing team manager:
+- `launch_team()`: Sends `@slug launch` prompt to agent runtime
+- `cancel_running()`: Sends CancelTask message to stop team operations
+
+### Expert Team Persistence
+
+- Teams stored at `.velocity/expert_teams.nda` (encrypted)
+- Loaded at startup via `load_expert_teams(&workspace_root)`
+- 3 preset teams: C# Software Team, Android App Team, Doccit Maintenance Team
+- Custom teams created via Team Studio or `create_expert_team` tool
 
 ---
 

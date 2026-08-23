@@ -1,6 +1,6 @@
 # velocity-browser: Engine & Networking
 
-The `velocity-browser` crate (109 source files) implements a complete pure-Rust browser engine: DOM tree, CSS layout, JavaScript VM, GPU compositor, networking stack, and session management — all without external C/C++ dependencies.
+The `velocity-browser` crate (171 source files) implements a complete pure-Rust browser engine: DOM tree, CSS layout, JavaScript VM, GPU compositor, networking stack, CAPTCHA solver, and session management — all without external C/C++ dependencies.
 
 ---
 
@@ -208,10 +208,16 @@ net/
 ├── mod.rs              # Module root, re-exports
 ├── http_client.rs      # HTTP/1.1 and HTTP/2 client
 ├── http2_ws.rs         # HTTP/2 frame parser + WebSocket RFC 6455
+├── http3_quic.rs       # QUIC/HTTP3 connection
 ├── tls13.rs            # TLS 1.3 client handshake state machine
+├── tls.rs              # TLS stream wrapper
 ├── tls_handshake.rs    # ClientHello/ServerHello/Finished flight messages
 ├── tls_record.rs       # TLS record layer encapsulation
+├── tls_fingerprint.rs  # TlsFingerprintRotator, TlsJa3Profile
+├── tls_sigverify.rs    # TLS signature verification
+├── tls_trust.rs        # TLS trust anchor management
 ├── x25519.rs           # Curve25519 ECDH key exchange
+├── x509.rs             # X.509 certificate parsing
 ├── aes_gcm.rs          # AES-128/256-GCM AEAD
 ├── chacha20poly1305.rs # ChaCha20-Poly1305 AEAD
 ├── inflate.rs          # DEFLATE/gzip decompression
@@ -219,10 +225,7 @@ net/
 ├── bluetooth.rs        # Web Bluetooth API
 ├── proxy.rs            # ProxyResolver, ProxyType
 ├── inspector.rs        # InspectorServer (DevTools protocol)
-├── quic.rs             # QUIC/HTTP3 connection
-├── tls_fingerprint.rs  # TlsFingerprintRotator, TlsJa3Profile
-├── websocket.rs        # NativeWsClient, WsFrame
-└── types.rs            # HttpResponse, TlsState, etc.
+└── websocket.rs        # NativeWsClient, WsFrame
 ```
 
 ### TLS 1.3 Implementation
@@ -321,9 +324,9 @@ parser/
 style/
 ├── mod.rs              # Module root
 ├── cascade.rs          # StyleCascader, Specificity
-├── animation.rs        # CssAnimation, KeyframesRule, AnimationInstance
+├── transitions.rs      # CSS transitions and animations
 ├── font_shaper.rs      # FontShaperEngine, GlyphMetric
-└── scoped.rs           # ScopedCssMatcher
+└── scoped_css.rs       # ScopedCssMatcher
 ```
 
 - **StyleCascader**: CSS cascade rules, specificity calculation, property inheritance

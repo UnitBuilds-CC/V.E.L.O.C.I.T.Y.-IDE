@@ -1,6 +1,6 @@
 # velocity-ide: Compiler & SiteMap
 
-The `velocity-ide` crate (78 source files) provides Rust-to-NDA compilation, RDF triple store indexing, Merkle integrity verification, automated wiki generation, and sandboxed execution.
+The `velocity-ide` crate (75 source files) provides Rust-to-NDA compilation, RDF triple store indexing, Merkle integrity verification, automated wiki generation, and sandboxed execution.
 
 ---
 

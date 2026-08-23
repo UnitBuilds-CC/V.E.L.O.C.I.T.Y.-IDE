@@ -3,25 +3,28 @@ schema_version: 1
 locale: en-US
 branch: main
 nodes_managed: true
-exported_at: "2026-08-17T18:00:00Z"
+exported_at: "2026-08-23T12:00:00Z"
 classification_summary:
-    total_files: 527
-    real: 527
+    total_files: 514
+    real: 514
     generated: 0
     template: 0
     stub: 0
     critical_modules:
         - module: velocity-mcp/src/agent
           files: 28
-          status: "4-provider AI reasoning loop"
+          status: "4-provider AI reasoning loop, peer-to-peer, planning"
         - module: velocity-mcp/src/editor
           files: 119
-          status: "egui IDE interface"
+          status: "egui IDE interface, team studio, orchestrator panel"
+        - module: velocity-mcp/src/automation
+          files: 14
+          status: "Task decomposition, instruction registry, model ranking"
         - module: velocity-browser/src
           files: 171
           status: "Pure-Rust browser engine"
         - module: velocity-ide/src/compiler
-          files: 45
+          files: 43
           status: "NDA compiler pipeline"
         - module: velocity-ide/src/model
           files: 5
@@ -97,8 +100,8 @@ modules:
         source_files:
             - velocity-ide/src/lib.rs
     drone:
-        dir_name: Drone Safety Monitor
-        title: Drone Safety Monitor
+        dir_name: Velocity Drone Portable Agent Endpoint
+        title: Velocity Drone Portable Agent Endpoint
         scope:
             - drone/Cargo.toml
             - drone/src/

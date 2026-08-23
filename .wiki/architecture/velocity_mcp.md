@@ -199,19 +199,70 @@ When a conflict is detected (agent and user editing the same lines), `resolve_co
 
 ## Automation Subsystem
 
-The `automation/` module provides background watchers and coordination:
+The `automation/` module provides background watchers, coordination, and the full task decomposition pipeline:
 
 | Module | Purpose |
-|--------|---------|
+|--------|--------|
+| `coordinator.rs` | `WorkspaceCoordinator`: `plan_routed_tasks()`, `execute_parallel_tasks()` |
+| `task_router.rs` | `SiteMapTaskRouter`: coupling analysis, model ranking, execution contracts |
+| `instruction_registry/` | Task kind taxonomy (8 kinds), decomposition policies, specialist templates |
 | `watcher.rs` | AST file watcher — monitors source files, sends updates via shmem |
 | `build_runner.rs` | Build watcher — polls `cargo check` output, updates diagnostics |
-| `coordinator.rs` | Multi-agent coordination and task routing |
 | `mediator.rs` | File presence locking, conflict resolution |
-| `task_router.rs` | Natural language task routing to agent personas |
+| `model_quality.rs` | Model output quality scoring per task kind |
 | `tester.rs` | Self-check automation (`--check` flag) |
-| `model_quality.rs` | Model output quality scoring |
 | `site_map_support.rs` | SiteMap integration helpers |
-| `nda_format.rs` | NDA serialization for automation artifacts |
+
+### Task Decomposition Pipeline
+
+The full pipeline from goal to parallel execution:
+
+```
+1. Goal received (chat input or mission brief)
+       │
+       ▼
+2. infer_task_kind_from_goal() → AgentTaskKind
+   (Refactor | BugFix | Test | Documentation | Analysis | Planning | Merge | DesktopAutomation)
+       │
+       ▼
+3. WorkspaceCoordinator.plan_routed_tasks()
+       │
+       ├── Select DecompositionPolicy by task kind
+       │   (e.g., Refactor → CoupledComponents, BugFix → IsolatedFiles)
+       │
+       ├── partition_files_by_coupling()
+       │   Query SiteMap CALLS/DECLARES graph edges
+       │   Group files sharing edges → coupled components
+       │   Each component = one RoutedSubAgentTask
+       │
+       ├── rank_candidates()
+       │   Rank models by quality score for task kind
+       │   Produce fallback chain (best → fallback → local)
+       │
+       └── build_execution_contract()
+           Versioned contract: scope, fallback chain, expectations
+       │
+       ▼
+4. OrchestratorPanel.set_routed_tasks()
+   build_routed_graph() → TaskGraph
+       │
+       ▼
+5. Auto-execute: spawn parallel workers
+   Each worker runs headless sub-agent with contract
+```
+
+### AgentTaskKind & Decomposition Policies
+
+| Task Kind | Decomposition Style | Specialist Template |
+|-----------|-------------------|--------------------|
+| Refactor | CoupledComponents | refactor-guardian |
+| BugFix | IsolatedFiles | bugfix-responder |
+| Test | IsolatedFiles | test-hardener |
+| Documentation | IsolatedFiles | docs-curator |
+| Analysis | IsolatedFiles | analysis-cartographer |
+| Planning | SequentialPipeline | planning-architect |
+| Merge | CoupledComponents | merge-mediator |
+| DesktopAutomation | IsolatedFiles | desktop-wa-operator |
 
 ### AST Watcher Flow
 
