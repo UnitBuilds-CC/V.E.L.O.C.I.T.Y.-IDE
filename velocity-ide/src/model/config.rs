@@ -178,6 +178,74 @@ impl ModelConfig {
             + self.hidden_size // final_norm
             + self.vocab_size * self.hidden_size // lm_head
     }
+
+    /// Estimate memory footprint in bytes for FP32 weights.
+    pub fn fp32_memory_bytes(&self) -> usize {
+        self.total_param_count() * 4
+    }
+
+    /// Estimate memory footprint in bytes for NDA ternary weights.
+    /// Ternary weights use 2 bits per parameter (sign + extra).
+    pub fn nda_memory_bytes(&self) -> usize {
+        let ternary_bits = self.ternary_param_count() * 2;
+        let embed_bits = self.vocab_size * self.hidden_size * 16; // FP16 embeddings
+        (ternary_bits + embed_bits) / 8
+    }
+
+    /// Return a serializable snapshot of the config.
+    pub fn snapshot(&self) -> ConfigSnapshot {
+        ConfigSnapshot {
+            n_layers: self.n_layers,
+            hidden_size: self.hidden_size,
+            ffn_size: self.ffn_size,
+            n_heads: self.n_heads,
+            n_kv_heads: self.n_kv_heads,
+            head_dim: self.head_dim,
+            vocab_size: self.vocab_size,
+            max_seq_len: self.max_seq_len,
+            uses_alibi: self.uses_alibi(),
+            fp32_memory_bytes: self.fp32_memory_bytes(),
+            nda_memory_bytes: self.nda_memory_bytes(),
+            total_params: self.total_param_count(),
+            validation_issues: self.validate(),
+        }
+    }
+
+    /// Estimate KV cache memory for a given batch size and sequence length.
+    pub fn kv_cache_bytes(&self, batch_size: usize, seq_len: usize) -> usize {
+        let kv_dim = self.n_kv_heads * self.head_dim;
+        // 2 (K + V) * batch * seq * layers * kv_dim * 4 bytes (FP32)
+        2 * batch_size * seq_len * self.n_layers * kv_dim * 4
+    }
+
+    /// Return the attention type as a string.
+    pub fn attention_type(&self) -> &'static str {
+        if self.n_kv_heads == self.n_heads {
+            "MHA"
+        } else if self.n_kv_heads == 1 {
+            "MQA"
+        } else {
+            "GQA"
+        }
+    }
+}
+
+/// Serializable snapshot of model configuration.
+#[derive(Debug, Clone, Serialize)]
+pub struct ConfigSnapshot {
+    pub n_layers: usize,
+    pub hidden_size: usize,
+    pub ffn_size: usize,
+    pub n_heads: usize,
+    pub n_kv_heads: usize,
+    pub head_dim: usize,
+    pub vocab_size: usize,
+    pub max_seq_len: usize,
+    pub uses_alibi: bool,
+    pub fp32_memory_bytes: usize,
+    pub nda_memory_bytes: usize,
+    pub total_params: usize,
+    pub validation_issues: Vec<String>,
 }
 
 #[cfg(test)]
@@ -303,5 +371,66 @@ mod tests {
         let total = cfg.total_param_count();
         let ternary = cfg.ternary_param_count();
         assert!(total > ternary); // includes embeddings + norms
+    }
+
+    // ─── Memory estimation tests ─────────────────────────────────────────
+
+    #[test]
+    fn test_fp32_memory_bytes() {
+        let cfg = ModelConfig::bitnet_3b();
+        let fp32_bytes = cfg.fp32_memory_bytes();
+        assert!(fp32_bytes > 0);
+        assert_eq!(fp32_bytes, cfg.total_param_count() * 4);
+    }
+
+    #[test]
+    fn test_nda_memory_bytes() {
+        let cfg = ModelConfig::bitnet_3b();
+        let nda_bytes = cfg.nda_memory_bytes();
+        assert!(nda_bytes > 0);
+        // NDA should be much smaller than FP32
+        assert!(nda_bytes < cfg.fp32_memory_bytes());
+    }
+
+    #[test]
+    fn test_kv_cache_bytes() {
+        let cfg = ModelConfig::qwen_coder_05b();
+        let cache_bytes = cfg.kv_cache_bytes(1, 512);
+        assert!(cache_bytes > 0);
+        // 2 * 1 * 512 * 24 * (2 * 64) * 4 = 3,145,728 bytes
+        let expected = 2 * 1 * 512 * 24 * (2 * 64) * 4;
+        assert_eq!(cache_bytes, expected);
+    }
+
+    #[test]
+    fn test_attention_type() {
+        let bitnet = ModelConfig::bitnet_3b();
+        assert_eq!(bitnet.attention_type(), "MHA");
+
+        let qwen = ModelConfig::qwen_coder_05b();
+        assert_eq!(qwen.attention_type(), "GQA");
+    }
+
+    #[test]
+    fn test_config_snapshot_serializes() {
+        let cfg = ModelConfig::qwen_coder_05b();
+        let snap = cfg.snapshot();
+        let json = serde_json::to_string(&snap).unwrap();
+        assert!(json.contains("\"n_layers\":24"));
+        assert!(json.contains("\"hidden_size\":896"));
+        assert!(json.contains("\"uses_alibi\":true"));
+        assert!(json.contains("\"fp32_memory_bytes\":"));
+    }
+
+    #[test]
+    fn test_config_snapshot_validation() {
+        let cfg = ModelConfig::bitnet_3b();
+        let snap = cfg.snapshot();
+        assert!(snap.validation_issues.is_empty());
+
+        let mut bad_cfg = ModelConfig::bitnet_3b();
+        bad_cfg.hidden_size = 0;
+        let bad_snap = bad_cfg.snapshot();
+        assert!(!bad_snap.validation_issues.is_empty());
     }
 }
