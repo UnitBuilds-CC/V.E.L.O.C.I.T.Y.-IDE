@@ -32,9 +32,10 @@
 
 #![allow(dead_code)]
 
-use std::{collections::HashMap, path::Path};
+use std::{collections::HashMap, fs, path::Path};
 
 use anyhow::{Context, Result};
+use serde::Serialize;
 use syn::{
     visit::Visit, Expr, ExprCall, ExprMethodCall, File, ImplItem, Item, ItemFn, ItemImpl, Lit, Pat,
     Stmt, Type,
@@ -77,6 +78,8 @@ pub struct RustToNda {
     functions: HashMap<String, CompiledFn>,
     /// Current impl block type name (for method qualification).
     current_impl: Option<String>,
+    /// Accumulated compilation diagnostics.
+    diagnostics: CompileDiagnostics,
 }
 
 impl Default for RustToNda {
@@ -90,6 +93,7 @@ impl RustToNda {
         Self {
             functions: HashMap::new(),
             current_impl: None,
+            diagnostics: CompileDiagnostics::default(),
         }
     }
 
@@ -169,9 +173,68 @@ impl RustToNda {
         self.functions.keys().map(|s| s.as_str()).collect()
     }
 
+    /// Return the resolved call graph: caller name → [callee names].
+    ///
+    /// Callees are filtered to only include functions that were actually compiled
+    /// (i.e. exist in the function map). Unresolved callees are dropped.
+    pub fn call_graph(&self) -> HashMap<String, Vec<String>> {
+        let known: std::collections::HashSet<&str> =
+            self.functions.keys().map(|s| s.as_str()).collect();
+        self.functions
+            .iter()
+            .map(|(name, cf)| {
+                let resolved: Vec<String> = cf
+                    .callees
+                    .iter()
+                    .filter(|c| known.contains(c.as_str()))
+                    .cloned()
+                    .collect();
+                (name.clone(), resolved)
+            })
+            .collect()
+    }
+
+    /// Return a reference to the accumulated compilation diagnostics.
+    pub fn diagnostics(&self) -> &CompileDiagnostics {
+        &self.diagnostics
+    }
+
+    /// Compile all `.rs` files in a directory tree. Returns one SeedReport per file.
+    pub fn compile_directory(
+        dir: &Path,
+        site_map: &mut SiteMap,
+    ) -> Result<Vec<SeedReport>> {
+        let mut reports = Vec::new();
+        let mut rs_files: Vec<_> = walkdir_rs_files(dir)?;
+        rs_files.sort();
+        for path in rs_files {
+            match seed_from_source(&path, site_map) {
+                Ok(report) => reports.push(report),
+                Err(e) => {
+                    eprintln!("[rust_to_nda] skipping {}: {e}", path.display());
+                }
+            }
+        }
+        Ok(reports)
+    }
+
     // ── Internal: item-level compilation ──────────────────────────────────────
 
     fn compile_item(&mut self, item: &Item) {
+        let kind_name = match item {
+            Item::Fn(_) => "Fn",
+            Item::Impl(_) => "Impl",
+            Item::Mod(_) => "Mod",
+            Item::Struct(_) => "Struct",
+            Item::Enum(_) => "Enum",
+            Item::Trait(_) => "Trait",
+            Item::Use(_) => "Use",
+            Item::Const(_) => "Const",
+            Item::Static(_) => "Static",
+            Item::Type(_) => "Type",
+            _ => "Other",
+        };
+        *self.diagnostics.items_by_kind.entry(kind_name.to_string()).or_insert(0) += 1;
         match item {
             Item::Fn(f) => {
                 self.compile_fn(f, None);
@@ -187,7 +250,19 @@ impl RustToNda {
                     }
                 }
             }
-            _ => {} // Structs, enums, traits, use, const — no executable body
+            Item::Enum(e) => {
+                self.diagnostics.warnings.push(format!(
+                    "Enum '{}' not transpiled to NDA (no executable body)",
+                    e.ident
+                ));
+            }
+            Item::Struct(s) => {
+                self.diagnostics.warnings.push(format!(
+                    "Struct '{}' not transpiled to NDA (no executable body)",
+                    s.ident
+                ));
+            }
+            _ => {} // Traits, use, const, static, type — no executable body
         }
     }
 
@@ -296,6 +371,45 @@ impl RustToNda {
     }
 
     fn compile_expr(&mut self, expr: &Expr, callees: &mut Vec<String>) -> Option<NdaNode> {
+        self.diagnostics.expressions_visited += 1;
+        let expr_kind = match expr {
+            Expr::Block(_) => "Block",
+            Expr::Call(_) => "Call",
+            Expr::MethodCall(_) => "MethodCall",
+            Expr::ForLoop(_) => "ForLoop",
+            Expr::While(_) => "While",
+            Expr::Loop(_) => "Loop",
+            Expr::If(_) => "If",
+            Expr::Lit(_) => "Lit",
+            Expr::Array(_) => "Array",
+            Expr::Repeat(_) => "Repeat",
+            Expr::Return(_) => "Return",
+            Expr::Closure(_) => "Closure",
+            Expr::Binary(_) => "Binary",
+            Expr::Match(_) => "Match",
+            Expr::Reference(_) => "Reference",
+            Expr::Tuple(_) => "Tuple",
+            Expr::Struct(_) => "Struct",
+            Expr::Field(_) => "Field",
+            Expr::Index(_) => "Index",
+            Expr::Unary(_) => "Unary",
+            Expr::Path(_) => "Path",
+            Expr::Assign(_) => "Assign",
+            Expr::Range(_) => "Range",
+            _ => "Other",
+        };
+        *self.diagnostics.expr_type_coverage.entry(expr_kind.to_string()).or_insert(0) += 1;
+
+        let result = self.compile_expr_inner(expr, callees);
+        if result.is_some() {
+            self.diagnostics.expressions_compiled += 1;
+        } else {
+            self.diagnostics.expressions_dropped += 1;
+        }
+        result
+    }
+
+    fn compile_expr_inner(&mut self, expr: &Expr, callees: &mut Vec<String>) -> Option<NdaNode> {
         match expr {
             // Block: recurse → Scope
             Expr::Block(b) => {
@@ -449,6 +563,100 @@ impl RustToNda {
 
             // Closure: body becomes a Scope.
             Expr::Closure(c) => self.compile_expr(&c.body, callees),
+
+            // Match: each arm's body becomes a child Scope.
+            Expr::Match(m) => {
+                let mut arm_nodes = Vec::new();
+                for arm in &m.arms {
+                    if let Some(body_node) = self.compile_expr(&arm.body, callees) {
+                        arm_nodes.push(body_node);
+                    }
+                }
+                if arm_nodes.is_empty() {
+                    None
+                } else if arm_nodes.len() == 1 {
+                    arm_nodes.into_iter().next()
+                } else {
+                    Some(NdaNode::Scope { children: arm_nodes })
+                }
+            }
+
+            // Reference: recurse into the inner expression.
+            Expr::Reference(r) => self.compile_expr(&r.expr, callees),
+
+            // Tuple: compile each element, wrap in Scope.
+            Expr::Tuple(t) => {
+                let children: Vec<NdaNode> = t.elems.iter()
+                    .filter_map(|e| self.compile_expr(e, callees))
+                    .collect();
+                if children.is_empty() {
+                    None
+                } else {
+                    Some(NdaNode::Scope { children })
+                }
+            }
+
+            // Struct literal: compile each field expression.
+            Expr::Struct(s) => {
+                let children: Vec<NdaNode> = s.fields.iter()
+                    .filter_map(|fv| self.compile_expr(&fv.expr, callees))
+                    .collect();
+                if children.is_empty() {
+                    None
+                } else {
+                    Some(NdaNode::Scope { children })
+                }
+            }
+
+            // Field access: compile the base expression.
+            Expr::Field(f) => self.compile_expr(&f.base, callees),
+
+            // Index: compile both base and index.
+            Expr::Index(idx) => {
+                let base = self.compile_expr(&idx.expr, callees);
+                let index = self.compile_expr(&idx.index, callees);
+                match (base, index) {
+                    (Some(b), Some(i)) => Some(NdaNode::Scope { children: vec![b, i] }),
+                    (Some(b), None) => Some(b),
+                    (None, Some(i)) => Some(i),
+                    _ => None,
+                }
+            }
+
+            // Unary: compile the operand.
+            Expr::Unary(u) => self.compile_expr(&u.expr, callees),
+
+            // Assignment: compile both sides.
+            Expr::Assign(a) => {
+                let lhs = self.compile_expr(&a.left, callees);
+                let rhs = self.compile_expr(&a.right, callees);
+                match (lhs, rhs) {
+                    (Some(l), Some(r)) => Some(NdaNode::Scope { children: vec![l, r] }),
+                    (Some(l), None) => Some(l),
+                    (None, Some(r)) => Some(r),
+                    _ => None,
+                }
+            }
+
+            // Range: compile start and end if present.
+            Expr::Range(r) => {
+                let mut children = Vec::new();
+                if let Some(start) = &r.start {
+                    if let Some(n) = self.compile_expr(start, callees) {
+                        children.push(n);
+                    }
+                }
+                if let Some(end) = &r.end {
+                    if let Some(n) = self.compile_expr(end, callees) {
+                        children.push(n);
+                    }
+                }
+                if children.is_empty() {
+                    None
+                } else {
+                    Some(NdaNode::Scope { children })
+                }
+            }
 
             // Binary ops: compile both sides, wrap in Scope if both produce nodes.
             Expr::Binary(b) => {
@@ -617,6 +825,33 @@ impl<'a> Visit<'_> for ExprCollector<'a> {
     }
 }
 
+/// Recursively find all `.rs` files under `dir`.
+fn walkdir_rs_files(dir: &Path) -> Result<Vec<std::path::PathBuf>> {
+    let mut files = Vec::new();
+    if !dir.is_dir() {
+        anyhow::bail!("Not a directory: {}", dir.display());
+    }
+    fn walk(dir: &Path, out: &mut Vec<std::path::PathBuf>) -> Result<()> {
+        for entry in fs::read_dir(dir)? {
+            let entry = entry?;
+            let path = entry.path();
+            if path.is_dir() {
+                // Skip target/, .git/, node_modules/
+                let name = path.file_name().unwrap_or_default().to_string_lossy();
+                if name == "target" || name == ".git" || name == "node_modules" {
+                    continue;
+                }
+                walk(&path, out)?;
+            } else if path.extension().map(|e| e == "rs").unwrap_or(false) {
+                out.push(path);
+            }
+        }
+        Ok(())
+    }
+    walk(dir, &mut files)?;
+    Ok(files)
+}
+
 // ─── CLI entry point ──────────────────────────────────────────────────────────
 
 /// Compile a Rust source file and populate the SiteMap.
@@ -640,23 +875,58 @@ pub fn seed_from_source(source_path: &Path, site_map: &mut SiteMap) -> Result<Se
 
     let n_stored = compiler.store_all(site_map, &root)?;
 
+    // Build resolved call graph and count resolved edges.
+    let call_graph = compiler.call_graph();
+    let total_edges: usize = compiler.functions.values().map(|cf| cf.callees.len()).sum();
+    let resolved_edges: usize = call_graph.values().map(|v| v.len()).sum();
+    let mut diagnostics = compiler.diagnostics().clone();
+    diagnostics.call_edges = total_edges;
+    diagnostics.call_edges_resolved = resolved_edges;
+
     Ok(SeedReport {
         source_path: source_path.to_path_buf(),
         functions: compiler.function_count(),
         nodes_stored: n_stored,
         root_hash,
         elapsed_ms: t0.elapsed().as_millis(),
+        call_graph,
+        diagnostics,
     })
 }
 
 /// Summary returned by `seed_from_source`.
-#[derive(Debug)]
+#[derive(Debug, Serialize)]
 pub struct SeedReport {
     pub source_path: std::path::PathBuf,
     pub functions: usize,
     pub nodes_stored: usize,
     pub root_hash: u64,
     pub elapsed_ms: u128,
+    /// Resolved call graph: caller → [callees].
+    pub call_graph: HashMap<String, Vec<String>>,
+    /// Compilation diagnostics.
+    pub diagnostics: CompileDiagnostics,
+}
+
+/// Diagnostics from a compilation pass — tracks what was handled and what wasn't.
+#[derive(Debug, Default, Clone, Serialize)]
+pub struct CompileDiagnostics {
+    /// Total expression nodes visited.
+    pub expressions_visited: usize,
+    /// Expressions that produced NDA nodes.
+    pub expressions_compiled: usize,
+    /// Expressions that were silently dropped (no NDA node produced).
+    pub expressions_dropped: usize,
+    /// Number of distinct expression types encountered (e.g. Call, If, Binary).
+    pub expr_type_coverage: HashMap<String, usize>,
+    /// Top-level items by kind (Fn, Impl, Struct, Enum, etc.).
+    pub items_by_kind: HashMap<String, usize>,
+    /// Total call edges (before resolution).
+    pub call_edges: usize,
+    /// Call edges resolved to known function hashes.
+    pub call_edges_resolved: usize,
+    /// Warnings for unsupported constructs.
+    pub warnings: Vec<String>,
 }
 
 impl std::fmt::Display for SeedReport {
@@ -777,6 +1047,136 @@ mod tests {
         assert!(
             names.contains(&"TcpEncoder::decode"),
             "impl method should be qualified"
+        );
+    }
+
+    #[test]
+    fn call_graph_extracts_resolved_edges() {
+        let source = r#"
+            fn helper() -> i32 { 1 }
+            fn main_fn() {
+                helper();
+            }
+        "#;
+        let mut compiler = RustToNda::new();
+        compiler.compile_source(source).unwrap();
+        let graph = compiler.call_graph();
+        // main_fn should have helper as a callee
+        let empty = vec![];
+        let main_callees = graph.get("main_fn").unwrap_or(&empty);
+        assert!(
+            main_callees.contains(&"helper".to_string()),
+            "main_fn should call helper, got: {:?}",
+            main_callees
+        );
+    }
+
+    #[test]
+    fn diagnostics_track_expression_coverage() {
+        let source = r#"
+            fn example() {
+                let x = 42;
+                let y = x + 1;
+            }
+        "#;
+        let mut compiler = RustToNda::new();
+        compiler.compile_source(source).unwrap();
+        let diag = compiler.diagnostics();
+        assert!(diag.expressions_visited > 0, "should visit some expressions");
+        assert!(diag.expressions_compiled > 0, "should compile some expressions");
+        assert!(
+            diag.expr_type_coverage.contains_key("Lit"),
+            "should track Lit expressions"
+        );
+        assert!(
+            diag.items_by_kind.contains_key("Fn"),
+            "should track Fn items"
+        );
+    }
+
+    #[test]
+    fn match_expression_compiled() {
+        let source = r#"
+            fn classify(x: i32) -> i32 {
+                match x {
+                    0 => 0,
+                    1 => 10,
+                    _ => 99,
+                }
+            }
+        "#;
+        let mut compiler = RustToNda::new();
+        let root = compiler.compile_source(source).unwrap();
+        // Match should produce Int nodes from arm bodies
+        fn count_ints(node: &NdaNode) -> usize {
+            match node {
+                NdaNode::Int { .. } => 1,
+                NdaNode::Scope { children } => children.iter().map(count_ints).sum(),
+                _ => 0,
+            }
+        }
+        assert!(count_ints(&root) >= 2, "match arms should produce Int nodes");
+    }
+
+    #[test]
+    fn reference_and_tuple_expressions() {
+        let source = r#"
+            fn refs_and_tups() {
+                let x = 42;
+                let r = &x;
+                let t = (1, 2, 3);
+            }
+        "#;
+        let mut compiler = RustToNda::new();
+        let root = compiler.compile_source(source).unwrap();
+        fn count_ints(node: &NdaNode) -> usize {
+            match node {
+                NdaNode::Int { .. } => 1,
+                NdaNode::Scope { children } => children.iter().map(count_ints).sum(),
+                _ => 0,
+            }
+        }
+        assert!(count_ints(&root) >= 2, "reference and tuple should produce Int nodes");
+    }
+
+    #[test]
+    fn diagnostics_serializable() {
+        let source = r#"
+            fn foo() -> i32 { 1 }
+        "#;
+        let mut compiler = RustToNda::new();
+        compiler.compile_source(source).unwrap();
+        let diag = compiler.diagnostics();
+        let json = serde_json::to_string(diag).unwrap();
+        assert!(json.contains("expressions_visited"));
+        assert!(json.contains("items_by_kind"));
+    }
+
+    #[test]
+    fn struct_and_enum_warnings() {
+        let source = r#"
+            struct MyStruct { x: i32 }
+            enum MyEnum { A, B }
+            fn foo() -> i32 { 1 }
+        "#;
+        let mut compiler = RustToNda::new();
+        compiler.compile_source(source).unwrap();
+        let diag = compiler.diagnostics();
+        assert!(
+            diag.items_by_kind.get("Struct").unwrap_or(&0) >= &1,
+            "should count struct items"
+        );
+        assert!(
+            diag.items_by_kind.get("Enum").unwrap_or(&0) >= &1,
+            "should count enum items"
+        );
+        assert!(
+            diag.warnings.iter().any(|w| w.contains("MyStruct")),
+            "should warn about struct"
+        );
+        assert!(
+            diag.warnings.iter().any(|w| w.contains("MyEnum")),
+            "should warn about enum"
         );
     }
 }
