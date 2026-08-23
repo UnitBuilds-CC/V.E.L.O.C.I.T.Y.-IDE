@@ -7,6 +7,183 @@
 //! multiples of 4. All packing functions are internal and called with pre-validated
 //! weight buffers from the model loader.
 
+use serde::Serialize;
+use std::time::Instant;
+
+// ─── Packing diagnostics ───────────────────────────────────────────────────
+
+/// Report from a packing operation with timing and validation info.
+#[derive(Debug, Clone, Serialize)]
+pub struct PackingReport {
+    pub operation: String,
+    pub input_bytes: usize,
+    pub output_bytes: usize,
+    pub elapsed_us: u64,
+    pub validation_issues: Vec<String>,
+    pub valid: bool,
+}
+
+/// Batch packing report for multiple operations.
+#[derive(Debug, Clone, Serialize)]
+pub struct BatchPackingReport {
+    pub operations: usize,
+    pub total_input_bytes: usize,
+    pub total_output_bytes: usize,
+    pub total_elapsed_us: u64,
+    pub per_op_avg_us: f64,
+    pub all_valid: bool,
+    pub issues: Vec<String>,
+}
+
+/// Validate that a byte slice is properly aligned and sized for u32 reinterpretation.
+pub fn validate_u32_alignment(data: &[u8], ctx: &str) -> Vec<String> {
+    let mut issues = Vec::new();
+    if data.len() % 4 != 0 {
+        issues.push(format!(
+            "{ctx}: byte length {} is not a multiple of 4",
+            data.len()
+        ));
+    }
+    if (data.as_ptr() as usize) % 4 != 0 {
+        issues.push(format!("{ctx}: pointer is not 4-byte aligned"));
+    }
+    issues
+}
+
+/// Validate dimensions for weight packing operations.
+pub fn validate_pack_dims(k: usize, n: usize, data_len: usize, ctx: &str) -> Vec<String> {
+    let mut issues = Vec::new();
+    if k == 0 {
+        issues.push(format!("{ctx}: k dimension is zero"));
+    }
+    if n == 0 {
+        issues.push(format!("{ctx}: n dimension is zero"));
+    }
+    if k % 16 != 0 {
+        issues.push(format!(
+            "{ctx}: k={k} is not a multiple of 16 (required for uvec4 packing)"
+        ));
+    }
+    let expected_words = (k / 16) * n;
+    let actual_words = data_len / 4;
+    if actual_words < expected_words {
+        issues.push(format!(
+            "{ctx}: data has {actual_words} u32 words but need {expected_words} (k={k}, n={n})"
+        ));
+    }
+    issues
+}
+
+/// Validate dimensions for NDA weight packing (128-column groups).
+pub fn validate_nda_pack_dims(k: usize, n: usize, data_len: usize, ctx: &str) -> Vec<String> {
+    let mut issues = Vec::new();
+    if k == 0 {
+        issues.push(format!("{ctx}: k dimension is zero"));
+    }
+    if n == 0 {
+        issues.push(format!("{ctx}: n dimension is zero"));
+    }
+    if k % 128 != 0 {
+        issues.push(format!(
+            "{ctx}: k={k} is not a multiple of 128 (required for NDA packing)"
+        ));
+    }
+    let expected_words = (k / 16) * n;
+    let actual_words = data_len / 4;
+    if actual_words < expected_words {
+        issues.push(format!(
+            "{ctx}: data has {actual_words} u32 words but need {expected_words} (k={k}, n={n})"
+        ));
+    }
+    issues
+}
+
+/// Pack weights with validation and a diagnostic report.
+pub fn pack_weights_uvec4_report(src: &[u8], k: usize, n: usize) -> (Vec<u8>, PackingReport) {
+    let start = Instant::now();
+    let mut issues = validate_u32_alignment(src, "pack_weights_uvec4 input");
+    issues.extend(validate_pack_dims(k, n, src.len(), "pack_weights_uvec4"));
+    let valid = issues.is_empty();
+
+    let result = if valid {
+        pack_weights_uvec4(src, k, n)
+    } else {
+        Vec::new()
+    };
+
+    let elapsed = start.elapsed().as_micros() as u64;
+    let report = PackingReport {
+        operation: "pack_weights_uvec4".to_string(),
+        input_bytes: src.len(),
+        output_bytes: result.len(),
+        elapsed_us: elapsed,
+        validation_issues: issues,
+        valid,
+    };
+    (result, report)
+}
+
+/// Pack NDA weights with validation and a diagnostic report.
+pub fn pack_weights_nda_report(
+    weights: &[u8], k: usize, n: usize,
+) -> ((Vec<u8>, Vec<u8>), PackingReport) {
+    let start = Instant::now();
+    let mut issues = validate_u32_alignment(weights, "pack_weights_nda input");
+    issues.extend(validate_nda_pack_dims(k, n, weights.len(), "pack_weights_nda"));
+    let valid = issues.is_empty();
+
+    let result = if valid {
+        pack_weights_nda(weights, k, n)
+    } else {
+        (Vec::new(), Vec::new())
+    };
+
+    let elapsed = start.elapsed().as_micros() as u64;
+    let out_bytes = result.0.len() + result.1.len();
+    let report = PackingReport {
+        operation: "pack_weights_nda".to_string(),
+        input_bytes: weights.len(),
+        output_bytes: out_bytes,
+        elapsed_us: elapsed,
+        validation_issues: issues,
+        valid,
+    };
+    (result, report)
+}
+
+/// Batch pack multiple weight sets, returning results and aggregate report.
+pub fn pack_weights_uvec4_batch(
+    items: &[(Vec<u8>, usize, usize)],
+) -> (Vec<Vec<u8>>, BatchPackingReport) {
+    let start = Instant::now();
+    let mut results = Vec::with_capacity(items.len());
+    let mut total_in = 0usize;
+    let mut total_out = 0usize;
+    let mut all_issues = Vec::new();
+
+    for (data, k, n) in items {
+        let (packed, report) = pack_weights_uvec4_report(data, *k, *n);
+        total_in += report.input_bytes;
+        total_out += report.output_bytes;
+        all_issues.extend(report.validation_issues.iter().cloned());
+        results.push(packed);
+    }
+
+    let elapsed = start.elapsed().as_micros() as u64;
+    let avg = if items.is_empty() { 0.0 } else { elapsed as f64 / items.len() as f64 };
+
+    let report = BatchPackingReport {
+        operations: items.len(),
+        total_input_bytes: total_in,
+        total_output_bytes: total_out,
+        total_elapsed_us: elapsed.max(1),
+        per_op_avg_us: avg,
+        all_valid: all_issues.is_empty(),
+        issues: all_issues,
+    };
+    (results, report)
+}
+
 pub fn pack_weights_uvec4(src: &[u8], k: usize, n: usize) -> Vec<u8> {
     // SAFETY: `src` is a weight buffer whose length is guaranteed to be a multiple of 4
     // by the model loader. Pointer cast is valid because the buffer is 4-byte aligned.
@@ -143,4 +320,247 @@ pub fn pack_weights_nda(weights_ternary_bytes: &[u8], k: usize, n: usize) -> (Ve
         std::slice::from_raw_parts(pos.as_ptr() as *const u8, byte_len).to_vec()
     };
     (act_bytes, pos_bytes)
+}
+
+// ─── Tests ─────────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ─── Validation tests ──────────────────────────────────────────────────
+
+    #[test]
+    fn validate_alignment_ok() {
+        let data = vec![0u8; 16];
+        let issues = validate_u32_alignment(&data, "test");
+        assert!(issues.is_empty(), "expected no issues, got: {issues:?}");
+    }
+
+    #[test]
+    fn validate_alignment_bad_length() {
+        let data = vec![0u8; 5]; // not multiple of 4
+        let issues = validate_u32_alignment(&data, "test");
+        assert!(!issues.is_empty());
+        assert!(issues[0].contains("not a multiple of 4"));
+    }
+
+    #[test]
+    fn validate_pack_dims_ok() {
+        // k=16, n=4: need (16/16)*4 = 4 words = 16 bytes
+        let issues = validate_pack_dims(16, 4, 16, "test");
+        assert!(issues.is_empty(), "expected no issues, got: {issues:?}");
+    }
+
+    #[test]
+    fn validate_pack_dims_zero_k() {
+        let issues = validate_pack_dims(0, 4, 16, "test");
+        assert!(!issues.is_empty());
+        assert!(issues[0].contains("k dimension is zero"));
+    }
+
+    #[test]
+    fn validate_pack_dims_zero_n() {
+        let issues = validate_pack_dims(16, 0, 16, "test");
+        assert!(!issues.is_empty());
+        assert!(issues[0].contains("n dimension is zero"));
+    }
+
+    #[test]
+    fn validate_pack_dims_bad_k_multiple() {
+        let issues = validate_pack_dims(15, 4, 16, "test");
+        assert!(!issues.is_empty());
+        assert!(issues.iter().any(|i| i.contains("not a multiple of 16")));
+    }
+
+    #[test]
+    fn validate_pack_dims_insufficient_data() {
+        // k=16, n=4: need 4 words = 16 bytes, but only give 8
+        let issues = validate_pack_dims(16, 4, 8, "test");
+        assert!(!issues.is_empty());
+        assert!(issues.iter().any(|i| i.contains("not enough")) || issues.iter().any(|i| i.contains("need")));
+    }
+
+    #[test]
+    fn validate_nda_pack_dims_ok() {
+        // k=128, n=2: need (128/16)*2 = 16 words = 64 bytes
+        let issues = validate_nda_pack_dims(128, 2, 64, "test");
+        assert!(issues.is_empty(), "expected no issues, got: {issues:?}");
+    }
+
+    #[test]
+    fn validate_nda_pack_dims_bad_k() {
+        let issues = validate_nda_pack_dims(64, 2, 64, "test");
+        assert!(!issues.is_empty());
+        assert!(issues.iter().any(|i| i.contains("not a multiple of 128")));
+    }
+
+    // ─── pack_weights_uvec4 tests ──────────────────────────────────────────
+
+    #[test]
+    fn pack_weights_uvec4_basic() {
+        // k=64, n=1: 4 col groups → 1 group-of-4, 1 row
+        // Input: 4 u32 words = 16 bytes, Output: 4 u32 words = 16 bytes
+        let input: Vec<u8> = vec![
+            0x01, 0x00, 0x00, 0x00,
+            0x02, 0x00, 0x00, 0x00,
+            0x03, 0x00, 0x00, 0x00,
+            0x04, 0x00, 0x00, 0x00,
+        ];
+        let result = pack_weights_uvec4(&input, 64, 1);
+        assert_eq!(result.len(), 16);
+        // With single row, tiling preserves order
+        assert_eq!(&result, &input);
+    }
+
+    #[test]
+    fn pack_weights_uvec4_report_valid() {
+        let input: Vec<u8> = vec![0; 64]; // 16 u32 words, k=64 n=4
+        let (result, report) = pack_weights_uvec4_report(&input, 64, 4);
+        assert!(report.valid);
+        assert!(report.validation_issues.is_empty());
+        assert_eq!(report.input_bytes, 64);
+        assert_eq!(report.operation, "pack_weights_uvec4");
+        assert!(!result.is_empty());
+    }
+
+    #[test]
+    fn pack_weights_uvec4_report_invalid() {
+        let input: Vec<u8> = vec![0; 5]; // bad alignment
+        let (result, report) = pack_weights_uvec4_report(&input, 64, 4);
+        assert!(!report.valid);
+        assert!(!report.validation_issues.is_empty());
+        assert!(result.is_empty()); // should not pack on invalid input
+    }
+
+    // ─── pack_weights_nda tests ────────────────────────────────────────────
+
+    #[test]
+    fn pack_weights_nda_basic() {
+        // k=128, n=1: 8 col groups, 1 row → 8 u32 words = 32 bytes input
+        let input = vec![0u8; 32];
+        let ((act, pos), report) = pack_weights_nda_report(&input, 128, 1);
+        assert!(report.valid);
+        // All zeros input → all zeros output
+        assert!(act.iter().all(|&b| b == 0));
+        assert!(pos.iter().all(|&b| b == 0));
+    }
+
+    #[test]
+    fn pack_weights_nda_report_invalid() {
+        let input = vec![0u8; 10]; // bad size for k=128
+        let ((act, pos), report) = pack_weights_nda_report(&input, 128, 1);
+        assert!(!report.valid);
+        assert!(act.is_empty());
+        assert!(pos.is_empty());
+    }
+
+    // ─── pack_inputs_nda tests ─────────────────────────────────────────────
+
+    #[test]
+    fn pack_inputs_nda_all_zeros() {
+        // 8 col groups × 1 = 8 u32 words (minimum for 1 cg128)
+        let input = vec![0u32; 8];
+        let (active, pos) = pack_inputs_nda(&input);
+        assert_eq!(active.len(), 4); // 1 cg128 × 4
+        assert_eq!(pos.len(), 4);
+        assert!(active.iter().all(|&v| v == 0));
+        assert!(pos.iter().all(|&v| v == 0));
+    }
+
+    #[test]
+    fn pack_inputs_nda_ternary_codes() {
+        // Encode: code 01 (positive ternary +1) in first 2-bit pair
+        // val_0 = 0x01 means code_0 at bit 0 is 01 → active bit set, pos bit set
+        let mut input = vec![0u32; 8];
+        input[0] = 0x01; // first 2-bit pair = 01 (positive)
+        let (active, pos) = pack_inputs_nda(&input);
+        assert_eq!(active.len(), 4);
+        // bit 0 of active[0] should be set (code != 0)
+        assert_ne!(active[0] & 0x01, 0);
+        // bit 0 of pos[0] should be set (code == 1)
+        assert_ne!(pos[0] & 0x01, 0);
+    }
+
+    #[test]
+    fn pack_inputs_nda_negative_code() {
+        // code 10 (negative ternary -1) → active set, pos NOT set
+        let mut input = vec![0u32; 8];
+        input[0] = 0x02; // first 2-bit pair = 10 (negative)
+        let (active, pos) = pack_inputs_nda(&input);
+        // active should have bit set
+        assert_ne!(active[0] & 0x01, 0);
+        // pos should NOT have bit set (code != 1)
+        assert_eq!(pos[0] & 0x01, 0);
+    }
+
+    // ─── Batch packing tests ───────────────────────────────────────────────
+
+    #[test]
+    fn batch_pack_uvec4_empty() {
+        let items: Vec<(Vec<u8>, usize, usize)> = vec![];
+        let (results, report) = pack_weights_uvec4_batch(&items);
+        assert!(results.is_empty());
+        assert_eq!(report.operations, 0);
+        assert!(report.all_valid);
+    }
+
+    #[test]
+    fn batch_pack_uvec4_multiple() {
+        let items = vec![
+            (vec![0u8; 64], 64, 4),  // valid
+            (vec![0u8; 64], 64, 4),  // valid
+        ];
+        let (results, report) = pack_weights_uvec4_batch(&items);
+        assert_eq!(results.len(), 2);
+        assert_eq!(report.operations, 2);
+        assert!(report.all_valid);
+        assert_eq!(report.total_input_bytes, 128);
+    }
+
+    #[test]
+    fn batch_pack_uvec4_with_invalid() {
+        let items = vec![
+            (vec![0u8; 64], 64, 4),  // valid
+            (vec![0u8; 5], 64, 4),   // invalid: bad alignment
+        ];
+        let (results, report) = pack_weights_uvec4_batch(&items);
+        assert_eq!(results.len(), 2);
+        assert!(!report.all_valid);
+        assert!(!report.issues.is_empty());
+    }
+
+    // ─── Diagnostic struct tests ───────────────────────────────────────────
+
+    #[test]
+    fn packing_report_serializes() {
+        let report = PackingReport {
+            operation: "pack_weights_uvec4".to_string(),
+            input_bytes: 1024,
+            output_bytes: 1024,
+            elapsed_us: 42,
+            validation_issues: vec![],
+            valid: true,
+        };
+        let json = serde_json::to_string(&report).unwrap();
+        assert!(json.contains("\"valid\":true"));
+        assert!(json.contains("\"input_bytes\":1024"));
+        assert!(json.contains("\"operation\":\"pack_weights_uvec4\""));
+    }
+
+    #[test]
+    fn batch_packing_report_serializes() {
+        let report = BatchPackingReport {
+            operations: 26,
+            total_input_bytes: 1_500_000,
+            total_output_bytes: 1_500_000,
+            total_elapsed_us: 5000,
+            per_op_avg_us: 192.3,
+            all_valid: true,
+            issues: vec![],
+        };
+        let json = serde_json::to_string(&report).unwrap();
+        assert!(json.contains("\"operations\":26"));
+        assert!(json.contains("\"all_valid\":true"));
+    }
 }
