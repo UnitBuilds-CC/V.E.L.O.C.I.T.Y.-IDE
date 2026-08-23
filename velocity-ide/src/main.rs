@@ -63,6 +63,12 @@ enum Command {
 
     /// Manage provider API keys and query usage
     Providers(ProvidersArgs),
+
+    /// Quick health check and router status
+    Status,
+
+    /// Show routing transparency — why models were chosen, cost flow
+    Transparency,
 }
 
 #[derive(clap::Args)]
@@ -168,6 +174,14 @@ struct UsageArgs {
     /// Show rate limit and quota status with projections
     #[arg(long)]
     rate_limit: bool,
+
+    /// Show enhanced summary with projections and sparkline
+    #[arg(long)]
+    summary: bool,
+
+    /// Show timeseries data (hourly or daily)
+    #[arg(long, value_name = "RANGE")]
+    timeseries: Option<String>,
 }
 
 #[derive(clap::Args)]
@@ -247,6 +261,8 @@ fn main() -> Result<()> {
         Command::Usage(args) => run_usage(args),
         Command::Login(args) => run_login(args),
         Command::Providers(args) => run_providers(args),
+        Command::Status => run_status(),
+        Command::Transparency => run_transparency(),
     }
 }
 
@@ -789,6 +805,59 @@ fn run_usage(args: UsageArgs) -> Result<()> {
         return Ok(());
     }
 
+    if args.summary {
+        let s = client.get_usage_summary()?;
+        println!();
+        println!("=== Velocity Usage Summary (Enhanced) ===");
+        println!();
+        println!("  Tier:             {}", s.tier);
+        println!("  Tokens:           {} / {}  ({})",
+            fmt_number(s.tokens_used), fmt_number(s.tokens_limit), fmt_percent(s.token_quota_pct));
+        println!("  Cost:             {} / {}  ({})",
+            fmt_currency(s.cost_usd), fmt_currency(s.cost_limit_usd), fmt_percent(s.cost_quota_pct));
+        println!("  Assignments:      {}", s.assignments_count);
+        println!();
+        println!("  Projections:");
+        println!("    Tokens:         {} by end of period", fmt_number(s.projected_tokens));
+        println!("    Cost:           {} by end of period", fmt_currency(s.projected_cost_usd));
+        println!();
+        println!("  Billing Period:");
+        println!("    Start:          {}", s.billing_period.start);
+        println!("    End:            {}", s.billing_period.end);
+        println!("    Days remaining: {}", s.billing_period.days_remaining);
+        println!();
+        // Sparkline (last 24h hourly).
+        if !s.sparkline.is_empty() {
+            println!("  Hourly Sparkline (last 24h):");
+            let max_tok = s.sparkline.iter().map(|b| b.tokens).max().unwrap_or(1).max(1);
+            for b in &s.sparkline {
+                let bar_len = (b.tokens as f64 / max_tok as f64 * 30.0) as usize;
+                let bar = "#".repeat(bar_len);
+                println!("    {:>6}  {:>10}  {}", b.label, fmt_number(b.tokens), bar);
+            }
+            println!();
+        }
+        return Ok(());
+    }
+
+    if let Some(ref range) = args.timeseries {
+        // Determine granularity from range.
+        let granularity = if range.ends_with('d') { "daily" } else { "hourly" };
+        let ts = client.get_timeseries(granularity, range)?;
+        println!();
+        println!("=== Velocity Timeseries ({}, {}) ===", ts.granularity, ts.range);
+        println!();
+        let max_tok = ts.buckets.iter().map(|b| b.tokens).max().unwrap_or(1).max(1);
+        for b in &ts.buckets {
+            let bar_len = (b.tokens as f64 / max_tok as f64 * 30.0) as usize;
+            let bar = "#".repeat(bar_len);
+            println!("  {:>6}  {:>10}  {:>10}  {}",
+                b.label, fmt_number(b.tokens), fmt_currency(b.cost_usd), bar);
+        }
+        println!();
+        return Ok(());
+    }
+
     // Default: summary view.
     let usage = client.get_usage()?;
     let token_pct = if usage.tokens_limit > 0 {
@@ -990,6 +1059,161 @@ fn run_providers(args: ProvidersArgs) -> Result<()> {
                 other
             );
         }
+    }
+
+    Ok(())
+}
+
+// ─── Status ──────────────────────────────────────────────────────────────
+
+fn run_status() -> Result<()> {
+    use velocity_client::VelocityClient;
+
+    let client = VelocityClient::from_env()?;
+
+    // Health check.
+    match client.health() {
+        Ok(h) => {
+            println!();
+            println!("=== Velocity Router Status ===");
+            println!();
+            println!("  Status:    {}", h.status);
+            println!("  Version:   {}", h.version);
+            println!("  Models:    {} available", h.models_available);
+        }
+        Err(e) => {
+            println!();
+            println!("=== Velocity Router Status ===");
+            println!();
+            println!("  Status:    UNREACHABLE");
+            println!("  Error:     {}", e);
+            println!();
+            println!("  Check that the router is running and VELOCITY_BASE_URL is correct.");
+            return Ok(());
+        }
+    }
+
+    // Usage snapshot (quick summary).
+    match client.get_usage() {
+        Ok(u) => {
+            let token_pct = if u.tokens_limit > 0 {
+                (u.tokens_used as f64 / u.tokens_limit as f64) * 100.0
+            } else {
+                0.0
+            };
+            let cost_pct = if u.cost_limit_usd > 0.0 {
+                (u.cost_usd / u.cost_limit_usd) * 100.0
+            } else {
+                0.0
+            };
+            println!();
+            println!("  Tier:      {}", u.tier);
+            println!("  Tokens:    {} / {}  ({:.1}%)",
+                velocity_client::fmt_number(u.tokens_used),
+                velocity_client::fmt_number(u.tokens_limit),
+                token_pct);
+            println!("  Cost:      {} / {}  ({:.1}%)",
+                velocity_client::fmt_currency(u.cost_usd),
+                velocity_client::fmt_currency(u.cost_limit_usd),
+                cost_pct);
+            println!("  Assigns:   {}", u.assignments_count);
+        }
+        Err(_) => {
+            println!("  (Could not fetch usage — key may not be configured)");
+        }
+    }
+
+    // Rate limit info.
+    match client.get_rate_limit() {
+        Ok(rl) => {
+            println!();
+            println!("  Rate:      {} req/min (resets in {}s)",
+                rl.rate_limit.max_requests_per_minute, rl.rate_limit.resets_in_secs);
+            println!("  Billing:   resets in {} days", rl.billing_period.resets_in_days);
+        }
+        Err(_) => {}
+    }
+
+    println!();
+    Ok(())
+}
+
+// ─── Transparency ────────────────────────────────────────────────────────
+
+fn run_transparency() -> Result<()> {
+    use velocity_client::{VelocityClient, fmt_number, fmt_currency};
+
+    let client = VelocityClient::from_env()?;
+    let t = client.get_transparency()?;
+
+    println!();
+    println!("=== Velocity Routing Transparency ===");
+    println!();
+    println!("  Summary:");
+    println!("    Assignments:  {}", t.summary.total_assignments);
+    println!("    Errors:       {}", t.summary.total_errors);
+    println!("    Models:       {} available", t.summary.models_available);
+    println!();
+    println!("  Cost Flow:");
+    let total_tok = t.cost_flow.input_tokens + t.cost_flow.output_tokens;
+    println!("    Input tokens:  {} ({:.1}%)",
+        fmt_number(t.cost_flow.input_tokens),
+        if total_tok > 0 { t.cost_flow.input_tokens as f64 / total_tok as f64 * 100.0 } else { 0.0 });
+    println!("    Output tokens: {} ({:.1}%)",
+        fmt_number(t.cost_flow.output_tokens),
+        if total_tok > 0 { t.cost_flow.output_tokens as f64 / total_tok as f64 * 100.0 } else { 0.0 });
+    println!("    In/Out ratio:  {:.2}", t.cost_flow.input_output_ratio);
+    println!("    Total cost:    {}", fmt_currency(t.cost_flow.total_cost_usd));
+    println!();
+
+    // Recent routing decisions.
+    if !t.recent_routing_decisions.is_empty() {
+        println!("  Recent Routing Decisions (last {}):", t.recent_routing_decisions.len());
+        println!("  {:<24} {:<20} {:<14} {}", "Domain", "Model", "Tokens", "Rationale");
+        println!("  {}", "-".repeat(90));
+        for d in t.recent_routing_decisions.iter().take(20) {
+            let rationale = d.routing_rationale.as_deref().unwrap_or("-");
+            let short = if rationale.len() > 40 { format!("{}...", &rationale[..37]) } else { rationale.to_string() };
+            println!("  {:<24} {:<20} {:<14} {}", d.domain, d.model_id, fmt_number(d.total_tokens), short);
+        }
+        println!();
+    }
+
+    // Model selection stats.
+    if !t.model_selection_stats.is_empty() {
+        println!("  Model Selection Stats:");
+        println!("  {:<24} {:>8} {:>12} {:>10} {:>10}", "Model", "Reqs", "Tokens", "Cost", "Avg ms");
+        println!("  {}", "-".repeat(70));
+        for m in &t.model_selection_stats {
+            println!("  {:<24} {:>8} {:>12} {:>10} {:>10}",
+                m.model_id, m.total_requests, fmt_number(m.total_tokens),
+                fmt_currency(m.total_cost_usd), m.avg_duration_ms);
+        }
+        println!();
+    }
+
+    // Domain distribution.
+    if !t.domain_distribution.is_empty() {
+        println!("  Domain Distribution:");
+        println!("  {:<24} {:>8} {:>12} {:>10}", "Domain", "Reqs", "Tokens", "Cost");
+        println!("  {}", "-".repeat(60));
+        for d in &t.domain_distribution {
+            println!("  {:<24} {:>8} {:>12} {:>10}",
+                d.domain, d.requests, fmt_number(d.tokens), fmt_currency(d.cost_usd));
+        }
+        println!();
+    }
+
+    // Available models.
+    if !t.available_models.is_empty() {
+        println!("  Available Models & Pricing:");
+        println!("  {:<24} {:<14} {:<10} {:>12} {:>12}", "Model", "Provider", "Tier", "In $/Mtok", "Out $/Mtok");
+        println!("  {}", "-".repeat(76));
+        for m in &t.available_models {
+            println!("  {:<24} {:<14} {:<10} {:>12.2} {:>12.2}",
+                m.id, m.provider, m.tier, m.cost_input_per_mtok, m.cost_output_per_mtok);
+        }
+        println!();
     }
 
     Ok(())
