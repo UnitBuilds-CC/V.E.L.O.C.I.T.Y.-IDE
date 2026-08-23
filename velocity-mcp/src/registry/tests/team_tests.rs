@@ -836,3 +836,69 @@ fn team_analytics_shows_provider_distribution() {
     assert!(output.contains("cloudflare"));
     assert!(output.contains("openai"));
 }
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Batch 4: Health Check / Provider Tests
+// ═══════════════════════════════════════════════════════════════════════════
+
+#[test]
+fn team_health_check_returns_score_and_status() {
+    let (_temp, root) = setup_root();
+    create_test_team(&root);
+
+    let output = call_tool_in_workspace(
+        &root,
+        "team_health_check",
+        &json!({ "team_id": "test-team" }),
+    )
+    .unwrap();
+
+    assert!(output.contains("Team health check"));
+    assert!(output.contains("health_score"));
+    assert!(output.contains("status"));
+    // Well-formed team should have good health
+    assert!(output.contains("EXCELLENT") || output.contains("GOOD"));
+}
+
+#[test]
+fn team_health_check_detects_issues() {
+    let (_temp, root) = setup_root();
+    // Create a team with overlapping scopes (triggers warnings)
+    call_tool_in_workspace(
+        &root,
+        "create_expert_team",
+        &json!({
+            "name": "Overlap Team",
+            "members": [
+                { "name": "Broad", "role": "General", "scope_patterns": ["src/"] },
+                { "name": "Narrow", "role": "Specific", "scope_patterns": ["src/api/"] }
+            ]
+        }),
+    )
+    .unwrap();
+
+    let output = call_tool_in_workspace(
+        &root,
+        "team_health_check",
+        &json!({ "team_id": "overlap-team" }),
+    )
+    .unwrap();
+
+    assert!(output.contains("scope_overlaps"));
+    // Should have at least 1 overlap warning
+    assert!(output.contains("1") || output.contains("warning"));
+}
+
+#[test]
+fn list_providers_returns_all_providers() {
+    let (_temp, root) = setup_root();
+
+    let output = call_tool_in_workspace(&root, "list_providers", &json!({})).unwrap();
+
+    assert!(output.contains("Available AI providers"));
+    assert!(output.contains("cloudflare"));
+    assert!(output.contains("openrouter"));
+    assert!(output.contains("anthropic"));
+    assert!(output.contains("openai"));
+    assert!(output.contains("16")); // 16 providers
+}

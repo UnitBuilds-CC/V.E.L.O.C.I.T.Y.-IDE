@@ -218,5 +218,25 @@ pub fn get_team_tools() -> Vec<Tool> {
                 "required": ["team_id"]
             }),
         },
+        // ── Health Check / Provider Tools ───────────────────────────────
+        Tool {
+            name: "team_health_check".to_string(),
+            description: "Comprehensive health check combining validation, scope overlaps, and analytics. Returns a health score (0-100), status (excellent/good/fair/poor), error/warning details, and recommendations.".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "team_id": { "type": "string", "description": "Team id, slug, or name." }
+                },
+                "required": ["team_id"]
+            }),
+        },
+        Tool {
+            name: "list_providers".to_string(),
+            description: "List all available AI providers with their slugs, labels, and aliases. Use this to discover valid provider values for team members.".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {}
+            }),
+        },
     ]
 }

@@ -95,6 +95,8 @@ pub fn handle_team_tool(
         "import_expert_team" => import_expert_team(root, arguments)?,
         "debug_routing" => debug_routing_tool(root, arguments)?,
         "team_analytics" => team_analytics(root, arguments)?,
+        "team_health_check" => team_health_check(root, arguments)?,
+        "list_providers" => list_providers(root, arguments)?,
         _ => return Ok(None),
     };
     Ok(Some(result))
@@ -825,5 +827,122 @@ fn team_analytics(root: &Path, arguments: &Value) -> Result<String, Box<dyn Erro
         "Team analytics for \"{}\":\n{}",
         team.name,
         serde_json::to_string_pretty(&analytics)?
+    ))
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Health Check / Provider Tools
+// ═══════════════════════════════════════════════════════════════════════════
+
+/// Comprehensive health check combining validation, overlaps, and analytics.
+fn team_health_check(root: &Path, arguments: &Value) -> Result<String, Box<dyn Error>> {
+    let team_ref = arguments["team_id"]
+        .as_str()
+        .or_else(|| arguments["team"].as_str())
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .ok_or("'team_id' is required")?;
+
+    let teams = load_expert_teams(root);
+    let lower = team_ref.to_lowercase();
+    let slug = slugify(team_ref);
+    let team = teams
+        .iter()
+        .find(|t| t.id.to_lowercase() == lower || t.slug() == slug || t.name.to_lowercase() == lower)
+        .ok_or_else(|| format!("team '{}' not found", team_ref))?;
+
+    // Run all checks
+    let issues = validate_team_composition(team);
+    let overlaps = detect_scope_overlaps(team);
+
+    let errors: Vec<&str> = issues
+        .iter()
+        .filter(|i| i.severity == ValidationSeverity::Error)
+        .map(|i| i.message.as_str())
+        .collect();
+    let warnings: Vec<&str> = issues
+        .iter()
+        .filter(|i| i.severity == ValidationSeverity::Warning)
+        .map(|i| i.message.as_str())
+        .collect();
+
+    // Compute health score (0-100)
+    let base_score = 100i32 - (errors.len() as i32 * 25 + warnings.len() as i32 * 10);
+    let overlap_penalty = overlaps.len() as i32 * 5;
+    let health_score = base_score.saturating_sub(overlap_penalty).max(0);
+
+    // Determine health status
+    let status = if health_score >= 90 {
+        "excellent"
+    } else if health_score >= 70 {
+        "good"
+    } else if health_score >= 50 {
+        "fair"
+    } else {
+        "poor"
+    };
+
+    // Provider diversity check
+    let mut providers = std::collections::HashSet::new();
+    for m in &team.members {
+        providers.insert(m.provider.slug());
+    }
+    let provider_diversity = providers.len();
+
+    let health = json!({
+        "team": team.name,
+        "team_id": team.id,
+        "health_score": health_score,
+        "status": status,
+        "summary": {
+            "errors": errors.len(),
+            "warnings": warnings.len(),
+            "scope_overlaps": overlaps.len(),
+            "provider_diversity": provider_diversity,
+        },
+        "error_details": errors,
+        "warning_details": warnings,
+        "recommendations": {
+            "has_errors": !errors.is_empty(),
+            "has_warnings": !warnings.is_empty(),
+            "has_overlaps": !overlaps.is_empty(),
+            "low_diversity": provider_diversity == 1 && team.members.len() > 2,
+        },
+    });
+
+    Ok(format!(
+        "Team health check for \"{}\": {} (score: {}/100)\n{}",
+        team.name,
+        status.to_uppercase(),
+        health_score,
+        serde_json::to_string_pretty(&health)?
+    ))
+}
+
+/// List all available AI providers with their slugs and labels.
+fn list_providers(_root: &Path, _arguments: &Value) -> Result<String, Box<dyn Error>> {
+    let providers = vec![
+        json!({"slug": "cloudflare", "label": "Cloudflare Workers AI", "aliases": ["cf", "workers-ai"]}),
+        json!({"slug": "openrouter", "label": "OpenRouter", "aliases": ["or"]}),
+        json!({"slug": "azure", "label": "Azure OpenAI", "aliases": ["azure_openai"]}),
+        json!({"slug": "ollama", "label": "Local Ollama", "aliases": ["local"]}),
+        json!({"slug": "openai", "label": "OpenAI Direct", "aliases": []}),
+        json!({"slug": "anthropic", "label": "Anthropic Claude", "aliases": ["claude"]}),
+        json!({"slug": "vertex", "label": "Google Vertex AI", "aliases": ["google"]}),
+        json!({"slug": "deepseek", "label": "Deepseek", "aliases": []}),
+        json!({"slug": "alibaba", "label": "Alibaba Qwen", "aliases": ["qwen", "dashscope"]}),
+        json!({"slug": "bedrock", "label": "AWS Bedrock", "aliases": ["aws"]}),
+        json!({"slug": "groq", "label": "Groq", "aliases": []}),
+        json!({"slug": "mistral", "label": "Mistral AI", "aliases": ["mistralai"]}),
+        json!({"slug": "together", "label": "Together AI", "aliases": ["togetherai"]}),
+        json!({"slug": "fireworks", "label": "Fireworks AI", "aliases": ["fireworksai"]}),
+        json!({"slug": "perplexity", "label": "Perplexity", "aliases": ["pplx"]}),
+        json!({"slug": "cerebras", "label": "Cerebras", "aliases": []}),
+    ];
+
+    Ok(format!(
+        "Available AI providers ({}):\n{}",
+        providers.len(),
+        serde_json::to_string_pretty(&providers)?
     ))
 }
