@@ -16,8 +16,69 @@ use super::packing::*;
 use super::vulkan_init::*;
 use ash::vk;
 use ash::Device;
+use serde::Serialize;
 use std::ffi::CString;
 use std::time::Instant;
+
+/// Configuration for an NDA GEMV kernel.
+#[derive(Debug, Clone, Serialize)]
+pub struct NdaGemvConfig {
+    pub k: usize,
+    pub n: usize,
+    pub version: u32,
+    pub scales: [f32; 3],
+}
+
+/// Diagnostic info about an NDA GEMV kernel setup.
+#[derive(Debug, Clone, Serialize)]
+pub struct NdaGemvInfo {
+    pub config: NdaGemvConfig,
+    pub input_active_bytes: usize,
+    pub input_pos_bytes: usize,
+    pub weight_active_bytes: usize,
+    pub weight_pos_bytes: usize,
+    pub output_bytes: usize,
+    pub total_gpu_memory_estimate: usize,
+    pub validation_issues: Vec<String>,
+}
+
+/// Validate NDA GEMV configuration.
+pub fn validate_nda_gemv_config(cfg: &NdaGemvConfig) -> Vec<String> {
+    let mut issues = Vec::new();
+    if cfg.k == 0 {
+        issues.push("k must be > 0".into());
+    }
+    if cfg.n == 0 {
+        issues.push("n must be > 0".into());
+    }
+    if cfg.k % 128 != 0 {
+        issues.push(format!(
+            "k ({}) must be a multiple of 128 for NDA packing",
+            cfg.k
+        ));
+    }
+    issues
+}
+
+/// Build diagnostic info for an NDA GEMV kernel.
+pub fn nda_gemv_info(cfg: &NdaGemvConfig) -> NdaGemvInfo {
+    let issues = validate_nda_gemv_config(cfg);
+    let k_words = cfg.k / 16;
+    let input_bytes = k_words * 4;
+    let weight_bytes = (cfg.k / 128) * cfg.n * 4 * 4;
+    let output_bytes = cfg.n * 4;
+    let total = input_bytes * 2 + weight_bytes * 2 + output_bytes;
+    NdaGemvInfo {
+        config: cfg.clone(),
+        input_active_bytes: input_bytes,
+        input_pos_bytes: input_bytes,
+        weight_active_bytes: weight_bytes,
+        weight_pos_bytes: weight_bytes,
+        output_bytes,
+        total_gpu_memory_estimate: total,
+        validation_issues: issues,
+    }
+}
 
 pub struct VulkanNdaGemv {
     pub device: Device,
@@ -1006,5 +1067,80 @@ impl Drop for VulkanNdaGemv {
                 .destroy_descriptor_set_layout(self.desc_set_layout, None);
             self.device.destroy_shader_module(self.shader_module, None);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn default_gemv_config() -> NdaGemvConfig {
+        NdaGemvConfig {
+            k: 128,
+            n: 3200,
+            version: 1,
+            scales: [1.0, 1.0, 1.0],
+        }
+    }
+
+    #[test]
+    fn validate_gemv_config_valid() {
+        assert!(validate_nda_gemv_config(&default_gemv_config()).is_empty());
+    }
+
+    #[test]
+    fn validate_gemv_config_zero_k() {
+        let mut cfg = default_gemv_config();
+        cfg.k = 0;
+        let issues = validate_nda_gemv_config(&cfg);
+        assert!(issues.iter().any(|i| i.contains("k must")));
+    }
+
+    #[test]
+    fn validate_gemv_config_bad_k() {
+        let mut cfg = default_gemv_config();
+        cfg.k = 64; // not multiple of 128
+        assert!(validate_nda_gemv_config(&cfg).iter().any(|i| i.contains("multiple of 128")));
+    }
+
+    #[test]
+    fn validate_gemv_config_zero_n() {
+        let mut cfg = default_gemv_config();
+        cfg.n = 0;
+        assert!(validate_nda_gemv_config(&cfg).iter().any(|i| i.contains("n must")));
+    }
+
+    #[test]
+    fn nda_gemv_info_works() {
+        let cfg = default_gemv_config();
+        let info = nda_gemv_info(&cfg);
+        assert!(info.validation_issues.is_empty());
+        assert_eq!(info.input_active_bytes, 32); // 128/16 * 4
+        assert_eq!(info.output_bytes, 12800); // 3200 * 4
+        assert!(info.total_gpu_memory_estimate > 0);
+    }
+
+    #[test]
+    fn nda_gemv_info_with_issues() {
+        let mut cfg = default_gemv_config();
+        cfg.k = 0;
+        cfg.n = 0;
+        let info = nda_gemv_info(&cfg);
+        assert!(info.validation_issues.len() >= 2);
+    }
+
+    #[test]
+    fn nda_gemv_config_serializes() {
+        let json = serde_json::to_string(&default_gemv_config()).unwrap();
+        assert!(json.contains("\"k\":128"));
+        assert!(json.contains("scales"));
+    }
+
+    #[test]
+    fn nda_gemv_info_serializes() {
+        let info = nda_gemv_info(&default_gemv_config());
+        let json = serde_json::to_string(&info).unwrap();
+        assert!(json.contains("total_gpu_memory_estimate"));
+        assert!(json.contains("input_active_bytes"));
     }
 }
