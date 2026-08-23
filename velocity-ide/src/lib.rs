@@ -12,4 +12,5 @@ pub mod safety;
 pub mod sandbox;
 pub mod site_map;
 pub mod tokenizer;
+pub mod velocity_client;
 pub mod wiki;

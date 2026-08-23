@@ -10,6 +10,7 @@ mod safety;
 mod sandbox;
 mod site_map;
 mod tokenizer;
+mod velocity_client;
 
 use std::{
     io::{BufRead, BufReader, Write},
@@ -52,6 +53,12 @@ enum Command {
 
     /// Interactive CLI chat session to test model generation
     Chat(ChatArgs),
+
+    /// Show Velocity Router usage statistics
+    Usage(UsageArgs),
+
+    /// Configure Velocity Router connection (API key and base URL)
+    Login(LoginArgs),
 }
 
 #[derive(clap::Args)]
@@ -148,6 +155,28 @@ struct ChatArgs {
     arch: String,
 }
 
+#[derive(clap::Args)]
+struct UsageArgs {
+    /// Show per-model and per-domain breakdown
+    #[arg(long)]
+    detailed: bool,
+
+    /// Show rate limit and quota status with projections
+    #[arg(long)]
+    rate_limit: bool,
+}
+
+#[derive(clap::Args)]
+struct LoginArgs {
+    /// Velocity Router base URL
+    #[arg(long, default_value = "http://localhost:8787")]
+    url: String,
+
+    /// API key (vr_... prefix)
+    #[arg(long)]
+    key: String,
+}
+
 // ─── Entry point ───────────────────────────────────────────────────────────
 
 fn main() -> Result<()> {
@@ -192,6 +221,8 @@ fn main() -> Result<()> {
             }
             Ok(())
         }
+        Command::Usage(args) => run_usage(args),
+        Command::Login(args) => run_login(args),
     }
 }
 
@@ -628,18 +659,176 @@ fn run_chat(_args: ChatArgs) -> Result<()> {
         let t_gen = Instant::now();
         match call_kimi(&history, &accounts) {
             Ok(response) => {
+                let elapsed = t_gen.elapsed().as_secs_f32();
+                let token_estimate = (response.len() as u64) / 4; // ~4 chars/token estimate
                 history.push(Message {
                     role: "assistant".to_string(),
-                    content: response,
+                    content: response.clone(),
                 });
-                let elapsed = t_gen.elapsed().as_secs_f32();
-                println!("--- Response time: {:.2}s ---\n", elapsed);
+                println!();
+                // Post-assignment summary: try Velocity router for real stats,
+                // fall back to local estimate.
+                match velocity_client::VelocityClient::from_env() {
+                    Ok(client) => {
+                        match client.get_usage() {
+                            Ok(u) => {
+                                println!("-> Completed in {:.1}s | {} tokens est. | tier: {} | total: {} / {}",
+                                    elapsed,
+                                    token_estimate,
+                                    u.tier,
+                                    velocity_client::fmt_number(u.tokens_used),
+                                    velocity_client::fmt_number(u.tokens_limit));
+                            }
+                            Err(_) => {
+                                println!("-> Completed in {:.1}s | {} tokens est.", elapsed, token_estimate);
+                            }
+                        }
+                    }
+                    Err(_) => {
+                        println!("-> Completed in {:.1}s | {} tokens est.", elapsed, token_estimate);
+                    }
+                }
+                println!();
             }
             Err(e) => {
                 println!("Error: {}", e);
             }
         }
     }
+
+    Ok(())
+}
+
+// ─── Usage ────────────────────────────────────────────────────────────────
+
+fn run_usage(args: UsageArgs) -> Result<()> {
+    use velocity_client::{VelocityClient, fmt_number, fmt_currency, fmt_percent};
+
+    let client = VelocityClient::from_env()?;
+
+    if args.rate_limit {
+        let rl = client.get_rate_limit()?;
+        println!();
+        println!("=== Velocity Rate Limit & Quota ===");
+        println!();
+        println!("  Key:              {}", rl.key_label);
+        println!("  Tier:             {}", rl.tier);
+        println!("  Rate Limit:       {} req/min (resets in {}s)",
+            rl.rate_limit.max_requests_per_minute, rl.rate_limit.resets_in_secs);
+        println!();
+        println!("  Tokens Used:      {} / {}  ({})",
+            fmt_number(rl.tokens.used),
+            fmt_number(rl.tokens.limit),
+            fmt_percent(rl.tokens.quota_pct));
+        println!("  Projected:        {} by end of period",
+            fmt_number(rl.tokens.projected_monthly));
+        println!();
+        println!("  Cost:             {} / {}  ({})",
+            fmt_currency(rl.cost.used_usd),
+            fmt_currency(rl.cost.limit_usd),
+            fmt_percent(rl.cost.quota_pct));
+        println!("  Projected:        {} by end of period",
+            fmt_currency(rl.cost.projected_monthly_usd));
+        println!();
+        println!("  Billing Reset:    in {} days", rl.billing_period.resets_in_days);
+        println!();
+        return Ok(());
+    }
+
+    if args.detailed {
+        let detail = client.get_usage_detailed()?;
+        println!();
+        println!("=== Velocity Usage Breakdown ===");
+        println!();
+        println!("  Key:              {}", detail.label);
+        println!("  Tier:             {}", detail.tier);
+        println!("  Total Tokens:     {}", fmt_number(detail.total_tokens));
+        println!("  Total Cost:       {}", fmt_currency(detail.total_cost_usd));
+        println!("  Assignments:      {}", detail.total_assignments);
+        println!();
+        println!("  By Model:");
+        println!("  {:<24} {:>10} {:>12} {:>10}", "Model", "Assigns", "Tokens", "Cost");
+        println!("  {}", "-".repeat(60));
+        for m in &detail.by_model {
+            println!("  {:<24} {:>10} {:>12} {:>10}",
+                m.model_id, m.assignments, fmt_number(m.tokens), fmt_currency(m.cost_usd));
+        }
+        println!();
+        println!("  By Domain:");
+        println!("  {:<24} {:>10} {:>12} {:>10}", "Domain", "Assigns", "Tokens", "Cost");
+        println!("  {}", "-".repeat(60));
+        for d in &detail.by_domain {
+            println!("  {:<24} {:>10} {:>12} {:>10}",
+                d.domain, d.assignments, fmt_number(d.tokens), fmt_currency(d.cost_usd));
+        }
+        println!();
+        return Ok(());
+    }
+
+    // Default: summary view.
+    let usage = client.get_usage()?;
+    let token_pct = if usage.tokens_limit > 0 {
+        (usage.tokens_used as f64 / usage.tokens_limit as f64) * 100.0
+    } else {
+        0.0
+    };
+    let cost_pct = if usage.cost_limit_usd > 0.0 {
+        (usage.cost_usd / usage.cost_limit_usd) * 100.0
+    } else {
+        0.0
+    };
+
+    println!();
+    println!("=== Velocity Usage Summary ===");
+    println!();
+    println!("  Tier:           {}", usage.tier);
+    println!("  Tokens Used:    {} / {}  ({})",
+        fmt_number(usage.tokens_used),
+        fmt_number(usage.tokens_limit),
+        fmt_percent(token_pct));
+    println!("  Cost:           {} / {}  ({})",
+        fmt_currency(usage.cost_usd),
+        fmt_currency(usage.cost_limit_usd),
+        fmt_percent(cost_pct));
+    println!("  Assignments:    {}", usage.assignments_count);
+    println!("  Period:         {} to {}", usage.period.start, usage.period.end);
+    println!();
+
+    Ok(())
+}
+
+// ─── Login ────────────────────────────────────────────────────────────────
+
+fn run_login(args: LoginArgs) -> Result<()> {
+    use velocity_client::VelocityConfig;
+
+    let config = VelocityConfig {
+        base_url: args.url,
+        api_key: args.key,
+    };
+    config.save()?;
+
+    println!();
+    println!("Velocity Router configured:");
+    println!("  URL:  {}", config.base_url);
+    println!("  Key:  {}...{}", &config.api_key[..8], &config.api_key[config.api_key.len().saturating_sub(4)..]);
+    println!();
+    println!("Saved to ~/.velocity/config.toml");
+    println!();
+
+    // Verify connection.
+    let client = velocity_client::VelocityClient::new(config);
+    match client.health() {
+        Ok(h) => {
+            println!("Router health: {} (v{}, {} models)",
+                h.status, h.version, h.models_available);
+        }
+        Err(e) => {
+            println!("Warning: could not reach router: {}", e);
+            println!("Configuration saved, but router may not be running.");
+        }
+    }
+    println!();
 
     Ok(())
 }
