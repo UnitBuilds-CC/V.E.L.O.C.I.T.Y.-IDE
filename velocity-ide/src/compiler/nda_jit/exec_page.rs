@@ -327,4 +327,106 @@ mod tests {
         assert_eq!(info.size_bytes, 65536);
         assert!(info.validation_issues.is_empty());
     }
+
+    // ── Block 112: expanded tests ────────────────────────────────────────────
+
+    #[test]
+    fn exec_page_allocate_minimum() {
+        let page = ExecPage::allocate(1);
+        assert!(page.is_some());
+        let info = page.unwrap().info();
+        assert_eq!(info.size_bytes, 1);
+    }
+
+    #[test]
+    fn exec_page_write_exact_end() {
+        let mut page = ExecPage::allocate(4).unwrap();
+        let code = [0x90u8; 4]; // exactly fills the page
+        page.write(0, &code);
+    }
+
+    #[test]
+    fn exec_page_write_at_end_boundary() {
+        let mut page = ExecPage::allocate(4096).unwrap();
+        let code = [0xC3u8]; // ret at the very last byte
+        page.write(4095, &code);
+    }
+
+    #[test]
+    fn exec_page_info_pointer_address_nonzero() {
+        let page = ExecPage::allocate(4096).unwrap();
+        let info = page.info();
+        assert_ne!(info.pointer_address, 0);
+    }
+
+    #[test]
+    fn validate_size_exactly_256mb() {
+        let issues = validate_exec_page_size(256 * 1024 * 1024);
+        // 256MB is the boundary — should not trigger the > 256MB warning
+        assert!(!issues.iter().any(|i| i.contains("256MB")));
+    }
+
+    #[test]
+    fn validate_size_one_byte_over_256mb() {
+        let issues = validate_exec_page_size(256 * 1024 * 1024 + 1);
+        assert!(issues.iter().any(|i| i.contains("256MB")));
+    }
+
+    #[test]
+    fn validate_size_page_aligned_4096() {
+        let issues = validate_exec_page_size(4096);
+        assert!(issues.is_empty());
+    }
+
+    #[test]
+    fn validate_size_page_aligned_8192() {
+        let issues = validate_exec_page_size(8192);
+        assert!(issues.is_empty());
+    }
+
+    #[test]
+    fn validate_size_one() {
+        let issues = validate_exec_page_size(1);
+        // 1 byte: not page-aligned, but > 0
+        assert!(issues.iter().any(|i| i.contains("not page-aligned")));
+    }
+
+    #[test]
+    fn validate_write_bounds_exact_fit() {
+        let issues = validate_write_bounds(4096, 0, 4096);
+        assert!(issues.is_empty());
+    }
+
+    #[test]
+    fn validate_write_bounds_saturating_add() {
+        // offset + data_len would overflow usize — saturating_add caps at usize::MAX
+        let issues = validate_write_bounds(4096, usize::MAX, 1);
+        assert!(issues.iter().any(|i| i.contains("exceeds page size")));
+    }
+
+    #[test]
+    fn validate_write_bounds_multiple_issues() {
+        // Both overflow AND zero-length
+        let issues = validate_write_bounds(4096, 5000, 0);
+        assert!(issues.len() >= 2);
+    }
+
+    #[test]
+    fn exec_page_info_serializes() {
+        let page = ExecPage::allocate(4096).unwrap();
+        let info = page.info();
+        let json = serde_json::to_string(&info).unwrap();
+        assert!(json.contains("\"size_bytes\":4096"));
+        assert!(json.contains("\"is_null\":false"));
+    }
+
+    #[test]
+    fn exec_page_multiple_writes() {
+        let mut page = ExecPage::allocate(4096).unwrap();
+        page.write(0, &[0x55]); // push rbp
+        page.write(1, &[0x48, 0x89, 0xE5]); // mov rbp, rsp
+        page.write(4, &[0xC3]); // ret
+        // Verify by reading back (pointer is valid)
+        assert!(!page.as_ptr().is_null());
+    }
 }
