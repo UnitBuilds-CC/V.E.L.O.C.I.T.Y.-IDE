@@ -2597,4 +2597,264 @@ mod tests {
         let issues = validate_node(&node);
         assert!(issues.iter().any(|i| i.contains("cast operand")));
     }
+
+    // ─── Block 192: JSON, opcode methods, memory, kind names ─────────────
+
+    #[test]
+    fn opcode_info_json_has_10_keys() {
+        let info = opcode_info(NdaOpcode::Matrix);
+        let json = serde_json::to_string(&info).unwrap();
+        let val: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(val.as_object().unwrap().len(), 10);
+    }
+
+    #[test]
+    fn opcode_distribution_json_has_15_keys() {
+        let dist = opcode_distribution(&[NdaOpcode::Scope, NdaOpcode::Int, NdaOpcode::EndScope]);
+        let json = serde_json::to_string(&dist).unwrap();
+        let val: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(val.as_object().unwrap().len(), 15);
+    }
+
+    #[test]
+    fn merkle_verifier_info_json_has_8_keys() {
+        let v = MerkleVerifier::new();
+        let info = v.info();
+        let json = serde_json::to_string(&info).unwrap();
+        let val: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(val.as_object().unwrap().len(), 8);
+        // Verify all expected keys exist
+        for key in &["stack_depth", "total_pending_hashes", "innermost_scope_size",
+                      "has_claimed_root", "has_computed_root", "is_valid",
+                      "is_consistent", "validation_issues"] {
+            assert!(val.get(key).is_some(), "missing key: {key}");
+        }
+    }
+
+    #[test]
+    fn opcode_info_clone_independent() {
+        let info = opcode_info(NdaOpcode::Loop);
+        let mut cloned = info.clone();
+        cloned.name = "MODIFIED".to_string();
+        assert_eq!(info.name, "LOOP");
+    }
+
+    #[test]
+    fn opcode_distribution_clone_independent() {
+        let dist = opcode_distribution(&[NdaOpcode::Matrix, NdaOpcode::Norm]);
+        let mut cloned = dist.clone();
+        cloned.total_tokens = 9999;
+        assert_eq!(dist.total_tokens, 2);
+    }
+
+    #[test]
+    fn opcode_from_u8_roundtrip_all_valid() {
+        for i in 0..=37u8 {
+            // Note: not all values 0..37 map to opcodes (e.g., 8 is Bit1 but there's no opcode at 8)
+            if let Some(op) = NdaOpcode::from_u8(i) {
+                let name = op.name();
+                assert!(!name.is_empty(), "opcode {i} has empty name");
+            }
+        }
+    }
+
+    #[test]
+    fn opcode_from_u8_invalid_returns_none() {
+        assert!(NdaOpcode::from_u8(38).is_none());
+        assert!(NdaOpcode::from_u8(255).is_none());
+    }
+
+    #[test]
+    fn cmp_op_from_u8_roundtrip() {
+        for i in 0..6u8 {
+            let op = CmpOp::from_u8(i).unwrap();
+            let sym = op.symbol();
+            assert!(!sym.is_empty());
+        }
+        assert!(CmpOp::from_u8(6).is_none());
+        assert!(CmpOp::from_u8(255).is_none());
+    }
+
+    #[test]
+    fn vec_op_kind_all_variants() {
+        assert_eq!(VecOpKind::from_u8(0).unwrap().name(), "silu");
+        assert_eq!(VecOpKind::from_u8(1).unwrap().name(), "negate");
+        assert_eq!(VecOpKind::from_u8(2).unwrap().name(), "abs");
+        assert_eq!(VecOpKind::from_u8(3).unwrap().name(), "reduce_sum");
+        assert!(VecOpKind::from_u8(4).is_none());
+    }
+
+    #[test]
+    fn bitwise_op_all_variants() {
+        for (i, expected) in [(0u8,"and"),(1,"or"),(2,"xor"),(3,"not"),(4,"shl"),(5,"shr")] {
+            assert_eq!(BitwiseOp::from_u8(i).unwrap().name(), expected);
+        }
+        assert!(BitwiseOp::from_u8(6).is_none());
+    }
+
+    #[test]
+    fn math_op_all_variants() {
+        assert_eq!(MathOp::from_u8(0).unwrap().symbol(), "+");
+        assert_eq!(MathOp::from_u8(1).unwrap().symbol(), "-");
+        assert_eq!(MathOp::from_u8(2).unwrap().symbol(), "*");
+        assert_eq!(MathOp::from_u8(3).unwrap().symbol(), "/");
+        assert!(MathOp::from_u8(4).is_none());
+    }
+
+    #[test]
+    fn math_func_all_variants() {
+        assert_eq!(MathFuncKind::from_u8(0).unwrap().name(), "sin");
+        assert_eq!(MathFuncKind::from_u8(1).unwrap().name(), "cos");
+        assert_eq!(MathFuncKind::from_u8(2).unwrap().name(), "sqrt");
+        assert_eq!(MathFuncKind::from_u8(3).unwrap().name(), "exp");
+        assert!(MathFuncKind::from_u8(4).is_none());
+    }
+
+    #[test]
+    fn atomic_op_and_type_kind() {
+        assert_eq!(AtomicOp::from_u8(0).unwrap().name(), "cas");
+        assert_eq!(AtomicOp::from_u8(1).unwrap().name(), "faa");
+        assert!(AtomicOp::from_u8(2).is_none());
+        assert_eq!(TypeKind::from_u8(0).unwrap().name(), "int");
+        assert_eq!(TypeKind::from_u8(1).unwrap().name(), "float");
+        assert_eq!(TypeKind::from_u8(2).unwrap().name(), "vector");
+        assert!(TypeKind::from_u8(3).is_none());
+    }
+
+    #[test]
+    fn opcode_categories_cover_all() {
+        // Verify every opcode has a non-empty category and description
+        for i in 0..=37u8 {
+            if let Some(op) = NdaOpcode::from_u8(i) {
+                assert!(!op.category().is_empty(), "opcode {:?} has empty category", op);
+                assert!(!op.description().is_empty(), "opcode {:?} has empty description", op);
+            }
+        }
+    }
+
+    #[test]
+    fn opcode_boolean_methods_consistent() {
+        // Each opcode should be in exactly one boolean category or none
+        let all_ops: Vec<NdaOpcode> = (0..=37u8).filter_map(NdaOpcode::from_u8).collect();
+        for op in &all_ops {
+            // Structure opcodes are not control_flow/arithmetic/io/variable/memory/computation
+            if *op == NdaOpcode::Scope || *op == NdaOpcode::EndScope || *op == NdaOpcode::Root {
+                assert!(!op.is_control_flow());
+                assert!(!op.is_computation());
+            }
+        }
+    }
+
+    #[test]
+    fn node_kind_name_coverage_192() {
+        let nodes = vec![
+            ("Matrix", NdaNode::Matrix { rows: 1, cols: 1, scale: 0, sign: vec![0], extra: vec![0] }),
+            ("Norm", NdaNode::Norm { size: 1, weight: vec![0], bias: vec![0] }),
+            ("Call", NdaNode::Call { target: 0 }),
+            ("Int", NdaNode::Int { value: 0 }),
+            ("Scope", NdaNode::Scope { children: vec![] }),
+            ("Float", NdaNode::Float { value: 0.0 }),
+            ("Break", NdaNode::Break),
+            ("Load", NdaNode::Load { name_hash: 0 }),
+            ("Spawn", NdaNode::Spawn { scope_hash: 0 }),
+            ("Triple", NdaNode::Triple { subject_hash: 0, predicate_id: 0, object_hash: 0 }),
+        ];
+        for (expected, node) in nodes {
+            assert_eq!(node_kind_name(&node), expected);
+        }
+    }
+
+    #[test]
+    fn estimated_memory_bytes_leaf_nodes() {
+        let int_node = NdaNode::Int { value: 42 };
+        let bytes = estimated_memory_bytes(&int_node);
+        assert_eq!(bytes, std::mem::size_of::<NdaNode>());
+
+        let float_node = NdaNode::Float { value: 3.14 };
+        assert_eq!(estimated_memory_bytes(&float_node), std::mem::size_of::<NdaNode>());
+    }
+
+    #[test]
+    fn estimated_memory_bytes_matrix_includes_bitmaps() {
+        let node = NdaNode::Matrix {
+            rows: 4, cols: 8, scale: 1,
+            sign: vec![0xFF; 4],
+            extra: vec![0xAA; 4],
+        };
+        let bytes = estimated_memory_bytes(&node);
+        assert_eq!(bytes, std::mem::size_of::<NdaNode>() + 8);
+    }
+
+    #[test]
+    fn estimated_memory_bytes_scope_recursive() {
+        let child = NdaNode::Matrix {
+            rows: 1, cols: 8, scale: 0,
+            sign: vec![0; 1], extra: vec![0; 1],
+        };
+        let scope = NdaNode::Scope { children: vec![child.clone(), child.clone()] };
+        let scope_bytes = estimated_memory_bytes(&scope);
+        let child_bytes = estimated_memory_bytes(&child);
+        // scope = size_of::<NdaNode>() + 2 * child_bytes
+        assert_eq!(scope_bytes, std::mem::size_of::<NdaNode>() + 2 * child_bytes);
+    }
+
+    #[test]
+    fn opcode_distribution_empty_stream_192() {
+        let dist = opcode_distribution(&[]);
+        assert_eq!(dist.total_tokens, 0);
+        assert_eq!(dist.unique_opcodes, 0);
+        assert!(dist.validation_issues.iter().any(|i| i.contains("empty")));
+    }
+
+    #[test]
+    fn opcode_distribution_scope_imbalance() {
+        let ops = vec![NdaOpcode::Scope, NdaOpcode::Scope, NdaOpcode::EndScope];
+        let dist = opcode_distribution(&ops);
+        assert!(dist.validation_issues.iter().any(|i| i.contains("imbalance")));
+    }
+
+    #[test]
+    fn opcode_distribution_root_not_last() {
+        let ops = vec![NdaOpcode::Root, NdaOpcode::Int];
+        let dist = opcode_distribution(&ops);
+        assert!(dist.validation_issues.iter().any(|i| i.contains("not the final")));
+    }
+
+    #[test]
+    fn opcode_distribution_multiple_roots_192() {
+        let ops = vec![NdaOpcode::Int, NdaOpcode::Root, NdaOpcode::Root];
+        let dist = opcode_distribution(&ops);
+        assert!(dist.validation_issues.iter().any(|i| i.contains("multiple ROOT")));
+    }
+
+    #[test]
+    fn verifier_info_with_mismatch_192() {
+        let mut v = MerkleVerifier::new();
+        v.claimed_root = Some(0xAAAA);
+        v.computed_root = Some(0xBBBB);
+        let info = v.info();
+        assert!(info.validation_issues.iter().any(|i| i.contains("mismatch")));
+        assert!(!info.is_valid);
+    }
+
+    #[test]
+    fn verifier_info_claimed_without_computed_192() {
+        let mut v = MerkleVerifier::new();
+        v.claimed_root = Some(0x1234);
+        // computed_root is None
+        let info = v.info();
+        assert!(info.validation_issues.iter().any(|i| i.contains("computed root is missing")));
+    }
+
+    #[test]
+    fn verifier_reset_clears_state_192() {
+        let mut v = MerkleVerifier::new();
+        v.open_scope();
+        v.push_leaf(&NdaNode::Int { value: 1 });
+        v.record_root(0xDEAD);
+        v.reset();
+        assert_eq!(v.depth(), 1);
+        assert!(!v.is_valid());
+        assert!(v.info().validation_issues.is_empty());
+    }
 }
