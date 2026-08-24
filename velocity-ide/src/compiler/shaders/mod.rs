@@ -711,4 +711,439 @@ mod tests {
         let computed: usize = reg.shaders.iter().map(|s| s.spv_bytes).sum();
         assert_eq!(computed, reg.total_spv_bytes);
     }
+
+    // ── Block 135: Shader registry comprehensive tests ───────────────────────
+
+    #[test]
+    fn validate_spirv_valid_bytecode() {
+        let valid = vec![SPIRV_MAGIC, 0x00010300, 0, 0, 0]; // magic + version + 3 more
+        let issues = validate_spirv(&valid, "good_shader");
+        assert!(issues.is_empty(), "expected no issues, got: {:?}", issues);
+    }
+
+    #[test]
+    fn validate_spirv_valid_large_bytecode() {
+        let mut spv = vec![SPIRV_MAGIC, 0x00010300, 0, 0, 0];
+        spv.extend_from_slice(&[0; 100]); // pad to 105 words
+        let issues = validate_spirv(&spv, "large_shader");
+        assert!(issues.is_empty());
+    }
+
+    #[test]
+    fn validate_spirv_empty_includes_name() {
+        let issues = validate_spirv(&[], "my_shader");
+        // Empty triggers both "empty" and "too short" (len < 5)
+        assert!(issues.len() >= 2);
+        assert!(issues.iter().any(|i| i.contains("my_shader") && i.contains("empty")));
+        assert!(issues.iter().any(|i| i.contains("too short")));
+    }
+
+    #[test]
+    fn validate_spirv_bad_magic_reports_expected_and_got() {
+        let bad = vec![0xBADBAD00, 0, 0, 0, 0];
+        let issues = validate_spirv(&bad, "broken");
+        assert!(issues.iter().any(|i| i.contains("0xBADBAD00")));
+        assert!(issues.iter().any(|i| i.contains("0x07230203")));
+    }
+
+    #[test]
+    fn validate_spirv_bad_magic_and_too_short() {
+        // Only 2 words AND bad magic → should produce 2 issues
+        let bad = vec![0xDEADBEEF, 0];
+        let issues = validate_spirv(&bad, "dual_problem");
+        assert!(issues.len() >= 2, "expected >=2 issues, got: {:?}", issues);
+        assert!(issues.iter().any(|i| i.contains("magic")));
+        assert!(issues.iter().any(|i| i.contains("too short")));
+    }
+
+    #[test]
+    fn validate_spirv_exactly_five_words_valid() {
+        let spv = vec![SPIRV_MAGIC, 1, 2, 3, 4];
+        let issues = validate_spirv(&spv, "minimal");
+        assert!(issues.is_empty());
+    }
+
+    #[test]
+    fn validate_spirv_four_words_valid_magic() {
+        // 4 words with correct magic but still too short
+        let spv = vec![SPIRV_MAGIC, 1, 2, 3];
+        let issues = validate_spirv(&spv, "short");
+        assert_eq!(issues.len(), 1);
+        assert!(issues[0].contains("too short"));
+        assert!(issues[0].contains("4 words"));
+    }
+
+    #[test]
+    fn shader_entry_one_word() {
+        let entry = shader_entry("tiny", &[SPIRV_MAGIC]);
+        assert_eq!(entry.spv_words, 1);
+        assert_eq!(entry.spv_bytes, 4);
+        assert!(entry.valid_header);
+    }
+
+    #[test]
+    fn shader_entry_six_words() {
+        let spv = vec![SPIRV_MAGIC, 0, 0, 0, 0, 0];
+        let entry = shader_entry("medium", &spv);
+        assert_eq!(entry.spv_words, 6);
+        assert_eq!(entry.spv_bytes, 24);
+        assert!(entry.valid_header);
+    }
+
+    #[test]
+    fn shader_entry_empty_bytecode() {
+        let entry = shader_entry("empty", &[]);
+        assert_eq!(entry.spv_words, 0);
+        assert_eq!(entry.spv_bytes, 0);
+        assert!(!entry.valid_header);
+    }
+
+    #[test]
+    fn shader_category_distribution_debug_clone() {
+        let reg = shader_registry();
+        let dist = shader_category_distribution(&reg);
+        // Debug
+        let debug_str = format!("{:?}", dist);
+        assert!(debug_str.contains("ShaderCategoryDistribution"));
+        // Clone
+        let cloned = dist.clone();
+        assert_eq!(cloned.activation_count, dist.activation_count);
+        assert_eq!(cloned.attention_count, dist.attention_count);
+        assert_eq!(cloned.arithmetic_count, dist.arithmetic_count);
+        assert_eq!(cloned.quantization_count, dist.quantization_count);
+        assert_eq!(cloned.kv_cache_count, dist.kv_cache_count);
+        assert_eq!(cloned.core_count, dist.core_count);
+        assert_eq!(cloned.normalization_count, dist.normalization_count);
+        assert_eq!(cloned.other_count, dist.other_count);
+        assert_eq!(cloned.categories.len(), dist.categories.len());
+    }
+
+    #[test]
+    fn shader_category_distribution_json_all_fields() {
+        let reg = shader_registry();
+        let dist = shader_category_distribution(&reg);
+        let json = serde_json::to_string(&dist).unwrap();
+        assert!(json.contains("\"activation_count\""));
+        assert!(json.contains("\"attention_count\""));
+        assert!(json.contains("\"arithmetic_count\""));
+        assert!(json.contains("\"quantization_count\""));
+        assert!(json.contains("\"kv_cache_count\""));
+        assert!(json.contains("\"core_count\""));
+        assert!(json.contains("\"normalization_count\""));
+        assert!(json.contains("\"other_count\""));
+        assert!(json.contains("\"categories\""));
+    }
+
+    #[test]
+    fn shader_category_distribution_empty_registry() {
+        let empty = ShaderRegistry {
+            shader_count: 0,
+            total_spv_bytes: 0,
+            shaders: vec![],
+            validation_issues: vec![],
+        };
+        let dist = shader_category_distribution(&empty);
+        assert_eq!(dist.activation_count, 0);
+        assert_eq!(dist.attention_count, 0);
+        assert_eq!(dist.arithmetic_count, 0);
+        assert_eq!(dist.quantization_count, 0);
+        assert_eq!(dist.kv_cache_count, 0);
+        assert_eq!(dist.core_count, 0);
+        assert_eq!(dist.normalization_count, 0);
+        assert_eq!(dist.other_count, 0);
+        // The 7 standard categories are always present (even with 0 counts);
+        // only "other" is conditionally added.
+        assert_eq!(dist.categories.len(), 7);
+        for (_, count) in &dist.categories {
+            assert_eq!(*count, 0, "empty registry should have all counts = 0");
+        }
+    }
+
+    #[test]
+    fn shader_category_distribution_other_count_with_unknown() {
+        let reg = ShaderRegistry {
+            shader_count: 1,
+            total_spv_bytes: 20,
+            shaders: vec![shader_entry("mystery", &[SPIRV_MAGIC, 0, 0, 0, 0])],
+            validation_issues: vec![],
+        };
+        let dist = shader_category_distribution(&reg);
+        assert_eq!(dist.other_count, 1);
+        // "other" should appear in categories
+        assert!(dist.categories.iter().any(|(name, count)| name == "other" && *count == 1));
+    }
+
+    #[test]
+    fn shader_category_distribution_categories_have_correct_names() {
+        let reg = shader_registry();
+        let dist = shader_category_distribution(&reg);
+        let cat_names: Vec<&str> = dist.categories.iter().map(|(n, _)| n.as_str()).collect();
+        // Must include the 7 standard categories (other omitted since other_count == 0)
+        assert!(cat_names.contains(&"activation"));
+        assert!(cat_names.contains(&"attention"));
+        assert!(cat_names.contains(&"arithmetic"));
+        assert!(cat_names.contains(&"quantization"));
+        assert!(cat_names.contains(&"kv_cache"));
+        assert!(cat_names.contains(&"core"));
+        assert!(cat_names.contains(&"normalization"));
+    }
+
+    #[test]
+    fn shader_size_stats_debug_clone() {
+        let reg = shader_registry();
+        let stats = shader_size_stats(&reg).unwrap();
+        let debug_str = format!("{:?}", stats);
+        assert!(debug_str.contains("ShaderSizeStats"));
+        let cloned = stats.clone();
+        assert_eq!(cloned.min_bytes, stats.min_bytes);
+        assert_eq!(cloned.max_bytes, stats.max_bytes);
+        assert!((cloned.avg_bytes - stats.avg_bytes).abs() < f64::EPSILON);
+        assert_eq!(cloned.total_bytes, stats.total_bytes);
+        assert_eq!(cloned.min_shader, stats.min_shader);
+        assert_eq!(cloned.max_shader, stats.max_shader);
+    }
+
+    #[test]
+    fn shader_size_stats_json_all_fields() {
+        let reg = shader_registry();
+        let stats = shader_size_stats(&reg).unwrap();
+        let json = serde_json::to_string(&stats).unwrap();
+        assert!(json.contains("\"min_bytes\""));
+        assert!(json.contains("\"max_bytes\""));
+        assert!(json.contains("\"avg_bytes\""));
+        assert!(json.contains("\"total_bytes\""));
+        assert!(json.contains("\"min_shader\""));
+        assert!(json.contains("\"max_shader\""));
+    }
+
+    #[test]
+    fn shader_size_stats_avg_formula() {
+        let reg = ShaderRegistry {
+            shader_count: 3,
+            total_spv_bytes: 60,
+            shaders: vec![
+                shader_entry("a", &[SPIRV_MAGIC, 0, 0, 0, 0]), // 20 bytes
+                shader_entry("b", &[SPIRV_MAGIC, 0, 0, 0, 0]), // 20 bytes
+                shader_entry("c", &[SPIRV_MAGIC, 0, 0, 0, 0]), // 20 bytes
+            ],
+            validation_issues: vec![],
+        };
+        let stats = shader_size_stats(&reg).unwrap();
+        assert!((stats.avg_bytes - 20.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn shader_size_stats_avg_unequal_sizes() {
+        // 2 shaders: 8 bytes and 24 bytes → total=32, avg=16
+        let reg = ShaderRegistry {
+            shader_count: 2,
+            total_spv_bytes: 32,
+            shaders: vec![
+                shader_entry("small", &[SPIRV_MAGIC, 0]),           // 2 words = 8 bytes
+                shader_entry("large", &[SPIRV_MAGIC, 0, 0, 0, 0, 0]), // 6 words = 24 bytes
+            ],
+            validation_issues: vec![],
+        };
+        let stats = shader_size_stats(&reg).unwrap();
+        assert_eq!(stats.min_bytes, 8);
+        assert_eq!(stats.max_bytes, 24);
+        assert_eq!(stats.min_shader, "small");
+        assert_eq!(stats.max_shader, "large");
+        assert!((stats.avg_bytes - 16.0).abs() < f64::EPSILON);
+        assert_eq!(stats.total_bytes, 32);
+    }
+
+    #[test]
+    fn registry_validate_with_preexisting_issues() {
+        let reg = ShaderRegistry {
+            shader_count: 1,
+            total_spv_bytes: 20,
+            shaders: vec![shader_entry("test", &[SPIRV_MAGIC, 0, 0, 0, 0])],
+            validation_issues: vec!["pre-existing issue".to_string()],
+        };
+        let issues = reg.validate();
+        assert!(issues.iter().any(|i| i == "pre-existing issue"));
+    }
+
+    #[test]
+    fn registry_validate_all_issues_combined() {
+        // count mismatch + total mismatch + duplicate names + pre-existing
+        let e = shader_entry("dup", &[SPIRV_MAGIC, 0, 0, 0, 0]);
+        let reg = ShaderRegistry {
+            shader_count: 99,
+            total_spv_bytes: 9999,
+            shaders: vec![e.clone(), e],
+            validation_issues: vec!["existing".to_string()],
+        };
+        let issues = reg.validate();
+        assert!(issues.len() >= 4, "expected >=4 issues, got: {:?}", issues);
+        assert!(issues.iter().any(|i| i == "existing"));
+        assert!(issues.iter().any(|i| i.contains("shader_count")));
+        assert!(issues.iter().any(|i| i.contains("total_spv_bytes")));
+        assert!(issues.iter().any(|i| i.contains("duplicate")));
+    }
+
+    #[test]
+    fn all_shader_names_unique() {
+        let reg = shader_registry();
+        let mut names: Vec<&str> = reg.shaders.iter().map(|s| s.name).collect();
+        let original_len = names.len();
+        names.sort();
+        names.dedup();
+        assert_eq!(names.len(), original_len, "duplicate shader names found");
+    }
+
+    #[test]
+    fn all_shaders_have_nonzero_words() {
+        let reg = shader_registry();
+        for s in &reg.shaders {
+            assert!(s.spv_words > 0, "shader {} has zero words", s.name);
+            assert!(s.spv_bytes > 0, "shader {} has zero bytes", s.name);
+        }
+    }
+
+    #[test]
+    fn all_shaders_bytecode_length_matches_entry() {
+        let reg = shader_registry();
+        for s in &reg.shaders {
+            if let Some(spv) = shader_bytecode(s.name) {
+                assert_eq!(
+                    spv.len(),
+                    s.spv_words,
+                    "shader {} bytecode len {} != entry spv_words {}",
+                    s.name,
+                    spv.len(),
+                    s.spv_words
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn registry_find_shader_empty_registry() {
+        let empty = ShaderRegistry {
+            shader_count: 0,
+            total_spv_bytes: 0,
+            shaders: vec![],
+            validation_issues: vec![],
+        };
+        assert!(empty.find_shader("nda").is_none());
+    }
+
+    #[test]
+    fn registry_largest_shader_empty_registry() {
+        let empty = ShaderRegistry {
+            shader_count: 0,
+            total_spv_bytes: 0,
+            shaders: vec![],
+            validation_issues: vec![],
+        };
+        assert!(empty.largest_shader().is_none());
+    }
+
+    #[test]
+    fn registry_smallest_shader_empty_registry() {
+        let empty = ShaderRegistry {
+            shader_count: 0,
+            total_spv_bytes: 0,
+            shaders: vec![],
+            validation_issues: vec![],
+        };
+        assert!(empty.smallest_shader().is_none());
+    }
+
+    #[test]
+    fn registry_debug_clone() {
+        let reg = shader_registry();
+        let debug_str = format!("{:?}", reg);
+        assert!(debug_str.contains("ShaderRegistry"));
+        assert!(debug_str.contains("shader_count"));
+
+        let cloned = reg.clone();
+        assert_eq!(cloned.shader_count, reg.shader_count);
+        assert_eq!(cloned.total_spv_bytes, reg.total_spv_bytes);
+        assert_eq!(cloned.shaders.len(), reg.shaders.len());
+        assert_eq!(cloned.validation_issues, reg.validation_issues);
+    }
+
+    #[test]
+    fn shader_entry_debug() {
+        let entry = shader_entry("debug_test", &[SPIRV_MAGIC, 0, 0, 0, 0]);
+        let debug_str = format!("{:?}", entry);
+        assert!(debug_str.contains("ShaderEntry"));
+        assert!(debug_str.contains("debug_test"));
+    }
+
+    #[test]
+    fn registry_validate_empty_clean() {
+        let empty = ShaderRegistry {
+            shader_count: 0,
+            total_spv_bytes: 0,
+            shaders: vec![],
+            validation_issues: vec![],
+        };
+        let issues = empty.validate();
+        assert!(issues.is_empty(), "empty registry should have no issues: {:?}", issues);
+    }
+
+    #[test]
+    fn shader_size_stats_min_max_correct_against_manual() {
+        let reg = shader_registry();
+        let stats = shader_size_stats(&reg).unwrap();
+        // Manually compute min/max
+        let manual_min = reg.shaders.iter().map(|s| s.spv_bytes).min().unwrap();
+        let manual_max = reg.shaders.iter().map(|s| s.spv_bytes).max().unwrap();
+        assert_eq!(stats.min_bytes, manual_min);
+        assert_eq!(stats.max_bytes, manual_max);
+    }
+
+    #[test]
+    fn shader_size_stats_min_shader_has_min_bytes() {
+        let reg = shader_registry();
+        let stats = shader_size_stats(&reg).unwrap();
+        let entry = reg.find_shader(&stats.min_shader).unwrap();
+        assert_eq!(entry.spv_bytes, stats.min_bytes);
+    }
+
+    #[test]
+    fn shader_size_stats_max_shader_has_max_bytes() {
+        let reg = shader_registry();
+        let stats = shader_size_stats(&reg).unwrap();
+        let entry = reg.find_shader(&stats.max_shader).unwrap();
+        assert_eq!(entry.spv_bytes, stats.max_bytes);
+    }
+
+    #[test]
+    fn spirv_magic_constant_correct() {
+        // Verify the magic constant is the standard SPIR-V magic number
+        assert_eq!(SPIRV_MAGIC, 0x07230203);
+    }
+
+    #[test]
+    fn category_distribution_categories_vec_nonempty_for_real_registry() {
+        let reg = shader_registry();
+        let dist = shader_category_distribution(&reg);
+        assert!(!dist.categories.is_empty());
+        // All entries should have non-zero counts
+        for (_, count) in &dist.categories {
+            assert!(*count > 0, "category with zero count should not appear in vec");
+        }
+    }
+
+    #[test]
+    fn shader_bytecode_returns_same_as_spv_constant() {
+        // Verify that shader_bytecode returns the same slice as the exported constant
+        let bc = shader_bytecode("nda").unwrap();
+        assert_eq!(bc.len(), NDA_SPV.len());
+        assert_eq!(bc[0], NDA_SPV[0]);
+    }
+
+    #[test]
+    fn registry_shaders_order_preserved() {
+        // The registry should preserve insertion order
+        let reg = shader_registry();
+        assert_eq!(reg.shaders[0].name, "act_bitnet");
+        assert_eq!(reg.shaders[1].name, "act_nda");
+        assert_eq!(reg.shaders[16].name, "ternary");
+    }
 }
