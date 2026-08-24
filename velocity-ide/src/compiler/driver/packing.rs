@@ -719,4 +719,350 @@ mod tests {
         assert!(json.contains("compression_ratio"));
         assert!(json.contains("layer_0_q_proj"));
     }
+
+    // ── validate_u32_alignment: edge cases ────────────────────────────────
+
+    #[test]
+    fn alignment_issue_text_contains_context() {
+        let data = vec![0u8; 5];
+        let issues = validate_u32_alignment(&data, "my_context");
+        assert!(issues[0].contains("my_context"));
+    }
+
+    #[test]
+    fn alignment_length_one() {
+        let data = vec![0u8; 1];
+        let issues = validate_u32_alignment(&data, "test");
+        assert!(issues.iter().any(|i| i.contains("1")));
+    }
+
+    #[test]
+    fn alignment_length_three() {
+        let data = vec![0u8; 3];
+        let issues = validate_u32_alignment(&data, "test");
+        assert!(!issues.is_empty());
+    }
+
+    #[test]
+    fn alignment_length_eight_ok() {
+        let data = vec![0u8; 8];
+        let issues = validate_u32_alignment(&data, "test");
+        assert!(issues.is_empty());
+    }
+
+    // ── validate_pack_dims: edge cases ────────────────────────────────────
+
+    #[test]
+    fn pack_dims_both_zero() {
+        let issues = validate_pack_dims(0, 0, 0, "ctx");
+        assert!(issues.iter().any(|i| i.contains("k dimension")));
+        assert!(issues.iter().any(|i| i.contains("n dimension")));
+    }
+
+    #[test]
+    fn pack_dims_issue_text_contains_context() {
+        let issues = validate_pack_dims(0, 4, 16, "my_fn");
+        assert!(issues[0].contains("my_fn"));
+    }
+
+    #[test]
+    fn pack_dims_exact_data_match() {
+        // k=16, n=1: need (16/16)*1 = 1 word = 4 bytes
+        let issues = validate_pack_dims(16, 1, 4, "test");
+        assert!(issues.is_empty(), "expected no issues, got: {issues:?}");
+    }
+
+    #[test]
+    fn pack_dims_excess_data_ok() {
+        // k=16, n=1: need 1 word = 4 bytes, but give 100
+        let issues = validate_pack_dims(16, 1, 100, "test");
+        assert!(issues.is_empty());
+    }
+
+    #[test]
+    fn pack_dims_k_zero_also_not_multiple() {
+        // k=0 triggers "k is zero"; 0%16==0 so no "not multiple" issue
+        let issues = validate_pack_dims(0, 4, 16, "test");
+        assert_eq!(issues.len(), 1);
+        assert!(issues[0].contains("k dimension is zero"));
+    }
+
+    #[test]
+    fn pack_dims_multiple_issues() {
+        // k=0, n=0 → 2 issues; k%16==0 (0%16==0), data check: 0 words < 0 words → false
+        let issues = validate_pack_dims(0, 0, 0, "test");
+        assert_eq!(issues.len(), 2);
+    }
+
+    // ── validate_nda_pack_dims: edge cases ───────────────────────────────
+
+    #[test]
+    fn nda_pack_dims_both_zero() {
+        let issues = validate_nda_pack_dims(0, 0, 0, "ctx");
+        assert!(issues.iter().any(|i| i.contains("k dimension")));
+        assert!(issues.iter().any(|i| i.contains("n dimension")));
+    }
+
+    #[test]
+    fn nda_pack_dims_k_zero_is_multiple_of_128() {
+        // 0 % 128 == 0, so no "not a multiple" issue
+        let issues = validate_nda_pack_dims(0, 4, 16, "test");
+        assert_eq!(issues.len(), 1);
+        assert!(issues[0].contains("k dimension is zero"));
+    }
+
+    #[test]
+    fn nda_pack_dims_issue_text_contains_context() {
+        let issues = validate_nda_pack_dims(64, 2, 64, "my_op");
+        assert!(issues[0].contains("my_op"));
+    }
+
+    #[test]
+    fn nda_pack_dims_exact_data_ok() {
+        // k=128, n=1: need (128/16)*1 = 8 words = 32 bytes
+        let issues = validate_nda_pack_dims(128, 1, 32, "test");
+        assert!(issues.is_empty(), "expected no issues, got: {issues:?}");
+    }
+
+    #[test]
+    fn nda_pack_dims_excess_data_ok() {
+        let issues = validate_nda_pack_dims(128, 1, 1000, "test");
+        assert!(issues.is_empty());
+    }
+
+    // ── validate_inputs_nda: edge cases ──────────────────────────────────
+
+    #[test]
+    fn inputs_nda_empty_also_not_multiple() {
+        // Empty → "empty" issue; 0%8==0 so no "multiple" issue
+        let issues = validate_inputs_nda(&[], "ctx");
+        assert_eq!(issues.len(), 1);
+        assert!(issues[0].contains("empty"));
+    }
+
+    #[test]
+    fn inputs_nda_issue_text_contains_context() {
+        let issues = validate_inputs_nda(&[], "my_fn");
+        assert!(issues[0].contains("my_fn"));
+    }
+
+    #[test]
+    fn inputs_nda_length_sixteen_ok() {
+        let data = vec![0u32; 16];
+        assert!(validate_inputs_nda(&data, "test").is_empty());
+    }
+
+    // ── PackingReport: struct derives ────────────────────────────────────
+
+    #[test]
+    fn packing_report_clone_is_independent() {
+        let report = PackingReport {
+            operation: "test".into(), input_bytes: 100, output_bytes: 50,
+            elapsed_us: 10, validation_issues: vec![], valid: true,
+        };
+        let mut cloned = report.clone();
+        cloned.input_bytes = 999;
+        assert_eq!(report.input_bytes, 100);
+    }
+
+    #[test]
+    fn packing_report_debug_format() {
+        let report = PackingReport {
+            operation: "test".into(), input_bytes: 100, output_bytes: 50,
+            elapsed_us: 10, validation_issues: vec![], valid: true,
+        };
+        let debug = format!("{:?}", report);
+        assert!(debug.contains("operation"));
+        assert!(debug.contains("input_bytes"));
+    }
+
+    #[test]
+    fn packing_report_json_all_fields() {
+        let report = PackingReport {
+            operation: "op".into(), input_bytes: 64, output_bytes: 32,
+            elapsed_us: 5, validation_issues: vec!["issue1".into()], valid: false,
+        };
+        let json = serde_json::to_string(&report).unwrap();
+        assert!(json.contains("operation"));
+        assert!(json.contains("input_bytes"));
+        assert!(json.contains("output_bytes"));
+        assert!(json.contains("elapsed_us"));
+        assert!(json.contains("validation_issues"));
+        assert!(json.contains("valid"));
+    }
+
+    // ── BatchPackingReport: struct derives ───────────────────────────────
+
+    #[test]
+    fn batch_report_clone_is_independent() {
+        let report = BatchPackingReport {
+            operations: 5, total_input_bytes: 500, total_output_bytes: 250,
+            total_elapsed_us: 100, per_op_avg_us: 20.0,
+            all_valid: true, issues: vec![],
+        };
+        let mut cloned = report.clone();
+        cloned.operations = 999;
+        assert_eq!(report.operations, 5);
+    }
+
+    #[test]
+    fn batch_report_debug_format() {
+        let report = BatchPackingReport {
+            operations: 3, total_input_bytes: 300, total_output_bytes: 150,
+            total_elapsed_us: 50, per_op_avg_us: 16.7,
+            all_valid: true, issues: vec![],
+        };
+        let debug = format!("{:?}", report);
+        assert!(debug.contains("operations"));
+        assert!(debug.contains("total_input_bytes"));
+    }
+
+    #[test]
+    fn batch_report_json_all_fields() {
+        let report = BatchPackingReport {
+            operations: 10, total_input_bytes: 1000, total_output_bytes: 500,
+            total_elapsed_us: 200, per_op_avg_us: 20.0,
+            all_valid: false, issues: vec!["err".into()],
+        };
+        let json = serde_json::to_string(&report).unwrap();
+        assert!(json.contains("operations"));
+        assert!(json.contains("total_input_bytes"));
+        assert!(json.contains("total_output_bytes"));
+        assert!(json.contains("per_op_avg_us"));
+        assert!(json.contains("all_valid"));
+        assert!(json.contains("issues"));
+    }
+
+    // ── BatchPackingReport::summary ──────────────────────────────────────
+
+    #[test]
+    fn summary_compression_ratio_calculation() {
+        let report = BatchPackingReport {
+            operations: 1, total_input_bytes: 1000, total_output_bytes: 250,
+            total_elapsed_us: 10, per_op_avg_us: 10.0,
+            all_valid: true, issues: vec![],
+        };
+        let summary = report.summary();
+        assert!((summary.compression_ratio - 0.25).abs() < 0.01);
+    }
+
+    #[test]
+    fn summary_with_issues_shows_invalid() {
+        let report = BatchPackingReport {
+            operations: 2, total_input_bytes: 100, total_output_bytes: 50,
+            total_elapsed_us: 10, per_op_avg_us: 5.0,
+            all_valid: false, issues: vec!["err1".into(), "err2".into()],
+        };
+        let summary = report.summary();
+        assert_eq!(summary.valid_ops, 0);
+        assert_eq!(summary.invalid_ops, 2);
+        assert_eq!(summary.total_issues, 2);
+    }
+
+    #[test]
+    fn summary_heaviest_op_is_none_by_default() {
+        let report = BatchPackingReport {
+            operations: 1, total_input_bytes: 100, total_output_bytes: 50,
+            total_elapsed_us: 10, per_op_avg_us: 10.0,
+            all_valid: true, issues: vec![],
+        };
+        let summary = report.summary();
+        assert!(summary.heaviest_op.is_none());
+        assert_eq!(summary.heaviest_op_bytes, 0);
+    }
+
+    // ── PackingSummary: struct derives ───────────────────────────────────
+
+    #[test]
+    fn packing_summary_clone_is_independent() {
+        let summary = PackingSummary {
+            total_ops: 5, valid_ops: 5, invalid_ops: 0,
+            compression_ratio: 0.5, total_issues: 0,
+            heaviest_op: Some("op".into()), heaviest_op_bytes: 100,
+        };
+        let mut cloned = summary.clone();
+        cloned.total_ops = 999;
+        assert_eq!(summary.total_ops, 5);
+    }
+
+    #[test]
+    fn packing_summary_json_all_fields() {
+        let summary = PackingSummary {
+            total_ops: 10, valid_ops: 8, invalid_ops: 2,
+            compression_ratio: 0.75, total_issues: 3,
+            heaviest_op: Some("layer_0".into()), heaviest_op_bytes: 2048,
+        };
+        let json = serde_json::to_string(&summary).unwrap();
+        assert!(json.contains("total_ops"));
+        assert!(json.contains("valid_ops"));
+        assert!(json.contains("invalid_ops"));
+        assert!(json.contains("compression_ratio"));
+        assert!(json.contains("total_issues"));
+        assert!(json.contains("heaviest_op"));
+        assert!(json.contains("heaviest_op_bytes"));
+    }
+
+    // ── pack_weights_uvec4_report: detailed checks ───────────────────────
+
+    #[test]
+    fn pack_uvec4_report_output_bytes_matches() {
+        let input = vec![0u8; 64];
+        let (result, report) = pack_weights_uvec4_report(&input, 64, 4);
+        assert_eq!(report.output_bytes, result.len());
+    }
+
+    #[test]
+    fn pack_uvec4_report_invalid_has_zero_output() {
+        let input = vec![0u8; 5]; // bad alignment
+        let (result, report) = pack_weights_uvec4_report(&input, 64, 4);
+        assert_eq!(report.output_bytes, 0);
+        assert!(!report.valid);
+    }
+
+    // ── pack_weights_nda_report: detailed checks ─────────────────────────
+
+    #[test]
+    fn pack_nda_report_output_bytes_calculation() {
+        let input = vec![0u8; 32]; // k=128, n=1
+        let ((act, pos), report) = pack_weights_nda_report(&input, 128, 1);
+        assert_eq!(report.output_bytes, act.len() + pos.len());
+    }
+
+    #[test]
+    fn pack_nda_report_invalid_has_zero_output() {
+        let input = vec![0u8; 10];
+        let ((act, pos), report) = pack_weights_nda_report(&input, 128, 1);
+        assert_eq!(report.output_bytes, 0);
+        assert!(!report.valid);
+    }
+
+    // ── pack_inputs_nda_report: detailed checks ──────────────────────────
+
+    #[test]
+    fn pack_inputs_nda_report_output_bytes_calculation() {
+        let input = vec![0u32; 8];
+        let ((act, pos), report) = pack_inputs_nda_report(&input);
+        assert_eq!(report.output_bytes, (act.len() + pos.len()) * 4);
+    }
+
+    #[test]
+    fn pack_inputs_nda_report_invalid_empty() {
+        let input: Vec<u32> = vec![];
+        let ((act, pos), report) = pack_inputs_nda_report(&input);
+        assert!(!report.valid);
+        assert!(act.is_empty());
+        assert!(pos.is_empty());
+    }
+
+    // ── batch pack: single item ──────────────────────────────────────────
+
+    #[test]
+    fn batch_pack_single_item() {
+        let items = vec![(vec![0u8; 64], 64, 4)];
+        let (results, report) = pack_weights_uvec4_batch(&items);
+        assert_eq!(results.len(), 1);
+        assert_eq!(report.operations, 1);
+        assert!(report.all_valid);
+        assert_eq!(report.total_input_bytes, 64);
+    }
 }
