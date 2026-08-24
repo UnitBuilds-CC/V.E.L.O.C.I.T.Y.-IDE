@@ -665,4 +665,273 @@ mod tests {
         // 100 rows → ceil(100/8) = 13 bytes * 2 = 26
         assert_eq!(info.estimated_output_bytes, 26);
     }
+
+    // ── Block 184: JSON key counts ────────────────────────────────────────
+
+    #[test]
+    fn gemv_report_json_has_exactly_5_keys() {
+        let r = GemvReport {
+            matrix_rows: 16, matrix_cols: 32, matrix_version: 2,
+            operations: 1, elapsed_us: 100,
+        };
+        let val: serde_json::Value = serde_json::from_str(
+            &serde_json::to_string(&r).unwrap()
+        ).unwrap();
+        assert_eq!(val.as_object().unwrap().len(), 5);
+    }
+
+    #[test]
+    fn gemv_info_json_has_exactly_10_keys() {
+        let mat = make_quad_matrix(16, 32);
+        let info = gemv_info(&mat);
+        let val: serde_json::Value = serde_json::from_str(
+            &serde_json::to_string(&info).unwrap()
+        ).unwrap();
+        assert_eq!(val.as_object().unwrap().len(), 10);
+    }
+
+    // ── Block 184: JSON roundtrip via Value ───────────────────────────────
+
+    #[test]
+    fn gemv_report_json_roundtrip_via_value() {
+        let r = GemvReport {
+            matrix_rows: 128, matrix_cols: 256, matrix_version: 4,
+            operations: 10, elapsed_us: 5000,
+        };
+        let json = serde_json::to_string(&r).unwrap();
+        let val: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(val["matrix_rows"], 128);
+        assert_eq!(val["matrix_cols"], 256);
+        assert_eq!(val["matrix_version"], 4);
+        assert_eq!(val["operations"], 10);
+        assert_eq!(val["elapsed_us"], 5000);
+    }
+
+    #[test]
+    fn gemv_info_json_roundtrip_via_value() {
+        let mat = make_quad_matrix(64, 128);
+        let info = gemv_info(&mat);
+        let json = serde_json::to_string(&info).unwrap();
+        let val: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(val["matrix_rows"], 64);
+        assert_eq!(val["matrix_cols"], 128);
+        assert_eq!(val["version_name"], "quad");
+        assert_eq!(val["input_len"], 128);
+        assert_eq!(val["output_len"], 64);
+        assert!(val["is_parallel"].as_bool().unwrap());
+    }
+
+    // ── Block 184: Clone independence ─────────────────────────────────────
+
+    #[test]
+    fn gemv_report_clone_independent() {
+        let mut r = GemvReport {
+            matrix_rows: 32, matrix_cols: 64, matrix_version: 2,
+            operations: 5, elapsed_us: 200,
+        };
+        let cloned = r.clone();
+        r.operations = 999;
+        assert_eq!(cloned.operations, 5);
+    }
+
+    #[test]
+    fn gemv_info_clone_independent() {
+        let mat = make_quad_matrix(16, 32);
+        let mut info = gemv_info(&mat);
+        let cloned = info.clone();
+        info.matrix_rows = 0;
+        assert_eq!(cloned.matrix_rows, 16);
+    }
+
+    // ── Block 184: Debug format ───────────────────────────────────────────
+
+    #[test]
+    fn gemv_report_debug_has_all_fields() {
+        let r = GemvReport {
+            matrix_rows: 8, matrix_cols: 16, matrix_version: 2,
+            operations: 3, elapsed_us: 100,
+        };
+        let debug = format!("{:?}", r);
+        assert!(debug.contains("matrix_rows"));
+        assert!(debug.contains("matrix_cols"));
+        assert!(debug.contains("matrix_version"));
+        assert!(debug.contains("operations"));
+        assert!(debug.contains("elapsed_us"));
+    }
+
+    #[test]
+    fn gemv_info_debug_has_all_fields() {
+        let mat = make_quad_matrix(16, 32);
+        let info = gemv_info(&mat);
+        let debug = format!("{:?}", info);
+        assert!(debug.contains("matrix_rows"));
+        assert!(debug.contains("version_name"));
+        assert!(debug.contains("matrix_weight_bytes"));
+        assert!(debug.contains("estimated_output_bytes"));
+        assert!(debug.contains("is_parallel"));
+        assert!(debug.contains("validation_issues"));
+    }
+
+    // ── Block 184: GemvReport default ─────────────────────────────────────
+
+    #[test]
+    fn gemv_report_default_all_zeros() {
+        let r = GemvReport::default();
+        assert_eq!(r.matrix_rows, 0);
+        assert_eq!(r.matrix_cols, 0);
+        assert_eq!(r.matrix_version, 0);
+        assert_eq!(r.operations, 0);
+        assert_eq!(r.elapsed_us, 0);
+    }
+
+    // ── Block 184: GemvInfo formula verification ──────────────────────────
+
+    #[test]
+    fn gemv_info_weight_bytes_quad_matrix() {
+        let mat = make_quad_matrix(16, 64);
+        let info = gemv_info(&mat);
+        // Quad: weight_bytes = sign.len() + extra.len()
+        // bitmap_bytes = rows * cols.div_ceil(8) = 16 * 8 = 128
+        assert_eq!(info.matrix_weight_bytes, 128 + 128);
+    }
+
+    #[test]
+    fn gemv_info_weight_bytes_packed_codes() {
+        let mat = NdaMatrix {
+            rows: 8, cols: 16, scale: 1.0, version: NDA_VERSION_FP4,
+            sign: vec![], extra: vec![],
+            block_size: 8, n_blocks: 2,
+            q_scales: vec![1, 2],
+            packed_codes: vec![0xAA; 50],
+        };
+        let info = gemv_info(&mat);
+        // FP4 with packed_codes: weight_bytes = packed_codes.len()
+        assert_eq!(info.matrix_weight_bytes, 50);
+    }
+
+    #[test]
+    fn gemv_info_estimated_output_bytes_formula() {
+        for rows in [1, 7, 8, 15, 16, 100, 256] {
+            let mat = make_quad_matrix(rows, 64);
+            let info = gemv_info(&mat);
+            let expected = rows.div_ceil(8) * 2;
+            assert_eq!(info.estimated_output_bytes, expected,
+                "wrong for rows={}", rows);
+        }
+    }
+
+    #[test]
+    fn gemv_info_input_output_len_match_matrix() {
+        let mat = make_quad_matrix(32, 128);
+        let info = gemv_info(&mat);
+        assert_eq!(info.input_len, 128);  // == matrix.cols
+        assert_eq!(info.output_len, 32);  // == matrix.rows
+    }
+
+    // ── Block 184: version_name for various versions ──────────────────────
+
+    #[test]
+    fn gemv_info_unknown_version_is_quad() {
+        let mat = NdaMatrix {
+            rows: 8, cols: 8, scale: 1.0, version: 99,
+            sign: vec![0xAA; 1], extra: vec![0x55; 1],
+            block_size: 0, n_blocks: 0,
+            q_scales: vec![], packed_codes: vec![],
+        };
+        let info = gemv_info(&mat);
+        assert_eq!(info.version_name, "quad");
+    }
+
+    // ── Block 184: argmax/topk edge cases ─────────────────────────────────
+
+    #[test]
+    fn argmax_i32_two_elements() {
+        assert_eq!(argmax_i32(&[10, 20]), 1);
+        assert_eq!(argmax_i32(&[20, 10]), 0);
+    }
+
+    #[test]
+    fn topk_i32_negative_values() {
+        let logits = vec![-5, -1, -10, -3];
+        let top = topk_i32(&logits, 2);
+        assert_eq!(top[0], (1, -1));
+        assert_eq!(top[1], (3, -3));
+    }
+
+    #[test]
+    fn topk_i32_all_same_values() {
+        let logits = vec![5, 5, 5, 5];
+        let top = topk_i32(&logits, 2);
+        assert_eq!(top.len(), 2);
+        // All values are 5
+        for &(_, v) in &top {
+            assert_eq!(v, 5);
+        }
+    }
+
+    // ── Block 184: validate combined issues ───────────────────────────────
+
+    #[test]
+    fn validate_gemv_params_multiple_issues() {
+        let mat = NdaMatrix {
+            rows: 0, cols: 0, scale: 1.0, version: 2,
+            sign: vec![], extra: vec![],
+            block_size: 0, n_blocks: 0,
+            q_scales: vec![], packed_codes: vec![],
+        };
+        let x = NdaVec::from_f32_slice(&[]);
+        let issues = validate_gemv_params(&mat, &x);
+        // Should have: 0 rows, 0 cols, no weight data
+        assert!(issues.len() >= 3, "expected >= 3 issues, got {}: {:?}", issues.len(), issues);
+    }
+
+    #[test]
+    fn validate_topk_params_both_errors() {
+        let issues = validate_topk_params(&[], 0);
+        assert_eq!(issues.len(), 2);
+        assert!(issues.iter().any(|i| i.contains("empty")));
+        assert!(issues.iter().any(|i| i.contains("k is 0")));
+    }
+
+    // ── Block 184: batch_gemv report accuracy ─────────────────────────────
+
+    #[test]
+    fn batch_gemv_report_fields_accurate() {
+        let mat = make_quad_matrix(16, 32);
+        let inputs: Vec<NdaVec> = (0..5)
+            .map(|_| NdaVec::from_f32_slice(&vec![0.5; 32]))
+            .collect();
+        let (_, report) = nda_gemv_batch(&mat, &inputs);
+        assert_eq!(report.matrix_rows, 16);
+        assert_eq!(report.matrix_cols, 32);
+        assert_eq!(report.matrix_version, 2);
+        assert_eq!(report.operations, 5);
+    }
+
+    // ── Block 184: Compact JSON ───────────────────────────────────────────
+
+    #[test]
+    fn gemv_report_compact_json() {
+        let r = GemvReport::default();
+        let json = serde_json::to_string(&r).unwrap();
+        assert!(!json.contains("\n"));
+    }
+
+    #[test]
+    fn gemv_info_compact_json() {
+        let mat = make_quad_matrix(8, 8);
+        let info = gemv_info(&mat);
+        let json = serde_json::to_string(&info).unwrap();
+        assert!(!json.contains("\n"));
+    }
+
+    // ── Block 184: gemv_info parallel threshold ───────────────────────────
+
+    #[test]
+    fn gemv_info_parallel_threshold_boundary() {
+        let mat7 = make_quad_matrix(7, 8);
+        assert!(!gemv_info(&mat7).is_parallel);
+        let mat8 = make_quad_matrix(8, 8);
+        assert!(gemv_info(&mat8).is_parallel);
+    }
 }
