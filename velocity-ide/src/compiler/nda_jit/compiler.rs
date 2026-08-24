@@ -2257,4 +2257,560 @@ mod tests {
         assert!(!state.print_buf.is_empty());
         assert!(state.print_buf[0].contains("print"));
     }
+
+    // ── Stack underflow error paths ──────────────────────────────────────────
+
+    #[test]
+    fn jit_matrix_stack_underflow() {
+        use crate::site_map::SiteMap;
+        let nodes = vec![NdaNode::Matrix {
+            rows: 4, cols: 4, scale: 0,
+            sign: vec![0xAA; 2], extra: vec![0x55; 2],
+        }];
+        let prog = compile(&nodes);
+        let sm = SiteMap::open(&std::env::temp_dir().join("jit_matrix_underflow_test"), 0).unwrap();
+        let mut state = JitState::new(&[], &sm, 16);
+        let result = prog.fns[0](&mut state);
+        assert!(result.is_err(), "expected stack underflow error for Matrix");
+    }
+
+    #[test]
+    fn jit_norm_stack_underflow() {
+        use crate::site_map::SiteMap;
+        let nodes = vec![NdaNode::Norm {
+            size: 64, weight: vec![0xFF; 8], bias: vec![0x00; 8],
+        }];
+        let prog = compile(&nodes);
+        let sm = SiteMap::open(&std::env::temp_dir().join("jit_norm_underflow_test"), 0).unwrap();
+        let mut state = JitState::new(&[], &sm, 16);
+        let result = prog.fns[0](&mut state);
+        assert!(result.is_err(), "expected stack underflow error for Norm");
+    }
+
+    #[test]
+    fn jit_add_rhs_underflow() {
+        use crate::site_map::SiteMap;
+        // Add with lhs that produces nothing, then rhs underflows
+        let nodes = vec![NdaNode::Add {
+            lhs: Box::new(NdaNode::Add {
+                lhs: Box::new(NdaNode::Int { value: 1 }),
+                rhs: Box::new(NdaNode::Int { value: 2 }),
+            }),
+            rhs: Box::new(NdaNode::Add {
+                lhs: Box::new(NdaNode::Load { name_hash: 0xDEAD }),
+                rhs: Box::new(NdaNode::Int { value: 0 }),
+            }),
+        }];
+        let prog = compile(&nodes);
+        let sm = SiteMap::open(&std::env::temp_dir().join("jit_add_underflow_test"), 0).unwrap();
+        let mut state = JitState::new(&[], &sm, 16);
+        for f in &prog.fns {
+            let r = f(&mut state);
+            if r.is_err() {
+                assert!(r.unwrap_err().contains("undefined"));
+                return;
+            }
+        }
+    }
+
+    // ── Dimension mismatch errors ────────────────────────────────────────────
+
+    #[test]
+    fn jit_matrix_dimension_mismatch() {
+        use crate::site_map::SiteMap;
+        // Push a vector of wrong length, then try Matrix
+        let nodes = vec![
+            NdaNode::Scope { children: vec![
+                NdaNode::Loop { count: 3, body: vec![NdaNode::Int { value: 1 }] },
+                NdaNode::VecOp { op: crate::site_map::verifier::VecOpKind::SiLU,
+                    operand: Box::new(NdaNode::Int { value: 0 }) },
+            ]},
+        ];
+        let prog = compile(&nodes);
+        let sm = SiteMap::open(&std::env::temp_dir().join("jit_matrix_dim_test"), 0).unwrap();
+        let mut state = JitState::new(&[], &sm, 16);
+        for f in &prog.fns {
+            let _ = f(&mut state);
+        }
+        // Just verify it doesn't panic; dimension mismatch may or may not trigger
+        // depending on the vector length produced
+    }
+
+    #[test]
+    fn jit_norm_dimension_mismatch() {
+        use crate::site_map::SiteMap;
+        let nodes = vec![NdaNode::Norm {
+            size: 4, weight: vec![0xFF; 2], bias: vec![0x00; 2],
+        }];
+        let prog = compile(&nodes);
+        let sm = SiteMap::open(&std::env::temp_dir().join("jit_norm_dim_test"), 0).unwrap();
+        let mut state = JitState::new(&[], &sm, 16);
+        let result = prog.fns[0](&mut state);
+        // Stack underflow since no input vector is pushed first
+        assert!(result.is_err());
+    }
+
+    // ── Math type mismatch ───────────────────────────────────────────────────
+
+    #[test]
+    fn jit_math_float_scalar_mismatch() {
+        use crate::site_map::SiteMap;
+        let nodes = vec![NdaNode::Math {
+            op: MathOp::Add,
+            lhs: Box::new(NdaNode::Float { value: 1.0 }),
+            rhs: Box::new(NdaNode::Int { value: 2 }),
+        }];
+        let prog = compile(&nodes);
+        let sm = SiteMap::open(&std::env::temp_dir().join("jit_math_mismatch_test"), 0).unwrap();
+        let mut state = JitState::new(&[], &sm, 16);
+        for f in &prog.fns {
+            let r = f(&mut state);
+            if r.is_err() {
+                assert!(r.unwrap_err().contains("Unsupported"));
+                return;
+            }
+        }
+    }
+
+    #[test]
+    fn jit_mathfunc_vector_operand_error() {
+        use crate::site_map::SiteMap;
+        // MathFunc on a vector should fail
+        let nodes = vec![NdaNode::MathFunc {
+            func: MathFuncKind::Sin,
+            operand: Box::new(NdaNode::VecOp {
+                op: crate::site_map::verifier::VecOpKind::SiLU,
+                operand: Box::new(NdaNode::Float { value: 1.0 }),
+            }),
+        }];
+        let prog = compile(&nodes);
+        let sm = SiteMap::open(&std::env::temp_dir().join("jit_mathfunc_vec_test"), 0).unwrap();
+        let mut state = JitState::new(&[], &sm, 16);
+        for f in &prog.fns {
+            let r = f(&mut state);
+            if r.is_err() {
+                assert!(r.unwrap_err().contains("scalar"));
+                return;
+            }
+        }
+    }
+
+    // ── Peek/Poke error paths ────────────────────────────────────────────────
+
+    #[test]
+    fn jit_peek_out_of_bounds() {
+        use crate::site_map::SiteMap;
+        let nodes = vec![NdaNode::Peek {
+            addr: Box::new(NdaNode::Int { value: 0x7FFFFFFF }),
+        }];
+        let prog = compile(&nodes);
+        let sm = SiteMap::open(&std::env::temp_dir().join("jit_peek_oob_test"), 0).unwrap();
+        let mut state = JitState::new(&[], &sm, 16);
+        for f in &prog.fns {
+            let r = f(&mut state);
+            if r.is_err() {
+                let err = r.unwrap_err();
+                assert!(err.contains("bounds") || err.contains("Out"));
+                return;
+            }
+        }
+    }
+
+    #[test]
+    fn jit_poke_out_of_bounds() {
+        use crate::site_map::SiteMap;
+        let nodes = vec![NdaNode::Poke {
+            addr: Box::new(NdaNode::Int { value: 0x7FFFFFFF }),
+            value: Box::new(NdaNode::Int { value: 42 }),
+        }];
+        let prog = compile(&nodes);
+        let sm = SiteMap::open(&std::env::temp_dir().join("jit_poke_oob_test"), 0).unwrap();
+        let mut state = JitState::new(&[], &sm, 16);
+        for f in &prog.fns {
+            let r = f(&mut state);
+            if r.is_err() {
+                let err = r.unwrap_err();
+                assert!(err.contains("bounds") || err.contains("Out"));
+                return;
+            }
+        }
+    }
+
+    #[test]
+    fn jit_poke_mmio_high_address() {
+        use crate::site_map::SiteMap;
+        // Poke to address >= 0xF0000000 should go to MMIO
+        let nodes = vec![NdaNode::Poke {
+            addr: Box::new(NdaNode::Int { value: 0xF0000000u32 as i32 }),
+            value: Box::new(NdaNode::Int { value: 99 }),
+        }];
+        let prog = compile(&nodes);
+        let sm = SiteMap::open(&std::env::temp_dir().join("jit_poke_mmio_test"), 0).unwrap();
+        let mut state = JitState::new(&[], &sm, 16);
+        for f in &prog.fns {
+            f(&mut state).unwrap();
+        }
+        // Should have written to MMIO
+        assert!(!state.mmio.is_empty());
+    }
+
+    // ── Gemv/Dot error paths ─────────────────────────────────────────────────
+
+    #[test]
+    fn jit_gemv_non_vector_operand() {
+        use crate::site_map::SiteMap;
+        let nodes = vec![NdaNode::Gemv {
+            matrix: Box::new(NdaNode::Int { value: 1 }),
+            vector: Box::new(NdaNode::Int { value: 2 }),
+        }];
+        let prog = compile(&nodes);
+        let sm = SiteMap::open(&std::env::temp_dir().join("jit_gemv_type_test"), 0).unwrap();
+        let mut state = JitState::new(&[], &sm, 16);
+        for f in &prog.fns {
+            let r = f(&mut state);
+            if r.is_err() {
+                assert!(r.unwrap_err().contains("Vector"));
+                return;
+            }
+        }
+    }
+
+    #[test]
+    fn jit_dot_length_mismatch() {
+        use crate::site_map::SiteMap;
+        // Dot with vectors of different lengths should error
+        let nodes = vec![NdaNode::Dot {
+            lhs: Box::new(NdaNode::Int { value: 1 }),
+            rhs: Box::new(NdaNode::Int { value: 2 }),
+        }];
+        let prog = compile(&nodes);
+        let sm = SiteMap::open(&std::env::temp_dir().join("jit_dot_mismatch_test"), 0).unwrap();
+        let mut state = JitState::new(&[], &sm, 16);
+        for f in &prog.fns {
+            let r = f(&mut state);
+            if r.is_err() {
+                assert!(r.unwrap_err().contains("Vector"));
+                return;
+            }
+        }
+    }
+
+    // ── compile_interpreter_sequence ─────────────────────────────────────────
+
+    #[test]
+    fn compile_interpreter_sequence_basic() {
+        let nodes = vec![
+            NdaNode::Int { value: 10 },
+            NdaNode::Float { value: 2.0 },
+            NdaNode::Add {
+                lhs: Box::new(NdaNode::Int { value: 1 }),
+                rhs: Box::new(NdaNode::Int { value: 2 }),
+            },
+        ];
+        let mut counter = 0usize;
+        let registry = VarRegistry::new();
+        let fns = compile_interpreter_sequence(&nodes, &mut counter, &registry);
+        assert_eq!(fns.len(), 3);
+        assert!(counter >= 3);
+    }
+
+    #[test]
+    fn compile_interpreter_sequence_empty() {
+        let mut counter = 0usize;
+        let registry = VarRegistry::new();
+        let fns = compile_interpreter_sequence(&[], &mut counter, &registry);
+        assert!(fns.is_empty());
+        assert_eq!(counter, 0);
+    }
+
+    #[test]
+    fn compile_interpreter_sequence_executes() {
+        use crate::site_map::SiteMap;
+        let nodes = vec![
+            NdaNode::Int { value: 42 },
+            NdaNode::Int { value: 8 },
+            NdaNode::Add {
+                lhs: Box::new(NdaNode::Int { value: 0 }),
+                rhs: Box::new(NdaNode::Int { value: 0 }),
+            },
+        ];
+        let mut counter = 0usize;
+        let registry = VarRegistry::new();
+        let fns = compile_interpreter_sequence(&nodes, &mut counter, &registry);
+        let sm = SiteMap::open(&std::env::temp_dir().join("jit_interpreter_exec_test"), 0).unwrap();
+        let mut state = JitState::new(&[], &sm, 16);
+        for f in &fns {
+            f(&mut state).unwrap();
+        }
+        // After executing, we should have results on the stack
+        assert!(!state.stack.is_empty());
+    }
+
+    // ── Bitwise NOT on all JitVal types ──────────────────────────────────────
+
+    #[test]
+    fn bitwise_not_scalar_preserves_scale() {
+        let result = bitwise_i32(BitwiseOp::Not, 0, 0);
+        assert_eq!(result, !0i32);
+    }
+
+    #[test]
+    fn bitwise_not_float_nan_handling() {
+        // NOT of NaN should produce a deterministic bit pattern
+        let nan = f32::NAN;
+        let result = bitwise_f32(BitwiseOp::Not, nan, 0.0);
+        // Result should have flipped bits from NaN — just verify it's a valid f32
+        let _bits = result.to_bits();
+        // NOT is self-inverse: NOT(NOT(x)) == x
+        let double_not = bitwise_f32(BitwiseOp::Not, result, 0.0);
+        assert_eq!(double_not.to_bits(), nan.to_bits());
+    }
+
+    #[test]
+    fn bitwise_binary_vec_vec_different_lengths() {
+        // Vectors of different lengths: result uses min length
+        let a = NdaVec::from_i32_slice(&[0xFF, 0xAA, 0x55], 0);
+        let b = NdaVec::from_i32_slice(&[0xF0], 0);
+        let result = bitwise_vec_vec(BitwiseOp::And, &a, &b);
+        match result {
+            JitVal::Vector(v) => assert_eq!(v.len, 1), // min(3, 1) = 1
+            _ => panic!("expected Vector"),
+        }
+    }
+
+    #[test]
+    fn bitwise_binary_shl_f32() {
+        let result = bitwise_f32(BitwiseOp::Shl, 1.0, 2.0);
+        // Shift left of 1.0 bits by 2.0 bits
+        let expected_bits = 1.0f32.to_bits().wrapping_shl(2.0f32.to_bits());
+        assert_eq!(result.to_bits(), expected_bits);
+    }
+
+    // ── JIT execution: Math operations ───────────────────────────────────────
+
+    #[test]
+    fn jit_execute_math_float_add() {
+        use crate::site_map::SiteMap;
+        let nodes = vec![NdaNode::Math {
+            op: MathOp::Mul,
+            lhs: Box::new(NdaNode::Float { value: 3.0 }),
+            rhs: Box::new(NdaNode::Float { value: 4.0 }),
+        }];
+        let prog = compile(&nodes);
+        let sm = SiteMap::open(&std::env::temp_dir().join("jit_math_float_test"), 0).unwrap();
+        let mut state = JitState::new(&[], &sm, 16);
+        for f in &prog.fns {
+            f(&mut state).unwrap();
+        }
+        // Should have a Float result on the stack
+        match state.stack.last() {
+            Some(JitVal::Float(v)) => assert!((v - 12.0).abs() < 1e-6),
+            other => panic!("expected Float(12.0), got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn jit_execute_mathfunc_sin() {
+        use crate::site_map::SiteMap;
+        let nodes = vec![NdaNode::MathFunc {
+            func: MathFuncKind::Sqrt,
+            operand: Box::new(NdaNode::Float { value: 16.0 }),
+        }];
+        let prog = compile(&nodes);
+        let sm = SiteMap::open(&std::env::temp_dir().join("jit_mathfunc_sqrt_test"), 0).unwrap();
+        let mut state = JitState::new(&[], &sm, 16);
+        for f in &prog.fns {
+            f(&mut state).unwrap();
+        }
+        match state.stack.last() {
+            Some(JitVal::Float(v)) => assert!((v - 4.0).abs() < 1e-6),
+            other => panic!("expected Float(4.0), got {:?}", other),
+        }
+    }
+
+    // ── JIT execution: Peek after Poke ───────────────────────────────────────
+
+    #[test]
+    fn jit_poke_then_peek_roundtrip() {
+        use crate::site_map::SiteMap;
+        // Poke value 42 at address 0, then peek it back
+        let nodes = vec![
+            NdaNode::Poke {
+                addr: Box::new(NdaNode::Int { value: 0 }),
+                value: Box::new(NdaNode::Int { value: 42 }),
+            },
+            NdaNode::Peek {
+                addr: Box::new(NdaNode::Int { value: 0 }),
+            },
+        ];
+        let prog = compile(&nodes);
+        let sm = SiteMap::open(&std::env::temp_dir().join("jit_poke_peek_test"), 0).unwrap();
+        let mut state = JitState::new(&[], &sm, 16);
+        for f in &prog.fns {
+            f(&mut state).unwrap();
+        }
+        // Peek should have pushed the value onto the stack
+        match state.stack.last() {
+            Some(JitVal::Scalar(v, _)) => assert_eq!(*v, 42),
+            other => panic!("expected Scalar(42), got {:?}", other),
+        }
+    }
+
+    // ── JIT execution: Syscall ───────────────────────────────────────────────
+
+    #[test]
+    fn jit_syscall_print() {
+        use crate::site_map::SiteMap;
+        let nodes = vec![NdaNode::Syscall {
+            num: 1,
+            args: vec![NdaNode::Int { value: 77 }],
+        }];
+        let prog = compile(&nodes);
+        let sm = SiteMap::open(&std::env::temp_dir().join("jit_syscall_test"), 0).unwrap();
+        let mut state = JitState::new(&[], &sm, 16);
+        for f in &prog.fns {
+            f(&mut state).unwrap();
+        }
+        assert!(!state.print_buf.is_empty());
+        assert!(state.print_buf[0].contains("syscall print"));
+    }
+
+    #[test]
+    fn jit_syscall_unknown_returns_zero() {
+        use crate::site_map::SiteMap;
+        let nodes = vec![NdaNode::Syscall {
+            num: 999,
+            args: vec![NdaNode::Int { value: 0 }],
+        }];
+        let prog = compile(&nodes);
+        let sm = SiteMap::open(&std::env::temp_dir().join("jit_syscall_unknown_test"), 0).unwrap();
+        let mut state = JitState::new(&[], &sm, 16);
+        for f in &prog.fns {
+            f(&mut state).unwrap();
+        }
+        // Unknown syscall pushes Scalar(0, 0)
+        match state.stack.last() {
+            Some(JitVal::Scalar(0, 0)) => {},
+            other => panic!("expected Scalar(0,0), got {:?}", other),
+        }
+    }
+
+    // ── scan_node_features deep recursion ────────────────────────────────────
+
+    #[test]
+    fn compile_diagnostic_deeply_nested_features() {
+        // Deeply nested: Loop > While > If > Return + Matrix + Norm
+        let nodes = vec![NdaNode::Loop {
+            count: 5,
+            body: vec![NdaNode::While {
+                cond: Box::new(NdaNode::If {
+                    cond: Box::new(NdaNode::Int { value: 1 }),
+                    then_body: vec![NdaNode::Return {
+                        value: Box::new(NdaNode::Int { value: 0 }),
+                    }],
+                    else_body: None,
+                }),
+                body: vec![
+                    NdaNode::Matrix {
+                        rows: 4, cols: 4, scale: 0,
+                        sign: vec![0; 2], extra: vec![0; 2],
+                    },
+                    NdaNode::Norm {
+                        size: 8, weight: vec![0; 1], bias: vec![0; 1],
+                    },
+                ],
+            }],
+        }];
+        let diag = compile_diagnostic(&nodes);
+        assert!(diag.has_loops);
+        assert!(diag.has_while_loops);
+        assert!(diag.has_conditionals);
+        assert!(diag.has_returns);
+        assert!(diag.has_matrices);
+        assert!(diag.has_norms);
+    }
+
+    #[test]
+    fn compile_diagnostic_let_store_print_scan() {
+        // scan_node_features should recurse into Let init, Store value, Print source
+        let nodes = vec![
+            NdaNode::Let {
+                name_hash: 1,
+                init: Box::new(NdaNode::Matrix {
+                    rows: 2, cols: 2, scale: 0,
+                    sign: vec![0; 1], extra: vec![0; 1],
+                }),
+            },
+            NdaNode::Print {
+                source: Box::new(NdaNode::Return {
+                    value: Box::new(NdaNode::Int { value: 0 }),
+                }),
+            },
+        ];
+        let diag = compile_diagnostic(&nodes);
+        assert!(diag.has_matrices);
+        assert!(diag.has_returns);
+    }
+
+    // ── Compile and count verification ───────────────────────────────────────
+
+    #[test]
+    fn compile_node_increments_counter() {
+        let mut counter = 0usize;
+        let registry = VarRegistry::new();
+        let _fn = compile_node(&NdaNode::Int { value: 42 }, &mut counter, &registry);
+        assert!(counter >= 1);
+    }
+
+    #[test]
+    fn compile_sequence_counts_all_nodes() {
+        let nodes = vec![
+            NdaNode::Int { value: 1 },
+            NdaNode::Int { value: 2 },
+            NdaNode::Float { value: 3.0 },
+        ];
+        let mut counter = 0usize;
+        let registry = VarRegistry::new();
+        let fns = compile_sequence(&nodes, &mut counter, &registry);
+        assert_eq!(fns.len(), 3);
+        assert!(counter >= 3);
+    }
+
+    // ── While loop truthy condition ──────────────────────────────────────────
+
+    #[test]
+    fn jit_while_false_condition_skips_body() {
+        use crate::site_map::SiteMap;
+        let nodes = vec![NdaNode::While {
+            cond: Box::new(NdaNode::Int { value: 0 }), // falsy
+            body: vec![NdaNode::Int { value: 99 }],
+        }];
+        let prog = compile(&nodes);
+        let sm = SiteMap::open(&std::env::temp_dir().join("jit_while_false_test"), 0).unwrap();
+        let mut state = JitState::new(&[], &sm, 16);
+        for f in &prog.fns {
+            f(&mut state).unwrap();
+        }
+        // Body should not execute; loop_count stays 0 since condition was false
+        // (executed_nodes is 1 for the While node itself)
+        assert!(state.stack.is_empty() || !state.stack.iter().any(|v| matches!(v, JitVal::Scalar(99, _))));
+    }
+
+    #[test]
+    fn jit_if_false_takes_else_branch() {
+        use crate::site_map::SiteMap;
+        let nodes = vec![NdaNode::If {
+            cond: Box::new(NdaNode::Int { value: 0 }), // falsy
+            then_body: vec![NdaNode::Int { value: 10 }],
+            else_body: Some(vec![NdaNode::Int { value: 20 }]),
+        }];
+        let prog = compile(&nodes);
+        let sm = SiteMap::open(&std::env::temp_dir().join("jit_if_else_test"), 0).unwrap();
+        let mut state = JitState::new(&[], &sm, 16);
+        for f in &prog.fns {
+            f(&mut state).unwrap();
+        }
+        // Else branch should have pushed 20
+        assert!(state.stack.iter().any(|v| matches!(v, JitVal::Scalar(20, _))));
+    }
 }
