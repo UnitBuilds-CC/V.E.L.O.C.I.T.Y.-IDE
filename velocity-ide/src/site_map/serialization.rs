@@ -1365,4 +1365,345 @@ mod tests {
         assert!(json.contains("\"nodes_serialized\":100"));
         assert!(json.contains("\"deserialization_verified\":true"));
     }
+
+    // ── Block 131: comprehensive tests ──────────────────────────────────────
+
+    // ── node_depth: more variants ────────────────────────────────────────
+
+    #[test]
+    fn node_depth_loop() {
+        let node = NdaNode::Loop {
+            count: 5,
+            body: vec![NdaNode::Int { value: 1 }],
+        };
+        assert_eq!(node_depth(&node), 2);
+    }
+
+    #[test]
+    fn node_depth_while_node() {
+        let node = NdaNode::While {
+            cond: Box::new(NdaNode::Int { value: 1 }),
+            body: vec![NdaNode::Int { value: 2 }],
+        };
+        assert_eq!(node_depth(&node), 2);
+    }
+
+    #[test]
+    fn node_depth_if_node() {
+        let node = NdaNode::If {
+            cond: Box::new(NdaNode::Int { value: 1 }),
+            then_body: vec![NdaNode::Scope {
+                children: vec![NdaNode::Int { value: 2 }],
+            }],
+            else_body: Some(vec![NdaNode::Int { value: 3 }]),
+        };
+        // cond depth=1, then depth=2 (scope->int), else depth=1
+        assert_eq!(node_depth(&node), 3);
+    }
+
+    #[test]
+    fn node_depth_compare() {
+        let node = NdaNode::Compare {
+            op: CmpOp::Eq,
+            lhs: Box::new(NdaNode::Int { value: 1 }),
+            rhs: Box::new(NdaNode::Int { value: 2 }),
+        };
+        assert_eq!(node_depth(&node), 2);
+    }
+
+    #[test]
+    fn node_depth_add() {
+        let node = NdaNode::Add {
+            lhs: Box::new(NdaNode::Int { value: 1 }),
+            rhs: Box::new(NdaNode::Float { value: 2.0 }),
+        };
+        assert_eq!(node_depth(&node), 2);
+    }
+
+    #[test]
+    fn node_depth_bitwise_with_rhs() {
+        let node = NdaNode::Bitwise {
+            op: BitwiseOp::And,
+            lhs: Box::new(NdaNode::Int { value: 0xFF }),
+            rhs: Some(Box::new(NdaNode::Int { value: 0x0F })),
+        };
+        assert_eq!(node_depth(&node), 2);
+    }
+
+    #[test]
+    fn node_depth_bitwise_no_rhs() {
+        let node = NdaNode::Bitwise {
+            op: BitwiseOp::Not,
+            lhs: Box::new(NdaNode::Int { value: 0xFF }),
+            rhs: None,
+        };
+        assert_eq!(node_depth(&node), 2);
+    }
+
+    #[test]
+    fn node_depth_vec_op() {
+        let node = NdaNode::VecOp {
+            op: VecOpKind::SiLU,
+            operand: Box::new(NdaNode::Int { value: 1 }),
+        };
+        assert_eq!(node_depth(&node), 2);
+    }
+
+    #[test]
+    fn node_depth_let_store() {
+        let node = NdaNode::Let {
+            name_hash: 0x1234,
+            init: Box::new(NdaNode::Store {
+                name_hash: 0x5678,
+                value: Box::new(NdaNode::Int { value: 42 }),
+            }),
+        };
+        assert_eq!(node_depth(&node), 3);
+    }
+
+    #[test]
+    fn node_depth_syscall() {
+        let node = NdaNode::Syscall {
+            num: 1,
+            args: vec![NdaNode::Int { value: 42 }],
+        };
+        assert_eq!(node_depth(&node), 2);
+    }
+
+    #[test]
+    fn node_depth_syscall_no_args() {
+        let node = NdaNode::Syscall { num: 0, args: vec![] };
+        assert_eq!(node_depth(&node), 1);
+    }
+
+    #[test]
+    fn node_depth_atomic() {
+        let node = NdaNode::Atomic {
+            op: AtomicOp::Cas,
+            addr: Box::new(NdaNode::Int { value: 0 }),
+            val: Box::new(NdaNode::Int { value: 1 }),
+        };
+        assert_eq!(node_depth(&node), 2);
+    }
+
+    #[test]
+    fn node_depth_all_leaf_nodes() {
+        assert_eq!(node_depth(&NdaNode::Matrix { rows: 1, cols: 1, scale: 0, sign: vec![], extra: vec![] }), 1);
+        assert_eq!(node_depth(&NdaNode::Norm { size: 1, weight: vec![], bias: vec![] }), 1);
+        assert_eq!(node_depth(&NdaNode::Load { name_hash: 0 }), 1);
+        assert_eq!(node_depth(&NdaNode::Spawn { scope_hash: 0 }), 1);
+        assert_eq!(node_depth(&NdaNode::RegInt { vector: 0, handler_hash: 0 }), 1);
+        assert_eq!(node_depth(&NdaNode::Triple { subject_hash: 0, predicate_id: 0, object_hash: 0 }), 1);
+        assert_eq!(node_depth(&NdaNode::Float { value: 0.0 }), 1);
+        assert_eq!(node_depth(&NdaNode::Peek { addr: Box::new(NdaNode::Int { value: 0 }) }), 1);
+    }
+
+    // ── node_count: more structures ──────────────────────────────────────
+
+    #[test]
+    fn node_count_loop() {
+        let node = NdaNode::Loop {
+            count: 5,
+            body: vec![NdaNode::Int { value: 1 }, NdaNode::Int { value: 2 }],
+        };
+        assert_eq!(node_count(&node), 3);
+    }
+
+    #[test]
+    fn node_count_while() {
+        let node = NdaNode::While {
+            cond: Box::new(NdaNode::Int { value: 1 }),
+            body: vec![NdaNode::Int { value: 2 }],
+        };
+        assert_eq!(node_count(&node), 3);
+    }
+
+    #[test]
+    fn node_count_if_with_else() {
+        let node = NdaNode::If {
+            cond: Box::new(NdaNode::Int { value: 1 }),
+            then_body: vec![NdaNode::Int { value: 2 }],
+            else_body: Some(vec![NdaNode::Int { value: 3 }]),
+        };
+        assert_eq!(node_count(&node), 4);
+    }
+
+    #[test]
+    fn node_count_if_no_else() {
+        let node = NdaNode::If {
+            cond: Box::new(NdaNode::Int { value: 1 }),
+            then_body: vec![NdaNode::Int { value: 2 }],
+            else_body: None,
+        };
+        assert_eq!(node_count(&node), 3);
+    }
+
+    #[test]
+    fn node_count_empty_scope() {
+        let node = NdaNode::Scope { children: vec![] };
+        assert_eq!(node_count(&node), 1);
+    }
+
+    // ── node_type_name: all variants ─────────────────────────────────────
+
+    #[test]
+    fn node_type_name_all_variants() {
+        let cases: Vec<(&str, NdaNode)> = vec![
+            ("Matrix", NdaNode::Matrix { rows: 0, cols: 0, scale: 0, sign: vec![], extra: vec![] }),
+            ("Norm", NdaNode::Norm { size: 0, weight: vec![], bias: vec![] }),
+            ("Call", NdaNode::Call { target: 0 }),
+            ("Int", NdaNode::Int { value: 0 }),
+            ("Float", NdaNode::Float { value: 0.0 }),
+            ("Scope", NdaNode::Scope { children: vec![] }),
+            ("Loop", NdaNode::Loop { count: 0, body: vec![] }),
+            ("While", NdaNode::While { cond: Box::new(NdaNode::Break), body: vec![] }),
+            ("If", NdaNode::If { cond: Box::new(NdaNode::Break), then_body: vec![], else_body: None }),
+            ("Compare", NdaNode::Compare { op: CmpOp::Eq, lhs: Box::new(NdaNode::Break), rhs: Box::new(NdaNode::Break) }),
+            ("Let", NdaNode::Let { name_hash: 0, init: Box::new(NdaNode::Break) }),
+            ("Load", NdaNode::Load { name_hash: 0 }),
+            ("Store", NdaNode::Store { name_hash: 0, value: Box::new(NdaNode::Break) }),
+            ("Add", NdaNode::Add { lhs: Box::new(NdaNode::Break), rhs: Box::new(NdaNode::Break) }),
+            ("VecOp", NdaNode::VecOp { op: VecOpKind::SiLU, operand: Box::new(NdaNode::Break) }),
+            ("Print", NdaNode::Print { source: Box::new(NdaNode::Break) }),
+            ("Return", NdaNode::Return { value: Box::new(NdaNode::Break) }),
+            ("Break", NdaNode::Break),
+            ("Bitwise", NdaNode::Bitwise { op: BitwiseOp::And, lhs: Box::new(NdaNode::Break), rhs: None }),
+            ("Math", NdaNode::Math { op: crate::site_map::verifier::MathOp::Add, lhs: Box::new(NdaNode::Break), rhs: Box::new(NdaNode::Break) }),
+            ("MathFunc", NdaNode::MathFunc { func: crate::site_map::verifier::MathFuncKind::Sqrt, operand: Box::new(NdaNode::Break) }),
+            ("Peek", NdaNode::Peek { addr: Box::new(NdaNode::Break) }),
+            ("Poke", NdaNode::Poke { addr: Box::new(NdaNode::Break), value: Box::new(NdaNode::Break) }),
+            ("Gemv", NdaNode::Gemv { matrix: Box::new(NdaNode::Break), vector: Box::new(NdaNode::Break) }),
+            ("Dot", NdaNode::Dot { lhs: Box::new(NdaNode::Break), rhs: Box::new(NdaNode::Break) }),
+            ("Syscall", NdaNode::Syscall { num: 0, args: vec![] }),
+            ("Spawn", NdaNode::Spawn { scope_hash: 0 }),
+            ("Atomic", NdaNode::Atomic { op: AtomicOp::Cas, addr: Box::new(NdaNode::Break), val: Box::new(NdaNode::Break) }),
+            ("Alloc", NdaNode::Alloc { size: Box::new(NdaNode::Break) }),
+            ("Free", NdaNode::Free { addr: Box::new(NdaNode::Break) }),
+            ("RegInt", NdaNode::RegInt { vector: 0, handler_hash: 0 }),
+            ("Cast", NdaNode::Cast { from_type: TypeKind::Int, to_type: TypeKind::Float, operand: Box::new(NdaNode::Break) }),
+            ("GpuDispatch", NdaNode::GpuDispatch { shader_hash: 0, args: vec![] }),
+            ("Triple", NdaNode::Triple { subject_hash: 0, predicate_id: 0, object_hash: 0 }),
+        ];
+        for (expected_name, node) in cases {
+            assert_eq!(node_type_name(&node), expected_name, "wrong name for {:?}", node);
+        }
+    }
+
+    // ── Struct derives ──────────────────────────────────────────────────
+
+    #[test]
+    fn serialization_report_debug() {
+        let report = SerializationReport {
+            operation: "serialise".to_string(),
+            node_type: "Int".to_string(),
+            byte_size: 5,
+            elapsed_us: 1,
+            node_count: 1,
+            tree_depth: 1,
+        };
+        let dbg = format!("{:?}", report);
+        assert!(dbg.contains("SerializationReport"));
+        assert!(dbg.contains("byte_size"));
+    }
+
+    #[test]
+    fn serialization_report_clone() {
+        let report = SerializationReport {
+            operation: "serialise".to_string(),
+            node_type: "Scope".to_string(),
+            byte_size: 1024,
+            elapsed_us: 50,
+            node_count: 10,
+            tree_depth: 3,
+        };
+        let cloned = report.clone();
+        assert_eq!(cloned.byte_size, 1024);
+        assert_eq!(cloned.node_count, 10);
+    }
+
+    #[test]
+    fn batch_serialization_report_debug() {
+        let report = BatchSerializationReport {
+            nodes_serialized: 5,
+            total_bytes: 200,
+            total_elapsed_us: 100,
+            per_node_avg_us: 20.0,
+            deserialization_verified: true,
+        };
+        let dbg = format!("{:?}", report);
+        assert!(dbg.contains("BatchSerializationReport"));
+        assert!(dbg.contains("nodes_serialized"));
+    }
+
+    #[test]
+    fn batch_serialization_report_clone() {
+        let report = BatchSerializationReport {
+            nodes_serialized: 10,
+            total_bytes: 500,
+            total_elapsed_us: 200,
+            per_node_avg_us: 20.0,
+            deserialization_verified: false,
+        };
+        let cloned = report.clone();
+        assert_eq!(cloned.total_bytes, 500);
+        assert!(!cloned.deserialization_verified);
+    }
+
+    #[test]
+    fn serialization_report_json_all_fields() {
+        let report = SerializationReport {
+            operation: "serialise".to_string(),
+            node_type: "Loop".to_string(),
+            byte_size: 512,
+            elapsed_us: 25,
+            node_count: 8,
+            tree_depth: 4,
+        };
+        let json = serde_json::to_string(&report).unwrap();
+        let val: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(val["operation"], "serialise");
+        assert_eq!(val["node_type"], "Loop");
+        assert_eq!(val["byte_size"], 512);
+        assert_eq!(val["elapsed_us"], 25);
+        assert_eq!(val["node_count"], 8);
+        assert_eq!(val["tree_depth"], 4);
+    }
+
+    #[test]
+    fn batch_serialization_report_json_all_fields() {
+        let report = BatchSerializationReport {
+            nodes_serialized: 50,
+            total_bytes: 2500,
+            total_elapsed_us: 500,
+            per_node_avg_us: 10.0,
+            deserialization_verified: true,
+        };
+        let json = serde_json::to_string(&report).unwrap();
+        let val: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(val["nodes_serialized"], 50);
+        assert_eq!(val["total_bytes"], 2500);
+        assert_eq!(val["total_elapsed_us"], 500);
+        assert_eq!(val["per_node_avg_us"], 10.0);
+        assert_eq!(val["deserialization_verified"], true);
+    }
+
+    // ── Batch roundtrip ──────────────────────────────────────────────────
+
+    #[test]
+    fn batch_serialise_roundtrip() {
+        let nodes = vec![
+            NdaNode::Int { value: 42 },
+            NdaNode::Float { value: 3.14 },
+            NdaNode::Break,
+        ];
+        let (serialized, report) = batch_serialise_nodes(&nodes);
+        assert_eq!(serialized.len(), 3);
+        assert_eq!(report.nodes_serialized, 3);
+        // Verify each can be deserialized back
+        for (i, bytes) in serialized.iter().enumerate() {
+            let mut offset = 0;
+            let result = deserialise_node(bytes, &mut offset).unwrap();
+            assert_eq!(node_type_name(&result), node_type_name(&nodes[i]));
+        }
+    }
 }
