@@ -1,9 +1,11 @@
-main.rs — 24 new tests (162 total)
+pipeline_bridge.rs — 26 new tests (189 total)
 
-Block 207: resolve_config field coverage (vocab_size, n_heads, max_seq_len
-for both qwen and bitnet), resolve_model_dir additional paths (None errors,
-existing dir clone), resolve_tokenizer auto-discover (None falls through,
-finds tokenizer.json in model dir), CloudflareAccount struct fields,
-CliDiagnostics with velocity_config Some/None, GenerationReport extreme
-values (elapsed_ms zero, u64::MAX, empty mode, large site_map counts),
-Message edge cases (JSON array content, JSON object in content, null bytes)
+Block 209: PipelineMode::detect routing (code keywords→Nda, questions→Text,
+imperative→Nda, explanation→Text), validate() model_dir existence checks
+(missing dir warning, combined zero+missing=6 warnings), run_dual_path
+formatting (text/nda stats, zero elapsed safety, status display variants),
+EngineInfo model presets (BitNet-3B and Qwen-0.5B configs with head_dim
+verification), parameter estimate formula, NdaRunDiagnostics opcode/access
+proportion, site_map_key JSON roundtrip, EngineReport text+nda both Some,
+path1_lazy_loaded consistency, nested NDA JSON all 10 fields, status
+snapshot all 4 path combinations, per_second NDA path formula

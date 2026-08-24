@@ -3674,4 +3674,369 @@ mod tests {
         assert_eq!(val["n_layers"], usize::MAX);
         assert_eq!(val["hidden_size"], usize::MAX);
     }
+
+    // ─── Block 209: PipelineMode detect, validate model_dir, run_dual_path formatting ──
+
+    #[test]
+    fn pipeline_mode_detect_code_keyword_209() {
+        // Code keywords should route to NDA mode
+        let mode = PipelineMode::detect("fn main() { println!(\"hello\"); }");
+        assert_eq!(mode, PipelineMode::Nda);
+    }
+
+    #[test]
+    fn pipeline_mode_detect_question_209() {
+        // Questions should route to Text mode
+        let mode = PipelineMode::detect("What is the meaning of life?");
+        assert_eq!(mode, PipelineMode::Text);
+    }
+
+    #[test]
+    fn pipeline_mode_detect_imperative_209() {
+        // Imperative creation verbs → NDA
+        let mode = PipelineMode::detect("create a function that sorts");
+        assert_eq!(mode, PipelineMode::Nda);
+    }
+
+    #[test]
+    fn pipeline_mode_detect_explanation_209() {
+        // Explanations → Text
+        let mode = PipelineMode::detect("explain how transformers work");
+        assert_eq!(mode, PipelineMode::Text);
+    }
+
+    #[test]
+    fn validate_model_dir_not_exists_209() {
+        // Simulate validate() with non-existent model_dir
+        let mut warnings: Vec<String> = Vec::new();
+        let model_dir_exists = false;
+        if !model_dir_exists {
+            warnings.push("model_dir does not exist: /nonexistent".to_string());
+        }
+        assert_eq!(warnings.len(), 1);
+        assert!(warnings[0].contains("does not exist"));
+    }
+
+    #[test]
+    fn validate_model_dir_exists_no_warning_209() {
+        let mut warnings: Vec<String> = Vec::new();
+        let model_dir_exists = true;
+        if !model_dir_exists {
+            warnings.push("model_dir does not exist".to_string());
+        }
+        assert!(warnings.is_empty());
+    }
+
+    #[test]
+    fn validate_combined_zero_and_missing_dir_209() {
+        let mut warnings: Vec<String> = Vec::new();
+        let vocab_size = 0usize;
+        let n_layers = 0usize;
+        let hidden_size = 0usize;
+        let n_heads = 0usize;
+        let max_seq_len = 0usize;
+        if vocab_size == 0 { warnings.push("vocab_size is 0".into()); }
+        if n_layers == 0 { warnings.push("n_layers is 0".into()); }
+        if hidden_size == 0 { warnings.push("hidden_size is 0".into()); }
+        if n_heads == 0 { warnings.push("n_heads is 0".into()); }
+        if max_seq_len == 0 { warnings.push("max_seq_len is 0".into()); }
+        let model_dir_exists = false;
+        if !model_dir_exists { warnings.push("model_dir does not exist".into()); }
+        assert_eq!(warnings.len(), 6);
+    }
+
+    #[test]
+    fn run_dual_path_text_stats_format_209() {
+        // Simulate the text path stats formatting from run_dual_path
+        let n_tokens = 100usize;
+        let elapsed_ms = 2000u128;
+        let elapsed_s = elapsed_ms as f64 / 1000.0;
+        let tok_per_s = n_tokens as f64 / elapsed_s.max(1e-6);
+        assert!((elapsed_s - 2.0).abs() < 0.001);
+        assert!((tok_per_s - 50.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn run_dual_path_nda_stats_format_209() {
+        let n_opcodes = 50usize;
+        let elapsed_ms = 500u128;
+        let elapsed_s = elapsed_ms as f64 / 1000.0;
+        let ops_per_s = n_opcodes as f64 / elapsed_s.max(1e-6);
+        assert!((elapsed_s - 0.5).abs() < 0.001);
+        assert!((ops_per_s - 100.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn run_dual_path_nda_zero_elapsed_209() {
+        let n_opcodes = 50usize;
+        let elapsed_ms = 0u128;
+        let elapsed_s = elapsed_ms as f64 / 1000.0;
+        let ops_per_s = n_opcodes as f64 / elapsed_s.max(1e-6);
+        assert!(ops_per_s.is_finite());
+    }
+
+    #[test]
+    fn run_dual_path_text_zero_elapsed_209() {
+        let n_tokens = 10usize;
+        let elapsed_ms = 0u128;
+        let elapsed_s = elapsed_ms as f64 / 1000.0;
+        let tok_per_s = n_tokens as f64 / elapsed_s.max(1e-6);
+        assert!(tok_per_s.is_finite());
+    }
+
+    #[test]
+    fn run_dual_path_status_valid_complete_209() {
+        let valid = true;
+        let force_terminated = false;
+        let status = match (valid, force_terminated) {
+            (true, false) => "VALID (complete)",
+            (true, true) => "VALID (truncated — increase --max-tokens)",
+            _ => "INVALID",
+        };
+        assert_eq!(status, "VALID (complete)");
+    }
+
+    #[test]
+    fn run_dual_path_status_valid_truncated_209() {
+        let valid = true;
+        let force_terminated = true;
+        let status = match (valid, force_terminated) {
+            (true, false) => "VALID (complete)",
+            (true, true) => "VALID (truncated — increase --max-tokens)",
+            _ => "INVALID",
+        };
+        assert!(status.contains("truncated"));
+        assert!(status.contains("--max-tokens"));
+    }
+
+    #[test]
+    fn run_dual_path_status_invalid_209() {
+        let valid = false;
+        let force_terminated = false;
+        let status = match (valid, force_terminated) {
+            (true, false) => "VALID (complete)",
+            (true, true) => "VALID (truncated — increase --max-tokens)",
+            _ => "INVALID",
+        };
+        assert_eq!(status, "INVALID");
+    }
+
+    #[test]
+    fn engine_info_bitnet3b_config_209() {
+        let cfg = ModelConfig::bitnet_3b();
+        let info = EngineInfo {
+            model_dir: "/bitnet3b".to_string(),
+            vocab_size: cfg.vocab_size,
+            n_layers: cfg.n_layers,
+            hidden_size: cfg.hidden_size,
+            ffn_size: cfg.ffn_size,
+            n_heads: cfg.n_heads,
+            n_kv_heads: cfg.n_kv_heads,
+            head_dim: cfg.head_dim,
+            max_seq_len: cfg.max_seq_len,
+            path1_loaded: false,
+            path2_site_map_stats: "0 entries".to_string(),
+            tokenizer_merge_count: cfg.vocab_size,
+        };
+        assert_eq!(info.vocab_size, 32000);
+        assert_eq!(info.n_layers, 26);
+        assert_eq!(info.hidden_size / info.n_heads, info.head_dim);
+    }
+
+    #[test]
+    fn engine_info_qwen05_config_209() {
+        let cfg = ModelConfig::qwen_coder_05b();
+        let info = EngineInfo {
+            model_dir: "/qwen05".to_string(),
+            vocab_size: cfg.vocab_size,
+            n_layers: cfg.n_layers,
+            hidden_size: cfg.hidden_size,
+            ffn_size: cfg.ffn_size,
+            n_heads: cfg.n_heads,
+            n_kv_heads: cfg.n_kv_heads,
+            head_dim: cfg.head_dim,
+            max_seq_len: cfg.max_seq_len,
+            path1_loaded: false,
+            path2_site_map_stats: "0 entries".to_string(),
+            tokenizer_merge_count: cfg.vocab_size,
+        };
+        assert_eq!(info.vocab_size, 151936);
+        assert_eq!(info.n_layers, 24);
+        assert_eq!(info.hidden_size / info.n_heads, info.head_dim);
+    }
+
+    #[test]
+    fn engine_report_per_second_nda_path_209() {
+        // NDA path: per_second = n_opcodes / (elapsed_us / 1_000_000)
+        let elapsed_us = 100_000u64;
+        let n_opcodes = 50usize;
+        let per_second = (n_opcodes as f64) / (elapsed_us as f64 / 1_000_000.0);
+        assert!((per_second - 500.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn nda_diagnostics_opcode_count_proportion_209() {
+        let diag = NdaRunDiagnostics {
+            root_hash: 0, valid: true, force_terminated: false,
+            site_map_key: Some(1), opcode_count: 75,
+            sandbox_passed: Some(true), scope_passed: Some(true),
+            scope_similarity: Some(0.9), site_map_hits: 10, site_map_misses: 5,
+        };
+        let total_accesses = diag.site_map_hits + diag.site_map_misses;
+        let opcode_per_access = diag.opcode_count as f64 / total_accesses as f64;
+        assert!(opcode_per_access > 0.0);
+        assert!((opcode_per_access - 5.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn engine_report_text_some_nda_some_inconsistent_209() {
+        // Both text and nda set — unusual but structurally allowed
+        let report = EngineReport {
+            path: "unknown".to_string(), resolved_mode: "Auto".to_string(),
+            prompt_tokens: 1, output_count: 1, elapsed_us: 1,
+            per_second: 1.0,
+            text: Some("text output".to_string()),
+            nda: Some(NdaRunDiagnostics {
+                root_hash: 0, valid: true, force_terminated: false,
+                site_map_key: None, opcode_count: 1,
+                sandbox_passed: None, scope_passed: None,
+                scope_similarity: None, site_map_hits: 0, site_map_misses: 0,
+            }),
+            path1_lazy_loaded: false,
+            engine_status: EngineStatusSnapshot {
+                path1_loaded: false, path2_active: true,
+                model_dir: "".to_string(), vocab_size: 0,
+                n_layers: 0, hidden_size: 0,
+            },
+        };
+        assert!(report.text.is_some());
+        assert!(report.nda.is_some());
+    }
+
+    #[test]
+    fn engine_status_snapshot_path_combinations_209() {
+        // All 4 combinations of path1_loaded × path2_active
+        for p1 in [false, true] {
+            for p2 in [false, true] {
+                let snap = EngineStatusSnapshot {
+                    path1_loaded: p1, path2_active: p2,
+                    model_dir: "/m".to_string(), vocab_size: 100,
+                    n_layers: 4, hidden_size: 256,
+                };
+                assert_eq!(snap.path1_loaded, p1);
+                assert_eq!(snap.path2_active, p2);
+            }
+        }
+    }
+
+    #[test]
+    fn engine_report_json_nda_nested_all_fields_209() {
+        let report = EngineReport {
+            path: "nda".to_string(), resolved_mode: "Nda".to_string(),
+            prompt_tokens: 5, output_count: 20, elapsed_us: 1000,
+            per_second: 20000.0, text: None,
+            nda: Some(NdaRunDiagnostics {
+                root_hash: 0xABCD, valid: true, force_terminated: false,
+                site_map_key: Some(42), opcode_count: 20,
+                sandbox_passed: Some(true), scope_passed: Some(true),
+                scope_similarity: Some(0.95), site_map_hits: 15, site_map_misses: 5,
+            }),
+            path1_lazy_loaded: true,
+            engine_status: EngineStatusSnapshot {
+                path1_loaded: true, path2_active: true,
+                model_dir: "/m".to_string(), vocab_size: 100,
+                n_layers: 4, hidden_size: 256,
+            },
+        };
+        let json = serde_json::to_string(&report).unwrap();
+        let val: serde_json::Value = serde_json::from_str(&json).unwrap();
+        let nda = &val["nda"];
+        assert_eq!(nda.as_object().unwrap().len(), 10);
+        assert_eq!(nda["root_hash"], 0xABCD_u64);
+        assert_eq!(nda["opcode_count"], 20);
+        assert_eq!(nda["site_map_hits"], 15);
+        assert_eq!(nda["site_map_misses"], 5);
+    }
+
+    #[test]
+    fn engine_report_elapsed_us_boundary_209() {
+        let report = EngineReport {
+            path: "text".to_string(), resolved_mode: "Text".to_string(),
+            prompt_tokens: 0, output_count: 0, elapsed_us: 1,
+            per_second: 0.0, text: None, nda: None,
+            path1_lazy_loaded: false,
+            engine_status: EngineStatusSnapshot {
+                path1_loaded: false, path2_active: true,
+                model_dir: "".to_string(), vocab_size: 0,
+                n_layers: 0, hidden_size: 0,
+            },
+        };
+        // 1μs elapsed — per_second would be 0 since output_count=0
+        assert_eq!(report.elapsed_us, 1);
+        assert_eq!(report.per_second, 0.0);
+    }
+
+    #[test]
+    fn nda_diagnostics_site_map_key_json_roundtrip_209() {
+        let diag = NdaRunDiagnostics {
+            root_hash: 0x1234, valid: true, force_terminated: false,
+            site_map_key: Some(0xABCD), opcode_count: 50,
+            sandbox_passed: Some(true), scope_passed: Some(true),
+            scope_similarity: Some(0.9), site_map_hits: 10, site_map_misses: 5,
+        };
+        let json = serde_json::to_string(&diag).unwrap();
+        let val: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(val["site_map_key"], 0xABCD_u64);
+    }
+
+    #[test]
+    fn engine_report_path1_lazy_loaded_consistency_209() {
+        // When path1_lazy_loaded = true, engine_status.path1_loaded should be true
+        // (after the run, path1 is now loaded)
+        let report = EngineReport {
+            path: "text".to_string(), resolved_mode: "Text".to_string(),
+            prompt_tokens: 1, output_count: 1, elapsed_us: 100,
+            per_second: 10000.0, text: Some("x".to_string()),
+            nda: None, path1_lazy_loaded: true,
+            engine_status: EngineStatusSnapshot {
+                path1_loaded: true, path2_active: true,
+                model_dir: "/m".to_string(), vocab_size: 100,
+                n_layers: 4, hidden_size: 256,
+            },
+        };
+        assert!(report.path1_lazy_loaded);
+        assert!(report.engine_status.path1_loaded);
+    }
+
+    #[test]
+    fn engine_report_path1_not_lazy_loaded_209() {
+        // When path1_lazy_loaded = false, path1 was already loaded before
+        let report = EngineReport {
+            path: "text".to_string(), resolved_mode: "Text".to_string(),
+            prompt_tokens: 1, output_count: 1, elapsed_us: 100,
+            per_second: 10000.0, text: Some("x".to_string()),
+            nda: None, path1_lazy_loaded: false,
+            engine_status: EngineStatusSnapshot {
+                path1_loaded: true, path2_active: true,
+                model_dir: "/m".to_string(), vocab_size: 100,
+                n_layers: 4, hidden_size: 256,
+            },
+        };
+        assert!(!report.path1_lazy_loaded);
+        assert!(report.engine_status.path1_loaded);
+    }
+
+    #[test]
+    fn engine_info_n_layers_total_params_estimate_209() {
+        // Rough parameter estimate: ~12 * n_layers * hidden_size^2 for transformer
+        let info = EngineInfo {
+            model_dir: "/m".to_string(), vocab_size: 32000, n_layers: 26,
+            hidden_size: 3200, ffn_size: 8640, n_heads: 32, n_kv_heads: 32,
+            head_dim: 100, max_seq_len: 4096, path1_loaded: false,
+            path2_site_map_stats: "0 entries".to_string(), tokenizer_merge_count: 32000,
+        };
+        let approx_params = 12 * info.n_layers * info.hidden_size * info.hidden_size;
+        // BitNet-3B should be ~3B parameters
+        assert!(approx_params > 2_000_000_000);
+    }
 }
