@@ -986,4 +986,565 @@ mod tests {
         // Should contain a line:col prefix
         assert!(err.contains(':'), "error should contain line:col, got: {}", err);
     }
+
+    // ─── Helper function tests ─────────────────────────────────────────────
+
+    #[test]
+    fn hash_name_deterministic() {
+        let h1 = hash_name("foo");
+        let h2 = hash_name("foo");
+        assert_eq!(h1, h2);
+        let h3 = hash_name("bar");
+        assert_ne!(h1, h3);
+    }
+
+    #[test]
+    fn hash_name_nonzero() {
+        // Extremely unlikely to be zero for any input
+        assert_ne!(hash_name("test"), 0);
+        assert_ne!(hash_name(""), 0);
+    }
+
+    #[test]
+    fn build_matrix_node_dimensions() {
+        let node = build_matrix_node(128, 896);
+        match node {
+            NdaNode::Matrix { rows, cols, scale, .. } => {
+                assert_eq!(rows, 128);
+                assert_eq!(cols, 896);
+                assert_eq!(scale, 0);
+            }
+            _ => panic!("Expected Matrix node"),
+        }
+    }
+
+    #[test]
+    fn build_matrix_node_clamping() {
+        // 0 should be clamped to 1
+        let node = build_matrix_node(0, 0);
+        match node {
+            NdaNode::Matrix { rows, cols, .. } => {
+                assert_eq!(rows, 1);
+                assert_eq!(cols, 1);
+            }
+            _ => panic!("Expected Matrix node"),
+        }
+    }
+
+    #[test]
+    fn build_matrix_node_sign_extra_pattern() {
+        let node = build_matrix_node(2, 8);
+        match node {
+            NdaNode::Matrix { sign, extra, .. } => {
+                // sign alternates 0xAA, 0x55; extra alternates 0x55, 0xAA
+                assert_eq!(sign[0], 0xAA);
+                assert_eq!(sign[1], 0x55);
+                assert_eq!(extra[0], 0x55);
+                assert_eq!(extra[1], 0xAA);
+            }
+            _ => panic!("Expected Matrix node"),
+        }
+    }
+
+    #[test]
+    fn build_norm_node_size() {
+        let node = build_norm_node(128);
+        match node {
+            NdaNode::Norm { size, weight, bias } => {
+                assert_eq!(size, 128);
+                assert!(!weight.is_empty());
+                assert!(!bias.is_empty());
+            }
+            _ => panic!("Expected Norm node"),
+        }
+    }
+
+    #[test]
+    fn build_norm_node_clamping() {
+        let node = build_norm_node(0);
+        match node {
+            NdaNode::Norm { size, .. } => assert_eq!(size, 1),
+            _ => panic!("Expected Norm node"),
+        }
+    }
+
+    // ─── Parse construct tests ─────────────────────────────────────────────
+
+    fn parse_ok(src: &str) -> NdaNode {
+        let mut lexer = NdaLexer::new(src);
+        let tokens = lexer.tokenize().unwrap();
+        let mut parser = NdaParser::new(tokens);
+        parser.parse_program().unwrap()
+    }
+
+    fn parse_err(src: &str) -> String {
+        let mut lexer = NdaLexer::new(src);
+        let tokens = lexer.tokenize().unwrap();
+        let mut parser = NdaParser::new(tokens);
+        parser.parse_program().unwrap_err()
+    }
+
+    #[test]
+    fn parse_if_else() {
+        let src = r#"
+            fn main() {
+                let x = 1
+                if x {
+                    print(x)
+                } else {
+                    print(0)
+                }
+            }
+        "#;
+        let program = parse_ok(src);
+        // Should contain an If node somewhere
+        fn has_if(node: &NdaNode) -> bool {
+            match node {
+                NdaNode::If { .. } => true,
+                NdaNode::Scope { children } => children.iter().any(has_if),
+                _ => false,
+            }
+        }
+        assert!(has_if(&program), "Expected If node in AST");
+    }
+
+    #[test]
+    fn parse_while_loop() {
+        let src = r#"
+            fn main() {
+                let x = 10
+                while x {
+                    x = add(x, -1)
+                }
+            }
+        "#;
+        let program = parse_ok(src);
+        fn has_while(node: &NdaNode) -> bool {
+            match node {
+                NdaNode::While { .. } => true,
+                NdaNode::Scope { children } => children.iter().any(has_while),
+                _ => false,
+            }
+        }
+        assert!(has_while(&program));
+    }
+
+    #[test]
+    fn parse_static_loop() {
+        let src = r#"
+            fn main() {
+                loop 5 {
+                    print(1)
+                }
+            }
+        "#;
+        let program = parse_ok(src);
+        fn has_loop(node: &NdaNode) -> bool {
+            match node {
+                NdaNode::Loop { count, .. } => *count == 5,
+                NdaNode::Scope { children } => children.iter().any(has_loop),
+                _ => false,
+            }
+        }
+        assert!(has_loop(&program));
+    }
+
+    #[test]
+    fn parse_comparison_operators() {
+        let src = r#"
+            fn main() {
+                let a = 1
+                let b = 2
+                if a < b {
+                    print(a)
+                }
+                if a == b {
+                    print(b)
+                }
+                if a != b {
+                    print(0)
+                }
+            }
+        "#;
+        let program = parse_ok(src);
+        fn count_compares(node: &NdaNode) -> usize {
+            let mut count = 0;
+            match node {
+                NdaNode::Compare { lhs, rhs, .. } => {
+                    count += 1;
+                    count += count_compares(lhs);
+                    count += count_compares(rhs);
+                }
+                NdaNode::Scope { children } => {
+                    for c in children { count += count_compares(c); }
+                }
+                NdaNode::If { cond, then_body, else_body } => {
+                    count += count_compares(cond);
+                    for c in then_body { count += count_compares(c); }
+                    if let Some(eb) = else_body {
+                        for c in eb { count += count_compares(c); }
+                    }
+                }
+                NdaNode::Let { init, .. } => count += count_compares(init),
+                _ => {}
+            }
+            count
+        }
+        assert_eq!(count_compares(&program), 3);
+    }
+
+    #[test]
+    fn parse_unary_negation() {
+        let src = r#"
+            fn main() {
+                let x = -1
+                print(x)
+            }
+        "#;
+        let program = parse_ok(src);
+        fn has_negate(node: &NdaNode) -> bool {
+            match node {
+                NdaNode::VecOp { op, .. } => matches!(op, VecOpKind::Negate),
+                NdaNode::Scope { children } => children.iter().any(has_negate),
+                NdaNode::Let { init, .. } => has_negate(init),
+                NdaNode::Print { source } => has_negate(source),
+                _ => false,
+            }
+        }
+        assert!(has_negate(&program));
+    }
+
+    #[test]
+    fn parse_silu_builtin() {
+        let src = "fn main() { let x = silu(42) }";
+        let program = parse_ok(src);
+        fn has_silu(node: &NdaNode) -> bool {
+            match node {
+                NdaNode::VecOp { op, .. } => matches!(op, VecOpKind::SiLU),
+                NdaNode::Scope { children } => children.iter().any(has_silu),
+                NdaNode::Let { init, .. } => has_silu(init),
+                _ => false,
+            }
+        }
+        assert!(has_silu(&program));
+    }
+
+    #[test]
+    fn parse_abs_builtin() {
+        let src = "fn main() { let x = abs(42) }";
+        let program = parse_ok(src);
+        fn has_abs(node: &NdaNode) -> bool {
+            match node {
+                NdaNode::VecOp { op, .. } => matches!(op, VecOpKind::Abs),
+                NdaNode::Scope { children } => children.iter().any(has_abs),
+                NdaNode::Let { init, .. } => has_abs(init),
+                _ => false,
+            }
+        }
+        assert!(has_abs(&program));
+    }
+
+    #[test]
+    fn parse_reduce_sum_builtin() {
+        let src = "fn main() { let x = reduce_sum(42) }";
+        let program = parse_ok(src);
+        fn has_reduce_sum(node: &NdaNode) -> bool {
+            match node {
+                NdaNode::VecOp { op, .. } => matches!(op, VecOpKind::ReduceSum),
+                NdaNode::Scope { children } => children.iter().any(has_reduce_sum),
+                NdaNode::Let { init, .. } => has_reduce_sum(init),
+                _ => false,
+            }
+        }
+        assert!(has_reduce_sum(&program));
+    }
+
+    #[test]
+    fn parse_matrix_literal() {
+        let src = "fn main() { let m = matrix[128, 896] }";
+        let program = parse_ok(src);
+        fn has_matrix(node: &NdaNode) -> bool {
+            match node {
+                NdaNode::Matrix { rows, cols, .. } => *rows == 128 && *cols == 896,
+                NdaNode::Scope { children } => children.iter().any(has_matrix),
+                NdaNode::Let { init, .. } => has_matrix(init),
+                _ => false,
+            }
+        }
+        assert!(has_matrix(&program));
+    }
+
+    #[test]
+    fn parse_norm_literal() {
+        let src = "fn main() { let n = norm[256] }";
+        let program = parse_ok(src);
+        fn has_norm(node: &NdaNode) -> bool {
+            match node {
+                NdaNode::Norm { size, .. } => *size == 256,
+                NdaNode::Scope { children } => children.iter().any(has_norm),
+                NdaNode::Let { init, .. } => has_norm(init),
+                _ => false,
+            }
+        }
+        assert!(has_norm(&program));
+    }
+
+    #[test]
+    fn parse_break_statement() {
+        let src = r#"
+            fn main() {
+                loop 10 {
+                    break
+                }
+            }
+        "#;
+        let program = parse_ok(src);
+        fn has_break(node: &NdaNode) -> bool {
+            match node {
+                NdaNode::Break => true,
+                NdaNode::Scope { children } => children.iter().any(has_break),
+                NdaNode::Loop { body, .. } => body.iter().any(has_break),
+                _ => false,
+            }
+        }
+        assert!(has_break(&program));
+    }
+
+    #[test]
+    fn parse_return_statement() {
+        let src = "fn main() { return 42 }";
+        let program = parse_ok(src);
+        fn has_return(node: &NdaNode) -> bool {
+            match node {
+                NdaNode::Return { value } => matches!(**value, NdaNode::Int { value: 42 }),
+                NdaNode::Scope { children } => children.iter().any(has_return),
+                _ => false,
+            }
+        }
+        assert!(has_return(&program));
+    }
+
+    #[test]
+    fn parse_print_statement() {
+        let src = "fn main() { print(42) }";
+        let program = parse_ok(src);
+        fn has_print(node: &NdaNode) -> bool {
+            match node {
+                NdaNode::Print { .. } => true,
+                NdaNode::Scope { children } => children.iter().any(has_print),
+                _ => false,
+            }
+        }
+        assert!(has_print(&program));
+    }
+
+    #[test]
+    fn parse_empty_function() {
+        let src = "fn empty() {}";
+        let program = parse_ok(src);
+        match program {
+            NdaNode::Scope { children } => {
+                assert_eq!(children.len(), 1);
+            }
+            _ => panic!("Expected Scope"),
+        }
+    }
+
+    #[test]
+    fn parse_function_with_params() {
+        let src = "fn myfunc(a: int, b: int) -> int { return a }";
+        let report = compile_with_report(src).unwrap();
+        assert_eq!(report.function_count, 1);
+        assert_eq!(report.function_names, vec!["myfunc"]);
+    }
+
+    #[test]
+    fn parse_function_with_return_type() {
+        let src = "fn main() -> vec { return 42 }";
+        let program = parse_ok(src);
+        assert!(matches!(program, NdaNode::Scope { .. }));
+    }
+
+    // ─── Error case tests ──────────────────────────────────────────────────
+
+    #[test]
+    fn error_missing_fn_keyword() {
+        let err = parse_err("main() { }");
+        assert!(err.contains("fn"), "Expected 'fn' in error, got: {}", err);
+    }
+
+    #[test]
+    fn error_missing_closing_brace() {
+        let src = "fn main() { print(1)";
+        let mut lexer = NdaLexer::new(src);
+        let tokens = lexer.tokenize().unwrap();
+        let mut parser = NdaParser::new(tokens);
+        let result = parser.parse_program();
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn error_missing_identifier() {
+        let src = "fn () { }";
+        let result = parse_err(src);
+        assert!(result.contains("identifier") || result.contains("Expected"));
+    }
+
+    #[test]
+    fn error_unexpected_token_in_expr() {
+        let src = "fn main() { let x = } }";
+        let mut lexer = NdaLexer::new(src);
+        let tokens = lexer.tokenize().unwrap();
+        let mut parser = NdaParser::new(tokens);
+        let result = parser.parse_program();
+        assert!(result.is_err());
+    }
+
+    // ─── Call resolution tests ─────────────────────────────────────────────
+
+    #[test]
+    fn resolve_calls_replaces_targets() {
+        let call_node = NdaNode::Call { target: 42 };
+        let mut fn_map = HashMap::new();
+        fn_map.insert("helper".to_string(), 99u64);
+        let mut call_names = HashMap::new();
+        call_names.insert(42u64, "helper".to_string());
+
+        let resolved = resolve_calls(&call_node, &fn_map, &call_names);
+        match resolved {
+            NdaNode::Call { target } => assert_eq!(target, 99),
+            _ => panic!("Expected Call node"),
+        }
+    }
+
+    #[test]
+    fn resolve_calls_unresolved_stays() {
+        let call_node = NdaNode::Call { target: 42 };
+        let fn_map = HashMap::new();
+        let mut call_names = HashMap::new();
+        call_names.insert(42u64, "unknown".to_string());
+
+        let resolved = resolve_calls(&call_node, &fn_map, &call_names);
+        match resolved {
+            NdaNode::Call { target } => assert_eq!(target, 42), // unchanged
+            _ => panic!("Expected Call node"),
+        }
+    }
+
+    #[test]
+    fn multi_function_call_resolution() {
+        let src = r#"
+            fn helper() -> int {
+                return 42
+            }
+            fn main() {
+                let x = helper()
+                print(x)
+            }
+        "#;
+        let report = compile_with_report(src).unwrap();
+        assert_eq!(report.function_count, 2);
+        assert!(report.call_edges >= 1);
+        // The call from main -> helper should be resolved
+        assert!(report.call_edges_resolved >= 1);
+    }
+
+    // ─── Compile with report tests ─────────────────────────────────────────
+
+    #[test]
+    fn compile_with_report_empty_source() {
+        let report = compile_with_report("").unwrap();
+        assert_eq!(report.function_count, 0);
+        assert!(report.function_names.is_empty());
+    }
+
+    #[test]
+    fn compile_with_report_error() {
+        let result = compile_with_report("not_a_function");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn parse_report_to_json_structure() {
+        let src = r#"
+            fn a() { return 1 }
+            fn b() { return a() }
+        "#;
+        let report = compile_with_report(src).unwrap();
+        let json = report.to_json();
+        assert_eq!(json["function_count"], 2);
+        assert!(json["function_names"].as_array().unwrap().len() == 2);
+        assert!(json["program_hash"].as_str().unwrap().len() == 16);
+    }
+
+    #[test]
+    fn parse_add_expression() {
+        let src = "fn main() { let x = add(1, 2) }";
+        let program = parse_ok(src);
+        fn has_add(node: &NdaNode) -> bool {
+            match node {
+                NdaNode::Add { .. } => true,
+                NdaNode::Scope { children } => children.iter().any(has_add),
+                NdaNode::Let { init, .. } => has_add(init),
+                _ => false,
+            }
+        }
+        assert!(has_add(&program));
+    }
+
+    #[test]
+    fn parse_store_assignment() {
+        let src = r#"
+            fn main() {
+                let x = 1
+                x = 2
+            }
+        "#;
+        let program = parse_ok(src);
+        fn has_store(node: &NdaNode) -> bool {
+            match node {
+                NdaNode::Store { .. } => true,
+                NdaNode::Scope { children } => children.iter().any(has_store),
+                _ => false,
+            }
+        }
+        assert!(has_store(&program));
+    }
+
+    #[test]
+    fn parse_nested_if_else() {
+        let src = r#"
+            fn main() {
+                let x = 1
+                if x {
+                    if x {
+                        print(1)
+                    } else {
+                        print(2)
+                    }
+                }
+            }
+        "#;
+        let program = parse_ok(src);
+        fn count_ifs(node: &NdaNode) -> usize {
+            let mut count = 0;
+            match node {
+                NdaNode::If { cond, then_body, else_body } => {
+                    count += 1;
+                    count += count_ifs(cond);
+                    for c in then_body { count += count_ifs(c); }
+                    if let Some(eb) = else_body {
+                        for c in eb { count += count_ifs(c); }
+                    }
+                }
+                NdaNode::Scope { children } => {
+                    for c in children { count += count_ifs(c); }
+                }
+                NdaNode::Let { init, .. } => count += count_ifs(init),
+                _ => {}
+            }
+            count
+        }
+        assert_eq!(count_ifs(&program), 2);
+    }
 }
