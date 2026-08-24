@@ -1263,4 +1263,581 @@ mod inline_tests {
         let json = serde_json::to_string(&r).unwrap();
         assert!(json.contains("\"has_more\":false"));
     }
+
+    // ── Block 137: Wiki generate comprehensive tests ─────────────────────
+
+    #[test]
+    fn slugify_special_chars_dropped() {
+        // @ and ! are not separator chars, they are simply dropped
+        assert_eq!(slugify("hello@world!"), "helloworld");
+        // Only /\., : and space become dashes
+        assert_eq!(slugify("a/b"), "a-b");
+    }
+
+    #[test]
+    fn slugify_consecutive_separators_single_dash() {
+        assert_eq!(slugify("a//b"), "a-b");
+        assert_eq!(slugify("a..b"), "a-b");
+        assert_eq!(slugify("a  b"), "a-b");
+    }
+
+    #[test]
+    fn slugify_leading_trailing_dashes_trimmed() {
+        assert_eq!(slugify("/leading"), "leading");
+        assert_eq!(slugify("trailing/"), "trailing");
+        assert_eq!(slugify("/both/"), "both");
+    }
+
+    #[test]
+    fn slugify_all_special_becomes_page() {
+        assert_eq!(slugify("!!!"), "page");
+        assert_eq!(slugify("@@@"), "page");
+    }
+
+    #[test]
+    fn slugify_preserves_underscores_and_hyphens() {
+        assert_eq!(slugify("my_fn-name"), "my_fn-name");
+    }
+
+    #[test]
+    fn slugify_backslash_path() {
+        assert!(looks_like_path("src\\main.rs"));
+        assert_eq!(slugify("src\\main.rs"), "src-main-rs");
+    }
+
+    #[test]
+    fn wiki_page_kind_labels() {
+        assert_eq!(WikiPageKind::Overview.label(), "Overview");
+        assert_eq!(WikiPageKind::File.label(), "File");
+        assert_eq!(WikiPageKind::Symbol.label(), "Symbol");
+    }
+
+    #[test]
+    fn wiki_page_kind_eq() {
+        assert_eq!(WikiPageKind::Overview, WikiPageKind::Overview);
+        assert_ne!(WikiPageKind::File, WikiPageKind::Symbol);
+    }
+
+    #[test]
+    fn wiki_page_kind_clone_copy() {
+        let kind = WikiPageKind::File;
+        let cloned = kind;
+        assert_eq!(cloned, WikiPageKind::File);
+    }
+
+    #[test]
+    fn wiki_model_is_empty() {
+        let model = make_test_model();
+        assert!(!model.is_empty());
+
+        let empty = WikiModel {
+            generated_at: "0".to_string(),
+            stats_summary: String::new(),
+            overview: make_test_page(WikiPageKind::Overview, "Overview", "index"),
+            file_pages: vec![],
+            symbol_pages: vec![],
+        };
+        assert!(empty.is_empty());
+    }
+
+    #[test]
+    fn wiki_model_counts() {
+        let model = make_test_model();
+        assert_eq!(model.file_count(), 1);
+        assert_eq!(model.symbol_count(), 3);
+        assert_eq!(model.total_pages(), 5); // 1 overview + 1 file + 3 symbols
+    }
+
+    #[test]
+    fn wiki_model_all_pages_order() {
+        let model = make_test_model();
+        let pages: Vec<&WikiPage> = model.all_pages().collect();
+        assert_eq!(pages.len(), 5);
+        // Overview first
+        assert_eq!(pages[0].kind, WikiPageKind::Overview);
+        // Then files
+        assert_eq!(pages[1].kind, WikiPageKind::File);
+        // Then symbols
+        assert!(pages[2..].iter().all(|p| p.kind == WikiPageKind::Symbol));
+    }
+
+    #[test]
+    fn wiki_model_find_by_title() {
+        let model = make_test_model();
+        assert!(model.find_by_title("main_fn").is_some());
+        assert!(model.find_by_title("nonexistent").is_none());
+        assert_eq!(model.find_by_title("main_fn").unwrap().kind, WikiPageKind::Symbol);
+    }
+
+    #[test]
+    fn wiki_model_find_by_slug() {
+        let model = make_test_model();
+        assert!(model.find_by_slug("main_fn").is_some());
+        assert!(model.find_by_slug("src-main-rs").is_some());
+        assert!(model.find_by_slug("nonexistent").is_none());
+    }
+
+    #[test]
+    fn wiki_search_empty_query() {
+        let model = make_test_model();
+        let results = model.search("");
+        assert!(results.is_empty());
+    }
+
+    #[test]
+    fn wiki_search_exact_title_match() {
+        let model = make_test_model();
+        let results = model.search("main_fn");
+        assert!(!results.is_empty());
+        // Exact title match should score highest
+        let best = &results[0];
+        assert!(best.score >= 30); // 10 (title contains) + 20 (exact match)
+    }
+
+    #[test]
+    fn wiki_search_summary_match() {
+        let model = make_test_model();
+        // "Summary" appears in all page summaries ("Summary for ...")
+        let results = model.search("Summary");
+        assert!(!results.is_empty());
+    }
+
+    #[test]
+    fn wiki_search_detail_match() {
+        let mut model = make_test_model();
+        // Add detail to a page
+        model.symbol_pages[0].detail = Some("Detailed info about main_fn".to_string());
+        let results = model.search("Detailed");
+        assert!(!results.is_empty());
+    }
+
+    #[test]
+    fn wiki_search_relationship_target_match() {
+        let model = make_test_model();
+        // "main_fn" appears as a relationship target in file1
+        let results = model.search("main_fn");
+        // src/main.rs has "main_fn" in its relationships
+        assert!(results.iter().any(|r| r.page.title == "src/main.rs"));
+    }
+
+    #[test]
+    fn wiki_search_called_by_match() {
+        let model = make_test_model();
+        // "src/main.rs" appears in called_by for main_fn and helper_fn
+        let results = model.search("src/main.rs");
+        assert!(results.iter().any(|r| r.page.title == "main_fn"));
+    }
+
+    #[test]
+    fn wiki_search_multi_term() {
+        let model = make_test_model();
+        let results = model.search("main helper");
+        // Should find pages matching either term
+        assert!(!results.is_empty());
+    }
+
+    #[test]
+    fn wiki_search_results_sorted_by_score() {
+        let model = make_test_model();
+        let results = model.search("fn");
+        for window in results.windows(2) {
+            assert!(window[0].score >= window[1].score);
+        }
+    }
+
+    #[test]
+    fn wiki_validate_empty_model() {
+        let empty = WikiModel {
+            generated_at: "0".to_string(),
+            stats_summary: String::new(),
+            overview: make_test_page(WikiPageKind::Overview, "Overview", "index"),
+            file_pages: vec![],
+            symbol_pages: vec![],
+        };
+        let warnings = empty.validate();
+        assert!(warnings.iter().any(|w| w.contains("no file or symbol pages")));
+    }
+
+    #[test]
+    fn wiki_validate_duplicate_slugs() {
+        let mut model = make_test_model();
+        // Add a page with duplicate slug
+        let dup = make_test_page(WikiPageKind::Symbol, "duplicate", "main_fn");
+        model.symbol_pages.push(dup);
+        let warnings = model.validate();
+        assert!(warnings.iter().any(|w| w.contains("Duplicate slug")));
+    }
+
+    #[test]
+    fn wiki_validate_empty_title() {
+        let mut model = make_test_model();
+        let empty_title = WikiPage {
+            kind: WikiPageKind::Symbol,
+            title: String::new(),
+            slug: "empty".to_string(),
+            summary: "test".to_string(),
+            relationships: vec![],
+            called_by: vec![],
+            detail: None,
+        };
+        model.symbol_pages.push(empty_title);
+        let warnings = model.validate();
+        assert!(warnings.iter().any(|w| w.contains("empty title")));
+    }
+
+    #[test]
+    fn wiki_validate_clean_model() {
+        let model = make_test_model();
+        let warnings = model.validate();
+        assert!(warnings.is_empty(), "unexpected warnings: {:?}", warnings);
+    }
+
+    #[test]
+    fn wiki_symbols_defined_by() {
+        let model = make_test_model();
+        let syms = model.symbols_defined_by("src/main.rs");
+        // main_fn has called_by = ["src/main.rs"], helper_fn has ["src/main.rs", "src/lib.rs"]
+        assert!(syms.len() >= 1);
+    }
+
+    #[test]
+    fn wiki_symbols_defined_by_no_match() {
+        let model = make_test_model();
+        let syms = model.symbols_defined_by("nonexistent.rs");
+        assert!(syms.is_empty());
+    }
+
+    #[test]
+    fn wiki_files_referencing() {
+        let model = make_test_model();
+        let files = model.files_referencing("main_fn");
+        assert_eq!(files.len(), 1);
+        assert_eq!(files[0].title, "src/main.rs");
+    }
+
+    #[test]
+    fn wiki_files_referencing_no_match() {
+        let model = make_test_model();
+        let files = model.files_referencing("nonexistent_fn");
+        assert!(files.is_empty());
+    }
+
+    #[test]
+    fn wiki_stats_computation() {
+        let model = make_test_model();
+        let stats = model.stats();
+        assert_eq!(stats.total_pages, 5);
+        assert_eq!(stats.file_pages, 1);
+        assert_eq!(stats.symbol_pages, 3);
+        assert_eq!(stats.total_relationships, 1); // file1 -> Defines -> main_fn
+        assert_eq!(stats.total_called_by, 3); // sym1: 1 + sym2: 2
+        assert_eq!(stats.pages_with_detail, 0);
+        assert_eq!(stats.generated_at, "1234567890");
+    }
+
+    #[test]
+    fn wiki_stats_with_detail() {
+        let mut model = make_test_model();
+        model.symbol_pages[0].detail = Some("detail".to_string());
+        let stats = model.stats();
+        assert_eq!(stats.pages_with_detail, 1);
+    }
+
+    #[test]
+    fn wiki_batch_search_deduplication() {
+        let model = make_test_model();
+        // Both queries match "main_fn" — should appear only once
+        let results = model.batch_search(&["main_fn", "main"]);
+        let main_fn_count = results.iter().filter(|r| r.page.title == "main_fn").count();
+        assert_eq!(main_fn_count, 1, "main_fn should appear only once after dedup");
+    }
+
+    #[test]
+    fn wiki_search_by_kind_overview() {
+        let model = make_test_model();
+        let results = model.search_by_kind("Overview", WikiPageKind::Overview);
+        assert!(!results.is_empty());
+        for r in &results {
+            assert_eq!(r.page.kind, WikiPageKind::Overview);
+        }
+    }
+
+    #[test]
+    fn wiki_search_paginated_total_matches() {
+        let model = make_test_model();
+        let result = model.search_paginated("fn", 1, 0);
+        assert!(result.total_matches > 1);
+        assert_eq!(result.results.len(), 1);
+        assert!(result.has_more);
+    }
+
+    #[test]
+    fn wiki_autocomplete_contains_match() {
+        let model = make_test_model();
+        // "fn" is contained in "main_fn", "helper_fn", "unused_fn"
+        let suggestions = model.autocomplete("fn", 10);
+        let contains_matches: Vec<_> = suggestions.iter().filter(|s| s.match_type == "contains").collect();
+        // "fn" doesn't start with "fn" for any title, but titles contain "fn"
+        assert!(!contains_matches.is_empty());
+    }
+
+    #[test]
+    fn wiki_autocomplete_sort_order() {
+        let model = make_test_model();
+        let suggestions = model.autocomplete("fn", 10);
+        // Sort is alphabetical on match_type: "contains" < "prefix"
+        if suggestions.len() >= 2 {
+            for window in suggestions.windows(2) {
+                assert!(
+                    window[0].match_type <= window[1].match_type,
+                    "sort order violated: {:?} before {:?}",
+                    window[0].match_type,
+                    window[1].match_type
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn wiki_fuzzy_search_score_inversely_proportional() {
+        let model = make_test_model();
+        // Shorter title should score higher for same query
+        let results = model.fuzzy_search("main_fn");
+        // main_fn should match with high score (7 chars query / 7 chars title * 10 = 10)
+        let main_result = results.iter().find(|r| r.page.title == "main_fn");
+        assert!(main_result.is_some());
+        assert!(main_result.unwrap().score >= 1);
+    }
+
+    #[test]
+    fn wiki_search_report_empty_query() {
+        let model = make_test_model();
+        let report = model.search_report("");
+        assert_eq!(report.total_matches, 0);
+        assert_eq!(report.top_score, 0);
+    }
+
+    #[test]
+    fn wiki_search_report_kind_counts() {
+        let model = make_test_model();
+        let report = model.search_report("fn");
+        // Should have counts for different kinds
+        assert!(!report.results_by_kind.is_empty());
+    }
+
+    #[test]
+    fn wiki_most_connected_pages_limit() {
+        let model = make_test_model();
+        let connected = model.most_connected_pages(1);
+        assert_eq!(connected.len(), 1);
+    }
+
+    #[test]
+    fn wiki_most_connected_pages_zero_limit() {
+        let model = make_test_model();
+        let connected = model.most_connected_pages(0);
+        assert!(connected.is_empty());
+    }
+
+    #[test]
+    fn wiki_relationship_edges_empty() {
+        let empty = WikiModel {
+            generated_at: "0".to_string(),
+            stats_summary: String::new(),
+            overview: make_test_page(WikiPageKind::Overview, "Overview", "index"),
+            file_pages: vec![],
+            symbol_pages: vec![],
+        };
+        let edges = empty.relationship_edges();
+        assert!(edges.is_empty());
+    }
+
+    #[test]
+    fn wiki_relationship_edges_multiple() {
+        let mut model = make_test_model();
+        model.file_pages[0].relationships = vec![
+            ("Defines".to_string(), vec!["a".to_string(), "b".to_string()]),
+            ("Calls".to_string(), vec!["c".to_string()]),
+        ];
+        let edges = model.relationship_edges();
+        assert_eq!(edges.len(), 3);
+    }
+
+    #[test]
+    fn is_subsequence_exact_match() {
+        let sub: Vec<char> = "abc".chars().collect();
+        let full: Vec<char> = "abc".chars().collect();
+        assert!(is_subsequence(&sub, &full));
+    }
+
+    #[test]
+    fn is_subsequence_longer_sub() {
+        let sub: Vec<char> = "abcdef".chars().collect();
+        let full: Vec<char> = "abc".chars().collect();
+        assert!(!is_subsequence(&sub, &full));
+    }
+
+    #[test]
+    fn is_subsequence_both_empty() {
+        let sub: Vec<char> = vec![];
+        let full: Vec<char> = vec![];
+        assert!(is_subsequence(&sub, &full));
+    }
+
+    #[test]
+    fn wiki_page_clone() {
+        let page = make_test_page(WikiPageKind::Symbol, "test", "test");
+        let cloned = page.clone();
+        assert_eq!(cloned.title, page.title);
+        assert_eq!(cloned.slug, page.slug);
+        assert_eq!(cloned.kind, page.kind);
+    }
+
+    #[test]
+    fn wiki_page_debug() {
+        let page = make_test_page(WikiPageKind::Symbol, "test", "test");
+        let debug = format!("{:?}", page);
+        assert!(debug.contains("WikiPage"));
+        assert!(debug.contains("test"));
+    }
+
+    #[test]
+    fn wiki_model_clone() {
+        let model = make_test_model();
+        let cloned = model.clone();
+        assert_eq!(cloned.total_pages(), model.total_pages());
+        assert_eq!(cloned.file_count(), model.file_count());
+        assert_eq!(cloned.symbol_count(), model.symbol_count());
+    }
+
+    #[test]
+    fn wiki_search_result_clone() {
+        let result = WikiSearchResult {
+            page: make_test_page(WikiPageKind::Symbol, "test", "test"),
+            score: 42,
+        };
+        let cloned = result.clone();
+        assert_eq!(cloned.score, 42);
+        assert_eq!(cloned.page.title, "test");
+    }
+
+    #[test]
+    fn wiki_stats_clone_debug() {
+        let stats = WikiStats {
+            total_pages: 5,
+            file_pages: 1,
+            symbol_pages: 3,
+            total_relationships: 10,
+            total_called_by: 5,
+            pages_with_detail: 2,
+            generated_at: "123".to_string(),
+        };
+        let cloned = stats.clone();
+        assert_eq!(cloned.total_pages, 5);
+        let debug = format!("{:?}", stats);
+        assert!(debug.contains("WikiStats"));
+    }
+
+    #[test]
+    fn wiki_model_info_json_all_fields() {
+        let model = make_test_model();
+        let info = model.info();
+        let json = serde_json::to_string(&info).unwrap();
+        assert!(json.contains("\"total_pages\""));
+        assert!(json.contains("\"file_pages\""));
+        assert!(json.contains("\"symbol_pages\""));
+        assert!(json.contains("\"total_relationships\""));
+        assert!(json.contains("\"total_called_by\""));
+        assert!(json.contains("\"pages_with_detail\""));
+        assert!(json.contains("\"orphan_pages\""));
+        assert!(json.contains("\"top_symbols\""));
+        assert!(json.contains("\"validation_issues\""));
+        assert!(json.contains("\"generated_at\""));
+    }
+
+    #[test]
+    fn wiki_generation_report_json_all_fields() {
+        let report = WikiGenerationReport {
+            elapsed_us: 1000,
+            triples_processed: 50,
+            file_pages_generated: 5,
+            symbol_pages_generated: 20,
+            total_pages: 26,
+            validation_issues: vec!["issue1".to_string()],
+        };
+        let json = serde_json::to_string(&report).unwrap();
+        assert!(json.contains("\"elapsed_us\""));
+        assert!(json.contains("\"triples_processed\""));
+        assert!(json.contains("\"file_pages_generated\""));
+        assert!(json.contains("\"symbol_pages_generated\""));
+        assert!(json.contains("\"total_pages\""));
+        assert!(json.contains("\"validation_issues\""));
+    }
+
+    #[test]
+    fn search_report_json_all_fields() {
+        let report = SearchReport {
+            query: "test".to_string(),
+            total_matches: 3,
+            elapsed_us: 50,
+            top_score: 30,
+            average_score: 15.0,
+            results_by_kind: vec![("Symbol".to_string(), 2)],
+            top_results: vec!["a".to_string()],
+        };
+        let json = serde_json::to_string(&report).unwrap();
+        assert!(json.contains("\"query\""));
+        assert!(json.contains("\"total_matches\""));
+        assert!(json.contains("\"elapsed_us\""));
+        assert!(json.contains("\"top_score\""));
+        assert!(json.contains("\"average_score\""));
+        assert!(json.contains("\"results_by_kind\""));
+        assert!(json.contains("\"top_results\""));
+    }
+
+    #[test]
+    fn paginated_search_json_all_fields() {
+        let r = PaginatedSearchResult {
+            results: vec![],
+            total_matches: 10,
+            offset: 5,
+            limit: 5,
+            has_more: true,
+        };
+        let json = serde_json::to_string(&r).unwrap();
+        assert!(json.contains("\"total_matches\""));
+        assert!(json.contains("\"offset\""));
+        assert!(json.contains("\"limit\""));
+        assert!(json.contains("\"has_more\""));
+    }
+
+    #[test]
+    fn wiki_validate_page_empty_relationship_label() {
+        let mut page = make_test_page(WikiPageKind::File, "test.rs", "test-rs");
+        page.relationships = vec![("".to_string(), vec!["target".to_string()])];
+        let issues = WikiModel::validate_page(&page);
+        assert!(issues.iter().any(|i| i.contains("empty label")));
+    }
+
+    #[test]
+    fn wiki_top_symbols_limit_larger_than_available() {
+        let model = make_test_model();
+        let top = model.top_symbols(100);
+        assert_eq!(top.len(), model.symbol_pages.len());
+    }
+
+    #[test]
+    fn wiki_search_no_results() {
+        let model = make_test_model();
+        let results = model.search("zzzznonexistent");
+        assert!(results.is_empty());
+    }
+
+    #[test]
+    fn wiki_search_case_insensitive() {
+        let model = make_test_model();
+        let lower = model.search("main_fn");
+        let upper = model.search("MAIN_FN");
+        assert_eq!(lower.len(), upper.len());
+    }
 }
