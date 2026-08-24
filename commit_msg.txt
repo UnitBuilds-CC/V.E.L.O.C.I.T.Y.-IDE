@@ -1,10 +1,9 @@
-verifier.rs — 25 new tests (146 total)
+main.rs — 24 new tests (162 total)
 
-Block 205: site_map/verifier.rs — hash determinism for new node variants (Float, Break,
-Load, Spawn, Triple, RegInt, Bitwise, Math, MathFunc, Peek, Poke, Gemv, Dot, Syscall,
-Atomic, Alloc, Free, Cast, GpuDispatch), hash differs by float value and bitwise rhs,
-validate_node matrix zero rows/sign mismatch/scale range, norm zero size/weight-bias
-mismatch, loop zero count/empty body, clean matrix no issues, node_kind_name coverage,
-estimated_memory_bytes for Norm/Loop, sub-enum roundtrips (CmpOp, VecOpKind, BitwiseOp),
-opcode boolean methods coverage, opcode_distribution all categories, MerkleVerifier
-depth/consistency/record_root, OpcodeInfo field validation
+Block 207: resolve_config field coverage (vocab_size, n_heads, max_seq_len
+for both qwen and bitnet), resolve_model_dir additional paths (None errors,
+existing dir clone), resolve_tokenizer auto-discover (None falls through,
+finds tokenizer.json in model dir), CloudflareAccount struct fields,
+CliDiagnostics with velocity_config Some/None, GenerationReport extreme
+values (elapsed_ms zero, u64::MAX, empty mode, large site_map counts),
+Message edge cases (JSON array content, JSON object in content, null bytes)

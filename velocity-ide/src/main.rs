@@ -3370,4 +3370,272 @@ mod tests {
         assert_eq!(args.api_key.as_deref(), Some("sk-test"));
         assert!(args.base_url.as_deref().unwrap().contains("proxy"));
     }
+
+    // ─── Block 207: resolve_config field coverage ──────────────────────────
+
+    #[test]
+    fn resolve_config_qwen_vocab_size_207() {
+        let cfg = resolve_config("qwen05").unwrap();
+        assert_eq!(cfg.vocab_size, 151936);
+    }
+
+    #[test]
+    fn resolve_config_bitnet_vocab_size_207() {
+        let cfg = resolve_config("bitnet3b").unwrap();
+        assert_eq!(cfg.vocab_size, 32000);
+    }
+
+    #[test]
+    fn resolve_config_qwen_n_heads_207() {
+        let cfg = resolve_config("qwen05").unwrap();
+        assert!(cfg.n_heads > 0);
+    }
+
+    #[test]
+    fn resolve_config_bitnet_n_heads_207() {
+        let cfg = resolve_config("bitnet3b").unwrap();
+        assert!(cfg.n_heads > 0);
+    }
+
+    #[test]
+    fn resolve_config_qwen_max_seq_len_207() {
+        let cfg = resolve_config("qwen05").unwrap();
+        assert!(cfg.max_seq_len > 0);
+    }
+
+    // ─── Block 207: resolve_model_dir additional ───────────────────────────
+
+    #[test]
+    fn resolve_model_dir_none_errors_without_auto_discover_207() {
+        // When model is None and no candidate dirs exist, should error
+        let result = resolve_model_dir(&None);
+        // In test env, auto-discover candidates won't exist
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("model") || err.contains("auto-discover") || err.contains("--model"));
+    }
+
+    #[test]
+    fn resolve_model_dir_existing_dir_returns_clone_207() {
+        let tmp = std::env::temp_dir().join("velocity_test_model_dir_207");
+        std::fs::create_dir_all(&tmp).ok();
+        let result = resolve_model_dir(&Some(tmp.clone()));
+        assert!(result.is_ok());
+        let resolved = result.unwrap();
+        assert_eq!(resolved, tmp);
+        std::fs::remove_dir(&tmp).ok();
+    }
+
+    // ─── Block 207: resolve_tokenizer additional ───────────────────────────
+
+    #[test]
+    fn resolve_tokenizer_none_falls_through_to_candidates_207() {
+        // When tokenizer is None and no candidates exist, should error
+        let tmp_dir = std::env::temp_dir().join("velocity_test_no_tokenizer_207");
+        std::fs::create_dir_all(&tmp_dir).ok();
+        let result = resolve_tokenizer(&None, &tmp_dir);
+        assert!(result.is_err());
+        std::fs::remove_dir(&tmp_dir).ok();
+    }
+
+    #[test]
+    fn resolve_tokenizer_finds_in_model_dir_207() {
+        let tmp_dir = std::env::temp_dir().join("velocity_test_tok_discover_207");
+        std::fs::create_dir_all(&tmp_dir).ok();
+        let tok_path = tmp_dir.join("tokenizer.json");
+        std::fs::write(&tok_path, "{}").ok();
+        let result = resolve_tokenizer(&None, &tmp_dir);
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), tok_path);
+        std::fs::remove_file(&tok_path).ok();
+        std::fs::remove_dir(&tmp_dir).ok();
+    }
+
+    // ─── Block 207: CloudflareAccount struct ───────────────────────────────
+
+    #[test]
+    fn cloudflare_account_struct_fields_207() {
+        let acct = CloudflareAccount {
+            id: "acct_id_123".into(),
+            token: "token_abc".into(),
+        };
+        assert_eq!(acct.id, "acct_id_123");
+        assert_eq!(acct.token, "token_abc");
+    }
+
+    // (CloudflareAccount does not derive Clone — tested via load_accounts instead)
+
+    // ─── Block 207: CliDiagnostics with velocity_config ────────────────────
+
+    #[test]
+    fn cli_diagnostics_with_config_none_207() {
+        let diag = CliDiagnostics {
+            environment: CliEnvironment {
+                velocity_configured: false,
+                velocity_url_set: false,
+                velocity_key_set: false,
+                config_file_exists: false,
+                provider_count: 0,
+                credential_boundary_active: false,
+                validation_issues: vec!["not configured".into()],
+            },
+            velocity_config: None,
+            available_subcommands: vec!["generate", "chat"],
+        };
+        let json = serde_json::to_string(&diag).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert!(parsed["velocity_config"].is_null());
+    }
+
+    #[test]
+    fn cli_diagnostics_with_config_some_207() {
+        let diag = CliDiagnostics {
+            environment: CliEnvironment {
+                velocity_configured: true,
+                velocity_url_set: true,
+                velocity_key_set: true,
+                config_file_exists: true,
+                provider_count: 2,
+                credential_boundary_active: false,
+                validation_issues: vec![],
+            },
+            velocity_config: Some(velocity_client::ConnectionInfo {
+                base_url: "https://router.example.com".into(),
+                is_https: true,
+                api_key_prefix: "vr_".into(),
+                api_key_length: 24,
+                validation_issues: vec![],
+            }),
+            available_subcommands: vec!["generate"],
+        };
+        let json = serde_json::to_string(&diag).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert!(parsed["velocity_config"].is_object());
+        assert_eq!(parsed["velocity_config"]["base_url"], "https://router.example.com");
+        assert_eq!(parsed["velocity_config"]["is_https"], true);
+    }
+
+    // ─── Block 207: GenerationReport extreme values ────────────────────────
+
+    #[test]
+    fn generation_report_elapsed_ms_zero_207() {
+        let report = GenerationReport {
+            mode: "text".into(),
+            tokens_generated: 10,
+            elapsed_ms: 0,
+            tokens_per_second: 0.0,
+            site_map_hits: 0,
+            site_map_misses: 0,
+            merkle_valid: None,
+            force_terminated: None,
+            sandbox_executed: None,
+            sandbox_panicked: None,
+            scope_passed: None,
+            stored_in_site_map: None,
+        };
+        let json = serde_json::to_string(&report).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed["elapsed_ms"], 0);
+    }
+
+    #[test]
+    fn generation_report_elapsed_ms_u64_max_207() {
+        let report = GenerationReport {
+            mode: "text".into(),
+            tokens_generated: 1,
+            elapsed_ms: u64::MAX,
+            tokens_per_second: 0.0,
+            site_map_hits: 0,
+            site_map_misses: 0,
+            merkle_valid: None,
+            force_terminated: None,
+            sandbox_executed: None,
+            sandbox_panicked: None,
+            scope_passed: None,
+            stored_in_site_map: None,
+        };
+        let json = serde_json::to_string(&report).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+        let expected = serde_json::json!(u64::MAX);
+        assert_eq!(parsed["elapsed_ms"], expected);
+    }
+
+    #[test]
+    fn generation_report_mode_empty_string_207() {
+        let report = GenerationReport {
+            mode: "".into(),
+            tokens_generated: 0,
+            elapsed_ms: 0,
+            tokens_per_second: 0.0,
+            site_map_hits: 0,
+            site_map_misses: 0,
+            merkle_valid: None,
+            force_terminated: None,
+            sandbox_executed: None,
+            sandbox_panicked: None,
+            scope_passed: None,
+            stored_in_site_map: None,
+        };
+        let json = serde_json::to_string(&report).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed["mode"], "");
+        report.display();
+    }
+
+    #[test]
+    fn generation_report_site_map_large_counts_207() {
+        let report = GenerationReport {
+            mode: "nda".into(),
+            tokens_generated: 1000,
+            elapsed_ms: 5000,
+            tokens_per_second: 200.0,
+            site_map_hits: 999_999,
+            site_map_misses: 1,
+            merkle_valid: None,
+            force_terminated: None,
+            sandbox_executed: None,
+            sandbox_panicked: None,
+            scope_passed: None,
+            stored_in_site_map: None,
+        };
+        let total = report.site_map_hits + report.site_map_misses;
+        let hit_rate = report.site_map_hits as f64 / total as f64 * 100.0;
+        assert!(hit_rate > 99.99, "hit rate should be >99.99%, got {}", hit_rate);
+        report.display();
+    }
+
+    // ─── Block 207: Message additional edge cases ──────────────────────────
+
+    #[test]
+    fn message_json_array_content_207() {
+        let msg = Message {
+            role: "user".into(),
+            content: "[1,2,3]".into(),
+        };
+        let json = serde_json::to_string(&msg).unwrap();
+        let parsed: Message = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed.content, "[1,2,3]");
+    }
+
+    #[test]
+    fn message_json_object_in_content_207() {
+        let msg = Message {
+            role: "assistant".into(),
+            content: r#"{"key": "value", "num": 42}"#.into(),
+        };
+        let json = serde_json::to_string(&msg).unwrap();
+        let parsed: Message = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed.content, msg.content);
+    }
+
+    #[test]
+    fn message_null_bytes_in_content_207() {
+        let msg = Message {
+            role: "user".into(),
+            content: "before\0after".into(),
+        };
+        let json = serde_json::to_string(&msg).unwrap();
+        let parsed: Message = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed.content, "before\0after");
+    }
 }
