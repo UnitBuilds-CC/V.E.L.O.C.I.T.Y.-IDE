@@ -731,6 +731,113 @@ pub fn fmt_percent(n: f64) -> String {
     format!("{:.1}%", n)
 }
 
+// ─── Diagnostics & Validation ────────────────────────────────────────────────
+
+/// Diagnostic info about the VelocityConfig connection.
+#[derive(Debug, Clone, Serialize)]
+pub struct ConnectionInfo {
+    pub base_url: String,
+    pub api_key_prefix: String,
+    pub api_key_length: usize,
+    pub is_https: bool,
+    pub validation_issues: Vec<String>,
+}
+
+impl VelocityConfig {
+    /// Return diagnostic info about the connection configuration.
+    pub fn connection_info(&self) -> ConnectionInfo {
+        let prefix = if self.api_key.len() >= 8 {
+            format!("{}...", &self.api_key[..8])
+        } else {
+            "***".to_string()
+        };
+        let is_https = self.base_url.starts_with("https://");
+        let mut issues = Vec::new();
+        if self.base_url.is_empty() {
+            issues.push("base_url is empty".to_string());
+        }
+        if !self.base_url.starts_with("http://") && !self.base_url.starts_with("https://") {
+            issues.push("base_url must start with http:// or https://".to_string());
+        }
+        if self.api_key.is_empty() {
+            issues.push("api_key is empty".to_string());
+        }
+        if self.api_key.len() < 10 {
+            issues.push("api_key seems too short (< 10 chars)".to_string());
+        }
+        ConnectionInfo {
+            base_url: self.base_url.clone(),
+            api_key_prefix: prefix,
+            api_key_length: self.api_key.len(),
+            is_https,
+            validation_issues: issues,
+        }
+    }
+
+    /// Validate the configuration. Returns warnings (empty = clean).
+    pub fn validate(&self) -> Vec<String> {
+        self.connection_info().validation_issues
+    }
+}
+
+/// Diagnostic snapshot of retry configuration.
+#[derive(Debug, Clone, Serialize)]
+pub struct RetryConfigInfo {
+    pub max_retries: u32,
+    pub initial_backoff_ms: u64,
+    pub max_backoff_ms: u64,
+    pub jitter_enabled: bool,
+    pub max_possible_delay_ms: u64,
+    pub validation_issues: Vec<String>,
+}
+
+impl RetryConfig {
+    /// Return a diagnostic snapshot of the retry configuration.
+    pub fn info(&self) -> RetryConfigInfo {
+        // Max delay: initial * 2^max_retries, capped at max_backoff.
+        let max_delay = (self.initial_backoff_ms * (1u64 << self.max_retries.min(20)))
+            .min(self.max_backoff_ms);
+        let mut issues = Vec::new();
+        if self.max_retries == 0 {
+            issues.push("max_retries is 0: no retries will be attempted".to_string());
+        }
+        if self.initial_backoff_ms == 0 {
+            issues.push("initial_backoff_ms is 0: immediate retries".to_string());
+        }
+        if self.max_backoff_ms < self.initial_backoff_ms {
+            issues.push(format!(
+                "max_backoff_ms ({}) < initial_backoff_ms ({})",
+                self.max_backoff_ms, self.initial_backoff_ms
+            ));
+        }
+        RetryConfigInfo {
+            max_retries: self.max_retries,
+            initial_backoff_ms: self.initial_backoff_ms,
+            max_backoff_ms: self.max_backoff_ms,
+            jitter_enabled: self.jitter,
+            max_possible_delay_ms: max_delay,
+            validation_issues: issues,
+        }
+    }
+}
+
+/// Diagnostic snapshot of the client's connection state.
+#[derive(Debug, Clone, Serialize)]
+pub struct ClientDiagnostics {
+    pub connection: ConnectionInfo,
+    pub retry: RetryConfigInfo,
+}
+
+impl VelocityClient {
+    /// Return a diagnostic snapshot of the client's configuration.
+    pub fn diagnostics(&self) -> ClientDiagnostics {
+        ClientDiagnostics {
+            connection: self.config.connection_info(),
+            retry: self.retry_config.info(),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -922,5 +1029,165 @@ ignored = true
         let resp: LatencyResponse = serde_json::from_str(json).unwrap();
         assert_eq!(resp.overall.p50_ms, 200);
         assert_eq!(resp.by_model.len(), 1);
+    }
+
+    // ─── Diagnostics & Validation Tests ──────────────────────────────────────
+
+    #[test]
+    fn connection_info_valid_config() {
+        let cfg = VelocityConfig {
+            base_url: "https://router.velocity.io".into(),
+            api_key: "vr_standard_abcdef1234567890".into(),
+        };
+        let info = cfg.connection_info();
+        assert!(info.is_https);
+        assert_eq!(info.api_key_prefix, "vr_stand...");
+        assert_eq!(info.api_key_length, 28);
+        assert!(info.validation_issues.is_empty());
+    }
+
+    #[test]
+    fn connection_info_empty_url() {
+        let cfg = VelocityConfig {
+            base_url: "".into(),
+            api_key: "vr_standard_abcdef1234567890".into(),
+        };
+        let info = cfg.connection_info();
+        assert!(info.validation_issues.iter().any(|i| i.contains("base_url is empty")));
+        assert!(!info.is_https);
+    }
+
+    #[test]
+    fn connection_info_short_key() {
+        let cfg = VelocityConfig {
+            base_url: "http://localhost:8787".into(),
+            api_key: "abc".into(),
+        };
+        let info = cfg.connection_info();
+        assert!(info.validation_issues.iter().any(|i| i.contains("too short")));
+        assert_eq!(info.api_key_prefix, "***");
+    }
+
+    #[test]
+    fn connection_info_empty_key() {
+        let cfg = VelocityConfig {
+            base_url: "http://localhost:8787".into(),
+            api_key: "".into(),
+        };
+        let info = cfg.connection_info();
+        assert!(info.validation_issues.iter().any(|i| i.contains("api_key is empty")));
+        assert!(info.validation_issues.iter().any(|i| i.contains("too short")));
+    }
+
+    #[test]
+    fn connection_info_https_detection() {
+        let http = VelocityConfig {
+            base_url: "http://localhost:8787".into(),
+            api_key: "vr_standard_1234567890".into(),
+        };
+        assert!(!http.connection_info().is_https);
+
+        let https = VelocityConfig {
+            base_url: "https://router.velocity.io".into(),
+            api_key: "vr_standard_1234567890".into(),
+        };
+        assert!(https.connection_info().is_https);
+    }
+
+    #[test]
+    fn connection_info_bad_scheme() {
+        let cfg = VelocityConfig {
+            base_url: "ftp://example.com".into(),
+            api_key: "vr_standard_1234567890".into(),
+        };
+        let info = cfg.connection_info();
+        assert!(info.validation_issues.iter().any(|i| i.contains("http://")));
+    }
+
+    #[test]
+    fn validate_delegates_to_connection_info() {
+        let cfg = VelocityConfig {
+            base_url: "".into(),
+            api_key: "".into(),
+        };
+        let warnings = cfg.validate();
+        assert!(warnings.len() >= 2);
+    }
+
+    #[test]
+    fn retry_config_info_default() {
+        let info = RetryConfig::default().info();
+        assert_eq!(info.max_retries, 3);
+        assert_eq!(info.initial_backoff_ms, 200);
+        assert_eq!(info.max_backoff_ms, 5000);
+        assert!(info.jitter_enabled);
+        assert!(info.validation_issues.is_empty());
+        // Max delay: 200 * 2^3 = 1600, capped at 5000 → 1600.
+        assert_eq!(info.max_possible_delay_ms, 1600);
+    }
+
+    #[test]
+    fn retry_config_info_zero_retries() {
+        let cfg = RetryConfig {
+            max_retries: 0,
+            ..RetryConfig::default()
+        };
+        let info = cfg.info();
+        assert!(info.validation_issues.iter().any(|i| i.contains("max_retries is 0")));
+    }
+
+    #[test]
+    fn retry_config_info_zero_backoff() {
+        let cfg = RetryConfig {
+            initial_backoff_ms: 0,
+            ..RetryConfig::default()
+        };
+        let info = cfg.info();
+        assert!(info.validation_issues.iter().any(|i| i.contains("initial_backoff_ms is 0")));
+    }
+
+    #[test]
+    fn retry_config_info_bad_backoff_ordering() {
+        let cfg = RetryConfig {
+            initial_backoff_ms: 1000,
+            max_backoff_ms: 500,
+            ..RetryConfig::default()
+        };
+        let info = cfg.info();
+        assert!(info.validation_issues.iter().any(|i| i.contains("max_backoff_ms")));
+    }
+
+    #[test]
+    fn client_diagnostics_serializes() {
+        let client = VelocityClient::new(VelocityConfig {
+            base_url: "https://router.velocity.io".into(),
+            api_key: "vr_standard_abcdef1234567890".into(),
+        });
+        let diag = client.diagnostics();
+        let json = serde_json::to_string(&diag).unwrap();
+        assert!(json.contains("connection"));
+        assert!(json.contains("retry"));
+        assert!(json.contains("router.velocity.io"));
+        // API key prefix should be masked in the output.
+        assert!(json.contains("vr_stand..."));
+        assert!(!json.contains("vr_standard_abcdef1234567890"));
+    }
+
+    #[test]
+    fn client_diagnostics_with_custom_retry() {
+        let client = VelocityClient::new(VelocityConfig {
+            base_url: "http://localhost:8787".into(),
+            api_key: "vr_standard_1234567890".into(),
+        })
+        .with_retry_config(RetryConfig {
+            max_retries: 5,
+            initial_backoff_ms: 100,
+            max_backoff_ms: 10000,
+            jitter: false,
+        });
+        let diag = client.diagnostics();
+        assert_eq!(diag.retry.max_retries, 5);
+        assert!(!diag.retry.jitter_enabled);
+        assert!(diag.retry.validation_issues.is_empty());
     }
 }
