@@ -732,4 +732,404 @@ mod tests {
         assert!(json.contains("RTX 3080"));
         assert!(json.contains("compute_queue_supported"));
     }
+
+    // ── Multiple simultaneous validation issues ──────────────────────────
+
+    #[test]
+    fn validate_all_three_issues_simultaneously() {
+        let mut info = sample_device_info();
+        info.device_name = String::new();
+        info.compute_queue_supported = false;
+        info.max_compute_work_group_invocations = 0;
+        let issues = validate_vulkan_device_info(&info);
+        assert_eq!(issues.len(), 3);
+        assert!(issues[0].contains("name"));
+        assert!(issues[1].contains("compute"));
+        assert!(issues[2].contains("invocations"));
+    }
+
+    #[test]
+    fn validate_name_and_no_compute() {
+        let mut info = sample_device_info();
+        info.device_name = String::new();
+        info.compute_queue_supported = false;
+        let issues = validate_vulkan_device_info(&info);
+        assert_eq!(issues.len(), 2);
+        assert!(issues.iter().any(|i| i.contains("name")));
+        assert!(issues.iter().any(|i| i.contains("compute")));
+    }
+
+    #[test]
+    fn validate_name_and_zero_invocations() {
+        let mut info = sample_device_info();
+        info.device_name = String::new();
+        info.max_compute_work_group_invocations = 0;
+        let issues = validate_vulkan_device_info(&info);
+        assert_eq!(issues.len(), 2);
+        assert!(issues.iter().any(|i| i.contains("name")));
+        assert!(issues.iter().any(|i| i.contains("invocations")));
+    }
+
+    #[test]
+    fn validate_no_compute_and_zero_invocations() {
+        let mut info = sample_device_info();
+        info.compute_queue_supported = false;
+        info.max_compute_work_group_invocations = 0;
+        let issues = validate_vulkan_device_info(&info);
+        assert_eq!(issues.len(), 2);
+        assert!(issues.iter().any(|i| i.contains("compute")));
+        assert!(issues.iter().any(|i| i.contains("invocations")));
+    }
+
+    #[test]
+    fn validate_returns_correct_issue_count() {
+        let info = sample_device_info();
+        assert_eq!(validate_vulkan_device_info(&info).len(), 0);
+
+        let mut one_issue = sample_device_info();
+        one_issue.device_name = String::new();
+        assert_eq!(validate_vulkan_device_info(&one_issue).len(), 1);
+    }
+
+    // ── Boundary values ──────────────────────────────────────────────────
+
+    #[test]
+    fn validate_work_group_count_all_zero() {
+        let mut info = sample_device_info();
+        info.max_compute_work_group_count = [0, 0, 0];
+        // Validation only checks name, compute_queue, and invocations — work_group_count
+        // is diagnostic-only, so this should still pass validation.
+        assert!(validate_vulkan_device_info(&info).is_empty());
+    }
+
+    #[test]
+    fn validate_work_group_count_max_values() {
+        let mut info = sample_device_info();
+        info.max_compute_work_group_count = [u32::MAX, u32::MAX, u32::MAX];
+        assert!(validate_vulkan_device_info(&info).is_empty());
+    }
+
+    #[test]
+    fn validate_work_group_count_partial_zero() {
+        let mut info = sample_device_info();
+        info.max_compute_work_group_count = [65536, 0, 65536];
+        assert!(validate_vulkan_device_info(&info).is_empty());
+    }
+
+    #[test]
+    fn validate_work_group_size_all_zero() {
+        let mut info = sample_device_info();
+        info.max_compute_work_group_size = [0, 0, 0];
+        assert!(validate_vulkan_device_info(&info).is_empty());
+    }
+
+    #[test]
+    fn validate_work_group_size_max_values() {
+        let mut info = sample_device_info();
+        info.max_compute_work_group_size = [u32::MAX, u32::MAX, u32::MAX];
+        assert!(validate_vulkan_device_info(&info).is_empty());
+    }
+
+    #[test]
+    fn validate_large_invocations() {
+        let mut info = sample_device_info();
+        info.max_compute_work_group_invocations = u32::MAX;
+        assert!(validate_vulkan_device_info(&info).is_empty());
+    }
+
+    #[test]
+    fn validate_invocations_one() {
+        let mut info = sample_device_info();
+        info.max_compute_work_group_invocations = 1;
+        assert!(validate_vulkan_device_info(&info).is_empty());
+    }
+
+    // ── Driver version edge cases ────────────────────────────────────────
+
+    #[test]
+    fn validate_driver_version_zero() {
+        let mut info = sample_device_info();
+        info.driver_version = 0;
+        assert!(validate_vulkan_device_info(&info).is_empty());
+    }
+
+    #[test]
+    fn validate_driver_version_max() {
+        let mut info = sample_device_info();
+        info.driver_version = u32::MAX;
+        assert!(validate_vulkan_device_info(&info).is_empty());
+    }
+
+    // ── Queue family index ───────────────────────────────────────────────
+
+    #[test]
+    fn validate_queue_family_index_nonzero() {
+        let mut info = sample_device_info();
+        info.queue_family_index = 3;
+        assert!(validate_vulkan_device_info(&info).is_empty());
+    }
+
+    #[test]
+    fn validate_queue_family_index_max() {
+        let mut info = sample_device_info();
+        info.queue_family_index = u32::MAX;
+        assert!(validate_vulkan_device_info(&info).is_empty());
+    }
+
+    // ── Device type variations ───────────────────────────────────────────
+
+    #[test]
+    fn validate_integrated_gpu() {
+        let mut info = sample_device_info();
+        info.device_type = "Integrated GPU".to_string();
+        info.device_name = "Intel UHD Graphics 630".to_string();
+        assert!(validate_vulkan_device_info(&info).is_empty());
+    }
+
+    #[test]
+    fn validate_cpu_device() {
+        let mut info = sample_device_info();
+        info.device_type = "CPU".to_string();
+        info.device_name = "SwiftShader CPU".to_string();
+        assert!(validate_vulkan_device_info(&info).is_empty());
+    }
+
+    #[test]
+    fn validate_other_device_type() {
+        let mut info = sample_device_info();
+        info.device_type = "Other".to_string();
+        assert!(validate_vulkan_device_info(&info).is_empty());
+    }
+
+    // ── API version format ───────────────────────────────────────────────
+
+    #[test]
+    fn validate_api_version_1_0() {
+        let mut info = sample_device_info();
+        info.api_version = "1.0.0".to_string();
+        assert!(validate_vulkan_device_info(&info).is_empty());
+    }
+
+    #[test]
+    fn validate_api_version_1_3() {
+        let mut info = sample_device_info();
+        info.api_version = "1.3.280".to_string();
+        assert!(validate_vulkan_device_info(&info).is_empty());
+    }
+
+    // ── Struct derives ───────────────────────────────────────────────────
+
+    #[test]
+    fn device_info_clone() {
+        let info = sample_device_info();
+        let cloned = info.clone();
+        assert_eq!(cloned.device_name, info.device_name);
+        assert_eq!(cloned.device_type, info.device_type);
+        assert_eq!(cloned.api_version, info.api_version);
+        assert_eq!(cloned.driver_version, info.driver_version);
+        assert_eq!(cloned.queue_family_index, info.queue_family_index);
+        assert_eq!(cloned.compute_queue_supported, info.compute_queue_supported);
+        assert_eq!(cloned.max_compute_work_group_count, info.max_compute_work_group_count);
+        assert_eq!(cloned.max_compute_work_group_size, info.max_compute_work_group_size);
+        assert_eq!(cloned.max_compute_work_group_invocations, info.max_compute_work_group_invocations);
+        assert_eq!(cloned.validation_issues, info.validation_issues);
+    }
+
+    #[test]
+    fn device_info_clone_is_independent() {
+        let info = sample_device_info();
+        let mut cloned = info.clone();
+        cloned.device_name = "Changed".to_string();
+        assert_ne!(info.device_name, cloned.device_name);
+        assert_eq!(info.device_name, "NVIDIA GeForce RTX 3080");
+    }
+
+    #[test]
+    fn device_info_debug_format() {
+        let info = sample_device_info();
+        let debug = format!("{:?}", info);
+        assert!(debug.contains("VulkanDeviceInfo"));
+        assert!(debug.contains("RTX 3080"));
+        assert!(debug.contains("Discrete GPU"));
+        assert!(debug.contains("1.2.0"));
+    }
+
+    #[test]
+    fn device_info_debug_with_issues() {
+        let mut info = sample_device_info();
+        info.validation_issues = vec!["issue one".to_string(), "issue two".to_string()];
+        let debug = format!("{:?}", info);
+        assert!(debug.contains("issue one"));
+        assert!(debug.contains("issue two"));
+    }
+
+    // ── Serialization variants ───────────────────────────────────────────
+
+    #[test]
+    fn device_info_serialization_with_issues() {
+        let mut info = sample_device_info();
+        info.validation_issues = vec![
+            "device name is empty".to_string(),
+            "no compute queue family available".to_string(),
+        ];
+        let json = serde_json::to_string(&info).unwrap();
+        assert!(json.contains("validation_issues"));
+        assert!(json.contains("device name is empty"));
+        assert!(json.contains("no compute queue family available"));
+    }
+
+    #[test]
+    fn device_info_json_parseable_as_value() {
+        let info = sample_device_info();
+        let json = serde_json::to_string(&info).unwrap();
+        let value: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(value["device_name"], "NVIDIA GeForce RTX 3080");
+        assert_eq!(value["device_type"], "Discrete GPU");
+        assert_eq!(value["api_version"], "1.2.0");
+        assert_eq!(value["driver_version"], 47000);
+        assert_eq!(value["queue_family_index"], 0);
+        assert_eq!(value["compute_queue_supported"], true);
+        assert_eq!(value["max_compute_work_group_invocations"], 1024);
+        assert!(value["validation_issues"].is_array());
+    }
+
+    #[test]
+    fn device_info_json_contains_all_fields() {
+        let info = sample_device_info();
+        let json = serde_json::to_string(&info).unwrap();
+        assert!(json.contains("device_name"));
+        assert!(json.contains("device_type"));
+        assert!(json.contains("api_version"));
+        assert!(json.contains("driver_version"));
+        assert!(json.contains("queue_family_index"));
+        assert!(json.contains("compute_queue_supported"));
+        assert!(json.contains("max_compute_work_group_count"));
+        assert!(json.contains("max_compute_work_group_size"));
+        assert!(json.contains("max_compute_work_group_invocations"));
+        assert!(json.contains("validation_issues"));
+    }
+
+    #[test]
+    fn device_info_json_values_correct() {
+        let info = sample_device_info();
+        let json = serde_json::to_string(&info).unwrap();
+        assert!(json.contains("47000")); // driver_version
+        assert!(json.contains("65536")); // work_group_count
+        assert!(json.contains("1024"));  // work_group_invocations
+        assert!(json.contains("true"));  // compute_queue_supported
+    }
+
+    #[test]
+    fn device_info_pretty_json() {
+        let info = sample_device_info();
+        let pretty = serde_json::to_string_pretty(&info).unwrap();
+        assert!(pretty.contains('\n'));
+        assert!(pretty.contains("  "));
+        assert!(pretty.contains("RTX 3080"));
+    }
+
+    // ── Validation issue text content ────────────────────────────────────
+
+    #[test]
+    fn validate_empty_name_issue_text() {
+        let mut info = sample_device_info();
+        info.device_name = String::new();
+        let issues = validate_vulkan_device_info(&info);
+        assert_eq!(issues[0], "device name is empty");
+    }
+
+    #[test]
+    fn validate_no_compute_issue_text() {
+        let mut info = sample_device_info();
+        info.compute_queue_supported = false;
+        let issues = validate_vulkan_device_info(&info);
+        assert_eq!(issues[0], "no compute queue family available");
+    }
+
+    #[test]
+    fn validate_zero_invocations_issue_text() {
+        let mut info = sample_device_info();
+        info.max_compute_work_group_invocations = 0;
+        let issues = validate_vulkan_device_info(&info);
+        assert_eq!(issues[0], "max compute work group invocations is 0");
+    }
+
+    #[test]
+    fn validate_issues_order_is_deterministic() {
+        let mut info = sample_device_info();
+        info.device_name = String::new();
+        info.compute_queue_supported = false;
+        info.max_compute_work_group_invocations = 0;
+        let issues1 = validate_vulkan_device_info(&info);
+        let issues2 = validate_vulkan_device_info(&info);
+        assert_eq!(issues1, issues2);
+        // name first, compute second, invocations third
+        assert!(issues1[0].contains("name"));
+        assert!(issues1[1].contains("compute"));
+        assert!(issues1[2].contains("invocations"));
+    }
+
+    // ── Pre-populated validation_issues ──────────────────────────────────
+
+    #[test]
+    fn validate_ignores_prepopulated_issues() {
+        // validate_vulkan_device_info computes its own issues; it does not
+        // read or append to info.validation_issues.
+        let mut info = sample_device_info();
+        info.validation_issues = vec!["pre-existing issue".to_string()];
+        let issues = validate_vulkan_device_info(&info);
+        assert!(issues.is_empty());
+        // The pre-populated issues remain in the struct but are not returned.
+        assert_eq!(info.validation_issues.len(), 1);
+    }
+
+    #[test]
+    fn validate_with_prepopulated_and_new_issues() {
+        let mut info = sample_device_info();
+        info.validation_issues = vec!["old".to_string()];
+        info.device_name = String::new();
+        let issues = validate_vulkan_device_info(&info);
+        assert_eq!(issues.len(), 1);
+        assert!(issues[0].contains("name"));
+    }
+
+    // ── Minimal / edge-case device info ──────────────────────────────────
+
+    #[test]
+    fn validate_minimal_valid_device() {
+        let info = VulkanDeviceInfo {
+            device_name: "X".to_string(),
+            device_type: String::new(),
+            api_version: String::new(),
+            driver_version: 0,
+            queue_family_index: 0,
+            compute_queue_supported: true,
+            max_compute_work_group_count: [0, 0, 0],
+            max_compute_work_group_size: [0, 0, 0],
+            max_compute_work_group_invocations: 1,
+            validation_issues: vec![],
+        };
+        assert!(validate_vulkan_device_info(&info).is_empty());
+    }
+
+    #[test]
+    fn validate_single_char_device_name() {
+        let mut info = sample_device_info();
+        info.device_name = "G".to_string();
+        assert!(validate_vulkan_device_info(&info).is_empty());
+    }
+
+    #[test]
+    fn validate_unicode_device_name() {
+        let mut info = sample_device_info();
+        info.device_name = "GPU — 日本語".to_string();
+        assert!(validate_vulkan_device_info(&info).is_empty());
+    }
+
+    #[test]
+    fn validate_very_long_device_name() {
+        let mut info = sample_device_info();
+        info.device_name = "A".repeat(4096);
+        assert!(validate_vulkan_device_info(&info).is_empty());
+    }
 }
