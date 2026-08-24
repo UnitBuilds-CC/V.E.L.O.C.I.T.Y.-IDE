@@ -259,7 +259,7 @@ impl AliBiSlopes {
 
 pub fn apply_alibi_bias_i32(scores: &mut [i32], q_pos: usize, shift: u8, scale_shift: u32) {
     for (k_pos, score) in scores.iter_mut().enumerate() {
-        let distance = (q_pos - k_pos) as i32;
+        let distance = q_pos as i32 - k_pos as i32;
         let bias_int = ((distance as i64) << scale_shift) >> shift;
         *score += bias_int as i32;
     }
@@ -1171,5 +1171,302 @@ mod tests {
         assert_eq!(embed.stride(), 1);
         assert_eq!(embed.sign.len(), 3);
         assert_eq!(embed.extra.len(), 3);
+    }
+
+    // ── JSON key count verification ─────────────────────────────────────
+
+    #[test]
+    fn ops_report_json_has_exactly_4_keys() {
+        let report = NdaOpsReport {
+            operation: "test".into(), count: 1, total_elapsed_us: 10, per_op_avg_us: 10.0,
+        };
+        let v: serde_json::Value = serde_json::from_str(&serde_json::to_string(&report).unwrap()).unwrap();
+        assert_eq!(v.as_object().unwrap().len(), 4);
+    }
+
+    #[test]
+    fn ops_summary_json_has_exactly_6_keys() {
+        let summary = summarize_ops(&[]);
+        let v: serde_json::Value = serde_json::from_str(&serde_json::to_string(&summary).unwrap()).unwrap();
+        assert_eq!(v.as_object().unwrap().len(), 6);
+    }
+
+    #[test]
+    fn embedding_info_json_has_exactly_5_keys() {
+        let embed = NdaEmbedding::from_f32(&[1.0; 8], 1, 8);
+        let info = embed.info();
+        let v: serde_json::Value = serde_json::from_str(&serde_json::to_string(&info).unwrap()).unwrap();
+        assert_eq!(v.as_object().unwrap().len(), 5);
+    }
+
+    #[test]
+    fn alibi_info_json_has_exactly_5_keys() {
+        let slopes = AliBiSlopes::new(4);
+        let info = slopes.info();
+        let v: serde_json::Value = serde_json::from_str(&serde_json::to_string(&info).unwrap()).unwrap();
+        assert_eq!(v.as_object().unwrap().len(), 5);
+    }
+
+    // ── JSON roundtrip via Value ────────────────────────────────────────
+
+    #[test]
+    fn ops_report_json_roundtrip_via_value() {
+        let report = NdaOpsReport {
+            operation: "gemv".into(), count: 42, total_elapsed_us: 1234, per_op_avg_us: 29.38,
+        };
+        let v: serde_json::Value = serde_json::from_str(&serde_json::to_string(&report).unwrap()).unwrap();
+        assert_eq!(v["operation"], "gemv");
+        assert_eq!(v["count"], 42);
+        assert_eq!(v["total_elapsed_us"], 1234);
+    }
+
+    #[test]
+    fn ops_summary_json_roundtrip_via_value() {
+        let summary = NdaOpsSummary {
+            total_operations: 3, total_ops_count: 100, total_elapsed_us: 5000,
+            overall_avg_us: 50.0,
+            slowest_operation: Some("norm".into()),
+            fastest_operation: Some("add".into()),
+        };
+        let v: serde_json::Value = serde_json::from_str(&serde_json::to_string(&summary).unwrap()).unwrap();
+        assert_eq!(v["total_operations"], 3);
+        assert_eq!(v["slowest_operation"], "norm");
+        assert_eq!(v["fastest_operation"], "add");
+    }
+
+    // ── Validation boundary tests ───────────────────────────────────────
+
+    #[test]
+    fn validate_rms_norm_eps_shift_14_ok() {
+        let x = NdaVec::from_i32_slice(&[1, 2, -1, -2], 0);
+        let w = NdaVec::from_i32_slice(&[1, 1, 1, 1], 0);
+        let issues = validate_rms_norm_params(&x, &w, 14);
+        assert!(issues.is_empty());
+    }
+
+    #[test]
+    fn validate_rms_norm_eps_shift_15_fails() {
+        let x = NdaVec::from_i32_slice(&[1, 2, -1, -2], 0);
+        let w = NdaVec::from_i32_slice(&[1, 1, 1, 1], 0);
+        let issues = validate_rms_norm_params(&x, &w, 15);
+        assert!(issues.iter().any(|i| i.contains("eps_shift")));
+    }
+
+    #[test]
+    fn validate_alibi_config_128_ok() {
+        let issues = validate_alibi_config(128);
+        assert!(issues.is_empty());
+    }
+
+    #[test]
+    fn validate_alibi_config_129_fails() {
+        let issues = validate_alibi_config(129);
+        assert!(issues.iter().any(|i| i.contains("exceeds")));
+    }
+
+    // ── Summarize ops formula verification ──────────────────────────────
+
+    #[test]
+    fn summarize_ops_overall_avg_formula() {
+        let reports = vec![
+            NdaOpsReport { operation: "a".into(), count: 10, total_elapsed_us: 100, per_op_avg_us: 10.0 },
+            NdaOpsReport { operation: "b".into(), count: 20, total_elapsed_us: 400, per_op_avg_us: 20.0 },
+        ];
+        let summary = summarize_ops(&reports);
+        // total_elapsed=500, total_count=30, avg=500/30
+        assert!((summary.overall_avg_us - 500.0 / 30.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn summarize_ops_total_ops_count_is_sum() {
+        let reports = vec![
+            NdaOpsReport { operation: "a".into(), count: 5, total_elapsed_us: 10, per_op_avg_us: 2.0 },
+            NdaOpsReport { operation: "b".into(), count: 15, total_elapsed_us: 30, per_op_avg_us: 2.0 },
+            NdaOpsReport { operation: "c".into(), count: 25, total_elapsed_us: 50, per_op_avg_us: 2.0 },
+        ];
+        let summary = summarize_ops(&reports);
+        assert_eq!(summary.total_ops_count, 45);
+        assert_eq!(summary.total_elapsed_us, 90);
+    }
+
+    // ── Debug format ────────────────────────────────────────────────────
+
+    #[test]
+    fn ops_report_debug_format() {
+        let report = NdaOpsReport {
+            operation: "test".into(), count: 5, total_elapsed_us: 100, per_op_avg_us: 20.0,
+        };
+        let debug = format!("{:?}", report);
+        assert!(debug.contains("NdaOpsReport"));
+        assert!(debug.contains("operation"));
+        assert!(debug.contains("per_op_avg_us"));
+    }
+
+    #[test]
+    fn ops_summary_debug_format() {
+        let summary = summarize_ops(&[NdaOpsReport {
+            operation: "x".into(), count: 1, total_elapsed_us: 10, per_op_avg_us: 10.0,
+        }]);
+        let debug = format!("{:?}", summary);
+        assert!(debug.contains("NdaOpsSummary"));
+        assert!(debug.contains("slowest_operation"));
+    }
+
+    // ── Clone tests ─────────────────────────────────────────────────────
+
+    #[test]
+    fn embedding_info_clone() {
+        let embed = NdaEmbedding::from_f32(&[1.0; 8], 2, 4);
+        let info = embed.info();
+        let cloned = info.clone();
+        assert_eq!(cloned.vocab_size, info.vocab_size);
+        assert_eq!(cloned.total_bytes, info.total_bytes);
+    }
+
+    #[test]
+    fn alibi_info_clone() {
+        let slopes = AliBiSlopes::new(4);
+        let info = slopes.info();
+        let cloned = info.clone();
+        assert_eq!(cloned.n_heads, info.n_heads);
+        assert_eq!(cloned.unique_shifts, info.unique_shifts);
+    }
+
+    #[test]
+    fn alibi_slopes_clone() {
+        let slopes = AliBiSlopes::new(8);
+        let cloned = slopes.clone();
+        assert_eq!(cloned.n_heads, slopes.n_heads);
+        assert_eq!(cloned.shifts, slopes.shifts);
+    }
+
+    #[test]
+    fn ops_summary_clone() {
+        let summary = summarize_ops(&[NdaOpsReport {
+            operation: "op".into(), count: 10, total_elapsed_us: 100, per_op_avg_us: 10.0,
+        }]);
+        let cloned = summary.clone();
+        assert_eq!(cloned.total_operations, summary.total_operations);
+        assert_eq!(cloned.slowest_operation, summary.slowest_operation);
+    }
+
+    // ── SiluLut tests ───────────────────────────────────────────────────
+
+    #[test]
+    fn silu_lut_default_trait() {
+        let silu = SiluLut::default();
+        let x = NdaVec::from_i32_slice(&[1, 2, -1, -2], 0);
+        let result = silu.apply(&x);
+        assert_eq!(result.len, x.len);
+    }
+
+    #[test]
+    fn silu_preserves_length() {
+        let silu = SiluLut::new();
+        for size in [1, 4, 8, 16, 32] {
+            let vals: Vec<i32> = (0..size).map(|i| if i % 2 == 0 { 1 } else { -1 }).collect();
+            let x = NdaVec::from_i32_slice(&vals, 0);
+            let result = silu.apply(&x);
+            assert_eq!(result.len, x.len);
+        }
+    }
+
+    // ── Batch operations with empty inputs ──────────────────────────────
+
+    #[test]
+    fn add_batch_empty_deltas() {
+        let mut x = NdaVec::from_i32_slice(&[1, 1, 1, 1], 0);
+        let report = nda_vec_add_batch(&mut x, &[]);
+        assert_eq!(report.count, 0);
+        assert_eq!(report.per_op_avg_us, 0.0);
+    }
+
+    #[test]
+    fn rms_norm_batch_empty() {
+        let w = NdaVec::from_i32_slice(&[1, 1, 1, 1], 0);
+        let (results, report) = rms_norm_batch(&[], &w, 2);
+        assert!(results.is_empty());
+        assert_eq!(report.count, 0);
+        assert_eq!(report.per_op_avg_us, 0.0);
+    }
+
+    #[test]
+    fn silu_batch_empty() {
+        let silu = SiluLut::new();
+        let (results, report) = silu_batch(&silu, &[]);
+        assert!(results.is_empty());
+        assert_eq!(report.count, 0);
+    }
+
+    #[test]
+    fn swiglu_batch_empty() {
+        let silu = SiluLut::new();
+        let pairs: Vec<(&NdaVec, &NdaVec)> = vec![];
+        let (results, report) = swiglu_batch(&pairs, &silu);
+        assert!(results.is_empty());
+        assert_eq!(report.count, 0);
+    }
+
+    // ── Embedding info serialization roundtrip ──────────────────────────
+
+    #[test]
+    fn embedding_info_json_roundtrip() {
+        let embed = NdaEmbedding::from_f32(&[1.0; 16], 4, 4);
+        let info = embed.info();
+        let json = serde_json::to_string(&info).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(v["vocab_size"], 4);
+        assert_eq!(v["hidden_size"], 4);
+        assert_eq!(v["bits_per_embedding"], 8);
+    }
+
+    // ── AliBi apply_alibi_bias_i32 ──────────────────────────────────────
+
+    #[test]
+    fn apply_alibi_bias_zero_distance() {
+        let mut scores = vec![100, 200, 300];
+        apply_alibi_bias_i32(&mut scores, 0, 8, 0);
+        // q_pos=0, k_pos=0: distance=0, bias=0>>8=0
+        // q_pos=0, k_pos=1: distance=-1, bias=-1>>8=0 (arithmetic shift)
+        // q_pos=0, k_pos=2: distance=-2, bias=-2>>8=0
+        assert_eq!(scores[0], 100); // no change for distance 0
+    }
+
+    #[test]
+    fn apply_alibi_bias_positive_distance() {
+        let mut scores = vec![0, 0];
+        apply_alibi_bias_i32(&mut scores, 2, 4, 0);
+        // q_pos=2, k_pos=0: distance=2, bias=2>>4=0
+        // q_pos=2, k_pos=1: distance=1, bias=1>>4=0
+        assert_eq!(scores[0], 0);
+        assert_eq!(scores[1], 0);
+    }
+
+    // ── validate_binary_op with various inputs ──────────────────────────
+
+    #[test]
+    fn validate_binary_op_same_vec() {
+        let a = NdaVec::from_i32_slice(&[1, -1, 2, -2], 0);
+        let w = validate_binary_op(&a, &a);
+        assert!(w.is_empty());
+    }
+
+    #[test]
+    fn validate_binary_op_different_lengths() {
+        let a = NdaVec::from_i32_slice(&[1, 2, 3], 0);
+        let b = NdaVec::from_i32_slice(&[1, 2, 3, 4], 0);
+        let w = validate_binary_op(&a, &b);
+        assert!(w.iter().any(|s| s.contains("length mismatch")));
+    }
+
+    // ── Equality via JSON ───────────────────────────────────────────────
+
+    #[test]
+    fn ops_report_eq_via_json() {
+        let r1 = NdaOpsReport { operation: "x".into(), count: 5, total_elapsed_us: 10, per_op_avg_us: 2.0 };
+        let r2 = NdaOpsReport { operation: "x".into(), count: 5, total_elapsed_us: 10, per_op_avg_us: 2.0 };
+        let j1: serde_json::Value = serde_json::from_str(&serde_json::to_string(&r1).unwrap()).unwrap();
+        let j2: serde_json::Value = serde_json::from_str(&serde_json::to_string(&r2).unwrap()).unwrap();
+        assert_eq!(j1, j2);
     }
 }
