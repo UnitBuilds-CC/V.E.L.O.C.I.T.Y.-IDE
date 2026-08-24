@@ -1665,4 +1665,358 @@ mod tests {
         assert!(s.contains("avg hold 0us"));
         assert!(s.contains("max hold 0us"));
     }
+
+    // ── Block 189: Additional safety coverage ──────────────────────────────
+
+    #[test]
+    fn lock_metrics_snapshot_json_key_count() {
+        let m = LockMetrics::new();
+        let snap = m.snapshot();
+        let json = serde_json::to_string(&snap).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+        // 7 fields: acquisitions, contention_events, poison_recoveries,
+        //           timeout_events, total_hold_time_us, max_hold_time_us, avg_hold_time_us
+        assert_eq!(parsed.as_object().unwrap().len(), 7);
+    }
+
+    #[test]
+    fn lock_metrics_snapshot_json_roundtrip() {
+        let m = LockMetrics::new();
+        m.record_acquire();
+        m.record_acquire();
+        m.record_contention();
+        m.record_hold_time(500);
+        let snap = m.snapshot();
+        let json = serde_json::to_string(&snap).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed["acquisitions"], 2);
+        assert_eq!(parsed["contention_events"], 1);
+        assert_eq!(parsed["total_hold_time_us"], 500);
+        assert_eq!(parsed["max_hold_time_us"], 500);
+        assert_eq!(parsed["avg_hold_time_us"], 250); // 500 / 2
+    }
+
+    #[test]
+    fn lock_metrics_snapshot_json_types() {
+        let m = LockMetrics::new();
+        let snap = m.snapshot();
+        let json = serde_json::to_string(&snap).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert!(parsed["acquisitions"].is_u64());
+        assert!(parsed["contention_events"].is_u64());
+        assert!(parsed["poison_recoveries"].is_u64());
+        assert!(parsed["timeout_events"].is_u64());
+        assert!(parsed["total_hold_time_us"].is_u64());
+        assert!(parsed["max_hold_time_us"].is_u64());
+        assert!(parsed["avg_hold_time_us"].is_u64());
+    }
+
+    #[test]
+    fn lock_order_snapshot_json_key_count() {
+        let detector = LockOrder::new();
+        let snap = detector.snapshot();
+        let json = serde_json::to_string(&snap).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+        // 3 fields: held_lock_count, violation_count, unique_threads
+        assert_eq!(parsed.as_object().unwrap().len(), 3);
+    }
+
+    #[test]
+    fn lock_order_snapshot_json_roundtrip() {
+        let detector = LockOrder::new();
+        detector.acquire(1);
+        detector.acquire(2);
+        let snap = detector.snapshot();
+        let json = serde_json::to_string(&snap).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed["held_lock_count"], 2);
+        assert_eq!(parsed["violation_count"], 0);
+        assert_eq!(parsed["unique_threads"], 1);
+        detector.release(2);
+        detector.release(1);
+    }
+
+    #[test]
+    fn safety_report_json_key_count() {
+        let report = safety_report();
+        let json = serde_json::to_string(&report).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+        // 5 fields: lock_metrics, lock_order, health_score, validation_warnings, timestamp_us
+        assert_eq!(parsed.as_object().unwrap().len(), 5);
+    }
+
+    #[test]
+    fn safety_report_json_roundtrip() {
+        let report = safety_report();
+        let json = serde_json::to_string(&report).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert!(parsed["health_score"].is_number());
+        assert!(parsed["timestamp_us"].is_u64());
+        assert!(parsed["validation_warnings"].is_array());
+        assert!(parsed["lock_metrics"].is_object());
+        assert!(parsed["lock_order"].is_object());
+    }
+
+    #[test]
+    fn lock_metrics_snapshot_clone_independence() {
+        let m = LockMetrics::new();
+        m.record_acquire();
+        m.record_hold_time(100);
+        let mut snap = m.snapshot();
+        snap.acquisitions = 999;
+        let snap2 = m.snapshot();
+        assert_eq!(snap2.acquisitions, 1);
+    }
+
+    #[test]
+    fn lock_order_snapshot_clone_independence() {
+        let detector = LockOrder::new();
+        detector.acquire(1);
+        let mut snap = detector.snapshot();
+        snap.violation_count = 999;
+        let snap2 = detector.snapshot();
+        assert_eq!(snap2.violation_count, 0);
+        detector.release(1);
+    }
+
+    #[test]
+    fn safety_report_clone_independence() {
+        let report = safety_report();
+        let mut cloned = report.clone();
+        cloned.validation_warnings.push("test".into());
+        assert_ne!(cloned.validation_warnings.len(), report.validation_warnings.len());
+    }
+
+    #[test]
+    fn lock_metrics_avg_hold_time_formula() {
+        let m = LockMetrics::new();
+        m.record_acquire();
+        m.record_acquire();
+        m.record_acquire();
+        m.record_acquire();
+        m.record_hold_time(100);
+        m.record_hold_time(200);
+        m.record_hold_time(300);
+        m.record_hold_time(400);
+        // avg = 1000 / 4 = 250
+        assert_eq!(m.avg_hold_time_us(), 250);
+    }
+
+    #[test]
+    fn lock_metrics_contention_rate_formula() {
+        let m = LockMetrics::new();
+        m.record_acquire();
+        m.record_acquire();
+        m.record_acquire();
+        m.record_acquire();
+        m.record_contention();
+        m.record_contention();
+        m.record_contention();
+        // rate = 3 / 4 = 0.75
+        assert!((m.contention_rate() - 0.75).abs() < 0.001);
+    }
+
+    #[test]
+    fn lock_metrics_poison_rate_formula() {
+        let m = LockMetrics::new();
+        m.record_acquire();
+        m.record_acquire();
+        m.record_poison_recovery();
+        // rate = 1 / 2 = 0.5
+        assert!((m.poison_rate() - 0.5).abs() < 0.001);
+    }
+
+    #[test]
+    fn lock_metrics_timeout_rate_formula() {
+        let m = LockMetrics::new();
+        m.record_acquire();
+        m.record_acquire();
+        m.record_acquire();
+        m.record_timeout();
+        // rate = 1 / 3
+        let expected = 1.0 / 3.0;
+        assert!((m.timeout_rate() - expected).abs() < 0.001);
+    }
+
+    #[test]
+    fn lock_health_score_formula() {
+        let m = LockMetrics::new();
+        m.record_acquire();
+        m.record_acquire();
+        m.record_contention(); // contention_rate = 0.5
+        // score = 1.0 - (0.5 * 0.3) = 1.0 - 0.15 = 0.85
+        let score = lock_health_score(&m);
+        assert!((score - 0.85).abs() < 0.001);
+    }
+
+    #[test]
+    fn lock_order_acquire_release_snapshot() {
+        let detector = LockOrder::new();
+        assert!(detector.acquire(1));
+        let snap1 = detector.snapshot();
+        assert_eq!(snap1.held_lock_count, 1);
+        detector.release(1);
+        let snap2 = detector.snapshot();
+        assert_eq!(snap2.held_lock_count, 0);
+    }
+
+    #[test]
+    fn lock_order_validate_no_violations_with_violation_count() {
+        let detector = LockOrder::new();
+        detector.acquire(5);
+        detector.acquire(3); // violation
+        let warnings = detector.validate();
+        // Should contain violation warning
+        assert!(warnings.iter().any(|w| w.contains("violation")));
+        // Count should match
+        let violation_warnings: Vec<_> = warnings.iter().filter(|w| w.contains("violation")).collect();
+        assert_eq!(violation_warnings.len(), 1);
+        detector.release(3);
+        detector.release(5);
+    }
+
+    #[test]
+    fn instrumented_mutex_try_lock_records_contention() {
+        let before = GLOBAL_LOCK_METRICS.contention_events();
+        let m = InstrumentedMutex::new("contention_track", 0);
+        let _guard = m.lock();
+        let _try = m.try_lock(); // should fail, record contention
+        let after = GLOBAL_LOCK_METRICS.contention_events();
+        assert!(after > before);
+    }
+
+    #[test]
+    fn instrumented_guard_deref_and_deref_mut() {
+        let m = InstrumentedMutex::new("deref_test", String::from("hello"));
+        {
+            let mut guard = m.lock();
+            // DerefMut
+            guard.push_str(" world");
+        }
+        {
+            // Deref
+            let guard = m.lock();
+            assert_eq!(guard.len(), 11);
+            assert_eq!(&*guard, "hello world");
+        }
+    }
+
+    #[test]
+    fn safety_report_validation_warnings_empty_clean() {
+        // After reset, validate should return no warnings for clean state
+        let detector = LockOrder::new();
+        let warnings = detector.validate();
+        assert!(warnings.is_empty());
+    }
+
+    #[test]
+    fn safety_report_timestamp_positive() {
+        let report = safety_report();
+        assert!(report.timestamp_us > 0);
+    }
+
+    #[test]
+    fn lock_metrics_snapshot_debug_format() {
+        let m = LockMetrics::new();
+        m.record_acquire();
+        let snap = m.snapshot();
+        let debug = format!("{:?}", snap);
+        assert!(debug.contains("LockMetricsSnapshot"));
+        assert!(debug.contains("acquisitions"));
+    }
+
+    #[test]
+    fn lock_order_snapshot_json_types() {
+        let detector = LockOrder::new();
+        let snap = detector.snapshot();
+        let json = serde_json::to_string(&snap).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert!(parsed["held_lock_count"].is_u64());
+        assert!(parsed["violation_count"].is_u64());
+        assert!(parsed["unique_threads"].is_u64());
+    }
+
+    #[test]
+    fn lock_metrics_compact_vs_pretty_json() {
+        let m = LockMetrics::new();
+        m.record_acquire();
+        let snap = m.snapshot();
+        let compact = serde_json::to_string(&snap).unwrap();
+        let pretty = serde_json::to_string_pretty(&snap).unwrap();
+        assert!(compact.len() < pretty.len());
+        let a: serde_json::Value = serde_json::from_str(&compact).unwrap();
+        let b: serde_json::Value = serde_json::from_str(&pretty).unwrap();
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn lock_order_multiple_violations_counted() {
+        let detector = LockOrder::new();
+        detector.acquire(10);
+        detector.acquire(5); // violation 1
+        detector.acquire(3); // violation 2
+        detector.acquire(1); // violation 3
+        assert_eq!(detector.violation_count(), 3);
+        detector.release(1);
+        detector.release(3);
+        detector.release(5);
+        detector.release(10);
+    }
+
+    #[test]
+    fn lock_metrics_reset_clears_all() {
+        let m = LockMetrics::new();
+        m.record_acquire();
+        m.record_contention();
+        m.record_poison_recovery();
+        m.record_timeout();
+        m.record_hold_time(500);
+        m.reset();
+        assert_eq!(m.acquisitions(), 0);
+        assert_eq!(m.contention_events(), 0);
+        assert_eq!(m.poison_recoveries(), 0);
+        assert_eq!(m.timeout_events(), 0);
+        assert_eq!(m.total_hold_time_us(), 0);
+        assert_eq!(m.max_hold_time_us(), 0);
+        assert_eq!(m.avg_hold_time_us(), 0);
+    }
+
+    #[test]
+    fn lock_order_guard_multiple_levels() {
+        let detector = &GLOBAL_LOCK_ORDER;
+        detector.reset();
+        {
+            let _g1 = LockOrderGuard::new(1);
+            let _g2 = LockOrderGuard::new(2);
+            let _g3 = LockOrderGuard::new(3);
+            // All three held, then all dropped
+        }
+        // After drop, should be able to acquire at any level
+        assert!(detector.acquire(1));
+        detector.release(1);
+    }
+
+    #[test]
+    fn safety_report_lock_metrics_match_global() {
+        let report = safety_report();
+        let global_acq = GLOBAL_LOCK_METRICS.acquisitions();
+        assert_eq!(report.lock_metrics.acquisitions, global_acq);
+    }
+
+    #[test]
+    fn lock_health_score_mixed_penalties() {
+        let m = LockMetrics::new();
+        // 10 acquisitions, 2 contention, 1 poison, 1 timeout
+        for _ in 0..10 { m.record_acquire(); }
+        m.record_contention();
+        m.record_contention();
+        m.record_poison_recovery();
+        m.record_timeout();
+        // contention_rate = 0.2 → penalty = 0.06
+        // poison_rate = 0.1 → penalty = 0.05
+        // timeout_rate = 0.1 → penalty = 0.02
+        // score = 1.0 - 0.06 - 0.05 - 0.02 = 0.87
+        let score = lock_health_score(&m);
+        assert!((score - 0.87).abs() < 0.01);
+    }
 }

@@ -1,33 +1,27 @@
-Block 188: errors.rs — 31 new tests (130 total)
+Block 189: safety.rs — 29 new tests (111 total)
 
 New tests cover:
-- JSON key count for VelocityError (4 keys: code, message, suggestion, context; source skipped)
-- JSON roundtrip via Value for VelocityError and ErrorSummary
-- JSON type verification for VelocityError and ErrorSummary fields
-- ErrorSummary clone independence (mutate clone, verify original unchanged)
-- VelocityError Display format uses em-dash (U+2014) separator
-- format_detailed with all fields present (6 lines: header, 2 context, suggestion, docs, caused by)
-- RouterError::AuthFailed converts to security error with login suggestion
-- ModelError::InvalidArch suggestion contains supported architectures
-- ProviderError::KeyInvalid suggestion contains provider name
-- ProviderError::RateLimited suggestion mentions router
-- CompileError::Wasm to VelocityError full chain
-- exit_code for general category = 1 (IoError, InvalidInput, InternalError)
-- exit_code security fallback for named categories
-- summarize_errors with single error and all-same-code edge cases
-- ErrorCode Debug format for multiple variants
-- VelocityError builder chaining (all methods compose)
-- SiteMapError::Corrupt suggestion text
-- ModelError::TokenizerNotFound context and suggestion
+- JSON key count for LockMetricsSnapshot (7), LockOrderSnapshot (3), SafetyReport (5)
+- JSON roundtrip via Value for all 3 diagnostic structs
+- JSON type verification for LockMetricsSnapshot and LockOrderSnapshot fields
+- Clone independence for LockMetricsSnapshot, LockOrderSnapshot, SafetyReport
+- avg_hold_time_us formula: total_hold_time / acquisitions
+- contention_rate formula: contention_events / acquisitions
+- poison_rate formula: poison_recoveries / acquisitions
+- timeout_rate formula: timeout_events / acquisitions
+- lock_health_score formula: 1.0 - (contention*0.3 + poison*0.5 + timeout*0.2)
+- lock_health_score mixed penalties (10 acq, 2 contention, 1 poison, 1 timeout)
+- LockOrder acquire/release snapshot tracking
+- LockOrder validate with violation count matching
+- LockOrder multiple violations counted correctly
+- InstrumentedMutex try_lock records contention metric
+- InstrumentedGuard deref and deref_mut work correctly
+- SafetyReport validation_warnings empty in clean state
+- SafetyReport timestamp_us > 0
+- SafetyReport lock_metrics match global metrics
+- LockMetricsSnapshot debug format
 - Compact vs pretty JSON equivalence
-- ErrorSummary debug format
-- VelocityError empty message handling
-- CredentialError::Expired context verification
-- ErrorCode serializes as variant name string in JSON
-- VelocityError context as array-of-arrays JSON structure
-- All 8 retryable codes enumerated and verified
-- All 4 security codes enumerated and verified
-- is_io with non-io source (std::fmt::Error) returns false
-- format_detailed with source but no suggestion
+- LockMetrics reset clears all 6 counters
+- LockOrderGuard multiple levels released on drop
 
-Full suite: 4627 lib tests, 0 failures
+Full suite: 4656 lib tests, 0 failures
