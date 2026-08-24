@@ -1731,4 +1731,414 @@ mod tests {
             assert!(window[1].2 >= window[0].2, "end offsets not monotonic");
         }
     }
+
+    // ── Block 183: JSON key counts ────────────────────────────────────────
+
+    #[test]
+    fn encode_report_json_has_exactly_8_keys() {
+        let report = EncodeReport {
+            token_count: 5, unique_token_count: 3, input_bytes: 10,
+            output_bytes: 8, bytes_per_token: 2.0, elapsed_us: 50,
+            roundtrip_ok: true, has_bos: false,
+        };
+        let val: serde_json::Value = serde_json::from_str(
+            &serde_json::to_string(&report).unwrap()
+        ).unwrap();
+        assert_eq!(val.as_object().unwrap().len(), 8);
+    }
+
+    #[test]
+    fn vocab_util_json_has_exactly_5_keys() {
+        let util = VocabularyUtilization {
+            total_tokens: 10, unique_tokens: 5, in_vocabulary: 5,
+            coverage: 1.0, vocab_size: 100,
+        };
+        let val: serde_json::Value = serde_json::from_str(
+            &serde_json::to_string(&util).unwrap()
+        ).unwrap();
+        assert_eq!(val.as_object().unwrap().len(), 5);
+    }
+
+    #[test]
+    fn tokenizer_info_json_has_exactly_7_keys() {
+        let info = TokenizerInfo {
+            vocab_size: 100, merge_count: 50, bos_id: 1, eos_id: 2,
+            is_tiktoken: true, special_token_count: 3, has_file_bytes: false,
+        };
+        let val: serde_json::Value = serde_json::from_str(
+            &serde_json::to_string(&info).unwrap()
+        ).unwrap();
+        assert_eq!(val.as_object().unwrap().len(), 7);
+    }
+
+    // ── Block 183: JSON roundtrip via Value ───────────────────────────────
+
+    #[test]
+    fn encode_report_json_roundtrip_via_value() {
+        let report = EncodeReport {
+            token_count: 42, unique_token_count: 20, input_bytes: 100,
+            output_bytes: 80, bytes_per_token: 2.38, elapsed_us: 500,
+            roundtrip_ok: false, has_bos: true,
+        };
+        let json = serde_json::to_string(&report).unwrap();
+        let val: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(val["token_count"], 42);
+        assert_eq!(val["unique_token_count"], 20);
+        assert_eq!(val["roundtrip_ok"], false);
+        assert_eq!(val["has_bos"], true);
+        assert!((val["bytes_per_token"].as_f64().unwrap() - 2.38).abs() < 0.01);
+    }
+
+    #[test]
+    fn vocab_util_json_roundtrip_via_value() {
+        let util = VocabularyUtilization {
+            total_tokens: 200, unique_tokens: 150, in_vocabulary: 148,
+            coverage: 0.987, vocab_size: 50000,
+        };
+        let json = serde_json::to_string(&util).unwrap();
+        let val: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(val["total_tokens"], 200);
+        assert_eq!(val["in_vocabulary"], 148);
+        assert!((val["coverage"].as_f64().unwrap() - 0.987).abs() < 0.001);
+    }
+
+    // ── Block 183: Clone independence ─────────────────────────────────────
+
+    #[test]
+    fn encode_report_clone_independent() {
+        let mut report = EncodeReport {
+            token_count: 10, unique_token_count: 5, input_bytes: 20,
+            output_bytes: 18, bytes_per_token: 2.0, elapsed_us: 100,
+            roundtrip_ok: true, has_bos: false,
+        };
+        let cloned = report.clone();
+        report.token_count = 999;
+        assert_eq!(cloned.token_count, 10);
+    }
+
+    #[test]
+    fn vocab_util_clone_independent() {
+        let mut util = VocabularyUtilization {
+            total_tokens: 50, unique_tokens: 30, in_vocabulary: 28,
+            coverage: 0.93, vocab_size: 1000,
+        };
+        let cloned = util.clone();
+        util.coverage = 0.0;
+        assert!((cloned.coverage - 0.93).abs() < 0.001);
+    }
+
+    #[test]
+    fn tokenizer_info_clone_independent() {
+        let mut info = TokenizerInfo {
+            vocab_size: 100, merge_count: 50, bos_id: 1, eos_id: 2,
+            is_tiktoken: true, special_token_count: 3, has_file_bytes: false,
+        };
+        let cloned = info.clone();
+        info.vocab_size = 0;
+        assert_eq!(cloned.vocab_size, 100);
+    }
+
+    // ── Block 183: Debug format ───────────────────────────────────────────
+
+    #[test]
+    fn encode_report_debug_has_all_fields() {
+        let report = EncodeReport {
+            token_count: 5, unique_token_count: 3, input_bytes: 10,
+            output_bytes: 8, bytes_per_token: 2.0, elapsed_us: 50,
+            roundtrip_ok: true, has_bos: false,
+        };
+        let debug = format!("{:?}", report);
+        assert!(debug.contains("token_count"));
+        assert!(debug.contains("unique_token_count"));
+        assert!(debug.contains("bytes_per_token"));
+        assert!(debug.contains("roundtrip_ok"));
+        assert!(debug.contains("has_bos"));
+    }
+
+    #[test]
+    fn vocab_util_debug_has_all_fields() {
+        let util = VocabularyUtilization {
+            total_tokens: 10, unique_tokens: 5, in_vocabulary: 5,
+            coverage: 1.0, vocab_size: 100,
+        };
+        let debug = format!("{:?}", util);
+        assert!(debug.contains("total_tokens"));
+        assert!(debug.contains("unique_tokens"));
+        assert!(debug.contains("in_vocabulary"));
+        assert!(debug.contains("coverage"));
+        assert!(debug.contains("vocab_size"));
+    }
+
+    // ── Block 183: EncodeReport formula verification ──────────────────────
+
+    #[test]
+    fn encode_reported_bytes_per_token_formula() {
+        let tok = make_test_tokenizer();
+        let text = "hello"; // 5 tokens in tiktoken mode
+        let report = tok.encode_reported(text, false);
+        let expected_bpt = text.len() as f64 / report.token_count as f64;
+        assert!((report.bytes_per_token - expected_bpt).abs() < 1e-9);
+    }
+
+    #[test]
+    fn encode_reported_input_bytes_matches_text_len() {
+        let tok = make_test_tokenizer();
+        let text = "test input";
+        let report = tok.encode_reported(text, false);
+        assert_eq!(report.input_bytes, text.len());
+    }
+
+    // ── Block 183: RLE advanced patterns ──────────────────────────────────
+
+    #[test]
+    fn encode_rle_mixed_runs() {
+        let tok = make_test_tokenizer();
+        // "hhi" → h,h,i → two runs: (h,2),(i,1)
+        let rle = tok.encode_rle("hhi", false);
+        assert_eq!(rle.len(), 2);
+        assert_eq!(rle[0].1, 2); // h repeated twice
+        assert_eq!(rle[1].1, 1); // i once
+    }
+
+    #[test]
+    fn decode_rle_multiple_runs() {
+        let tok = make_test_tokenizer();
+        let h_id = tok.encode("h", false)[0];
+        let i_id = tok.encode("i", false)[0];
+        let decoded = tok.decode_rle(&[(h_id, 3), (i_id, 2)]);
+        assert_eq!(decoded, "hhhii");
+    }
+
+    // ── Block 183: Consistency checks ─────────────────────────────────────
+
+    #[test]
+    fn encode_batch_consistent_with_encode() {
+        let tok = make_test_tokenizer();
+        let texts = ["hello", "world", "hi"];
+        let batch = tok.encode_batch(&texts, false);
+        for (i, text) in texts.iter().enumerate() {
+            assert_eq!(batch[i], tok.encode(text, false));
+        }
+    }
+
+    #[test]
+    fn count_tokens_batch_consistent_with_count() {
+        let tok = make_test_tokenizer();
+        let texts = ["hello", "world", "hi"];
+        let batch_counts = tok.count_tokens_batch(&texts);
+        for (i, text) in texts.iter().enumerate() {
+            assert_eq!(batch_counts[i], tok.count_tokens(text));
+        }
+    }
+
+    #[test]
+    fn total_tokens_equals_sum_of_individual_counts() {
+        let tok = make_test_tokenizer();
+        let texts = ["hello", "world", "hi", "abc"];
+        let total = tok.total_tokens(&texts);
+        let manual: usize = texts.iter().map(|t| tok.count_tokens(t)).sum();
+        assert_eq!(total, manual);
+    }
+
+    // ── Block 183: Vocabulary utilization formula ─────────────────────────
+
+    #[test]
+    fn vocabulary_utilization_coverage_formula() {
+        let tok = make_test_tokenizer();
+        let util = tok.vocabulary_utilization("hi");
+        // coverage = in_vocabulary / unique_tokens
+        let expected = util.in_vocabulary as f64 / util.unique_tokens as f64;
+        let expected_rounded = (expected * 1000.0).round() / 1000.0;
+        assert!((util.coverage - expected_rounded).abs() < 1e-6);
+    }
+
+    #[test]
+    fn vocabulary_utilization_repeated_chars() {
+        let tok = make_test_tokenizer();
+        // "hhh" → 3 tokens, 1 unique
+        let util = tok.vocabulary_utilization("hhh");
+        assert_eq!(util.total_tokens, 3);
+        assert_eq!(util.unique_tokens, 1);
+        assert_eq!(util.in_vocabulary, 1);
+        assert_eq!(util.coverage, 1.0);
+    }
+
+    // ── Block 183: encode_with_offsets consistency ────────────────────────
+
+    #[test]
+    fn encode_with_offsets_length_matches_encode() {
+        let tok = make_test_tokenizer();
+        let text = "hello world";
+        let ids = tok.encode(text, false);
+        let with_offsets = tok.encode_with_offsets(text, false);
+        assert_eq!(ids.len(), with_offsets.len());
+        for (i, &(id, _, _)) in with_offsets.iter().enumerate() {
+            assert_eq!(id, ids[i]);
+        }
+    }
+
+    #[test]
+    fn decode_with_ids_consistent_with_decode_token() {
+        let tok = make_test_tokenizer();
+        let ids = tok.encode("test", false);
+        let pairs = tok.decode_with_ids(&ids);
+        for &(id, ref s) in &pairs {
+            assert_eq!(*s, tok.decode_token(id));
+        }
+    }
+
+    // ── Block 183: byte_to_unicode boundary values ────────────────────────
+
+    #[test]
+    fn byte_to_unicode_161_to_172_identity() {
+        // Bytes 161..=172 map to themselves (Latin-1 supplement range)
+        for b in 161u8..=172 {
+            assert_eq!(byte_to_unicode(b) as u32, b as u32, "byte {} should be identity", b);
+        }
+    }
+
+    #[test]
+    fn byte_to_unicode_173_maps_above_256() {
+        // Byte 173 (soft hyphen) is NOT in the identity ranges
+        let c = byte_to_unicode(173);
+        assert!((c as u32) >= 256);
+    }
+
+    #[test]
+    fn byte_to_unicode_174_to_255_identity() {
+        // Bytes 174..=255 map to themselves
+        for b in 174u8..=255 {
+            assert_eq!(byte_to_unicode(b) as u32, b as u32, "byte {} should be identity", b);
+        }
+    }
+
+    // ── Block 183: special_tokens filter criteria ─────────────────────────
+
+    #[test]
+    fn special_tokens_includes_pipe_tokens() {
+        let tok = make_test_tokenizer();
+        let specials = tok.special_tokens();
+        // <|endoftext|> matches the |> filter
+        let names: Vec<&str> = specials.iter().map(|(_, n)| *n).collect();
+        assert!(names.contains(&"<|endoftext|>"));
+    }
+
+    #[test]
+    fn special_tokens_excludes_regular_tokens() {
+        let tok = make_test_tokenizer();
+        let specials = tok.special_tokens();
+        let names: Vec<&str> = specials.iter().map(|(_, n)| *n).collect();
+        // Regular characters like 'a' or 'h' should not appear
+        assert!(!names.contains(&"h"));
+        assert!(!names.contains(&"a"));
+    }
+
+    // ── Block 183: validate multiple errors ───────────────────────────────
+
+    #[test]
+    fn validate_multiple_errors_at_once() {
+        let tok = Tokenizer {
+            vocab: HashMap::new(),
+            id_to_token: vec![],
+            merges: HashMap::new(),
+            bos_id: 999,
+            eos_id: 888,
+            is_tiktoken: false,
+            file_bytes: vec![],
+        };
+        let errors = tok.validate();
+        // Should have: empty vocab, bad bos_id, bad eos_id
+        assert!(errors.len() >= 3, "expected >= 3 errors, got {}: {:?}", errors.len(), errors);
+        assert!(errors.iter().any(|e| e.contains("vocabulary is empty")));
+        assert!(errors.iter().any(|e| e.contains("bos_id")));
+        assert!(errors.iter().any(|e| e.contains("eos_id")));
+    }
+
+    // ── Block 183: chunk_text exact fit ───────────────────────────────────
+
+    #[test]
+    fn chunk_text_exact_fit_returns_single() {
+        let tok = make_test_tokenizer();
+        // "hi" = 2 tokens; budget of exactly 2 → single chunk
+        let chunks = tok.chunk_text("hi", 2);
+        assert_eq!(chunks.len(), 1);
+        assert_eq!(chunks[0], "hi");
+    }
+
+    // ── Block 183: split_into_words single word ───────────────────────────
+
+    #[test]
+    fn split_into_words_single_word() {
+        let tok = make_test_tokenizer();
+        let words = tok.split_into_words("hello");
+        assert_eq!(words.len(), 1);
+        assert_eq!(words[0].0, "hello");
+        assert_eq!(words[0].1, 0);
+        assert_eq!(words[0].2, 5);
+    }
+
+    // ── Block 183: token_frequency with BOS ───────────────────────────────
+
+    #[test]
+    fn token_frequency_with_bos_includes_bos_token() {
+        let tok = make_test_tokenizer();
+        let freq = tok.token_frequency("hi", true);
+        // BOS token should appear with count 1
+        let bos_entry = freq.iter().find(|(id, _)| *id == tok.bos_id);
+        assert!(bos_entry.is_some(), "BOS token should appear in frequency");
+        assert_eq!(bos_entry.unwrap().1, 1);
+    }
+
+    // ── Block 183: estimate_text_length proportionality ───────────────────
+
+    #[test]
+    fn estimate_text_length_zero_tokens_returns_zero() {
+        let tok = make_test_tokenizer();
+        assert_eq!(tok.estimate_text_length_for_tokens(0), 0);
+    }
+
+    #[test]
+    fn estimate_text_length_positive_for_positive_tokens() {
+        let tok = make_test_tokenizer();
+        assert!(tok.estimate_text_length_for_tokens(1) > 0);
+        assert!(tok.estimate_text_length_for_tokens(100) > 0);
+    }
+
+    // ── Block 183: JSON compact format ────────────────────────────────────
+
+    #[test]
+    fn encode_report_compact_json() {
+        let report = EncodeReport {
+            token_count: 1, unique_token_count: 1, input_bytes: 1,
+            output_bytes: 1, bytes_per_token: 1.0, elapsed_us: 0,
+            roundtrip_ok: true, has_bos: false,
+        };
+        let json = serde_json::to_string(&report).unwrap();
+        // Compact JSON should not contain unnecessary whitespace
+        assert!(!json.contains("\n"));
+    }
+
+    #[test]
+    fn vocab_util_compact_json() {
+        let util = VocabularyUtilization {
+            total_tokens: 1, unique_tokens: 1, in_vocabulary: 1,
+            coverage: 1.0, vocab_size: 1,
+        };
+        let json = serde_json::to_string(&util).unwrap();
+        assert!(!json.contains("\n"));
+    }
+
+    // ── Block 183: decode_raw_token_sp additional ─────────────────────────
+
+    #[test]
+    fn decode_sp_byte_token_hex_lowercase() {
+        // <0x61> → 'a'
+        assert_eq!(decode_raw_token_sp("<0x61>"), "a");
+    }
+
+    #[test]
+    fn decode_sp_multiple_space_markers() {
+        // Multiple ▁ markers each become spaces
+        assert_eq!(decode_raw_token_sp("\u{2581}\u{2581}hello"), "  hello");
+    }
 }
