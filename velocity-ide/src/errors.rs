@@ -1396,4 +1396,391 @@ mod tests {
         assert_eq!(summary.unique_codes.len(), 2);
         assert!(summary.unique_codes[0] < summary.unique_codes[1]);
     }
+
+    // ── Block 173: Comprehensive error coverage ────────────────────────────
+
+    #[test]
+    fn error_code_config_category_full() {
+        assert_eq!(ErrorCode::ConfigNotFound.category(), "config");
+        assert_eq!(ErrorCode::ConfigInvalid.category(), "config");
+        assert_eq!(ErrorCode::ConfigMissingKey.category(), "config");
+        assert_eq!(ErrorCode::HomeDirectoryUnavailable.category(), "config");
+        // None are retryable or security
+        assert!(!ErrorCode::ConfigNotFound.is_retryable());
+        assert!(!ErrorCode::ConfigInvalid.is_security());
+    }
+
+    #[test]
+    fn error_code_config_as_str() {
+        assert_eq!(ErrorCode::ConfigNotFound.as_str(), "E100");
+        assert_eq!(ErrorCode::ConfigInvalid.as_str(), "E101");
+        assert_eq!(ErrorCode::ConfigMissingKey.as_str(), "E102");
+        assert_eq!(ErrorCode::HomeDirectoryUnavailable.as_str(), "E103");
+    }
+
+    #[test]
+    fn error_code_tokenizer_category() {
+        assert_eq!(ErrorCode::TokenizerFileInvalid.category(), "tokenizer");
+        assert_eq!(ErrorCode::TokenizerMergeFailed.category(), "tokenizer");
+        assert_eq!(ErrorCode::TokenizerUnknownToken.category(), "tokenizer");
+        assert!(!ErrorCode::TokenizerFileInvalid.is_retryable());
+        assert!(!ErrorCode::TokenizerMergeFailed.is_security());
+    }
+
+    #[test]
+    fn error_code_tokenizer_as_str() {
+        assert_eq!(ErrorCode::TokenizerFileInvalid.as_str(), "E400");
+        assert_eq!(ErrorCode::TokenizerMergeFailed.as_str(), "E401");
+        assert_eq!(ErrorCode::TokenizerUnknownToken.as_str(), "E402");
+    }
+
+    #[test]
+    fn error_code_general_category() {
+        assert_eq!(ErrorCode::IoError.category(), "general");
+        assert_eq!(ErrorCode::InvalidInput.category(), "general");
+        assert_eq!(ErrorCode::InternalError.category(), "general");
+        assert_eq!(ErrorCode::IoError.as_str(), "E900");
+        assert_eq!(ErrorCode::InvalidInput.as_str(), "E901");
+        assert_eq!(ErrorCode::InternalError.as_str(), "E999");
+    }
+
+    #[test]
+    fn error_code_wiki_full() {
+        assert_eq!(ErrorCode::WikiIndexCorrupt.as_str(), "E1100");
+        assert_eq!(ErrorCode::WikiSearchFailed.as_str(), "E1101");
+        assert_eq!(ErrorCode::WikiIndexCorrupt.category(), "wiki");
+        assert_eq!(ErrorCode::WikiSearchFailed.category(), "wiki");
+        assert!(!ErrorCode::WikiIndexCorrupt.is_retryable());
+        assert!(!ErrorCode::WikiSearchFailed.is_security());
+    }
+
+    #[test]
+    fn error_code_router_all_str() {
+        assert_eq!(ErrorCode::RouterUnreachable.as_str(), "E200");
+        assert_eq!(ErrorCode::RouterTimeout.as_str(), "E201");
+        assert_eq!(ErrorCode::RouterAuthFailed.as_str(), "E202");
+        assert_eq!(ErrorCode::RouterRateLimited.as_str(), "E203");
+        assert_eq!(ErrorCode::RouterServerError.as_str(), "E204");
+        assert_eq!(ErrorCode::RouterResponseInvalid.as_str(), "E205");
+    }
+
+    #[test]
+    fn error_code_model_all_str() {
+        assert_eq!(ErrorCode::ModelDirNotFound.as_str(), "E300");
+        assert_eq!(ErrorCode::TokenizerNotFound.as_str(), "E301");
+        assert_eq!(ErrorCode::WeightLoadFailed.as_str(), "E302");
+        assert_eq!(ErrorCode::WeightShapeMismatch.as_str(), "E303");
+        assert_eq!(ErrorCode::ConfigInvalidArch.as_str(), "E304");
+    }
+
+    #[test]
+    fn error_code_assignment_all_str() {
+        assert_eq!(ErrorCode::AssignmentFailed.as_str(), "E800");
+        assert_eq!(ErrorCode::AssignmentCostExceeded.as_str(), "E801");
+        assert_eq!(ErrorCode::AssignmentTimeout.as_str(), "E802");
+    }
+
+    #[test]
+    fn error_code_sitemap_all_str() {
+        assert_eq!(ErrorCode::SiteMapCorrupt.as_str(), "E700");
+        assert_eq!(ErrorCode::SiteMapVersionMismatch.as_str(), "E701");
+        assert_eq!(ErrorCode::SiteMapIoError.as_str(), "E702");
+    }
+
+    #[test]
+    fn error_code_provider_all_str() {
+        assert_eq!(ErrorCode::ProviderKeyInvalid.as_str(), "E500");
+        assert_eq!(ErrorCode::ProviderRateLimited.as_str(), "E501");
+        assert_eq!(ErrorCode::ProviderUnavailable.as_str(), "E502");
+        assert_eq!(ErrorCode::ProviderUsageApiUnsupported.as_str(), "E503");
+    }
+
+    #[test]
+    fn error_code_pipeline_all_str() {
+        assert_eq!(ErrorCode::CompileFailed.as_str(), "E600");
+        assert_eq!(ErrorCode::PipelineExecutionFailed.as_str(), "E601");
+        assert_eq!(ErrorCode::SandBoxViolation.as_str(), "E602");
+    }
+
+    #[test]
+    fn error_code_all_codes_count() {
+        let codes = ErrorCode::all_codes();
+        assert_eq!(codes.len(), 39, "expected 39 error codes, got {}", codes.len());
+    }
+
+    #[test]
+    fn error_code_eq_and_copy() {
+        let a = ErrorCode::RouterTimeout;
+        let b = ErrorCode::RouterTimeout;
+        let c = ErrorCode::ConfigNotFound;
+        assert_eq!(a, b);
+        assert_ne!(a, c);
+        // Copy semantics
+        let d = a;
+        assert_eq!(d, ErrorCode::RouterTimeout);
+    }
+
+    #[test]
+    fn error_code_debug_format() {
+        let code = ErrorCode::RouterTimeout;
+        let debug = format!("{:?}", code);
+        assert_eq!(debug, "RouterTimeout");
+    }
+
+    #[test]
+    fn velocity_error_category_method() {
+        let err = VelocityError::new(ErrorCode::RouterTimeout, "test");
+        assert_eq!(err.category(), "router");
+        let err = VelocityError::new(ErrorCode::ConfigNotFound, "test");
+        assert_eq!(err.category(), "config");
+        let err = VelocityError::new(ErrorCode::JitCompilationFailed, "test");
+        assert_eq!(err.category(), "jit");
+    }
+
+    #[test]
+    fn velocity_error_format_detailed_multiple_context() {
+        let err = VelocityError::new(ErrorCode::RouterTimeout, "connection failed")
+            .with_context("host", "router.velocity.io")
+            .with_context("port", "443")
+            .with_context("attempt", "3")
+            .with_suggestion("Check your network connection.");
+        let formatted = err.format_detailed();
+        assert!(formatted.contains("host: router.velocity.io"));
+        assert!(formatted.contains("port: 443"));
+        assert!(formatted.contains("attempt: 3"));
+        assert!(formatted.contains("Suggestion: Check your network connection."));
+    }
+
+    #[test]
+    fn velocity_error_with_source_and_suggestion() {
+        let io_err = std::io::Error::new(std::io::ErrorKind::PermissionDenied, "access denied");
+        let err = VelocityError::new(ErrorCode::IoError, "failed to read file")
+            .with_source(io_err)
+            .with_suggestion("Check file permissions.")
+            .with_context("path", "/etc/secrets");
+        assert!(err.source.is_some());
+        assert!(err.suggestion.is_some());
+        assert_eq!(err.context.len(), 1);
+        let formatted = err.format_detailed();
+        assert!(formatted.contains("Caused by:"));
+        assert!(formatted.contains("Suggestion:"));
+        assert!(formatted.contains("path: /etc/secrets"));
+    }
+
+    #[test]
+    fn velocity_error_debug_format() {
+        let err = VelocityError::new(ErrorCode::RouterTimeout, "timeout");
+        let debug = format!("{:?}", err);
+        assert!(debug.contains("VelocityError"));
+        assert!(debug.contains("RouterTimeout"));
+        assert!(debug.contains("timeout"));
+    }
+
+    #[test]
+    fn router_error_unreachable_context() {
+        let e = RouterError::Unreachable { url: "http://localhost:9999".into() };
+        let ve = e.to_velocity_error();
+        assert_eq!(ve.code, ErrorCode::RouterUnreachable);
+        assert!(ve.context.iter().any(|(k, v)| k == "url" && v == "http://localhost:9999"));
+        assert!(ve.suggestion.is_some());
+    }
+
+    #[test]
+    fn router_error_timeout_suggestion() {
+        let e = RouterError::Timeout { secs: 30 };
+        let ve = e.to_velocity_error();
+        assert_eq!(ve.code, ErrorCode::RouterTimeout);
+        assert!(ve.suggestion.is_some());
+        assert!(ve.suggestion.as_ref().unwrap().contains("overloaded"));
+    }
+
+    #[test]
+    fn router_error_rate_limited_suggestion() {
+        let e = RouterError::RateLimited { retry_after_secs: 120 };
+        let ve = e.to_velocity_error();
+        assert_eq!(ve.code, ErrorCode::RouterRateLimited);
+        assert!(ve.suggestion.is_some());
+        assert!(ve.suggestion.as_ref().unwrap().contains("120"));
+    }
+
+    #[test]
+    fn router_error_response_invalid_context() {
+        let e = RouterError::ResponseInvalid { detail: "missing field 'usage'".into() };
+        let ve = e.to_velocity_error();
+        assert_eq!(ve.code, ErrorCode::RouterResponseInvalid);
+        assert!(ve.context.iter().any(|(k, v)| k == "detail" && v.contains("missing field")));
+    }
+
+    #[test]
+    fn router_error_max_retries_context() {
+        let e = RouterError::MaxRetriesExceeded { attempts: 5 };
+        let ve = e.to_velocity_error();
+        assert_eq!(ve.code, ErrorCode::RouterServerError);
+        assert!(ve.context.iter().any(|(k, v)| k == "attempts" && v == "5"));
+    }
+
+    #[test]
+    fn model_error_dir_not_found_context() {
+        let e = ModelError::DirNotFound { path: "/bad/model".into() };
+        let ve = e.to_velocity_error();
+        assert_eq!(ve.code, ErrorCode::ModelDirNotFound);
+        assert!(ve.suggestion.is_some());
+        assert!(ve.context.iter().any(|(k, _)| k == "path"));
+    }
+
+    #[test]
+    fn model_error_weight_shape_mismatch_context() {
+        let e = ModelError::WeightShapeMismatch {
+            expected: "4x4".into(),
+            actual: "2x8".into(),
+        };
+        let ve = e.to_velocity_error();
+        assert_eq!(ve.code, ErrorCode::WeightShapeMismatch);
+        assert!(ve.context.iter().any(|(k, v)| k == "expected" && v == "4x4"));
+        assert!(ve.context.iter().any(|(k, v)| k == "actual" && v == "2x8"));
+    }
+
+    #[test]
+    fn provider_error_unavailable_context() {
+        let e = ProviderError::Unavailable {
+            provider: "openai".into(),
+            detail: "service down".into(),
+        };
+        let ve: VelocityError = e.into();
+        assert_eq!(ve.code, ErrorCode::ProviderUnavailable);
+        assert!(ve.context.iter().any(|(k, v)| k == "provider" && v == "openai"));
+        assert!(ve.context.iter().any(|(k, v)| k == "detail" && v == "service down"));
+    }
+
+    #[test]
+    fn pipeline_error_compile_failed_context() {
+        let e = PipelineError::CompileFailed { detail: "syntax error at line 5".into() };
+        let ve = e.to_velocity_error();
+        assert_eq!(ve.code, ErrorCode::CompileFailed);
+        assert!(ve.context.iter().any(|(k, v)| k == "detail" && v.contains("syntax error")));
+    }
+
+    #[test]
+    fn pipeline_error_execution_failed_context() {
+        let e = PipelineError::ExecutionFailed { detail: "out of memory".into() };
+        let ve = e.to_velocity_error();
+        assert_eq!(ve.code, ErrorCode::PipelineExecutionFailed);
+        assert!(ve.context.iter().any(|(k, v)| k == "detail" && v.contains("out of memory")));
+    }
+
+    #[test]
+    fn sandbox_error_timeout_suggestion_text() {
+        let e = SandboxError::Timeout { secs: 60 };
+        let ve = e.to_velocity_error();
+        assert!(ve.suggestion.is_some());
+        assert!(ve.suggestion.as_ref().unwrap().contains("smaller steps"));
+        assert!(ve.context.iter().any(|(k, v)| k == "timeout_secs" && v == "60"));
+    }
+
+    #[test]
+    fn sandbox_error_resource_limit_context() {
+        let e = SandboxError::ResourceLimit { resource: "memory".into() };
+        let ve = e.to_velocity_error();
+        assert_eq!(ve.code, ErrorCode::SandBoxViolation);
+        assert!(ve.context.iter().any(|(k, v)| k == "resource" && v == "memory"));
+    }
+
+    #[test]
+    fn compile_error_from_io_error() {
+        let io_err = std::io::Error::new(std::io::ErrorKind::NotFound, "file missing");
+        let ce = CompileError::from(io_err);
+        assert!(ce.to_string().contains("file missing"));
+        let ve: VelocityError = ce.into();
+        assert_eq!(ve.code, ErrorCode::CompileFailed);
+    }
+
+    #[test]
+    fn compile_error_parser_to_pipeline_to_velocity() {
+        let ce = CompileError::Parser("unexpected token 'foo'".into());
+        let pe: PipelineError = ce.into();
+        match &pe {
+            PipelineError::CompileFailed { detail } => {
+                assert!(detail.contains("unexpected token"));
+            }
+            _ => panic!("expected CompileFailed"),
+        }
+        let ve: VelocityError = pe.to_velocity_error();
+        assert_eq!(ve.code, ErrorCode::CompileFailed);
+    }
+
+    #[test]
+    fn error_summary_by_category_sorted_descending() {
+        let errors = vec![
+            VelocityError::new(ErrorCode::RouterTimeout, "r1"),
+            VelocityError::new(ErrorCode::RouterTimeout, "r2"),
+            VelocityError::new(ErrorCode::RouterTimeout, "r3"),
+            VelocityError::new(ErrorCode::ConfigNotFound, "c1"),
+            VelocityError::new(ErrorCode::IoError, "i1"),
+        ];
+        let summary = summarize_errors(&errors);
+        // router=3 should be first
+        assert_eq!(summary.by_category[0].0, "router");
+        assert_eq!(summary.by_category[0].1, 3);
+        // remaining should have count 1 each
+        assert!(summary.by_category[1].1 <= 1);
+    }
+
+    #[test]
+    fn error_summary_json_key_count() {
+        let summary = ErrorSummary {
+            total: 5,
+            by_category: vec![("router".into(), 3), ("config".into(), 2)],
+            retryable_count: 3,
+            security_count: 0,
+            unique_codes: vec!["E201".into(), "E100".into()],
+        };
+        let json = serde_json::to_string(&summary).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed.as_object().unwrap().len(), 5);
+    }
+
+    #[test]
+    fn error_summary_clone() {
+        let summary = summarize_errors(&[
+            VelocityError::new(ErrorCode::RouterTimeout, "t"),
+        ]);
+        let s2 = summary.clone();
+        assert_eq!(s2.total, 1);
+        assert_eq!(s2.retryable_count, 1);
+    }
+
+    #[test]
+    fn velocity_error_display_trait_format() {
+        let err = VelocityError::new(ErrorCode::ConfigNotFound, "no config file");
+        let s = format!("{}", err);
+        assert!(s.contains("E100"));
+        assert!(s.contains("no config file"));
+        assert!(s.contains("—"));
+    }
+
+    #[test]
+    fn velocity_error_is_io_via_source_downcast() {
+        let io_err = std::io::Error::new(std::io::ErrorKind::Other, "inner io error");
+        let err = VelocityError::new(ErrorCode::InternalError, "wrapped")
+            .with_source(io_err);
+        // InternalError is not normally io, but has an io::Error source
+        assert!(err.is_io());
+    }
+
+    #[test]
+    fn credential_error_not_found_suggestion() {
+        let e = CredentialError::NotFound { key: "api_key".into() };
+        let ve = e.to_velocity_error();
+        assert!(ve.suggestion.is_some());
+        assert!(ve.suggestion.as_ref().unwrap().contains("login"));
+        assert!(ve.context.iter().any(|(k, v)| k == "key" && v == "api_key"));
+    }
+
+    #[test]
+    fn credential_error_boundary_violation_suggestion() {
+        let e = CredentialError::BoundaryViolation { detail: "env var leak".into() };
+        let ve = e.to_velocity_error();
+        assert!(ve.suggestion.is_some());
+        assert!(ve.suggestion.as_ref().unwrap().contains("boundary"));
+    }
 }
