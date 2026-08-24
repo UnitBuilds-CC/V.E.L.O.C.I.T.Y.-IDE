@@ -1448,4 +1448,304 @@ mod tests {
         assert_ne!(Token::IntLit(1), Token::IntLit(2));
         assert_ne!(Token::Ident("a".into()), Token::Ident("b".into()));
     }
+
+    // ── Hex with underscores ─────────────────────────────────────────────
+
+    #[test]
+    fn lex_hex_with_underscores() {
+        let src = "0x1_000";
+        let mut lexer = NdaLexer::new(src);
+        let tokens = lexer.tokenize().unwrap();
+        assert_eq!(tokens[0].token, Token::IntLit(0x1000));
+    }
+
+    #[test]
+    fn lex_hex_upper_with_underscores() {
+        let src = "0XFF_FF";
+        let mut lexer = NdaLexer::new(src);
+        let tokens = lexer.tokenize().unwrap();
+        assert_eq!(tokens[0].token, Token::IntLit(0xFFFF));
+    }
+
+    #[test]
+    fn lex_hex_all_digits() {
+        let src = "0xabcdef";
+        let mut lexer = NdaLexer::new(src);
+        let tokens = lexer.tokenize().unwrap();
+        assert_eq!(tokens[0].token, Token::IntLit(0xABCDEF));
+    }
+
+    // ── String escape: \n and \t ─────────────────────────────────────────
+
+    #[test]
+    fn lex_string_newline_escape() {
+        let src = r#""line1\nline2""#;
+        let mut lexer = NdaLexer::new(src);
+        let tokens = lexer.tokenize().unwrap();
+        assert_eq!(tokens[0].token, Token::StringLit("line1\nline2".to_string()));
+    }
+
+    #[test]
+    fn lex_string_tab_escape() {
+        let src = r#""col1\tcol2""#;
+        let mut lexer = NdaLexer::new(src);
+        let tokens = lexer.tokenize().unwrap();
+        assert_eq!(tokens[0].token, Token::StringLit("col1\tcol2".to_string()));
+    }
+
+    #[test]
+    fn lex_string_multiple_escapes() {
+        let src = r#""a\n\t\\b""#;
+        let mut lexer = NdaLexer::new(src);
+        let tokens = lexer.tokenize().unwrap();
+        assert_eq!(tokens[0].token, Token::StringLit("a\n\t\\b".to_string()));
+    }
+
+    // ── Comparison operators ─────────────────────────────────────────────
+
+    #[test]
+    fn lex_less_than_or_equal() {
+        let src = "<=";
+        let mut lexer = NdaLexer::new(src);
+        let tokens = lexer.tokenize().unwrap();
+        assert_eq!(tokens[0].token, Token::Le);
+    }
+
+    #[test]
+    fn lex_greater_than_or_equal() {
+        let src = ">=";
+        let mut lexer = NdaLexer::new(src);
+        let tokens = lexer.tokenize().unwrap();
+        assert_eq!(tokens[0].token, Token::Ge);
+    }
+
+    #[test]
+    fn lex_not_equal() {
+        let src = "!=";
+        let mut lexer = NdaLexer::new(src);
+        let tokens = lexer.tokenize().unwrap();
+        assert_eq!(tokens[0].token, Token::Ne);
+    }
+
+    #[test]
+    fn lex_comparison_chain() {
+        let src = "a <= b >= c != d == e";
+        let mut lexer = NdaLexer::new(src);
+        let tokens = lexer.tokenize().unwrap();
+        assert_eq!(tokens[0].token, Token::Ident("a".into()));
+        assert_eq!(tokens[1].token, Token::Le);
+        assert_eq!(tokens[2].token, Token::Ident("b".into()));
+        assert_eq!(tokens[3].token, Token::Ge);
+        assert_eq!(tokens[4].token, Token::Ident("c".into()));
+        assert_eq!(tokens[5].token, Token::Ne);
+        assert_eq!(tokens[6].token, Token::Ident("d".into()));
+        assert_eq!(tokens[7].token, Token::Eq);
+        assert_eq!(tokens[8].token, Token::Ident("e".into()));
+    }
+
+    // ── Pipe and Amp tokens ──────────────────────────────────────────────
+
+    #[test]
+    fn lex_pipe_token() {
+        let src = "|";
+        let mut lexer = NdaLexer::new(src);
+        let tokens = lexer.tokenize().unwrap();
+        assert_eq!(tokens[0].token, Token::Pipe);
+    }
+
+    #[test]
+    fn lex_amp_token() {
+        let src = "&";
+        let mut lexer = NdaLexer::new(src);
+        let tokens = lexer.tokenize().unwrap();
+        assert_eq!(tokens[0].token, Token::Amp);
+    }
+
+    #[test]
+    fn lex_pipe_and_amp_in_expr() {
+        let src = "a | b & c";
+        let mut lexer = NdaLexer::new(src);
+        let tokens = lexer.tokenize().unwrap();
+        assert_eq!(tokens[1].token, Token::Pipe);
+        assert_eq!(tokens[3].token, Token::Amp);
+    }
+
+    // ── Dot as number starter ────────────────────────────────────────────
+
+    #[test]
+    fn lex_dot_digit_becomes_dot_then_int() {
+        // The code checks `ch == '.' && peek_next is digit` → goes to lex_number
+        // But lex_number first checks hex, then enters while loop.
+        // ".5" enters lex_number, reads ".5", parses as float 0.5
+        let src = ".5";
+        let mut lexer = NdaLexer::new(src);
+        let tokens = lexer.tokenize().unwrap();
+        // Actually: the match on '.' at line 354 fires first, consuming dot as Dot token
+        // Then '5' is lexed as IntLit(5)
+        assert_eq!(tokens[0].token, Token::Dot);
+        assert_eq!(tokens[1].token, Token::IntLit(5));
+    }
+
+    // ── Location tracking for various token types ────────────────────────
+
+    #[test]
+    fn lex_string_location_tracking() {
+        let src = "\"hello\"";
+        let mut lexer = NdaLexer::new(src);
+        let tokens = lexer.tokenize().unwrap();
+        assert_eq!(tokens[0].line, 1);
+        assert_eq!(tokens[0].col, 1);
+    }
+
+    #[test]
+    fn lex_number_location_after_keyword() {
+        let src = "let x = 42";
+        let mut lexer = NdaLexer::new(src);
+        let tokens = lexer.tokenize().unwrap();
+        // let(1) x(5) =(7) 42(9)
+        assert_eq!(tokens[3].line, 1);
+        assert_eq!(tokens[3].col, 9);
+    }
+
+    #[test]
+    fn lex_arrow_location_tracking() {
+        let src = "\n->";
+        let mut lexer = NdaLexer::new(src);
+        let tokens = lexer.tokenize().unwrap();
+        assert_eq!(tokens[0].line, 2);
+        assert_eq!(tokens[0].col, 1);
+    }
+
+    // ── Keyword: all remaining keywords ──────────────────────────────────
+
+    #[test]
+    fn lex_all_control_keywords() {
+        let src = "fn let loop while if else return break print";
+        let mut lexer = NdaLexer::new(src);
+        let tokens = lexer.tokenize().unwrap();
+        assert_eq!(tokens[0].token, Token::Fn);
+        assert_eq!(tokens[1].token, Token::Let);
+        assert_eq!(tokens[2].token, Token::Loop);
+        assert_eq!(tokens[3].token, Token::While);
+        assert_eq!(tokens[4].token, Token::If);
+        assert_eq!(tokens[5].token, Token::Else);
+        assert_eq!(tokens[6].token, Token::Return);
+        assert_eq!(tokens[7].token, Token::Break);
+        assert_eq!(tokens[8].token, Token::Print);
+    }
+
+    // ── Realistic program tokenization ───────────────────────────────────
+
+    #[test]
+    fn lex_full_function_with_types() {
+        let src = "fn compute(x: int) -> vec {\n  return silu(x);\n}";
+        let mut lexer = NdaLexer::new(src);
+        let tokens = lexer.tokenize().unwrap();
+        assert_eq!(tokens[0].token, Token::Fn);
+        assert_eq!(tokens[1].token, Token::Ident("compute".into()));
+        assert_eq!(tokens[2].token, Token::LParen);
+        assert_eq!(tokens[3].token, Token::Ident("x".into()));
+        assert_eq!(tokens[4].token, Token::Colon);
+        assert_eq!(tokens[5].token, Token::Int);
+        assert_eq!(tokens[6].token, Token::RParen);
+        assert_eq!(tokens[7].token, Token::Arrow);
+        assert_eq!(tokens[8].token, Token::Vec);
+        assert_eq!(tokens[9].token, Token::LBrace);
+        assert_eq!(tokens[10].token, Token::Return);
+        assert_eq!(tokens[11].token, Token::Silu);
+    }
+
+    // ── Error recovery details ───────────────────────────────────────────
+
+    #[test]
+    fn error_recovery_continues_after_bad_char() {
+        let src = "a @ b";
+        let mut lexer = NdaLexer::new(src);
+        let (tokens, errors) = lexer.tokenize_with_errors();
+        assert_eq!(errors.len(), 1);
+        // Should have tokens: a, b, Eof
+        let idents: Vec<_> = tokens.iter().filter(|t| matches!(t.token, Token::Ident(_))).collect();
+        assert_eq!(idents.len(), 2);
+    }
+
+    #[test]
+    fn error_recovery_multiple_bad_chars() {
+        let src = "@ # $";
+        let mut lexer = NdaLexer::new(src);
+        let (tokens, errors) = lexer.tokenize_with_errors();
+        assert_eq!(errors.len(), 3);
+        assert_eq!(tokens.last().unwrap().token, Token::Eof);
+    }
+
+    // ── Number: float with E uppercase ───────────────────────────────────
+
+    #[test]
+    fn lex_float_with_dot_and_e() {
+        let src = "3.14E2";
+        let mut lexer = NdaLexer::new(src);
+        let tokens = lexer.tokenize().unwrap();
+        match &tokens[0].token {
+            Token::FloatLit(v) => assert!((v - 314.0).abs() < 0.1),
+            _ => panic!("Expected FloatLit, got {:?}", tokens[0].token),
+        }
+    }
+
+    #[test]
+    fn lex_float_trailing_dot() {
+        let src = "2.";
+        let mut lexer = NdaLexer::new(src);
+        let tokens = lexer.tokenize().unwrap();
+        match &tokens[0].token {
+            Token::FloatLit(v) => assert!((v - 2.0).abs() < f64::EPSILON),
+            _ => panic!("Expected FloatLit, got {:?}", tokens[0].token),
+        }
+    }
+
+    // ── Lone bang error message ──────────────────────────────────────────
+
+    #[test]
+    fn lone_bang_error_contains_location() {
+        let src = "!";
+        let mut lexer = NdaLexer::new(src);
+        let result = lexer.tokenize();
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(err.contains("1:1"), "error should contain location: {}", err);
+    }
+
+    // ── Token clone ──────────────────────────────────────────────────────
+
+    #[test]
+    fn token_clone_intlit() {
+        let tok = Token::IntLit(99);
+        let cloned = tok.clone();
+        assert_eq!(tok, cloned);
+    }
+
+    #[test]
+    fn token_clone_stringlit() {
+        let tok = Token::StringLit("hello".into());
+        let cloned = tok.clone();
+        assert_eq!(tok, cloned);
+    }
+
+    // ── Whitespace variants ──────────────────────────────────────────────
+
+    #[test]
+    fn lex_tab_separated_tokens() {
+        let src = "fn\tmain";
+        let mut lexer = NdaLexer::new(src);
+        let tokens = lexer.tokenize().unwrap();
+        assert_eq!(tokens[0].token, Token::Fn);
+        assert_eq!(tokens[1].token, Token::Ident("main".into()));
+    }
+
+    #[test]
+    fn lex_mixed_whitespace() {
+        let src = " \t\n fn ";
+        let mut lexer = NdaLexer::new(src);
+        let tokens = lexer.tokenize().unwrap();
+        assert_eq!(tokens[0].token, Token::Fn);
+        assert_eq!(tokens[0].line, 2); // after one newline
+    }
 }
