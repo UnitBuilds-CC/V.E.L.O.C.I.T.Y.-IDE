@@ -1,15 +1,13 @@
-Block 211: transformer.rs — 26 new tests (167 total), committed
+Phase N: IDE client expansion — 7 new methods and response types
 
-New tests cover:
-- attention_head (bitwise popcount Q·K): empty KV, single block, output length, offset head
-- pack_vector helper: delegation to impl, empty slice
-- TransformerInfo computed fields: head_dim, GQA ratio, all_gpu_false, multiple validation issues
-- Fp32GenerationReport edge cases: zero tokens, elapsed boundary, both stopped+truncated, forward metrics count
-- Fp32ForwardMetrics: gpu_active true, boundary values (usize::MAX, u64::MAX)
-- NdaKvBlock: clone independence, large bitmaps (128-dim)
-- KvLayer: single element push, bitmap bytes formula
-- sample_token: two-logit tie, very small top_p
-- apply_rope_head: pos=0 full identity verification
-- silu: boundary at 0.5
-- rms_norm: large values
-- lm_head: 4-vocab × 2-hidden parallel correctness
+- echo() — GET /v1/echo connectivity test
+- estimate_assignment() — POST /v1/assignments/estimate cost preview
+- submit_batch() — POST /v1/assignments/batch multi-task submission
+- get_billing() — GET /v1/usage/billing period summary
+- get_analytics() — GET /v1/analytics usage analytics
+- get_provider_health() — GET /health/providers circuit breaker status
+- 7 new response types: EchoResponse, EstimateResponse, BatchResponse,
+  BatchResultEntry, BillingResponse, AnalyticsResponse, ProviderHealthResponse,
+  ProviderStatus
+- 4 new unit tests for response deserialization
+- 104 velocity_client tests pass

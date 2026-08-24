@@ -544,6 +544,76 @@ pub struct ModelEntry {
     pub domains: Vec<String>,
 }
 
+/// Response from GET /v1/echo.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EchoResponse {
+    pub status: String,
+    pub authorization: String,
+    pub headers: serde_json::Value,
+}
+
+/// Response from POST /v1/assignments/estimate.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EstimateResponse {
+    pub estimated_cost_usd: f64,
+    pub estimated_tokens: u64,
+    pub routing: Vec<serde_json::Value>,
+}
+
+/// Response from POST /v1/assignments/batch.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BatchResponse {
+    pub results: Vec<BatchResultEntry>,
+    pub total_tasks: u64,
+    pub total_tokens: u64,
+    pub total_cost_usd: f64,
+}
+
+/// A single result entry in a batch response.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BatchResultEntry {
+    pub index: u64,
+    pub assignment_id: String,
+    pub status: String,
+    pub subtask_count: u64,
+    pub tokens_used: u64,
+    pub cost_usd: f64,
+    pub results: Vec<serde_json::Value>,
+}
+
+/// Response from GET /v1/usage/billing.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BillingResponse {
+    pub period: serde_json::Value,
+    pub usage: serde_json::Value,
+    pub limits: serde_json::Value,
+}
+
+/// Response from GET /v1/analytics.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AnalyticsResponse {
+    pub total_assignments: u64,
+    pub total_tokens: u64,
+    pub total_cost_usd: f64,
+    pub success_rate: f64,
+    pub avg_duration_ms: f64,
+}
+
+/// Response from GET /health/providers.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProviderHealthResponse {
+    pub providers: Vec<ProviderStatus>,
+}
+
+/// Status of a single provider.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProviderStatus {
+    pub provider: String,
+    pub state: String,
+    pub consecutive_failures: u64,
+    pub consecutive_successes: u64,
+}
+
 // ─── Client ─────────────────────────────────────────────────────────────
 
 /// Synchronous HTTP client for the Velocity Router API.
@@ -837,6 +907,72 @@ impl VelocityClient {
             .context("failed to fetch models catalog")?;
         resp.into_json()
             .context("failed to parse models response")
+    }
+
+    /// GET /v1/echo — connectivity test (returns status + masked auth).
+    pub fn echo(&self) -> Result<EchoResponse> {
+        let resp = self
+            .get_with_retry(&self.url("/v1/echo"), true)
+            .context("failed to reach echo endpoint")?;
+        resp.into_json()
+            .context("failed to parse echo response")
+    }
+
+    /// POST /v1/assignments/estimate — estimate cost and routing without executing.
+    pub fn estimate_assignment(&self, req: &AssignmentRequest) -> Result<EstimateResponse> {
+        let resp = self
+            .agent
+            .post(&self.url("/v1/assignments/estimate"))
+            .set("Authorization", &self.auth_header())
+            .set("Content-Type", "application/json")
+            .send_json(serde_json::to_value(req)?)
+            .context("failed to estimate assignment")?;
+        resp.into_json()
+            .context("failed to parse estimate response")
+    }
+
+    /// POST /v1/assignments/batch — submit multiple tasks at once.
+    pub fn submit_batch(&self, tasks: &[AssignmentRequest], tier: &str) -> Result<BatchResponse> {
+        let body = serde_json::json!({
+            "tasks": tasks.iter().map(|t| serde_json::to_value(t).unwrap()).collect::<Vec<_>>(),
+            "tier": tier,
+        });
+        let resp = self
+            .agent
+            .post(&self.url("/v1/assignments/batch"))
+            .set("Authorization", &self.auth_header())
+            .set("Content-Type", "application/json")
+            .send_json(body)
+            .context("failed to submit batch assignment")?;
+        resp.into_json()
+            .context("failed to parse batch response")
+    }
+
+    /// GET /v1/usage/billing — billing period summary.
+    pub fn get_billing(&self) -> Result<BillingResponse> {
+        let resp = self
+            .get_with_retry(&self.url("/v1/usage/billing"), true)
+            .context("failed to fetch billing data")?;
+        resp.into_json()
+            .context("failed to parse billing response")
+    }
+
+    /// GET /v1/analytics — usage analytics summary.
+    pub fn get_analytics(&self) -> Result<AnalyticsResponse> {
+        let resp = self
+            .get_with_retry(&self.url("/v1/analytics"), true)
+            .context("failed to fetch analytics")?;
+        resp.into_json()
+            .context("failed to parse analytics response")
+    }
+
+    /// GET /health/providers — provider circuit breaker status.
+    pub fn get_provider_health(&self) -> Result<ProviderHealthResponse> {
+        let resp = self
+            .get_with_retry(&self.url("/health/providers"), false)
+            .context("failed to fetch provider health")?;
+        resp.into_json()
+            .context("failed to parse provider health response")
     }
 }
 
@@ -2306,5 +2442,73 @@ extra_key = "extra_value"
         assert_eq!(resp.total, 1);
         assert_eq!(resp.models[0].id, "deepseek-v3");
         assert_eq!(resp.models[0].domains.len(), 2);
+    }
+
+    #[test]
+    fn batch_response_deserializes() {
+        let json = r#"{
+            "results": [
+                {
+                    "index": 0,
+                    "assignment_id": "abc123",
+                    "status": "completed",
+                    "subtask_count": 2,
+                    "tokens_used": 1500,
+                    "cost_usd": 0.005,
+                    "results": []
+                }
+            ],
+            "total_tasks": 1,
+            "total_tokens": 1500,
+            "total_cost_usd": 0.005
+        }"#;
+        let resp: BatchResponse = serde_json::from_str(json).unwrap();
+        assert_eq!(resp.total_tasks, 1);
+        assert_eq!(resp.results[0].assignment_id, "abc123");
+        assert_eq!(resp.results[0].status, "completed");
+    }
+
+    #[test]
+    fn echo_response_deserializes() {
+        let json = r#"{
+            "status": "ok",
+            "authorization": "Bearer vr_stan...abcd",
+            "headers": {"x-request-id": "123"}
+        }"#;
+        let resp: EchoResponse = serde_json::from_str(json).unwrap();
+        assert_eq!(resp.status, "ok");
+        assert!(resp.authorization.contains("Bearer"));
+    }
+
+    #[test]
+    fn analytics_response_deserializes() {
+        let json = r#"{
+            "total_assignments": 42,
+            "total_tokens": 100000,
+            "total_cost_usd": 0.50,
+            "success_rate": 0.95,
+            "avg_duration_ms": 1200.0
+        }"#;
+        let resp: AnalyticsResponse = serde_json::from_str(json).unwrap();
+        assert_eq!(resp.total_assignments, 42);
+        assert!((resp.success_rate - 0.95).abs() < 0.001);
+    }
+
+    #[test]
+    fn provider_health_response_deserializes() {
+        let json = r#"{
+            "providers": [
+                {
+                    "provider": "anthropic",
+                    "state": "closed",
+                    "consecutive_failures": 0,
+                    "consecutive_successes": 5
+                }
+            ]
+        }"#;
+        let resp: ProviderHealthResponse = serde_json::from_str(json).unwrap();
+        assert_eq!(resp.providers.len(), 1);
+        assert_eq!(resp.providers[0].provider, "anthropic");
+        assert_eq!(resp.providers[0].state, "closed");
     }
 }
