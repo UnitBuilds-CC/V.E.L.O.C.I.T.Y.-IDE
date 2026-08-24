@@ -1498,4 +1498,456 @@ mod tests {
         assert_eq!(entry.v.len, 16);
         assert_eq!(entry.v.log2_scale, -2);
     }
+
+    // ─── Block 152: comprehensive expansion ────────────────────────────────
+
+    // ── JSON key counts ─────────────────────────────────────────────────────
+
+    #[test]
+    fn forward_metrics_json_key_count() {
+        let m = ForwardMetrics::default();
+        let v: serde_json::Value = serde_json::to_value(&m).unwrap();
+        assert_eq!(v.as_object().unwrap().len(), 3, "ForwardMetrics has 3 fields");
+    }
+
+    #[test]
+    fn generation_report_json_key_count() {
+        let r = GenerationReport {
+            tokens_generated: 0, prompt_tokens: 0, stopped_at_eos: false,
+            truncated: false, site_map_hits: 0, site_map_misses: 0,
+            final_kv_cache_size: 0, elapsed_us: 0, tokens_per_second: 0.0,
+            token_ids: vec![],
+        };
+        let v: serde_json::Value = serde_json::to_value(&r).unwrap();
+        assert_eq!(v.as_object().unwrap().len(), 10, "GenerationReport has 10 fields");
+    }
+
+    #[test]
+    fn zero_transformer_info_json_key_count() {
+        let info = ZeroTransformerInfo {
+            n_layers: 1, n_heads: 1, n_kv_heads: 1, hidden_size: 8,
+            head_dim: 8, vocab_size: 10, max_seq_len: 16, eos_token_id: 2,
+            total_kv_cached: 0, per_layer_kv: vec![0], lm_head_rows: 10,
+            lm_head_stride: 1, embed_tokens_bytes: 0, validation_issues: vec![],
+        };
+        let v: serde_json::Value = serde_json::to_value(&info).unwrap();
+        assert_eq!(v.as_object().unwrap().len(), 14, "ZeroTransformerInfo has 14 fields");
+    }
+
+    #[test]
+    fn norm_conversion_report_json_key_count() {
+        let w = vec![1.0];
+        let (_, r) = norm_to_ndavec_report(&w);
+        let v: serde_json::Value = serde_json::to_value(&r).unwrap();
+        assert_eq!(v.as_object().unwrap().len(), 6, "NormConversionReport has 6 fields");
+    }
+
+    #[test]
+    fn generation_summary_json_key_count() {
+        let s = GenerationSummary {
+            tokens_generated: 0, prompt_tokens: 0, stopped_at_eos: false,
+            truncated: false, tokens_per_second: 0.0, cache_hit_rate: 0.0,
+            elapsed_ms: 0.0, first_token_id: None, last_token_id: None,
+        };
+        let v: serde_json::Value = serde_json::to_value(&s).unwrap();
+        assert_eq!(v.as_object().unwrap().len(), 9, "GenerationSummary has 9 fields");
+    }
+
+    // ── JSON value verification ─────────────────────────────────────────────
+
+    #[test]
+    fn zero_transformer_info_json_values() {
+        let info = ZeroTransformerInfo {
+            n_layers: 24, n_heads: 32, n_kv_heads: 8, hidden_size: 4096,
+            head_dim: 128, vocab_size: 32000, max_seq_len: 2048, eos_token_id: 2,
+            total_kv_cached: 100, per_layer_kv: vec![4; 24], lm_head_rows: 32000,
+            lm_head_stride: 512, embed_tokens_bytes: 32000 * 4096 * 4,
+            validation_issues: vec!["issue".into()],
+        };
+        let v: serde_json::Value = serde_json::to_value(&info).unwrap();
+        assert_eq!(v["n_layers"], 24);
+        assert_eq!(v["hidden_size"], 4096);
+        assert_eq!(v["n_heads"], 32);
+        assert_eq!(v["n_kv_heads"], 8);
+        assert_eq!(v["head_dim"], 128);
+        assert_eq!(v["vocab_size"], 32000);
+        assert_eq!(v["max_seq_len"], 2048);
+        assert_eq!(v["eos_token_id"], 2);
+        assert_eq!(v["total_kv_cached"], 100);
+        assert_eq!(v["lm_head_rows"], 32000);
+        assert_eq!(v["lm_head_stride"], 512);
+        assert_eq!(v["per_layer_kv"].as_array().unwrap().len(), 24);
+        assert_eq!(v["validation_issues"][0], "issue");
+    }
+
+    #[test]
+    fn generation_report_json_values() {
+        let r = GenerationReport {
+            tokens_generated: 42, prompt_tokens: 10, stopped_at_eos: true,
+            truncated: false, site_map_hits: 80, site_map_misses: 20,
+            final_kv_cache_size: 200, elapsed_us: 50000,
+            tokens_per_second: 840.0, token_ids: vec![1, 2, 3],
+        };
+        let v: serde_json::Value = serde_json::to_value(&r).unwrap();
+        assert_eq!(v["tokens_generated"], 42);
+        assert_eq!(v["prompt_tokens"], 10);
+        assert_eq!(v["stopped_at_eos"], true);
+        assert_eq!(v["truncated"], false);
+        assert_eq!(v["site_map_hits"], 80);
+        assert_eq!(v["site_map_misses"], 20);
+        assert_eq!(v["token_ids"][0], 1);
+    }
+
+    #[test]
+    fn norm_conversion_report_json_values() {
+        let w = vec![1.0, -2.0, 3.0];
+        let (_, r) = norm_to_ndavec_report(&w);
+        let v: serde_json::Value = serde_json::to_value(&r).unwrap();
+        assert_eq!(v["input_len"], 3);
+        assert_eq!(v["output_len"], 3);
+        assert!((v["abs_max"].as_f64().unwrap() - 3.0).abs() < 1e-9);
+        assert_eq!(v["all_positive"], false);
+        assert_eq!(v["all_negative"], false);
+    }
+
+    // ── Clone independence ──────────────────────────────────────────────────
+
+    #[test]
+    fn generation_report_clone_independent() {
+        let r = GenerationReport {
+            tokens_generated: 5, prompt_tokens: 3, stopped_at_eos: true,
+            truncated: false, site_map_hits: 10, site_map_misses: 5,
+            final_kv_cache_size: 20, elapsed_us: 500, tokens_per_second: 10000.0,
+            token_ids: vec![1, 2, 3],
+        };
+        let mut cloned = r.clone();
+        cloned.token_ids.push(99);
+        cloned.tokens_generated = 999;
+        assert_eq!(r.tokens_generated, 5, "original unchanged");
+        assert_eq!(r.token_ids.len(), 3, "original vec unchanged");
+    }
+
+    #[test]
+    fn forward_metrics_clone_independent() {
+        let m = ForwardMetrics { site_map_hits: 10, site_map_misses: 5, kv_cache_size: 15 };
+        let mut cloned = m.clone();
+        cloned.site_map_hits = 999;
+        assert_eq!(m.site_map_hits, 10, "original unchanged");
+    }
+
+    #[test]
+    fn zero_transformer_info_clone_independent() {
+        let info = ZeroTransformerInfo {
+            n_layers: 2, n_heads: 4, n_kv_heads: 2, hidden_size: 64,
+            head_dim: 16, vocab_size: 100, max_seq_len: 256, eos_token_id: 2,
+            total_kv_cached: 0, per_layer_kv: vec![0, 0], lm_head_rows: 100,
+            lm_head_stride: 8, embed_tokens_bytes: 0,
+            validation_issues: vec!["a".into()],
+        };
+        let mut cloned = info.clone();
+        cloned.validation_issues.push("b".into());
+        cloned.per_layer_kv.push(99);
+        assert_eq!(info.validation_issues.len(), 1, "original unchanged");
+        assert_eq!(info.per_layer_kv.len(), 2, "original unchanged");
+    }
+
+    #[test]
+    fn generation_summary_clone_independent() {
+        let s = GenerationSummary {
+            tokens_generated: 10, prompt_tokens: 5, stopped_at_eos: false,
+            truncated: true, tokens_per_second: 100.0, cache_hit_rate: 0.5,
+            elapsed_ms: 100.0, first_token_id: Some(1), last_token_id: Some(10),
+        };
+        let mut cloned = s.clone();
+        cloned.tokens_generated = 999;
+        assert_eq!(s.tokens_generated, 10);
+    }
+
+    // ── Debug format ────────────────────────────────────────────────────────
+
+    #[test]
+    fn forward_metrics_debug_format() {
+        let m = ForwardMetrics { site_map_hits: 5, site_map_misses: 3, kv_cache_size: 8 };
+        let d = format!("{:?}", m);
+        assert!(d.contains("ForwardMetrics"));
+        assert!(d.contains("site_map_hits: 5"));
+    }
+
+    #[test]
+    fn generation_report_debug_format() {
+        let r = GenerationReport {
+            tokens_generated: 3, prompt_tokens: 2, stopped_at_eos: true,
+            truncated: false, site_map_hits: 0, site_map_misses: 0,
+            final_kv_cache_size: 0, elapsed_us: 100, tokens_per_second: 30000.0,
+            token_ids: vec![1, 2, 3],
+        };
+        let d = format!("{:?}", r);
+        assert!(d.contains("GenerationReport"));
+        assert!(d.contains("tokens_generated: 3"));
+        assert!(d.contains("stopped_at_eos: true"));
+    }
+
+    #[test]
+    fn zero_transformer_info_debug_format() {
+        let info = ZeroTransformerInfo {
+            n_layers: 2, n_heads: 4, n_kv_heads: 2, hidden_size: 64,
+            head_dim: 16, vocab_size: 100, max_seq_len: 256, eos_token_id: 2,
+            total_kv_cached: 0, per_layer_kv: vec![0, 0], lm_head_rows: 100,
+            lm_head_stride: 8, embed_tokens_bytes: 0, validation_issues: vec![],
+        };
+        let d = format!("{:?}", info);
+        assert!(d.contains("ZeroTransformerInfo"));
+        assert!(d.contains("n_layers: 2"));
+    }
+
+    #[test]
+    fn norm_conversion_report_debug_format() {
+        let w = vec![1.0, -2.0];
+        let (_, r) = norm_to_ndavec_report(&w);
+        let d = format!("{:?}", r);
+        assert!(d.contains("NormConversionReport"));
+        assert!(d.contains("input_len: 2"));
+    }
+
+    #[test]
+    fn generation_summary_debug_format() {
+        let s = GenerationSummary {
+            tokens_generated: 5, prompt_tokens: 3, stopped_at_eos: false,
+            truncated: true, tokens_per_second: 500.0, cache_hit_rate: 0.6,
+            elapsed_ms: 10.0, first_token_id: Some(42), last_token_id: Some(99),
+        };
+        let d = format!("{:?}", s);
+        assert!(d.contains("GenerationSummary"));
+        assert!(d.contains("tokens_generated: 5"));
+    }
+
+    // ── norm_to_ndavec detailed ─────────────────────────────────────────────
+
+    #[test]
+    fn norm_to_ndavec_log2_scale_exact() {
+        // amax=4.0 → (4.0/2.0).log2().floor() = (2.0).log2().floor() = 1.0 → log2_scale=1
+        let w = vec![4.0, -2.0];
+        let v = norm_to_ndavec(&w);
+        assert_eq!(v.log2_scale, 1, "amax=4 → log2_scale=1");
+    }
+
+    #[test]
+    fn norm_to_ndavec_log2_scale_large() {
+        // amax=16.0 → (16.0/2.0).log2().floor() = (8.0).log2().floor() = 3.0 → log2_scale=3
+        let w = vec![16.0, -8.0, 4.0];
+        let v = norm_to_ndavec(&w);
+        assert_eq!(v.log2_scale, 3, "amax=16 → log2_scale=3");
+    }
+
+    #[test]
+    fn norm_to_ndavec_non_aligned_len() {
+        let w = vec![1.0; 10]; // 10 elements → ceil(10/8)=2 bytes
+        let v = norm_to_ndavec(&w);
+        assert_eq!(v.len, 10);
+        assert_eq!(v.sign.len(), 2);
+        assert_eq!(v.extra.len(), 2);
+    }
+
+    #[test]
+    fn norm_to_ndavec_extra_bit_pattern() {
+        // w=[2.0, -2.0] → amax=2.0, log2_scale=(2.0/2.0).log2().floor()=0
+        // scale=2^0=1.0, inv_s=1.0
+        // 2.0/1.0=2.0: pos, |2.0|>=1.5 → large → is_pos==is_large → extra=1
+        // -2.0/1.0=-2.0: neg, |−2.0|>=1.5 → large → !is_pos==is_large → extra=0
+        let w = vec![2.0, -2.0];
+        let v = norm_to_ndavec(&w);
+        assert_eq!(v.sign[0] & 0x01, 1, "positive → sign bit 0 = 1");
+        assert_eq!(v.sign[0] & 0x02, 0, "negative → sign bit 1 = 0");
+        assert_eq!(v.extra[0] & 0x01, 1, "pos+large → extra bit 0 = 1");
+        assert_eq!(v.extra[0] & 0x02, 0, "neg+large → extra bit 1 = 0");
+    }
+
+    #[test]
+    fn norm_to_ndavec_small_values_no_extra() {
+        // w=[0.5, -0.5] → amax=0.5, log2_scale=(0.5/2.0).log2().floor()=(0.25).log2().floor()=-2
+        // scale=2^(-2)=0.25, inv_s=4.0
+        // 0.5*4.0=2.0: pos, |2.0|>=1.5 → large → is_pos==is_large → extra=1
+        // -0.5*4.0=-2.0: neg, |−2.0|>=1.5 → large → is_neg!=is_large → extra=0
+        let w = vec![0.5, -0.5];
+        let v = norm_to_ndavec(&w);
+        assert_eq!(v.log2_scale, -2);
+        // Both are large, so extra differs by sign
+        assert_eq!(v.extra[0] & 0x01, 1, "pos+large → extra=1");
+        assert_eq!(v.extra[0] & 0x02, 0, "neg+large → extra=0");
+    }
+
+    // ── norm_to_ndavec_report extras ────────────────────────────────────────
+
+    #[test]
+    fn norm_to_ndavec_report_log2_scale_matches_vec() {
+        let w = vec![8.0, -4.0, 2.0];
+        let (vec, report) = norm_to_ndavec_report(&w);
+        assert_eq!(report.log2_scale, vec.log2_scale);
+    }
+
+    #[test]
+    fn norm_conversion_report_clone() {
+        let w = vec![1.0, -2.0, 3.0];
+        let (_, r) = norm_to_ndavec_report(&w);
+        let cloned = r.clone();
+        assert_eq!(cloned.input_len, r.input_len);
+        assert_eq!(cloned.output_len, r.output_len);
+        assert_eq!(cloned.log2_scale, r.log2_scale);
+        assert!((cloned.abs_max - r.abs_max).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn norm_conversion_report_pretty_json() {
+        let w = vec![1.0, 2.0];
+        let (_, r) = norm_to_ndavec_report(&w);
+        let pretty = serde_json::to_string_pretty(&r).unwrap();
+        assert!(pretty.contains('\n'));
+    }
+
+    // ── ZeroKvLayer extras ──────────────────────────────────────────────────
+
+    #[test]
+    fn zero_kv_layer_preserves_data() {
+        let mut layer = ZeroKvLayer::new();
+        let k = NdaVec {
+            len: 8, log2_scale: 2,
+            sign: vec![0xAB].into(), extra: vec![0xCD].into(),
+        };
+        let v = NdaVec {
+            len: 8, log2_scale: -1,
+            sign: vec![0xEF].into(), extra: vec![0x01].into(),
+        };
+        layer.push(k, v);
+        assert_eq!(layer.entries[0].k.log2_scale, 2);
+        assert_eq!(layer.entries[0].v.log2_scale, -1);
+        assert_eq!(layer.entries[0].k.sign[0], 0xAB);
+        assert_eq!(layer.entries[0].v.extra[0], 0x01);
+    }
+
+    #[test]
+    fn zero_kv_layer_long_chain() {
+        let mut layer = ZeroKvLayer::new();
+        for i in 0..20 {
+            let k = NdaVec {
+                len: 8, log2_scale: i as i8,
+                sign: vec![i as u8].into(), extra: vec![0].into(),
+            };
+            let v = NdaVec {
+                len: 8, log2_scale: 0,
+                sign: vec![0xFF].into(), extra: vec![0].into(),
+            };
+            layer.push(k, v);
+        }
+        assert_eq!(layer.len(), 20);
+        assert_eq!(layer.entries[19].k.log2_scale, 19);
+    }
+
+    // ── GenerationReport edge cases ─────────────────────────────────────────
+
+    #[test]
+    fn generation_report_tokens_per_second_calculation() {
+        let r = GenerationReport {
+            tokens_generated: 100, prompt_tokens: 10, stopped_at_eos: false,
+            truncated: true, site_map_hits: 0, site_map_misses: 0,
+            final_kv_cache_size: 0, elapsed_us: 200_000,
+            tokens_per_second: 100.0 * 1_000_000.0 / 200_000.0,
+            token_ids: vec![0; 100],
+        };
+        assert!((r.tokens_per_second - 500.0).abs() < 1e-3);
+    }
+
+    #[test]
+    fn generation_report_cache_hit_rate_calculation() {
+        let r = GenerationReport {
+            tokens_generated: 10, prompt_tokens: 5, stopped_at_eos: false,
+            truncated: false, site_map_hits: 30, site_map_misses: 70,
+            final_kv_cache_size: 0, elapsed_us: 0, tokens_per_second: 0.0,
+            token_ids: vec![],
+        };
+        assert!((r.cache_hit_rate() - 0.3).abs() < 1e-9);
+    }
+
+    #[test]
+    fn generation_report_total_tokens_large() {
+        let r = GenerationReport {
+            tokens_generated: 100_000, prompt_tokens: 50_000,
+            stopped_at_eos: false, truncated: true, site_map_hits: 0,
+            site_map_misses: 0, final_kv_cache_size: 0, elapsed_us: 0,
+            tokens_per_second: 0.0, token_ids: vec![],
+        };
+        assert_eq!(r.total_tokens(), 150_000);
+    }
+
+    // ── GenerationSummary extras ────────────────────────────────────────────
+
+    #[test]
+    fn generation_summary_serializes_none_tokens() {
+        let s = GenerationSummary {
+            tokens_generated: 0, prompt_tokens: 5, stopped_at_eos: false,
+            truncated: false, tokens_per_second: 0.0, cache_hit_rate: 0.0,
+            elapsed_ms: 0.0, first_token_id: None, last_token_id: None,
+        };
+        let json = serde_json::to_string(&s).unwrap();
+        assert!(json.contains("\"first_token_id\":null"));
+        assert!(json.contains("\"last_token_id\":null"));
+    }
+
+    #[test]
+    fn generation_summary_cache_hit_rate_matches_report() {
+        let r = GenerationReport {
+            tokens_generated: 50, prompt_tokens: 10, stopped_at_eos: true,
+            truncated: false, site_map_hits: 40, site_map_misses: 10,
+            final_kv_cache_size: 100, elapsed_us: 50000,
+            tokens_per_second: 1000.0, token_ids: vec![1; 50],
+        };
+        let s = ZeroTransformer::summarize_report(&r);
+        assert!((s.cache_hit_rate - r.cache_hit_rate()).abs() < f64::EPSILON);
+    }
+
+    // ── Pretty JSON ─────────────────────────────────────────────────────────
+
+    #[test]
+    fn zero_transformer_info_pretty_json() {
+        let info = ZeroTransformerInfo {
+            n_layers: 1, n_heads: 1, n_kv_heads: 1, hidden_size: 8,
+            head_dim: 8, vocab_size: 10, max_seq_len: 16, eos_token_id: 2,
+            total_kv_cached: 0, per_layer_kv: vec![0], lm_head_rows: 10,
+            lm_head_stride: 1, embed_tokens_bytes: 0, validation_issues: vec![],
+        };
+        let pretty = serde_json::to_string_pretty(&info).unwrap();
+        assert!(pretty.contains('\n'));
+        assert!(pretty.contains("  "));
+    }
+
+    #[test]
+    fn generation_report_pretty_json() {
+        let r = GenerationReport {
+            tokens_generated: 1, prompt_tokens: 1, stopped_at_eos: true,
+            truncated: false, site_map_hits: 0, site_map_misses: 0,
+            final_kv_cache_size: 0, elapsed_us: 0, tokens_per_second: 0.0,
+            token_ids: vec![42],
+        };
+        let pretty = serde_json::to_string_pretty(&r).unwrap();
+        assert!(pretty.contains('\n'));
+    }
+
+    // ── ForwardMetrics extras ───────────────────────────────────────────────
+
+    #[test]
+    fn forward_metrics_json_values() {
+        let m = ForwardMetrics { site_map_hits: 77, site_map_misses: 23, kv_cache_size: 200 };
+        let v: serde_json::Value = serde_json::to_value(&m).unwrap();
+        assert_eq!(v["site_map_hits"], 77);
+        assert_eq!(v["site_map_misses"], 23);
+        assert_eq!(v["kv_cache_size"], 200);
+    }
+
+    #[test]
+    fn forward_metrics_clone_all_fields() {
+        let m = ForwardMetrics { site_map_hits: 42, site_map_misses: 8, kv_cache_size: 50 };
+        let c = m.clone();
+        assert_eq!(c.site_map_hits, 42);
+        assert_eq!(c.site_map_misses, 8);
+        assert_eq!(c.kv_cache_size, 50);
+    }
 }
