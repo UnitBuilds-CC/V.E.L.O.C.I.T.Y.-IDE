@@ -60,6 +60,15 @@ pub enum ErrorCode {
     AssignmentCostExceeded,
     AssignmentTimeout,
 
+    // JIT / compiler (E10xx)
+    JitCompilationFailed,
+    JitOptimizationFailed,
+    JitSandboxEscape,
+
+    // Wiki (E11xx)
+    WikiIndexCorrupt,
+    WikiSearchFailed,
+
     // General
     IoError,
     InvalidInput,
@@ -67,6 +76,73 @@ pub enum ErrorCode {
 }
 
 impl ErrorCode {
+    /// Parse an error code from its string representation (e.g. "E200").
+    pub fn from_code_str(s: &str) -> Option<Self> {
+        match s {
+            "E100" => Some(Self::ConfigNotFound),
+            "E101" => Some(Self::ConfigInvalid),
+            "E102" => Some(Self::ConfigMissingKey),
+            "E103" => Some(Self::HomeDirectoryUnavailable),
+            "E200" => Some(Self::RouterUnreachable),
+            "E201" => Some(Self::RouterTimeout),
+            "E202" => Some(Self::RouterAuthFailed),
+            "E203" => Some(Self::RouterRateLimited),
+            "E204" => Some(Self::RouterServerError),
+            "E205" => Some(Self::RouterResponseInvalid),
+            "E300" => Some(Self::ModelDirNotFound),
+            "E301" => Some(Self::TokenizerNotFound),
+            "E302" => Some(Self::WeightLoadFailed),
+            "E303" => Some(Self::WeightShapeMismatch),
+            "E304" => Some(Self::ConfigInvalidArch),
+            "E400" => Some(Self::TokenizerFileInvalid),
+            "E401" => Some(Self::TokenizerMergeFailed),
+            "E402" => Some(Self::TokenizerUnknownToken),
+            "E500" => Some(Self::ProviderKeyInvalid),
+            "E501" => Some(Self::ProviderRateLimited),
+            "E502" => Some(Self::ProviderUnavailable),
+            "E503" => Some(Self::ProviderUsageApiUnsupported),
+            "E600" => Some(Self::CompileFailed),
+            "E601" => Some(Self::PipelineExecutionFailed),
+            "E602" => Some(Self::SandBoxViolation),
+            "E700" => Some(Self::SiteMapCorrupt),
+            "E701" => Some(Self::SiteMapVersionMismatch),
+            "E702" => Some(Self::SiteMapIoError),
+            "E800" => Some(Self::AssignmentFailed),
+            "E801" => Some(Self::AssignmentCostExceeded),
+            "E802" => Some(Self::AssignmentTimeout),
+            "E900" => Some(Self::IoError),
+            "E901" => Some(Self::InvalidInput),
+            "E999" => Some(Self::InternalError),
+            "E1000" => Some(Self::JitCompilationFailed),
+            "E1001" => Some(Self::JitOptimizationFailed),
+            "E1002" => Some(Self::JitSandboxEscape),
+            "E1100" => Some(Self::WikiIndexCorrupt),
+            "E1101" => Some(Self::WikiSearchFailed),
+            _ => None,
+        }
+    }
+
+    /// Enumerate all known error codes (for documentation generation).
+    pub fn all_codes() -> Vec<Self> {
+        vec![
+            Self::ConfigNotFound, Self::ConfigInvalid, Self::ConfigMissingKey,
+            Self::HomeDirectoryUnavailable,
+            Self::RouterUnreachable, Self::RouterTimeout, Self::RouterAuthFailed,
+            Self::RouterRateLimited, Self::RouterServerError, Self::RouterResponseInvalid,
+            Self::ModelDirNotFound, Self::TokenizerNotFound, Self::WeightLoadFailed,
+            Self::WeightShapeMismatch, Self::ConfigInvalidArch,
+            Self::TokenizerFileInvalid, Self::TokenizerMergeFailed, Self::TokenizerUnknownToken,
+            Self::ProviderKeyInvalid, Self::ProviderRateLimited, Self::ProviderUnavailable,
+            Self::ProviderUsageApiUnsupported,
+            Self::CompileFailed, Self::PipelineExecutionFailed, Self::SandBoxViolation,
+            Self::SiteMapCorrupt, Self::SiteMapVersionMismatch, Self::SiteMapIoError,
+            Self::AssignmentFailed, Self::AssignmentCostExceeded, Self::AssignmentTimeout,
+            Self::JitCompilationFailed, Self::JitOptimizationFailed, Self::JitSandboxEscape,
+            Self::WikiIndexCorrupt, Self::WikiSearchFailed,
+            Self::IoError, Self::InvalidInput, Self::InternalError,
+        ]
+    }
+
     /// Numeric code for display (e.g. "E201").
     pub fn as_str(&self) -> &'static str {
         match self {
@@ -109,6 +185,13 @@ impl ErrorCode {
             Self::AssignmentCostExceeded => "E801",
             Self::AssignmentTimeout => "E802",
 
+            Self::JitCompilationFailed => "E1000",
+            Self::JitOptimizationFailed => "E1001",
+            Self::JitSandboxEscape => "E1002",
+
+            Self::WikiIndexCorrupt => "E1100",
+            Self::WikiSearchFailed => "E1101",
+
             Self::IoError => "E900",
             Self::InvalidInput => "E901",
             Self::InternalError => "E999",
@@ -144,6 +227,10 @@ impl ErrorCode {
 
             Self::AssignmentFailed | Self::AssignmentCostExceeded | Self::AssignmentTimeout => "assignment",
 
+            Self::JitCompilationFailed | Self::JitOptimizationFailed | Self::JitSandboxEscape => "jit",
+
+            Self::WikiIndexCorrupt | Self::WikiSearchFailed => "wiki",
+
             Self::IoError | Self::InvalidInput | Self::InternalError => "general",
         }
     }
@@ -159,6 +246,7 @@ impl ErrorCode {
                 | Self::ProviderRateLimited
                 | Self::ProviderUnavailable
                 | Self::AssignmentTimeout
+                | Self::JitOptimizationFailed
         )
     }
 
@@ -169,6 +257,7 @@ impl ErrorCode {
             Self::RouterAuthFailed
                 | Self::ProviderKeyInvalid
                 | Self::SandBoxViolation
+                | Self::JitSandboxEscape
         )
     }
 }
@@ -234,6 +323,48 @@ impl VelocityError {
     /// Whether this error indicates a security or credential issue.
     pub fn is_security(&self) -> bool {
         self.code.is_security()
+    }
+
+    /// Whether this error wraps an I/O error.
+    pub fn is_io(&self) -> bool {
+        self.code == ErrorCode::IoError
+            || self.code == ErrorCode::SiteMapIoError
+            || self.source.as_ref().map_or(false, |s| s.downcast_ref::<std::io::Error>().is_some())
+    }
+
+    /// Map to a process exit code for CLI usage.
+    pub fn exit_code(&self) -> i32 {
+        match self.code.category() {
+            "config" => 2,
+            "router" => 3,
+            "model" => 4,
+            "tokenizer" => 5,
+            "provider" => 6,
+            "pipeline" => 7,
+            "sitemap" => 8,
+            "assignment" => 9,
+            "jit" => 10,
+            "wiki" => 11,
+            _ => {
+                if self.is_security() { 13 } else { 1 }
+            }
+        }
+    }
+
+    /// Collect all source error messages in the chain.
+    pub fn chain_sources(&self) -> Vec<String> {
+        let mut msgs = Vec::new();
+        if let Some(ref src) = self.source {
+            msgs.push(src.to_string());
+            let mut current: Option<&dyn std::error::Error> = Some(src.as_ref());
+            while let Some(e) = current {
+                current = std::error::Error::source(e);
+                if let Some(next) = current {
+                    msgs.push(next.to_string());
+                }
+            }
+        }
+        msgs
     }
 
     /// The error category (e.g. "router", "model", "pipeline").
@@ -575,6 +706,42 @@ impl From<CredentialError> for VelocityError {
     }
 }
 
+// ─── Error Summary ─────────────────────────────────────────────────────────
+
+/// Summary of a batch of errors for structured reporting.
+#[derive(Debug, Clone, Serialize)]
+pub struct ErrorSummary {
+    pub total: usize,
+    pub by_category: Vec<(String, usize)>,
+    pub retryable_count: usize,
+    pub security_count: usize,
+    pub unique_codes: Vec<String>,
+}
+
+/// Produce a summary from a slice of errors.
+pub fn summarize_errors(errors: &[VelocityError]) -> ErrorSummary {
+    use std::collections::HashMap;
+    let mut cat_counts: HashMap<String, usize> = HashMap::new();
+    let mut unique = std::collections::BTreeSet::new();
+    let mut retryable = 0;
+    let mut security = 0;
+    for e in errors {
+        *cat_counts.entry(e.category().to_string()).or_insert(0) += 1;
+        unique.insert(e.code.as_str().to_string());
+        if e.is_retryable() { retryable += 1; }
+        if e.is_security() { security += 1; }
+    }
+    let mut by_category: Vec<(String, usize)> = cat_counts.into_iter().collect();
+    by_category.sort_by(|a, b| b.1.cmp(&a.1));
+    ErrorSummary {
+        total: errors.len(),
+        by_category,
+        retryable_count: retryable,
+        security_count: security,
+        unique_codes: unique.into_iter().collect(),
+    }
+}
+
 // ─── Legacy compatibility ──────────────────────────────────────────────────
 
 /// Errors produced by the NDA lexer, parser, and WASM runner.
@@ -797,5 +964,103 @@ mod tests {
         let ve: VelocityError = ce.into();
         assert_eq!(ve.code, ErrorCode::RouterAuthFailed);
         assert!(ve.suggestion.is_some());
+    }
+
+    #[test]
+    fn error_code_from_code_str_roundtrip() {
+        for code in ErrorCode::all_codes() {
+            let s = code.as_str();
+            let parsed = ErrorCode::from_code_str(s).unwrap();
+            assert_eq!(parsed, code, "roundtrip failed for {}", s);
+        }
+    }
+
+    #[test]
+    fn error_code_from_code_str_unknown() {
+        assert!(ErrorCode::from_code_str("E9999").is_none());
+        assert!(ErrorCode::from_code_str("").is_none());
+    }
+
+    #[test]
+    fn all_codes_has_no_duplicates() {
+        let codes = ErrorCode::all_codes();
+        let mut strs: Vec<&str> = codes.iter().map(|c| c.as_str()).collect();
+        let before = strs.len();
+        strs.sort();
+        strs.dedup();
+        assert_eq!(before, strs.len(), "duplicate error codes found");
+    }
+
+    #[test]
+    fn new_jit_codes_work() {
+        assert_eq!(ErrorCode::JitCompilationFailed.as_str(), "E1000");
+        assert_eq!(ErrorCode::JitCompilationFailed.category(), "jit");
+        assert!(!ErrorCode::JitCompilationFailed.is_retryable());
+        assert_eq!(ErrorCode::JitSandboxEscape.category(), "jit");
+        assert!(ErrorCode::JitSandboxEscape.is_security());
+    }
+
+    #[test]
+    fn new_wiki_codes_work() {
+        assert_eq!(ErrorCode::WikiIndexCorrupt.as_str(), "E1100");
+        assert_eq!(ErrorCode::WikiSearchFailed.category(), "wiki");
+    }
+
+    #[test]
+    fn velocity_error_exit_code() {
+        let config_err = VelocityError::new(ErrorCode::ConfigNotFound, "no config");
+        assert_eq!(config_err.exit_code(), 2);
+        let router_err = VelocityError::new(ErrorCode::RouterTimeout, "timeout");
+        assert_eq!(router_err.exit_code(), 3);
+        let sec_err = VelocityError::new(ErrorCode::SandBoxViolation, "violation");
+        assert_eq!(sec_err.exit_code(), 7); // pipeline category
+    }
+
+    #[test]
+    fn velocity_error_is_io() {
+        let io_err = VelocityError::new(ErrorCode::IoError, "io");
+        assert!(io_err.is_io());
+        let non_io = VelocityError::new(ErrorCode::ConfigNotFound, "no config");
+        assert!(!non_io.is_io());
+        let with_io_source = VelocityError::new(ErrorCode::InternalError, "wrapped")
+            .with_source(std::io::Error::new(std::io::ErrorKind::Other, "inner"));
+        assert!(with_io_source.is_io());
+    }
+
+    #[test]
+    fn velocity_error_chain_sources() {
+        let io_err = std::io::Error::new(std::io::ErrorKind::NotFound, "file missing");
+        let err = VelocityError::new(ErrorCode::IoError, "read failed")
+            .with_source(io_err);
+        let chain = err.chain_sources();
+        assert_eq!(chain.len(), 1);
+        assert!(chain[0].contains("file missing"));
+    }
+
+    #[test]
+    fn summarize_errors_basic() {
+        let errors = vec![
+            VelocityError::new(ErrorCode::RouterTimeout, "t1"),
+            VelocityError::new(ErrorCode::RouterTimeout, "t2"),
+            VelocityError::new(ErrorCode::ConfigNotFound, "c1"),
+            VelocityError::new(ErrorCode::SandBoxViolation, "s1"),
+        ];
+        let summary = summarize_errors(&errors);
+        assert_eq!(summary.total, 4);
+        assert_eq!(summary.retryable_count, 2);
+        assert_eq!(summary.security_count, 1);
+        assert!(summary.unique_codes.contains(&"E201".to_string()));
+        assert!(summary.unique_codes.contains(&"E100".to_string()));
+        // router should have highest count
+        assert_eq!(summary.by_category[0].0, "router");
+        assert_eq!(summary.by_category[0].1, 2);
+    }
+
+    #[test]
+    fn summarize_errors_empty() {
+        let summary = summarize_errors(&[]);
+        assert_eq!(summary.total, 0);
+        assert!(summary.by_category.is_empty());
+        assert_eq!(summary.retryable_count, 0);
     }
 }
