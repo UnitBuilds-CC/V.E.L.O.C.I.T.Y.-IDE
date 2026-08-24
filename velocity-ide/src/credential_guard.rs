@@ -1615,4 +1615,301 @@ mod tests {
         let count = removed.iter().filter(|v| *v == "SSH_AUTH_SOCK").count();
         assert_eq!(count, 1, "SSH_AUTH_SOCK should appear only once in removed list");
     }
+
+    // ── Block 187: Additional tests ────────────────────────────────────────
+
+    // ── JSON key count verification ──────────────────────────────────────
+
+    #[test]
+    fn cred_audit_summary_json_key_count_is_6() {
+        let s = CredentialAuditSummary {
+            clean: true, severity: "none".into(), exposed_env_count: 0,
+            reachable_socket_count: 0, accessible_config_dir_count: 0, total_issues: 0,
+        };
+        let v: serde_json::Value = serde_json::to_value(&s).unwrap();
+        assert_eq!(v.as_object().unwrap().len(), 6);
+    }
+
+    #[test]
+    fn cred_scope_report_json_key_count_is_6() {
+        let r = CredentialScopeReport {
+            secret_count: 0, labels: vec![], env_vars_scrubbed: vec![],
+            created_at: 0, scrubbed_at: 0, is_scrubbed: false,
+        };
+        let v: serde_json::Value = serde_json::to_value(&r).unwrap();
+        assert_eq!(v.as_object().unwrap().len(), 6);
+    }
+
+    #[test]
+    fn boundary_audit_json_key_count_is_4() {
+        let a = CredentialBoundaryAudit {
+            exposed_env_vars: vec![], reachable_sockets: vec![],
+            accessible_config_dirs: vec![], clean: true,
+        };
+        let v: serde_json::Value = serde_json::to_value(&a).unwrap();
+        assert_eq!(v.as_object().unwrap().len(), 4);
+    }
+
+    // ── JSON roundtrip via Value ─────────────────────────────────────────
+
+    #[test]
+    fn cred_audit_summary_json_roundtrip() {
+        let s = CredentialAuditSummary {
+            clean: false, severity: "critical".into(), exposed_env_count: 3,
+            reachable_socket_count: 2, accessible_config_dir_count: 1, total_issues: 6,
+        };
+        let v: serde_json::Value = serde_json::to_value(&s).unwrap();
+        assert_eq!(v["clean"], false);
+        assert_eq!(v["severity"], "critical");
+        assert_eq!(v["exposed_env_count"], 3);
+        assert_eq!(v["reachable_socket_count"], 2);
+        assert_eq!(v["accessible_config_dir_count"], 1);
+        assert_eq!(v["total_issues"], 6);
+    }
+
+    #[test]
+    fn boundary_audit_json_roundtrip_via_value() {
+        let a = CredentialBoundaryAudit {
+            exposed_env_vars: vec!["KEY1".into(), "KEY2".into()],
+            reachable_sockets: vec![("SSH".into(), "/tmp/s".into())],
+            accessible_config_dirs: vec!["/home/.ssh".into()],
+            clean: false,
+        };
+        let v: serde_json::Value = serde_json::to_value(&a).unwrap();
+        assert_eq!(v["exposed_env_vars"].as_array().unwrap().len(), 2);
+        assert_eq!(v["reachable_sockets"].as_array().unwrap().len(), 1);
+        assert_eq!(v["accessible_config_dirs"].as_array().unwrap().len(), 1);
+        assert_eq!(v["clean"], false);
+    }
+
+    #[test]
+    fn scope_report_json_roundtrip_via_value() {
+        let r = CredentialScopeReport {
+            secret_count: 2, labels: vec!["a".into(), "b".into()],
+            env_vars_scrubbed: vec!["X".into()],
+            created_at: 100, scrubbed_at: 200, is_scrubbed: true,
+        };
+        let v: serde_json::Value = serde_json::to_value(&r).unwrap();
+        assert_eq!(v["secret_count"], 2);
+        assert_eq!(v["labels"][0], "a");
+        assert_eq!(v["labels"][1], "b");
+        assert_eq!(v["is_scrubbed"], true);
+        assert_eq!(v["created_at"], 100);
+    }
+
+    // ── JSON type verification ───────────────────────────────────────────
+
+    #[test]
+    fn cred_audit_summary_json_types() {
+        let s = CredentialAuditSummary {
+            clean: true, severity: "none".into(), exposed_env_count: 0,
+            reachable_socket_count: 0, accessible_config_dir_count: 0, total_issues: 0,
+        };
+        let v: serde_json::Value = serde_json::to_value(&s).unwrap();
+        assert!(v["clean"].is_boolean());
+        assert!(v["severity"].is_string());
+        assert!(v["exposed_env_count"].is_u64());
+        assert!(v["total_issues"].is_u64());
+    }
+
+    #[test]
+    fn boundary_audit_json_types() {
+        let a = CredentialBoundaryAudit {
+            exposed_env_vars: vec![], reachable_sockets: vec![],
+            accessible_config_dirs: vec![], clean: true,
+        };
+        let v: serde_json::Value = serde_json::to_value(&a).unwrap();
+        assert!(v["exposed_env_vars"].is_array());
+        assert!(v["reachable_sockets"].is_array());
+        assert!(v["accessible_config_dirs"].is_array());
+        assert!(v["clean"].is_boolean());
+    }
+
+    // ── Clone independence ───────────────────────────────────────────────
+
+    #[test]
+    fn summary_clone_is_fully_independent() {
+        let s1 = CredentialAuditSummary {
+            clean: false, severity: "high".into(), exposed_env_count: 5,
+            reachable_socket_count: 3, accessible_config_dir_count: 2, total_issues: 10,
+        };
+        let mut s2 = s1.clone();
+        s2.severity = "none".into();
+        s2.total_issues = 0;
+        assert_eq!(s1.severity, "high");
+        assert_eq!(s1.total_issues, 10);
+    }
+
+    #[test]
+    fn scope_report_clone_is_fully_independent() {
+        let r1 = CredentialScopeReport {
+            secret_count: 1, labels: vec!["k".into()],
+            env_vars_scrubbed: vec!["E".into()],
+            created_at: 50, scrubbed_at: 100, is_scrubbed: false,
+        };
+        let mut r2 = r1.clone();
+        r2.labels.push("extra".into());
+        r2.is_scrubbed = true;
+        assert_eq!(r1.labels.len(), 1);
+        assert_eq!(r1.is_scrubbed, false);
+    }
+
+    // ── Debug format ─────────────────────────────────────────────────────
+
+    #[test]
+    fn cred_audit_summary_debug_format() {
+        let s = CredentialAuditSummary {
+            clean: false, severity: "critical".into(), exposed_env_count: 1,
+            reachable_socket_count: 0, accessible_config_dir_count: 0, total_issues: 1,
+        };
+        let debug = format!("{:?}", s);
+        assert!(debug.contains("severity"));
+        assert!(debug.contains("critical"));
+        assert!(debug.contains("total_issues"));
+    }
+
+    // ── Masked edge cases ────────────────────────────────────────────────
+
+    #[test]
+    fn secret_string_masked_13_chars_boundary() {
+        let s = SecretString::new("abcdefghijklm".to_string());
+        let masked = s.masked();
+        assert!(masked.starts_with("abcd"));
+        assert!(masked.ends_with("jklm"));
+        assert_eq!(masked, "abcd...jklm");
+    }
+
+    #[test]
+    fn secret_string_masked_empty() {
+        let s = SecretString::new("".to_string());
+        assert_eq!(s.masked(), "****");
+    }
+
+    // ── SecretString zeroize behavior ────────────────────────────────────
+
+    #[test]
+    fn secret_string_zeroize_then_as_str_all_zeros() {
+        let mut s = SecretString::new("secret_data".to_string());
+        s.zeroize();
+        assert!(s.as_bytes().iter().all(|&b| b == 0));
+        assert_eq!(s.len(), 11);
+    }
+
+    // ── CredentialScope: scrub behavior ──────────────────────────────────
+
+    #[test]
+    fn credential_scope_scrub_preserves_env_vars_scrubbed_list() {
+        let mut scope = CredentialScope::new();
+        scope.record_scrubbed_env("TEST_VAR".to_string());
+        scope.load_value("temp".to_string());
+        scope.scrub();
+        assert_eq!(scope.scrubbed_env_count(), 1);
+        assert!(scope.is_empty());
+    }
+
+    #[test]
+    fn credential_scope_audit_report_no_secret_values_in_json() {
+        let mut scope = CredentialScope::new();
+        scope.load_labeled("api_key", "super_secret_value_12345".to_string());
+        let report = scope.audit_report();
+        let json = serde_json::to_string(&report).unwrap();
+        assert!(!json.contains("super_secret_value_12345"));
+        assert!(json.contains("api_key"));
+    }
+
+    // ── Env scrubbing: additional vars ───────────────────────────────────
+
+    #[test]
+    fn scrub_removes_xai_api_key() {
+        let _g = ENV_LOCK.lock().unwrap();
+        std::env::set_var("XAI_API_KEY", "xai_test_key");
+        let removed = scrub_sensitive_env_vars();
+        assert!(removed.contains(&"XAI_API_KEY".to_string()));
+        assert!(std::env::var("XAI_API_KEY").is_err());
+    }
+
+    #[test]
+    fn scrub_removes_cr_pat() {
+        let _g = ENV_LOCK.lock().unwrap();
+        std::env::set_var("CR_PAT", "ghcr_token_val");
+        let removed = scrub_sensitive_env_vars();
+        assert!(removed.contains(&"CR_PAT".to_string()));
+    }
+
+    #[test]
+    fn scrub_removes_aws_session_token() {
+        let _g = ENV_LOCK.lock().unwrap();
+        std::env::set_var("AWS_SESSION_TOKEN", "aws_session_val");
+        std::env::set_var("AWS_SECURITY_TOKEN", "aws_security_val");
+        let removed = scrub_sensitive_env_vars();
+        assert!(removed.contains(&"AWS_SESSION_TOKEN".to_string()));
+        assert!(removed.contains(&"AWS_SECURITY_TOKEN".to_string()));
+    }
+
+    // ── Audit env exposure: dedup ────────────────────────────────────────
+
+    #[test]
+    fn audit_env_exposure_no_duplicates_for_ssh_auth_sock() {
+        let _g = ENV_LOCK.lock().unwrap();
+        std::env::set_var("SSH_AUTH_SOCK", "/tmp/ssh-audit-test");
+        let exposed = audit_env_exposure();
+        let count = exposed.iter().filter(|v| *v == "SSH_AUTH_SOCK").count();
+        assert_eq!(count, 1);
+        std::env::remove_var("SSH_AUTH_SOCK");
+    }
+
+    // ── Sensitive config paths ───────────────────────────────────────────
+
+    #[test]
+    fn sensitive_config_paths_includes_npmrc_and_pypirc() {
+        let paths = sensitive_config_paths();
+        if home_dir().is_some() {
+            assert!(paths.iter().any(|p| p.ends_with(".npmrc")));
+            assert!(paths.iter().any(|p| p.ends_with(".pypirc")));
+        }
+    }
+
+    #[test]
+    fn sensitive_config_paths_count_matches_expected() {
+        let paths = sensitive_config_paths();
+        if home_dir().is_some() {
+            assert_eq!(paths.len(), 10);
+        }
+    }
+
+    // ── Compact JSON ─────────────────────────────────────────────────────
+
+    #[test]
+    fn cred_audit_summary_compact_json() {
+        let s = CredentialAuditSummary {
+            clean: true, severity: "none".into(), exposed_env_count: 0,
+            reachable_socket_count: 0, accessible_config_dir_count: 0, total_issues: 0,
+        };
+        let json = serde_json::to_string(&s).unwrap();
+        assert!(!json.contains("  "));
+    }
+
+    // ── Warning message structure ────────────────────────────────────────
+
+    #[test]
+    fn warning_message_all_three_categories() {
+        let audit = CredentialBoundaryAudit {
+            exposed_env_vars: vec!["A".into()],
+            reachable_sockets: vec![("S".into(), "/p".into())],
+            accessible_config_dirs: vec!["D".into()],
+            clean: false,
+        };
+        let msg = audit.warning_message().unwrap();
+        assert!(msg.contains("sensitive env var(s)"));
+        assert!(msg.contains("agent socket(s)"));
+        assert!(msg.contains("config dir(s)"));
+        assert!(msg.contains("exfiltrate"));
+    }
+
+    // ── SENSITIVE_ENV_VARS exact count ───────────────────────────────────
+
+    #[test]
+    fn sensitive_env_vars_exact_count() {
+        assert_eq!(SENSITIVE_ENV_VARS.len(), 28);
+    }
 }

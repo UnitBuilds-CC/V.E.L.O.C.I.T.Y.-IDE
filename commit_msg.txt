@@ -1,20 +1,20 @@
-Block 186: packing.rs — 29 new tests (95 total)
+Block 187: credential_guard.rs — 25 new tests (111 total)
 
 New tests cover:
-- JSON key counts for PackingReport (6), BatchPackingReport (7), PackingSummary (7)
-- JSON roundtrip via Value for all 3 structs
-- Compression ratio formula verification (output/input)
-- valid_ops/invalid_ops logic for all_valid true/false
-- Validation edge cases: k=1 not multiple of 16, k=32 ok, k=256 ok, k=64 not multiple of 128
-- validate_inputs_nda non-multiple-of-8
-- Report operation names from actual packing functions
-- Input bytes formula (inputs.len() * 4)
-- Batch total_elapsed_us >= 1
-- Clone independence for validation_issues and issues vecs
-- PackingSummary debug format
+- JSON key counts for CredentialAuditSummary (6), CredentialScopeReport (6), CredentialBoundaryAudit (4)
+- JSON roundtrip via Value for all 3 diagnostic structs
+- JSON type verification for CredentialAuditSummary and CredentialBoundaryAudit
+- Clone independence for CredentialAuditSummary and CredentialScopeReport
+- Debug format for CredentialAuditSummary
+- Masked edge cases: 13-char boundary, empty string
+- SecretString zeroize then verify all bytes zero with length preserved
+- CredentialScope scrub preserves env_vars_scrubbed list
+- Audit report JSON contains no secret values
+- Env scrubbing: XAI_API_KEY, CR_PAT, AWS_SESSION_TOKEN, AWS_SECURITY_TOKEN
+- Audit env exposure dedup for SSH_AUTH_SOCK
+- Sensitive config paths: .npmrc, .pypirc, exact count (10)
 - Compact JSON (no whitespace)
-- JSON type verification for PackingReport and BatchPackingReport
-- Output size formulas for uvec4, nda, and inputs packing
-- Batch mixed valid/invalid total bytes accuracy
+- Warning message structure with all 3 categories
+- SENSITIVE_ENV_VARS exact count (28)
 
-Full suite: 4571 lib tests, 0 failures
+Full suite: 4596 lib tests, 0 failures
