@@ -731,3 +731,221 @@ fn test_var_registry_slot_reuse() {
     assert_ne!(a, b);
     assert_eq!(reg.total_slots(), 2);
 }
+
+// ─── Extended coverage ────────────────────────────────────────────────────────
+
+#[test]
+fn test_jit_nested_loop_break_inner() {
+    // Outer loop runs 3 times; inner loop breaks after 1 iteration.
+    let h = 0xaabb_ccdd_eeff_0011u64;
+    let nodes = vec![
+        NdaNode::Let {
+            name_hash: h,
+            init: Box::new(NdaNode::Int { value: 0 }),
+        },
+        NdaNode::Loop {
+            count: 3,
+            body: vec![
+                NdaNode::Loop {
+                    count: 5,
+                    body: vec![
+                        NdaNode::Store {
+                            name_hash: h,
+                            value: Box::new(NdaNode::Add {
+                                lhs: Box::new(NdaNode::Load { name_hash: h }),
+                                rhs: Box::new(NdaNode::Int { value: 1 }),
+                            }),
+                        },
+                        NdaNode::Break,
+                    ],
+                },
+            ],
+        },
+        NdaNode::Load { name_hash: h },
+    ];
+    let res = run_program(nodes, &[]);
+    assert!(res.error.is_none());
+    // Inner loop runs once per outer iteration: 3 * 1 = 3
+    assert_eq!(res.output_vec, vec![3.0]);
+}
+
+#[test]
+fn test_jit_math_div_by_zero_no_panic() {
+    let nodes = vec![NdaNode::Math {
+        op: MathOp::Div,
+        lhs: Box::new(NdaNode::Float { value: 5.0 }),
+        rhs: Box::new(NdaNode::Float { value: 0.0 }),
+    }];
+    let res = run_program(nodes, &[]);
+    // JIT uses native x86 division which produces inf; interpreter returns 0.0.
+    assert!(res.error.is_none());
+    assert!(!res.output_vec.is_empty());
+}
+
+#[test]
+fn test_jit_multiple_variables_independent() {
+    let a = 0xaaaa_0000_0000_0001u64;
+    let b = 0xbbbb_0000_0000_0002u64;
+    let nodes = vec![
+        NdaNode::Let {
+            name_hash: a,
+            init: Box::new(NdaNode::Int { value: 10 }),
+        },
+        NdaNode::Let {
+            name_hash: b,
+            init: Box::new(NdaNode::Int { value: 20 }),
+        },
+        NdaNode::Add {
+            lhs: Box::new(NdaNode::Load { name_hash: a }),
+            rhs: Box::new(NdaNode::Load { name_hash: b }),
+        },
+    ];
+    let res = run_program(nodes, &[]);
+    assert!(res.error.is_none());
+    assert_eq!(res.output_vec, vec![30.0]);
+}
+
+#[test]
+fn test_jit_cast_node_runs() {
+    let nodes = vec![NdaNode::Cast {
+        from_type: crate::site_map::verifier::TypeKind::Int,
+        to_type: crate::site_map::verifier::TypeKind::Float,
+        operand: Box::new(NdaNode::Float { value: 42.0 }),
+    }];
+    let res = run_program(nodes, &[]);
+    // Cast may produce empty output in JIT path; just verify no crash.
+    assert!(res.error.is_none());
+}
+
+#[test]
+fn test_jit_triple_node_is_noop() {
+    // Triple nodes are semantic metadata and should not affect execution.
+    let nodes = vec![
+        NdaNode::Int { value: 7 },
+        NdaNode::Triple {
+            subject_hash: 0x1,
+            predicate_id: 0,
+            object_hash: 0x2,
+        },
+    ];
+    let res = run_program(nodes, &[]);
+    assert!(res.error.is_none());
+    // The Int node sets current_vec, Triple is a no-op.
+    assert_eq!(res.output_vec, vec![7.0]);
+}
+
+#[test]
+fn test_jit_alloc_runs_without_error() {
+    let nodes = vec![NdaNode::Alloc {
+        size: Box::new(NdaNode::Int { value: 256 }),
+    }];
+    let res = run_program(nodes, &[]);
+    // Alloc in JIT path may not produce visible output; verify no crash.
+    assert!(res.error.is_none());
+}
+
+#[test]
+fn test_jit_free_runs_without_error() {
+    let nodes = vec![
+        NdaNode::Alloc {
+            size: Box::new(NdaNode::Int { value: 64 }),
+        },
+        NdaNode::Free {
+            addr: Box::new(NdaNode::Int { value: 2048 }),
+        },
+    ];
+    let res = run_program(nodes, &[]);
+    assert!(res.error.is_none());
+}
+
+#[test]
+fn test_jit_spawn_runs_without_error() {
+    let nodes = vec![NdaNode::Spawn {
+        scope_hash: 0xdead_beefu64,
+    }];
+    let res = run_program(nodes, &[]);
+    assert!(res.error.is_none());
+}
+
+#[test]
+fn test_jit_atomic_runs_without_error() {
+    let nodes = vec![NdaNode::Atomic {
+        op: crate::site_map::verifier::AtomicOp::Cas,
+        addr: Box::new(NdaNode::Int { value: 0 }),
+        val: Box::new(NdaNode::Int { value: 42 }),
+    }];
+    let res = run_program(nodes, &[]);
+    assert!(res.error.is_none());
+}
+
+#[test]
+fn test_jit_regint_noop() {
+    let nodes = vec![
+        NdaNode::Int { value: 99 },
+        NdaNode::RegInt {
+            vector: 5,
+            handler_hash: 0x1234u64,
+        },
+    ];
+    let res = run_program(nodes, &[]);
+    assert!(res.error.is_none());
+    // RegInt is a no-op; the Int value should still be current.
+    assert_eq!(res.output_vec, vec![99.0]);
+}
+
+#[test]
+fn test_jit_gpu_dispatch_runs_without_error() {
+    let nodes = vec![NdaNode::GpuDispatch {
+        shader_hash: 0xfeedu64,
+        args: vec![NdaNode::Int { value: 1 }],
+    }];
+    let res = run_program(nodes, &[]);
+    assert!(res.error.is_none());
+}
+
+#[test]
+fn test_jit_syscall_runs_without_error() {
+    let nodes = vec![NdaNode::Syscall {
+        num: 1,
+        args: vec![NdaNode::Int { value: 42 }],
+    }];
+    let res = run_program(nodes, &[]);
+    assert!(res.error.is_none());
+}
+
+#[test]
+fn test_jit_compile_reports_nodes_compiled() {
+    let nodes = vec![
+        NdaNode::Int { value: 1 },
+        NdaNode::Float { value: 2.0 },
+        NdaNode::Add {
+            lhs: Box::new(NdaNode::Int { value: 1 }),
+            rhs: Box::new(NdaNode::Float { value: 2.0 }),
+        },
+    ];
+    let program = compile(&nodes);
+    assert!(program.nodes_compiled > 0);
+}
+
+#[test]
+fn test_jit_empty_program_run_sandboxed() {
+    let program = compile(&[]);
+    let site_map = SiteMap::open(&std::env::temp_dir().join("nda_jit_test_sm"), 0).unwrap();
+    let res = program.run_sandboxed(&[1.0, 2.0], &site_map);
+    assert!(res.error.is_none());
+    assert!(!res.panicked);
+    assert_eq!(res.output_vec, vec![1.0, 2.0]);
+}
+
+#[test]
+fn test_jit_print_captures_output() {
+    let nodes = vec![NdaNode::Print {
+        source: Box::new(NdaNode::Int { value: 42 }),
+    }];
+    let program = compile(&nodes);
+    let site_map = SiteMap::open(&std::env::temp_dir().join("nda_jit_test_sm"), 0).unwrap();
+    let res = program.run_sandboxed(&[], &site_map);
+    assert!(res.error.is_none());
+    assert!(!res.output_log.is_empty());
+    assert!(res.output_log[0].contains("42"));
+}
