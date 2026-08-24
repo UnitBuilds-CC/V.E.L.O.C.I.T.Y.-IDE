@@ -1063,4 +1063,337 @@ mod tests {
         assert!(summary.by_category.is_empty());
         assert_eq!(summary.retryable_count, 0);
     }
+
+    // ─── ErrorCode Additional ───────────────────────────────────────────────
+
+    #[test]
+    fn error_code_all_categories_covered() {
+        for code in ErrorCode::all_codes() {
+            let cat = code.category();
+            assert!(["config","router","model","tokenizer","provider","pipeline","sitemap","assignment","jit","wiki","general"].contains(&cat),
+                "unknown category '{}' for {:?}", cat, code);
+        }
+    }
+
+    #[test]
+    fn error_code_assignment_category() {
+        assert_eq!(ErrorCode::AssignmentFailed.category(), "assignment");
+        assert_eq!(ErrorCode::AssignmentCostExceeded.category(), "assignment");
+        assert_eq!(ErrorCode::AssignmentTimeout.category(), "assignment");
+        assert!(ErrorCode::AssignmentTimeout.is_retryable());
+    }
+
+    #[test]
+    fn error_code_provider_category() {
+        assert_eq!(ErrorCode::ProviderKeyInvalid.category(), "provider");
+        assert_eq!(ErrorCode::ProviderRateLimited.category(), "provider");
+        assert!(ErrorCode::ProviderRateLimited.is_retryable());
+        assert!(ErrorCode::ProviderKeyInvalid.is_security());
+    }
+
+    #[test]
+    fn error_code_sitemap_category() {
+        assert_eq!(ErrorCode::SiteMapCorrupt.category(), "sitemap");
+        assert_eq!(ErrorCode::SiteMapVersionMismatch.category(), "sitemap");
+        assert_eq!(ErrorCode::SiteMapIoError.category(), "sitemap");
+        assert!(!ErrorCode::SiteMapCorrupt.is_retryable());
+    }
+
+    #[test]
+    fn error_code_jit_full() {
+        assert!(ErrorCode::JitOptimizationFailed.is_retryable());
+        assert!(!ErrorCode::JitCompilationFailed.is_security());
+        assert_eq!(ErrorCode::JitSandboxEscape.as_str(), "E1002");
+    }
+
+    #[test]
+    fn error_code_display_trait() {
+        let code = ErrorCode::RouterTimeout;
+        let s = format!("{}", code);
+        assert_eq!(s, "E201");
+    }
+
+    #[test]
+    fn error_code_doc_url_format() {
+        for code in ErrorCode::all_codes() {
+            let url = code.doc_url();
+            assert!(url.starts_with("https://velocity.dev/errors/"));
+            assert!(url.ends_with(code.as_str()));
+        }
+    }
+
+    // ─── Module Error Variant Display ───────────────────────────────────────
+
+    #[test]
+    fn router_error_display_all_variants() {
+        let e = RouterError::Unreachable { url: "http://x".into() };
+        assert!(e.to_string().contains("http://x"));
+        let e = RouterError::Timeout { secs: 30 };
+        assert!(e.to_string().contains("30s"));
+        let e = RouterError::AuthFailed;
+        assert!(e.to_string().contains("authentication failed"));
+        let e = RouterError::RateLimited { retry_after_secs: 60 };
+        assert!(e.to_string().contains("60s"));
+        let e = RouterError::ServerError { status: 503 };
+        assert!(e.to_string().contains("503"));
+        let e = RouterError::ResponseInvalid { detail: "bad json".into() };
+        assert!(e.to_string().contains("bad json"));
+        let e = RouterError::MaxRetriesExceeded { attempts: 5 };
+        assert!(e.to_string().contains("5 attempts"));
+    }
+
+    #[test]
+    fn router_error_all_variants_convert() {
+        let variants: Vec<RouterError> = vec![
+            RouterError::Unreachable { url: "u".into() },
+            RouterError::Timeout { secs: 1 },
+            RouterError::AuthFailed,
+            RouterError::RateLimited { retry_after_secs: 1 },
+            RouterError::ServerError { status: 500 },
+            RouterError::ResponseInvalid { detail: "d".into() },
+            RouterError::MaxRetriesExceeded { attempts: 3 },
+        ];
+        for v in variants {
+            let ve = v.to_velocity_error();
+            assert!(!ve.message.is_empty());
+        }
+    }
+
+    #[test]
+    fn model_error_display_all_variants() {
+        let e = ModelError::DirNotFound { path: "/bad".into() };
+        assert!(e.to_string().contains("/bad"));
+        let e = ModelError::TokenizerNotFound { searched: vec!["/a".into()] };
+        assert!(e.to_string().contains("searched"));
+        let e = ModelError::WeightLoadFailed { detail: "corrupt".into() };
+        assert!(e.to_string().contains("corrupt"));
+        let e = ModelError::WeightShapeMismatch { expected: "4x4".into(), actual: "2x8".into() };
+        assert!(e.to_string().contains("4x4"));
+        assert!(e.to_string().contains("2x8"));
+    }
+
+    #[test]
+    fn provider_error_all_variants_convert() {
+        let variants: Vec<ProviderError> = vec![
+            ProviderError::KeyInvalid { provider: "openai".into() },
+            ProviderError::RateLimited { provider: "anthropic".into() },
+            ProviderError::Unavailable { provider: "google".into(), detail: "down".into() },
+            ProviderError::UsageApiUnsupported { provider: "mistral".into() },
+        ];
+        for v in variants {
+            let ve: VelocityError = v.into();
+            assert!(!ve.message.is_empty());
+        }
+    }
+
+    #[test]
+    fn pipeline_error_all_variants_convert() {
+        let variants: Vec<PipelineError> = vec![
+            PipelineError::CompileFailed { detail: "syntax".into() },
+            PipelineError::ExecutionFailed { detail: "oom".into() },
+            PipelineError::SandBoxViolation { detail: "fs access".into() },
+        ];
+        for v in variants {
+            let ve = v.to_velocity_error();
+            assert!(!ve.message.is_empty());
+        }
+        // SandBoxViolation should have a suggestion.
+        let ve = PipelineError::SandBoxViolation { detail: "x".into() }.to_velocity_error();
+        assert!(ve.suggestion.is_some());
+        assert!(ve.is_security());
+    }
+
+    #[test]
+    fn sitemap_error_all_variants() {
+        let e = SiteMapError::VersionMismatch { expected: "2".into(), actual: "1".into() };
+        let ve = e.to_velocity_error();
+        assert_eq!(ve.code, ErrorCode::SiteMapVersionMismatch);
+        assert!(ve.context.iter().any(|(k,_)| k == "expected"));
+        assert!(ve.context.iter().any(|(k,_)| k == "actual"));
+
+        let e = SiteMapError::IoError { detail: "disk full".into() };
+        let ve = e.to_velocity_error();
+        assert_eq!(ve.code, ErrorCode::SiteMapIoError);
+        assert!(ve.is_io());
+    }
+
+    #[test]
+    fn tokenizer_error_all_variants() {
+        let variants: Vec<TokenizerError> = vec![
+            TokenizerError::FileInvalid { detail: "bad header".into() },
+            TokenizerError::MergeFailed { detail: "incompatible".into() },
+            TokenizerError::UnknownToken { token: "<unk>".into() },
+        ];
+        for v in variants {
+            let ve: VelocityError = v.into();
+            assert!(!ve.message.is_empty());
+        }
+    }
+
+    #[test]
+    fn sandbox_error_all_variants() {
+        let e = SandboxError::Violation { detail: "fs write".into() };
+        let ve = e.to_velocity_error();
+        assert_eq!(ve.code, ErrorCode::SandBoxViolation);
+        assert!(ve.is_security());
+
+        let e = SandboxError::ResourceLimit { resource: "memory".into() };
+        let ve = e.to_velocity_error();
+        assert_eq!(ve.code, ErrorCode::SandBoxViolation);
+
+        let e = SandboxError::Timeout { secs: 60 };
+        let ve = e.to_velocity_error();
+        assert_eq!(ve.code, ErrorCode::PipelineExecutionFailed);
+        assert!(ve.suggestion.is_some());
+    }
+
+    #[test]
+    fn credential_error_all_variants() {
+        let e = CredentialError::NotFound { key: "api_key".into() };
+        let ve = e.to_velocity_error();
+        assert_eq!(ve.code, ErrorCode::ConfigMissingKey);
+        assert!(ve.suggestion.is_some());
+
+        let e = CredentialError::BoundaryViolation { detail: "leak".into() };
+        let ve = e.to_velocity_error();
+        assert_eq!(ve.code, ErrorCode::SandBoxViolation);
+        assert!(ve.is_security());
+    }
+
+    // ─── VelocityError Additional ───────────────────────────────────────────
+
+    #[test]
+    fn velocity_error_display_trait() {
+        let err = VelocityError::new(ErrorCode::RouterTimeout, "timed out");
+        let s = format!("{}", err);
+        assert!(s.contains("E201"));
+        assert!(s.contains("timed out"));
+    }
+
+    #[test]
+    fn velocity_error_is_security_delegates() {
+        let err = VelocityError::new(ErrorCode::JitSandboxEscape, "escape");
+        assert!(err.is_security());
+        let err2 = VelocityError::new(ErrorCode::IoError, "io");
+        assert!(!err2.is_security());
+    }
+
+    #[test]
+    fn velocity_error_exit_code_all_categories() {
+        let cases = vec![
+            (ErrorCode::ConfigNotFound, 2),
+            (ErrorCode::RouterTimeout, 3),
+            (ErrorCode::ModelDirNotFound, 4),
+            (ErrorCode::TokenizerFileInvalid, 5),
+            (ErrorCode::ProviderKeyInvalid, 6),
+            (ErrorCode::CompileFailed, 7),
+            (ErrorCode::SiteMapCorrupt, 8),
+            (ErrorCode::AssignmentFailed, 9),
+            (ErrorCode::JitCompilationFailed, 10),
+            (ErrorCode::WikiIndexCorrupt, 11),
+        ];
+        for (code, expected) in cases {
+            let err = VelocityError::new(code, "test");
+            assert_eq!(err.exit_code(), expected, "wrong exit code for {:?}", code);
+        }
+    }
+
+    #[test]
+    fn velocity_error_is_io_with_sitemap_io() {
+        let err = VelocityError::new(ErrorCode::SiteMapIoError, "disk");
+        assert!(err.is_io());
+    }
+
+    #[test]
+    fn velocity_error_chain_sources_empty() {
+        let err = VelocityError::new(ErrorCode::InternalError, "no source");
+        assert!(err.chain_sources().is_empty());
+    }
+
+    #[test]
+    fn velocity_error_format_detailed_no_optional() {
+        let err = VelocityError::new(ErrorCode::IoError, "disk read failed");
+        let formatted = err.format_detailed();
+        assert!(formatted.contains("E900"));
+        assert!(formatted.contains("disk read failed"));
+        assert!(formatted.contains("Docs:"));
+        // No suggestion or context lines.
+        assert!(!formatted.contains("Suggestion:"));
+    }
+
+    #[test]
+    fn velocity_error_serializes_with_context() {
+        let err = VelocityError::new(ErrorCode::RouterTimeout, "timeout")
+            .with_context("host", "router.velocity.io")
+            .with_context("port", "443");
+        let json = serde_json::to_string(&err).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed["context"].as_array().unwrap().len(), 2);
+    }
+
+    // ─── CompileError Additional ────────────────────────────────────────────
+
+    #[test]
+    fn compile_error_display_variants() {
+        let e = CompileError::Lexer("bad char".into());
+        assert!(e.to_string().contains("Lexer error"));
+        let e = CompileError::Parser("unexpected token".into());
+        assert!(e.to_string().contains("Parser error"));
+        let e = CompileError::Wasm("validation failed".into());
+        assert!(e.to_string().contains("WASM error"));
+    }
+
+    #[test]
+    fn compile_error_to_string_conversion() {
+        let e = CompileError::Lexer("test".into());
+        let s: String = e.into();
+        assert!(s.contains("Lexer error"));
+    }
+
+    #[test]
+    fn compile_error_io_variant() {
+        let io_err = std::io::Error::new(std::io::ErrorKind::PermissionDenied, "access denied");
+        let ce = CompileError::Io(io_err);
+        assert!(ce.to_string().contains("access denied"));
+        let ve: VelocityError = ce.into();
+        assert_eq!(ve.code, ErrorCode::CompileFailed);
+    }
+
+    // ─── ErrorSummary Additional ────────────────────────────────────────────
+
+    #[test]
+    fn summarize_errors_security_count() {
+        let errors = vec![
+            VelocityError::new(ErrorCode::RouterAuthFailed, "auth"),
+            VelocityError::new(ErrorCode::ProviderKeyInvalid, "key"),
+            VelocityError::new(ErrorCode::SandBoxViolation, "sandbox"),
+            VelocityError::new(ErrorCode::JitSandboxEscape, "escape"),
+        ];
+        let summary = summarize_errors(&errors);
+        assert_eq!(summary.security_count, 4);
+    }
+
+    #[test]
+    fn summarize_errors_serializes() {
+        let errors = vec![
+            VelocityError::new(ErrorCode::RouterTimeout, "t"),
+        ];
+        let summary = summarize_errors(&errors);
+        let json = serde_json::to_string(&summary).unwrap();
+        assert!(json.contains("\"total\":1"));
+        assert!(json.contains("\"retryable_count\":1"));
+    }
+
+    #[test]
+    fn summarize_errors_unique_codes_sorted() {
+        let errors = vec![
+            VelocityError::new(ErrorCode::RouterTimeout, "a"),
+            VelocityError::new(ErrorCode::RouterTimeout, "b"),
+            VelocityError::new(ErrorCode::ConfigNotFound, "c"),
+        ];
+        let summary = summarize_errors(&errors);
+        // BTreeSet ensures sorted order.
+        assert_eq!(summary.unique_codes.len(), 2);
+        assert!(summary.unique_codes[0] < summary.unique_codes[1]);
+    }
 }
