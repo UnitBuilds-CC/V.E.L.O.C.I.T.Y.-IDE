@@ -607,4 +607,241 @@ mod tests {
         assert_eq!(pat.increment_step, 1);
         assert!(info.validation_issues.is_empty());
     }
+
+    // ── Block 162: comprehensive expansion ──────────────────────────────────
+
+    #[test]
+    fn symbolic_loop_pattern_json_key_count() {
+        let p = SymbolicLoopPattern {
+            increment_var_hash: 1, increment_step: 2,
+            accumulator_var_hash: 3, added_var_hash: 1,
+            is_native_eligible: true,
+        };
+        let json = serde_json::to_value(&p).unwrap();
+        assert_eq!(json.as_object().unwrap().len(), 5);
+    }
+
+    #[test]
+    fn symbolic_loop_pattern_json_all_values() {
+        let p = SymbolicLoopPattern {
+            increment_var_hash: 0xAA, increment_step: 7,
+            accumulator_var_hash: 0xBB, added_var_hash: 0xAA,
+            is_native_eligible: false,
+        };
+        let json = serde_json::to_value(&p).unwrap();
+        assert_eq!(json["increment_var_hash"], 0xAA);
+        assert_eq!(json["increment_step"], 7);
+        assert_eq!(json["accumulator_var_hash"], 0xBB);
+        assert_eq!(json["added_var_hash"], 0xAA);
+        assert_eq!(json["is_native_eligible"], false);
+    }
+
+    #[test]
+    fn symbolic_loop_pattern_clone_independence() {
+        let p = SymbolicLoopPattern {
+            increment_var_hash: 1, increment_step: 2,
+            accumulator_var_hash: 3, added_var_hash: 1,
+            is_native_eligible: true,
+        };
+        let mut cloned = p.clone();
+        cloned.increment_step = 99;
+        cloned.is_native_eligible = false;
+        assert_eq!(p.increment_step, 2);
+        assert!(p.is_native_eligible);
+    }
+
+    #[test]
+    fn symbolic_loop_pattern_debug_format() {
+        let p = SymbolicLoopPattern {
+            increment_var_hash: 1, increment_step: 2,
+            accumulator_var_hash: 3, added_var_hash: 1,
+            is_native_eligible: true,
+        };
+        let dbg = format!("{:?}", p);
+        assert!(dbg.contains("SymbolicLoopPattern"));
+        assert!(dbg.contains("increment_step"));
+        assert!(dbg.contains("is_native_eligible"));
+    }
+
+    #[test]
+    fn loop_analysis_info_json_key_count() {
+        let info = LoopAnalysisInfo {
+            body_node_count: 2,
+            has_increment_pattern: true,
+            has_accumulator_pattern: false,
+            detected_pattern: None,
+            validation_issues: vec![],
+        };
+        let json = serde_json::to_value(&info).unwrap();
+        assert_eq!(json.as_object().unwrap().len(), 5);
+    }
+
+    #[test]
+    fn loop_analysis_info_clone_independence() {
+        let info = LoopAnalysisInfo {
+            body_node_count: 3,
+            has_increment_pattern: true,
+            has_accumulator_pattern: true,
+            detected_pattern: Some(SymbolicLoopPattern {
+                increment_var_hash: 1, increment_step: 1,
+                accumulator_var_hash: 2, added_var_hash: 1,
+                is_native_eligible: true,
+            }),
+            validation_issues: vec!["test".into()],
+        };
+        let mut cloned = info.clone();
+        cloned.validation_issues.push("extra".into());
+        cloned.body_node_count = 999;
+        assert_eq!(info.body_node_count, 3);
+        assert_eq!(info.validation_issues.len(), 1);
+    }
+
+    #[test]
+    fn closed_form_large_step() {
+        // count=3, step=10: i goes 0,10,20 -> final_i=30, sum=0+10+20=30
+        let (final_i, sum_delta) = symbolic_loop_closed_form(3, 10);
+        assert_eq!(final_i, 30);
+        assert_eq!(sum_delta, 30);
+    }
+
+    #[test]
+    fn closed_form_count_two() {
+        // count=2, step=1: i goes 0,1 -> final_i=2, sum=0+1=1
+        let (final_i, sum_delta) = symbolic_loop_closed_form(2, 1);
+        assert_eq!(final_i, 2);
+        assert_eq!(sum_delta, 1);
+    }
+
+    #[test]
+    fn closed_form_negative_step_large() {
+        // count=3, step=-2: i goes 0,-2,-4 -> final_i=-6, sum=0+(-2)+(-4)=-6
+        let (final_i, sum_delta) = symbolic_loop_closed_form(3, -2);
+        assert_eq!(final_i, -6);
+        assert_eq!(sum_delta, -6);
+    }
+
+    #[test]
+    fn validate_count_boundary_100000() {
+        let body = vec![make_inc_store(0x01, 1)];
+        let issues = validate_symbolic_loop_params(100_000, &body);
+        assert!(issues.is_empty()); // exactly 100k is OK
+    }
+
+    #[test]
+    fn validate_count_boundary_100001() {
+        let body = vec![make_inc_store(0x01, 1)];
+        let issues = validate_symbolic_loop_params(100_001, &body);
+        assert!(issues.iter().any(|i| i.contains("overflow")));
+    }
+
+    #[test]
+    fn analyze_non_store_nodes() {
+        let body = vec![
+            NdaNode::Int { value: 1 },
+            NdaNode::Int { value: 2 },
+        ];
+        let info = analyze_loop_body(10, &body);
+        assert!(!info.has_increment_pattern);
+        assert!(!info.has_accumulator_pattern);
+        assert!(info.detected_pattern.is_none());
+    }
+
+    #[test]
+    fn analyze_store_with_non_add_value() {
+        let body = vec![
+            NdaNode::Store {
+                name_hash: 0x01,
+                value: Box::new(NdaNode::Int { value: 42 }),
+            },
+            NdaNode::Int { value: 0 },
+        ];
+        let info = analyze_loop_body(10, &body);
+        assert!(!info.has_increment_pattern);
+        assert!(!info.has_accumulator_pattern);
+    }
+
+    #[test]
+    fn analyze_store_add_non_self_load() {
+        // Store { var=1, Add { Load { var=2 }, Int { 5 } } } — load is different var
+        let body = vec![
+            NdaNode::Store {
+                name_hash: 0x01,
+                value: Box::new(NdaNode::Add {
+                    lhs: Box::new(NdaNode::Load { name_hash: 0x02 }),
+                    rhs: Box::new(NdaNode::Int { value: 5 }),
+                }),
+            },
+            NdaNode::Int { value: 0 },
+        ];
+        let info = analyze_loop_body(10, &body);
+        assert!(!info.has_increment_pattern);
+    }
+
+    #[test]
+    fn detect_single_node_body() {
+        let body = vec![make_inc_store(0x01, 1)];
+        let mut emitter = X86Emitter::new();
+        let registry = VarRegistry::new();
+        let result = detect_and_compile_symbolic_loop(10, &body, &mut emitter, &registry).unwrap();
+        assert!(!result); // body.len() != 2
+    }
+
+    #[test]
+    fn detect_empty_body() {
+        let body: Vec<NdaNode> = vec![];
+        let mut emitter = X86Emitter::new();
+        let registry = VarRegistry::new();
+        let result = detect_and_compile_symbolic_loop(10, &body, &mut emitter, &registry).unwrap();
+        assert!(!result);
+    }
+
+    #[test]
+    fn detect_eligible_emitted_byte_count() {
+        let i_hash: u64 = 0xAAAA;
+        let sum_hash: u64 = 0xBBBB;
+        let body = vec![
+            make_inc_store(i_hash, 1),
+            make_acc_store(sum_hash, i_hash),
+        ];
+        let mut emitter = X86Emitter::new();
+        let registry = VarRegistry::new();
+        let result = detect_and_compile_symbolic_loop(5, &body, &mut emitter, &registry).unwrap();
+        assert!(result);
+        // Should emit a fixed sequence of x86 bytes
+        assert!(emitter.buf.len() > 10);
+    }
+
+    #[test]
+    fn detect_different_steps() {
+        let i_hash: u64 = 0xAAAA;
+        let sum_hash: u64 = 0xBBBB;
+        for step in [1, 2, 4, -1] {
+            let body = vec![
+                make_inc_store(i_hash, step),
+                make_acc_store(sum_hash, i_hash),
+            ];
+            let mut emitter = X86Emitter::new();
+            let registry = VarRegistry::new();
+            let result = detect_and_compile_symbolic_loop(10, &body, &mut emitter, &registry).unwrap();
+            assert!(result, "step={} should succeed", step);
+        }
+    }
+
+    #[test]
+    fn loop_analysis_info_pretty_json() {
+        let info = LoopAnalysisInfo {
+            body_node_count: 2,
+            has_increment_pattern: true,
+            has_accumulator_pattern: true,
+            detected_pattern: Some(SymbolicLoopPattern {
+                increment_var_hash: 1, increment_step: 1,
+                accumulator_var_hash: 2, added_var_hash: 1,
+                is_native_eligible: true,
+            }),
+            validation_issues: vec![],
+        };
+        let pretty = serde_json::to_string_pretty(&info).unwrap();
+        assert!(pretty.contains('\n'));
+        assert!(pretty.contains("detected_pattern"));
+    }
 }
