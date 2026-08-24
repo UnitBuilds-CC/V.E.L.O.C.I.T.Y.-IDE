@@ -1713,4 +1713,373 @@ mod tests {
         assert!(json.contains("\"hidden_size\":3200"));
         assert!(json.contains("\"gpu_pipeline_active\":false"));
     }
+
+    // ─── Block 88: comprehensive tests ─────────────────────────────────────
+
+    // ── silu edge cases ──────────────────────────────────────────────────────
+
+    #[test]
+    fn silu_negative() {
+        let y = silu(-5.0);
+        assert!(y.abs() < 0.05, "silu(-5) should be near zero, got {}", y);
+    }
+
+    #[test]
+    fn silu_large_negative() {
+        let y = silu(-20.0);
+        assert!(y.abs() < 1e-6, "silu(-20) should be effectively zero, got {}", y);
+    }
+
+    #[test]
+    fn silu_symmetry() {
+        // silu(x) ≈ x for large x, silu(-x) ≈ 0 for large x
+        let y_pos = silu(10.0);
+        let y_neg = silu(-10.0);
+        assert!((y_pos - 10.0).abs() < 0.01);
+        assert!(y_neg.abs() < 0.01);
+    }
+
+    // ── rms_norm edge cases ──────────────────────────────────────────────────
+
+    #[test]
+    fn rms_norm_zero_input() {
+        let mut x = vec![0.0; 4];
+        let weight = vec![1.0; 4];
+        rms_norm(&mut x, &weight, 1e-6);
+        // Zero input with eps → small but finite output
+        for &xi in &x {
+            assert!(xi.is_finite());
+        }
+    }
+
+    #[test]
+    fn rms_norm_single_element() {
+        let mut x = vec![5.0];
+        let weight = vec![2.0];
+        rms_norm(&mut x, &weight, 1e-6);
+        // rms = sqrt(25/1) = 5, inv_rms = 0.2, x = 5 * 0.2 * 2 = 2.0
+        assert!((x[0] - 2.0).abs() < 0.01, "got {}", x[0]);
+    }
+
+    #[test]
+    fn rms_norm_non_uniform_weights() {
+        let mut x = vec![1.0, 1.0, 1.0, 1.0];
+        let weight = vec![2.0, 1.0, 1.0, 0.5];
+        rms_norm(&mut x, &weight, 1e-6);
+        // After normalization, ratios should match weight ratios
+        assert!(x[0] > x[1], "higher weight should give higher value");
+        assert!(x[3] < x[1], "lower weight should give lower value");
+    }
+
+    #[test]
+    fn rms_norm_to_matches_in_place() {
+        let x = vec![1.0, 2.0, 3.0, 4.0];
+        let weight = vec![1.0; 4];
+        let mut out = vec![0.0; 4];
+        rms_norm_to(&x, &mut out, &weight, 1e-6);
+        let mut x_copy = x.clone();
+        rms_norm(&mut x_copy, &weight, 1e-6);
+        for (a, b) in out.iter().zip(x_copy.iter()) {
+            assert!((a - b).abs() < 1e-5);
+        }
+    }
+
+    // ── apply_rope_head edge cases ───────────────────────────────────────────
+
+    #[test]
+    fn rope_head_nonzero_position() {
+        let mut head = vec![1.0, 0.0, 1.0, 0.0];
+        apply_rope_head(&mut head, 5, 4, 10000.0);
+        // Should be rotated — not identity anymore
+        assert!((head[0] - 1.0).abs() > 0.01, "should be rotated at pos=5");
+    }
+
+    #[test]
+    fn rope_head_preserves_norm() {
+        let mut head = vec![3.0, 4.0, 1.0, 2.0];
+        let norm_before: f32 = head.iter().map(|v| v * v).sum::<f32>().sqrt();
+        apply_rope_head(&mut head, 10, 4, 10000.0);
+        let norm_after: f32 = head.iter().map(|v| v * v).sum::<f32>().sqrt();
+        // RoPE is a rotation — should preserve L2 norm
+        assert!((norm_before - norm_after).abs() < 0.01,
+            "norm before={}, after={}", norm_before, norm_after);
+    }
+
+    // ── sample_token edge cases ──────────────────────────────────────────────
+
+    #[test]
+    fn sample_token_all_equal() {
+        let logits = vec![1.0, 1.0, 1.0, 1.0];
+        let mut rng = rand::thread_rng();
+        let tok = sample_token(&logits, 1.0, 1.0, &mut rng);
+        assert!(tok < 4, "should pick a valid token");
+    }
+
+    #[test]
+    fn sample_token_single_logit() {
+        let logits = vec![5.0];
+        let mut rng = rand::thread_rng();
+        let tok = sample_token(&logits, 1.0, 1.0, &mut rng);
+        assert_eq!(tok, 0, "only one token available");
+    }
+
+    // ── sample_token_top_k edge cases ────────────────────────────────────────
+
+    #[test]
+    fn sample_top_k_one_is_greedy() {
+        let logits = vec![1.0, 5.0, 3.0, 2.0];
+        let mut rng = rand::thread_rng();
+        let tok = sample_token_top_k(&logits, 0.01, 1.0, 1, &mut rng);
+        assert_eq!(tok, 1, "k=1 should be greedy");
+    }
+
+    #[test]
+    fn sample_top_k_larger_than_vocab() {
+        let logits = vec![1.0, 5.0, 3.0];
+        let mut rng = rand::thread_rng();
+        let tok = sample_token_top_k(&logits, 0.01, 1.0, 100, &mut rng);
+        assert_eq!(tok, 1, "k > vocab should still pick highest");
+    }
+
+    // ── penalty functions ────────────────────────────────────────────────────
+
+    #[test]
+    fn frequency_penalty_no_counts() {
+        let mut logits = vec![5.0, 3.0, 1.0];
+        let counts = std::collections::HashMap::new();
+        apply_frequency_penalty(&mut logits, &counts, 1.0);
+        assert_eq!(logits, vec![5.0, 3.0, 1.0], "no counts → no change");
+    }
+
+    #[test]
+    fn frequency_penalty_multiple_tokens() {
+        let mut logits = vec![5.0, 5.0, 5.0];
+        let mut counts = std::collections::HashMap::new();
+        counts.insert(0, 2);
+        counts.insert(1, 3);
+        apply_frequency_penalty(&mut logits, &counts, 0.5);
+        assert!((logits[0] - 4.0).abs() < 1e-5); // 5 - 2*0.5
+        assert!((logits[1] - 3.5).abs() < 1e-5); // 5 - 3*0.5
+        assert!((logits[2] - 5.0).abs() < 1e-5); // unchanged
+    }
+
+    #[test]
+    fn presence_penalty_no_counts() {
+        let mut logits = vec![5.0, 3.0, 1.0];
+        let counts = std::collections::HashMap::new();
+        apply_presence_penalty(&mut logits, &counts, 1.0);
+        assert_eq!(logits, vec![5.0, 3.0, 1.0], "no counts → no change");
+    }
+
+    #[test]
+    fn presence_penalty_out_of_range_token() {
+        let mut logits = vec![5.0, 3.0, 1.0];
+        let mut counts = std::collections::HashMap::new();
+        counts.insert(99, 1); // token 99 is out of range
+        apply_presence_penalty(&mut logits, &counts, 1.0);
+        assert_eq!(logits, vec![5.0, 3.0, 1.0], "out-of-range token → no change");
+    }
+
+    // ── pack_vector_impl ─────────────────────────────────────────────────────
+
+    #[test]
+    fn pack_vector_impl_known_values() {
+        let v = vec![2.0, -2.0, 1.0, -1.0, 0.0, 0.5, -0.5, 1.5];
+        let (sign, extra) = pack_vector_impl(&v, 2.0, 8);
+        assert_eq!(sign.len(), 1);
+        assert_eq!(extra.len(), 1);
+        // Positive values: sign bit = 1
+        // Negative values: sign bit = 0
+    }
+
+    #[test]
+    fn pack_vector_impl_padding() {
+        let v = vec![1.0, -1.0];
+        let (sign, extra) = pack_vector_impl(&v, 1.0, 8); // padded to 8
+        assert_eq!(sign.len(), 1);
+        assert_eq!(extra.len(), 1);
+    }
+
+    // ── NdaKvBlock hash ──────────────────────────────────────────────────────
+
+    #[test]
+    fn kv_block_hash_differs_for_different_data() {
+        let b1 = NdaKvBlock {
+            prev_hash: [0u8; 32], hash: [0u8; 32],
+            k_scale: 1.0, v_scale: 1.0,
+            k_sign: vec![0xFF], k_extra: vec![0xAA],
+            v_sign: vec![0x55], v_extra: vec![0x00],
+            k_raw: vec![1.0], v_raw: vec![2.0],
+        };
+        let b2 = NdaKvBlock {
+            prev_hash: [0u8; 32], hash: [0u8; 32],
+            k_scale: 2.0, v_scale: 1.0, // different scale
+            k_sign: vec![0xFF], k_extra: vec![0xAA],
+            v_sign: vec![0x55], v_extra: vec![0x00],
+            k_raw: vec![1.0], v_raw: vec![2.0],
+        };
+        assert_ne!(b1.compute_hash(), b2.compute_hash());
+    }
+
+    #[test]
+    fn kv_block_hash_differs_for_different_prev_hash() {
+        let b1 = NdaKvBlock {
+            prev_hash: [0u8; 32], hash: [0u8; 32],
+            k_scale: 1.0, v_scale: 1.0,
+            k_sign: vec![0xFF], k_extra: vec![0xAA],
+            v_sign: vec![0x55], v_extra: vec![0x00],
+            k_raw: vec![1.0], v_raw: vec![2.0],
+        };
+        let b2 = NdaKvBlock {
+            prev_hash: [1u8; 32], hash: [0u8; 32],
+            k_scale: 1.0, v_scale: 1.0,
+            k_sign: vec![0xFF], k_extra: vec![0xAA],
+            v_sign: vec![0x55], v_extra: vec![0x00],
+            k_raw: vec![1.0], v_raw: vec![2.0],
+        };
+        assert_ne!(b1.compute_hash(), b2.compute_hash());
+    }
+
+    // ── KvLayer ──────────────────────────────────────────────────────────────
+
+    #[test]
+    fn kv_layer_push_bitmap_sizes() {
+        let mut layer = KvLayer::new();
+        let k = vec![1.0; 16];
+        let v = vec![0.5; 16];
+        layer.push(&k, &v);
+        assert_eq!(layer.blocks.len(), 1);
+        let block = &layer.blocks[0];
+        // 16 elements → 2 bytes per bitmap
+        assert_eq!(block.k_sign.len(), 2);
+        assert_eq!(block.k_extra.len(), 2);
+        assert_eq!(block.v_sign.len(), 2);
+        assert_eq!(block.v_extra.len(), 2);
+    }
+
+    #[test]
+    fn kv_layer_multiple_pushes() {
+        let mut layer = KvLayer::new();
+        for i in 0..5 {
+            let k = vec![i as f32; 8];
+            let v = vec![(i as f32) * 0.5; 8];
+            layer.push(&k, &v);
+        }
+        assert_eq!(layer.blocks.len(), 5);
+        // Hash chain integrity
+        for i in 1..5 {
+            assert_eq!(layer.blocks[i].prev_hash, layer.blocks[i - 1].hash);
+        }
+    }
+
+    // ── lm_head ──────────────────────────────────────────────────────────────
+
+    #[test]
+    fn lm_head_identity_like() {
+        // 3×3 identity weight matrix
+        let hidden = vec![1.0, 2.0, 3.0];
+        let weights = vec![
+            1.0, 0.0, 0.0,
+            0.0, 1.0, 0.0,
+            0.0, 0.0, 1.0,
+        ];
+        let mut logits = vec![0.0; 3];
+        lm_head(&hidden, &weights, 3, 3, &mut logits);
+        assert!((logits[0] - 1.0).abs() < 1e-5);
+        assert!((logits[1] - 2.0).abs() < 1e-5);
+        assert!((logits[2] - 3.0).abs() < 1e-5);
+    }
+
+    #[test]
+    fn lm_head_zero_hidden() {
+        let hidden = vec![0.0; 4];
+        let weights = vec![1.0; 8]; // 2 vocab × 4 hidden
+        let mut logits = vec![0.0; 2];
+        lm_head(&hidden, &weights, 2, 4, &mut logits);
+        assert_eq!(logits, vec![0.0, 0.0]);
+    }
+
+    // ── Fp32GenerationReport extras ──────────────────────────────────────────
+
+    #[test]
+    fn generation_report_with_metrics() {
+        let report = Fp32GenerationReport {
+            prompt_tokens: 5,
+            tokens_generated: 3,
+            stopped_at_eos: false,
+            truncated: true,
+            final_kv_blocks: 100,
+            kv_cache_sizes: vec![4; 2],
+            kv_memory_bytes: 8000,
+            gpu_pipeline_active: true,
+            elapsed_us: 5000,
+            tokens_per_second: 600.0,
+            token_ids: vec![10, 20, 30],
+            forward_metrics: vec![
+                Fp32ForwardMetrics {
+                    position: 0, gpu_active: true, layers_executed: 2,
+                    total_kv_blocks: 2, elapsed_us: 1000,
+                },
+                Fp32ForwardMetrics {
+                    position: 1, gpu_active: true, layers_executed: 2,
+                    total_kv_blocks: 4, elapsed_us: 800,
+                },
+            ],
+        };
+        let json = serde_json::to_string(&report).unwrap();
+        assert!(json.contains("\"truncated\":true"));
+        assert!(json.contains("\"gpu_pipeline_active\":true"));
+        assert!(json.contains("\"tokens_per_second\":600.0"));
+        assert!(json.contains("\"forward_metrics\""));
+    }
+
+    // ── TransformerInfo with validation issues ───────────────────────────────
+
+    #[test]
+    fn transformer_info_with_issues() {
+        let info = TransformerInfo {
+            n_layers: 2,
+            hidden_size: 64,
+            n_heads: 4,
+            n_kv_heads: 2,
+            head_dim: 16,
+            ffn_size: 128,
+            vocab_size: 100,
+            max_seq_len: 512,
+            gpu_pipeline_active: false,
+            total_kv_blocks: 0,
+            kv_memory_bytes: 0,
+            weight_layers: 2,
+            validation_issues: vec!["layer 0 q_proj mismatch".into()],
+        };
+        let json = serde_json::to_string(&info).unwrap();
+        assert!(json.contains("validation_issues"));
+        assert!(json.contains("q_proj mismatch"));
+    }
+
+    // ── TransformerScratch different configs ─────────────────────────────────
+
+    #[test]
+    fn scratch_gqa_config() {
+        let cfg = ModelConfig {
+            n_layers: 1,
+            hidden_size: 64,
+            ffn_size: 128,
+            n_heads: 8,      // 8 heads
+            n_kv_heads: 2,   // 2 KV heads (GQA)
+            head_dim: 8,
+            vocab_size: 50,
+            max_seq_len: 32,
+            rope_theta: 10000.0,
+            alibi_shifts: vec![],
+            rms_eps: 1e-6,
+            eos_token_id: 2,
+            bos_token_id: 1,
+        };
+        let scratch = TransformerScratch::new(&cfg);
+        assert_eq!(scratch.q.len(), 64); // 8 * 8
+        assert_eq!(scratch.k.len(), 16); // 2 * 8
+        assert_eq!(scratch.v.len(), 16); // 2 * 8
+        assert_eq!(scratch.logits.len(), 50);
+    }
 }
