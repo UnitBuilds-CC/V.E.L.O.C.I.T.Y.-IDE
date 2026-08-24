@@ -2026,4 +2026,293 @@ mod tests {
         assert_eq!(info.version_name, "v3 FP4 E2M1");
         assert!(!info.is_quad);
     }
+
+    // ─── Block 97: additional comprehensive tests ──────────────────────────
+
+    // ── nda_gemv_batch ───────────────────────────────────────────────────────
+
+    #[test]
+    fn gemv_batch_empty_inputs() {
+        let m = NdaMatrix::new_quad(8, 64, 1.0, vec![0xAA; 16], vec![0x55; 16]);
+        let (outputs, report) = nda_gemv_batch(&m, &[]);
+        assert!(outputs.is_empty());
+        assert_eq!(report.count, 0);
+        assert_eq!(report.per_op_avg_us, 0.0);
+    }
+
+    #[test]
+    fn gemv_batch_single_input() {
+        // 4x32 quad: stride=4, sign/extra need 4*4=16 bytes
+        let m = NdaMatrix::new_quad(4, 32, 1.0, vec![0xAA; 16], vec![0x55; 16]);
+        let x = vec![0.5; 32];
+        let (outputs, report) = nda_gemv_batch(&m, &[x]);
+        assert_eq!(outputs.len(), 1);
+        assert_eq!(outputs[0].len(), 4);
+        assert_eq!(report.count, 1);
+        assert_eq!(report.total_rows, 4);
+    }
+
+    #[test]
+    fn gemv_batch_multiple_inputs() {
+        let m = NdaMatrix::new_quad(4, 32, 1.0, vec![0xAA; 16], vec![0x55; 16]);
+        let xs = vec![vec![0.5; 32], vec![-0.5; 32], vec![0.0; 32]];
+        let (outputs, report) = nda_gemv_batch(&m, &xs);
+        assert_eq!(outputs.len(), 3);
+        assert_eq!(report.count, 3);
+        assert_eq!(report.total_rows, 12);
+    }
+
+    // ── nda_gemv_with_report ─────────────────────────────────────────────────
+
+    #[test]
+    fn gemv_with_report_fields() {
+        // 8x64 quad: stride=8, sign/extra need 8*8=64 bytes
+        let m = NdaMatrix::new_quad(8, 64, 2.0, vec![0xAA; 64], vec![0x55; 64]);
+        let x = vec![1.0; 64];
+        let (out, report) = nda_gemv_with_report(&m, &x);
+        assert_eq!(out.len(), 8);
+        assert_eq!(report.rows, 8);
+        assert_eq!(report.cols, 64);
+        assert_eq!(report.version, 2);
+        assert_eq!(report.output_len, 8);
+    }
+
+    // ── GemvReport serialization ────────────────────────────────────────────
+
+    #[test]
+    fn gemv_report_serialize() {
+        let report = GemvReport {
+            rows: 32,
+            cols: 64,
+            version: 2,
+            elapsed_us: 150,
+            output_len: 32,
+        };
+        let json = serde_json::to_string(&report).unwrap();
+        assert!(json.contains("\"rows\":32"));
+        assert!(json.contains("\"elapsed_us\":150"));
+    }
+
+    // ── BatchGemvReport serialization ────────────────────────────────────────
+
+    #[test]
+    fn batch_gemv_report_serialize() {
+        let report = BatchGemvReport {
+            count: 5,
+            total_elapsed_us: 500,
+            per_op_avg_us: 100.0,
+            total_rows: 160,
+        };
+        let json = serde_json::to_string(&report).unwrap();
+        assert!(json.contains("\"count\":5"));
+        assert!(json.contains("\"per_op_avg_us\":100.0"));
+    }
+
+    // ── quantize_activations_i8 ─────────────────────────────────────────────
+
+    #[test]
+    fn quantize_i8_zeros() {
+        let x = vec![0.0; 8];
+        let (q, scale) = quantize_activations_i8(&x);
+        assert_eq!(q.len(), 8);
+        assert_eq!(scale, 1.0); // fallback for near-zero
+        for &qi in &q {
+            assert_eq!(qi, 0);
+        }
+    }
+
+    #[test]
+    fn quantize_i8_known_values() {
+        let x = vec![1.0, -1.0, 0.5, -0.5];
+        let (q, scale) = quantize_activations_i8(&x);
+        assert_eq!(q.len(), 4);
+        // amax=1.0, scale=1.0/127≈0.00787
+        // q[0] = round(1.0/0.00787) = 127
+        assert_eq!(q[0], 127);
+        assert_eq!(q[1], -127);
+        assert!((scale - 1.0 / 127.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn quantize_i8_negative_values() {
+        let x = vec![-5.0, -3.0, -1.0];
+        let (q, scale) = quantize_activations_i8(&x);
+        // amax=5.0, scale=5.0/127
+        assert!((scale - 5.0 / 127.0).abs() < 1e-5);
+        assert_eq!(q[0], -127); // -5.0 is max abs
+        assert!(q[1] < 0);
+        assert!(q[2] < 0);
+    }
+
+    // ── quantize batch operations ────────────────────────────────────────────
+
+    #[test]
+    fn quantize_v2_quad_batch_empty() {
+        let results = quantize_activations_v2_quad_batch(&[]);
+        assert!(results.is_empty());
+    }
+
+    #[test]
+    fn quantize_v2_quad_batch_multiple() {
+        let xs = vec![vec![1.0, -1.0, 0.5, 0.0], vec![0.0; 4], vec![2.0; 4]];
+        let results = quantize_activations_v2_quad_batch(&xs);
+        assert_eq!(results.len(), 3);
+        for (sign, extra, scale) in &results {
+            assert_eq!(sign.len(), 1); // 4 elements → 1 byte
+            assert_eq!(extra.len(), 1);
+            assert!(*scale > 0.0);
+        }
+    }
+
+    #[test]
+    fn quantize_i8_batch_empty() {
+        let results = quantize_activations_i8_batch(&[]);
+        assert!(results.is_empty());
+    }
+
+    #[test]
+    fn quantize_i8_batch_multiple() {
+        let xs = vec![vec![1.0, -1.0], vec![0.0, 0.0], vec![5.0, 3.0]];
+        let results = quantize_activations_i8_batch(&xs);
+        assert_eq!(results.len(), 3);
+        assert_eq!(results[0].0.len(), 2);
+        assert_eq!(results[1].0.len(), 2);
+    }
+
+    // ── quantize_with_report ─────────────────────────────────────────────────
+
+    #[test]
+    fn quantize_with_report_fields() {
+        let x = vec![1.0, -2.0, 0.5, -0.5, 0.0, 0.0, 0.0, 0.0];
+        let ((sign, extra, scale), report) = quantize_with_report(&x);
+        assert_eq!(sign.len(), 1);
+        assert_eq!(extra.len(), 1);
+        assert_eq!(report.input_len, 8);
+        assert!(report.output_scale > 0.0);
+        assert!(report.input_amax > 0.0);
+        assert!(report.max_abs_error >= 0.0);
+        assert!(report.mean_abs_error >= 0.0);
+        assert!(report.compression_ratio > 0.0);
+        assert!(report.validation_issues.is_empty());
+    }
+
+    #[test]
+    fn quantize_with_report_empty_input() {
+        let x: Vec<f32> = vec![];
+        let (_, report) = quantize_with_report(&x);
+        assert_eq!(report.input_len, 0);
+        assert!(!report.validation_issues.is_empty());
+        assert!(report.validation_issues[0].contains("empty"));
+    }
+
+    #[test]
+    fn quantize_with_report_compression_ratio() {
+        let x = vec![1.0; 64]; // 64 floats = 256 bytes
+        let (_, report) = quantize_with_report(&x);
+        // Output: 8 bytes sign + 8 bytes extra = 16 bytes
+        // Ratio: 256 / 16 = 16.0
+        assert!((report.compression_ratio - 16.0).abs() < 0.01,
+            "ratio={}", report.compression_ratio);
+    }
+
+    // ── NdaQuantizationReport serialization ──────────────────────────────────
+
+    #[test]
+    fn quantization_report_serialize() {
+        let report = NdaQuantizationReport {
+            input_len: 64,
+            output_scale: 2.0,
+            input_amax: 5.0,
+            max_abs_error: 1.5,
+            mean_abs_error: 0.75,
+            compression_ratio: 16.0,
+            validation_issues: vec![],
+        };
+        let json = serde_json::to_string(&report).unwrap();
+        assert!(json.contains("\"input_len\":64"));
+        assert!(json.contains("\"compression_ratio\":16.0"));
+    }
+
+    // ── validate_matrix_compatibility ────────────────────────────────────────
+
+    #[test]
+    fn validate_compatibility_matching() {
+        let a = NdaMatrix::new_quad(4, 8, 1.0, vec![0; 4], vec![0; 4]);
+        let b = NdaMatrix::new_quad(8, 16, 1.0, vec![0; 16], vec![0; 16]);
+        let issues = validate_matrix_compatibility(&a, &b);
+        assert!(issues.is_empty());
+    }
+
+    #[test]
+    fn validate_compatibility_dimension_mismatch() {
+        let a = NdaMatrix::new_quad(4, 8, 1.0, vec![0; 4], vec![0; 4]);
+        let b = NdaMatrix::new_quad(16, 32, 1.0, vec![0; 64], vec![0; 64]);
+        let issues = validate_matrix_compatibility(&a, &b);
+        assert!(issues.iter().any(|i| i.contains("dimension mismatch")));
+    }
+
+    // ── NdaMatrix::new_quad edge cases ───────────────────────────────────────
+
+    #[test]
+    fn new_quad_single_row() {
+        let m = NdaMatrix::new_quad(1, 32, 1.0, vec![0xAA; 4], vec![0x55; 4]);
+        assert_eq!(m.rows, 1);
+        assert_eq!(m.cols, 32);
+        assert!(m.is_quad());
+    }
+
+    #[test]
+    fn new_quad_large_scale() {
+        let m = NdaMatrix::new_quad(4, 32, 1e6, vec![0; 8], vec![0; 8]);
+        assert_eq!(m.scale, 1e6);
+    }
+
+    // ── NdaMatrixInfo extras ─────────────────────────────────────────────────
+
+    #[test]
+    fn info_v2_quad_matrix() {
+        let m = NdaMatrix::new_quad(16, 64, 0.5, vec![0; 128], vec![0; 128]);
+        let info = m.info();
+        assert_eq!(info.rows, 16);
+        assert_eq!(info.cols, 64);
+        assert_eq!(info.version, 2);
+        assert!(info.version_name.contains("v2 quad"));
+        assert!(info.is_quad);
+        assert_eq!(info.scale, 0.5);
+    }
+
+    #[test]
+    fn info_fp2_matrix() {
+        let m = NdaMatrix {
+            rows: 4, cols: 32, scale: 1.0, version: NDA_VERSION_FP2,
+            sign: vec![], extra: vec![],
+            block_size: 32, n_blocks: 4,
+            q_scales: vec![64; 4], packed_codes: vec![0; 64],
+        };
+        let info = m.info();
+        assert_eq!(info.version_name, "v4 FP2 E1M0");
+        assert!(!info.is_quad);
+    }
+
+    // ── nda_gemv_v2_i8 ──────────────────────────────────────────────────────
+
+    #[test]
+    fn gemv_v2_i8_zero_input() {
+        let m = NdaMatrix::new_quad(4, 32, 1.0, vec![0xAA; 16], vec![0x55; 16]);
+        let q = vec![0i8; 32];
+        let out = nda_gemv_v2_i8(&m, &q, 1.0);
+        assert_eq!(out.len(), 4);
+        for &v in &out {
+            assert_eq!(v, 0.0);
+        }
+    }
+
+    #[test]
+    fn gemv_v2_i8_output_length() {
+        // 8x64 quad: stride=8, sign/extra need 8*8=64 bytes
+        let m = NdaMatrix::new_quad(8, 64, 1.0, vec![0xAA; 64], vec![0x55; 64]);
+        let q = vec![1i8; 64];
+        let out = nda_gemv_v2_i8(&m, &q, 0.5);
+        assert_eq!(out.len(), 8);
+    }
 }
