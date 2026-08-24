@@ -535,4 +535,240 @@ mod tests {
         let issues = validate_dot_product_params(&a, &b);
         assert!(issues.iter().any(|i| i.contains("0")));
     }
+
+    // ─── Expanded Tests ─────────────────────────────────────────────────
+
+    #[test]
+    fn nda_vec_zeros_constructor() {
+        let v = NdaVec::zeros(16, 5);
+        assert_eq!(v.len, 16);
+        assert_eq!(v.log2_scale, 5);
+        assert_eq!(v.sign.len(), 2); // ceil(16/8) = 2
+        assert_eq!(v.extra.len(), 2);
+        // zeros: sign=0xFF (positive), extra=0x00 → is_large = (0xFF == 0x00) = false → mag=1
+        // So get_raw returns +1 for all positions
+        for i in 0..16 {
+            assert_eq!(v.get_raw(i), 1);
+        }
+    }
+
+    #[test]
+    fn nda_vec_zeros_single_element() {
+        let v = NdaVec::zeros(1, 0);
+        assert_eq!(v.len, 1);
+        assert_eq!(v.bitmap_bytes(), 1);
+        assert_eq!(v.get_raw(0), 1);
+    }
+
+    #[test]
+    fn nda_vec_from_i32_clamping() {
+        // Values > 4 should be clamped to 4 → encodes as +2
+        let v = NdaVec::from_i32_slice(&[100, -100, 5, -5], 0);
+        assert_eq!(v.get_raw(0), 2);  // 100 → clamped to 4 → +2
+        assert_eq!(v.get_raw(1), -2); // -100 → clamped to -4 → -2
+        assert_eq!(v.get_raw(2), 2);  // 5 → clamped to 4 → +2
+        assert_eq!(v.get_raw(3), -2); // -5 → clamped to -4 → -2
+    }
+
+    #[test]
+    fn nda_vec_from_i32_all_four_values() {
+        let v = NdaVec::from_i32_slice(&[-2, -1, 1, 2], 0);
+        assert_eq!(v.get_raw(0), -2);
+        assert_eq!(v.get_raw(1), -1);
+        assert_eq!(v.get_raw(2), 1);
+        assert_eq!(v.get_raw(3), 2);
+    }
+
+    #[test]
+    fn nda_vec_from_i32_zero_encodes() {
+        // 0 → clamped to 0 → ENCODE_TABLE[4] = 2 → sign=1, extra=0 → is_pos=true, is_large=(1==0)=false → mag=1 → +1
+        // Wait: ENCODE_TABLE = [0, 0, 0, 1, 2, 2, 3, 3, 3]
+        // 0 + 4 = 4 → ENCODE_TABLE[4] = 2 → sign bit = 2>>1 = 1, extra bit = 2&1 = 0
+        // is_pos = (sign & mask) != 0 = true
+        // is_large = (sign & mask) == (extra & mask) = (1 == 0) = false → mag = 1
+        // result: +1
+        let v = NdaVec::from_i32_slice(&[0], 0);
+        assert_eq!(v.get_raw(0), 1);
+    }
+
+    #[test]
+    fn nda_vec_to_f32_vec_roundtrip() {
+        let v = NdaVec::from_i32_slice(&[1, -1, 2, -2], 3);
+        let f32s = v.to_f32_vec();
+        assert_eq!(f32s.len(), 4);
+        let scale = 2.0f32.powi(3);
+        assert!((f32s[0] - 1.0 * scale).abs() < 1e-6);
+        assert!((f32s[1] - (-1.0) * scale).abs() < 1e-6);
+        assert!((f32s[2] - 2.0 * scale).abs() < 1e-6);
+        assert!((f32s[3] - (-2.0) * scale).abs() < 1e-6);
+    }
+
+    #[test]
+    fn nda_vec_to_f32_vec_zero_scale() {
+        let v = NdaVec::from_i32_slice(&[1, -1], 0);
+        let f32s = v.to_f32_vec();
+        assert!((f32s[0] - 1.0).abs() < 1e-6);
+        assert!((f32s[1] - (-1.0)).abs() < 1e-6);
+    }
+
+    #[test]
+    fn nda_vec_bitmap_bytes_various() {
+        assert_eq!(NdaVec::from_i32_slice(&[1], 0).bitmap_bytes(), 1);
+        assert_eq!(NdaVec::from_i32_slice(&[1; 7], 0).bitmap_bytes(), 1);
+        assert_eq!(NdaVec::from_i32_slice(&[1; 8], 0).bitmap_bytes(), 1);
+        assert_eq!(NdaVec::from_i32_slice(&[1; 9], 0).bitmap_bytes(), 2);
+        assert_eq!(NdaVec::from_i32_slice(&[1; 16], 0).bitmap_bytes(), 2);
+        assert_eq!(NdaVec::from_i32_slice(&[1; 17], 0).bitmap_bytes(), 3);
+    }
+
+    #[test]
+    fn nda_vec_value_histogram_specific() {
+        let v = NdaVec::from_i32_slice(&[1, 1, 1, -1, -1, 2, 2, -2], 0);
+        let hist = v.value_histogram();
+        assert_eq!(hist[0], 1); // count(-2)
+        assert_eq!(hist[1], 2); // count(-1)
+        assert_eq!(hist[2], 3); // count(1)
+        assert_eq!(hist[3], 2); // count(2)
+    }
+
+    #[test]
+    fn nda_vec_dot_raw_known_values() {
+        // [1, 1, 1, 1] · [1, 1, 1, 1] = 4
+        let a = NdaVec::from_i32_slice(&[1, 1, 1, 1], 0);
+        assert_eq!(a.dot_raw(&a), 4);
+
+        // [1, 1, 1, 1] · [-1, -1, -1, -1] = -4
+        let b = NdaVec::from_i32_slice(&[-1, -1, -1, -1], 0);
+        assert_eq!(a.dot_raw(&b), -4);
+
+        // [2, 2, 2, 2] · [2, 2, 2, 2] = 16
+        let c = NdaVec::from_i32_slice(&[2, 2, 2, 2], 0);
+        assert_eq!(c.dot_raw(&c), 16);
+    }
+
+    #[test]
+    fn nda_vec_sign_hamming_non_aligned() {
+        // 5 elements → 1 byte, but only 5 bits matter
+        let a = NdaVec::from_i32_slice(&[1, 1, 1, 1, 1], 0);
+        let b = NdaVec::from_i32_slice(&[1, 1, 1, -1, -1], 0);
+        let dist = a.sign_hamming_distance(&b);
+        assert_eq!(dist, 2); // bits 3 and 4 differ
+    }
+
+    #[test]
+    fn nda_vec_validate_extra_mismatch() {
+        let v = NdaVec {
+            len: 8,
+            log2_scale: 0,
+            sign: vec![0xFF; 1].into(),
+            extra: vec![0x00; 3].into(), // wrong: 3 bytes instead of 1
+        };
+        let w = v.validate();
+        assert!(w.iter().any(|s| s.contains("extra bitmap size mismatch")));
+    }
+
+    #[test]
+    fn nda_vec_info_unique_values() {
+        // Only +1 and -1 → 2 unique values
+        let v = NdaVec::from_i32_slice(&[1, -1, 1, -1], 0);
+        let info = v.info();
+        assert_eq!(info.unique_values, 2);
+    }
+
+    #[test]
+    fn nda_vec_info_all_same() {
+        // All +2 → 1 unique value
+        let v = NdaVec::from_i32_slice(&[2, 2, 2, 2], 0);
+        let info = v.info();
+        assert_eq!(info.unique_values, 1);
+    }
+
+    #[test]
+    fn from_f32_slice_report_large_values() {
+        let input = vec![100.0, -200.0, 50.0];
+        let (nv, report) = from_f32_slice_report(&input);
+        assert_eq!(report.input_len, 3);
+        assert_eq!(nv.len, 3);
+        assert!(nv.log2_scale > 0);
+        // Large values will have significant quantization error
+        assert!(report.max_abs_error > 0.0);
+    }
+
+    #[test]
+    fn from_f32_slice_report_compression() {
+        let input = vec![1.0; 64]; // 64 f32s = 256 bytes
+        let (nv, report) = from_f32_slice_report(&input);
+        // 64 elements → 8 bytes sign + 8 bytes extra = 16 bytes
+        assert_eq!(nv.memory_bytes(), 16);
+        assert!((report.compression_ratio - 16.0).abs() < 1e-9); // 256/16
+    }
+
+    #[test]
+    fn batch_from_f32_mixed_sizes() {
+        let vecs = vec![
+            vec![1.0, -1.0],
+            vec![0.5; 16],
+            vec![-2.0, 2.0, 0.0],
+        ];
+        let (nvs, report) = batch_from_f32(&vecs);
+        assert_eq!(nvs.len(), 3);
+        assert_eq!(nvs[0].len, 2);
+        assert_eq!(nvs[1].len, 16);
+        assert_eq!(nvs[2].len, 3);
+        assert_eq!(report.input_len, 21);
+    }
+
+    #[test]
+    fn combine_log2_scales_zero() {
+        assert_eq!(combine_log2_scales(0, 0), 0);
+        assert_eq!(combine_log2_scales(5, 0), 5);
+        assert_eq!(combine_log2_scales(0, -3), -3);
+    }
+
+    #[test]
+    fn div_pow2_i32_negative() {
+        assert_eq!(div_pow2_i32(-16, 2), -4);
+        assert_eq!(div_pow2_i32(-1, 1), 0); // integer division truncates toward zero
+    }
+
+    #[test]
+    fn div_pow2_i32_large_shift() {
+        assert_eq!(div_pow2_i32(1000, 32), 0);
+        assert_eq!(div_pow2_i32(1000, 100), 0);
+    }
+
+    #[test]
+    fn div_pow2_i64_negative() {
+        assert_eq!(div_pow2_i64(-1024, 3), -128);
+    }
+
+    #[test]
+    fn div_pow2_i64_large_shift() {
+        assert_eq!(div_pow2_i64(1000, 64), 0);
+        assert_eq!(div_pow2_i64(1000, 100), 0);
+    }
+
+    #[test]
+    fn nda_vec_conversion_report_serializes() {
+        let report = NdaVecConversionReport {
+            input_len: 100,
+            output_log2_scale: 5,
+            memory_bytes: 26,
+            compression_ratio: 15.38,
+            max_abs_error: 0.5,
+            mean_abs_error: 0.25,
+            validation_issues: vec![],
+        };
+        let json = serde_json::to_string(&report).unwrap();
+        assert!(json.contains("\"input_len\":100"));
+        assert!(json.contains("\"compression_ratio\""));
+    }
+
+    #[test]
+    fn nda_vec_clone_is_independent() {
+        let v1 = NdaVec::from_i32_slice(&[1, -1, 2, -2], 3);
+        let v2 = v1.clone();
+        assert_eq!(v2.get_raw(0), 1);
+        assert_eq!(v2.log2_scale, 3);
+    }
 }
