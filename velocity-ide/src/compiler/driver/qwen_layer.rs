@@ -1124,4 +1124,323 @@ mod tests {
         let info_large = qwen_layer_info(&large);
         assert!(info_large.total_weight_bytes_estimate > info_small.total_weight_bytes_estimate);
     }
+
+    // ── JSON key count verification ──────────────────────────────────────
+
+    #[test]
+    fn config_json_has_exactly_5_keys() {
+        let json = serde_json::to_string(&default_qwen_config()).unwrap();
+        let val: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(val.as_object().unwrap().len(), 5);
+    }
+
+    #[test]
+    fn dispatch_plan_json_has_exactly_4_keys() {
+        let json = serde_json::to_string(&qwen_dispatch_plan()).unwrap();
+        let val: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(val.as_object().unwrap().len(), 4);
+    }
+
+    #[test]
+    fn info_json_has_exactly_5_keys() {
+        let info = qwen_layer_info(&default_qwen_config());
+        let json = serde_json::to_string(&info).unwrap();
+        let val: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(val.as_object().unwrap().len(), 5);
+        assert!(val.get("config").is_some());
+        assert!(val.get("dispatch_plan").is_some());
+        assert!(val.get("weight_buffers").is_some());
+        assert!(val.get("total_weight_bytes_estimate").is_some());
+        assert!(val.get("validation_issues").is_some());
+    }
+
+    // ── JSON roundtrip ───────────────────────────────────────────────────
+
+    #[test]
+    fn config_json_roundtrip_via_value() {
+        let cfg = default_qwen_config();
+        let json = serde_json::to_string(&cfg).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed["hidden_size"].as_u64().unwrap(), cfg.hidden_size as u64);
+        assert_eq!(parsed["ffn_size"].as_u64().unwrap(), cfg.ffn_size as u64);
+        assert_eq!(parsed["n_heads"].as_u64().unwrap(), cfg.n_heads as u64);
+        assert_eq!(parsed["n_kv_heads"].as_u64().unwrap(), cfg.n_kv_heads as u64);
+        assert_eq!(parsed["head_dim"].as_u64().unwrap(), cfg.head_dim as u64);
+    }
+
+    #[test]
+    fn dispatch_plan_json_roundtrip_via_value() {
+        let plan = qwen_dispatch_plan();
+        let json = serde_json::to_string(&plan).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed["int4_dispatches"].as_u64().unwrap(), plan.int4_dispatches as u64);
+        assert_eq!(parsed["activation_dispatches"].as_u64().unwrap(), plan.activation_dispatches as u64);
+        assert_eq!(parsed["total_dispatches"].as_u64().unwrap(), plan.total_dispatches as u64);
+        assert_eq!(parsed["descriptor_sets"].as_u64().unwrap(), plan.descriptor_sets as u64);
+    }
+
+    #[test]
+    fn info_json_roundtrip_preserves_values() {
+        let cfg = default_qwen_config();
+        let info = qwen_layer_info(&cfg);
+        let json = serde_json::to_string(&info).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed["config"]["hidden_size"].as_u64().unwrap(), info.config.hidden_size as u64);
+        assert_eq!(parsed["weight_buffers"].as_u64().unwrap(), info.weight_buffers as u64);
+        assert_eq!(parsed["total_weight_bytes_estimate"].as_u64().unwrap(), info.total_weight_bytes_estimate as u64);
+        assert!(parsed["validation_issues"].is_array());
+    }
+
+    // ── Validation: combined issues ──────────────────────────────────────
+
+    #[test]
+    fn validate_multiple_zero_fields_combined() {
+        let cfg = QwenLayerConfig {
+            hidden_size: 0,
+            ffn_size: 0,
+            n_heads: 0,
+            n_kv_heads: 0,
+            head_dim: 0,
+        };
+        let issues = validate_qwen_config(&cfg);
+        // 5 zero-field issues (divisibility guard prevents 6th)
+        assert_eq!(issues.len(), 5);
+    }
+
+    #[test]
+    fn validate_issue_messages_are_descriptive() {
+        let cfg = QwenLayerConfig {
+            hidden_size: 0,
+            ffn_size: 0,
+            n_heads: 0,
+            n_kv_heads: 0,
+            head_dim: 0,
+        };
+        let issues = validate_qwen_config(&cfg);
+        for issue in &issues {
+            assert!(issue.contains("must be"), "issue should contain 'must be': {}", issue);
+        }
+    }
+
+    #[test]
+    fn validate_valid_config_returns_empty_vec() {
+        let cfg = QwenLayerConfig {
+            hidden_size: 1024,
+            ffn_size: 4096,
+            n_heads: 16,
+            n_kv_heads: 4,
+            head_dim: 64,
+        };
+        let issues = validate_qwen_config(&cfg);
+        assert!(issues.is_empty());
+        assert_eq!(issues.len(), 0);
+    }
+
+    // ── Weight byte formula edge cases ───────────────────────────────────
+
+    #[test]
+    fn weight_bytes_all_zeros_is_zero() {
+        let cfg = QwenLayerConfig {
+            hidden_size: 0,
+            ffn_size: 0,
+            n_heads: 1,
+            n_kv_heads: 1,
+            head_dim: 1,
+        };
+        let info = qwen_layer_info(&cfg);
+        assert_eq!(info.total_weight_bytes_estimate, 0);
+    }
+
+    #[test]
+    fn weight_bytes_hidden_one_ffn_one() {
+        let cfg = QwenLayerConfig {
+            hidden_size: 1,
+            ffn_size: 1,
+            n_heads: 1,
+            n_kv_heads: 1,
+            head_dim: 1,
+        };
+        let info = qwen_layer_info(&cfg);
+        // 1*1*4*4 + 1*1*4*2 + 1*1*4 = 16 + 8 + 4 = 28
+        assert_eq!(info.total_weight_bytes_estimate, 28);
+    }
+
+    #[test]
+    fn weight_bytes_scales_linearly_with_ffn() {
+        let cfg1 = QwenLayerConfig {
+            hidden_size: 256,
+            ffn_size: 512,
+            n_heads: 4,
+            n_kv_heads: 2,
+            head_dim: 64,
+        };
+        let cfg2 = QwenLayerConfig {
+            hidden_size: 256,
+            ffn_size: 1024,
+            n_heads: 4,
+            n_kv_heads: 2,
+            head_dim: 64,
+        };
+        let info1 = qwen_layer_info(&cfg1);
+        let info2 = qwen_layer_info(&cfg2);
+        // ffn terms: hidden*ffn*4*2 + ffn*hidden*4 = hidden*ffn*(8+4) = hidden*ffn*12
+        // Doubling ffn should increase ffn-related terms by 2x
+        let ffn_term_1 = cfg1.hidden_size * cfg1.ffn_size * 4 * 2 + cfg1.ffn_size * cfg1.hidden_size * 4;
+        let ffn_term_2 = cfg2.hidden_size * cfg2.ffn_size * 4 * 2 + cfg2.ffn_size * cfg2.hidden_size * 4;
+        assert_eq!(ffn_term_2, ffn_term_1 * 2);
+        assert!(info2.total_weight_bytes_estimate > info1.total_weight_bytes_estimate);
+    }
+
+    // ── Dispatch plan constants ──────────────────────────────────────────
+
+    #[test]
+    fn dispatch_plan_int4_count_is_seven() {
+        // Q, K, V, O, gate, up, down = 7
+        assert_eq!(qwen_dispatch_plan().int4_dispatches, 7);
+    }
+
+    #[test]
+    fn dispatch_plan_activation_count_is_one() {
+        // SiLU activation = 1
+        assert_eq!(qwen_dispatch_plan().activation_dispatches, 1);
+    }
+
+    #[test]
+    fn dispatch_plan_descriptor_sets_is_eight() {
+        assert_eq!(qwen_dispatch_plan().descriptor_sets, 8);
+    }
+
+    // ── Info struct consistency ──────────────────────────────────────────
+
+    #[test]
+    fn info_validation_issues_match_standalone_validation() {
+        let mut cfg = default_qwen_config();
+        cfg.hidden_size = 0;
+        cfg.n_heads = 7;
+        cfg.n_kv_heads = 2;
+        let info = qwen_layer_info(&cfg);
+        let standalone = validate_qwen_config(&cfg);
+        assert_eq!(info.validation_issues.len(), standalone.len());
+        for (a, b) in info.validation_issues.iter().zip(standalone.iter()) {
+            assert_eq!(a, b);
+        }
+    }
+
+    #[test]
+    fn info_dispatch_plan_matches_standalone() {
+        let cfg = default_qwen_config();
+        let info = qwen_layer_info(&cfg);
+        let standalone = qwen_dispatch_plan();
+        assert_eq!(info.dispatch_plan.int4_dispatches, standalone.int4_dispatches);
+        assert_eq!(info.dispatch_plan.activation_dispatches, standalone.activation_dispatches);
+        assert_eq!(info.dispatch_plan.total_dispatches, standalone.total_dispatches);
+        assert_eq!(info.dispatch_plan.descriptor_sets, standalone.descriptor_sets);
+    }
+
+    #[test]
+    fn info_weight_buffers_always_seven() {
+        // Regardless of config, weight_buffers is always 7
+        for hidden in [1, 64, 2304, 4096] {
+            let cfg = QwenLayerConfig {
+                hidden_size: hidden,
+                ffn_size: hidden * 4,
+                n_heads: 4,
+                n_kv_heads: 2,
+                head_dim: hidden / 4,
+            };
+            let info = qwen_layer_info(&cfg);
+            assert_eq!(info.weight_buffers, 7);
+        }
+    }
+
+    // ── Config edge cases ────────────────────────────────────────────────
+
+    #[test]
+    fn config_with_very_large_values() {
+        let cfg = QwenLayerConfig {
+            hidden_size: 16384,
+            ffn_size: 65536,
+            n_heads: 128,
+            n_kv_heads: 16,
+            head_dim: 128,
+        };
+        let issues = validate_qwen_config(&cfg);
+        assert!(issues.is_empty());
+        let info = qwen_layer_info(&cfg);
+        assert!(info.total_weight_bytes_estimate > 1_000_000_000);
+    }
+
+    #[test]
+    fn config_mha_n_heads_equals_kv_heads() {
+        let cfg = QwenLayerConfig {
+            hidden_size: 512,
+            ffn_size: 2048,
+            n_heads: 8,
+            n_kv_heads: 8, // MHA: n_kv_heads == n_heads
+            head_dim: 64,
+        };
+        let issues = validate_qwen_config(&cfg);
+        assert!(issues.is_empty());
+    }
+
+    #[test]
+    fn config_gqa_various_ratios() {
+        // GQA with 4:1 ratio
+        let cfg = QwenLayerConfig {
+            hidden_size: 2048,
+            ffn_size: 8192,
+            n_heads: 32,
+            n_kv_heads: 8,
+            head_dim: 64,
+        };
+        assert!(validate_qwen_config(&cfg).is_empty());
+    }
+
+    // ── Debug format ─────────────────────────────────────────────────────
+
+    #[test]
+    fn info_debug_format_contains_fields() {
+        let info = qwen_layer_info(&default_qwen_config());
+        let debug = format!("{:?}", info);
+        assert!(debug.contains("QwenLayerInfo"));
+        assert!(debug.contains("weight_buffers"));
+        assert!(debug.contains("validation_issues"));
+    }
+
+    #[test]
+    fn config_eq_derived() {
+        let cfg1 = default_qwen_config();
+        let cfg2 = default_qwen_config();
+        // QwenLayerConfig derives Debug, Clone, Serialize but not PartialEq.
+        // Compare via JSON roundtrip.
+        let j1 = serde_json::to_string(&cfg1).unwrap();
+        let j2 = serde_json::to_string(&cfg2).unwrap();
+        assert_eq!(j1, j2);
+    }
+
+    // ── Validate: n_heads=0 with n_kv_heads=0 guard ─────────────────────
+
+    #[test]
+    fn validate_both_heads_zero_no_divisibility_issue() {
+        let cfg = QwenLayerConfig {
+            hidden_size: 100,
+            ffn_size: 200,
+            n_heads: 0,
+            n_kv_heads: 0,
+            head_dim: 10,
+        };
+        let issues = validate_qwen_config(&cfg);
+        // n_heads=0 and n_kv_heads=0 → 2 issues; divisibility check guarded
+        assert_eq!(issues.len(), 2);
+        assert!(!issues.iter().any(|i| i.contains("divisible")));
+    }
+
+    #[test]
+    fn validate_n_heads_one_n_kv_heads_one() {
+        let mut cfg = default_qwen_config();
+        cfg.n_heads = 1;
+        cfg.n_kv_heads = 1;
+        let issues = validate_qwen_config(&cfg);
+        assert!(issues.is_empty());
+    }
 }
