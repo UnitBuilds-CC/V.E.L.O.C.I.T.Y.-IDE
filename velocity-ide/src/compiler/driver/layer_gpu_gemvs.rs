@@ -398,4 +398,348 @@ mod tests {
         assert_eq!(layer.attention_projection_count(), 0);
         assert_eq!(layer.ffn_projection_count(), 0);
     }
+
+    // ── LayerForwardResult: individual field dispatch ────────────────────
+
+    fn all_false_result() -> LayerForwardResult {
+        LayerForwardResult {
+            q_dispatched: false,
+            k_dispatched: false,
+            v_dispatched: false,
+            o_dispatched: false,
+            gate_dispatched: false,
+            up_dispatched: false,
+            down_dispatched: false,
+        }
+    }
+
+    #[test]
+    fn result_only_q_dispatched() {
+        let mut r = all_false_result();
+        r.q_dispatched = true;
+        assert_eq!(r.dispatched_count(), 1);
+        assert!(r.has_attention());
+        assert!(!r.has_ffn());
+        assert!(!r.all_dispatched());
+    }
+
+    #[test]
+    fn result_only_k_dispatched() {
+        let mut r = all_false_result();
+        r.k_dispatched = true;
+        assert_eq!(r.dispatched_count(), 1);
+        assert!(r.has_attention());
+        assert!(!r.has_ffn());
+    }
+
+    #[test]
+    fn result_only_v_dispatched() {
+        let mut r = all_false_result();
+        r.v_dispatched = true;
+        assert_eq!(r.dispatched_count(), 1);
+        assert!(r.has_attention());
+    }
+
+    #[test]
+    fn result_only_o_dispatched() {
+        let mut r = all_false_result();
+        r.o_dispatched = true;
+        assert_eq!(r.dispatched_count(), 1);
+        assert!(r.has_attention());
+        assert!(!r.has_ffn());
+    }
+
+    #[test]
+    fn result_only_gate_dispatched() {
+        let mut r = all_false_result();
+        r.gate_dispatched = true;
+        assert_eq!(r.dispatched_count(), 1);
+        assert!(!r.has_attention());
+        assert!(r.has_ffn());
+    }
+
+    #[test]
+    fn result_only_up_dispatched() {
+        let mut r = all_false_result();
+        r.up_dispatched = true;
+        assert_eq!(r.dispatched_count(), 1);
+        assert!(!r.has_attention());
+        assert!(r.has_ffn());
+    }
+
+    #[test]
+    fn result_only_down_dispatched() {
+        let mut r = all_false_result();
+        r.down_dispatched = true;
+        assert_eq!(r.dispatched_count(), 1);
+        assert!(!r.has_attention());
+        assert!(r.has_ffn());
+    }
+
+    // ── LayerForwardResult: attention-only combinations ──────────────────
+
+    #[test]
+    fn result_qk_dispatched() {
+        let mut r = all_false_result();
+        r.q_dispatched = true;
+        r.k_dispatched = true;
+        assert_eq!(r.dispatched_count(), 2);
+        assert!(r.has_attention());
+        assert!(!r.has_ffn());
+    }
+
+    #[test]
+    fn result_qkvo_dispatched() {
+        let mut r = all_false_result();
+        r.q_dispatched = true;
+        r.k_dispatched = true;
+        r.v_dispatched = true;
+        r.o_dispatched = true;
+        assert_eq!(r.dispatched_count(), 4);
+        assert!(r.has_attention());
+        assert!(!r.has_ffn());
+        assert!(!r.all_dispatched());
+    }
+
+    // ── LayerForwardResult: FFN-only combinations ────────────────────────
+
+    #[test]
+    fn result_gate_up_dispatched() {
+        let mut r = all_false_result();
+        r.gate_dispatched = true;
+        r.up_dispatched = true;
+        assert_eq!(r.dispatched_count(), 2);
+        assert!(!r.has_attention());
+        assert!(r.has_ffn());
+    }
+
+    #[test]
+    fn result_gate_up_down_dispatched() {
+        let mut r = all_false_result();
+        r.gate_dispatched = true;
+        r.up_dispatched = true;
+        r.down_dispatched = true;
+        assert_eq!(r.dispatched_count(), 3);
+        assert!(!r.has_attention());
+        assert!(r.has_ffn());
+        assert!(!r.all_dispatched());
+    }
+
+    // ── LayerForwardResult: mixed attention + FFN ────────────────────────
+
+    #[test]
+    fn result_q_plus_gate_dispatched() {
+        let mut r = all_false_result();
+        r.q_dispatched = true;
+        r.gate_dispatched = true;
+        assert_eq!(r.dispatched_count(), 2);
+        assert!(r.has_attention());
+        assert!(r.has_ffn());
+    }
+
+    #[test]
+    fn result_six_of_seven_dispatched() {
+        let mut r = all_false_result();
+        r.q_dispatched = true;
+        r.k_dispatched = true;
+        r.v_dispatched = true;
+        r.o_dispatched = true;
+        r.gate_dispatched = true;
+        r.up_dispatched = true;
+        // down_dispatched = false
+        assert_eq!(r.dispatched_count(), 6);
+        assert!(r.has_attention());
+        assert!(r.has_ffn());
+        assert!(!r.all_dispatched());
+    }
+
+    // ── LayerForwardResult: struct derives ───────────────────────────────
+
+    #[test]
+    fn result_clone_is_independent() {
+        let mut r = all_false_result();
+        r.q_dispatched = true;
+        let mut cloned = r.clone();
+        cloned.q_dispatched = false;
+        assert!(r.q_dispatched); // original unchanged
+    }
+
+    #[test]
+    fn result_debug_format_contains_fields() {
+        let mut r = all_false_result();
+        r.q_dispatched = true;
+        let debug = format!("{:?}", r);
+        assert!(debug.contains("q_dispatched"));
+        assert!(debug.contains("true"));
+    }
+
+    // ── LayerForwardResult: serialization ────────────────────────────────
+
+    #[test]
+    fn result_json_all_fields_present() {
+        let r = all_false_result();
+        let json = serde_json::to_string(&r).unwrap();
+        assert!(json.contains("q_dispatched"));
+        assert!(json.contains("k_dispatched"));
+        assert!(json.contains("v_dispatched"));
+        assert!(json.contains("o_dispatched"));
+        assert!(json.contains("gate_dispatched"));
+        assert!(json.contains("up_dispatched"));
+        assert!(json.contains("down_dispatched"));
+    }
+
+    #[test]
+    fn result_json_parseable_as_value() {
+        let mut r = all_false_result();
+        r.q_dispatched = true;
+        r.gate_dispatched = true;
+        let json = serde_json::to_string(&r).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed["q_dispatched"].as_bool(), Some(true));
+        assert_eq!(parsed["k_dispatched"].as_bool(), Some(false));
+        assert_eq!(parsed["gate_dispatched"].as_bool(), Some(true));
+        assert_eq!(parsed["down_dispatched"].as_bool(), Some(false));
+    }
+
+    #[test]
+    fn result_json_roundtrip_consistent() {
+        let mut r = all_false_result();
+        r.o_dispatched = true;
+        r.down_dispatched = true;
+        let json = serde_json::to_string(&r).unwrap();
+        assert!(json.contains("\"o_dispatched\":true"));
+        assert!(json.contains("\"down_dispatched\":true"));
+        assert!(json.contains("\"q_dispatched\":false"));
+    }
+
+    // ── LayerGpuGemvsInfo: struct and serialization ──────────────────────
+
+    fn sample_info() -> LayerGpuGemvsInfo {
+        LayerGpuGemvsInfo {
+            attention_projections: 4,
+            ffn_projections: 3,
+            total_projections: 7,
+            has_fused_qkv: false,
+            has_fused_gate_up: false,
+            has_full_attention: true,
+            has_full_ffn: true,
+            validation_issues: vec![],
+        }
+    }
+
+    #[test]
+    fn info_clone_is_independent() {
+        let info = sample_info();
+        let mut cloned = info.clone();
+        cloned.attention_projections = 99;
+        assert_eq!(info.attention_projections, 4);
+    }
+
+    #[test]
+    fn info_debug_format() {
+        let info = sample_info();
+        let debug = format!("{:?}", info);
+        assert!(debug.contains("attention_projections"));
+        assert!(debug.contains("total_projections"));
+    }
+
+    #[test]
+    fn info_json_all_fields() {
+        let info = sample_info();
+        let json = serde_json::to_string(&info).unwrap();
+        assert!(json.contains("attention_projections"));
+        assert!(json.contains("ffn_projections"));
+        assert!(json.contains("total_projections"));
+        assert!(json.contains("has_fused_qkv"));
+        assert!(json.contains("has_fused_gate_up"));
+        assert!(json.contains("has_full_attention"));
+        assert!(json.contains("has_full_ffn"));
+        assert!(json.contains("validation_issues"));
+    }
+
+    #[test]
+    fn info_json_parseable_as_value() {
+        let info = sample_info();
+        let json = serde_json::to_string(&info).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed["attention_projections"].as_u64(), Some(4));
+        assert_eq!(parsed["ffn_projections"].as_u64(), Some(3));
+        assert_eq!(parsed["total_projections"].as_u64(), Some(7));
+        assert_eq!(parsed["has_full_attention"].as_bool(), Some(true));
+        assert_eq!(parsed["has_full_ffn"].as_bool(), Some(true));
+    }
+
+    #[test]
+    fn info_with_validation_issues_serializes() {
+        let mut info = sample_info();
+        info.validation_issues = vec![
+            "partial attention coverage: 2/4 projections".to_string(),
+            "partial FFN coverage: 1/3 projections".to_string(),
+        ];
+        let json = serde_json::to_string(&info).unwrap();
+        assert!(json.contains("partial attention"));
+        assert!(json.contains("partial FFN"));
+    }
+
+    #[test]
+    fn info_total_is_sum_of_parts() {
+        let info = sample_info();
+        assert_eq!(
+            info.total_projections,
+            info.attention_projections + info.ffn_projections
+        );
+    }
+
+    #[test]
+    fn info_zero_projections() {
+        let info = LayerGpuGemvsInfo {
+            attention_projections: 0,
+            ffn_projections: 0,
+            total_projections: 0,
+            has_fused_qkv: false,
+            has_fused_gate_up: false,
+            has_full_attention: false,
+            has_full_ffn: false,
+            validation_issues: vec![],
+        };
+        assert_eq!(info.total_projections, 0);
+        assert!(!info.has_full_attention);
+        assert!(!info.has_full_ffn);
+    }
+
+    // ── Empty layer: info and validate ───────────────────────────────────
+
+    #[test]
+    fn empty_layer_info_total_is_sum() {
+        let layer = make_empty_layer();
+        let info = layer.info();
+        assert_eq!(
+            info.total_projections,
+            info.attention_projections + info.ffn_projections
+        );
+    }
+
+    #[test]
+    fn empty_layer_info_no_fused() {
+        let layer = make_empty_layer();
+        let info = layer.info();
+        assert!(!info.has_fused_qkv);
+        assert!(!info.has_fused_gate_up);
+    }
+
+    #[test]
+    fn empty_layer_validate_matches_info() {
+        let layer = make_empty_layer();
+        let info = layer.info();
+        let validate = layer.validate();
+        assert_eq!(info.validation_issues, validate);
+    }
+
+    #[test]
+    fn empty_layer_info_no_partial_issues() {
+        // Empty layer has 0 projections → no partial coverage issues
+        let layer = make_empty_layer();
+        let info = layer.info();
+        assert!(info.validation_issues.is_empty());
+    }
 }
