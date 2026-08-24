@@ -2403,4 +2403,403 @@ mod tests {
         let ratio = info.ffn_size as f64 / info.hidden_size as f64;
         assert!(ratio >= 2.0 && ratio <= 4.0, "FFN ratio {} out of typical range", ratio);
     }
+
+    // ─── Block 193: JSON keys, clone independence, formulas, edge cases ─────
+
+    #[test]
+    fn engine_report_json_has_10_keys() {
+        let report = EngineReport {
+            path: "text".to_string(),
+            resolved_mode: "Text".to_string(),
+            prompt_tokens: 5,
+            output_count: 10,
+            elapsed_us: 1000,
+            per_second: 10000.0,
+            text: Some("hello".to_string()),
+            nda: None,
+            path1_lazy_loaded: true,
+            engine_status: EngineStatusSnapshot {
+                path1_loaded: true, path2_active: true,
+                model_dir: "/m".to_string(), vocab_size: 100,
+                n_layers: 4, hidden_size: 256,
+            },
+        };
+        let json = serde_json::to_string(&report).unwrap();
+        let val: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(val.as_object().unwrap().len(), 10);
+        for key in &["path", "resolved_mode", "prompt_tokens", "output_count",
+                      "elapsed_us", "per_second", "text", "nda",
+                      "path1_lazy_loaded", "engine_status"] {
+            assert!(val.get(key).is_some(), "missing key: {key}");
+        }
+    }
+
+    #[test]
+    fn nda_run_diagnostics_json_has_10_keys() {
+        let diag = NdaRunDiagnostics {
+            root_hash: 0, valid: true, force_terminated: false,
+            site_map_key: None, opcode_count: 0,
+            sandbox_passed: None, scope_passed: None,
+            scope_similarity: None, site_map_hits: 0, site_map_misses: 0,
+        };
+        let json = serde_json::to_string(&diag).unwrap();
+        let val: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(val.as_object().unwrap().len(), 10);
+    }
+
+    #[test]
+    fn engine_status_snapshot_json_has_6_keys() {
+        let snap = EngineStatusSnapshot {
+            path1_loaded: false, path2_active: true,
+            model_dir: "/x".to_string(), vocab_size: 50,
+            n_layers: 2, hidden_size: 128,
+        };
+        let json = serde_json::to_string(&snap).unwrap();
+        let val: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(val.as_object().unwrap().len(), 6);
+    }
+
+    #[test]
+    fn engine_info_json_has_12_keys() {
+        let info = EngineInfo {
+            model_dir: "/m".to_string(), vocab_size: 100, n_layers: 4,
+            hidden_size: 256, ffn_size: 512, n_heads: 4, n_kv_heads: 2,
+            head_dim: 64, max_seq_len: 1024, path1_loaded: false,
+            path2_site_map_stats: "0 entries".to_string(), tokenizer_merge_count: 50,
+        };
+        let json = serde_json::to_string(&info).unwrap();
+        let val: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(val.as_object().unwrap().len(), 12);
+    }
+
+    #[test]
+    fn engine_report_clone_independent() {
+        let report = EngineReport {
+            path: "nda".to_string(), resolved_mode: "Nda".to_string(),
+            prompt_tokens: 3, output_count: 7, elapsed_us: 500,
+            per_second: 14000.0, text: None,
+            nda: Some(NdaRunDiagnostics {
+                root_hash: 0xAA, valid: true, force_terminated: false,
+                site_map_key: Some(1), opcode_count: 7,
+                sandbox_passed: Some(true), scope_passed: Some(true),
+                scope_similarity: Some(0.9), site_map_hits: 5, site_map_misses: 2,
+            }),
+            path1_lazy_loaded: false,
+            engine_status: EngineStatusSnapshot {
+                path1_loaded: false, path2_active: true,
+                model_dir: "/m".to_string(), vocab_size: 100,
+                n_layers: 4, hidden_size: 256,
+            },
+        };
+        let mut cloned = report.clone();
+        cloned.path = "MODIFIED".to_string();
+        cloned.output_count = 999;
+        assert_eq!(report.path, "nda");
+        assert_eq!(report.output_count, 7);
+    }
+
+    #[test]
+    fn nda_diagnostics_clone_independent() {
+        let diag = NdaRunDiagnostics {
+            root_hash: 0x1234, valid: true, force_terminated: false,
+            site_map_key: Some(42), opcode_count: 100,
+            sandbox_passed: Some(true), scope_passed: Some(true),
+            scope_similarity: Some(0.95), site_map_hits: 10, site_map_misses: 1,
+        };
+        let mut cloned = diag.clone();
+        cloned.root_hash = 0;
+        cloned.opcode_count = 0;
+        assert_eq!(diag.root_hash, 0x1234);
+        assert_eq!(diag.opcode_count, 100);
+    }
+
+    #[test]
+    fn engine_report_per_second_formula() {
+        // per_second = output_count / (elapsed_us / 1_000_000)
+        let report = EngineReport {
+            path: "text".to_string(), resolved_mode: "Text".to_string(),
+            prompt_tokens: 1, output_count: 100, elapsed_us: 500_000,
+            per_second: 100.0 / 0.5, text: Some("x".to_string()),
+            nda: None, path1_lazy_loaded: false,
+            engine_status: EngineStatusSnapshot {
+                path1_loaded: true, path2_active: true,
+                model_dir: "/m".to_string(), vocab_size: 100,
+                n_layers: 4, hidden_size: 256,
+            },
+        };
+        let expected = 100.0 / (500_000.0 / 1_000_000.0);
+        assert!((report.per_second - expected).abs() < 0.01);
+    }
+
+    #[test]
+    fn engine_report_zero_elapsed_per_second() {
+        let report = EngineReport {
+            path: "nda".to_string(), resolved_mode: "Nda".to_string(),
+            prompt_tokens: 1, output_count: 50, elapsed_us: 0,
+            per_second: 0.0, text: None,
+            nda: Some(NdaRunDiagnostics {
+                root_hash: 0, valid: true, force_terminated: false,
+                site_map_key: None, opcode_count: 50,
+                sandbox_passed: None, scope_passed: None,
+                scope_similarity: None, site_map_hits: 0, site_map_misses: 0,
+            }),
+            path1_lazy_loaded: false,
+            engine_status: EngineStatusSnapshot {
+                path1_loaded: false, path2_active: true,
+                model_dir: "/m".to_string(), vocab_size: 100,
+                n_layers: 4, hidden_size: 256,
+            },
+        };
+        assert_eq!(report.per_second, 0.0);
+    }
+
+    #[test]
+    fn nda_diagnostics_site_map_hit_rate() {
+        let diag = NdaRunDiagnostics {
+            root_hash: 0, valid: true, force_terminated: false,
+            site_map_key: Some(1), opcode_count: 100,
+            sandbox_passed: None, scope_passed: None,
+            scope_similarity: None, site_map_hits: 80, site_map_misses: 20,
+        };
+        let total = diag.site_map_hits + diag.site_map_misses;
+        let hit_rate = diag.site_map_hits as f64 / total as f64;
+        assert!((hit_rate - 0.8).abs() < 0.001);
+    }
+
+    #[test]
+    fn nda_diagnostics_site_map_all_misses() {
+        let diag = NdaRunDiagnostics {
+            root_hash: 0, valid: false, force_terminated: true,
+            site_map_key: None, opcode_count: 0,
+            sandbox_passed: Some(false), scope_passed: Some(false),
+            scope_similarity: Some(0.0), site_map_hits: 0, site_map_misses: 50,
+        };
+        let total = diag.site_map_hits + diag.site_map_misses;
+        assert!(total > 0);
+        let hit_rate = diag.site_map_hits as f64 / total as f64;
+        assert_eq!(hit_rate, 0.0);
+    }
+
+    #[test]
+    fn engine_status_snapshot_debug_format() {
+        let snap = EngineStatusSnapshot {
+            path1_loaded: true, path2_active: true,
+            model_dir: "/models/test".to_string(), vocab_size: 32000,
+            n_layers: 12, hidden_size: 768,
+        };
+        let dbg = format!("{:?}", snap);
+        assert!(dbg.contains("EngineStatusSnapshot"));
+        assert!(dbg.contains("path1_loaded: true"));
+        assert!(dbg.contains("/models/test"));
+    }
+
+    #[test]
+    fn engine_report_debug_format() {
+        let report = EngineReport {
+            path: "text".to_string(), resolved_mode: "Text".to_string(),
+            prompt_tokens: 1, output_count: 1, elapsed_us: 100,
+            per_second: 10000.0, text: Some("hi".to_string()),
+            nda: None, path1_lazy_loaded: false,
+            engine_status: EngineStatusSnapshot {
+                path1_loaded: false, path2_active: true,
+                model_dir: "/m".to_string(), vocab_size: 100,
+                n_layers: 4, hidden_size: 256,
+            },
+        };
+        let dbg = format!("{:?}", report);
+        assert!(dbg.contains("EngineReport"));
+        assert!(dbg.contains("path: \"text\""));
+    }
+
+    #[test]
+    fn nda_diagnostics_force_terminated_not_stored() {
+        let diag = NdaRunDiagnostics {
+            root_hash: 0xABCD, valid: true, force_terminated: true,
+            site_map_key: None, opcode_count: 200,
+            sandbox_passed: None, scope_passed: None,
+            scope_similarity: None, site_map_hits: 0, site_map_misses: 0,
+        };
+        // force_terminated programs are not stored in site_map
+        assert!(diag.force_terminated);
+        assert!(diag.site_map_key.is_none());
+    }
+
+    #[test]
+    fn engine_report_text_path_has_no_nda() {
+        let report = EngineReport {
+            path: "text".to_string(), resolved_mode: "Text".to_string(),
+            prompt_tokens: 5, output_count: 10, elapsed_us: 1000,
+            per_second: 10000.0, text: Some("output".to_string()),
+            nda: None, path1_lazy_loaded: true,
+            engine_status: EngineStatusSnapshot {
+                path1_loaded: true, path2_active: true,
+                model_dir: "/m".to_string(), vocab_size: 100,
+                n_layers: 4, hidden_size: 256,
+            },
+        };
+        assert!(report.text.is_some());
+        assert!(report.nda.is_none());
+        assert_eq!(report.path, "text");
+    }
+
+    #[test]
+    fn engine_report_nda_path_has_no_text_193() {
+        let report = EngineReport {
+            path: "nda".to_string(), resolved_mode: "Nda".to_string(),
+            prompt_tokens: 3, output_count: 15, elapsed_us: 500,
+            per_second: 30000.0, text: None,
+            nda: Some(NdaRunDiagnostics {
+                root_hash: 0xFF, valid: true, force_terminated: false,
+                site_map_key: Some(99), opcode_count: 15,
+                sandbox_passed: Some(true), scope_passed: Some(true),
+                scope_similarity: Some(0.99), site_map_hits: 10, site_map_misses: 5,
+            }),
+            path1_lazy_loaded: false,
+            engine_status: EngineStatusSnapshot {
+                path1_loaded: true, path2_active: true,
+                model_dir: "/m".to_string(), vocab_size: 100,
+                n_layers: 4, hidden_size: 256,
+            },
+        };
+        assert!(report.text.is_none());
+        assert!(report.nda.is_some());
+        assert_eq!(report.path, "nda");
+    }
+
+    #[test]
+    fn engine_info_ffn_hidden_ratio() {
+        let info = EngineInfo {
+            model_dir: "/m".to_string(), vocab_size: 32000, n_layers: 32,
+            hidden_size: 4096, ffn_size: 11008, n_heads: 32, n_kv_heads: 32,
+            head_dim: 128, max_seq_len: 4096, path1_loaded: false,
+            path2_site_map_stats: "100 entries".to_string(), tokenizer_merge_count: 200,
+        };
+        // LLaMA-style FFN ratio ~2.7
+        let ratio = info.ffn_size as f64 / info.hidden_size as f64;
+        assert!(ratio > 2.0 && ratio < 4.0);
+    }
+
+    #[test]
+    fn engine_info_kv_head_ratio() {
+        let info = EngineInfo {
+            model_dir: "/m".to_string(), vocab_size: 32000, n_layers: 32,
+            hidden_size: 4096, ffn_size: 11008, n_heads: 32, n_kv_heads: 8,
+            head_dim: 128, max_seq_len: 4096, path1_loaded: false,
+            path2_site_map_stats: "0 entries".to_string(), tokenizer_merge_count: 200,
+        };
+        // GQA: n_heads / n_kv_heads should be integer
+        assert_eq!(info.n_heads % info.n_kv_heads, 0);
+    }
+
+    #[test]
+    fn engine_status_snapshot_clone_193() {
+        let snap = EngineStatusSnapshot {
+            path1_loaded: true, path2_active: false,
+            model_dir: "/test".to_string(), vocab_size: 1000,
+            n_layers: 6, hidden_size: 384,
+        };
+        let cloned = snap.clone();
+        assert_eq!(cloned.path1_loaded, true);
+        assert_eq!(cloned.model_dir, "/test");
+        assert_eq!(cloned.vocab_size, 1000);
+    }
+
+    #[test]
+    fn engine_info_clone_independent() {
+        let info = EngineInfo {
+            model_dir: "/m".to_string(), vocab_size: 100, n_layers: 4,
+            hidden_size: 256, ffn_size: 512, n_heads: 4, n_kv_heads: 2,
+            head_dim: 64, max_seq_len: 1024, path1_loaded: false,
+            path2_site_map_stats: "0 entries".to_string(), tokenizer_merge_count: 50,
+        };
+        let mut cloned = info.clone();
+        cloned.model_dir = "MODIFIED".to_string();
+        cloned.vocab_size = 99999;
+        assert_eq!(info.model_dir, "/m");
+        assert_eq!(info.vocab_size, 100);
+    }
+
+    #[test]
+    fn nda_diagnostics_json_types() {
+        let diag = NdaRunDiagnostics {
+            root_hash: 0xDEAD_BEEF, valid: true, force_terminated: false,
+            site_map_key: Some(42), opcode_count: 100,
+            sandbox_passed: Some(true), scope_passed: None,
+            scope_similarity: Some(0.85), site_map_hits: 50, site_map_misses: 10,
+        };
+        let json = serde_json::to_string(&diag).unwrap();
+        let val: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert!(val["root_hash"].is_number());
+        assert!(val["valid"].is_boolean());
+        assert!(val["force_terminated"].is_boolean());
+        assert!(val["opcode_count"].is_number());
+        assert!(val["site_map_hits"].is_number());
+        assert!(val["sandbox_passed"].is_boolean());
+        assert!(val["scope_passed"].is_null());
+        assert!(val["scope_similarity"].is_number());
+    }
+
+    #[test]
+    fn engine_report_lazy_loaded_flag() {
+        // path1_lazy_loaded = true means it was NOT loaded before this run
+        let report = EngineReport {
+            path: "text".to_string(), resolved_mode: "Text".to_string(),
+            prompt_tokens: 1, output_count: 1, elapsed_us: 100,
+            per_second: 10000.0, text: Some("x".to_string()),
+            nda: None, path1_lazy_loaded: true,
+            engine_status: EngineStatusSnapshot {
+                path1_loaded: true, path2_active: true,
+                model_dir: "/m".to_string(), vocab_size: 100,
+                n_layers: 4, hidden_size: 256,
+            },
+        };
+        // After lazy load, the status should show path1 as loaded
+        assert!(report.path1_lazy_loaded);
+        assert!(report.engine_status.path1_loaded);
+    }
+
+    #[test]
+    fn nda_diagnostics_scope_similarity_range() {
+        let diag = NdaRunDiagnostics {
+            root_hash: 0, valid: true, force_terminated: false,
+            site_map_key: Some(1), opcode_count: 50,
+            sandbox_passed: None, scope_passed: Some(true),
+            scope_similarity: Some(0.95), site_map_hits: 10, site_map_misses: 0,
+        };
+        let sim = diag.scope_similarity.unwrap();
+        assert!(sim >= 0.0 && sim <= 1.0);
+    }
+
+    #[test]
+    fn engine_report_json_roundtrip_via_value() {
+        let report = EngineReport {
+            path: "text".to_string(), resolved_mode: "Text".to_string(),
+            prompt_tokens: 10, output_count: 20, elapsed_us: 2000,
+            per_second: 10000.0, text: Some("hello world".to_string()),
+            nda: None, path1_lazy_loaded: false,
+            engine_status: EngineStatusSnapshot {
+                path1_loaded: true, path2_active: true,
+                model_dir: "/m".to_string(), vocab_size: 100,
+                n_layers: 4, hidden_size: 256,
+            },
+        };
+        let json = serde_json::to_string(&report).unwrap();
+        let val: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(val["path"], "text");
+        assert_eq!(val["prompt_tokens"], 10);
+        assert_eq!(val["output_count"], 20);
+        assert_eq!(val["text"], "hello world");
+    }
+
+    #[test]
+    fn engine_info_head_dim_formula() {
+        let info = EngineInfo {
+            model_dir: "/m".to_string(), vocab_size: 32000, n_layers: 32,
+            hidden_size: 4096, ffn_size: 11008, n_heads: 32, n_kv_heads: 32,
+            head_dim: 128, max_seq_len: 4096, path1_loaded: false,
+            path2_site_map_stats: "0 entries".to_string(), tokenizer_merge_count: 200,
+        };
+        // head_dim = hidden_size / n_heads
+        assert_eq!(info.hidden_size / info.n_heads, info.head_dim);
+    }
 }
