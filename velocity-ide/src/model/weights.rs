@@ -1379,4 +1379,527 @@ mod tests {
         let json = serde_json::to_string(&report).unwrap();
         assert!(json.contains("\"files_attempted\":0"));
     }
+
+    // ─── Block 86: comprehensive tests ─────────────────────────────────────
+
+    // Helper: build a minimal NdaMatrix for testing
+    fn make_test_matrix(rows: usize, cols: usize, version: u16) -> NdaMatrix {
+        let sign_len = rows * (cols / 32) * 4;
+        let extra_len = sign_len;
+        NdaMatrix {
+            rows,
+            cols,
+            scale: 1.0,
+            version,
+            sign: vec![0xAA; sign_len],
+            extra: vec![0x55; extra_len],
+            block_size: 0,
+            n_blocks: 0,
+            q_scales: vec![],
+            packed_codes: vec![],
+        }
+    }
+
+    // Helper: build a minimal LayerWeights for testing
+    fn make_test_layer(h: usize, ffn: usize, q_size: usize, kv_size: usize) -> LayerWeights {
+        LayerWeights {
+            q_proj: make_test_matrix(q_size, h, 2),
+            k_proj: make_test_matrix(kv_size, h, 2),
+            v_proj: make_test_matrix(kv_size, h, 2),
+            o_proj: make_test_matrix(h, q_size, 2),
+            gate_proj: make_test_matrix(ffn, h, 2),
+            up_proj: make_test_matrix(ffn, h, 2),
+            down_proj: make_test_matrix(h, ffn, 2),
+            qkv_proj_gpu: None,
+            gate_up_proj_gpu: None,
+            q_proj_gpu: None,
+            k_proj_gpu: None,
+            v_proj_gpu: None,
+            o_proj_gpu: None,
+            gate_proj_gpu: None,
+            up_proj_gpu: None,
+            down_proj_gpu: None,
+            attn_norm: vec![1.0; h],
+            ffn_norm: vec![1.0; h],
+            q_proj_bias: None,
+            k_proj_bias: None,
+            v_proj_bias: None,
+        }
+    }
+
+    // Helper: build a minimal ModelWeights with `n` layers
+    fn make_test_weights(n: usize, h: usize, ffn: usize, vocab: usize) -> ModelWeights {
+        let q_size = h; // n_heads * head_dim = h for simplicity
+        let kv_size = h;
+        let layers: Vec<LayerWeights> = (0..n)
+            .map(|_| make_test_layer(h, ffn, q_size, kv_size))
+            .collect();
+        ModelWeights {
+            embed_tokens: vec![0.5; vocab * h],
+            lm_head: vec![0.5; vocab * h],
+            final_norm: vec![1.0; h],
+            layers,
+            vulkan: None,
+        }
+    }
+
+    // Helper: minimal ModelConfig
+    fn make_test_config(n_layers: usize, h: usize, ffn: usize, vocab: usize) -> ModelConfig {
+        ModelConfig {
+            n_layers,
+            hidden_size: h,
+            ffn_size: ffn,
+            n_heads: 4,
+            n_kv_heads: 4,
+            head_dim: h / 4,
+            vocab_size: vocab,
+            max_seq_len: 512,
+            rope_theta: 10000.0,
+            alibi_shifts: vec![],
+            rms_eps: 1e-6,
+            eos_token_id: 2,
+            bos_token_id: 1,
+        }
+    }
+
+    // ── read_u32_le_bytes tests ──────────────────────────────────────────────
+
+    #[test]
+    fn read_u32_le_bytes_valid() {
+        let val = read_u32_le_bytes(&[0x01, 0x00, 0x00, 0x00], "test").unwrap();
+        assert_eq!(val, 1);
+    }
+
+    #[test]
+    fn read_u32_le_bytes_big_endian_value() {
+        let val = read_u32_le_bytes(&[0x00, 0x00, 0x01, 0x00], "test").unwrap();
+        assert_eq!(val, 65536);
+    }
+
+    #[test]
+    fn read_u32_le_bytes_too_short() {
+        let result = read_u32_le_bytes(&[0x01, 0x00], "short");
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("expected 4 bytes"), "error: {err}");
+        assert!(err.contains("short"), "should include context");
+    }
+
+    #[test]
+    fn read_u32_le_bytes_too_long() {
+        let result = read_u32_le_bytes(&[0; 8], "long");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn read_u32_le_bytes_empty() {
+        let result = read_u32_le_bytes(&[], "empty");
+        assert!(result.is_err());
+    }
+
+    // ── load_fp32_bin edge cases ─────────────────────────────────────────────
+
+    #[test]
+    fn load_fp32_bin_truncated_data() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("trunc_data.bin");
+        // Header says 1D with 10 elements, but only provide 2 floats of data
+        write_fp32_bin(&path, &[10], &[1.0, 2.0]);
+        let result = load_fp32_bin(&path);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("truncated"));
+    }
+
+    #[test]
+    fn load_fp32_bin_zero_dim() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("zero.bin");
+        write_fp32_bin(&path, &[0], &[]);
+        let loaded = load_fp32_bin(&path).unwrap();
+        assert!(loaded.is_empty());
+    }
+
+    #[test]
+    fn load_fp32_bin_negative_values() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("neg.bin");
+        let data = vec![-1.0_f32, -2.5, -0.001, f32::MIN];
+        write_fp32_bin(&path, &[4], &data);
+        let loaded = load_fp32_bin(&path).unwrap();
+        assert_eq!(loaded, data);
+    }
+
+    #[test]
+    fn load_fp32_bin_special_floats() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("special.bin");
+        let data = vec![f32::NAN, f32::INFINITY, f32::NEG_INFINITY, 0.0];
+        write_fp32_bin(&path, &[4], &data);
+        let loaded = load_fp32_bin(&path).unwrap();
+        assert!(loaded[0].is_nan());
+        assert_eq!(loaded[1], f32::INFINITY);
+        assert_eq!(loaded[2], f32::NEG_INFINITY);
+        assert_eq!(loaded[3], 0.0);
+    }
+
+    // ── load_fp32_batch edge cases ───────────────────────────────────────────
+
+    #[test]
+    fn load_fp32_batch_empty() {
+        let (results, report) = load_fp32_batch(&[]);
+        assert!(results.is_empty());
+        assert_eq!(report.files_attempted, 0);
+        assert_eq!(report.files_loaded, 0);
+        assert_eq!(report.files_failed, 0);
+        assert_eq!(report.per_file_avg_us, 0.0);
+    }
+
+    #[test]
+    fn load_fp32_batch_all_fail() {
+        let paths = vec![
+            std::path::PathBuf::from("/no/such/a.bin"),
+            std::path::PathBuf::from("/no/such/b.bin"),
+        ];
+        let (results, report) = load_fp32_batch(&paths);
+        assert_eq!(results.len(), 2);
+        assert!(results[0].is_err());
+        assert!(results[1].is_err());
+        assert_eq!(report.files_attempted, 2);
+        assert_eq!(report.files_loaded, 0);
+        assert_eq!(report.files_failed, 2);
+    }
+
+    #[test]
+    fn batch_load_report_display_fields() {
+        let report = BatchLoadReport {
+            files_attempted: 10,
+            files_loaded: 8,
+            files_failed: 2,
+            total_elapsed_us: 5000,
+            per_file_avg_us: 500.0,
+        };
+        let json = serde_json::to_string(&report).unwrap();
+        assert!(json.contains("\"files_attempted\":10"));
+        assert!(json.contains("\"files_failed\":2"));
+        assert!(json.contains("\"per_file_avg_us\":500.0"));
+    }
+
+    // ── ModelWeights method tests ────────────────────────────────────────────
+
+    #[test]
+    fn model_weights_fp32_bytes() {
+        let w = make_test_weights(2, 64, 128, 10);
+        let fp32 = w.fp32_bytes();
+        // embed: 10*64*4 = 2560, lm_head: 2560, final_norm: 64*4=256
+        // per-layer norms: 2 * (64+64)*4 = 1024
+        // total = 2560 + 2560 + 256 + 1024 = 6400
+        assert_eq!(fp32, 6400);
+    }
+
+    #[test]
+    fn model_weights_nda_bytes() {
+        let w = make_test_weights(1, 64, 128, 10);
+        let nda = w.nda_bytes();
+        // Each matrix: 18 + sign_len + extra_len
+        // sign_len = rows * (cols/32) * 4
+        // q_proj(64,64): sign=64*(64/32)*4=512, total=18+512+512=1042
+        // k_proj(64,64): same = 1042
+        // v_proj(64,64): same = 1042
+        // o_proj(64,64): same = 1042
+        // gate_proj(128,64): sign=128*2*4=1024, total=18+1024+1024=2066
+        // up_proj(128,64): same = 2066
+        // down_proj(64,128): sign=64*4*4=1024, total=18+1024+1024=2066
+        // total = 4*1042 + 3*2066 = 4168 + 6198 = 10366
+        assert_eq!(nda, 10366);
+    }
+
+    #[test]
+    fn model_weights_gpu_upload_count_no_vulkan() {
+        let w = make_test_weights(2, 64, 128, 10);
+        assert_eq!(w.gpu_upload_count(), 0);
+    }
+
+    #[test]
+    fn model_weights_vulkan_not_active() {
+        let w = make_test_weights(1, 64, 128, 10);
+        assert!(!w.vulkan_active());
+    }
+
+    #[test]
+    fn model_weights_gpu_utilization_zero_layers() {
+        let w = make_test_weights(0, 64, 128, 10);
+        assert_eq!(w.gpu_utilization(), 0.0);
+    }
+
+    #[test]
+    fn model_weights_validate_correct() {
+        let h = 64;
+        let ffn = 128;
+        let w = make_test_weights(2, h, ffn, 10);
+        let cfg = make_test_config(2, h, ffn, 10);
+        let errors = w.validate(&cfg);
+        assert!(errors.is_empty(), "expected no errors, got: {:?}", errors);
+    }
+
+    #[test]
+    fn model_weights_validate_layer_count_mismatch() {
+        let w = make_test_weights(2, 64, 128, 10);
+        let cfg = make_test_config(5, 64, 128, 10); // expects 5 layers
+        let errors = w.validate(&cfg);
+        assert!(errors.iter().any(|e| e.contains("layer count mismatch")),
+            "expected layer count error, got: {:?}", errors);
+    }
+
+    #[test]
+    fn model_weights_validate_embed_mismatch() {
+        let w = make_test_weights(1, 64, 128, 10);
+        let mut cfg = make_test_config(1, 64, 128, 20); // vocab=20 but embed has 10*64
+        cfg.vocab_size = 20;
+        let errors = w.validate(&cfg);
+        assert!(errors.iter().any(|e| e.contains("embed_tokens")),
+            "expected embed error, got: {:?}", errors);
+    }
+
+    #[test]
+    fn model_weights_validate_final_norm_mismatch() {
+        let mut w = make_test_weights(1, 64, 128, 10);
+        w.final_norm = vec![1.0; 32]; // wrong size (should be 64)
+        let cfg = make_test_config(1, 64, 128, 10);
+        let errors = w.validate(&cfg);
+        assert!(errors.iter().any(|e| e.contains("final_norm")),
+            "expected final_norm error, got: {:?}", errors);
+    }
+
+    #[test]
+    fn model_weights_check_tensor_health_clean() {
+        let w = make_test_weights(2, 64, 128, 10);
+        let health = w.check_tensor_health();
+        assert!(health.healthy, "should be healthy, issues: {:?}", health.issues);
+        assert_eq!(health.nan_count, 0);
+        assert_eq!(health.inf_count, 0);
+        // tensors_checked = 3 global + 2 layers * 2 norms = 7
+        assert_eq!(health.tensors_checked, 7);
+    }
+
+    #[test]
+    fn model_weights_check_tensor_health_nan() {
+        let mut w = make_test_weights(1, 64, 128, 10);
+        w.embed_tokens.push(f32::NAN);
+        let health = w.check_tensor_health();
+        assert!(!health.healthy);
+        assert!(health.nan_count > 0);
+        assert!(health.issues.iter().any(|i| i.contains("NaN")));
+    }
+
+    #[test]
+    fn model_weights_check_tensor_health_inf() {
+        let mut w = make_test_weights(1, 64, 128, 10);
+        w.lm_head.push(f32::INFINITY);
+        let health = w.check_tensor_health();
+        assert!(!health.healthy);
+        assert!(health.inf_count > 0);
+        assert!(health.issues.iter().any(|i| i.contains("Inf")));
+    }
+
+    #[test]
+    fn model_weights_version_consistency_all_same() {
+        let w = make_test_weights(3, 64, 128, 10);
+        let vc = w.weight_version_consistency();
+        assert!(vc.consistent);
+        assert_eq!(vc.majority_version, Some(2));
+        assert!(vc.outlier_layers.is_empty());
+        assert_eq!(vc.unique_versions, vec![2]);
+    }
+
+    #[test]
+    fn model_weights_version_consistency_with_outlier() {
+        let mut w = make_test_weights(3, 64, 128, 10);
+        // Make layer 1 have a different version on q_proj
+        w.layers[1].q_proj.version = 3;
+        let vc = w.weight_version_consistency();
+        assert!(!vc.consistent);
+        assert!(vc.outlier_layers.contains(&1));
+        assert_eq!(vc.majority_version, Some(2));
+        assert!(vc.unique_versions.contains(&2));
+        assert!(vc.unique_versions.contains(&3));
+    }
+
+    #[test]
+    fn model_weights_memory_breakdown_totals() {
+        let w = make_test_weights(2, 64, 128, 10);
+        let mb = w.memory_breakdown();
+        assert_eq!(mb.embed_tokens_bytes, 10 * 64 * 4);
+        assert_eq!(mb.lm_head_bytes, 10 * 64 * 4);
+        assert_eq!(mb.final_norm_bytes, 64 * 4);
+        assert!(mb.per_layer_nda_bytes > 0);
+        assert!(mb.per_layer_norm_bytes > 0);
+        assert_eq!(mb.per_layer_bias_bytes, 0); // no biases in test
+        assert_eq!(mb.total_nda_bytes, mb.per_layer_nda_bytes);
+        assert_eq!(mb.total_fp32_bytes,
+            mb.embed_tokens_bytes + mb.lm_head_bytes + mb.final_norm_bytes
+            + mb.per_layer_norm_bytes + mb.per_layer_bias_bytes);
+    }
+
+    #[test]
+    fn model_weights_memory_breakdown_with_biases() {
+        let mut w = make_test_weights(1, 64, 128, 10);
+        w.layers[0].q_proj_bias = Some(vec![0.1; 64]);
+        w.layers[0].k_proj_bias = Some(vec![0.1; 64]);
+        let mb = w.memory_breakdown();
+        // 2 biases * 64 * 4 = 512
+        assert_eq!(mb.per_layer_bias_bytes, 512);
+    }
+
+    #[test]
+    fn model_weights_summary_fields() {
+        let w = make_test_weights(2, 64, 128, 10);
+        let cfg = make_test_config(2, 64, 128, 10);
+        let summary = w.summary(&cfg);
+        assert_eq!(summary.n_layers, 2);
+        assert_eq!(summary.embed_shape, (10, 64));
+        assert_eq!(summary.gpu_upload_capacity, 14); // 2 layers * 7
+        assert_eq!(summary.gpu_uploads, 0);
+        assert!(!summary.vulkan_active);
+        assert_eq!(summary.layer_versions.len(), 2);
+        // All versions should be [2,2,2,2,2,2,2]
+        for lv in &summary.layer_versions {
+            assert_eq!(lv, &[2; 7]);
+        }
+    }
+
+    #[test]
+    fn model_weights_summary_lm_head_shared() {
+        let mut w = make_test_weights(1, 64, 128, 10);
+        // Make lm_head identical to embed_tokens
+        w.lm_head = w.embed_tokens.clone();
+        let cfg = make_test_config(1, 64, 128, 10);
+        let summary = w.summary(&cfg);
+        assert!(summary.lm_head_shared);
+    }
+
+    #[test]
+    fn model_weights_summary_lm_head_not_shared() {
+        let mut w = make_test_weights(1, 64, 128, 10);
+        w.lm_head = vec![99.0; 10 * 64]; // different from embed
+        let cfg = make_test_config(1, 64, 128, 10);
+        let summary = w.summary(&cfg);
+        assert!(!summary.lm_head_shared);
+    }
+
+    #[test]
+    fn model_weights_layer_stats_shapes() {
+        let w = make_test_weights(2, 64, 128, 10);
+        let stats = w.layer_stats();
+        assert_eq!(stats.len(), 2);
+        assert_eq!(stats[0].layer_idx, 0);
+        assert_eq!(stats[1].layer_idx, 1);
+        // 7 projection shapes per layer
+        assert_eq!(stats[0].projection_shapes.len(), 7);
+        assert_eq!(stats[0].versions.len(), 7);
+        assert_eq!(stats[0].gpu_count, 0);
+        assert!(!stats[0].has_biases);
+        assert!(stats[0].nda_bytes > 0);
+    }
+
+    #[test]
+    fn model_weights_layer_stats_with_biases() {
+        let mut w = make_test_weights(1, 64, 128, 10);
+        w.layers[0].v_proj_bias = Some(vec![0.1; 64]);
+        let stats = w.layer_stats();
+        assert!(stats[0].has_biases);
+    }
+
+    #[test]
+    fn model_weights_validate_layer_valid() {
+        let w = make_test_weights(2, 64, 128, 10);
+        let cfg = make_test_config(2, 64, 128, 10);
+        let errors = w.validate_layer(0, &cfg);
+        assert!(errors.is_empty(), "layer 0 should be valid, got: {:?}", errors);
+        let errors = w.validate_layer(1, &cfg);
+        assert!(errors.is_empty(), "layer 1 should be valid, got: {:?}", errors);
+    }
+
+    #[test]
+    fn model_weights_validate_layer_out_of_bounds() {
+        let w = make_test_weights(2, 64, 128, 10);
+        let cfg = make_test_config(2, 64, 128, 10);
+        let errors = w.validate_layer(5, &cfg);
+        assert!(!errors.is_empty());
+        assert!(errors[0].contains("out of range"));
+    }
+
+    #[test]
+    fn model_weights_validate_layer_dimension_mismatch() {
+        let mut w = make_test_weights(1, 64, 128, 10);
+        // Corrupt q_proj dimensions
+        w.layers[0].q_proj.rows = 999;
+        let cfg = make_test_config(1, 64, 128, 10);
+        let errors = w.validate_layer(0, &cfg);
+        assert!(errors.iter().any(|e| e.contains("q_proj")),
+            "expected q_proj error, got: {:?}", errors);
+    }
+
+    #[test]
+    fn model_weights_info_comprehensive() {
+        let w = make_test_weights(2, 64, 128, 10);
+        let cfg = make_test_config(2, 64, 128, 10);
+        let info = w.info(&cfg);
+        assert_eq!(info.n_layers, 2);
+        assert!(info.total_bytes > 0);
+        assert_eq!(info.total_bytes, info.nda_bytes + info.fp32_bytes);
+        assert!(info.validation_issues.is_empty());
+        assert!(info.tensor_health.healthy);
+        assert!(info.version_consistency.consistent);
+        assert_eq!(info.embed_shape, (10, 64));
+        assert!(!info.vulkan_active);
+        assert_eq!(info.gpu_utilization, 0.0);
+    }
+
+    #[test]
+    fn model_weights_info_serializable() {
+        let w = make_test_weights(1, 64, 128, 10);
+        let cfg = make_test_config(1, 64, 128, 10);
+        let info = w.info(&cfg);
+        let json = serde_json::to_string(&info).unwrap();
+        assert!(json.contains("\"n_layers\":1"));
+        assert!(json.contains("\"total_bytes\""));
+        assert!(json.contains("\"tensor_health\""));
+        assert!(json.contains("\"version_consistency\""));
+        assert!(json.contains("\"memory\""));
+    }
+
+    #[test]
+    fn model_weights_zero_layers() {
+        let w = make_test_weights(0, 64, 128, 10);
+        assert_eq!(w.layers.len(), 0);
+        assert_eq!(w.nda_bytes(), 0);
+        assert_eq!(w.gpu_upload_count(), 0);
+        let health = w.check_tensor_health();
+        // 3 global tensors only
+        assert_eq!(health.tensors_checked, 3);
+        assert!(health.healthy);
+    }
+
+    #[test]
+    fn model_weights_validate_projection_shapes() {
+        let h = 64;
+        let ffn = 128;
+        let w = make_test_weights(1, h, ffn, 10);
+        let stats = w.layer_stats();
+        let shapes = &stats[0].projection_shapes;
+        // q_proj: (q_size, h) = (64, 64)
+        assert_eq!(shapes[0], (h, h));
+        // k_proj: (kv_size, h) = (64, 64)
+        assert_eq!(shapes[1], (h, h));
+        // v_proj: (kv_size, h) = (64, 64)
+        assert_eq!(shapes[2], (h, h));
+        // o_proj: (h, q_size) = (64, 64)
+        assert_eq!(shapes[3], (h, h));
+        // gate_proj: (ffn, h) = (128, 64)
+        assert_eq!(shapes[4], (ffn, h));
+        // up_proj: (ffn, h) = (128, 64)
+        assert_eq!(shapes[5], (ffn, h));
+        // down_proj: (h, ffn) = (64, 128)
+        assert_eq!(shapes[6], (h, ffn));
+    }
 }
