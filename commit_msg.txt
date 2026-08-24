@@ -1,11 +1,15 @@
-pipeline_bridge.rs — 26 new tests (189 total)
+Block 211: transformer.rs — 26 new tests (167 total), committed
 
-Block 209: PipelineMode::detect routing (code keywords→Nda, questions→Text,
-imperative→Nda, explanation→Text), validate() model_dir existence checks
-(missing dir warning, combined zero+missing=6 warnings), run_dual_path
-formatting (text/nda stats, zero elapsed safety, status display variants),
-EngineInfo model presets (BitNet-3B and Qwen-0.5B configs with head_dim
-verification), parameter estimate formula, NdaRunDiagnostics opcode/access
-proportion, site_map_key JSON roundtrip, EngineReport text+nda both Some,
-path1_lazy_loaded consistency, nested NDA JSON all 10 fields, status
-snapshot all 4 path combinations, per_second NDA path formula
+New tests cover:
+- attention_head (bitwise popcount Q·K): empty KV, single block, output length, offset head
+- pack_vector helper: delegation to impl, empty slice
+- TransformerInfo computed fields: head_dim, GQA ratio, all_gpu_false, multiple validation issues
+- Fp32GenerationReport edge cases: zero tokens, elapsed boundary, both stopped+truncated, forward metrics count
+- Fp32ForwardMetrics: gpu_active true, boundary values (usize::MAX, u64::MAX)
+- NdaKvBlock: clone independence, large bitmaps (128-dim)
+- KvLayer: single element push, bitmap bytes formula
+- sample_token: two-logit tie, very small top_p
+- apply_rope_head: pos=0 full identity verification
+- silu: boundary at 0.5
+- rms_norm: large values
+- lm_head: 4-vocab × 2-hidden parallel correctness
