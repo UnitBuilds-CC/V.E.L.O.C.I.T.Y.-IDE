@@ -1513,4 +1513,295 @@ mod tests {
         // hidden_size=3200 is valid (multiple of 128)
         assert!(validate_nda_bitnet_config(&cfg).is_empty());
     }
+
+    // ── JSON key counts ──────────────────────────────────────────────────
+
+    #[test]
+    fn config_json_has_exactly_4_keys() {
+        let json = serde_json::to_string(&default_nda_bitnet_config()).unwrap();
+        let val: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(val.as_object().unwrap().len(), 4);
+    }
+
+    #[test]
+    fn info_json_has_exactly_6_keys() {
+        let info = nda_bitnet_layer_info(&default_nda_bitnet_config());
+        let json = serde_json::to_string(&info).unwrap();
+        let val: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(val.as_object().unwrap().len(), 6);
+    }
+
+    // ── Weight bytes calculation specifics ───────────────────────────────
+
+    #[test]
+    fn info_weight_bytes_minimal() {
+        let cfg = NdaBitNetLayerConfig {
+            hidden_size: 128, ffn_size: 1, n_heads: 1, head_dim: 1,
+        };
+        let info = nda_bitnet_layer_info(&cfg);
+        // attn: 128*128*16 = 262144
+        // ffn gate+up: 128*1*8 = 1024
+        // ffn down: 1*128*4 = 512
+        // total = 263680
+        assert_eq!(info.total_weight_bytes_estimate, 263680);
+    }
+
+    #[test]
+    fn info_weight_bytes_hidden_256_ffn_64() {
+        let cfg = NdaBitNetLayerConfig {
+            hidden_size: 256, ffn_size: 64, n_heads: 4, head_dim: 64,
+        };
+        let info = nda_bitnet_layer_info(&cfg);
+        // attn: 256*256*16 = 1048576
+        // ffn gate+up: 256*64*8 = 131072
+        // ffn down: 64*256*4 = 65536
+        // total = 1245184
+        assert_eq!(info.total_weight_bytes_estimate, 1245184);
+    }
+
+    #[test]
+    fn info_weight_bytes_default_config() {
+        let cfg = default_nda_bitnet_config();
+        let info = nda_bitnet_layer_info(&cfg);
+        // attn: 3200*3200*16 = 163840000
+        // ffn gate+up: 3200*8640*8 = 221184000
+        // ffn down: 8640*3200*4 = 110592000
+        // total = 495616000
+        assert_eq!(info.total_weight_bytes_estimate, 495616000);
+    }
+
+    #[test]
+    fn info_weight_bytes_zero_ffn() {
+        let mut cfg = default_nda_bitnet_config();
+        cfg.ffn_size = 0;
+        let info = nda_bitnet_layer_info(&cfg);
+        // attn: 3200*3200*16 = 163840000
+        // ffn: all zero
+        assert_eq!(info.total_weight_bytes_estimate, 163840000);
+    }
+
+    // ── Info clone independence ──────────────────────────────────────────
+
+    #[test]
+    fn info_clone_independent_issues() {
+        let mut cfg = default_nda_bitnet_config();
+        cfg.hidden_size = 100;
+        let info = nda_bitnet_layer_info(&cfg);
+        let mut cloned = info.clone();
+        cloned.validation_issues.push("extra".to_string());
+        assert_ne!(info.validation_issues.len(), cloned.validation_issues.len());
+    }
+
+    #[test]
+    fn info_clone_independent_config() {
+        let info = nda_bitnet_layer_info(&default_nda_bitnet_config());
+        let mut cloned = info.clone();
+        cloned.config.hidden_size = 999;
+        assert_ne!(info.config.hidden_size, cloned.config.hidden_size);
+    }
+
+    // ── Validation issues propagation ────────────────────────────────────
+
+    #[test]
+    fn info_issues_match_validate_function() {
+        let mut cfg = default_nda_bitnet_config();
+        cfg.hidden_size = 0;
+        cfg.ffn_size = 0;
+        let info = nda_bitnet_layer_info(&cfg);
+        let direct = validate_nda_bitnet_config(&cfg);
+        assert_eq!(info.validation_issues, direct);
+    }
+
+    #[test]
+    fn info_issues_count_all_zeros() {
+        let cfg = NdaBitNetLayerConfig {
+            hidden_size: 0, ffn_size: 0, n_heads: 0, head_dim: 0,
+        };
+        let info = nda_bitnet_layer_info(&cfg);
+        assert_eq!(info.validation_issues.len(), 4);
+    }
+
+    // ── JSON value verification ──────────────────────────────────────────
+
+    #[test]
+    fn config_json_numeric_values() {
+        let json = serde_json::to_string(&default_nda_bitnet_config()).unwrap();
+        let val: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(val["hidden_size"], 3200);
+        assert_eq!(val["ffn_size"], 8640);
+        assert_eq!(val["n_heads"], 50);
+        assert_eq!(val["head_dim"], 64);
+    }
+
+    #[test]
+    fn info_json_nested_config() {
+        let info = nda_bitnet_layer_info(&default_nda_bitnet_config());
+        let json = serde_json::to_string(&info).unwrap();
+        let val: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert!(val["config"].is_object());
+        assert_eq!(val["config"]["hidden_size"], 3200);
+        assert_eq!(val["config"]["ffn_size"], 8640);
+    }
+
+    #[test]
+    fn info_json_validation_issues_content() {
+        let mut cfg = default_nda_bitnet_config();
+        cfg.hidden_size = 0;
+        cfg.n_heads = 0;
+        let info = nda_bitnet_layer_info(&cfg);
+        let json = serde_json::to_string(&info).unwrap();
+        let val: serde_json::Value = serde_json::from_str(&json).unwrap();
+        let issues = val["validation_issues"].as_array().unwrap();
+        assert_eq!(issues.len(), 2);
+        assert!(issues[0].as_str().unwrap().contains("hidden_size"));
+        assert!(issues[1].as_str().unwrap().contains("n_heads"));
+    }
+
+    #[test]
+    fn info_json_weight_bytes_value() {
+        let info = nda_bitnet_layer_info(&default_nda_bitnet_config());
+        let json = serde_json::to_string(&info).unwrap();
+        let val: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(val["total_weight_bytes_estimate"], 495616000);
+    }
+
+    // ── Debug format details ─────────────────────────────────────────────
+
+    #[test]
+    fn config_debug_all_fields() {
+        let cfg = default_nda_bitnet_config();
+        let debug = format!("{:?}", cfg);
+        assert!(debug.contains("hidden_size: 3200"));
+        assert!(debug.contains("ffn_size: 8640"));
+        assert!(debug.contains("n_heads: 50"));
+        assert!(debug.contains("head_dim: 64"));
+    }
+
+    #[test]
+    fn info_debug_includes_all_fields() {
+        let info = nda_bitnet_layer_info(&default_nda_bitnet_config());
+        let debug = format!("{:?}", info);
+        assert!(debug.contains("nda_shader_count: 2"));
+        assert!(debug.contains("pipeline_count: 2"));
+        assert!(debug.contains("weight_buffers: 7"));
+        assert!(debug.contains("validation_issues"));
+    }
+
+    #[test]
+    fn info_debug_with_issues() {
+        let mut cfg = default_nda_bitnet_config();
+        cfg.hidden_size = 0;
+        let info = nda_bitnet_layer_info(&cfg);
+        let debug = format!("{:?}", info);
+        assert!(debug.contains("hidden_size must"));
+    }
+
+    // ── Validation edge cases ────────────────────────────────────────────
+
+    #[test]
+    fn validate_hidden_127_invalid() {
+        let mut cfg = default_nda_bitnet_config();
+        cfg.hidden_size = 127;
+        let issues = validate_nda_bitnet_config(&cfg);
+        assert_eq!(issues.len(), 1);
+        assert!(issues[0].contains("multiple of 128"));
+    }
+
+    #[test]
+    fn validate_hidden_129_invalid() {
+        let mut cfg = default_nda_bitnet_config();
+        cfg.hidden_size = 129;
+        let issues = validate_nda_bitnet_config(&cfg);
+        assert_eq!(issues.len(), 1);
+        assert!(issues[0].contains("multiple of 128"));
+    }
+
+    #[test]
+    fn validate_hidden_4096_valid() {
+        let mut cfg = default_nda_bitnet_config();
+        cfg.hidden_size = 4096;
+        assert!(validate_nda_bitnet_config(&cfg).is_empty());
+    }
+
+    #[test]
+    fn validate_multiple_calls_same_result() {
+        let cfg = default_nda_bitnet_config();
+        for _ in 0..10 {
+            assert!(validate_nda_bitnet_config(&cfg).is_empty());
+        }
+    }
+
+    #[test]
+    fn validate_n_heads_max_valid() {
+        let mut cfg = default_nda_bitnet_config();
+        cfg.n_heads = usize::MAX;
+        assert!(validate_nda_bitnet_config(&cfg).is_empty());
+    }
+
+    #[test]
+    fn validate_head_dim_max_valid() {
+        let mut cfg = default_nda_bitnet_config();
+        cfg.head_dim = usize::MAX;
+        assert!(validate_nda_bitnet_config(&cfg).is_empty());
+    }
+
+    // ── Scaling behavior ─────────────────────────────────────────────────
+
+    #[test]
+    fn info_weight_scales_quadratically_with_hidden() {
+        let cfg1 = NdaBitNetLayerConfig { hidden_size: 128, ffn_size: 0, n_heads: 1, head_dim: 1 };
+        let cfg2 = NdaBitNetLayerConfig { hidden_size: 256, ffn_size: 0, n_heads: 1, head_dim: 1 };
+        let info1 = nda_bitnet_layer_info(&cfg1);
+        let info2 = nda_bitnet_layer_info(&cfg2);
+        // With ffn=0, weight = hidden*hidden*16, so doubling hidden → 4x weight
+        assert_eq!(info2.total_weight_bytes_estimate, info1.total_weight_bytes_estimate * 4);
+    }
+
+    #[test]
+    fn info_weight_scales_linearly_with_ffn() {
+        let cfg1 = NdaBitNetLayerConfig { hidden_size: 128, ffn_size: 100, n_heads: 1, head_dim: 1 };
+        let cfg2 = NdaBitNetLayerConfig { hidden_size: 128, ffn_size: 200, n_heads: 1, head_dim: 1 };
+        let info1 = nda_bitnet_layer_info(&cfg1);
+        let info2 = nda_bitnet_layer_info(&cfg2);
+        // FFN part: hidden*ffn*8 + ffn*hidden*4 = hidden*ffn*12
+        // Doubling ffn → FFN part doubles
+        let ffn1 = cfg1.hidden_size * cfg1.ffn_size * 12;
+        let ffn2 = cfg2.hidden_size * cfg2.ffn_size * 12;
+        assert_eq!(ffn2, ffn1 * 2);
+        // Total difference should equal FFN difference
+        assert_eq!(
+            info2.total_weight_bytes_estimate - info1.total_weight_bytes_estimate,
+            ffn2 - ffn1
+        );
+    }
+
+    // ── JSON roundtrip via Value ─────────────────────────────────────────
+
+    #[test]
+    fn config_json_roundtrip_via_value() {
+        let cfg = NdaBitNetLayerConfig {
+            hidden_size: 256, ffn_size: 512, n_heads: 8, head_dim: 32,
+        };
+        let json = serde_json::to_string(&cfg).unwrap();
+        let val: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(val["hidden_size"], 256);
+        assert_eq!(val["ffn_size"], 512);
+        assert_eq!(val["n_heads"], 8);
+        assert_eq!(val["head_dim"], 32);
+    }
+
+    #[test]
+    fn info_json_roundtrip_via_value() {
+        let cfg = NdaBitNetLayerConfig {
+            hidden_size: 256, ffn_size: 512, n_heads: 8, head_dim: 32,
+        };
+        let info = nda_bitnet_layer_info(&cfg);
+        let json = serde_json::to_string(&info).unwrap();
+        let val: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(val["config"]["hidden_size"], 256);
+        assert_eq!(val["nda_shader_count"], 2);
+        assert_eq!(val["pipeline_count"], 2);
+        assert_eq!(val["weight_buffers"], 7);
+        assert!(val["validation_issues"].as_array().unwrap().is_empty());
+    }
 }
