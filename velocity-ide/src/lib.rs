@@ -181,4 +181,207 @@ mod tests {
         let info = library_info();
         assert!(info.features.contains(&"credential_boundary".to_string()));
     }
+
+    // ── ModuleInfo tests ─────────────────────────────────────────────────────
+
+    #[test]
+    fn module_info_json_key_count() {
+        let m = ModuleInfo { name: "test", description: "desc", is_public: true };
+        let json = serde_json::to_string(&m).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(v.as_object().unwrap().len(), 3);
+    }
+
+    #[test]
+    fn module_info_clone_independence() {
+        let m = ModuleInfo { name: "original", description: "desc", is_public: true };
+        let cloned = m.clone();
+        assert_eq!(cloned.name, "original");
+        assert_eq!(cloned.description, "desc");
+        assert!(cloned.is_public);
+    }
+
+    #[test]
+    fn module_info_debug_format() {
+        let m = ModuleInfo { name: "test_mod", description: "A test module", is_public: true };
+        let dbg = format!("{:?}", m);
+        assert!(dbg.contains("ModuleInfo"));
+        assert!(dbg.contains("test_mod"));
+    }
+
+    #[test]
+    fn module_info_serialization_roundtrip() {
+        let m = ModuleInfo { name: "compiler", description: "JIT compiler", is_public: true };
+        let json = serde_json::to_string(&m).unwrap();
+        assert!(json.contains("\"name\":\"compiler\""));
+        assert!(json.contains("\"is_public\":true"));
+    }
+
+    // ── LibraryInfo tests ────────────────────────────────────────────────────
+
+    #[test]
+    fn library_info_json_key_count() {
+        let info = library_info();
+        let json = serde_json::to_string(&info).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&json).unwrap();
+        // 7 fields: name, version, target_os, target_arch, module_count, modules, features
+        assert_eq!(v.as_object().unwrap().len(), 7);
+    }
+
+    #[test]
+    fn library_info_clone_independence() {
+        let info = library_info();
+        let mut cloned = info.clone();
+        cloned.module_count = 9999;
+        cloned.features.push("injected".into());
+        assert_eq!(info.module_count, 15);
+        assert!(!info.features.contains(&"injected".to_string()));
+    }
+
+    #[test]
+    fn library_info_debug_format() {
+        let info = library_info();
+        let dbg = format!("{:?}", info);
+        assert!(dbg.contains("LibraryInfo"));
+        assert!(dbg.contains("module_count"));
+    }
+
+    #[test]
+    fn library_info_pretty_json() {
+        let info = library_info();
+        let pretty = serde_json::to_string_pretty(&info).unwrap();
+        assert!(pretty.contains('\n'));
+        assert!(pretty.contains("  "));
+        let v: serde_json::Value = serde_json::from_str(&pretty).unwrap();
+        assert_eq!(v["module_count"], 15);
+    }
+
+    #[test]
+    fn library_info_name_matches_constant() {
+        let info = library_info();
+        assert_eq!(info.name, NAME);
+        assert_eq!(info.version, VERSION);
+    }
+
+    #[test]
+    fn library_info_module_count_matches_inventory() {
+        let info = library_info();
+        let inv = module_inventory();
+        assert_eq!(info.module_count, inv.len());
+        assert_eq!(info.modules.len(), inv.len());
+    }
+
+    #[test]
+    fn library_info_features_exact_count() {
+        let info = library_info();
+        // 14 features defined in library_info()
+        assert_eq!(info.features.len(), 14);
+    }
+
+    #[test]
+    fn library_info_features_no_duplicates() {
+        let info = library_info();
+        let mut unique = info.features.clone();
+        unique.sort();
+        unique.dedup();
+        assert_eq!(unique.len(), info.features.len(), "features should have no duplicates");
+    }
+
+    #[test]
+    fn library_info_features_all_nonempty() {
+        let info = library_info();
+        for f in &info.features {
+            assert!(!f.is_empty(), "feature should not be empty");
+        }
+    }
+
+    // ── Module inventory detailed tests ──────────────────────────────────────
+
+    #[test]
+    fn module_inventory_all_descriptions_nonempty() {
+        for m in module_inventory() {
+            assert!(!m.description.is_empty(), "module {} has empty description", m.name);
+        }
+    }
+
+    #[test]
+    fn module_inventory_all_names_nonempty() {
+        for m in module_inventory() {
+            assert!(!m.name.is_empty(), "module has empty name");
+        }
+    }
+
+    #[test]
+    fn module_inventory_contains_expected_modules() {
+        let inv = module_inventory();
+        let names: Vec<&str> = inv.iter().map(|m| m.name).collect();
+        let expected = [
+            "compiler", "errors", "model", "nda", "nda_int",
+            "pipeline_bridge", "pipeline_nda", "safety", "sandbox",
+            "site_map", "tokenizer", "velocity_client", "provider_usage",
+            "credential_guard", "wiki",
+        ];
+        for e in &expected {
+            assert!(names.contains(e), "missing module: {}", e);
+        }
+    }
+
+    #[test]
+    fn module_inventory_no_duplicate_names() {
+        let inv = module_inventory();
+        let mut names: Vec<&str> = inv.iter().map(|m| m.name).collect();
+        let original_len = names.len();
+        names.sort();
+        names.dedup();
+        assert_eq!(names.len(), original_len, "duplicate module names found");
+    }
+
+    #[test]
+    fn module_inventory_serializes() {
+        let inv = module_inventory();
+        let json = serde_json::to_string(&inv).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert!(v.is_array());
+        assert_eq!(v.as_array().unwrap().len(), 15);
+    }
+
+    // ── Banner tests ─────────────────────────────────────────────────────────
+
+    #[test]
+    fn banner_contains_os_and_arch() {
+        let b = banner();
+        assert!(b.contains(TARGET_OS));
+        assert!(b.contains(TARGET_ARCH));
+    }
+
+    #[test]
+    fn banner_format() {
+        let b = banner();
+        assert!(b.starts_with("V.E.L.O.C.I.T.Y.-IDE v"));
+        assert!(b.contains(&format!("({}-)", TARGET_OS)) || b.contains(&format!("{}-{}", TARGET_OS, TARGET_ARCH)));
+    }
+
+    #[test]
+    fn version_matches_cargo_pkg() {
+        assert_eq!(VERSION, env!("CARGO_PKG_VERSION"));
+    }
+
+    #[test]
+    fn name_matches_cargo_pkg() {
+        assert_eq!(NAME, env!("CARGO_PKG_NAME"));
+    }
+
+    #[test]
+    fn library_info_json_all_field_values() {
+        let info = library_info();
+        let json = serde_json::to_string(&info).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert!(v["name"].as_str().unwrap().contains("velocity"));
+        assert!(!v["version"].as_str().unwrap().is_empty());
+        assert!(!v["target_os"].as_str().unwrap().is_empty());
+        assert!(!v["target_arch"].as_str().unwrap().is_empty());
+        assert!(v["module_count"].as_u64().unwrap() >= 15);
+        assert!(v["modules"].is_array());
+        assert!(v["features"].is_array());
+    }
 }
