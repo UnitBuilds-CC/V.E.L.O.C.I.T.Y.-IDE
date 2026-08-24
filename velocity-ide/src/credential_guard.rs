@@ -88,6 +88,30 @@ impl SecretString {
         }
         format!("{}...{}", &s[..4], &s[s.len() - 4..])
     }
+
+    /// Length of the secret in bytes.
+    pub fn len(&self) -> usize {
+        self.inner.len()
+    }
+
+    /// Whether the secret is empty.
+    pub fn is_empty(&self) -> bool {
+        self.inner.is_empty()
+    }
+
+    /// Check if the secret matches a given value (constant-time comparison).
+    pub fn eq_secret(&self, other: &str) -> bool {
+        let other_bytes = other.as_bytes();
+        if self.inner.len() != other_bytes.len() {
+            return false;
+        }
+        // Volatile comparison prevents early-exit timing attacks.
+        let mut diff = 0u8;
+        for (a, b) in self.inner.iter().zip(other_bytes.iter()) {
+            diff |= a ^ b;
+        }
+        diff == 0
+    }
 }
 
 impl Drop for SecretString {
@@ -524,6 +548,46 @@ impl CredentialBoundaryAudit {
         lines.push("  JIT code in the sandbox may be able to exfiltrate credentials.".to_string());
         Some(lines.join("\n"))
     }
+
+    /// Return a severity level for the audit result.
+    pub fn severity(&self) -> &'static str {
+        if self.clean {
+            "none"
+        } else if !self.exposed_env_vars.is_empty() && !self.reachable_sockets.is_empty() {
+            "critical" // env vars + sockets = active exfiltration path
+        } else if !self.exposed_env_vars.is_empty() {
+            "high" // env vars present but no sockets
+        } else if !self.reachable_sockets.is_empty() {
+            "high" // sockets reachable
+        } else {
+            "medium" // only config dirs accessible
+        }
+    }
+
+    /// Return a compact summary of the audit.
+    pub fn summary(&self) -> CredentialAuditSummary {
+        CredentialAuditSummary {
+            clean: self.clean,
+            severity: self.severity().to_string(),
+            exposed_env_count: self.exposed_env_vars.len(),
+            reachable_socket_count: self.reachable_sockets.len(),
+            accessible_config_dir_count: self.accessible_config_dirs.len(),
+            total_issues: self.exposed_env_vars.len()
+                + self.reachable_sockets.len()
+                + self.accessible_config_dirs.len(),
+        }
+    }
+}
+
+/// Compact summary of a credential boundary audit.
+#[derive(Debug, Clone, Serialize)]
+pub struct CredentialAuditSummary {
+    pub clean: bool,
+    pub severity: String,
+    pub exposed_env_count: usize,
+    pub reachable_socket_count: usize,
+    pub accessible_config_dir_count: usize,
+    pub total_issues: usize,
 }
 
 /// Return paths to sensitive config directories that may contain credentials.
@@ -850,5 +914,148 @@ mod tests {
         scope.record_scrubbed_env("VAR1".to_string());
         scope.record_scrubbed_env("VAR2".to_string());
         assert_eq!(scope.scrubbed_env_count(), 2);
+    }
+
+    // ─── New Tests ─────────────────────────────────────────────────────────
+
+    #[test]
+    fn secret_string_len_and_is_empty() {
+        let s = SecretString::new("hello".to_string());
+        assert_eq!(s.len(), 5);
+        assert!(!s.is_empty());
+
+        let empty = SecretString::new(String::new());
+        assert_eq!(empty.len(), 0);
+        assert!(empty.is_empty());
+    }
+
+    #[test]
+    fn secret_string_eq_secret_matches() {
+        let s = SecretString::new("my_api_key".to_string());
+        assert!(s.eq_secret("my_api_key"));
+        assert!(!s.eq_secret("wrong_key"));
+        assert!(!s.eq_secret(""));
+        assert!(!s.eq_secret("my_api_key_extra"));
+    }
+
+    #[test]
+    fn secret_string_clone_is_independent() {
+        let mut s1 = SecretString::new("original".to_string());
+        let s2 = s1.clone();
+        assert_eq!(s2.as_str(), "original");
+        // Zeroizing s1 doesn't affect s2.
+        s1.zeroize();
+        assert_eq!(s2.as_str(), "original");
+    }
+
+    #[test]
+    fn audit_severity_clean() {
+        let audit = CredentialBoundaryAudit {
+            exposed_env_vars: vec![],
+            reachable_sockets: vec![],
+            accessible_config_dirs: vec![],
+            clean: true,
+        };
+        assert_eq!(audit.severity(), "none");
+    }
+
+    #[test]
+    fn audit_severity_critical() {
+        let audit = CredentialBoundaryAudit {
+            exposed_env_vars: vec!["VELOCITY_API_KEY".into()],
+            reachable_sockets: vec![("SSH_AUTH_SOCK".into(), "/tmp/sock".into())],
+            accessible_config_dirs: vec![],
+            clean: false,
+        };
+        assert_eq!(audit.severity(), "critical");
+    }
+
+    #[test]
+    fn audit_severity_high_env_only() {
+        let audit = CredentialBoundaryAudit {
+            exposed_env_vars: vec!["OPENAI_API_KEY".into()],
+            reachable_sockets: vec![],
+            accessible_config_dirs: vec![],
+            clean: false,
+        };
+        assert_eq!(audit.severity(), "high");
+    }
+
+    #[test]
+    fn audit_severity_high_socket_only() {
+        let audit = CredentialBoundaryAudit {
+            exposed_env_vars: vec![],
+            reachable_sockets: vec![("SSH_AUTH_SOCK".into(), "/tmp/sock".into())],
+            accessible_config_dirs: vec![],
+            clean: false,
+        };
+        assert_eq!(audit.severity(), "high");
+    }
+
+    #[test]
+    fn audit_severity_medium_config_only() {
+        let audit = CredentialBoundaryAudit {
+            exposed_env_vars: vec![],
+            reachable_sockets: vec![],
+            accessible_config_dirs: vec!["/home/user/.ssh".into()],
+            clean: false,
+        };
+        assert_eq!(audit.severity(), "medium");
+    }
+
+    #[test]
+    fn audit_summary_counts() {
+        let audit = CredentialBoundaryAudit {
+            exposed_env_vars: vec!["A".into(), "B".into()],
+            reachable_sockets: vec![("S".into(), "/p".into())],
+            accessible_config_dirs: vec!["D1".into(), "D2".into(), "D3".into()],
+            clean: false,
+        };
+        let summary = audit.summary();
+        assert!(!summary.clean);
+        assert_eq!(summary.severity, "critical");
+        assert_eq!(summary.exposed_env_count, 2);
+        assert_eq!(summary.reachable_socket_count, 1);
+        assert_eq!(summary.accessible_config_dir_count, 3);
+        assert_eq!(summary.total_issues, 6);
+    }
+
+    #[test]
+    fn audit_summary_serializes() {
+        let summary = CredentialAuditSummary {
+            clean: false,
+            severity: "high".into(),
+            exposed_env_count: 1,
+            reachable_socket_count: 0,
+            accessible_config_dir_count: 0,
+            total_issues: 1,
+        };
+        let json = serde_json::to_string(&summary).unwrap();
+        assert!(json.contains("\"severity\":\"high\""));
+        assert!(json.contains("\"total_issues\":1"));
+    }
+
+    #[test]
+    fn warning_message_none_when_clean() {
+        let audit = CredentialBoundaryAudit {
+            exposed_env_vars: vec![],
+            reachable_sockets: vec![],
+            accessible_config_dirs: vec![],
+            clean: true,
+        };
+        assert!(audit.warning_message().is_none());
+    }
+
+    #[test]
+    fn warning_message_mentions_jit_when_dirty() {
+        let audit = CredentialBoundaryAudit {
+            exposed_env_vars: vec!["VELOCITY_API_KEY".into()],
+            reachable_sockets: vec![],
+            accessible_config_dirs: vec![],
+            clean: false,
+        };
+        let msg = audit.warning_message().unwrap();
+        assert!(msg.contains("JIT code"));
+        assert!(msg.contains("exfiltrate"));
     }
 }
