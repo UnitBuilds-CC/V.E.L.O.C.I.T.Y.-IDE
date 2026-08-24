@@ -1352,4 +1352,267 @@ mod tests {
         assert_eq!(parsed["severity"], "none");
         assert_eq!(parsed["total_issues"], 0);
     }
+
+    // ── Block 167: Additional tests ────────────────────────────────────────
+
+    #[test]
+    fn sensitive_env_vars_contains_expected_keys() {
+        assert!(SENSITIVE_ENV_VARS.contains(&"VELOCITY_API_KEY"));
+        assert!(SENSITIVE_ENV_VARS.contains(&"OPENAI_API_KEY"));
+        assert!(SENSITIVE_ENV_VARS.contains(&"ANTHROPIC_API_KEY"));
+        assert!(SENSITIVE_ENV_VARS.contains(&"GITHUB_TOKEN"));
+        assert!(SENSITIVE_ENV_VARS.contains(&"AWS_ACCESS_KEY_ID"));
+        assert!(SENSITIVE_ENV_VARS.contains(&"AWS_SECRET_ACCESS_KEY"));
+        assert!(SENSITIVE_ENV_VARS.contains(&"SSH_AUTH_SOCK"));
+        assert!(SENSITIVE_ENV_VARS.contains(&"JWT_SECRET"));
+    }
+
+    #[test]
+    fn socket_env_vars_contains_expected() {
+        assert!(SOCKET_ENV_VARS.contains(&"SSH_AUTH_SOCK"));
+        assert!(SOCKET_ENV_VARS.contains(&"GPG_AGENT_INFO"));
+        assert!(SOCKET_ENV_VARS.contains(&"DBUS_SESSION_BUS_ADDRESS"));
+        assert_eq!(SOCKET_ENV_VARS.len(), 3);
+    }
+
+    #[test]
+    fn secret_string_clone_preserves_value() {
+        let s1 = SecretString::new("clone_test_value".to_string());
+        let s2 = s1.clone();
+        assert_eq!(s1.as_str(), s2.as_str());
+        assert_eq!(s1.len(), s2.len());
+    }
+
+    #[test]
+    fn boundary_audit_clone_is_independent() {
+        let a1 = CredentialBoundaryAudit {
+            exposed_env_vars: vec!["A".into()],
+            reachable_sockets: vec![],
+            accessible_config_dirs: vec![],
+            clean: false,
+        };
+        let a2 = a1.clone();
+        assert_eq!(a2.exposed_env_vars.len(), 1);
+        assert_eq!(a2.clean, false);
+    }
+
+    #[test]
+    fn summary_clone_and_debug() {
+        let s = CredentialAuditSummary {
+            clean: false,
+            severity: "high".into(),
+            exposed_env_count: 2,
+            reachable_socket_count: 1,
+            accessible_config_dir_count: 0,
+            total_issues: 3,
+        };
+        let s2 = s.clone();
+        assert_eq!(s2.total_issues, 3);
+        let debug = format!("{:?}", s);
+        assert!(debug.contains("high"));
+    }
+
+    #[test]
+    fn audit_summary_json_has_6_keys() {
+        let summary = CredentialAuditSummary {
+            clean: true,
+            severity: "none".into(),
+            exposed_env_count: 0,
+            reachable_socket_count: 0,
+            accessible_config_dir_count: 0,
+            total_issues: 0,
+        };
+        let json = serde_json::to_string(&summary).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed.as_object().unwrap().len(), 6);
+    }
+
+    #[test]
+    fn scope_report_json_has_6_keys() {
+        let report = CredentialScopeReport {
+            secret_count: 0,
+            labels: vec![],
+            env_vars_scrubbed: vec![],
+            created_at: 0,
+            scrubbed_at: 0,
+            is_scrubbed: false,
+        };
+        let json = serde_json::to_string(&report).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed.as_object().unwrap().len(), 6);
+    }
+
+    #[test]
+    fn boundary_audit_json_has_4_keys() {
+        let audit = CredentialBoundaryAudit {
+            exposed_env_vars: vec![],
+            reachable_sockets: vec![],
+            accessible_config_dirs: vec![],
+            clean: true,
+        };
+        let json = serde_json::to_string(&audit).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed.as_object().unwrap().len(), 4);
+    }
+
+    #[test]
+    fn scrub_removes_github_token() {
+        let _g = ENV_LOCK.lock().unwrap();
+        std::env::set_var("GITHUB_TOKEN", "ghp_test123");
+        let removed = scrub_sensitive_env_vars();
+        assert!(removed.contains(&"GITHUB_TOKEN".to_string()));
+        assert!(std::env::var("GITHUB_TOKEN").is_err());
+    }
+
+    #[test]
+    fn scrub_removes_session_and_private_key() {
+        let _g = ENV_LOCK.lock().unwrap();
+        std::env::set_var("PRIVATE_KEY", "priv_key_val");
+        std::env::set_var("SECRET_KEY", "secret_key_val");
+        let removed = scrub_sensitive_env_vars();
+        assert!(removed.contains(&"PRIVATE_KEY".to_string()));
+        assert!(removed.contains(&"SECRET_KEY".to_string()));
+    }
+
+    #[test]
+    fn sensitive_config_paths_includes_terraform() {
+        let paths = sensitive_config_paths();
+        if home_dir().is_some() {
+            assert!(paths.iter().any(|p| p.ends_with(".terraform.d")));
+        }
+    }
+
+    #[test]
+    fn sensitive_config_paths_includes_git_credentials() {
+        let paths = sensitive_config_paths();
+        if home_dir().is_some() {
+            assert!(paths.iter().any(|p| p.ends_with(".git-credentials")));
+        }
+    }
+
+    #[test]
+    fn warning_message_structure_clean() {
+        let audit = CredentialBoundaryAudit {
+            exposed_env_vars: vec!["A".into(), "B".into()],
+            reachable_sockets: vec![("S".into(), "/p".into())],
+            accessible_config_dirs: vec!["D".into()],
+            clean: false,
+        };
+        let msg = audit.warning_message().unwrap();
+        assert!(msg.contains("2 sensitive env var(s)"));
+        assert!(msg.contains("1 agent socket(s)"));
+        assert!(msg.contains("1 config dir(s)"));
+        // Should have multiple lines
+        let line_count = msg.lines().count();
+        assert!(line_count >= 4, "expected >= 4 lines, got {}", line_count);
+    }
+
+    #[test]
+    fn credential_scope_multiple_loads() {
+        let mut scope = CredentialScope::new();
+        scope.load_value("s1".to_string());
+        scope.load_value("s2".to_string());
+        scope.load_labeled("custom", "s3".to_string());
+        assert_eq!(scope.len(), 3);
+        assert_eq!(scope.secrets().len(), 3);
+        assert_eq!(scope.label(0), Some("secret_0"));
+        assert_eq!(scope.label(1), Some("secret_1"));
+        assert_eq!(scope.label(2), Some("custom"));
+    }
+
+    #[test]
+    fn credential_scope_scrub_clears_labels_too() {
+        let mut scope = CredentialScope::new();
+        scope.load_labeled("key1", "val1".to_string());
+        scope.load_labeled("key2", "val2".to_string());
+        assert_eq!(scope.len(), 2);
+        scope.scrub();
+        assert_eq!(scope.len(), 0);
+        // After scrub, labels should be cleared too
+        assert_eq!(scope.label(0), None);
+    }
+
+    #[test]
+    fn audit_summary_total_issues_formula() {
+        let audit = CredentialBoundaryAudit {
+            exposed_env_vars: vec!["A".into()],
+            reachable_sockets: vec![("S".into(), "/p".into()), ("S2".into(), "/q".into())],
+            accessible_config_dirs: vec!["D".into()],
+            clean: false,
+        };
+        let summary = audit.summary();
+        // total = env_count + socket_count + dir_count = 1 + 2 + 1 = 4
+        assert_eq!(summary.total_issues, 4);
+    }
+
+    #[test]
+    fn secret_string_eq_secret_different_lengths() {
+        let s = SecretString::new("abc".to_string());
+        assert!(!s.eq_secret("ab"));
+        assert!(!s.eq_secret("abcd"));
+        assert!(s.eq_secret("abc"));
+    }
+
+    #[test]
+    fn boundary_audit_debug_format() {
+        let audit = CredentialBoundaryAudit {
+            exposed_env_vars: vec!["KEY".into()],
+            reachable_sockets: vec![],
+            accessible_config_dirs: vec![],
+            clean: false,
+        };
+        let debug = format!("{:?}", audit);
+        assert!(debug.contains("exposed_env_vars"));
+        assert!(debug.contains("KEY"));
+    }
+
+    #[test]
+    fn credential_scope_report_clone() {
+        let report = CredentialScopeReport {
+            secret_count: 3,
+            labels: vec!["a".into(), "b".into()],
+            env_vars_scrubbed: vec!["X".into()],
+            created_at: 100,
+            scrubbed_at: 200,
+            is_scrubbed: true,
+        };
+        let r2 = report.clone();
+        assert_eq!(r2.secret_count, 3);
+        assert_eq!(r2.labels.len(), 2);
+        assert_eq!(r2.is_scrubbed, true);
+    }
+
+    #[test]
+    fn home_dir_uses_home_env_first() {
+        let _g = ENV_LOCK.lock().unwrap();
+        // HOME should take precedence if set
+        let original_home = std::env::var("HOME").ok();
+        std::env::set_var("HOME", "/test/home/dir");
+        let dir = home_dir();
+        assert!(dir.is_some());
+        assert_eq!(dir.unwrap().to_str().unwrap(), "/test/home/dir");
+        // Restore
+        match original_home {
+            Some(v) => std::env::set_var("HOME", v),
+            None => std::env::remove_var("HOME"),
+        }
+    }
+
+    #[test]
+    fn sensitive_env_vars_count_at_least_20() {
+        // Verify the list is comprehensive
+        assert!(SENSITIVE_ENV_VARS.len() >= 20,
+            "expected >= 20 sensitive vars, got {}", SENSITIVE_ENV_VARS.len());
+    }
+
+    #[test]
+    fn scrub_no_duplicates_for_overlapping_vars() {
+        // SSH_AUTH_SOCK is in both SENSITIVE_ENV_VARS and SOCKET_ENV_VARS
+        // scrub should not report it twice
+        let _g = ENV_LOCK.lock().unwrap();
+        std::env::set_var("SSH_AUTH_SOCK", "/tmp/ssh-test");
+        let removed = scrub_sensitive_env_vars();
+        let count = removed.iter().filter(|v| *v == "SSH_AUTH_SOCK").count();
+        assert_eq!(count, 1, "SSH_AUTH_SOCK should appear only once in removed list");
+    }
 }
