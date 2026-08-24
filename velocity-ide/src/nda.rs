@@ -2596,4 +2596,263 @@ mod tests {
         assert!(info.is_quad);
         assert_eq!(info.validation_issues, 0);
     }
+
+    // ── Block 191: New tests ──────────────────────────────────────────────────
+
+    #[test]
+    fn nda_memory_breakdown_json_key_count() {
+        let mb = NdaMemoryBreakdown {
+            header_bytes: 18, data_bytes: 1024, total_bytes: 1042, bits_per_weight: 2.0,
+        };
+        let v: serde_json::Value = serde_json::to_value(&mb).unwrap();
+        assert_eq!(v.as_object().unwrap().len(), 4);
+    }
+
+    #[test]
+    fn nda_batch_load_report_json_key_count() {
+        let report = NdaBatchLoadReport {
+            count: 5, total_bytes: 1000, total_elements: 5000,
+            version_counts: [1, 3, 1, 0], validation_errors: vec![], elapsed_us: 500,
+        };
+        let v: serde_json::Value = serde_json::to_value(&report).unwrap();
+        assert_eq!(v.as_object().unwrap().len(), 6);
+    }
+
+    #[test]
+    fn nda_matrix_summary_json_keys_191() {
+        let summary = NdaMatrixSummary {
+            matrix_count: 3, total_rows: 100, total_cols: 200, total_memory_bytes: 5000,
+            versions: vec![2, 3], largest_matrix: Some("a".into()),
+            smallest_matrix: Some("b".into()), validation_issues: vec![],
+        };
+        let v: serde_json::Value = serde_json::to_value(&summary).unwrap();
+        assert_eq!(v.as_object().unwrap().len(), 8);
+        // Verify all expected keys exist
+        for key in &["matrix_count", "total_rows", "total_cols", "total_memory_bytes", "versions", "largest_matrix", "smallest_matrix", "validation_issues"] {
+            assert!(v.as_object().unwrap().contains_key(*key), "missing key: {}", key);
+        }
+    }
+
+    #[test]
+    fn nda_quantization_report_json_types() {
+        let report = NdaQuantizationReport {
+            input_len: 64, output_scale: 2.0, input_amax: 5.0,
+            max_abs_error: 1.5, mean_abs_error: 0.75, compression_ratio: 16.0,
+            validation_issues: vec![],
+        };
+        let v: serde_json::Value = serde_json::to_value(&report).unwrap();
+        assert!(v["input_len"].is_u64());
+        assert!(v["output_scale"].is_f64());
+        assert!(v["input_amax"].is_f64());
+        assert!(v["max_abs_error"].is_f64());
+        assert!(v["mean_abs_error"].is_f64());
+        assert!(v["compression_ratio"].is_f64());
+        assert!(v["validation_issues"].is_array());
+    }
+
+    #[test]
+    fn nda_matrix_info_json_types() {
+        let m = NdaMatrix::new_quad(4, 32, 1.0, vec![0; 16], vec![0; 16]);
+        let info = m.info();
+        let v: serde_json::Value = serde_json::to_value(&info).unwrap();
+        assert!(v["rows"].is_u64());
+        assert!(v["cols"].is_u64());
+        assert!(v["version"].is_u64());
+        assert!(v["version_name"].is_string());
+        assert!(v["scale"].is_f64());
+        assert!(v["memory"].is_object());
+        assert!(v["validation_issues"].is_u64());
+        assert!(v["is_quad"].is_boolean());
+    }
+
+    #[test]
+    fn memory_breakdown_clone_independence() {
+        let mb = NdaMemoryBreakdown {
+            header_bytes: 18, data_bytes: 1024, total_bytes: 1042, bits_per_weight: 2.0,
+        };
+        let mut cloned = mb.clone();
+        cloned.header_bytes = 99;
+        assert_eq!(mb.header_bytes, 18);
+    }
+
+    #[test]
+    fn batch_gemv_report_clone_independence() {
+        let report = BatchGemvReport { count: 5, total_elapsed_us: 500, per_op_avg_us: 100.0, total_rows: 40 };
+        let mut cloned = report.clone();
+        cloned.count = 99;
+        assert_eq!(report.count, 5);
+    }
+
+    #[test]
+    fn gemv_report_clone_independence() {
+        let report = GemvReport { rows: 8, cols: 64, version: 2, elapsed_us: 100, output_len: 8 };
+        let mut cloned = report.clone();
+        cloned.elapsed_us = 999;
+        assert_eq!(report.elapsed_us, 100);
+    }
+
+    #[test]
+    fn nda_matrix_info_clone_independence() {
+        let m = NdaMatrix::new_quad(4, 32, 1.0, vec![0; 16], vec![0; 16]);
+        let info = m.info();
+        let mut cloned = info.clone();
+        cloned.rows = 999;
+        assert_eq!(info.rows, 4);
+    }
+
+    #[test]
+    fn quad_distribution_sum_equals_total_elements() {
+        let m = NdaMatrix::new_quad(8, 16, 1.0, vec![0xAA; 16], vec![0x55; 16]);
+        let dist = m.quad_distribution();
+        let total: usize = dist.iter().sum();
+        assert_eq!(total, 8 * 16, "distribution should sum to rows*cols");
+    }
+
+    #[test]
+    fn quantize_v2_scale_formula() {
+        // scale = amax / 2.0
+        let x = vec![4.0, -2.0, 1.0];
+        let (_, _, scale) = quantize_activations_v2_quad(&x);
+        assert!((scale - 2.0).abs() < f32::EPSILON, "scale should be amax/2 = 4.0/2 = 2.0, got {}", scale);
+    }
+
+    #[test]
+    fn quantize_i8_scale_formula() {
+        // scale = amax / 127.0
+        let x = vec![5.0, -3.0, 1.0];
+        let (_, scale) = quantize_activations_i8(&x);
+        assert!((scale - 5.0 / 127.0).abs() < 1e-6, "scale should be amax/127, got {}", scale);
+    }
+
+    #[test]
+    fn quantize_with_report_compression_formula() {
+        let x = vec![1.0; 128]; // 128 floats = 512 bytes
+        let (_, report) = quantize_with_report(&x);
+        // Output: 16 bytes sign + 16 bytes extra = 32 bytes
+        // Ratio: 512 / 32 = 16.0
+        assert!((report.compression_ratio - 16.0).abs() < 0.01,
+            "compression_ratio should be 16.0, got {}", report.compression_ratio);
+    }
+
+    #[test]
+    fn memory_breakdown_bits_per_weight_v2() {
+        // v2 quad: 2 bits per weight
+        let m = NdaMatrix::new_quad(8, 64, 1.0, vec![0; 64], vec![0; 64]);
+        let mb = m.memory_breakdown();
+        // data_bytes = 64 + 64 = 128, elements = 8*64 = 512
+        // bits_per_weight = 128*8 / 512 = 1024/512 = 2.0
+        assert!((mb.bits_per_weight - 2.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn byte_size_fp2_formula() {
+        let m = NdaMatrix {
+            rows: 4, cols: 64, scale: 1.0, version: NDA_VERSION_FP2,
+            sign: vec![], extra: vec![],
+            block_size: 64, n_blocks: 4,
+            q_scales: vec![128; 4], packed_codes: vec![0; 64], // 4*64/4 = 64
+        };
+        // 24 + q_scales.len() + packed_codes.len() = 24 + 4 + 64 = 92
+        assert_eq!(m.byte_size(), 92);
+    }
+
+    #[test]
+    fn validate_fp2_packed_codes_wrong_size() {
+        let m = NdaMatrix {
+            rows: 4, cols: 64, scale: 1.0, version: NDA_VERSION_FP2,
+            sign: vec![], extra: vec![],
+            block_size: 64, n_blocks: 4,
+            q_scales: vec![128; 4],
+            packed_codes: vec![0; 100], // wrong: should be 4*64/4 = 64
+        };
+        let errors = m.validate();
+        assert!(errors.iter().any(|e| e.contains("packed_codes size mismatch")));
+    }
+
+    #[test]
+    fn gemv_batch_report_total_rows_formula() {
+        // total_rows = matrix.rows * xs.len()
+        let m = NdaMatrix::new_quad(8, 32, 1.0, vec![0; 32], vec![0; 32]);
+        let xs = vec![vec![1.0; 32], vec![2.0; 32], vec![3.0; 32], vec![4.0; 32]];
+        let (_, report) = nda_gemv_batch(&m, &xs);
+        assert_eq!(report.total_rows, 8 * 4);
+    }
+
+    #[test]
+    fn gemv_with_report_elapsed_positive() {
+        let m = NdaMatrix::new_quad(4, 32, 1.0, vec![0; 16], vec![0; 16]);
+        let x = vec![1.0; 32];
+        let (_, report) = nda_gemv_with_report(&m, &x);
+        // elapsed_us should be >= 0 (always true for u64, but check it ran)
+        assert_eq!(report.output_len, 4);
+        assert_eq!(report.version, NDA_V2_QUAD);
+    }
+
+    #[test]
+    fn summarize_matrices_versions_preserve_order() {
+        let mut m1 = NdaMatrix::new_quad(4, 8, 1.0, vec![0; 4], vec![0; 4]);
+        m1.version = NDA_VERSION_FP4;
+        let m2 = NdaMatrix::new_quad(8, 16, 1.0, vec![0; 16], vec![0; 16]); // v2
+        let mut m3 = NdaMatrix::new_quad(2, 2, 1.0, vec![0; 1], vec![0; 1]);
+        m3.version = NDA_VERSION_FP2;
+        let summary = summarize_matrices(&[m1, m2, m3]);
+        assert_eq!(summary.versions, vec![NDA_VERSION_FP4, NDA_V2_QUAD, NDA_VERSION_FP2]);
+    }
+
+    #[test]
+    fn nda_memory_breakdown_debug_format() {
+        let mb = NdaMemoryBreakdown { header_bytes: 18, data_bytes: 1024, total_bytes: 1042, bits_per_weight: 2.0 };
+        let debug = format!("{:?}", mb);
+        assert!(debug.contains("NdaMemoryBreakdown"));
+        assert!(debug.contains("1042"));
+    }
+
+    #[test]
+    fn batch_gemv_report_debug_format() {
+        let report = BatchGemvReport { count: 5, total_elapsed_us: 500, per_op_avg_us: 100.0, total_rows: 40 };
+        let debug = format!("{:?}", report);
+        assert!(debug.contains("BatchGemvReport"));
+    }
+
+    #[test]
+    fn nda_quantization_report_debug_format() {
+        let report = NdaQuantizationReport {
+            input_len: 64, output_scale: 2.0, input_amax: 5.0,
+            max_abs_error: 1.5, mean_abs_error: 0.75, compression_ratio: 16.0,
+            validation_issues: vec![],
+        };
+        let debug = format!("{:?}", report);
+        assert!(debug.contains("NdaQuantizationReport"));
+        assert!(debug.contains("compression_ratio"));
+    }
+
+    #[test]
+    fn load_file_too_small() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("tiny.nda");
+        std::fs::write(&path, &[0x00, 0x4E]).unwrap(); // only 2 bytes
+        let result = NdaMatrix::load(&path);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn gemv_v1_tern_basic() {
+        // v1 ternary: sign=active, extra=pos
+        // 2 rows × 8 cols → stride = 1 byte per row → need 2 bytes total
+        let m = NdaMatrix {
+            rows: 2, cols: 8, scale: 1.0, version: NDA_V1_TERN,
+            sign: vec![0xFF, 0xFF], // all active for both rows
+            extra: vec![0xAA, 0x55], // row0: alternating pos/neg; row1: opposite
+            block_size: 0, n_blocks: 0, q_scales: vec![], packed_codes: vec![],
+        };
+        let x = vec![1.0; 8];
+        let y = nda_gemv(&m, &x);
+        assert_eq!(y.len(), 2);
+        for &v in &y {
+            assert!(v.is_finite());
+        }
+        // row0: 4 pos + 4 neg = 0; row1: 4 neg + 4 pos = 0
+        assert!((y[0]).abs() < 1e-6);
+        assert!((y[1]).abs() < 1e-6);
+    }
 }
