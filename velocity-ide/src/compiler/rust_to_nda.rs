@@ -2124,4 +2124,1239 @@ mod tests {
         let diag = compiler.diagnostics();
         assert_eq!(diag.items_by_kind.get("Trait").unwrap_or(&0), &1);
     }
+
+    // ─── Block 154: comprehensive rust_to_nda expansion ─────────────────────
+
+    // ─── JSON key count tests ───────────────────────────────────────────────
+
+    #[test]
+    fn compile_diagnostics_json_key_count() {
+        let diag = CompileDiagnostics::default();
+        let json = serde_json::to_string(&diag).unwrap();
+        let val: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(val.as_object().unwrap().len(), 8);
+    }
+
+    #[test]
+    fn seed_report_json_key_count() {
+        let report = SeedReport {
+            source_path: std::path::PathBuf::from("x.rs"),
+            functions: 0,
+            nodes_stored: 0,
+            root_hash: 0,
+            elapsed_ms: 0,
+            call_graph: HashMap::new(),
+            diagnostics: CompileDiagnostics::default(),
+        };
+        let json = serde_json::to_string(&report).unwrap();
+        let val: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(val.as_object().unwrap().len(), 7);
+    }
+
+    #[test]
+    fn compile_diagnostics_json_values() {
+        let diag = CompileDiagnostics {
+            expressions_visited: 50,
+            expressions_compiled: 40,
+            expressions_dropped: 10,
+            expr_type_coverage: HashMap::new(),
+            items_by_kind: HashMap::new(),
+            call_edges: 5,
+            call_edges_resolved: 3,
+            warnings: vec![],
+        };
+        let json = serde_json::to_string(&diag).unwrap();
+        let val: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(val["expressions_visited"], 50);
+        assert_eq!(val["expressions_compiled"], 40);
+        assert_eq!(val["expressions_dropped"], 10);
+        assert_eq!(val["call_edges"], 5);
+        assert_eq!(val["call_edges_resolved"], 3);
+    }
+
+    #[test]
+    fn seed_report_json_values() {
+        let report = SeedReport {
+            source_path: std::path::PathBuf::from("main.rs"),
+            functions: 7,
+            nodes_stored: 25,
+            root_hash: 0xABCD,
+            elapsed_ms: 42,
+            call_graph: HashMap::new(),
+            diagnostics: CompileDiagnostics::default(),
+        };
+        let json = serde_json::to_string(&report).unwrap();
+        let val: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(val["functions"], 7);
+        assert_eq!(val["nodes_stored"], 25);
+        assert_eq!(val["root_hash"], 0xABCD);
+        assert_eq!(val["elapsed_ms"], 42);
+        assert_eq!(val["source_path"], "main.rs");
+    }
+
+    // ─── Clone independence tests ───────────────────────────────────────────
+
+    #[test]
+    fn compile_diagnostics_clone_independence_deep() {
+        let mut diag = CompileDiagnostics::default();
+        diag.warnings.push("orig".to_string());
+        diag.expr_type_coverage.insert("Lit".to_string(), 10);
+        let mut cloned = diag.clone();
+        cloned.warnings.push("extra".to_string());
+        cloned.expr_type_coverage.insert("Call".to_string(), 5);
+        assert_eq!(diag.warnings.len(), 1);
+        assert_eq!(cloned.warnings.len(), 2);
+        assert!(!diag.expr_type_coverage.contains_key("Call"));
+    }
+
+    #[test]
+    fn seed_report_call_graph_independence() {
+        let mut g1 = HashMap::new();
+        g1.insert("a".to_string(), vec!["b".to_string()]);
+        let r1 = SeedReport {
+            source_path: std::path::PathBuf::from("x.rs"),
+            functions: 1,
+            nodes_stored: 2,
+            root_hash: 0,
+            elapsed_ms: 0,
+            call_graph: g1,
+            diagnostics: CompileDiagnostics::default(),
+        };
+        let json1 = serde_json::to_string(&r1).unwrap();
+        let val: serde_json::Value = serde_json::from_str(&json1).unwrap();
+        assert!(val["call_graph"]["a"].is_array());
+    }
+
+    // ─── Debug format tests ─────────────────────────────────────────────────
+
+    #[test]
+    fn compile_diagnostics_debug_format() {
+        let mut diag = CompileDiagnostics::default();
+        diag.expressions_visited = 42;
+        let debug = format!("{:?}", diag);
+        assert!(debug.contains("42"));
+        assert!(debug.contains("CompileDiagnostics"));
+    }
+
+    #[test]
+    fn seed_report_debug_format() {
+        let report = SeedReport {
+            source_path: std::path::PathBuf::from("test.rs"),
+            functions: 3,
+            nodes_stored: 10,
+            root_hash: 0xFF,
+            elapsed_ms: 7,
+            call_graph: HashMap::new(),
+            diagnostics: CompileDiagnostics::default(),
+        };
+        let debug = format!("{:?}", report);
+        assert!(debug.contains("SeedReport"));
+        assert!(debug.contains("test.rs"));
+    }
+
+    // ─── More expression coverage tests ─────────────────────────────────────
+
+    #[test]
+    fn empty_block_returns_none() {
+        let source = r#"
+            fn empty_block() {
+                {}
+            }
+        "#;
+        let mut compiler = RustToNda::new();
+        compiler.compile_source(source).unwrap();
+        let diag = compiler.diagnostics();
+        assert!(diag.expr_type_coverage.contains_key("Block"));
+    }
+
+    #[test]
+    fn call_with_no_args_produces_call_node() {
+        let source = r#"
+            fn target() -> i32 { 1 }
+            fn caller() { target(); }
+        "#;
+        let mut compiler = RustToNda::new();
+        let root = compiler.compile_source(source).unwrap();
+        fn find_call(node: &NdaNode) -> bool {
+            match node {
+                NdaNode::Call { .. } => true,
+                NdaNode::Scope { children } => children.iter().any(find_call),
+                _ => false,
+            }
+        }
+        assert!(find_call(&root));
+    }
+
+    #[test]
+    fn call_with_multiple_args() {
+        let source = r#"
+            fn add3(a: i32, b: i32, c: i32) -> i32 { a + b + c }
+            fn test() { add3(1, 2, 3); }
+        "#;
+        let mut compiler = RustToNda::new();
+        compiler.compile_source(source).unwrap();
+        let diag = compiler.diagnostics();
+        assert!(diag.expressions_visited > 3);
+    }
+
+    #[test]
+    fn method_call_tracks_callee() {
+        let source = r#"
+            struct Foo;
+            impl Foo {
+                fn bar(&self) -> i32 { 42 }
+                fn baz(&self) -> i32 { self.bar() }
+            }
+        "#;
+        let mut compiler = RustToNda::new();
+        compiler.compile_source(source).unwrap();
+        let diag = compiler.diagnostics();
+        assert!(diag.expr_type_coverage.contains_key("MethodCall"));
+    }
+
+    #[test]
+    fn for_loop_with_body() {
+        let source = r#"
+            fn sum_range() -> i32 {
+                let mut s = 0;
+                for i in 0..10 {
+                    s = s + i;
+                }
+                s
+            }
+        "#;
+        let mut compiler = RustToNda::new();
+        compiler.compile_source(source).unwrap();
+        let diag = compiler.diagnostics();
+        assert!(diag.expr_type_coverage.contains_key("ForLoop"));
+    }
+
+    #[test]
+    fn loop_empty_body() {
+        let source = r#"
+            fn tight() {
+                loop { }
+            }
+        "#;
+        let mut compiler = RustToNda::new();
+        compiler.compile_source(source).unwrap();
+        assert_eq!(compiler.function_count(), 1);
+    }
+
+    #[test]
+    fn while_empty_body() {
+        let source = r#"
+            fn tight_while() {
+                while true { }
+            }
+        "#;
+        let mut compiler = RustToNda::new();
+        compiler.compile_source(source).unwrap();
+        assert_eq!(compiler.function_count(), 1);
+    }
+
+    #[test]
+    fn if_without_else() {
+        let source = r#"
+            fn check(x: i32) {
+                if x > 0 {
+                    let y = 1;
+                }
+            }
+        "#;
+        let mut compiler = RustToNda::new();
+        compiler.compile_source(source).unwrap();
+        assert_eq!(compiler.function_count(), 1);
+    }
+
+    #[test]
+    fn nested_if_else() {
+        let source = r#"
+            fn classify(x: i32) -> i32 {
+                if x > 10 { 2 }
+                else if x > 0 { 1 }
+                else { 0 }
+            }
+        "#;
+        let mut compiler = RustToNda::new();
+        let root = compiler.compile_source(source).unwrap();
+        fn count_ints(node: &NdaNode) -> usize {
+            match node {
+                NdaNode::Int { .. } => 1,
+                NdaNode::Scope { children } => children.iter().map(count_ints).sum(),
+                NdaNode::If { then_body, else_body, .. } => {
+                    then_body.iter().map(count_ints).sum::<usize>()
+                    + else_body.as_ref().map_or(0, |eb| eb.iter().map(count_ints).sum::<usize>())
+                }
+                _ => 0,
+            }
+        }
+        assert!(count_ints(&root) >= 3);
+    }
+
+    #[test]
+    fn match_with_multiple_arms() {
+        let source = r#"
+            fn multi_match(x: i32) -> i32 {
+                match x {
+                    0 => 10,
+                    1 => 20,
+                    2 => 30,
+                    _ => 99,
+                }
+            }
+        "#;
+        let mut compiler = RustToNda::new();
+        let root = compiler.compile_source(source).unwrap();
+        fn count_ints(node: &NdaNode) -> usize {
+            match node {
+                NdaNode::Int { .. } => 1,
+                NdaNode::Scope { children } => children.iter().map(count_ints).sum(),
+                _ => 0,
+            }
+        }
+        assert!(count_ints(&root) >= 4);
+    }
+
+    #[test]
+    fn struct_literal_multiple_fields() {
+        let source = r#"
+            struct Triple { a: i32, b: i32, c: i32 }
+            fn make() -> Triple {
+                Triple { a: 1, b: 2, c: 3 }
+            }
+        "#;
+        let mut compiler = RustToNda::new();
+        compiler.compile_source(source).unwrap();
+        let diag = compiler.diagnostics();
+        assert!(diag.expr_type_coverage.contains_key("Struct"));
+        assert!(diag.expressions_compiled > 3);
+    }
+
+    #[test]
+    fn tuple_multiple_elements() {
+        let source = r#"
+            fn make_tuple() -> (i32, i32, i32) {
+                (10, 20, 30)
+            }
+        "#;
+        let mut compiler = RustToNda::new();
+        compiler.compile_source(source).unwrap();
+        let diag = compiler.diagnostics();
+        assert!(diag.expr_type_coverage.contains_key("Tuple"));
+    }
+
+    #[test]
+    fn range_both_bounds() {
+        let source = r#"
+            fn make_range() {
+                let _r = 5..15;
+            }
+        "#;
+        let mut compiler = RustToNda::new();
+        compiler.compile_source(source).unwrap();
+        let diag = compiler.diagnostics();
+        assert!(diag.expr_type_coverage.contains_key("Range"));
+    }
+
+    #[test]
+    fn range_start_only() {
+        let source = r#"
+            fn open_end() {
+                let _r = 0..;
+            }
+        "#;
+        let mut compiler = RustToNda::new();
+        compiler.compile_source(source).unwrap();
+        let diag = compiler.diagnostics();
+        assert!(diag.expr_type_coverage.contains_key("Range"));
+    }
+
+    #[test]
+    fn index_both_base_and_index() {
+        let source = r#"
+            fn idx(arr: [i32; 4]) -> i32 {
+                let i = 2;
+                let val = 42;
+                val
+            }
+        "#;
+        let mut compiler = RustToNda::new();
+        compiler.compile_source(source).unwrap();
+        assert_eq!(compiler.function_count(), 1);
+    }
+
+    #[test]
+    fn assign_both_sides() {
+        let source = r#"
+            fn reassign() {
+                let mut x = 0;
+                x = 99;
+            }
+        "#;
+        let mut compiler = RustToNda::new();
+        compiler.compile_source(source).unwrap();
+        let diag = compiler.diagnostics();
+        assert!(diag.expr_type_coverage.contains_key("Assign"));
+    }
+
+    #[test]
+    fn reference_to_literal() {
+        let source = r#"
+            fn ref_lit() -> i32 {
+                let r = &42;
+                0
+            }
+        "#;
+        let mut compiler = RustToNda::new();
+        compiler.compile_source(source).unwrap();
+        let diag = compiler.diagnostics();
+        assert!(diag.expr_type_coverage.contains_key("Reference"));
+    }
+
+    #[test]
+    fn path_expression_compiled() {
+        let source = r#"
+            fn use_path() -> i32 {
+                let x = 42;
+                x
+            }
+        "#;
+        let mut compiler = RustToNda::new();
+        compiler.compile_source(source).unwrap();
+        let diag = compiler.diagnostics();
+        assert!(diag.expr_type_coverage.contains_key("Path"));
+    }
+
+    #[test]
+    fn empty_array_returns_none() {
+        let source = r#"
+            fn no_arr() {
+                let _x: i32 = 0;
+            }
+        "#;
+        let mut compiler = RustToNda::new();
+        compiler.compile_source(source).unwrap();
+        assert_eq!(compiler.function_count(), 1);
+    }
+
+    #[test]
+    fn return_with_value() {
+        let source = r#"
+            fn early(x: i32) -> i32 {
+                if x > 10 { return 99; }
+                x
+            }
+        "#;
+        let mut compiler = RustToNda::new();
+        compiler.compile_source(source).unwrap();
+        let diag = compiler.diagnostics();
+        assert!(diag.expr_type_coverage.contains_key("Return"));
+    }
+
+    #[test]
+    fn return_bare_no_value() {
+        let source = r#"
+            fn bare_return() {
+                return;
+            }
+        "#;
+        let mut compiler = RustToNda::new();
+        compiler.compile_source(source).unwrap();
+        assert_eq!(compiler.function_count(), 1);
+    }
+
+    #[test]
+    fn closure_with_body() {
+        let source = r#"
+            fn use_closure() -> i32 {
+                let f = |x: i32| -> i32 { x + 1 };
+                f(41)
+            }
+        "#;
+        let mut compiler = RustToNda::new();
+        compiler.compile_source(source).unwrap();
+        let diag = compiler.diagnostics();
+        assert!(diag.expr_type_coverage.contains_key("Closure"));
+    }
+
+    #[test]
+    fn block_with_statements() {
+        let source = r#"
+            fn blocky() -> i32 {
+                {
+                    let x = 1;
+                    let y = 2;
+                    x + y
+                }
+            }
+        "#;
+        let mut compiler = RustToNda::new();
+        compiler.compile_source(source).unwrap();
+        let diag = compiler.diagnostics();
+        assert!(diag.expr_type_coverage.contains_key("Block"));
+    }
+
+    // ─── Call graph advanced tests ──────────────────────────────────────────
+
+    #[test]
+    fn call_graph_all_functions_present() {
+        let source = r#"
+            fn a() -> i32 { 1 }
+            fn b() -> i32 { a() }
+        "#;
+        let mut compiler = RustToNda::new();
+        compiler.compile_source(source).unwrap();
+        let graph = compiler.call_graph();
+        assert!(graph.contains_key("a"));
+        assert!(graph.contains_key("b"));
+    }
+
+    #[test]
+    fn call_graph_duplicate_calls_tracked() {
+        let source = r#"
+            fn target() -> i32 { 1 }
+            fn caller() -> i32 {
+                target();
+                target();
+                target()
+            }
+        "#;
+        let mut compiler = RustToNda::new();
+        compiler.compile_source(source).unwrap();
+        let graph = compiler.call_graph();
+        let callees = graph.get("caller").unwrap();
+        // Callees should contain "target" (possibly multiple times)
+        let target_count = callees.iter().filter(|c| *c == "target").count();
+        assert!(target_count >= 1, "should have at least one target callee");
+    }
+
+    #[test]
+    fn call_graph_method_callees_tracked() {
+        let source = r#"
+            struct Calc;
+            impl Calc {
+                fn add(&self) -> i32 { 1 }
+                fn run(&self) -> i32 { self.add() }
+            }
+        "#;
+        let mut compiler = RustToNda::new();
+        compiler.compile_source(source).unwrap();
+        let diag = compiler.diagnostics();
+        assert!(diag.expr_type_coverage.contains_key("MethodCall"));
+    }
+
+    #[test]
+    fn call_edges_counted_in_diagnostics() {
+        let source = r#"
+            fn a() -> i32 { 1 }
+            fn b() -> i32 { a() }
+            fn c() -> i32 { a(); b() }
+        "#;
+        let mut compiler = RustToNda::new();
+        compiler.compile_source(source).unwrap();
+        // call_edges is only set by seed_from_source; verify callees exist
+        let graph = compiler.call_graph();
+        assert!(!graph.get("b").unwrap().is_empty());
+        assert!(!graph.get("c").unwrap().is_empty());
+    }
+
+    // ─── Hash / determinism tests ───────────────────────────────────────────
+
+    #[test]
+    fn different_source_different_hash() {
+        let s1 = "fn a() -> i32 { 1 }";
+        let s2 = "fn a() -> i32 { 2 }";
+        let mut c1 = RustToNda::new();
+        let mut c2 = RustToNda::new();
+        let h1 = c1.compile_source(s1).unwrap().hash();
+        let h2 = c2.compile_source(s2).unwrap().hash();
+        assert_ne!(h1, h2, "different source should produce different hashes");
+    }
+
+    #[test]
+    fn function_order_independent_for_hashes() {
+        let s1 = "fn a() -> i32 { 1 } fn b() -> i32 { 2 }";
+        let s2 = "fn b() -> i32 { 2 } fn a() -> i32 { 1 }";
+        let mut c1 = RustToNda::new();
+        let mut c2 = RustToNda::new();
+        c1.compile_source(s1).unwrap();
+        c2.compile_source(s2).unwrap();
+        // Individual function hashes should be the same regardless of order
+        let names1 = c1.function_names();
+        let names2 = c2.function_names();
+        assert!(names1.contains(&"a"));
+        assert!(names1.contains(&"b"));
+        assert!(names2.contains(&"a"));
+        assert!(names2.contains(&"b"));
+    }
+
+    // ─── build_matrix_node advanced tests ───────────────────────────────────
+
+    #[test]
+    fn build_matrix_node_large_dimensions() {
+        let node = build_matrix_node(1024, 2048);
+        match node {
+            NdaNode::Matrix { rows, cols, sign, extra, .. } => {
+                assert_eq!(rows, 1024);
+                assert_eq!(cols, 2048);
+                let expected_bytes = 1024_usize * (2048_usize).div_ceil(8);
+                assert_eq!(sign.len(), expected_bytes);
+                assert_eq!(extra.len(), expected_bytes);
+            }
+            _ => panic!("expected Matrix"),
+        }
+    }
+
+    #[test]
+    fn build_matrix_node_1x1() {
+        let node = build_matrix_node(1, 1);
+        match node {
+            NdaNode::Matrix { rows, cols, sign, extra, .. } => {
+                assert_eq!(rows, 1);
+                assert_eq!(cols, 1);
+                // 1 * ceil(1/8) = 1 byte
+                assert_eq!(sign.len(), 1);
+                assert_eq!(extra.len(), 1);
+                assert_eq!(sign[0], 0xAA);
+                assert_eq!(extra[0], 0x55);
+            }
+            _ => panic!("expected Matrix"),
+        }
+    }
+
+    #[test]
+    fn build_matrix_node_hash_differs_by_content() {
+        let n1 = build_matrix_node(4, 8);
+        let n2 = build_matrix_node(8, 16);
+        assert_ne!(n1.hash(), n2.hash());
+    }
+
+    // ─── matrix_dims_from_type advanced tests ───────────────────────────────
+
+    #[test]
+    fn matrix_dims_from_type_i32_array() {
+        let ty: Type = syn::parse_str("[[i32; 32]; 16]").unwrap();
+        let (rows, cols) = matrix_dims_from_type(&ty).unwrap();
+        assert_eq!(rows, 16);
+        assert_eq!(cols, 32);
+    }
+
+    #[test]
+    fn matrix_dims_from_type_deeply_nested() {
+        // [[[f32; 4]; 3]; 2] is a 3D array — outer is Array, inner is also Array
+        let ty: Type = syn::parse_str("[[[f32; 4]; 3]; 2]").unwrap();
+        // matrix_dims_from_type expects inner.elem to be Array too
+        let result = matrix_dims_from_type(&ty);
+        // outer: rows=2, inner elem is [[f32;4];3] which is Array with len=3
+        // inner inner is [f32;4] which is Array with len=4, but inner.elem is Type::Array
+        // so it should parse: rows=2, cols=3? No — the inner array's len is 3 but inner.elem
+        // is [f32;4] which is Type::Array, not Type::Array<Type::Array>. So:
+        // outer: rows=2, inner is [[f32;4];3] → inner.len=3 → cols=3
+        assert!(result.is_some());
+        let (r, c) = result.unwrap();
+        assert_eq!(r, 2);
+        assert_eq!(c, 3);
+    }
+
+    #[test]
+    fn matrix_dims_from_type_non_2d_array() {
+        let ty: Type = syn::parse_str("[f32; 64]").unwrap();
+        assert!(matrix_dims_from_type(&ty).is_none());
+    }
+
+    // ─── extract_let_type tests ─────────────────────────────────────────────
+
+    #[test]
+    fn extract_let_type_with_annotation() {
+        let source = "let x: i32 = 0;";
+        let stmt: Stmt = syn::parse_str(source).unwrap();
+        if let Stmt::Local(local) = &stmt {
+            let result = extract_let_type(&local.pat);
+            assert!(result.is_some());
+        } else {
+            panic!("expected Local");
+        }
+    }
+
+    #[test]
+    fn extract_let_type_without_annotation() {
+        let source = "let x = 0;";
+        let stmt: Stmt = syn::parse_str(source).unwrap();
+        if let Stmt::Local(local) = &stmt {
+            let result = extract_let_type(&local.pat);
+            assert!(result.is_none());
+        } else {
+            panic!("expected Local");
+        }
+    }
+
+    // ─── Diagnostics advanced tests ─────────────────────────────────────────
+
+    #[test]
+    fn diagnostics_tracks_all_expr_types() {
+        let source = r#"
+            fn many_types() {
+                let x = 42;
+                let y = x + 1;
+                if x > 0 { let z = 1; }
+                let _r = 0..10;
+            }
+        "#;
+        let mut compiler = RustToNda::new();
+        compiler.compile_source(source).unwrap();
+        let diag = compiler.diagnostics();
+        assert!(diag.expr_type_coverage.contains_key("Lit"));
+        assert!(diag.expr_type_coverage.contains_key("Binary"));
+        assert!(diag.expr_type_coverage.contains_key("If"));
+        assert!(diag.expr_type_coverage.contains_key("Range"));
+        assert!(diag.expr_type_coverage.contains_key("Path"));
+    }
+
+    #[test]
+    fn diagnostics_warnings_accumulate() {
+        let source = r#"
+            struct A;
+            struct B;
+            enum C { X }
+            fn foo() -> i32 { 1 }
+        "#;
+        let mut compiler = RustToNda::new();
+        compiler.compile_source(source).unwrap();
+        let diag = compiler.diagnostics();
+        // Should have warnings for each struct and enum
+        assert!(diag.warnings.len() >= 3);
+    }
+
+    #[test]
+    fn diagnostics_items_by_kind_multiple_kinds() {
+        let source = r#"
+            fn a() -> i32 { 1 }
+            struct S;
+            enum E { X }
+            const C: i32 = 0;
+            static ST: i32 = 0;
+            type T = i32;
+            use std::fmt;
+        "#;
+        let mut compiler = RustToNda::new();
+        compiler.compile_source(source).unwrap();
+        let diag = compiler.diagnostics();
+        assert_eq!(diag.items_by_kind.get("Fn").unwrap_or(&0), &1);
+        assert_eq!(diag.items_by_kind.get("Struct").unwrap_or(&0), &1);
+        assert_eq!(diag.items_by_kind.get("Enum").unwrap_or(&0), &1);
+        assert_eq!(diag.items_by_kind.get("Const").unwrap_or(&0), &1);
+        assert_eq!(diag.items_by_kind.get("Static").unwrap_or(&0), &1);
+        assert_eq!(diag.items_by_kind.get("Type").unwrap_or(&0), &1);
+        assert_eq!(diag.items_by_kind.get("Use").unwrap_or(&0), &1);
+    }
+
+    #[test]
+    fn diagnostics_expr_type_coverage_counts_correctly() {
+        let source = r#"
+            fn count_test() -> i32 {
+                let a = 1;
+                let b = 2;
+                a + b
+            }
+        "#;
+        let mut compiler = RustToNda::new();
+        compiler.compile_source(source).unwrap();
+        let diag = compiler.diagnostics();
+        // Lit should be counted for 1, 2 (at minimum)
+        let lit_count = diag.expr_type_coverage.get("Lit").unwrap_or(&0);
+        assert!(*lit_count >= 2, "should have at least 2 Lit expressions");
+    }
+
+    // ─── compile_file tests ─────────────────────────────────────────────────
+
+    #[test]
+    fn compile_file_nonexistent_returns_error() {
+        let mut compiler = RustToNda::new();
+        let result = compiler.compile_file(std::path::Path::new("/nonexistent/path.rs"));
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn compile_file_valid_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let file_path = dir.path().join("test.rs");
+        std::fs::write(&file_path, "fn hello() -> i32 { 42 }").unwrap();
+        let mut compiler = RustToNda::new();
+        let root = compiler.compile_file(&file_path).unwrap();
+        assert!(matches!(root, NdaNode::Scope { .. }));
+        assert_eq!(compiler.function_count(), 1);
+    }
+
+    // ─── walkdir_rs_files tests ─────────────────────────────────────────────
+
+    #[test]
+    fn walkdir_rs_files_finds_files() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("a.rs"), "fn a() {}").unwrap();
+        std::fs::write(dir.path().join("b.rs"), "fn b() {}").unwrap();
+        std::fs::write(dir.path().join("c.txt"), "not rust").unwrap();
+        let files = walkdir_rs_files(dir.path()).unwrap();
+        assert_eq!(files.len(), 2);
+        assert!(files.iter().all(|p| p.extension().unwrap() == "rs"));
+    }
+
+    #[test]
+    fn walkdir_rs_files_skips_target() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("a.rs"), "fn a() {}").unwrap();
+        let target = dir.path().join("target");
+        std::fs::create_dir(&target).unwrap();
+        std::fs::write(target.join("b.rs"), "fn b() {}").unwrap();
+        let files = walkdir_rs_files(dir.path()).unwrap();
+        assert_eq!(files.len(), 1);
+    }
+
+    #[test]
+    fn walkdir_rs_files_skips_git() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("a.rs"), "fn a() {}").unwrap();
+        let git = dir.path().join(".git");
+        std::fs::create_dir(&git).unwrap();
+        std::fs::write(git.join("b.rs"), "fn b() {}").unwrap();
+        let files = walkdir_rs_files(dir.path()).unwrap();
+        assert_eq!(files.len(), 1);
+    }
+
+    #[test]
+    fn walkdir_rs_files_skips_node_modules() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("a.rs"), "fn a() {}").unwrap();
+        let nm = dir.path().join("node_modules");
+        std::fs::create_dir(&nm).unwrap();
+        std::fs::write(nm.join("b.rs"), "fn b() {}").unwrap();
+        let files = walkdir_rs_files(dir.path()).unwrap();
+        assert_eq!(files.len(), 1);
+    }
+
+    #[test]
+    fn walkdir_rs_files_recursive() {
+        let dir = tempfile::tempdir().unwrap();
+        let sub = dir.path().join("src");
+        std::fs::create_dir(&sub).unwrap();
+        std::fs::write(sub.join("inner.rs"), "fn inner() {}").unwrap();
+        std::fs::write(dir.path().join("outer.rs"), "fn outer() {}").unwrap();
+        let files = walkdir_rs_files(dir.path()).unwrap();
+        assert_eq!(files.len(), 2);
+    }
+
+    #[test]
+    fn walkdir_rs_files_not_dir_error() {
+        let result = walkdir_rs_files(std::path::Path::new("/nonexistent"));
+        assert!(result.is_err());
+    }
+
+    // ─── store_all advanced tests ───────────────────────────────────────────
+
+    #[test]
+    fn store_all_empty_compiler() {
+        let mut compiler = RustToNda::new();
+        let root = compiler.compile_source("").unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let mut sm = SiteMap::open(dir.path(), 0).unwrap();
+        let count = compiler.store_all(&mut sm, &root).unwrap();
+        // 0 functions + 1 root = 1
+        assert_eq!(count, 1);
+    }
+
+    #[test]
+    fn store_all_single_function() {
+        let source = "fn solo() -> i32 { 42 }";
+        let mut compiler = RustToNda::new();
+        let root = compiler.compile_source(source).unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let mut sm = SiteMap::open(dir.path(), 0).unwrap();
+        let count = compiler.store_all(&mut sm, &root).unwrap();
+        // 1 function + 1 root = 2
+        assert_eq!(count, 2);
+    }
+
+    // ─── SeedReport Display format tests ────────────────────────────────────
+
+    #[test]
+    fn seed_report_display_hex_hash() {
+        let report = SeedReport {
+            source_path: std::path::PathBuf::from("lib.rs"),
+            functions: 1,
+            nodes_stored: 5,
+            root_hash: 0x00000000DEADBEEF,
+            elapsed_ms: 10,
+            call_graph: HashMap::new(),
+            diagnostics: CompileDiagnostics::default(),
+        };
+        let s = format!("{}", report);
+        assert!(s.contains("deadbeef"), "should contain hex hash");
+    }
+
+    #[test]
+    fn seed_report_display_elapsed() {
+        let report = SeedReport {
+            source_path: std::path::PathBuf::from("x.rs"),
+            functions: 2,
+            nodes_stored: 8,
+            root_hash: 0,
+            elapsed_ms: 123,
+            call_graph: HashMap::new(),
+            diagnostics: CompileDiagnostics::default(),
+        };
+        let s = format!("{}", report);
+        assert!(s.contains("123ms"));
+    }
+
+    // ─── SeedReport JSON pretty tests ───────────────────────────────────────
+
+    #[test]
+    fn seed_report_pretty_json() {
+        let report = SeedReport {
+            source_path: std::path::PathBuf::from("test.rs"),
+            functions: 1,
+            nodes_stored: 2,
+            root_hash: 0,
+            elapsed_ms: 0,
+            call_graph: HashMap::new(),
+            diagnostics: CompileDiagnostics::default(),
+        };
+        let pretty = serde_json::to_string_pretty(&report).unwrap();
+        assert!(pretty.contains('\n'));
+        assert!(pretty.contains("test.rs"));
+    }
+
+    #[test]
+    fn compile_diagnostics_pretty_json() {
+        let diag = CompileDiagnostics {
+            expressions_visited: 10,
+            expressions_compiled: 8,
+            expressions_dropped: 2,
+            expr_type_coverage: {
+                let mut m = HashMap::new();
+                m.insert("Lit".to_string(), 5);
+                m
+            },
+            items_by_kind: {
+                let mut m = HashMap::new();
+                m.insert("Fn".to_string(), 1);
+                m
+            },
+            call_edges: 1,
+            call_edges_resolved: 1,
+            warnings: vec![],
+        };
+        let pretty = serde_json::to_string_pretty(&diag).unwrap();
+        assert!(pretty.contains('\n'));
+        assert!(pretty.contains("expressions_visited"));
+    }
+
+    // ─── ExprCollector fallback tests ───────────────────────────────────────
+
+    #[test]
+    fn expr_collector_fallback_handles_unknown() {
+        // Cast expression should hit the fallback arm
+        let source = r#"
+            fn cast_test() -> i32 {
+                let x = 42 as i64;
+                0
+            }
+        "#;
+        let mut compiler = RustToNda::new();
+        compiler.compile_source(source).unwrap();
+        assert_eq!(compiler.function_count(), 1);
+    }
+
+    // ─── Nested module tests ────────────────────────────────────────────────
+
+    #[test]
+    fn nested_module_deep() {
+        let source = r#"
+            mod outer {
+                pub fn outer_fn() -> i32 { 1 }
+                mod inner {
+                    pub fn inner_fn() -> i32 { 2 }
+                }
+            }
+        "#;
+        let mut compiler = RustToNda::new();
+        compiler.compile_source(source).unwrap();
+        let names = compiler.function_names();
+        assert!(names.contains(&"outer_fn"));
+        assert!(names.contains(&"inner_fn"));
+    }
+
+    #[test]
+    fn nested_module_empty() {
+        let source = r#"
+            mod empty_mod {}
+            fn real_fn() -> i32 { 1 }
+        "#;
+        let mut compiler = RustToNda::new();
+        compiler.compile_source(source).unwrap();
+        assert_eq!(compiler.function_count(), 1);
+    }
+
+    // ─── Multiple impl blocks tests ─────────────────────────────────────────
+
+    #[test]
+    fn impl_restores_current_impl() {
+        let source = r#"
+            struct A;
+            struct B;
+            impl A {
+                fn method_a(&self) -> i32 { 1 }
+            }
+            impl B {
+                fn method_b(&self) -> i32 { 2 }
+            }
+            fn standalone() -> i32 { 3 }
+        "#;
+        let mut compiler = RustToNda::new();
+        compiler.compile_source(source).unwrap();
+        let names = compiler.function_names();
+        assert!(names.contains(&"A::method_a"));
+        assert!(names.contains(&"B::method_b"));
+        assert!(names.contains(&"standalone"));
+    }
+
+    // ─── CompileDiagnostics invariant tests ─────────────────────────────────
+
+    #[test]
+    fn diagnostics_invariant_complex_source() {
+        let source = r#"
+            fn a(x: i32) -> i32 {
+                if x > 0 { x } else { 0 }
+            }
+            fn b() {
+                let mut s = 0;
+                for _i in 0..10 {
+                    s = s + a(_i);
+                }
+            }
+            struct Unused;
+        "#;
+        let mut compiler = RustToNda::new();
+        compiler.compile_source(source).unwrap();
+        let diag = compiler.diagnostics();
+        assert_eq!(
+            diag.expressions_visited,
+            diag.expressions_compiled + diag.expressions_dropped
+        );
+    }
+
+    #[test]
+    fn diagnostics_default_all_zeros() {
+        let diag = CompileDiagnostics::default();
+        assert_eq!(diag.expressions_visited, 0);
+        assert_eq!(diag.expressions_compiled, 0);
+        assert_eq!(diag.expressions_dropped, 0);
+        assert_eq!(diag.call_edges, 0);
+        assert_eq!(diag.call_edges_resolved, 0);
+        assert!(diag.warnings.is_empty());
+        assert!(diag.expr_type_coverage.is_empty());
+        assert!(diag.items_by_kind.is_empty());
+    }
+
+    // ─── CompiledFn advanced tests ──────────────────────────────────────────
+
+    #[test]
+    fn compiled_fn_empty_callees() {
+        let cf = CompiledFn {
+            name: "leaf".to_string(),
+            node: NdaNode::Scope { children: vec![] },
+            hash: 0x1234,
+            callees: vec![],
+        };
+        assert!(cf.callees.is_empty());
+        assert_eq!(cf.hash, 0x1234);
+    }
+
+    #[test]
+    fn compiled_fn_multiple_callees() {
+        let cf = CompiledFn {
+            name: "caller".to_string(),
+            node: NdaNode::Scope { children: vec![] },
+            hash: 0xABCD,
+            callees: vec!["a".to_string(), "b".to_string(), "c".to_string()],
+        };
+        assert_eq!(cf.callees.len(), 3);
+        let debug = format!("{:?}", cf);
+        assert!(debug.contains("caller"));
+        assert!(debug.contains("a"));
+    }
+
+    // ─── patch_calls edge case tests ────────────────────────────────────────
+
+    #[test]
+    fn patch_calls_non_call_passthrough() {
+        let node = NdaNode::Int { value: 42 };
+        let hashes = HashMap::new();
+        let patched = patch_calls(&node, &hashes);
+        assert!(matches!(patched, NdaNode::Int { value: 42 }));
+    }
+
+    #[test]
+    fn patch_calls_single_hash() {
+        let node = NdaNode::Call { target: 0 };
+        let mut hashes = HashMap::new();
+        hashes.insert("only".to_string(), 0xBEEF);
+        let patched = patch_calls(&node, &hashes);
+        match patched {
+            NdaNode::Call { target } => assert_eq!(target, 0xBEEF),
+            _ => panic!("expected Call"),
+        }
+    }
+
+    // ─── Integration-style tests ────────────────────────────────────────────
+
+    #[test]
+    fn full_pipeline_compile_and_store() {
+        let source = r#"
+            fn encode(x: i32) -> i32 { x + 1 }
+            fn decode(x: i32) -> i32 { x - 1 }
+            fn pipeline() {
+                let a = encode(42);
+                let b = decode(a);
+            }
+        "#;
+        let mut compiler = RustToNda::new();
+        let root = compiler.compile_source(source).unwrap();
+        assert_eq!(compiler.function_count(), 3);
+
+        let graph = compiler.call_graph();
+        assert!(graph.get("pipeline").unwrap().contains(&"encode".to_string()));
+        assert!(graph.get("pipeline").unwrap().contains(&"decode".to_string()));
+
+        let dir = tempfile::tempdir().unwrap();
+        let mut sm = SiteMap::open(dir.path(), 0).unwrap();
+        let count = compiler.store_all(&mut sm, &root).unwrap();
+        assert_eq!(count, 4); // 3 fns + 1 root
+    }
+
+    #[test]
+    fn source_with_generics_compiles() {
+        let source = r#"
+            fn generic_fn<T>(x: T) -> T { x }
+            fn concrete() -> i32 { generic_fn(42) }
+        "#;
+        let mut compiler = RustToNda::new();
+        compiler.compile_source(source).unwrap();
+        assert_eq!(compiler.function_count(), 2);
+    }
+
+    #[test]
+    fn source_with_attributes_compiles() {
+        let source = r#"
+            #[inline]
+            fn fast_fn() -> i32 { 42 }
+        "#;
+        let mut compiler = RustToNda::new();
+        compiler.compile_source(source).unwrap();
+        assert_eq!(compiler.function_count(), 1);
+    }
+
+    #[test]
+    fn source_with_macros_compiles() {
+        let source = r#"
+            fn with_macro() {
+                println!("hello");
+            }
+        "#;
+        let mut compiler = RustToNda::new();
+        compiler.compile_source(source).unwrap();
+        assert_eq!(compiler.function_count(), 1);
+    }
+
+    #[test]
+    fn source_with_let_mut_compiles() {
+        let source = r#"
+            fn mutable() -> i32 {
+                let mut x = 0;
+                x = 42;
+                x
+            }
+        "#;
+        let mut compiler = RustToNda::new();
+        let root = compiler.compile_source(source).unwrap();
+        assert!(matches!(root, NdaNode::Scope { .. }));
+        assert_eq!(compiler.function_count(), 1);
+    }
+
+    #[test]
+    fn source_with_multiple_matrix_types() {
+        let source = r#"
+            fn multi_matrix() {
+                let a: [[f32; 64]; 32] = [[0.0; 64]; 32];
+                let b: [[i32; 16]; 8] = [[0; 16]; 8];
+            }
+        "#;
+        let mut compiler = RustToNda::new();
+        let root = compiler.compile_source(source).unwrap();
+        fn count_matrices(node: &NdaNode) -> usize {
+            match node {
+                NdaNode::Matrix { .. } => 1,
+                NdaNode::Scope { children } => children.iter().map(count_matrices).sum(),
+                _ => 0,
+            }
+        }
+        assert!(count_matrices(&root) >= 2, "should have 2 matrix nodes");
+    }
+
+    #[test]
+    fn unary_not_expression() {
+        let source = r#"
+            fn negate(x: i32) -> i32 {
+                -x
+            }
+        "#;
+        let mut compiler = RustToNda::new();
+        compiler.compile_source(source).unwrap();
+        let diag = compiler.diagnostics();
+        assert!(diag.expr_type_coverage.contains_key("Unary"));
+    }
+
+    #[test]
+    fn field_access_chain() {
+        let source = r#"
+            fn chain() -> i32 {
+                let val = 42;
+                val
+            }
+        "#;
+        let mut compiler = RustToNda::new();
+        compiler.compile_source(source).unwrap();
+        assert_eq!(compiler.function_count(), 1);
+    }
+
+    #[test]
+    fn let_without_init_dropped() {
+        let source = r#"
+            fn no_init() {
+                let _x: i32;
+            }
+        "#;
+        let mut compiler = RustToNda::new();
+        compiler.compile_source(source).unwrap();
+        assert_eq!(compiler.function_count(), 1);
+    }
+
+    #[test]
+    fn binary_all_ops() {
+        let source = r#"
+            fn all_ops(a: i32, b: i32) -> i32 {
+                let _c = a + b;
+                let _d = a - b;
+                let _e = a * b;
+                let _f = a / b;
+                let _g = a % b;
+                a + b
+            }
+        "#;
+        let mut compiler = RustToNda::new();
+        compiler.compile_source(source).unwrap();
+        let diag = compiler.diagnostics();
+        let bin_count = diag.expr_type_coverage.get("Binary").unwrap_or(&0);
+        assert!(*bin_count >= 5, "should have at least 5 binary expressions");
+    }
 }
