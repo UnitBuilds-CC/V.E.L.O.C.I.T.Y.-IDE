@@ -1,13 +1,20 @@
-test: velocity_client — 27 new tests (JSON key counts, clone, edge cases)
+Block 186: packing.rs — 29 new tests (95 total)
 
-Block 169: Added 27 new tests to velocity_client.rs covering:
-- JSON key count verification (ConnectionInfo=5, RetryConfigInfo=6, ClientDiagnostics=2, HealthResponse=3, UsageResponse=7)
-- VelocityConfig and RetryConfig clone independence
-- Debug format for config types
-- parse_toml duplicate keys (last wins), whitespace handling, multiple keys
-- fmt_number max u64, fmt_currency negative, fmt_percent large values
-- Sub-type deserialization (UsagePeriod, ModelUsage, DomainUsage, AssignmentCost, LatencyPercentiles, ModelLatency, AuditModelBreakdown, BillingPeriodDetail)
-- RetryConfig all-issues-combined, high exponent capping
-- URL builder multiple trailing slashes, auth header special chars
+New tests cover:
+- JSON key counts for PackingReport (6), BatchPackingReport (7), PackingSummary (7)
+- JSON roundtrip via Value for all 3 structs
+- Compression ratio formula verification (output/input)
+- valid_ops/invalid_ops logic for all_valid true/false
+- Validation edge cases: k=1 not multiple of 16, k=32 ok, k=256 ok, k=64 not multiple of 128
+- validate_inputs_nda non-multiple-of-8
+- Report operation names from actual packing functions
+- Input bytes formula (inputs.len() * 4)
+- Batch total_elapsed_us >= 1
+- Clone independence for validation_issues and issues vecs
+- PackingSummary debug format
+- Compact JSON (no whitespace)
+- JSON type verification for PackingReport and BatchPackingReport
+- Output size formulas for uvec4, nda, and inputs packing
+- Batch mixed valid/invalid total bytes accuracy
 
-Total: 4157 lib tests, 0 failures
+Full suite: 4571 lib tests, 0 failures
