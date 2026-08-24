@@ -1,7 +1,10 @@
-pipeline_bridge.rs — 26 new tests (163 total)
+verifier.rs — 25 new tests (146 total)
 
-Block 203: pipeline_bridge.rs — EngineOutput variant field access (Text/Nda),
-validate() logic multiple warnings + divisibility, boundary values (u64::MAX elapsed_us/root_hash),
-MHA/MQA/GQA attention patterns, site_map zero-total guard, per_second extreme values,
-scope_similarity boundary (0.0/1.0), pretty JSON, clone preserves all fields,
-tokenizer_merge_count zero, vocab_size boundary
+Block 205: site_map/verifier.rs — hash determinism for new node variants (Float, Break,
+Load, Spawn, Triple, RegInt, Bitwise, Math, MathFunc, Peek, Poke, Gemv, Dot, Syscall,
+Atomic, Alloc, Free, Cast, GpuDispatch), hash differs by float value and bitwise rhs,
+validate_node matrix zero rows/sign mismatch/scale range, norm zero size/weight-bias
+mismatch, loop zero count/empty body, clean matrix no issues, node_kind_name coverage,
+estimated_memory_bytes for Norm/Loop, sub-enum roundtrips (CmpOp, VecOpKind, BitwiseOp),
+opcode boolean methods coverage, opcode_distribution all categories, MerkleVerifier
+depth/consistency/record_root, OpcodeInfo field validation

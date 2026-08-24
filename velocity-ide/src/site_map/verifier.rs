@@ -2857,4 +2857,305 @@ mod tests {
         assert!(!v.is_valid());
         assert!(v.info().validation_issues.is_empty());
     }
+
+    // ─── Block 205: hash coverage for new variants, validate_node, sub-enum roundtrips ──
+
+    #[test]
+    fn hash_new_variants_deterministic() {
+        // Each new node variant should produce the same hash on repeated calls
+        let nodes: Vec<NdaNode> = vec![
+            NdaNode::Float { value: 3.14 },
+            NdaNode::Break,
+            NdaNode::Load { name_hash: 0xABCD },
+            NdaNode::Spawn { scope_hash: 0x1234 },
+            NdaNode::Triple { subject_hash: 1, predicate_id: 2, object_hash: 3 },
+            NdaNode::RegInt { vector: 5, handler_hash: 99 },
+        ];
+        for node in &nodes {
+            assert_eq!(node.hash(), node.hash(), "hash not deterministic for {:?}", node_kind_name(node));
+        }
+    }
+
+    #[test]
+    fn hash_compound_variants_deterministic() {
+        let int_a = NdaNode::Int { value: 1 };
+        let int_b = NdaNode::Int { value: 2 };
+        let nodes: Vec<NdaNode> = vec![
+            NdaNode::Bitwise { op: BitwiseOp::And, lhs: Box::new(int_a.clone()), rhs: Some(Box::new(int_b.clone())) },
+            NdaNode::Math { op: MathOp::Add, lhs: Box::new(int_a.clone()), rhs: Box::new(int_b.clone()) },
+            NdaNode::MathFunc { func: MathFuncKind::Sin, operand: Box::new(int_a.clone()) },
+            NdaNode::Peek { addr: Box::new(int_a.clone()) },
+            NdaNode::Poke { addr: Box::new(int_a.clone()), value: Box::new(int_b.clone()) },
+            NdaNode::Gemv { matrix: Box::new(int_a.clone()), vector: Box::new(int_b.clone()) },
+            NdaNode::Dot { lhs: Box::new(int_a.clone()), rhs: Box::new(int_b.clone()) },
+            NdaNode::Syscall { num: 1, args: vec![int_a.clone()] },
+            NdaNode::Atomic { op: AtomicOp::Cas, addr: Box::new(int_a.clone()), val: Box::new(int_b.clone()) },
+            NdaNode::Alloc { size: Box::new(int_a.clone()) },
+            NdaNode::Free { addr: Box::new(int_a.clone()) },
+            NdaNode::Cast { from_type: TypeKind::Int, to_type: TypeKind::Float, operand: Box::new(int_a.clone()) },
+            NdaNode::GpuDispatch { shader_hash: 0xFF, args: vec![int_a.clone()] },
+        ];
+        for node in &nodes {
+            assert_eq!(node.hash(), node.hash(), "not deterministic for {:?}", node_kind_name(node));
+        }
+    }
+
+    #[test]
+    fn hash_different_float_values() {
+        let a = NdaNode::Float { value: 1.0 };
+        let b = NdaNode::Float { value: 2.0 };
+        assert_ne!(a.hash(), b.hash());
+    }
+
+    #[test]
+    fn hash_bitwise_with_and_without_rhs() {
+        let lhs = NdaNode::Int { value: 1 };
+        let rhs = NdaNode::Int { value: 2 };
+        let with_rhs = NdaNode::Bitwise { op: BitwiseOp::And, lhs: Box::new(lhs.clone()), rhs: Some(Box::new(rhs)) };
+        let without_rhs = NdaNode::Bitwise { op: BitwiseOp::Not, lhs: Box::new(lhs.clone()), rhs: None };
+        // Different structure → different hash
+        assert_ne!(with_rhs.hash(), without_rhs.hash());
+    }
+
+    #[test]
+    fn validate_node_matrix_zero_rows() {
+        let node = NdaNode::Matrix { rows: 0, cols: 4, scale: 0, sign: vec![], extra: vec![] };
+        let issues = validate_node(&node);
+        assert!(issues.iter().any(|i| i.contains("zero dimension")));
+    }
+
+    #[test]
+    fn validate_node_matrix_sign_byte_mismatch() {
+        // 2x4 = 8 bits → 1 byte expected for sign
+        let node = NdaNode::Matrix { rows: 2, cols: 4, scale: 0, sign: vec![0, 0], extra: vec![] };
+        let issues = validate_node(&node);
+        assert!(issues.iter().any(|i| i.contains("sign bytes mismatch")));
+    }
+
+    #[test]
+    fn validate_node_matrix_scale_out_of_range_205() {
+        let node = NdaNode::Matrix { rows: 1, cols: 1, scale: 20, sign: vec![0], extra: vec![] };
+        let issues = validate_node(&node);
+        assert!(issues.iter().any(|i| i.contains("scale out of range")));
+    }
+
+    #[test]
+    fn validate_node_matrix_negative_scale_out_of_range() {
+        let node = NdaNode::Matrix { rows: 1, cols: 1, scale: -20, sign: vec![0], extra: vec![] };
+        let issues = validate_node(&node);
+        assert!(issues.iter().any(|i| i.contains("scale out of range")));
+    }
+
+    #[test]
+    fn validate_node_norm_zero_size_205() {
+        let node = NdaNode::Norm { size: 0, weight: vec![], bias: vec![] };
+        let issues = validate_node(&node);
+        assert!(issues.iter().any(|i| i.contains("zero size")));
+    }
+
+    #[test]
+    fn validate_node_norm_weight_bias_mismatch_205() {
+        let node = NdaNode::Norm { size: 4, weight: vec![1, 2, 3], bias: vec![1, 2] };
+        let issues = validate_node(&node);
+        assert!(issues.iter().any(|i| i.contains("weight/bias length mismatch")));
+    }
+
+    #[test]
+    fn validate_node_loop_zero_count_205() {
+        let node = NdaNode::Loop { count: 0, body: vec![NdaNode::Int { value: 1 }] };
+        let issues = validate_node(&node);
+        assert!(issues.iter().any(|i| i.contains("zero iteration")));
+    }
+
+    #[test]
+    fn validate_node_loop_empty_body_205() {
+        let node = NdaNode::Loop { count: 10, body: vec![] };
+        let issues = validate_node(&node);
+        assert!(issues.iter().any(|i| i.contains("empty body")));
+    }
+
+    #[test]
+    fn validate_node_clean_matrix() {
+        // 4x4 = 16 bits → 2 bytes for sign
+        let node = NdaNode::Matrix { rows: 4, cols: 4, scale: 5, sign: vec![0xFF; 2], extra: vec![] };
+        let issues = validate_node(&node);
+        assert!(issues.is_empty(), "expected no issues, got {:?}", issues);
+    }
+
+    #[test]
+    fn node_kind_name_all_variants_205() {
+        let int_node = NdaNode::Int { value: 0 };
+        assert_eq!(node_kind_name(&int_node), "Int");
+        let call = NdaNode::Call { target: 0 };
+        assert_eq!(node_kind_name(&call), "Call");
+        let scope = NdaNode::Scope { children: vec![] };
+        assert_eq!(node_kind_name(&scope), "Scope");
+        let loop_n = NdaNode::Loop { count: 1, body: vec![] };
+        assert_eq!(node_kind_name(&loop_n), "Loop");
+        let while_n = NdaNode::While { cond: Box::new(int_node.clone()), body: vec![] };
+        assert_eq!(node_kind_name(&while_n), "While");
+        let if_n = NdaNode::If { cond: Box::new(int_node.clone()), then_body: vec![], else_body: None };
+        assert_eq!(node_kind_name(&if_n), "If");
+        let break_n = NdaNode::Break;
+        assert_eq!(node_kind_name(&break_n), "Break");
+    }
+
+    #[test]
+    fn estimated_memory_bytes_norm_includes_weight_bias() {
+        let node = NdaNode::Norm { size: 4, weight: vec![0; 10], bias: vec![0; 10] };
+        let bytes = estimated_memory_bytes(&node);
+        assert_eq!(bytes, std::mem::size_of::<NdaNode>() + 20);
+    }
+
+    #[test]
+    fn estimated_memory_bytes_loop_recursive() {
+        let child = NdaNode::Int { value: 1 };
+        let loop_n = NdaNode::Loop { count: 3, body: vec![child.clone(), child.clone()] };
+        let loop_bytes = estimated_memory_bytes(&loop_n);
+        let child_bytes = estimated_memory_bytes(&child);
+        assert_eq!(loop_bytes, std::mem::size_of::<NdaNode>() + 2 * child_bytes);
+    }
+
+    #[test]
+    fn cmp_op_roundtrip_and_symbol() {
+        for i in 0..=5u8 {
+            let op = CmpOp::from_u8(i).unwrap();
+            assert_eq!(op as u8, i);
+            assert!(!op.symbol().is_empty());
+        }
+        assert!(CmpOp::from_u8(6).is_none());
+        assert!(CmpOp::from_u8(255).is_none());
+    }
+
+    #[test]
+    fn vec_op_kind_roundtrip_and_name() {
+        for i in 0..=3u8 {
+            let op = VecOpKind::from_u8(i).unwrap();
+            assert_eq!(op as u8, i);
+            assert!(!op.name().is_empty());
+        }
+        assert!(VecOpKind::from_u8(4).is_none());
+    }
+
+    #[test]
+    fn bitwise_op_roundtrip_and_name() {
+        for i in 0..=5u8 {
+            let op = BitwiseOp::from_u8(i).unwrap();
+            assert_eq!(op as u8, i);
+            assert!(!op.name().is_empty());
+        }
+        assert!(BitwiseOp::from_u8(6).is_none());
+    }
+
+    #[test]
+    fn opcode_is_methods_coverage() {
+        // Test each boolean method returns true for at least one opcode
+        assert!(NdaOpcode::Loop.is_control_flow());
+        assert!(NdaOpcode::While.is_control_flow());
+        assert!(NdaOpcode::If.is_control_flow());
+        assert!(NdaOpcode::Break.is_control_flow());
+        assert!(NdaOpcode::Add.is_arithmetic());
+        assert!(NdaOpcode::Dot.is_arithmetic());
+        assert!(NdaOpcode::Print.is_io());
+        assert!(NdaOpcode::Return.is_io());
+        assert!(NdaOpcode::Let.is_variable());
+        assert!(NdaOpcode::Load.is_variable());
+        assert!(NdaOpcode::Store.is_variable());
+        assert!(NdaOpcode::Compare.is_variable());
+        assert!(NdaOpcode::Peek.is_memory());
+        assert!(NdaOpcode::Poke.is_memory());
+        assert!(NdaOpcode::Alloc.is_memory());
+        assert!(NdaOpcode::Free.is_memory());
+        assert!(NdaOpcode::Matrix.is_computation());
+        assert!(NdaOpcode::Norm.is_computation());
+        assert!(NdaOpcode::Call.is_computation());
+        assert!(NdaOpcode::Gemv.is_computation());
+        assert!(NdaOpcode::Dot.is_computation());
+    }
+
+    #[test]
+    fn opcode_distribution_all_categories() {
+        // Build an opcode stream covering every category
+        let ops = vec![
+            NdaOpcode::Scope, NdaOpcode::EndScope, NdaOpcode::Root,  // structure
+            NdaOpcode::Matrix, NdaOpcode::Norm, NdaOpcode::Call, NdaOpcode::Int,  // computation
+            NdaOpcode::Bit0, NdaOpcode::Bit1,  // payload
+            NdaOpcode::Loop, NdaOpcode::While, NdaOpcode::If, NdaOpcode::Break,  // control_flow
+            NdaOpcode::Compare, NdaOpcode::Let, NdaOpcode::Load, NdaOpcode::Store,  // variable
+            NdaOpcode::Add, NdaOpcode::VecOp, NdaOpcode::Bitwise, NdaOpcode::Float,  // arithmetic
+            NdaOpcode::Math, NdaOpcode::MathFunc, NdaOpcode::Dot, NdaOpcode::Gemv,  // arithmetic
+            NdaOpcode::Print, NdaOpcode::Return,  // io
+            NdaOpcode::Peek, NdaOpcode::Poke,  // memory
+            NdaOpcode::Syscall, NdaOpcode::Spawn, NdaOpcode::Atomic,  // system
+            NdaOpcode::Alloc, NdaOpcode::Free, NdaOpcode::RegInt,  // system
+            NdaOpcode::Cast,  // type_system
+            NdaOpcode::GpuDispatch,  // gpu
+            NdaOpcode::Triple,  // semantic
+        ];
+        let dist = opcode_distribution(&ops);
+        assert_eq!(dist.total_tokens, ops.len());
+        assert!(dist.structure_count >= 3);
+        assert!(dist.computation_count >= 4);
+        assert!(dist.payload_count >= 2);
+        assert!(dist.control_flow_count >= 4);
+        assert!(dist.variable_count >= 4);
+        assert!(dist.arithmetic_count >= 6);
+        assert!(dist.io_count >= 2);
+        assert!(dist.memory_count >= 2);
+        assert!(dist.system_count >= 6);
+        assert_eq!(dist.type_system_count, 1);
+        assert_eq!(dist.gpu_count, 1);
+        assert_eq!(dist.semantic_count, 1);
+        assert_eq!(dist.unique_opcodes, NdaOpcode::VOCAB_SIZE);
+    }
+
+    #[test]
+    fn merkle_verifier_depth_tracking() {
+        let mut v = MerkleVerifier::new();
+        assert_eq!(v.depth(), 1);
+        v.open_scope();
+        assert_eq!(v.depth(), 2);
+        v.open_scope();
+        assert_eq!(v.depth(), 3);
+        v.close_scope().unwrap();
+        assert_eq!(v.depth(), 2);
+        v.close_scope().unwrap();
+        assert_eq!(v.depth(), 1);
+    }
+
+    #[test]
+    fn merkle_verifier_is_consistent() {
+        let v = MerkleVerifier::new();
+        assert!(v.is_consistent());
+        // After reset, still consistent
+        let mut v2 = MerkleVerifier::new();
+        v2.open_scope();
+        v2.reset();
+        assert!(v2.is_consistent());
+    }
+
+    #[test]
+    fn merkle_verifier_record_root_with_pending_hash() {
+        let mut v = MerkleVerifier::new();
+        let leaf = NdaNode::Int { value: 42 };
+        v.push_leaf(&leaf);
+        // stack[0] now has one hash — record_root should set computed_root
+        v.record_root(leaf.hash());
+        assert!(v.is_valid());
+    }
+
+    #[test]
+    fn opcode_info_all_fields_populated() {
+        let info = opcode_info(NdaOpcode::Triple);
+        assert_eq!(info.opcode, 37);
+        assert_eq!(info.name, "TRIPLE");
+        assert_eq!(info.category, "semantic");
+        assert!(!info.description.is_empty());
+        assert!(!info.is_control_flow);
+        assert!(!info.is_arithmetic);
+        assert!(!info.is_io);
+        assert!(!info.is_variable);
+        assert!(!info.is_memory);
+        assert!(!info.is_computation);
+    }
 }
