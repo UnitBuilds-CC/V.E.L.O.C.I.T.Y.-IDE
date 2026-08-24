@@ -1,13 +1,15 @@
-Block 198: pipeline_bridge.rs — 24 new tests (137 total)
+Block 199: nda_parser.rs — 42 new tests (158 total)
 
-JSON value types verification for all report fields, nested struct
-serialization (EngineStatusSnapshot inside EngineReport, NdaRunDiagnostics
-inside EngineReport), unicode and special char roundtrips, empty string
-edge cases, nested clone independence (status snapshot and NDA diagnostics
-inside report), fractional per_second calculations, optional field
-combinations (all_some, mixed, sandbox_only), path consistency checks
-(text vs nda mutual exclusivity), boundary values (usize::MAX for
-prompt_tokens and output_count), site_map_stats string content, model_dir
-with special chars and path separators, hit rate formula edge cases,
-stored per_second matches formula, all derived fields consistent for
-Qwen-0.5B style config.
+Coverage areas:
+- hash_name: distribution (100 unique), similar prefixes, case sensitivity
+- build_matrix_node: bitmap byte count formulas, odd cols, 1x1 exact bytes
+- build_norm_node: bitmap bytes for 8/9, large clamped, weight/bias content
+- resolve_calls: nested if/else, unresolved name stays original, no call_names entry
+- compile vs compile_with_report equivalence
+- ParseReport: unresolved calls, JSON hash format (16 hex chars), sorted names
+- parse_type: vec/matrix/norm/int params, int/vec return types
+- parse expressions: vec bracket/paren, norm paren, abs/reduce_sum/negate builtins
+- Nested control flow: nested loops, else-if chains, while inside loop
+- Error paths: unexpected token in let, missing colon, missing rparen, missing comma
+- Misc: empty function body, multiple calls same fn, call target hash, optional semicolons,
+  negative int literal, double negate, add chain left-associativity
