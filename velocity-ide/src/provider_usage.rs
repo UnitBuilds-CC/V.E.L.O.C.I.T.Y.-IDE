@@ -148,6 +148,123 @@ pub struct ProviderCredential {
     pub model: Option<String>,
 }
 
+impl ProviderCredential {
+    /// Validate the credential for common issues.
+    pub fn validate(&self) -> Vec<String> {
+        let mut issues = Vec::new();
+        if self.provider.is_empty() {
+            issues.push("provider name is empty".into());
+        }
+        if Provider::from_str_loose(&self.provider).is_none() {
+            issues.push(format!("unrecognized provider: '{}'", self.provider));
+        }
+        if self.api_key.is_empty() {
+            issues.push("api_key is empty".into());
+        }
+        if self.api_key.len() < 8 {
+            issues.push("api_key seems too short (< 8 chars)".into());
+        }
+        if let Some(ref url) = self.base_url {
+            if !url.starts_with("http://") && !url.starts_with("https://") {
+                issues.push(format!("base_url '{}' must start with http:// or https://", url));
+            }
+        }
+        issues
+    }
+
+    /// Return the masked API key for display (first 8 + last 4 chars).
+    pub fn masked_key(&self) -> String {
+        if self.api_key.len() > 12 {
+            format!("{}...{}", &self.api_key[..8], &self.api_key[self.api_key.len() - 4..])
+        } else if self.api_key.len() > 4 {
+            format!("{}...", &self.api_key[..4])
+        } else {
+            "****".into()
+        }
+    }
+}
+
+/// Batch-validate all credentials, returning per-credential issues.
+pub fn validate_credentials(creds: &[ProviderCredential]) -> Vec<(usize, Vec<String>)> {
+    creds.iter()
+        .enumerate()
+        .map(|(i, c)| (i, c.validate()))
+        .filter(|(_, issues)| !issues.is_empty())
+        .collect()
+}
+
+/// Find credentials by provider name (case-insensitive).
+pub fn find_by_provider<'a>(creds: &'a [ProviderCredential], provider: &str) -> Vec<&'a ProviderCredential> {
+    let lower = provider.to_lowercase();
+    creds.iter().filter(|c| c.provider.to_lowercase() == lower).collect()
+}
+
+/// Check for duplicate provider entries (same provider name).
+pub fn find_duplicate_providers(creds: &[ProviderCredential]) -> Vec<String> {
+    let mut seen = std::collections::HashSet::new();
+    let mut dupes = Vec::new();
+    for c in creds {
+        let lower = c.provider.to_lowercase();
+        if !seen.insert(lower.clone()) {
+            dupes.push(lower);
+        }
+    }
+    dupes.sort();
+    dupes.dedup();
+    dupes
+}
+
+/// Estimate cost for a given model and token count using known pricing.
+pub fn estimate_cost(provider: &Provider, model: &str, input_tokens: u64, output_tokens: u64) -> Option<f64> {
+    let pricing = provider.model_pricing();
+    let entry = pricing.iter().find(|(m, _, _)| *m == model)?;
+    let input_per_mtok = entry.1;
+    let output_per_mtok = entry.2;
+    let input_cost = input_per_mtok * (input_tokens as f64) / 1_000_000.0;
+    let output_cost = output_per_mtok * (output_tokens as f64) / 1_000_000.0;
+    Some(input_cost + output_cost)
+}
+
+/// Compare providers for a given workload (model name + token counts).
+/// Returns estimated costs per provider that has pricing for the model.
+#[derive(Debug, Clone, Serialize)]
+pub struct ProviderCostEstimate {
+    pub provider: String,
+    pub display_name: String,
+    pub model: String,
+    pub estimated_cost_usd: f64,
+}
+
+/// Compare costs across all providers for a given model and workload.
+pub fn compare_provider_costs(
+    model: &str,
+    input_tokens: u64,
+    output_tokens: u64,
+) -> Vec<ProviderCostEstimate> {
+    let all_providers = [
+        Provider::Openai,
+        Provider::Anthropic,
+        Provider::Google,
+        Provider::Mistral,
+        Provider::Cohere,
+        Provider::Xai,
+        Provider::Github,
+    ];
+    let mut estimates = Vec::new();
+    for p in &all_providers {
+        if let Some(cost) = estimate_cost(p, model, input_tokens, output_tokens) {
+            estimates.push(ProviderCostEstimate {
+                provider: p.to_string(),
+                display_name: p.display_name().to_string(),
+                model: model.to_string(),
+                estimated_cost_usd: cost,
+            });
+        }
+    }
+    estimates.sort_by(|a, b| a.estimated_cost_usd.partial_cmp(&b.estimated_cost_usd).unwrap_or(std::cmp::Ordering::Equal));
+    estimates
+}
+
 /// Load provider credentials from `~/.velocity/providers.toml`.
 pub fn load_credentials() -> Result<Vec<ProviderCredential>> {
     let path = providers_toml_path();
@@ -1327,5 +1444,204 @@ mod tests {
         let json = serde_json::to_string(&summary).unwrap();
         assert!(json.contains("\"key_valid\":true"));
         assert!(json.contains("\"model_count\":2"));
+    }
+
+    // ─── Credential Validation Tests ─────────────────────────────────────────
+
+    #[test]
+    fn credential_validate_valid() {
+        let cred = ProviderCredential {
+            provider: "openai".into(),
+            api_key: "sk-test-12345678".into(),
+            base_url: None,
+            model: None,
+        };
+        assert!(cred.validate().is_empty());
+    }
+
+    #[test]
+    fn credential_validate_empty_provider() {
+        let cred = ProviderCredential {
+            provider: "".into(),
+            api_key: "sk-test-12345678".into(),
+            base_url: None,
+            model: None,
+        };
+        let issues = cred.validate();
+        assert!(issues.iter().any(|i| i.contains("empty")));
+        assert!(issues.iter().any(|i| i.contains("unrecognized")));
+    }
+
+    #[test]
+    fn credential_validate_short_key() {
+        let cred = ProviderCredential {
+            provider: "openai".into(),
+            api_key: "abc".into(),
+            base_url: None,
+            model: None,
+        };
+        let issues = cred.validate();
+        assert!(issues.iter().any(|i| i.contains("too short")));
+    }
+
+    #[test]
+    fn credential_validate_bad_base_url() {
+        let cred = ProviderCredential {
+            provider: "openai".into(),
+            api_key: "sk-test-12345678".into(),
+            base_url: Some("ftp://bad".into()),
+            model: None,
+        };
+        let issues = cred.validate();
+        assert!(issues.iter().any(|i| i.contains("http://")));
+    }
+
+    #[test]
+    fn masked_key_long_key() {
+        let cred = ProviderCredential {
+            provider: "openai".into(),
+            api_key: "sk-test-1234567890abcdef".into(),
+            base_url: None,
+            model: None,
+        };
+        let masked = cred.masked_key();
+        assert!(masked.starts_with("sk-test-"));
+        assert!(masked.contains("..."));
+        assert!(masked.ends_with("cdef"));
+    }
+
+    #[test]
+    fn masked_key_short_key() {
+        let cred = ProviderCredential {
+            provider: "openai".into(),
+            api_key: "abc".into(),
+            base_url: None,
+            model: None,
+        };
+        assert_eq!(cred.masked_key(), "****");
+    }
+
+    #[test]
+    fn masked_key_medium_key() {
+        let cred = ProviderCredential {
+            provider: "openai".into(),
+            api_key: "abcdef12".into(),
+            base_url: None,
+            model: None,
+        };
+        let masked = cred.masked_key();
+        assert!(masked.starts_with("abcd"));
+        assert!(masked.contains("..."));
+    }
+
+    #[test]
+    fn validate_credentials_batch() {
+        let creds = vec![
+            ProviderCredential {
+                provider: "openai".into(),
+                api_key: "sk-test-12345678".into(),
+                base_url: None,
+                model: None,
+            },
+            ProviderCredential {
+                provider: "".into(),
+                api_key: "abc".into(),
+                base_url: None,
+                model: None,
+            },
+        ];
+        let issues = validate_credentials(&creds);
+        assert_eq!(issues.len(), 1);
+        assert_eq!(issues[0].0, 1); // second credential has issues
+    }
+
+    #[test]
+    fn find_by_provider_case_insensitive() {
+        let creds = vec![
+            ProviderCredential {
+                provider: "OpenAI".into(),
+                api_key: "sk-test".into(),
+                base_url: None,
+                model: None,
+            },
+            ProviderCredential {
+                provider: "anthropic".into(),
+                api_key: "sk-ant".into(),
+                base_url: None,
+                model: None,
+            },
+        ];
+        let found = find_by_provider(&creds, "openai");
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].provider, "OpenAI");
+    }
+
+    #[test]
+    fn find_duplicate_providers_detects_dupes() {
+        let creds = vec![
+            ProviderCredential { provider: "openai".into(), api_key: "sk-1".into(), base_url: None, model: None },
+            ProviderCredential { provider: "anthropic".into(), api_key: "sk-2".into(), base_url: None, model: None },
+            ProviderCredential { provider: "OpenAI".into(), api_key: "sk-3".into(), base_url: None, model: None },
+        ];
+        let dupes = find_duplicate_providers(&creds);
+        assert_eq!(dupes.len(), 1);
+        assert_eq!(dupes[0], "openai");
+    }
+
+    #[test]
+    fn find_duplicate_providers_no_dupes() {
+        let creds = vec![
+            ProviderCredential { provider: "openai".into(), api_key: "sk-1".into(), base_url: None, model: None },
+            ProviderCredential { provider: "anthropic".into(), api_key: "sk-2".into(), base_url: None, model: None },
+        ];
+        let dupes = find_duplicate_providers(&creds);
+        assert!(dupes.is_empty());
+    }
+
+    #[test]
+    fn estimate_cost_gpt4o() {
+        // gpt-4o: $2.50/M input, $10.00/M output
+        let cost = estimate_cost(&Provider::Openai, "gpt-4o", 1_000_000, 1_000_000).unwrap();
+        assert!((cost - 12.50).abs() < 0.01);
+    }
+
+    #[test]
+    fn estimate_cost_unknown_model() {
+        let cost = estimate_cost(&Provider::Openai, "gpt-99-turbo", 1000, 1000);
+        assert!(cost.is_none());
+    }
+
+    #[test]
+    fn estimate_cost_zero_tokens() {
+        let cost = estimate_cost(&Provider::Openai, "gpt-4o", 0, 0).unwrap();
+        assert!((cost - 0.0).abs() < 0.001);
+    }
+
+    #[test]
+    fn compare_provider_costs_sorted() {
+        // gpt-4o-mini: $0.15/M input, $0.60/M output
+        // Only OpenAI has gpt-4o-mini, so only one result.
+        let estimates = compare_provider_costs("gpt-4o-mini", 1_000_000, 1_000_000);
+        assert_eq!(estimates.len(), 1);
+        assert_eq!(estimates[0].provider, "openai");
+        assert!((estimates[0].estimated_cost_usd - 0.75).abs() < 0.01);
+    }
+
+    #[test]
+    fn compare_provider_costs_no_match() {
+        let estimates = compare_provider_costs("nonexistent-model", 1000, 1000);
+        assert!(estimates.is_empty());
+    }
+
+    #[test]
+    fn provider_cost_estimate_serializes() {
+        let est = ProviderCostEstimate {
+            provider: "openai".into(),
+            display_name: "OpenAI".into(),
+            model: "gpt-4o".into(),
+            estimated_cost_usd: 1.23,
+        };
+        let json = serde_json::to_string(&est).unwrap();
+        assert!(json.contains("\"estimated_cost_usd\":1.23"));
     }
 }
