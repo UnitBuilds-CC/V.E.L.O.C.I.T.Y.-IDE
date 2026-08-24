@@ -2229,4 +2229,652 @@ mod tests {
         let est = estimate_resource_usage(&nodes);
         assert!(est.validation_issues.is_empty());
     }
+
+    // ── Block 155: sandbox/mod.rs comprehensive expansion ───────────────────
+
+    // ─── JSON key count tests ───────────────────────────────────────────────
+
+    #[test]
+    fn sandbox_result_json_key_count() {
+        let r = make_result(1, 0, 0, 0, false, None, 0, vec![], vec![], 0);
+        let json = serde_json::to_string(&r).unwrap();
+        let val: serde_json::Value = serde_json::from_str(&json).unwrap();
+        // 10 fields: executed_nodes, matrix_count, norm_count, output_vec,
+        //            output_dim, panicked, error, elapsed_us, kind_counts,
+        //            output_log, loop_iterations
+        assert_eq!(val.as_object().unwrap().len(), 11);
+    }
+
+    #[test]
+    fn sandbox_execution_summary_json_key_count() {
+        let s = SandboxExecutionSummary {
+            success: true, executed_nodes: 0, matrix_count: 0,
+            norm_count: 0, output_dim: 0, elapsed_us: 0,
+            loop_iterations: 0, unique_kinds: 0,
+            output_log_lines: 0, has_error: false,
+        };
+        let json = serde_json::to_string(&s).unwrap();
+        let val: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(val.as_object().unwrap().len(), 10);
+    }
+
+    #[test]
+    fn sandbox_execution_profile_json_key_count() {
+        let p = SandboxExecutionProfile {
+            total_nodes: 0, unique_kinds: 0, top_kinds: vec![],
+            output_dim: 0, output_log_lines: 0, loop_iterations: 0,
+            elapsed_us: 0, throughput_ops: 0.0, computation_ratio: 0.0,
+        };
+        let json = serde_json::to_string(&p).unwrap();
+        let val: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(val.as_object().unwrap().len(), 9);
+    }
+
+    #[test]
+    fn sandbox_batch_report_json_key_count() {
+        let r = SandboxBatchReport {
+            total_runs: 0, successful: 0, failed: 0,
+            total_elapsed_us: 0, total_nodes_executed: 0,
+            per_run_summaries: vec![],
+        };
+        let json = serde_json::to_string(&r).unwrap();
+        let val: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(val.as_object().unwrap().len(), 6);
+    }
+
+    #[test]
+    fn resource_estimate_json_key_count() {
+        let est = estimate_resource_usage(&[NdaNode::Int { value: 1 }]);
+        let json = serde_json::to_string(&est).unwrap();
+        let val: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(val.as_object().unwrap().len(), 8);
+    }
+
+    // ─── JSON value tests ───────────────────────────────────────────────────
+
+    #[test]
+    fn sandbox_result_json_values() {
+        let r = make_result(42, 5, 3, 8, false, None, 999,
+            vec![("Matrix", 5)], vec!["hello".into()], 77);
+        let json = serde_json::to_string(&r).unwrap();
+        let val: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(val["executed_nodes"], 42);
+        assert_eq!(val["matrix_count"], 5);
+        assert_eq!(val["norm_count"], 3);
+        assert_eq!(val["output_dim"], 8);
+        assert_eq!(val["panicked"], false);
+        assert_eq!(val["elapsed_us"], 999);
+        assert_eq!(val["loop_iterations"], 77);
+        assert!(val["output_log"].is_array());
+        assert_eq!(val["output_log"][0], "hello");
+    }
+
+    #[test]
+    fn sandbox_result_json_error_case() {
+        let r = make_result(0, 0, 0, 0, true, Some("boom".into()), 10, vec![], vec![], 0);
+        let json = serde_json::to_string(&r).unwrap();
+        let val: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(val["panicked"], true);
+        assert_eq!(val["error"], "boom");
+    }
+
+    // ─── Clone independence tests ───────────────────────────────────────────
+
+    #[test]
+    fn sandbox_result_clone_kind_counts_independence() {
+        let r = make_result(5, 2, 1, 1, false, None, 100,
+            vec![("Matrix", 2), ("Norm", 1)], vec![], 0);
+        let mut cloned = r.clone();
+        cloned.kind_counts.insert("Extra".to_string(), 99);
+        assert!(!r.kind_counts.contains_key("Extra"));
+    }
+
+    #[test]
+    fn sandbox_result_clone_output_log_independence() {
+        let r = make_result(5, 0, 0, 1, false, None, 100,
+            vec![], vec!["orig".into()], 0);
+        let mut cloned = r.clone();
+        cloned.output_log.push("extra".into());
+        assert_eq!(r.output_log.len(), 1);
+        assert_eq!(cloned.output_log.len(), 2);
+    }
+
+    #[test]
+    fn execution_summary_clone_all_fields() {
+        let s = SandboxExecutionSummary {
+            success: true, executed_nodes: 10, matrix_count: 5,
+            norm_count: 3, output_dim: 128, elapsed_us: 1000,
+            loop_iterations: 50, unique_kinds: 4,
+            output_log_lines: 2, has_error: false,
+        };
+        let mut cloned = s.clone();
+        cloned.success = false;
+        cloned.has_error = true;
+        cloned.loop_iterations = 999;
+        assert!(s.success);
+        assert!(!s.has_error);
+        assert_eq!(s.loop_iterations, 50);
+    }
+
+    #[test]
+    fn execution_profile_clone_top_kinds_independence() {
+        let p = SandboxExecutionProfile {
+            total_nodes: 10, unique_kinds: 2,
+            top_kinds: vec![("A".into(), 5), ("B".into(), 3)],
+            output_dim: 64, output_log_lines: 1,
+            loop_iterations: 5, elapsed_us: 200,
+            throughput_ops: 50000.0, computation_ratio: 0.8,
+        };
+        let mut cloned = p.clone();
+        cloned.top_kinds.push(("C".into(), 1));
+        assert_eq!(p.top_kinds.len(), 2);
+        assert_eq!(cloned.top_kinds.len(), 3);
+    }
+
+    #[test]
+    fn resource_estimate_clone_validation_independence() {
+        let est = estimate_resource_usage(&[]);
+        let mut cloned = est.clone();
+        cloned.validation_issues.push("extra".into());
+        assert_ne!(est.validation_issues.len(), cloned.validation_issues.len());
+    }
+
+    // ─── Debug format tests ─────────────────────────────────────────────────
+
+    #[test]
+    fn sandbox_result_debug_contains_fields() {
+        let r = make_result(42, 5, 3, 8, false, None, 999,
+            vec![("Matrix", 5)], vec![], 77);
+        let debug = format!("{:?}", r);
+        assert!(debug.contains("executed_nodes"));
+        assert!(debug.contains("42"));
+        assert!(debug.contains("matrix_count"));
+        assert!(debug.contains("loop_iterations"));
+    }
+
+    #[test]
+    fn execution_summary_debug_contains_fields() {
+        let s = SandboxExecutionSummary {
+            success: false, executed_nodes: 0, matrix_count: 0,
+            norm_count: 0, output_dim: 0, elapsed_us: 0,
+            loop_iterations: 0, unique_kinds: 0,
+            output_log_lines: 0, has_error: true,
+        };
+        let debug = format!("{:?}", s);
+        assert!(debug.contains("SandboxExecutionSummary"));
+        assert!(debug.contains("has_error"));
+    }
+
+    #[test]
+    fn execution_profile_debug_contains_fields() {
+        let p = SandboxExecutionProfile {
+            total_nodes: 10, unique_kinds: 2,
+            top_kinds: vec![("A".into(), 5)],
+            output_dim: 64, output_log_lines: 1,
+            loop_iterations: 5, elapsed_us: 200,
+            throughput_ops: 50000.0, computation_ratio: 0.8,
+        };
+        let debug = format!("{:?}", p);
+        assert!(debug.contains("SandboxExecutionProfile"));
+        assert!(debug.contains("throughput_ops"));
+    }
+
+    // ─── Pretty JSON tests ──────────────────────────────────────────────────
+
+    #[test]
+    fn sandbox_result_pretty_json() {
+        let r = make_result(1, 0, 0, 1, false, None, 10, vec![], vec![], 0);
+        let pretty = serde_json::to_string_pretty(&r).unwrap();
+        assert!(pretty.contains('\n'));
+        assert!(pretty.contains("executed_nodes"));
+    }
+
+    #[test]
+    fn batch_report_pretty_json() {
+        let r = SandboxBatchReport {
+            total_runs: 1, successful: 1, failed: 0,
+            total_elapsed_us: 100, total_nodes_executed: 5,
+            per_run_summaries: vec![],
+        };
+        let pretty = serde_json::to_string_pretty(&r).unwrap();
+        assert!(pretty.contains('\n'));
+        assert!(pretty.contains("total_runs"));
+    }
+
+    // ─── node_kind_name: remaining variants ─────────────────────────────────
+
+    #[test]
+    fn node_kind_name_call() {
+        assert_eq!(node_kind_name(&NdaNode::Call { target: 0 }), "Call");
+    }
+
+    #[test]
+    fn node_kind_name_loop_variant() {
+        let n = NdaNode::Loop { count: 1, body: vec![] };
+        assert_eq!(node_kind_name(&n), "Loop");
+    }
+
+    #[test]
+    fn node_kind_name_while() {
+        let n = NdaNode::While {
+            cond: Box::new(NdaNode::Int { value: 1 }),
+            body: vec![],
+        };
+        assert_eq!(node_kind_name(&n), "While");
+    }
+
+    #[test]
+    fn node_kind_name_if() {
+        let n = NdaNode::If {
+            cond: Box::new(NdaNode::Int { value: 1 }),
+            then_body: vec![],
+            else_body: None,
+        };
+        assert_eq!(node_kind_name(&n), "If");
+    }
+
+    #[test]
+    fn node_kind_name_compare() {
+        use crate::site_map::verifier::CmpOp;
+        let n = NdaNode::Compare {
+            op: CmpOp::Eq,
+            lhs: Box::new(NdaNode::Int { value: 1 }),
+            rhs: Box::new(NdaNode::Int { value: 2 }),
+        };
+        assert_eq!(node_kind_name(&n), "Compare");
+    }
+
+    #[test]
+    fn node_kind_name_load() {
+        assert_eq!(node_kind_name(&NdaNode::Load { name_hash: 0 }), "Load");
+    }
+
+    #[test]
+    fn node_kind_name_store() {
+        let n = NdaNode::Store {
+            name_hash: 0,
+            value: Box::new(NdaNode::Int { value: 0 }),
+        };
+        assert_eq!(node_kind_name(&n), "Store");
+    }
+
+    #[test]
+    fn node_kind_name_vec_op() {
+        use crate::site_map::verifier::VecOpKind;
+        let n = NdaNode::VecOp {
+            op: VecOpKind::Negate,
+            operand: Box::new(NdaNode::Int { value: 1 }),
+        };
+        assert_eq!(node_kind_name(&n), "VecOp");
+    }
+
+    #[test]
+    fn node_kind_name_print() {
+        let n = NdaNode::Print {
+            source: Box::new(NdaNode::Int { value: 42 }),
+        };
+        assert_eq!(node_kind_name(&n), "Print");
+    }
+
+    #[test]
+    fn node_kind_name_return() {
+        let n = NdaNode::Return {
+            value: Box::new(NdaNode::Int { value: 0 }),
+        };
+        assert_eq!(node_kind_name(&n), "Return");
+    }
+
+    #[test]
+    fn node_kind_name_bitwise() {
+        let n = NdaNode::Bitwise {
+            op: BitwiseOp::And,
+            lhs: Box::new(NdaNode::Int { value: 1 }),
+            rhs: Some(Box::new(NdaNode::Int { value: 2 })),
+        };
+        assert_eq!(node_kind_name(&n), "Bitwise");
+    }
+
+    #[test]
+    fn node_kind_name_math() {
+        let n = NdaNode::Math {
+            op: MathOp::Add,
+            lhs: Box::new(NdaNode::Int { value: 1 }),
+            rhs: Box::new(NdaNode::Int { value: 2 }),
+        };
+        assert_eq!(node_kind_name(&n), "Math");
+    }
+
+    #[test]
+    fn node_kind_name_mathfunc() {
+        let n = NdaNode::MathFunc {
+            func: MathFuncKind::Sin,
+            operand: Box::new(NdaNode::Int { value: 1 }),
+        };
+        assert_eq!(node_kind_name(&n), "MathFunc");
+    }
+
+    #[test]
+    fn node_kind_name_peek() {
+        let n = NdaNode::Peek {
+            addr: Box::new(NdaNode::Int { value: 0 }),
+        };
+        assert_eq!(node_kind_name(&n), "Peek");
+    }
+
+    #[test]
+    fn node_kind_name_poke() {
+        let n = NdaNode::Poke {
+            addr: Box::new(NdaNode::Int { value: 0 }),
+            value: Box::new(NdaNode::Int { value: 0 }),
+        };
+        assert_eq!(node_kind_name(&n), "Poke");
+    }
+
+    #[test]
+    fn node_kind_name_gemv() {
+        let n = NdaNode::Gemv {
+            matrix: Box::new(NdaNode::Int { value: 0 }),
+            vector: Box::new(NdaNode::Int { value: 0 }),
+        };
+        assert_eq!(node_kind_name(&n), "Gemv");
+    }
+
+    #[test]
+    fn node_kind_name_dot() {
+        let n = NdaNode::Dot {
+            lhs: Box::new(NdaNode::Int { value: 1 }),
+            rhs: Box::new(NdaNode::Int { value: 2 }),
+        };
+        assert_eq!(node_kind_name(&n), "Dot");
+    }
+
+    #[test]
+    fn node_kind_name_syscall() {
+        let n = NdaNode::Syscall { num: 0, args: vec![] };
+        assert_eq!(node_kind_name(&n), "Syscall");
+    }
+
+    #[test]
+    fn node_kind_name_spawn() {
+        assert_eq!(node_kind_name(&NdaNode::Spawn { scope_hash: 0 }), "Spawn");
+    }
+
+    #[test]
+    fn node_kind_name_atomic() {
+        let n = NdaNode::Atomic {
+            op: crate::site_map::verifier::AtomicOp::Cas,
+            addr: Box::new(NdaNode::Int { value: 0 }),
+            val: Box::new(NdaNode::Int { value: 0 }),
+        };
+        assert_eq!(node_kind_name(&n), "Atomic");
+    }
+
+    #[test]
+    fn node_kind_name_alloc() {
+        let n = NdaNode::Alloc {
+            size: Box::new(NdaNode::Int { value: 1024 }),
+        };
+        assert_eq!(node_kind_name(&n), "Alloc");
+    }
+
+    #[test]
+    fn node_kind_name_free() {
+        let n = NdaNode::Free {
+            addr: Box::new(NdaNode::Int { value: 0 }),
+        };
+        assert_eq!(node_kind_name(&n), "Free");
+    }
+
+    #[test]
+    fn node_kind_name_reg_int() {
+        assert_eq!(node_kind_name(&NdaNode::RegInt { vector: 0, handler_hash: 0 }), "RegInt");
+    }
+
+    #[test]
+    fn node_kind_name_cast() {
+        use crate::site_map::verifier::TypeKind;
+        let n = NdaNode::Cast {
+            from_type: TypeKind::Int,
+            to_type: TypeKind::Float,
+            operand: Box::new(NdaNode::Int { value: 0 }),
+        };
+        assert_eq!(node_kind_name(&n), "Cast");
+    }
+
+    #[test]
+    fn node_kind_name_gpu_dispatch() {
+        let n = NdaNode::GpuDispatch { shader_hash: 0, args: vec![] };
+        assert_eq!(node_kind_name(&n), "GpuDispatch");
+    }
+
+    #[test]
+    fn node_kind_name_triple() {
+        let n = NdaNode::Triple {
+            subject_hash: 0, predicate_id: 0, object_hash: 0,
+        };
+        assert_eq!(node_kind_name(&n), "Triple");
+    }
+
+    // ─── estimate_resource: more complex programs ───────────────────────────
+
+    #[test]
+    fn estimate_resource_bitwise_nodes() {
+        let nodes = vec![NdaNode::Bitwise {
+            op: BitwiseOp::And,
+            lhs: Box::new(NdaNode::Int { value: 1 }),
+            rhs: Some(Box::new(NdaNode::Int { value: 2 })),
+        }];
+        let est = estimate_resource_usage(&nodes);
+        assert_eq!(est.node_count, 1);
+        assert!(est.validation_issues.is_empty());
+    }
+
+    #[test]
+    fn estimate_resource_compare_add_math() {
+        use crate::site_map::verifier::CmpOp;
+        let nodes = vec![
+            NdaNode::Compare {
+                op: CmpOp::Eq,
+                lhs: Box::new(NdaNode::Int { value: 1 }),
+                rhs: Box::new(NdaNode::Int { value: 2 }),
+            },
+            NdaNode::Add {
+                lhs: Box::new(NdaNode::Int { value: 3 }),
+                rhs: Box::new(NdaNode::Int { value: 4 }),
+            },
+            NdaNode::Math {
+                op: MathOp::Mul,
+                lhs: Box::new(NdaNode::Int { value: 5 }),
+                rhs: Box::new(NdaNode::Int { value: 6 }),
+            },
+        ];
+        let est = estimate_resource_usage(&nodes);
+        assert_eq!(est.node_count, 3);
+    }
+
+    #[test]
+    fn estimate_resource_syscall_gpu_dispatch() {
+        let nodes = vec![
+            NdaNode::Syscall { num: 1, args: vec![NdaNode::Int { value: 42 }] },
+            NdaNode::GpuDispatch { shader_hash: 0, args: vec![NdaNode::Int { value: 1 }] },
+        ];
+        let est = estimate_resource_usage(&nodes);
+        assert_eq!(est.node_count, 2);
+    }
+
+    #[test]
+    fn estimate_resource_deeply_nested_loops_warning() {
+        let mut body = vec![NdaNode::Int { value: 1 }];
+        for _ in 0..110 {
+            body = vec![NdaNode::Loop { count: 1, body }];
+        }
+        let est = estimate_resource_usage(&body);
+        assert!(est.validation_issues.iter().any(|i| i.contains("deeply nested")));
+    }
+
+    #[test]
+    fn estimate_resource_memory_formula() {
+        let nodes = vec![
+            NdaNode::Matrix {
+                rows: 1, cols: 1, scale: 0,
+                sign: vec![0], extra: vec![0],
+            },
+            NdaNode::Norm { size: 1, weight: vec![], bias: vec![] },
+            NdaNode::Int { value: 0 },
+        ];
+        let est = estimate_resource_usage(&nodes);
+        // 3 * 128 + 1 * 4096 + 1 * 512 = 384 + 4096 + 512 = 4992
+        assert_eq!(est.estimated_memory_bytes, 4992);
+    }
+
+    #[test]
+    fn estimate_resource_store_counts_variable() {
+        let nodes = vec![NdaNode::Store {
+            name_hash: 42,
+            value: Box::new(NdaNode::Int { value: 0 }),
+        }];
+        let est = estimate_resource_usage(&nodes);
+        assert_eq!(est.variable_count, 1);
+    }
+
+    #[test]
+    fn estimate_resource_dot_gemv_counted() {
+        let nodes = vec![
+            NdaNode::Dot {
+                lhs: Box::new(NdaNode::Int { value: 1 }),
+                rhs: Box::new(NdaNode::Int { value: 2 }),
+            },
+            NdaNode::Gemv {
+                matrix: Box::new(NdaNode::Int { value: 0 }),
+                vector: Box::new(NdaNode::Int { value: 0 }),
+            },
+        ];
+        let est = estimate_resource_usage(&nodes);
+        assert_eq!(est.node_count, 2);
+    }
+
+    // ─── Sandbox execution tests ────────────────────────────────────────────
+
+    #[test]
+    fn sandbox_executes_int_node() {
+        let input = vec![1.0f32; 4];
+        let site_map = SiteMap::open(
+            &std::env::temp_dir().join("sandbox_int_sm"), 0
+        ).unwrap();
+        let nodes = vec![NdaNode::Int { value: 42 }];
+        let result = NdaSandbox::run(&nodes, &input, &site_map);
+        assert!(result.is_success());
+        assert_eq!(result.executed_nodes, 1);
+        assert_eq!(*result.kind_counts.get("Int").unwrap_or(&0), 1);
+    }
+
+    #[test]
+    fn sandbox_executes_float_node() {
+        let input = vec![1.0f32; 4];
+        let site_map = SiteMap::open(
+            &std::env::temp_dir().join("sandbox_float_sm"), 0
+        ).unwrap();
+        let nodes = vec![NdaNode::Float { value: 3.14 }];
+        let result = NdaSandbox::run(&nodes, &input, &site_map);
+        assert!(result.is_success());
+        assert_eq!(*result.kind_counts.get("Float").unwrap_or(&0), 1);
+    }
+
+    #[test]
+    fn sandbox_executes_scope_node() {
+        let input = vec![1.0f32; 4];
+        let site_map = SiteMap::open(
+            &std::env::temp_dir().join("sandbox_scope_sm"), 0
+        ).unwrap();
+        let nodes = vec![NdaNode::Scope {
+            children: vec![
+                NdaNode::Int { value: 1 },
+                NdaNode::Int { value: 2 },
+            ],
+        }];
+        let result = NdaSandbox::run(&nodes, &input, &site_map);
+        assert!(result.is_success());
+        // Scope + 2 Int children = 3 executed nodes
+        assert_eq!(result.executed_nodes, 3);
+    }
+
+    #[test]
+    fn sandbox_executes_loop_node() {
+        let input = vec![1.0f32; 4];
+        let site_map = SiteMap::open(
+            &std::env::temp_dir().join("sandbox_loop_sm"), 0
+        ).unwrap();
+        let nodes = vec![NdaNode::Loop {
+            count: 3,
+            body: vec![NdaNode::Int { value: 1 }],
+        }];
+        let result = NdaSandbox::run(&nodes, &input, &site_map);
+        assert!(result.is_success());
+        assert_eq!(result.loop_iterations, 3);
+    }
+
+    #[test]
+    fn sandbox_executes_spawn_node() {
+        let input = vec![1.0f32; 4];
+        let site_map = SiteMap::open(
+            &std::env::temp_dir().join("sandbox_spawn_sm"), 0
+        ).unwrap();
+        let nodes = vec![NdaNode::Spawn { scope_hash: 0 }];
+        let result = NdaSandbox::run(&nodes, &input, &site_map);
+        assert!(result.is_success());
+        assert_eq!(*result.kind_counts.get("Spawn").unwrap_or(&0), 1);
+    }
+
+    #[test]
+    fn sandbox_executes_reg_int_node() {
+        let input = vec![1.0f32; 4];
+        let site_map = SiteMap::open(
+            &std::env::temp_dir().join("sandbox_regint_sm"), 0
+        ).unwrap();
+        let nodes = vec![NdaNode::RegInt { vector: 0, handler_hash: 42 }];
+        let result = NdaSandbox::run(&nodes, &input, &site_map);
+        assert!(result.is_success());
+        assert_eq!(*result.kind_counts.get("RegInt").unwrap_or(&0), 1);
+    }
+
+    #[test]
+    fn sandbox_executes_triple_node() {
+        let input = vec![1.0f32; 4];
+        let site_map = SiteMap::open(
+            &std::env::temp_dir().join("sandbox_triple_sm"), 0
+        ).unwrap();
+        let nodes = vec![NdaNode::Triple { subject_hash: 1, predicate_id: 2, object_hash: 3 }];
+        let result = NdaSandbox::run(&nodes, &input, &site_map);
+        assert!(result.is_success());
+        assert_eq!(*result.kind_counts.get("Triple").unwrap_or(&0), 1);
+    }
+
+    // ─── execution_summary field accuracy ───────────────────────────────────
+
+    #[test]
+    fn execution_summary_field_values() {
+        let r = make_result(50, 10, 5, 128, false, None, 2000,
+            vec![("Matrix", 10), ("Norm", 5), ("Int", 3)],
+            vec!["line1".into(), "line2".into()], 25);
+        let s = r.execution_summary();
+        assert!(s.success);
+        assert_eq!(s.executed_nodes, 50);
+        assert_eq!(s.matrix_count, 10);
+        assert_eq!(s.norm_count, 5);
+        assert_eq!(s.output_dim, 128);
+        assert_eq!(s.elapsed_us, 2000);
+        assert_eq!(s.loop_iterations, 25);
+        assert_eq!(s.unique_kinds, 3);
+        assert_eq!(s.output_log_lines, 2);
+        assert!(!s.has_error);
+    }
+
+    #[test]
+    fn execution_summary_error_case() {
+        let r = make_result(0, 0, 0, 0, false, Some("dim mismatch".into()), 100,
+            vec![], vec![], 0);
+        let s = r.execution_summary();
+        assert!(!s.success);
+        assert!(s.has_error);
+    }
 }
