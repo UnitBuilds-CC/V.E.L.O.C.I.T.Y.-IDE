@@ -551,4 +551,479 @@ mod tests {
         assert_eq!(info.triple_count, 0);
         assert_eq!(info.unique_subjects, 0);
     }
+
+    // ── JSON key counts ──────────────────────────────────────────────────
+
+    #[test]
+    fn vc_triple_json_has_3_keys() {
+        let t = VcTriple { subject_hash: 1, predicate_id: 2, object_hash: 3 };
+        let json = serde_json::to_string(&t).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(v.as_object().unwrap().len(), 3);
+    }
+
+    #[test]
+    fn entry_json_has_5_keys() {
+        let e = SiteMapEntry {
+            kind: EntryKind::Kv, hash: 1, file: "a".into(),
+            file_sha: "abc".into(), size: 10,
+        };
+        let json = serde_json::to_string(&e).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(v.as_object().unwrap().len(), 5);
+    }
+
+    #[test]
+    fn stats_json_has_10_keys() {
+        let stats = SiteMapStats {
+            kv: 0, nodes: 0, programs: 0, snapshots: 0,
+            total_bytes: 0, root: 0, weight_root: 0,
+            kv_cache_size: 0, string_dict_size: 0, total_entries: 0,
+        };
+        let json = serde_json::to_string(&stats).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(v.as_object().unwrap().len(), 10);
+    }
+
+    #[test]
+    fn triple_info_json_has_4_keys() {
+        let t = VcTriple { subject_hash: 1, predicate_id: 0, object_hash: 2 };
+        let json = serde_json::to_string(&t.info()).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(v.as_object().unwrap().len(), 4);
+    }
+
+    #[test]
+    fn dist_json_has_5_keys() {
+        let dist = entry_kind_distribution(&[]);
+        let json = serde_json::to_string(&dist).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(v.as_object().unwrap().len(), 5);
+    }
+
+    #[test]
+    fn triple_index_info_json_has_4_keys() {
+        let info = TripleIndex::build(&[]).info();
+        let json = serde_json::to_string(&info).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(v.as_object().unwrap().len(), 4);
+    }
+
+    // ── JSON value verification ──────────────────────────────────────────
+
+    #[test]
+    fn vc_triple_json_values() {
+        let t = VcTriple { subject_hash: 0xFF, predicate_id: 42, object_hash: 0xAB };
+        let json = serde_json::to_string(&t).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(v["subject_hash"], 0xFF);
+        assert_eq!(v["predicate_id"], 42);
+        assert_eq!(v["object_hash"], 0xAB);
+    }
+
+    #[test]
+    fn entry_json_values() {
+        let e = SiteMapEntry {
+            kind: EntryKind::Node, hash: 123, file: "prog.nda".into(),
+            file_sha: "deadbeef".into(), size: 456,
+        };
+        let json = serde_json::to_string(&e).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(v["hash"], 123);
+        assert_eq!(v["file"], "prog.nda");
+        assert_eq!(v["size"], 456);
+    }
+
+    #[test]
+    fn stats_json_values() {
+        let stats = SiteMapStats {
+            kv: 10, nodes: 5, programs: 2, snapshots: 1,
+            total_bytes: 2048, root: 0xDEAD, weight_root: 0xBEEF,
+            kv_cache_size: 8, string_dict_size: 100, total_entries: 18,
+        };
+        let json = serde_json::to_string(&stats).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(v["kv"], 10);
+        assert_eq!(v["nodes"], 5);
+        assert_eq!(v["programs"], 2);
+        assert_eq!(v["snapshots"], 1);
+        assert_eq!(v["total_bytes"], 2048);
+        assert_eq!(v["root"], 0xDEAD);
+        assert_eq!(v["weight_root"], 0xBEEF);
+        assert_eq!(v["kv_cache_size"], 8);
+        assert_eq!(v["string_dict_size"], 100);
+        assert_eq!(v["total_entries"], 18);
+    }
+
+    #[test]
+    fn dist_json_values() {
+        let entries = vec![
+            SiteMapEntry { kind: EntryKind::Kv, hash: 1, file: "a".into(), file_sha: "x".into(), size: 10 },
+            SiteMapEntry { kind: EntryKind::Snapshot, hash: 2, file: "b".into(), file_sha: "y".into(), size: 20 },
+        ];
+        let dist = entry_kind_distribution(&entries);
+        let json = serde_json::to_string(&dist).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(v["kv"], 1);
+        assert_eq!(v["snapshot"], 1);
+        assert_eq!(v["total"], 2);
+    }
+
+    // ── Clone independence ───────────────────────────────────────────────
+
+    #[test]
+    fn triple_index_clone_independent() {
+        let triples = vec![
+            VcTriple { subject_hash: 1, predicate_id: 0, object_hash: 2 },
+        ];
+        let idx = TripleIndex::build(&triples);
+        let cloned = idx.clone();
+        assert_eq!(cloned.triple_count, idx.triple_count);
+        assert_eq!(cloned.unique_subjects(), idx.unique_subjects());
+    }
+
+    #[test]
+    fn entry_clone_independent() {
+        let e = SiteMapEntry {
+            kind: EntryKind::Program, hash: 42, file: "root.nda".into(),
+            file_sha: "abcdef".into(), size: 100,
+        };
+        let mut cloned = e.clone();
+        cloned.hash = 99;
+        assert_ne!(cloned.hash, e.hash);
+    }
+
+    #[test]
+    fn dist_clone_independent() {
+        let dist = entry_kind_distribution(&[
+            SiteMapEntry { kind: EntryKind::Kv, hash: 1, file: "a".into(), file_sha: "x".into(), size: 10 },
+        ]);
+        let mut cloned = dist.clone();
+        cloned.kv = 999;
+        assert_ne!(cloned.kv, dist.kv);
+    }
+
+    // ── Display format details ───────────────────────────────────────────
+
+    #[test]
+    fn stats_display_contains_programs() {
+        let stats = SiteMapStats {
+            kv: 0, nodes: 0, programs: 3, snapshots: 0,
+            total_bytes: 0, root: 0, weight_root: 0,
+            kv_cache_size: 0, string_dict_size: 0, total_entries: 3,
+        };
+        let display = format!("{}", stats);
+        assert!(display.contains("3 programs"));
+    }
+
+    #[test]
+    fn stats_display_contains_snapshots() {
+        let stats = SiteMapStats {
+            kv: 0, nodes: 0, programs: 0, snapshots: 7,
+            total_bytes: 0, root: 0, weight_root: 0,
+            kv_cache_size: 0, string_dict_size: 0, total_entries: 7,
+        };
+        let display = format!("{}", stats);
+        assert!(display.contains("7 snapshots"));
+    }
+
+    #[test]
+    fn stats_display_contains_strings() {
+        let stats = SiteMapStats {
+            kv: 0, nodes: 0, programs: 0, snapshots: 0,
+            total_bytes: 0, root: 0, weight_root: 0,
+            kv_cache_size: 0, string_dict_size: 256, total_entries: 0,
+        };
+        let display = format!("{}", stats);
+        assert!(display.contains("256 strings"));
+    }
+
+    #[test]
+    fn stats_display_contains_cache() {
+        let stats = SiteMapStats {
+            kv: 0, nodes: 0, programs: 0, snapshots: 0,
+            total_bytes: 0, root: 0, weight_root: 0,
+            kv_cache_size: 42, string_dict_size: 0, total_entries: 0,
+        };
+        let display = format!("{}", stats);
+        assert!(display.contains("cache=42"));
+    }
+
+    #[test]
+    fn stats_display_root_hex() {
+        let stats = SiteMapStats {
+            kv: 0, nodes: 0, programs: 0, snapshots: 0,
+            total_bytes: 0, root: 0xDEADBEEF, weight_root: 0,
+            kv_cache_size: 0, string_dict_size: 0, total_entries: 0,
+        };
+        let display = format!("{}", stats);
+        assert!(display.contains("deadbeef"));
+    }
+
+    #[test]
+    fn stats_display_weight_root_hex() {
+        let stats = SiteMapStats {
+            kv: 0, nodes: 0, programs: 0, snapshots: 0,
+            total_bytes: 0, root: 0, weight_root: 0xCAFEBABE,
+            kv_cache_size: 0, string_dict_size: 0, total_entries: 0,
+        };
+        let display = format!("{}", stats);
+        assert!(display.contains("cafebabe"));
+    }
+
+    #[test]
+    fn stats_display_kb_format() {
+        let stats = SiteMapStats {
+            kv: 0, nodes: 0, programs: 0, snapshots: 0,
+            total_bytes: 10240, root: 0, weight_root: 0,
+            kv_cache_size: 0, string_dict_size: 0, total_entries: 0,
+        };
+        let display = format!("{}", stats);
+        assert!(display.contains("10.0 KB"));
+    }
+
+    // ── Validation: multiple issues ──────────────────────────────────────
+
+    #[test]
+    fn validate_entry_all_invalid() {
+        let e = SiteMapEntry {
+            kind: EntryKind::Kv, hash: 0, file: "".into(),
+            file_sha: "".into(), size: 0,
+        };
+        let issues = validate_entry(&e);
+        // hash=0, file empty, file_sha empty, size=0
+        assert_eq!(issues.len(), 4);
+        assert!(issues[0].contains("hash"));
+        assert!(issues[1].contains("empty"));
+        assert!(issues[2].contains("file_sha"));
+        assert!(issues[3].contains("size"));
+    }
+
+    #[test]
+    fn validate_entry_full_all_invalid() {
+        let e = SiteMapEntry {
+            kind: EntryKind::Kv, hash: 0, file: "".into(),
+            file_sha: "xx".into(), size: 0,
+        };
+        let issues = validate_entry_full(&e);
+        // hash=0, file empty, size=0, file_sha too short
+        assert!(issues.len() >= 4);
+    }
+
+    #[test]
+    fn validate_entry_full_combined_short_and_nonhex() {
+        let e = SiteMapEntry {
+            kind: EntryKind::Kv, hash: 1, file: "a.kv".into(),
+            file_sha: "zz".into(), size: 10,
+        };
+        let issues = validate_entry_full(&e);
+        // "zz" is both < 8 chars AND non-hex
+        assert!(issues.iter().any(|i| i.contains("too short")));
+        assert!(issues.iter().any(|i| i.contains("non-hex")));
+    }
+
+    // ── Validation: triple edge cases ────────────────────────────────────
+
+    #[test]
+    fn validate_triple_null_object() {
+        let t = VcTriple { subject_hash: 1, predicate_id: 0, object_hash: 0 };
+        let issues = t.validate();
+        assert!(issues.iter().any(|i| i.contains("object_hash")));
+    }
+
+    #[test]
+    fn validate_triple_both_null_and_self_ref() {
+        let t = VcTriple { subject_hash: 0, predicate_id: 0, object_hash: 0 };
+        let issues = t.validate();
+        // subject=0, object=0, and subject==object (self-ref)
+        assert!(issues.len() >= 2);
+        assert!(issues.iter().any(|i| i.contains("subject_hash")));
+        assert!(issues.iter().any(|i| i.contains("object_hash")));
+    }
+
+    #[test]
+    fn validate_triples_empty_slice() {
+        assert!(validate_triples(&[]).is_empty());
+    }
+
+    #[test]
+    fn validate_triples_with_invalid_and_duplicate() {
+        let t = VcTriple { subject_hash: 0, predicate_id: 0, object_hash: 0 };
+        let triples = vec![t.clone(), t];
+        let issues = validate_triples(&triples);
+        // Each triple has issues + duplicate
+        assert!(issues.iter().any(|i| i.contains("triple[0]")));
+        assert!(issues.iter().any(|i| i.contains("duplicate")));
+    }
+
+    // ── EntryKind distribution: all kinds ────────────────────────────────
+
+    #[test]
+    fn dist_all_kinds() {
+        let entries = vec![
+            SiteMapEntry { kind: EntryKind::Kv, hash: 1, file: "a".into(), file_sha: "x".into(), size: 1 },
+            SiteMapEntry { kind: EntryKind::Node, hash: 2, file: "b".into(), file_sha: "y".into(), size: 2 },
+            SiteMapEntry { kind: EntryKind::Program, hash: 3, file: "c".into(), file_sha: "z".into(), size: 3 },
+            SiteMapEntry { kind: EntryKind::Snapshot, hash: 4, file: "d".into(), file_sha: "w".into(), size: 4 },
+        ];
+        let dist = entry_kind_distribution(&entries);
+        assert_eq!(dist.kv, 1);
+        assert_eq!(dist.node, 1);
+        assert_eq!(dist.program, 1);
+        assert_eq!(dist.snapshot, 1);
+        assert_eq!(dist.total, 4);
+    }
+
+    #[test]
+    fn dist_empty() {
+        let dist = entry_kind_distribution(&[]);
+        assert_eq!(dist.kv, 0);
+        assert_eq!(dist.node, 0);
+        assert_eq!(dist.program, 0);
+        assert_eq!(dist.snapshot, 0);
+        assert_eq!(dist.total, 0);
+    }
+
+    // ── TripleIndex: advanced scenarios ──────────────────────────────────
+
+    #[test]
+    fn triple_index_shared_subject() {
+        let triples = vec![
+            VcTriple { subject_hash: 100, predicate_id: 0, object_hash: 1 },
+            VcTriple { subject_hash: 100, predicate_id: 1, object_hash: 2 },
+            VcTriple { subject_hash: 100, predicate_id: 2, object_hash: 3 },
+        ];
+        let idx = TripleIndex::build(&triples);
+        assert_eq!(idx.by_subject(100).len(), 3);
+        assert_eq!(idx.unique_subjects(), 1);
+    }
+
+    #[test]
+    fn triple_index_shared_object() {
+        let triples = vec![
+            VcTriple { subject_hash: 1, predicate_id: 0, object_hash: 999 },
+            VcTriple { subject_hash: 2, predicate_id: 0, object_hash: 999 },
+            VcTriple { subject_hash: 3, predicate_id: 0, object_hash: 999 },
+        ];
+        let idx = TripleIndex::build(&triples);
+        assert_eq!(idx.by_object(999).len(), 3);
+        assert_eq!(idx.unique_objects(), 1);
+    }
+
+    #[test]
+    fn triple_index_info_matches_methods() {
+        let triples = vec![
+            VcTriple { subject_hash: 1, predicate_id: 0, object_hash: 2 },
+            VcTriple { subject_hash: 3, predicate_id: 1, object_hash: 4 },
+            VcTriple { subject_hash: 1, predicate_id: 2, object_hash: 4 },
+        ];
+        let idx = TripleIndex::build(&triples);
+        let info = idx.info();
+        assert_eq!(info.triple_count, idx.triple_count);
+        assert_eq!(info.unique_subjects, idx.unique_subjects());
+        assert_eq!(info.unique_objects, idx.unique_objects());
+        assert_eq!(info.unique_predicates, idx.unique_predicates());
+    }
+
+    #[test]
+    fn triple_index_info_json_values() {
+        let triples = vec![
+            VcTriple { subject_hash: 1, predicate_id: 0, object_hash: 2 },
+            VcTriple { subject_hash: 3, predicate_id: 1, object_hash: 4 },
+        ];
+        let info = TripleIndex::build(&triples).info();
+        let json = serde_json::to_string(&info).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(v["triple_count"], 2);
+        assert_eq!(v["unique_subjects"], 2);
+        assert_eq!(v["unique_objects"], 2);
+        assert_eq!(v["unique_predicates"], 2);
+    }
+
+    // ── Debug format ─────────────────────────────────────────────────────
+
+    #[test]
+    fn entry_kind_debug() {
+        assert!(format!("{:?}", EntryKind::Kv).contains("Kv"));
+        assert!(format!("{:?}", EntryKind::Node).contains("Node"));
+        assert!(format!("{:?}", EntryKind::Program).contains("Program"));
+        assert!(format!("{:?}", EntryKind::Snapshot).contains("Snapshot"));
+    }
+
+    #[test]
+    fn entry_debug_contains_fields() {
+        let e = SiteMapEntry {
+            kind: EntryKind::Kv, hash: 42, file: "test.kv".into(),
+            file_sha: "abc".into(), size: 100,
+        };
+        let debug = format!("{:?}", e);
+        assert!(debug.contains("hash: 42"));
+        assert!(debug.contains("test.kv"));
+    }
+
+    // ── Serialization roundtrip ──────────────────────────────────────────
+
+    #[test]
+    fn entry_json_roundtrip_via_value() {
+        let e = SiteMapEntry {
+            kind: EntryKind::Snapshot, hash: 0xABCD, file: "snap.json".into(),
+            file_sha: "deadbeef01234567".into(), size: 9999,
+        };
+        let json = serde_json::to_string(&e).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(v["hash"], 0xABCD);
+        assert_eq!(v["file"], "snap.json");
+        assert_eq!(v["size"], 9999);
+        assert_eq!(v["kind"], "Snapshot");
+    }
+
+    #[test]
+    fn vc_triple_pretty_json() {
+        let t = VcTriple { subject_hash: 1, predicate_id: 2, object_hash: 3 };
+        let pretty = serde_json::to_string_pretty(&t).unwrap();
+        assert!(pretty.contains('\n'));
+        assert!(pretty.contains("  "));
+    }
+
+    #[test]
+    fn stats_pretty_json() {
+        let stats = SiteMapStats {
+            kv: 1, nodes: 2, programs: 3, snapshots: 4,
+            total_bytes: 100, root: 0, weight_root: 0,
+            kv_cache_size: 5, string_dict_size: 10, total_entries: 10,
+        };
+        let pretty = serde_json::to_string_pretty(&stats).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&pretty).unwrap();
+        assert_eq!(v["kv"], 1);
+        assert_eq!(v["total_entries"], 10);
+    }
+
+    // ── VcTripleInfo: details ────────────────────────────────────────────
+
+    #[test]
+    fn triple_info_hash_format() {
+        let t = VcTriple { subject_hash: 0x0000000000000001, predicate_id: 0, object_hash: 0x0000000000000002 };
+        let info = t.info();
+        assert_eq!(info.subject_hash.len(), 16); // 16 hex chars
+        assert_eq!(info.object_hash.len(), 16);
+    }
+
+    #[test]
+    fn triple_info_with_issues() {
+        let t = VcTriple { subject_hash: 0, predicate_id: 0, object_hash: 0 };
+        let info = t.info();
+        assert!(!info.validation_issues.is_empty());
+    }
+
+    #[test]
+    fn triple_info_json_all_values() {
+        let t = VcTriple { subject_hash: 0xFF, predicate_id: 7, object_hash: 0xAA };
+        let info = t.info();
+        let json = serde_json::to_string(&info).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(v["predicate_id"], 7);
+        assert!(v["subject_hash"].as_str().unwrap().contains("ff"));
+        assert!(v["object_hash"].as_str().unwrap().contains("aa"));
+        assert!(v["validation_issues"].as_array().unwrap().is_empty());
+    }
 }
