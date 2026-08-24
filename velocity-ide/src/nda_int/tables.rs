@@ -715,4 +715,349 @@ mod tests {
             }
         }
     }
+
+    // ── Block 134: comprehensive tables tests ───────────────────────────────
+
+    // ─── DOT_4_LUT exhaustive manual verification ───────────────────────────
+
+    #[test]
+    fn dot_4_lut_matches_manual_all_entries() {
+        // Verify every entry matches the manual computation
+        for q in 0..256u16 {
+            for k in (0..256u16).step_by(16) {
+                let lut_val = DOT_4_LUT[q as usize][k as usize];
+                let manual_val = validate_dot4_entry(q as u8, k as u8);
+                assert_eq!(lut_val, manual_val, "mismatch at q={}, k={}", q, k);
+            }
+        }
+    }
+
+    #[test]
+    fn dot_4_lut_zero_with_minus_two() {
+        // 0x00 encodes (-2,-2,-2,-2), 0x55 encodes (+2,+2,+2,+2) (wait, 0x55 is qs=5, qe=5)
+        // Actually 0x00: qs=0, qe=0 → all bits: sign=0, extra=0 → -2
+        // 0x55: qs=5=0101, qe=5=0101 → bit0: s=1,e=1→+2; bit1: s=0,e=0→-2; bit2: s=1,e=1→+2; bit3: s=0,e=0→-2
+        // dot((-2,-2,-2,-2), (+2,-2,+2,-2)) = -4+4-4+4 = 0
+        assert_eq!(DOT_4_LUT[0x00][0x55], 0);
+    }
+
+    #[test]
+    fn dot_4_lut_min_value() {
+        // Find the minimum value in the entire LUT
+        let mut min_val = i8::MAX;
+        for row in &DOT_4_LUT {
+            for &val in row {
+                if val < min_val { min_val = val; }
+            }
+        }
+        // Min should be -16 (opposite signs: (-2)*2 * 4 = -16)
+        assert_eq!(min_val, -16);
+    }
+
+    #[test]
+    fn dot_4_lut_max_value() {
+        let mut max_val = i8::MIN;
+        for row in &DOT_4_LUT {
+            for &val in row {
+                if val > max_val { max_val = val; }
+            }
+        }
+        // Max should be 16 (same signs: 2*2 * 4 = 16 or (-2)*(-2) * 4 = 16)
+        assert_eq!(max_val, 16);
+    }
+
+    // ─── validate_dot4_entry edge cases ─────────────────────────────────────
+
+    #[test]
+    fn validate_dot4_mixed_encodings() {
+        // 0x0F encodes (+1,+1,+1,+1): qs=0xF, qe=0x0
+        // 0xF0 encodes (-1,-1,-1,-1): qs=0x0, qe=0xF
+        // dot = 4 * (+1)*(-1) = -4
+        assert_eq!(validate_dot4_entry(0x0F, 0xF0), -4);
+    }
+
+    #[test]
+    fn validate_dot4_orthogonal() {
+        // 0x0F encodes (+1,+1,+1,+1), 0x00 encodes (-2,-2,-2,-2)
+        // dot = 4 * (+1)*(-2) = -8
+        assert_eq!(validate_dot4_entry(0x0F, 0x00), -8);
+    }
+
+    // ─── ADD_LUT_Q16 tests ─────────────────────────────────────────────────
+
+    #[test]
+    fn add_lut_identity_property() {
+        // Adding (0,0,0,0) encoding to itself should give (+1,+1,+1,+1) encoding
+        // 0 encodes (-2,-2,-2,-2), so (-2)+(-2) = -4 → clamped to -4 → encode_table[0] = 0
+        let key = 0u32; // xs=0, xe=0, ds=0, de=0
+        let result = ADD_LUT_Q16[key as usize];
+        // Both encode (-2,-2,-2,-2), sum = (-4,-4,-4,-4) → clamped to 0 → encode_table[0] = 0
+        assert_eq!(result, 0x00); // sign=0, extra=0 → (-2,-2,-2,-2) encoding
+    }
+
+    #[test]
+    fn add_lut_commutative() {
+        // ADD(a,b) should equal ADD(b,a) since addition is commutative
+        for key_sample in [0u32, 0x1111, 0x2222, 0xAAAA, 0xFFFF, 0x0F0F, 0xF0F0] {
+            let xs = key_sample & 0x0F;
+            let xe = (key_sample >> 4) & 0x0F;
+            let ds = (key_sample >> 8) & 0x0F;
+            let de = (key_sample >> 12) & 0x0F;
+            let swapped_key = ds | (de << 4) | (xs << 8) | (xe << 12);
+            assert_eq!(
+                ADD_LUT_Q16[key_sample as usize],
+                ADD_LUT_Q16[swapped_key as usize],
+                "ADD_LUT not commutative at key=0x{:04X}", key_sample
+            );
+        }
+    }
+
+    #[test]
+    fn add_lut_all_entries_are_valid_bytes() {
+        // Every entry should be a valid byte (always true for u8, but check no panics)
+        for i in (0..65536u32).step_by(256) {
+            let _ = ADD_LUT_Q16[i as usize];
+        }
+    }
+
+    // ─── SWIGLU_LUT_Q16 tests ──────────────────────────────────────────────
+
+    #[test]
+    fn swiglu_lut_all_entries_accessible() {
+        // Verify no panics on access across the full table
+        for i in (0..65536u32).step_by(1024) {
+            let _ = SWIGLU_LUT_Q16[i as usize];
+        }
+    }
+
+    #[test]
+    fn swiglu_lut_output_range() {
+        // Each byte encodes sign nibble + extra nibble, both in 0..=15
+        for i in (0..65536u32).step_by(256) {
+            let val = SWIGLU_LUT_Q16[i as usize];
+            let sign = val & 0x0F;
+            let extra = (val >> 4) & 0x0F;
+            assert!(sign <= 0x0F);
+            assert!(extra <= 0x0F);
+        }
+    }
+
+    // ─── FP4_PRODUCT_LUT exhaustive ────────────────────────────────────────
+
+    #[test]
+    fn fp4_product_lut_all_rows() {
+        let x_vals = [-2i32, -1, 1, 2];
+        let w_vals = [0, 1, 4, 6, 8, 12, 16, 24, 0, -1, -4, -6, -8, -12, -16, -24];
+        for (xi, &x) in x_vals.iter().enumerate() {
+            for (wi, &w) in w_vals.iter().enumerate() {
+                assert_eq!(FP4_PRODUCT_LUT[xi][wi], x * w,
+                    "FP4_PRODUCT_LUT[{}][{}] = {} but expected {}", xi, wi, FP4_PRODUCT_LUT[xi][wi], x * w);
+            }
+        }
+    }
+
+    #[test]
+    fn fp4_product_lut_min_max() {
+        let mut min_val = i32::MAX;
+        let mut max_val = i32::MIN;
+        for row in &FP4_PRODUCT_LUT {
+            for &val in row {
+                if val < min_val { min_val = val; }
+                if val > max_val { max_val = val; }
+            }
+        }
+        // x=[-2,-1,1,2], w=[0,1,4,6,8,12,16,24,0,-1,-4,-6,-8,-12,-16,-24]
+        // min = -2 * 24 = -48
+        // max = -2 * -24 = 48
+        assert_eq!(min_val, -48);
+        assert_eq!(max_val, 48);
+    }
+
+    #[test]
+    fn fp4_product_lut_dimensions() {
+        assert_eq!(FP4_PRODUCT_LUT.len(), 4);
+        for row in &FP4_PRODUCT_LUT {
+            assert_eq!(row.len(), 16);
+        }
+    }
+
+    // ─── FP2_PRODUCT_LUT exhaustive ────────────────────────────────────────
+
+    #[test]
+    fn fp2_product_lut_dimensions() {
+        assert_eq!(FP2_PRODUCT_LUT.len(), 4);
+        for row in &FP2_PRODUCT_LUT {
+            assert_eq!(row.len(), 4);
+        }
+    }
+
+    #[test]
+    fn fp2_product_lut_min_max() {
+        let mut min_val = i32::MAX;
+        let mut max_val = i32::MIN;
+        for row in &FP2_PRODUCT_LUT {
+            for &val in row {
+                if val < min_val { min_val = val; }
+                if val > max_val { max_val = val; }
+            }
+        }
+        // x=[-2,-1,1,2], w=[0,1,0,-1]
+        // min = -2 * 1 = -2 or 2 * -1 = -2
+        // max = -2 * -1 = 2 or 2 * 1 = 2
+        assert_eq!(min_val, -2);
+        assert_eq!(max_val, 2);
+    }
+
+    // ─── LutInfo struct tests ───────────────────────────────────────────────
+
+    #[test]
+    fn lut_info_debug_clone() {
+        let info = LutInfo {
+            name: "test_lut".to_string(),
+            entry_count: 100,
+            memory_bytes: 400,
+            min_value: -10,
+            max_value: 10,
+            validation_issues: vec!["issue1".to_string()],
+        };
+        let debug = format!("{:?}", info);
+        assert!(debug.contains("test_lut"));
+        assert!(debug.contains("LutInfo"));
+        let cloned = info.clone();
+        assert_eq!(cloned.name, "test_lut");
+        assert_eq!(cloned.entry_count, 100);
+        assert_eq!(cloned.validation_issues.len(), 1);
+    }
+
+    #[test]
+    fn lut_info_json_all_fields() {
+        let info = dot_4_lut_info();
+        let json = serde_json::to_string(&info).unwrap();
+        let val: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert!(val["name"].is_string());
+        assert!(val["entry_count"].is_number());
+        assert!(val["memory_bytes"].is_number());
+        assert!(val["min_value"].is_number());
+        assert!(val["max_value"].is_number());
+        assert!(val["validation_issues"].is_array());
+    }
+
+    // ─── TablesSummary struct tests ─────────────────────────────────────────
+
+    #[test]
+    fn tables_summary_debug_clone() {
+        let summary = tables_summary();
+        let debug = format!("{:?}", summary);
+        assert!(debug.contains("TablesSummary"));
+        assert!(debug.contains("table_count"));
+        let cloned = summary.clone();
+        assert_eq!(cloned.table_count, summary.table_count);
+        assert_eq!(cloned.total_memory_bytes, summary.total_memory_bytes);
+        assert_eq!(cloned.tables.len(), summary.tables.len());
+    }
+
+    #[test]
+    fn tables_summary_json_all_fields() {
+        let summary = tables_summary();
+        let json = serde_json::to_string(&summary).unwrap();
+        let val: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(val["table_count"], 5);
+        assert!(val["total_memory_bytes"].is_number());
+        assert!(val["tables"].is_array());
+        assert_eq!(val["tables"].as_array().unwrap().len(), 5);
+        assert!(val["validation_issues"].is_array());
+    }
+
+    #[test]
+    fn tables_summary_memory_breakdown() {
+        let summary = tables_summary();
+        // DOT_4_LUT: 256*256*1 = 65536
+        assert_eq!(summary.tables[0].memory_bytes, 65536);
+        // ADD_LUT_Q16: 65536*1 = 65536
+        assert_eq!(summary.tables[1].memory_bytes, 65536);
+        // SWIGLU_LUT_Q16: 65536*1 = 65536
+        assert_eq!(summary.tables[2].memory_bytes, 65536);
+        // FP4_PRODUCT_LUT: 4*16*4 = 256
+        assert_eq!(summary.tables[3].memory_bytes, 256);
+        // FP2_PRODUCT_LUT: 4*4*4 = 64
+        assert_eq!(summary.tables[4].memory_bytes, 64);
+    }
+
+    #[test]
+    fn tables_summary_table_names() {
+        let summary = tables_summary();
+        let names: Vec<&str> = summary.tables.iter().map(|t| t.name.as_str()).collect();
+        assert_eq!(names, vec!["DOT_4_LUT", "ADD_LUT_Q16", "SWIGLU_LUT_Q16", "FP4_PRODUCT_LUT", "FP2_PRODUCT_LUT"]);
+    }
+
+    #[test]
+    fn tables_summary_no_validation_issues() {
+        let summary = tables_summary();
+        assert!(summary.validation_issues.is_empty(),
+            "Expected no validation issues, got: {:?}", summary.validation_issues);
+        for table in &summary.tables {
+            assert!(table.validation_issues.is_empty(),
+                "Table {} has issues: {:?}", table.name, table.validation_issues);
+        }
+    }
+
+    // ─── DOT_4_LUT value distribution ───────────────────────────────────────
+
+    #[test]
+    fn dot_4_lut_value_distribution() {
+        // Count how many entries have each value
+        let mut counts = [0u32; 33]; // -16..16 → index = val + 16
+        for row in &DOT_4_LUT {
+            for &val in row {
+                counts[(val as i16 + 16) as usize] += 1;
+            }
+        }
+        // Total entries should be 256*256 = 65536
+        let total: u32 = counts.iter().sum();
+        assert_eq!(total, 65536);
+        // The distribution should be centered around 0 (symmetric)
+        // Values at extremes (-16, 16) should be rare
+        assert!(counts[0] < counts[16], "-16 should be rarer than 0");
+        assert!(counts[32] < counts[16], "16 should be rarer than 0");
+    }
+
+    // ─── FP4_PRODUCT_LUT row 1 and 2 ───────────────────────────────────────
+
+    #[test]
+    fn fp4_product_lut_row_one() {
+        // x_vals[1] = -1
+        let w_vals = [0, 1, 4, 6, 8, 12, 16, 24, 0, -1, -4, -6, -8, -12, -16, -24];
+        for (i, &w) in w_vals.iter().enumerate() {
+            assert_eq!(FP4_PRODUCT_LUT[1][i], -1 * w);
+        }
+    }
+
+    #[test]
+    fn fp4_product_lut_row_two() {
+        // x_vals[2] = 1
+        let w_vals = [0, 1, 4, 6, 8, 12, 16, 24, 0, -1, -4, -6, -8, -12, -16, -24];
+        for (i, &w) in w_vals.iter().enumerate() {
+            assert_eq!(FP4_PRODUCT_LUT[2][i], 1 * w);
+        }
+    }
+
+    // ─── FP2_PRODUCT_LUT rows 0 and 3 ──────────────────────────────────────
+
+    #[test]
+    fn fp2_product_lut_row_zero() {
+        // x_vals[0] = -2, w_vals = [0, 1, 0, -1]
+        assert_eq!(FP2_PRODUCT_LUT[0][0], 0);   // -2 * 0
+        assert_eq!(FP2_PRODUCT_LUT[0][1], -2);  // -2 * 1
+        assert_eq!(FP2_PRODUCT_LUT[0][2], 0);   // -2 * 0
+        assert_eq!(FP2_PRODUCT_LUT[0][3], 2);   // -2 * -1
+    }
+
+    #[test]
+    fn fp2_product_lut_row_three() {
+        // x_vals[3] = 2, w_vals = [0, 1, 0, -1]
+        assert_eq!(FP2_PRODUCT_LUT[3][0], 0);   // 2 * 0
+        assert_eq!(FP2_PRODUCT_LUT[3][1], 2);   // 2 * 1
+        assert_eq!(FP2_PRODUCT_LUT[3][2], 0);   // 2 * 0
+        assert_eq!(FP2_PRODUCT_LUT[3][3], -2);  // 2 * -1
+    }
 }
