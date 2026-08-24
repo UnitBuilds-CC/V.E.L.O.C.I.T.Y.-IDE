@@ -347,6 +347,44 @@ impl std::fmt::Debug for LockMetrics {
 /// Global lock metrics singleton.
 pub static GLOBAL_LOCK_METRICS: LockMetrics = LockMetrics::new();
 
+/// Health score for lock subsystem (0.0 = bad, 1.0 = healthy).
+/// Penalizes high contention, poison recovery, and timeout rates.
+pub fn lock_health_score(m: &LockMetrics) -> f64 {
+    let contention_penalty = m.contention_rate() * 0.3;
+    let poison_penalty = m.poison_rate() * 0.5;
+    let timeout_penalty = m.timeout_rate() * 0.2;
+    let score = 1.0 - contention_penalty - poison_penalty - timeout_penalty;
+    score.max(0.0).min(1.0)
+}
+
+/// Comprehensive safety audit report combining metrics and lock ordering.
+#[derive(Debug, Clone, Serialize)]
+pub struct SafetyReport {
+    pub lock_metrics: LockMetricsSnapshot,
+    pub lock_order: LockOrderSnapshot,
+    pub health_score: f64,
+    pub validation_warnings: Vec<String>,
+    pub timestamp_us: u64,
+}
+
+/// Generate a comprehensive safety audit report.
+pub fn safety_report() -> SafetyReport {
+    let warnings = GLOBAL_LOCK_ORDER.validate();
+    let health = lock_health_score(&GLOBAL_LOCK_METRICS);
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_micros() as u64;
+
+    SafetyReport {
+        lock_metrics: GLOBAL_LOCK_METRICS.snapshot(),
+        lock_order: GLOBAL_LOCK_ORDER.snapshot(),
+        health_score: health,
+        validation_warnings: warnings,
+        timestamp_us: now,
+    }
+}
+
 // ─── Timed Locking ─────────────────────────────────────────────────────────
 
 /// Extension trait for `Mutex<T>` providing timeout-based locking.
@@ -1056,5 +1094,54 @@ mod tests {
         let snap = detector.snapshot();
         assert_eq!(snap.held_lock_count, 0);
         assert_eq!(snap.violation_count, 0);
+    }
+
+    // ─── Block 81: safety diagnostics tests ─────────────────────────────
+
+    #[test]
+    fn lock_health_score_perfect() {
+        let m = LockMetrics::new();
+        m.record_acquire();
+        let score = lock_health_score(&m);
+        assert!((score - 1.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn lock_health_score_degraded() {
+        let m = LockMetrics::new();
+        m.record_acquire();
+        m.record_acquire();
+        m.record_contention();
+        m.record_contention();
+        let score = lock_health_score(&m);
+        assert!(score < 1.0);
+        assert!(score > 0.0);
+    }
+
+    #[test]
+    fn lock_health_score_bad() {
+        let m = LockMetrics::new();
+        m.record_acquire();
+        m.record_poison_recovery();
+        m.record_timeout();
+        let score = lock_health_score(&m);
+        assert!(score < 0.5);
+    }
+
+    #[test]
+    fn safety_report_basic() {
+        let report = safety_report();
+        assert!(report.health_score >= 0.0);
+        assert!(report.health_score <= 1.0);
+        assert!(report.timestamp_us > 0);
+    }
+
+    #[test]
+    fn safety_report_serializes() {
+        let report = safety_report();
+        let json = serde_json::to_string(&report).unwrap();
+        assert!(json.contains("health_score"));
+        assert!(json.contains("lock_metrics"));
+        assert!(json.contains("lock_order"));
     }
 }
