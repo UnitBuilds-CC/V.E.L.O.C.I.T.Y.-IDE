@@ -1710,4 +1710,414 @@ mod tests {
         let issues = validate_optimization_report(&report);
         assert!(issues.is_empty(), "issues: {:?}", issues);
     }
+
+    // ── Block 140: Extended tests ─────────────────────────────────────────
+
+    // --- has_side_effects: remaining variants ---
+
+    #[test]
+    fn side_effects_spawn_is_true() {
+        assert!(has_side_effects(&NdaNode::Spawn { scope_hash: 0 }));
+    }
+
+    #[test]
+    fn side_effects_atomic_is_true() {
+        assert!(has_side_effects(&NdaNode::Atomic {
+            op: crate::site_map::verifier::AtomicOp::Cas,
+            addr: Box::new(NdaNode::Int { value: 0 }),
+            val: Box::new(NdaNode::Int { value: 1 }),
+        }));
+    }
+
+    #[test]
+    fn side_effects_gpu_dispatch_is_true() {
+        assert!(has_side_effects(&NdaNode::GpuDispatch {
+            shader_hash: 0,
+            args: vec![],
+        }));
+    }
+
+    #[test]
+    fn side_effects_free_is_true() {
+        assert!(has_side_effects(&NdaNode::Free {
+            addr: Box::new(NdaNode::Int { value: 0 }),
+        }));
+    }
+
+    #[test]
+    fn side_effects_reg_int_is_true() {
+        assert!(has_side_effects(&NdaNode::RegInt {
+            vector: 0,
+            handler_hash: 0,
+        }));
+    }
+
+    #[test]
+    fn side_effects_store_delegates_to_value() {
+        assert!(!has_side_effects(&NdaNode::Store {
+            name_hash: 0,
+            value: Box::new(NdaNode::Int { value: 42 }),
+        }));
+        assert!(has_side_effects(&NdaNode::Store {
+            name_hash: 0,
+            value: Box::new(NdaNode::Call { target: 0 }),
+        }));
+    }
+
+    #[test]
+    fn side_effects_while_cond_and_body() {
+        assert!(!has_side_effects(&NdaNode::While {
+            cond: Box::new(NdaNode::Int { value: 1 }),
+            body: vec![NdaNode::Int { value: 0 }],
+        }));
+        assert!(has_side_effects(&NdaNode::While {
+            cond: Box::new(NdaNode::Call { target: 0 }),
+            body: vec![],
+        }));
+        assert!(has_side_effects(&NdaNode::While {
+            cond: Box::new(NdaNode::Int { value: 1 }),
+            body: vec![NdaNode::Print { source: Box::new(NdaNode::Int { value: 0 }) }],
+        }));
+    }
+
+    #[test]
+    fn side_effects_if_all_branches() {
+        assert!(!has_side_effects(&NdaNode::If {
+            cond: Box::new(NdaNode::Int { value: 1 }),
+            then_body: vec![NdaNode::Int { value: 0 }],
+            else_body: Some(vec![NdaNode::Int { value: 1 }]),
+        }));
+        assert!(has_side_effects(&NdaNode::If {
+            cond: Box::new(NdaNode::Int { value: 1 }),
+            then_body: vec![NdaNode::Call { target: 0 }],
+            else_body: None,
+        }));
+        assert!(has_side_effects(&NdaNode::If {
+            cond: Box::new(NdaNode::Int { value: 1 }),
+            then_body: vec![],
+            else_body: Some(vec![NdaNode::Print { source: Box::new(NdaNode::Int { value: 0 }) }]),
+        }));
+    }
+
+    #[test]
+    fn side_effects_compare_delegates() {
+        assert!(!has_side_effects(&NdaNode::Compare {
+            op: CmpOp::Eq,
+            lhs: Box::new(NdaNode::Int { value: 1 }),
+            rhs: Box::new(NdaNode::Int { value: 2 }),
+        }));
+        assert!(has_side_effects(&NdaNode::Compare {
+            op: CmpOp::Eq,
+            lhs: Box::new(NdaNode::Call { target: 0 }),
+            rhs: Box::new(NdaNode::Int { value: 2 }),
+        }));
+    }
+
+    #[test]
+    fn side_effects_bitwise_delegates() {
+        assert!(!has_side_effects(&NdaNode::Bitwise {
+            op: crate::site_map::verifier::BitwiseOp::And,
+            lhs: Box::new(NdaNode::Int { value: 1 }),
+            rhs: Some(Box::new(NdaNode::Int { value: 2 })),
+        }));
+        assert!(has_side_effects(&NdaNode::Bitwise {
+            op: crate::site_map::verifier::BitwiseOp::And,
+            lhs: Box::new(NdaNode::Call { target: 0 }),
+            rhs: None,
+        }));
+    }
+
+    #[test]
+    fn side_effects_math_delegates() {
+        assert!(!has_side_effects(&NdaNode::Math {
+            op: crate::site_map::verifier::MathOp::Add,
+            lhs: Box::new(NdaNode::Float { value: 1.0 }),
+            rhs: Box::new(NdaNode::Float { value: 2.0 }),
+        }));
+    }
+
+    #[test]
+    fn side_effects_gemv_delegates() {
+        assert!(!has_side_effects(&NdaNode::Gemv {
+            matrix: Box::new(NdaNode::Matrix { rows: 2, cols: 2, scale: 0, sign: vec![], extra: vec![] }),
+            vector: Box::new(NdaNode::Int { value: 0 }),
+        }));
+    }
+
+    #[test]
+    fn side_effects_alloc_delegates() {
+        assert!(!has_side_effects(&NdaNode::Alloc {
+            size: Box::new(NdaNode::Int { value: 64 }),
+        }));
+    }
+
+    #[test]
+    fn side_effects_cast_delegates() {
+        assert!(!has_side_effects(&NdaNode::Cast {
+            from_type: crate::site_map::verifier::TypeKind::Int,
+            to_type: crate::site_map::verifier::TypeKind::Float,
+            operand: Box::new(NdaNode::Int { value: 42 }),
+        }));
+    }
+
+    // --- gather_loaded_vars: more variants ---
+
+    #[test]
+    fn gather_loads_while_body() {
+        let mut set = std::collections::HashSet::new();
+        gather_loaded_vars(&NdaNode::While {
+            cond: Box::new(NdaNode::Load { name_hash: 5 }),
+            body: vec![NdaNode::Load { name_hash: 6 }],
+        }, &mut set);
+        assert!(set.contains(&5));
+        assert!(set.contains(&6));
+    }
+
+    #[test]
+    fn gather_loads_store_value() {
+        let mut set = std::collections::HashSet::new();
+        gather_loaded_vars(&NdaNode::Store {
+            name_hash: 10,
+            value: Box::new(NdaNode::Load { name_hash: 20 }),
+        }, &mut set);
+        assert!(set.contains(&20));
+    }
+
+    // --- Struct derives ---
+
+    #[test]
+    fn optimization_report_clone() {
+        let report = OptimizationReport {
+            constants_folded: 5,
+            dead_nodes_removed: 3,
+            loops_unrolled: 1,
+            dead_branches_eliminated: 2,
+            identities_simplified: 4,
+            double_negations_eliminated: 1,
+            strength_reductions: 0,
+            input_nodes: 30,
+            output_nodes: 15,
+        };
+        let cloned = report.clone();
+        assert_eq!(cloned.constants_folded, 5);
+        assert_eq!(cloned.input_nodes, 30);
+    }
+
+    #[test]
+    fn optimization_report_debug() {
+        let report = OptimizationReport::default();
+        let debug = format!("{:?}", report);
+        assert!(debug.contains("OptimizationReport"));
+    }
+
+    #[test]
+    fn optimization_summary_clone_and_debug() {
+        let report = OptimizationReport {
+            constants_folded: 1,
+            dead_nodes_removed: 0,
+            loops_unrolled: 0,
+            dead_branches_eliminated: 0,
+            identities_simplified: 0,
+            double_negations_eliminated: 0,
+            strength_reductions: 0,
+            input_nodes: 10,
+            output_nodes: 8,
+        };
+        let summary = optimization_summary(&report);
+        let cloned = summary.clone();
+        assert_eq!(cloned.total_optimizations, summary.total_optimizations);
+        let debug = format!("{:?}", summary);
+        assert!(debug.contains("OptimizationSummary"));
+    }
+
+    #[test]
+    fn node_kind_distribution_clone_and_debug() {
+        let dist = ast_complexity_info(&[NdaNode::Int { value: 1 }]);
+        let cloned = dist.clone();
+        assert_eq!(cloned.int_count, 1);
+        let debug = format!("{:?}", dist);
+        assert!(debug.contains("NodeKindDistribution"));
+    }
+
+    // --- ast_complexity_info: more variants ---
+
+    #[test]
+    fn ast_complexity_store_let_counts() {
+        let nodes = vec![
+            NdaNode::Let {
+                name_hash: 1,
+                init: Box::new(NdaNode::Int { value: 42 }),
+            },
+            NdaNode::Store {
+                name_hash: 1,
+                value: Box::new(NdaNode::Int { value: 99 }),
+            },
+        ];
+        let dist = ast_complexity_info(&nodes);
+        assert_eq!(dist.let_count, 1);
+        assert_eq!(dist.store_count, 1);
+    }
+
+    #[test]
+    fn ast_complexity_total_is_sum_of_kinds() {
+        let nodes = vec![
+            NdaNode::Int { value: 1 },
+            NdaNode::Load { name_hash: 0 },
+            NdaNode::Call { target: 0 },
+            NdaNode::Matrix { rows: 1, cols: 1, scale: 0, sign: vec![], extra: vec![] },
+            NdaNode::Break,
+        ];
+        let dist = ast_complexity_info(&nodes);
+        let kind_sum = dist.int_count + dist.load_count + dist.store_count
+            + dist.let_count + dist.add_count + dist.compare_count
+            + dist.loop_count + dist.while_count + dist.if_count
+            + dist.scope_count + dist.return_count + dist.print_count
+            + dist.matrix_count + dist.norm_count + dist.call_count
+            + dist.vec_op_count + dist.other_count;
+        assert_eq!(dist.total_nodes, kind_sum);
+    }
+
+    #[test]
+    fn ast_complexity_other_count_catches_unmapped() {
+        // Break, Float, Spawn etc go to other_count
+        let nodes = vec![
+            NdaNode::Break,
+            NdaNode::Float { value: 1.0 },
+            NdaNode::Spawn { scope_hash: 0 },
+        ];
+        let dist = ast_complexity_info(&nodes);
+        assert_eq!(dist.other_count, 3);
+    }
+
+    #[test]
+    fn ast_complexity_max_depth_tracks_nesting() {
+        let nodes = vec![
+            NdaNode::Scope {
+                children: vec![
+                    NdaNode::Scope {
+                        children: vec![
+                            NdaNode::Int { value: 1 },
+                        ],
+                    },
+                ],
+            },
+        ];
+        let dist = ast_complexity_info(&nodes);
+        assert!(dist.max_depth >= 2);
+    }
+
+    // --- optimization_summary edge cases ---
+
+    #[test]
+    fn optimization_summary_low_effectiveness() {
+        let report = OptimizationReport {
+            constants_folded: 0,
+            dead_nodes_removed: 0,
+            loops_unrolled: 0,
+            dead_branches_eliminated: 0,
+            identities_simplified: 0,
+            double_negations_eliminated: 0,
+            strength_reductions: 0,
+            input_nodes: 10,
+            output_nodes: 9,
+        };
+        let summary = optimization_summary(&report);
+        assert_eq!(summary.effectiveness, "low"); // 0.9 is < 1.0 but >= 0.8
+    }
+
+    #[test]
+    fn optimization_summary_zero_input_ratio_is_one() {
+        let report = OptimizationReport {
+            constants_folded: 0,
+            dead_nodes_removed: 0,
+            loops_unrolled: 0,
+            dead_branches_eliminated: 0,
+            identities_simplified: 0,
+            double_negations_eliminated: 0,
+            strength_reductions: 0,
+            input_nodes: 0,
+            output_nodes: 0,
+        };
+        let summary = optimization_summary(&report);
+        assert!((summary.compression_ratio - 1.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn optimization_summary_has_side_effects_from_branches() {
+        let report = OptimizationReport {
+            constants_folded: 0,
+            dead_nodes_removed: 0,
+            loops_unrolled: 0,
+            dead_branches_eliminated: 3,
+            identities_simplified: 0,
+            double_negations_eliminated: 0,
+            strength_reductions: 0,
+            input_nodes: 10,
+            output_nodes: 7,
+        };
+        let summary = optimization_summary(&report);
+        assert!(summary.has_side_effects);
+    }
+
+    // --- validate_optimization_report edge cases ---
+
+    #[test]
+    fn validate_report_both_zero_is_clean() {
+        let report = OptimizationReport {
+            constants_folded: 0,
+            dead_nodes_removed: 0,
+            loops_unrolled: 0,
+            dead_branches_eliminated: 0,
+            identities_simplified: 0,
+            double_negations_eliminated: 0,
+            strength_reductions: 0,
+            input_nodes: 0,
+            output_nodes: 0,
+        };
+        let issues = validate_optimization_report(&report);
+        assert!(issues.is_empty());
+    }
+
+    // --- optimize_ast: more cases ---
+
+    #[test]
+    fn optimize_identity_preserves_single_node() {
+        let nodes = vec![NdaNode::Load { name_hash: 42 }];
+        let result = optimize_ast(&nodes);
+        assert_eq!(result.len(), 1);
+    }
+
+    #[test]
+    fn optimize_constant_folding_produces_int() {
+        let nodes = vec![NdaNode::Add {
+            lhs: Box::new(NdaNode::Int { value: 100 }),
+            rhs: Box::new(NdaNode::Int { value: 200 }),
+        }];
+        let result = optimize_ast(&nodes);
+        match &result[0] {
+            NdaNode::Int { value } => assert_eq!(*value, 300),
+            other => panic!("Expected Int(300), got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn count_nodes_empty() {
+        assert_eq!(count_nodes(&[]), 0);
+    }
+
+    #[test]
+    fn count_nodes_single() {
+        assert_eq!(count_nodes(&[NdaNode::Int { value: 1 }]), 1);
+    }
+
+    #[test]
+    fn count_nodes_nested_scope() {
+        let nodes = vec![NdaNode::Scope {
+            children: vec![
+                NdaNode::Int { value: 1 },
+                NdaNode::Int { value: 2 },
+            ],
+        }];
+        assert!(count_nodes(&nodes) >= 3); // scope + 2 ints
+    }
 }
