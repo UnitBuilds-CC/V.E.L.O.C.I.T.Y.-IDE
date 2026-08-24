@@ -168,6 +168,103 @@ pub fn validate_entry(entry: &SiteMapEntry) -> Vec<String> {
     issues
 }
 
+/// Stricter validation for SiteMapEntry (checks format details).
+pub fn validate_entry_full(entry: &SiteMapEntry) -> Vec<String> {
+    let mut issues = validate_entry(entry);
+    // Check file_sha looks like a hex digest
+    if !entry.file_sha.is_empty() && entry.file_sha.len() < 8 {
+        issues.push("file_sha too short to be a valid hash".to_string());
+    }
+    if !entry.file_sha.is_empty() && !entry.file_sha.chars().all(|c| c.is_ascii_hexdigit()) {
+        issues.push("file_sha contains non-hex characters".to_string());
+    }
+    // Check file path doesn't contain parent traversal
+    if entry.file.contains("..") {
+        issues.push("file path contains parent traversal '..'".to_string());
+    }
+    issues
+}
+
+/// In-memory triple index for fast lookups by subject, predicate, or object.
+#[derive(Debug, Clone, Serialize)]
+pub struct TripleIndex {
+    by_subject: std::collections::HashMap<u64, Vec<usize>>,
+    by_object: std::collections::HashMap<u64, Vec<usize>>,
+    by_predicate: std::collections::HashMap<u16, Vec<usize>>,
+    pub triple_count: usize,
+}
+
+impl TripleIndex {
+    /// Build an index from a slice of triples.
+    pub fn build(triples: &[VcTriple]) -> Self {
+        let mut by_subject: std::collections::HashMap<u64, Vec<usize>> = std::collections::HashMap::new();
+        let mut by_object: std::collections::HashMap<u64, Vec<usize>> = std::collections::HashMap::new();
+        let mut by_predicate: std::collections::HashMap<u16, Vec<usize>> = std::collections::HashMap::new();
+
+        for (i, t) in triples.iter().enumerate() {
+            by_subject.entry(t.subject_hash).or_default().push(i);
+            by_object.entry(t.object_hash).or_default().push(i);
+            by_predicate.entry(t.predicate_id).or_default().push(i);
+        }
+
+        TripleIndex {
+            by_subject,
+            by_object,
+            by_predicate,
+            triple_count: triples.len(),
+        }
+    }
+
+    /// Find triple indices by subject hash.
+    pub fn by_subject(&self, hash: u64) -> &[usize] {
+        self.by_subject.get(&hash).map(|v| v.as_slice()).unwrap_or(&[])
+    }
+
+    /// Find triple indices by object hash.
+    pub fn by_object(&self, hash: u64) -> &[usize] {
+        self.by_object.get(&hash).map(|v| v.as_slice()).unwrap_or(&[])
+    }
+
+    /// Find triple indices by predicate id.
+    pub fn by_predicate(&self, pred: u16) -> &[usize] {
+        self.by_predicate.get(&pred).map(|v| v.as_slice()).unwrap_or(&[])
+    }
+
+    /// Number of unique subjects in the index.
+    pub fn unique_subjects(&self) -> usize {
+        self.by_subject.len()
+    }
+
+    /// Number of unique objects in the index.
+    pub fn unique_objects(&self) -> usize {
+        self.by_object.len()
+    }
+
+    /// Number of unique predicates in the index.
+    pub fn unique_predicates(&self) -> usize {
+        self.by_predicate.len()
+    }
+
+    /// Diagnostic info about the index.
+    pub fn info(&self) -> TripleIndexInfo {
+        TripleIndexInfo {
+            triple_count: self.triple_count,
+            unique_subjects: self.unique_subjects(),
+            unique_objects: self.unique_objects(),
+            unique_predicates: self.unique_predicates(),
+        }
+    }
+}
+
+/// Diagnostic info about a triple index.
+#[derive(Debug, Clone, Serialize)]
+pub struct TripleIndexInfo {
+    pub triple_count: usize,
+    pub unique_subjects: usize,
+    pub unique_objects: usize,
+    pub unique_predicates: usize,
+}
+
 // ─── Tests ─────────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
@@ -319,5 +416,139 @@ mod tests {
         let info = t.info();
         let json = serde_json::to_string(&info).unwrap();
         assert!(json.contains("predicate_id"));
+    }
+
+    // ─── Block 80: new tests ──────────────────────────────────────────────
+
+    #[test]
+    fn validate_entry_full_clean() {
+        let e = SiteMapEntry {
+            kind: EntryKind::Kv,
+            hash: 1,
+            file: "test.kv".into(),
+            file_sha: "abcdef1234567890".into(),
+            size: 100,
+        };
+        assert!(validate_entry_full(&e).is_empty());
+    }
+
+    #[test]
+    fn validate_entry_full_bad_sha_short() {
+        let e = SiteMapEntry {
+            kind: EntryKind::Kv,
+            hash: 1,
+            file: "test.kv".into(),
+            file_sha: "abc".into(),
+            size: 100,
+        };
+        let issues = validate_entry_full(&e);
+        assert!(issues.iter().any(|i| i.contains("too short")));
+    }
+
+    #[test]
+    fn validate_entry_full_bad_sha_non_hex() {
+        let e = SiteMapEntry {
+            kind: EntryKind::Kv,
+            hash: 1,
+            file: "test.kv".into(),
+            file_sha: "xyznotahexvalue!".into(),
+            size: 100,
+        };
+        let issues = validate_entry_full(&e);
+        assert!(issues.iter().any(|i| i.contains("non-hex")));
+    }
+
+    #[test]
+    fn validate_entry_full_parent_traversal() {
+        let e = SiteMapEntry {
+            kind: EntryKind::Node,
+            hash: 1,
+            file: "../../../etc/passwd".into(),
+            file_sha: "abcdef1234567890".into(),
+            size: 100,
+        };
+        let issues = validate_entry_full(&e);
+        assert!(issues.iter().any(|i| i.contains("parent traversal")));
+    }
+
+    #[test]
+    fn triple_index_build_empty() {
+        let idx = TripleIndex::build(&[]);
+        assert_eq!(idx.triple_count, 0);
+        assert_eq!(idx.unique_subjects(), 0);
+        assert_eq!(idx.unique_objects(), 0);
+        assert_eq!(idx.unique_predicates(), 0);
+    }
+
+    #[test]
+    fn triple_index_build_basic() {
+        let triples = vec![
+            VcTriple { subject_hash: 1, predicate_id: 0, object_hash: 2 },
+            VcTriple { subject_hash: 1, predicate_id: 1, object_hash: 3 },
+            VcTriple { subject_hash: 2, predicate_id: 0, object_hash: 3 },
+        ];
+        let idx = TripleIndex::build(&triples);
+        assert_eq!(idx.triple_count, 3);
+        assert_eq!(idx.unique_subjects(), 2);
+        assert_eq!(idx.unique_objects(), 2);
+        assert_eq!(idx.unique_predicates(), 2);
+    }
+
+    #[test]
+    fn triple_index_by_subject_lookup() {
+        let triples = vec![
+            VcTriple { subject_hash: 1, predicate_id: 0, object_hash: 2 },
+            VcTriple { subject_hash: 1, predicate_id: 1, object_hash: 3 },
+            VcTriple { subject_hash: 2, predicate_id: 0, object_hash: 3 },
+        ];
+        let idx = TripleIndex::build(&triples);
+        assert_eq!(idx.by_subject(1).len(), 2);
+        assert_eq!(idx.by_subject(2).len(), 1);
+        assert_eq!(idx.by_subject(999).len(), 0);
+    }
+
+    #[test]
+    fn triple_index_by_object_lookup() {
+        let triples = vec![
+            VcTriple { subject_hash: 1, predicate_id: 0, object_hash: 3 },
+            VcTriple { subject_hash: 2, predicate_id: 0, object_hash: 3 },
+            VcTriple { subject_hash: 3, predicate_id: 0, object_hash: 4 },
+        ];
+        let idx = TripleIndex::build(&triples);
+        assert_eq!(idx.by_object(3).len(), 2);
+        assert_eq!(idx.by_object(4).len(), 1);
+    }
+
+    #[test]
+    fn triple_index_by_predicate_lookup() {
+        let triples = vec![
+            VcTriple { subject_hash: 1, predicate_id: 0, object_hash: 2 },
+            VcTriple { subject_hash: 2, predicate_id: 0, object_hash: 3 },
+            VcTriple { subject_hash: 3, predicate_id: 1, object_hash: 4 },
+        ];
+        let idx = TripleIndex::build(&triples);
+        assert_eq!(idx.by_predicate(0).len(), 2);
+        assert_eq!(idx.by_predicate(1).len(), 1);
+        assert_eq!(idx.by_predicate(99).len(), 0);
+    }
+
+    #[test]
+    fn triple_index_info_serializes() {
+        let triples = vec![
+            VcTriple { subject_hash: 1, predicate_id: 0, object_hash: 2 },
+        ];
+        let idx = TripleIndex::build(&triples);
+        let info = idx.info();
+        let json = serde_json::to_string(&info).unwrap();
+        assert!(json.contains("\"triple_count\":1"));
+        assert!(json.contains("\"unique_subjects\":1"));
+    }
+
+    #[test]
+    fn triple_index_info_basic() {
+        let idx = TripleIndex::build(&[]);
+        let info = idx.info();
+        assert_eq!(info.triple_count, 0);
+        assert_eq!(info.unique_subjects, 0);
     }
 }
