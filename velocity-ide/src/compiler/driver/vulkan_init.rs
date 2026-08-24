@@ -1132,4 +1132,255 @@ mod tests {
         info.device_name = "A".repeat(4096);
         assert!(validate_vulkan_device_info(&info).is_empty());
     }
+
+    // ── JSON key count verification ─────────────────────────────────────
+
+    #[test]
+    fn device_info_json_has_exactly_10_keys() {
+        let info = sample_device_info();
+        let json = serde_json::to_string(&info).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(v.as_object().unwrap().len(), 10);
+    }
+
+    // ── JSON roundtrip via Value ────────────────────────────────────────
+
+    #[test]
+    fn device_info_json_roundtrip_via_value() {
+        let info = sample_device_info();
+        let json = serde_json::to_string(&info).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(v["device_name"], "NVIDIA GeForce RTX 3080");
+        assert_eq!(v["device_type"], "Discrete GPU");
+        assert_eq!(v["api_version"], "1.2.0");
+        assert_eq!(v["driver_version"], 47000);
+        assert_eq!(v["queue_family_index"], 0);
+        assert_eq!(v["compute_queue_supported"], true);
+        assert_eq!(v["max_compute_work_group_count"], serde_json::json!([65536, 65536, 65536]));
+        assert_eq!(v["max_compute_work_group_size"], serde_json::json!([1024, 1024, 64]));
+        assert_eq!(v["max_compute_work_group_invocations"], 1024);
+        assert!(v["validation_issues"].as_array().unwrap().is_empty());
+    }
+
+    #[test]
+    fn device_info_json_roundtrip_with_issues() {
+        let mut info = sample_device_info();
+        info.validation_issues = vec!["issue_a".into(), "issue_b".into()];
+        let json = serde_json::to_string(&info).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&json).unwrap();
+        let arr = v["validation_issues"].as_array().unwrap();
+        assert_eq!(arr.len(), 2);
+        assert_eq!(arr[0], "issue_a");
+        assert_eq!(arr[1], "issue_b");
+    }
+
+    // ── Equality via JSON ───────────────────────────────────────────────
+
+    #[test]
+    fn device_info_eq_via_json() {
+        let a = sample_device_info();
+        let b = sample_device_info();
+        let ja: serde_json::Value = serde_json::from_str(&serde_json::to_string(&a).unwrap()).unwrap();
+        let jb: serde_json::Value = serde_json::from_str(&serde_json::to_string(&b).unwrap()).unwrap();
+        assert_eq!(ja, jb);
+    }
+
+    #[test]
+    fn device_info_neq_when_modified() {
+        let a = sample_device_info();
+        let mut b = sample_device_info();
+        b.driver_version = 99999;
+        let ja: serde_json::Value = serde_json::from_str(&serde_json::to_string(&a).unwrap()).unwrap();
+        let jb: serde_json::Value = serde_json::from_str(&serde_json::to_string(&b).unwrap()).unwrap();
+        assert_ne!(ja, jb);
+    }
+
+    // ── Workgroup array structure ───────────────────────────────────────
+
+    #[test]
+    fn work_group_count_always_3_elements() {
+        let info = sample_device_info();
+        assert_eq!(info.max_compute_work_group_count.len(), 3);
+    }
+
+    #[test]
+    fn work_group_size_always_3_elements() {
+        let info = sample_device_info();
+        assert_eq!(info.max_compute_work_group_size.len(), 3);
+    }
+
+    #[test]
+    fn work_group_count_json_array_length() {
+        let info = sample_device_info();
+        let json = serde_json::to_string(&info).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(v["max_compute_work_group_count"].as_array().unwrap().len(), 3);
+    }
+
+    #[test]
+    fn work_group_size_json_array_length() {
+        let info = sample_device_info();
+        let json = serde_json::to_string(&info).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(v["max_compute_work_group_size"].as_array().unwrap().len(), 3);
+    }
+
+    #[test]
+    fn work_group_count_asymmetric_values() {
+        let mut info = sample_device_info();
+        info.max_compute_work_group_count = [128, 256, 512];
+        let json = serde_json::to_string(&info).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(v["max_compute_work_group_count"][0], 128);
+        assert_eq!(v["max_compute_work_group_count"][1], 256);
+        assert_eq!(v["max_compute_work_group_count"][2], 512);
+    }
+
+    // ── Boolean field tests ─────────────────────────────────────────────
+
+    #[test]
+    fn compute_queue_true_no_issue() {
+        let mut info = sample_device_info();
+        info.compute_queue_supported = true;
+        assert!(!validate_vulkan_device_info(&info).iter().any(|i| i.contains("compute")));
+    }
+
+    #[test]
+    fn compute_queue_false_always_issues() {
+        let mut info = sample_device_info();
+        info.compute_queue_supported = false;
+        let issues = validate_vulkan_device_info(&info);
+        assert_eq!(issues.len(), 1);
+        assert!(issues[0].contains("compute"));
+    }
+
+    // ── Validation: combined with workgroup modifications ───────────────
+
+    #[test]
+    fn validate_with_modified_workgroup_count_still_valid() {
+        let mut info = sample_device_info();
+        info.max_compute_work_group_count = [1, 1, 1];
+        assert!(validate_vulkan_device_info(&info).is_empty());
+    }
+
+    #[test]
+    fn validate_with_modified_workgroup_size_still_valid() {
+        let mut info = sample_device_info();
+        info.max_compute_work_group_size = [1, 1, 1];
+        assert!(validate_vulkan_device_info(&info).is_empty());
+    }
+
+    // ── Debug format for arrays ─────────────────────────────────────────
+
+    #[test]
+    fn debug_format_contains_work_group_count() {
+        let info = sample_device_info();
+        let debug = format!("{:?}", info);
+        assert!(debug.contains("65536"));
+    }
+
+    #[test]
+    fn debug_format_contains_work_group_size() {
+        let info = sample_device_info();
+        let debug = format!("{:?}", info);
+        assert!(debug.contains("1024"));
+    }
+
+    // ── Serialization with various device types ─────────────────────────
+
+    #[test]
+    fn serialize_integrated_gpu() {
+        let mut info = sample_device_info();
+        info.device_type = "Integrated GPU".to_string();
+        let json = serde_json::to_string(&info).unwrap();
+        assert!(json.contains("Integrated GPU"));
+    }
+
+    #[test]
+    fn serialize_cpu_device() {
+        let mut info = sample_device_info();
+        info.device_type = "CPU".to_string();
+        let json = serde_json::to_string(&info).unwrap();
+        assert!(json.contains("CPU"));
+    }
+
+    // ── Validation with various driver versions ─────────────────────────
+
+    #[test]
+    fn validate_driver_version_one() {
+        let mut info = sample_device_info();
+        info.driver_version = 1;
+        assert!(validate_vulkan_device_info(&info).is_empty());
+    }
+
+    #[test]
+    fn validate_driver_version_typical_nvidia() {
+        // NVIDIA driver versions are typically 6 digits
+        let mut info = sample_device_info();
+        info.driver_version = 536210;
+        assert!(validate_vulkan_device_info(&info).is_empty());
+    }
+
+    // ── Clone independence for arrays ───────────────────────────────────
+
+    #[test]
+    fn clone_work_group_count_independent() {
+        let info = sample_device_info();
+        let mut cloned = info.clone();
+        cloned.max_compute_work_group_count[0] = 0;
+        assert_eq!(info.max_compute_work_group_count[0], 65536);
+    }
+
+    #[test]
+    fn clone_work_group_size_independent() {
+        let info = sample_device_info();
+        let mut cloned = info.clone();
+        cloned.max_compute_work_group_size[2] = 0;
+        assert_eq!(info.max_compute_work_group_size[2], 64);
+    }
+
+    #[test]
+    fn clone_validation_issues_independent() {
+        let info = sample_device_info();
+        let mut cloned = info.clone();
+        cloned.validation_issues.push("new issue".into());
+        assert!(info.validation_issues.is_empty());
+    }
+
+    // ── Validation: all fields at boundary ──────────────────────────────
+
+    #[test]
+    fn validate_all_boundaries_simultaneously() {
+        let info = VulkanDeviceInfo {
+            device_name: "X".to_string(),
+            device_type: "Other".to_string(),
+            api_version: "0.0.0".to_string(),
+            driver_version: u32::MAX,
+            queue_family_index: u32::MAX,
+            compute_queue_supported: true,
+            max_compute_work_group_count: [u32::MAX, u32::MAX, u32::MAX],
+            max_compute_work_group_size: [u32::MAX, u32::MAX, u32::MAX],
+            max_compute_work_group_invocations: u32::MAX,
+            validation_issues: vec![],
+        };
+        assert!(validate_vulkan_device_info(&info).is_empty());
+    }
+
+    #[test]
+    fn validate_empty_strings_everywhere() {
+        let info = VulkanDeviceInfo {
+            device_name: "Valid".to_string(),
+            device_type: String::new(),
+            api_version: String::new(),
+            driver_version: 0,
+            queue_family_index: 0,
+            compute_queue_supported: true,
+            max_compute_work_group_count: [0, 0, 0],
+            max_compute_work_group_size: [0, 0, 0],
+            max_compute_work_group_invocations: 1,
+            validation_issues: vec![],
+        };
+        // Empty device_type and api_version don't trigger validation issues
+        assert!(validate_vulkan_device_info(&info).is_empty());
+    }
 }
