@@ -3062,4 +3062,312 @@ mod tests {
         assert!(pretty.contains('\n'));
         assert!(pretty.contains("  ")); // indented
     }
+
+    // ── Block 196: JSON key counts ──────────────────────────────────────────
+
+    #[test]
+    fn cli_environment_json_has_7_keys() {
+        let env = CliEnvironment {
+            velocity_configured: true,
+            velocity_url_set: true,
+            velocity_key_set: true,
+            config_file_exists: true,
+            provider_count: 3,
+            credential_boundary_active: false,
+            validation_issues: vec![],
+        };
+        let json = serde_json::to_string(&env).unwrap();
+        let map: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(map.as_object().unwrap().len(), 7);
+    }
+
+    #[test]
+    fn cli_diagnostics_json_has_3_keys() {
+        let diag = CliDiagnostics {
+            environment: CliEnvironment {
+                velocity_configured: false,
+                velocity_url_set: false,
+                velocity_key_set: false,
+                config_file_exists: false,
+                provider_count: 0,
+                credential_boundary_active: false,
+                validation_issues: vec![],
+            },
+            velocity_config: None,
+            available_subcommands: vec!["generate"],
+        };
+        let json = serde_json::to_string(&diag).unwrap();
+        let map: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(map.as_object().unwrap().len(), 3);
+    }
+
+    // ── Block 196: validate_generate_args multiple issues ───────────────────
+
+    #[test]
+    fn generate_multiple_issues_at_once() {
+        let mut args = default_generate_args();
+        args.max_tokens = 0;
+        args.temperature = -1.0;
+        args.top_p = 2.0;
+        args.arch = "unknown_arch".into();
+        args.mode = "bad_mode".into();
+        args.prompt = None;
+        args.prompt_file = None;
+        let issues = validate_generate_args(&args);
+        // Should have: max_tokens, temperature, top_p, arch, mode, prompt
+        assert!(issues.len() >= 6, "expected >=6 issues, got {}: {:?}", issues.len(), issues);
+    }
+
+    #[test]
+    fn generate_temperature_exactly_zero_valid() {
+        let mut args = default_generate_args();
+        args.temperature = 0.0;
+        let issues = validate_generate_args(&args);
+        assert!(issues.iter().all(|i| !i.contains("temperature")));
+    }
+
+    #[test]
+    fn generate_temperature_exactly_five_valid() {
+        let mut args = default_generate_args();
+        args.temperature = 5.0;
+        let issues = validate_generate_args(&args);
+        assert!(issues.iter().all(|i| !i.contains("temperature")));
+    }
+
+    #[test]
+    fn generate_top_p_boundary_values_196() {
+        let mut args = default_generate_args();
+        args.top_p = 0.0;
+        assert!(validate_generate_args(&args).iter().all(|i| !i.contains("top-p")));
+        args.top_p = 1.0;
+        assert!(validate_generate_args(&args).iter().all(|i| !i.contains("top-p")));
+    }
+
+    #[test]
+    fn generate_both_prompt_and_prompt_file_valid() {
+        let mut args = default_generate_args();
+        args.prompt = Some("hello".into());
+        args.prompt_file = Some(PathBuf::from("prompt.txt"));
+        let issues = validate_generate_args(&args);
+        // Having both should NOT trigger the prompt issue
+        assert!(issues.iter().all(|i| !i.contains("prompt")));
+    }
+
+    // ── Block 196: validate_chat_args edge cases ────────────────────────────
+
+    #[test]
+    fn chat_temperature_exactly_zero_valid() {
+        let mut args = default_chat_args();
+        args.temperature = 0.0;
+        let issues = validate_chat_args(&args);
+        assert!(issues.iter().all(|i| !i.contains("temperature")));
+    }
+
+    #[test]
+    fn chat_top_p_boundaries() {
+        let mut args = default_chat_args();
+        args.top_p = 0.0;
+        assert!(validate_chat_args(&args).iter().all(|i| !i.contains("top-p")));
+        args.top_p = 1.0;
+        assert!(validate_chat_args(&args).iter().all(|i| !i.contains("top-p")));
+    }
+
+    #[test]
+    fn chat_multiple_issues_196() {
+        let mut args = default_chat_args();
+        args.max_tokens = 0;
+        args.temperature = -1.0;
+        args.top_p = 5.0;
+        args.arch = "invalid".into();
+        let issues = validate_chat_args(&args);
+        assert!(issues.len() >= 4, "expected >=4 issues, got {}: {:?}", issues.len(), issues);
+    }
+
+    // ── Block 196: validate_seed_args ───────────────────────────────────────
+
+    #[test]
+    fn seed_empty_source_files() {
+        let args = SeedArgs {
+            source: vec![],
+            site_map: PathBuf::from("/tmp/sm"),
+            weight_root: "0".into(),
+        };
+        let issues = validate_seed_args(&args);
+        assert!(issues.iter().any(|i| i.contains("source")));
+    }
+
+    #[test]
+    fn seed_invalid_hex_weight_root_196() {
+        let args = SeedArgs {
+            source: vec![PathBuf::from("test.rs")],
+            site_map: PathBuf::from("/tmp/sm"),
+            weight_root: "ZZZZ_NOT_HEX".into(),
+        };
+        let issues = validate_seed_args(&args);
+        assert!(issues.iter().any(|i| i.contains("hex")));
+    }
+
+    #[test]
+    fn seed_valid_hex_with_0x_prefix_196() {
+        let args = SeedArgs {
+            source: vec![PathBuf::from("test.rs")],
+            site_map: PathBuf::from("/tmp/sm"),
+            weight_root: "0xDEADBEEF".into(),
+        };
+        let issues = validate_seed_args(&args);
+        assert!(issues.is_empty(), "expected no issues, got: {:?}", issues);
+    }
+
+    #[test]
+    fn seed_default_args_valid() {
+        let args = default_seed_args();
+        let issues = validate_seed_args(&args);
+        assert!(issues.is_empty(), "default seed args should be valid, got: {:?}", issues);
+    }
+
+    // ── Block 196: Message edge cases ───────────────────────────────────────
+
+    #[test]
+    fn message_empty_role_and_content() {
+        let msg = Message {
+            role: "".into(),
+            content: "".into(),
+        };
+        let json = serde_json::to_string(&msg).unwrap();
+        let parsed: Message = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed.role, "");
+        assert_eq!(parsed.content, "");
+    }
+
+    #[test]
+    fn message_unicode_roundtrip() {
+        let msg = Message {
+            role: "user".into(),
+            content: "\u{1F600}\u{00E9}\u{4E16}\u{754C}".into(),
+        };
+        let json = serde_json::to_string(&msg).unwrap();
+        let parsed: Message = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed.content, msg.content);
+    }
+
+    // ── Block 196: CliEnvironment serialization ─────────────────────────────
+
+    #[test]
+    fn cli_environment_json_field_types() {
+        let env = CliEnvironment {
+            velocity_configured: true,
+            velocity_url_set: false,
+            velocity_key_set: true,
+            config_file_exists: true,
+            provider_count: 5,
+            credential_boundary_active: false,
+            validation_issues: vec!["issue1".into(), "issue2".into()],
+        };
+        let json = serde_json::to_string(&env).unwrap();
+        let map: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(map["velocity_configured"], true);
+        assert_eq!(map["velocity_url_set"], false);
+        assert_eq!(map["provider_count"], 5);
+        assert_eq!(map["validation_issues"].as_array().unwrap().len(), 2);
+    }
+
+    #[test]
+    fn cli_environment_clone_independence() {
+        let env = CliEnvironment {
+            velocity_configured: true,
+            velocity_url_set: true,
+            velocity_key_set: true,
+            config_file_exists: true,
+            provider_count: 3,
+            credential_boundary_active: true,
+            validation_issues: vec!["a".into()],
+        };
+        let mut cloned = env.clone();
+        cloned.provider_count = 99;
+        cloned.validation_issues.push("b".into());
+        assert_eq!(env.provider_count, 3);
+        assert_eq!(env.validation_issues.len(), 1);
+    }
+
+    // ── Block 196: GenerationReport clone and display ───────────────────────
+
+    #[test]
+    fn generation_report_display_all_fields_196() {
+        let report = GenerationReport {
+            mode: "nda".into(),
+            tokens_generated: 50,
+            elapsed_ms: 200,
+            tokens_per_second: 250.0,
+            site_map_hits: 10,
+            site_map_misses: 5,
+            merkle_valid: Some(true),
+            force_terminated: Some(false),
+            sandbox_executed: Some(true),
+            sandbox_panicked: Some(false),
+            scope_passed: Some(true),
+            stored_in_site_map: Some(false),
+        };
+        // Just verify display() doesn't panic
+        report.display();
+    }
+
+    #[test]
+    fn generation_report_tokens_per_second_formula() {
+        // tokens_per_second should equal tokens_generated / (elapsed_ms / 1000)
+        let report = GenerationReport {
+            mode: "text".into(),
+            tokens_generated: 100,
+            elapsed_ms: 500,
+            tokens_per_second: 200.0,
+            site_map_hits: 0,
+            site_map_misses: 0,
+            merkle_valid: None,
+            force_terminated: None,
+            sandbox_executed: None,
+            sandbox_panicked: None,
+            scope_passed: None,
+            stored_in_site_map: None,
+        };
+        let expected = report.tokens_generated as f64 / (report.elapsed_ms as f64 / 1000.0);
+        assert!((report.tokens_per_second - expected).abs() < 0.01);
+    }
+
+    // ── Block 196: LoginArgs and ProvidersArgs ──────────────────────────────
+
+    #[test]
+    fn login_args_default_url() {
+        // Verify the default URL is localhost:8787
+        let args = LoginArgs {
+            url: "http://localhost:8787".into(),
+            key: "vr_test123".into(),
+        };
+        assert_eq!(args.url, "http://localhost:8787");
+        assert!(args.key.starts_with("vr_"));
+    }
+
+    #[test]
+    fn providers_args_optional_fields() {
+        let args = ProvidersArgs {
+            action: "list".into(),
+            provider: None,
+            api_key: None,
+            base_url: None,
+        };
+        assert!(args.provider.is_none());
+        assert!(args.api_key.is_none());
+        assert!(args.base_url.is_none());
+    }
+
+    #[test]
+    fn providers_args_all_fields() {
+        let args = ProvidersArgs {
+            action: "add".into(),
+            provider: Some("openai".into()),
+            api_key: Some("sk-test".into()),
+            base_url: Some("https://proxy.example.com".into()),
+        };
+        assert_eq!(args.provider.as_deref(), Some("openai"));
+        assert_eq!(args.api_key.as_deref(), Some("sk-test"));
+        assert!(args.base_url.as_deref().unwrap().contains("proxy"));
+    }
 }

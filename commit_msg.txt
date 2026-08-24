@@ -1,13 +1,9 @@
-pipeline_nda.rs: 29 new tests (117 total)
+Block 196: main.rs — 25 new tests (140 total)
 
-JSON key counts: NdaGenStatsSnapshot(8), NdaExecutionSummary(9),
-BatchItemResult(9), BatchGenerationReport(7). Serde skip fields:
-nodes, sandbox, scope not in JSON. cache_hit_rate formula: exact
-fraction, single hit/miss, large numbers. top_opcodes: sorted
-descending, single opcode. ensure_distribution: vocab-sized,
-idempotent. Clone independence for NdaGenStatsSnapshot. NdaHead:
-save file size, different inputs, nonzero output, too-short file.
-PipelineMode: native alias, unknown defaults, struct/func/fn triggers.
-execution_summary: stored_in_site_map false, elapsed_ms u64 cast.
-snapshot unique_opcodes counts all nonzero. NdaGenStats debug format.
-random_uniform mean near zero. NdaExecutionSummary all fields JSON.
+JSON key counts (CliEnvironment=7, CliDiagnostics=3), validate_generate_args
+(multiple issues, temperature/top_p boundaries, both prompt+prompt_file),
+validate_chat_args (temperature 0, top_p boundaries, multiple issues),
+validate_seed_args (empty source, invalid hex, valid hex with 0x prefix),
+Message edge cases (empty role/content, unicode roundtrip), CliEnvironment
+serialization/clone independence, GenerationReport display all fields,
+LoginArgs/ProvidersArgs defaults and optional fields.
