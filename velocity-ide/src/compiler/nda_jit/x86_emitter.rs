@@ -2216,4 +2216,279 @@ mod tests {
         emitter.emit_slice(&[]);
         assert!(emitter.buf.is_empty());
     }
+
+    // ── Block 201: x86_emitter expanded tests ────────────────────────────────
+
+    #[test]
+    fn gemv_native_produces_correct_size() {
+        let mat = NdaMatrix::new_quad(4, 8, 0.0, vec![0xAA; 4], vec![0x55; 4]);
+        let input = NdaVec::zeros(8, 0);
+        let output = gemv_native(&mat, &input);
+        assert_eq!(output.len, 4);
+    }
+
+    #[test]
+    fn gemv_native_output_has_correct_length() {
+        let mat = NdaMatrix::new_quad(3, 8, 0.0, vec![0xAA; 3], vec![0x55; 3]);
+        let input = NdaVec::zeros(8, 0);
+        let output = gemv_native(&mat, &input);
+        // Output length should match matrix rows
+        assert_eq!(output.len, 3);
+    }
+
+    #[test]
+    fn is_pure_scalar_vecop_silu_not_eligible() {
+        // SiLU is NOT in the eligible list (only Negate, Abs, ReduceSum)
+        let node = NdaNode::VecOp {
+            op: VecOpKind::SiLU,
+            operand: Box::new(NdaNode::Load { name_hash: 0 }),
+        };
+        let info = native_compile_info(&[node]);
+        assert!(!info.is_fully_native);
+    }
+
+    #[test]
+    fn is_pure_scalar_nested_add_of_loads() {
+        let node = NdaNode::Add {
+            lhs: Box::new(NdaNode::Add {
+                lhs: Box::new(NdaNode::Load { name_hash: 1 }),
+                rhs: Box::new(NdaNode::Load { name_hash: 2 }),
+            }),
+            rhs: Box::new(NdaNode::Int { value: 10 }),
+        };
+        let info = native_compile_info(&[node]);
+        assert!(info.is_fully_native);
+        assert_eq!(info.total_nodes, 5); // Add(1) + Add(1) + Load(1) + Load(1) + Int(1)
+    }
+
+    #[test]
+    fn native_compile_info_norm_node() {
+        let node = NdaNode::Norm { size: 128, weight: vec![], bias: vec![] };
+        let info = native_compile_info(&[node]);
+        assert!(!info.is_fully_native); // Norm is interpreter-only
+        assert_eq!(info.native_eligible_nodes, 0);
+    }
+
+    #[test]
+    fn native_compile_info_multiple_variables() {
+        let nodes = vec![
+            NdaNode::Let { name_hash: 10, init: Box::new(NdaNode::Int { value: 1 }) },
+            NdaNode::Let { name_hash: 20, init: Box::new(NdaNode::Int { value: 2 }) },
+            NdaNode::Let { name_hash: 30, init: Box::new(NdaNode::Int { value: 3 }) },
+            NdaNode::Store { name_hash: 10, value: Box::new(NdaNode::Load { name_hash: 20 }) },
+        ];
+        let info = native_compile_info(&nodes);
+        assert_eq!(info.variable_count, 3); // 10, 20, 30
+    }
+
+    #[test]
+    fn emitter_diagnostic_short_buffer() {
+        let mut emitter = X86Emitter::new();
+        emitter.emit(0x55);
+        emitter.emit(0x48);
+        // Only 2 bytes — too short for prologue check (needs >= 4)
+        let diag = emitter_diagnostic(&emitter);
+        assert!(!diag.has_prologue);
+        assert_eq!(diag.code_bytes, 2);
+    }
+
+    #[test]
+    fn emitter_diagnostic_three_bytes_no_ret() {
+        let mut emitter = X86Emitter::new();
+        emitter.emit(0x55);
+        emitter.emit(0x48);
+        emitter.emit(0x89);
+        let diag = emitter_diagnostic(&emitter);
+        assert!(!diag.has_prologue); // needs exactly [0x55, 0x48, 0x89, 0xE5]
+        assert!(!diag.has_ret);
+    }
+
+    #[test]
+    fn emitter_diagnostic_validation_issues_count() {
+        let emitter = X86Emitter::new();
+        let diag = emitter_diagnostic(&emitter);
+        // Empty buffer should have at least 2 issues: empty + missing prologue
+        assert!(diag.validation_issues.len() >= 2);
+    }
+
+    #[test]
+    fn count_nodes_empty_while_body() {
+        let node = NdaNode::While {
+            cond: Box::new(NdaNode::Int { value: 1 }),
+            body: vec![],
+        };
+        assert_eq!(count_nodes(&node), 2); // While + cond Int
+    }
+
+    #[test]
+    fn count_nodes_nested_scopes() {
+        let node = NdaNode::Scope {
+            children: vec![
+                NdaNode::Scope {
+                    children: vec![
+                        NdaNode::Scope {
+                            children: vec![NdaNode::Int { value: 0 }],
+                        },
+                    ],
+                },
+            ],
+        };
+        // 3 Scopes + 1 Int = 4
+        assert_eq!(count_nodes(&node), 4);
+    }
+
+    #[test]
+    fn native_compile_info_json_all_fields() {
+        let nodes = vec![
+            NdaNode::Let { name_hash: 1, init: Box::new(NdaNode::Int { value: 0 }) },
+            NdaNode::Loop { count: 5, body: vec![NdaNode::Int { value: 1 }] },
+            NdaNode::Print { source: Box::new(NdaNode::Int { value: 2 }) },
+        ];
+        let info = native_compile_info(&nodes);
+        let json = serde_json::to_value(&info).unwrap();
+        assert!(json.get("total_nodes").is_some());
+        assert!(json.get("native_eligible_nodes").is_some());
+        assert!(json.get("interpreter_only_nodes").is_some());
+        assert!(json.get("native_ratio").is_some());
+        assert!(json.get("is_fully_native").is_some());
+        assert!(json.get("has_loops").is_some());
+        assert!(json.get("has_while_loops").is_some());
+        assert!(json.get("has_conditionals").is_some());
+        assert!(json.get("has_returns").is_some());
+        assert!(json.get("variable_count").is_some());
+        assert!(json.get("validation_issues").is_some());
+    }
+
+    #[test]
+    fn native_compile_info_total_equals_sum() {
+        let nodes = vec![
+            NdaNode::Int { value: 1 },
+            NdaNode::Print { source: Box::new(NdaNode::Int { value: 2 }) },
+            NdaNode::Return { value: Box::new(NdaNode::Int { value: 3 }) },
+            NdaNode::Loop { count: 3, body: vec![NdaNode::Load { name_hash: 0 }] },
+        ];
+        let info = native_compile_info(&nodes);
+        assert_eq!(
+            info.total_nodes,
+            info.native_eligible_nodes + info.interpreter_only_nodes
+        );
+    }
+
+    #[test]
+    fn native_compile_info_while_sets_both_flags() {
+        let node = NdaNode::While {
+            cond: Box::new(NdaNode::Load { name_hash: 0 }),
+            body: vec![NdaNode::Int { value: 0 }],
+        };
+        let info = native_compile_info(&[node]);
+        assert!(info.has_loops);
+        assert!(info.has_while_loops);
+    }
+
+    #[test]
+    fn native_compile_info_no_loops_no_whiles() {
+        let nodes = vec![
+            NdaNode::Int { value: 1 },
+            NdaNode::Load { name_hash: 0 },
+        ];
+        let info = native_compile_info(&nodes);
+        assert!(!info.has_loops);
+        assert!(!info.has_while_loops);
+    }
+
+    #[test]
+    fn emitter_mov_eax_imm32_length() {
+        let mut emitter = X86Emitter::new();
+        emitter.mov_eax_imm32(0x12345678);
+        assert_eq!(emitter.buf.len(), 5); // 1 opcode + 4 bytes
+    }
+
+    #[test]
+    fn emitter_multiple_mov_eax_last_wins() {
+        let mut emitter = X86Emitter::new();
+        emitter.mov_eax_imm32(1);
+        emitter.mov_eax_imm32(2);
+        assert_eq!(emitter.buf.len(), 10); // two 5-byte sequences
+        let imm2 = i32::from_le_bytes([emitter.buf[6], emitter.buf[7], emitter.buf[8], emitter.buf[9]]);
+        assert_eq!(imm2, 2);
+    }
+
+    #[test]
+    fn emitter_diagnostic_multiple_issues() {
+        // Buffer with wrong prologue bytes AND no ret
+        let mut emitter = X86Emitter::new();
+        emitter.emit(0x90); // NOP
+        emitter.emit(0x90); // NOP
+        let diag = emitter_diagnostic(&emitter);
+        // Should have: missing prologue + missing ret
+        assert!(diag.validation_issues.len() >= 2);
+        assert!(!diag.has_prologue);
+        assert!(!diag.has_ret);
+    }
+
+    #[test]
+    fn count_nodes_compare_all_ops() {
+        for op in &[CmpOp::Lt, CmpOp::Gt, CmpOp::Eq, CmpOp::Ne, CmpOp::Le, CmpOp::Ge] {
+            let node = NdaNode::Compare {
+                op: *op,
+                lhs: Box::new(NdaNode::Int { value: 1 }),
+                rhs: Box::new(NdaNode::Int { value: 2 }),
+            };
+            assert_eq!(count_nodes(&node), 3);
+        }
+    }
+
+    #[test]
+    fn native_compile_info_if_without_else_no_conditionals_from_scope() {
+        // An If always sets has_conditionals regardless
+        let node = NdaNode::If {
+            cond: Box::new(NdaNode::Int { value: 1 }),
+            then_body: vec![NdaNode::Int { value: 0 }],
+            else_body: None,
+        };
+        let info = native_compile_info(&[node]);
+        assert!(info.has_conditionals);
+    }
+
+    #[test]
+    fn is_pure_scalar_if_with_impure_then_body() {
+        let node = NdaNode::If {
+            cond: Box::new(NdaNode::Int { value: 1 }),
+            then_body: vec![NdaNode::Print { source: Box::new(NdaNode::Int { value: 0 }) }],
+            else_body: None,
+        };
+        let info = native_compile_info(&[node]);
+        assert!(!info.is_fully_native);
+    }
+
+    #[test]
+    fn is_pure_scalar_if_with_impure_else_body() {
+        let node = NdaNode::If {
+            cond: Box::new(NdaNode::Int { value: 1 }),
+            then_body: vec![NdaNode::Int { value: 0 }],
+            else_body: Some(vec![NdaNode::Call { target: 0 }]),
+        };
+        let info = native_compile_info(&[node]);
+        assert!(!info.is_fully_native);
+    }
+
+    #[test]
+    fn native_compile_info_empty_has_no_flags() {
+        let info = native_compile_info(&[]);
+        assert!(!info.has_loops);
+        assert!(!info.has_while_loops);
+        assert!(!info.has_conditionals);
+        assert!(!info.has_returns);
+        assert_eq!(info.variable_count, 0);
+    }
+
+    #[test]
+    fn validate_emitter_size_serializes() {
+        let mut emitter = X86Emitter::new();
+        emitter.push_rbp();
+        emitter.ret();
+        let issues = validate_emitter_size(&emitter, 1024);
+        let json = serde_json::to_value(&issues).unwrap();
+        assert!(json.is_array());
+    }
 }

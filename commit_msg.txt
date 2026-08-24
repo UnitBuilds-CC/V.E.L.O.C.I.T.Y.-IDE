@@ -1,15 +1,15 @@
-Block 199: nda_parser.rs — 42 new tests (158 total)
+Block 201: x86_emitter.rs — 24 new tests (115 total)
 
 Coverage areas:
-- hash_name: distribution (100 unique), similar prefixes, case sensitivity
-- build_matrix_node: bitmap byte count formulas, odd cols, 1x1 exact bytes
-- build_norm_node: bitmap bytes for 8/9, large clamped, weight/bias content
-- resolve_calls: nested if/else, unresolved name stays original, no call_names entry
-- compile vs compile_with_report equivalence
-- ParseReport: unresolved calls, JSON hash format (16 hex chars), sorted names
-- parse_type: vec/matrix/norm/int params, int/vec return types
-- parse expressions: vec bracket/paren, norm paren, abs/reduce_sum/negate builtins
-- Nested control flow: nested loops, else-if chains, while inside loop
-- Error paths: unexpected token in let, missing colon, missing rparen, missing comma
-- Misc: empty function body, multiple calls same fn, call target hash, optional semicolons,
-  negative int literal, double negate, add chain left-associativity
+- gemv_native: output size verification, correct dimensions with NdaMatrix::new_quad
+- is_pure_scalar: SiLU not eligible (only Negate/Abs/ReduceSum), nested Add of Loads,
+  if with impure then/else body
+- native_compile_info: Norm node interpreter-only, multiple variables count,
+  JSON all 11 fields present, total=eligible+interpreter invariant,
+  while sets both loop flags, no-ops flags for pure nodes,
+  empty has no flags, if without else still sets conditionals
+- count_nodes: empty while body, nested scopes, all CmpOp variants
+- emitter_diagnostic: short buffer (2 bytes), 3 bytes no ret, multiple issues count,
+  validation issues >= 2 for empty buffer
+- emitter operations: mov_eax_imm32 length, multiple mov_eax last wins,
+  multiple emits accumulate correctly
