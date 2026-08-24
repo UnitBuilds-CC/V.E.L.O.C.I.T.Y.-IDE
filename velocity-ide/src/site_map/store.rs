@@ -2131,4 +2131,738 @@ mod tests {
         assert_eq!(analysis.unique_predicates, 0);
         cleanup(&dir);
     }
+
+    // ── JSON key counts ──────────────────────────────────────────────────
+
+    #[test]
+    fn site_map_info_json_key_count() {
+        let info = SiteMapInfo {
+            total_entries: 0, kv_count: 0, node_count: 0, program_count: 0, snapshot_count: 0,
+            total_bytes: 0, root: 0, weight_root: 0, kv_cache_size: 0, kv_cache_max: 4096,
+            string_dict_size: 0, validation_issues: vec![],
+        };
+        let json = serde_json::to_string(&info).unwrap();
+        let val: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(val.as_object().unwrap().len(), 12);
+    }
+
+    #[test]
+    fn site_map_verify_report_json_key_count() {
+        let report = SiteMapVerifyReport {
+            total_entries: 0, checked: 0, corrupt: 0, missing: 0, valid: 0, issues: vec![],
+        };
+        let json = serde_json::to_string(&report).unwrap();
+        let val: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(val.as_object().unwrap().len(), 6);
+    }
+
+    #[test]
+    fn site_map_summary_json_key_count() {
+        let summary = SiteMapSummary {
+            stats: "s".into(), root: "r".into(), weight_root: "w".into(),
+            cache_utilization: "c".into(), validation_clean: true,
+        };
+        let json = serde_json::to_string(&summary).unwrap();
+        let val: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(val.as_object().unwrap().len(), 5);
+    }
+
+    #[test]
+    fn store_operation_report_json_key_count() {
+        let report = StoreOperationReport {
+            operation: "op".into(), elapsed_us: 1, entries_affected: 0, total_entries_after: 0,
+        };
+        let json = serde_json::to_string(&report).unwrap();
+        let val: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(val.as_object().unwrap().len(), 4);
+    }
+
+    #[test]
+    fn triple_analysis_json_key_count() {
+        let analysis = TripleAnalysis {
+            total_triples: 0, unique_predicates: 0, predicate_distribution: vec![],
+            unique_subjects: 0, unique_objects: 0,
+        };
+        let json = serde_json::to_string(&analysis).unwrap();
+        let val: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(val.as_object().unwrap().len(), 5);
+    }
+
+    #[test]
+    fn predicate_count_json_key_count() {
+        let pc = PredicateCount { predicate_id: 1, count: 5 };
+        let json = serde_json::to_string(&pc).unwrap();
+        let val: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(val.as_object().unwrap().len(), 2);
+    }
+
+    // ── Clone independence ───────────────────────────────────────────────
+
+    #[test]
+    fn site_map_info_clone_independent() {
+        let info = SiteMapInfo {
+            total_entries: 5, kv_count: 3, node_count: 1, program_count: 0, snapshot_count: 1,
+            total_bytes: 1000, root: 42, weight_root: 99, kv_cache_size: 10, kv_cache_max: 4096,
+            string_dict_size: 2, validation_issues: vec!["warn".into()],
+        };
+        let mut cloned = info.clone();
+        cloned.validation_issues.push("extra".into());
+        assert_ne!(info.validation_issues.len(), cloned.validation_issues.len());
+    }
+
+    #[test]
+    fn site_map_verify_report_clone_independent() {
+        let report = SiteMapVerifyReport {
+            total_entries: 10, checked: 10, corrupt: 0, missing: 0, valid: 10,
+            issues: vec![],
+        };
+        let mut cloned = report.clone();
+        cloned.issues.push("issue".into());
+        assert_ne!(report.issues.len(), cloned.issues.len());
+    }
+
+    #[test]
+    fn triple_analysis_clone_independent() {
+        let analysis = TripleAnalysis {
+            total_triples: 5, unique_predicates: 2,
+            predicate_distribution: vec![PredicateCount { predicate_id: 1, count: 3 }],
+            unique_subjects: 3, unique_objects: 2,
+        };
+        let mut cloned = analysis.clone();
+        cloned.predicate_distribution.push(PredicateCount { predicate_id: 2, count: 2 });
+        assert_ne!(analysis.predicate_distribution.len(), cloned.predicate_distribution.len());
+    }
+
+    // ── JSON value verification ──────────────────────────────────────────
+
+    #[test]
+    fn site_map_info_json_values() {
+        let info = SiteMapInfo {
+            total_entries: 10, kv_count: 5, node_count: 3, program_count: 1, snapshot_count: 1,
+            total_bytes: 2048, root: 0xDEAD, weight_root: 0xBEEF, kv_cache_size: 8, kv_cache_max: 4096,
+            string_dict_size: 4, validation_issues: vec!["issue1".into()],
+        };
+        let json = serde_json::to_string(&info).unwrap();
+        let val: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(val["total_entries"], 10);
+        assert_eq!(val["kv_count"], 5);
+        assert_eq!(val["node_count"], 3);
+        assert_eq!(val["program_count"], 1);
+        assert_eq!(val["snapshot_count"], 1);
+        assert_eq!(val["total_bytes"], 2048);
+        assert_eq!(val["kv_cache_max"], 4096);
+        assert_eq!(val["validation_issues"].as_array().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn site_map_verify_report_json_values() {
+        let report = SiteMapVerifyReport {
+            total_entries: 20, checked: 18, corrupt: 1, missing: 1, valid: 16,
+            issues: vec!["CORRUPT: x".into(), "MISSING: y".into()],
+        };
+        let json = serde_json::to_string(&report).unwrap();
+        let val: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(val["total_entries"], 20);
+        assert_eq!(val["checked"], 18);
+        assert_eq!(val["corrupt"], 1);
+        assert_eq!(val["missing"], 1);
+        assert_eq!(val["valid"], 16);
+        assert_eq!(val["issues"].as_array().unwrap().len(), 2);
+    }
+
+    // ── Extract triples: more node types ─────────────────────────────────
+
+    #[test]
+    fn extract_triples_from_while() {
+        let node = NdaNode::While {
+            cond: Box::new(NdaNode::Triple { subject_hash: 1, predicate_id: 2, object_hash: 3 }),
+            body: vec![NdaNode::Triple { subject_hash: 4, predicate_id: 5, object_hash: 6 }],
+        };
+        let mut triples = Vec::new();
+        SiteMap::extract_triples_recursive(&node, &mut triples);
+        assert_eq!(triples.len(), 2);
+    }
+
+    #[test]
+    fn extract_triples_from_compare() {
+        let node = NdaNode::Compare {
+            op: crate::site_map::verifier::CmpOp::Eq,
+            lhs: Box::new(NdaNode::Triple { subject_hash: 1, predicate_id: 2, object_hash: 3 }),
+            rhs: Box::new(NdaNode::Int { value: 0 }),
+        };
+        let mut triples = Vec::new();
+        SiteMap::extract_triples_recursive(&node, &mut triples);
+        assert_eq!(triples.len(), 1);
+    }
+
+    #[test]
+    fn extract_triples_from_add() {
+        let node = NdaNode::Add {
+            lhs: Box::new(NdaNode::Triple { subject_hash: 1, predicate_id: 2, object_hash: 3 }),
+            rhs: Box::new(NdaNode::Triple { subject_hash: 4, predicate_id: 5, object_hash: 6 }),
+        };
+        let mut triples = Vec::new();
+        SiteMap::extract_triples_recursive(&node, &mut triples);
+        assert_eq!(triples.len(), 2);
+    }
+
+    #[test]
+    fn extract_triples_from_print() {
+        let node = NdaNode::Print {
+            source: Box::new(NdaNode::Triple { subject_hash: 1, predicate_id: 2, object_hash: 3 }),
+        };
+        let mut triples = Vec::new();
+        SiteMap::extract_triples_recursive(&node, &mut triples);
+        assert_eq!(triples.len(), 1);
+    }
+
+    #[test]
+    fn extract_triples_from_return_node() {
+        let node = NdaNode::Return {
+            value: Box::new(NdaNode::Triple { subject_hash: 1, predicate_id: 2, object_hash: 3 }),
+        };
+        let mut triples = Vec::new();
+        SiteMap::extract_triples_recursive(&node, &mut triples);
+        assert_eq!(triples.len(), 1);
+    }
+
+    #[test]
+    fn extract_triples_from_dot() {
+        let node = NdaNode::Dot {
+            lhs: Box::new(NdaNode::Triple { subject_hash: 1, predicate_id: 2, object_hash: 3 }),
+            rhs: Box::new(NdaNode::Triple { subject_hash: 4, predicate_id: 5, object_hash: 6 }),
+        };
+        let mut triples = Vec::new();
+        SiteMap::extract_triples_recursive(&node, &mut triples);
+        assert_eq!(triples.len(), 2);
+    }
+
+    #[test]
+    fn extract_triples_from_syscall() {
+        let node = NdaNode::Syscall {
+            num: 1,
+            args: vec![NdaNode::Triple { subject_hash: 1, predicate_id: 2, object_hash: 3 }],
+        };
+        let mut triples = Vec::new();
+        SiteMap::extract_triples_recursive(&node, &mut triples);
+        assert_eq!(triples.len(), 1);
+    }
+
+    #[test]
+    fn extract_triples_from_atomic() {
+        let node = NdaNode::Atomic {
+            op: crate::site_map::verifier::AtomicOp::Cas,
+            addr: Box::new(NdaNode::Triple { subject_hash: 1, predicate_id: 2, object_hash: 3 }),
+            val: Box::new(NdaNode::Int { value: 5 }),
+        };
+        let mut triples = Vec::new();
+        SiteMap::extract_triples_recursive(&node, &mut triples);
+        assert_eq!(triples.len(), 1);
+    }
+
+    // ── validate_entry: all issues at once ───────────────────────────────
+
+    #[test]
+    fn validate_entry_all_issues() {
+        let entry = SiteMapEntry {
+            kind: EntryKind::Kv, hash: 0xABCD, file: "".into(), file_sha: "".into(), size: 0,
+        };
+        let issues = SiteMap::validate_entry(&entry);
+        assert_eq!(issues.len(), 3);
+        assert!(issues[0].contains("empty file path"));
+        assert!(issues[1].contains("empty file_sha"));
+        assert!(issues[2].contains("zero size"));
+    }
+
+    // ── hash_string edge cases ───────────────────────────────────────────
+
+    #[test]
+    fn hash_string_empty_string() {
+        let dir = temp_dir("hstr_empty");
+        let sm = SiteMap::open(&dir, 0).unwrap();
+        let h = sm.hash_string("");
+        assert_ne!(h, 0); // SHA-256 of empty is not zero
+        cleanup(&dir);
+    }
+
+    #[test]
+    fn hash_string_unicode() {
+        let dir = temp_dir("hstr_uni");
+        let sm = SiteMap::open(&dir, 0).unwrap();
+        let h1 = sm.hash_string("hello");
+        let h2 = sm.hash_string("\u{1f600}");
+        assert_ne!(h1, h2);
+        cleanup(&dir);
+    }
+
+    // ── Cache utilization after puts ─────────────────────────────────────
+
+    #[test]
+    fn cache_utilization_after_kv() {
+        let dir = temp_dir("cache_after");
+        let mut sm = SiteMap::open(&dir, 0).unwrap();
+        sm.put_kv(1, 0, test_ndavec(&[1]), test_ndavec(&[2])).unwrap();
+        assert!(sm.cache_utilization() > 0.0);
+        assert!(sm.cache_utilization() <= 1.0);
+        cleanup(&dir);
+    }
+
+    // ── Stats after multiple operations ──────────────────────────────────
+
+    #[test]
+    fn stats_after_nodes() {
+        let dir = temp_dir("stats_nodes");
+        let mut sm = SiteMap::open(&dir, 0).unwrap();
+        sm.put_node(&NdaNode::Int { value: 1 }).unwrap();
+        sm.put_node(&NdaNode::Int { value: 2 }).unwrap();
+        let s = sm.stats();
+        assert_eq!(s.nodes, 2);
+        assert_eq!(s.total_entries, 2);
+        cleanup(&dir);
+    }
+
+    #[test]
+    fn stats_after_mixed() {
+        let dir = temp_dir("stats_mixed");
+        let mut sm = SiteMap::open(&dir, 0).unwrap();
+        sm.put_kv(1, 0, test_ndavec(&[1]), test_ndavec(&[2])).unwrap();
+        sm.put_node(&NdaNode::Int { value: 42 }).unwrap();
+        let s = sm.stats();
+        assert_eq!(s.kv, 1);
+        assert_eq!(s.nodes, 1);
+        assert_eq!(s.total_entries, 2);
+        cleanup(&dir);
+    }
+
+    // ── Validate clean after put ─────────────────────────────────────────
+
+    #[test]
+    fn validate_clean_after_kv() {
+        let dir = temp_dir("val_clean_kv");
+        let mut sm = SiteMap::open(&dir, 0).unwrap();
+        sm.put_kv(1, 0, test_ndavec(&[1]), test_ndavec(&[2])).unwrap();
+        let w = sm.validate();
+        // Should not have "empty" warning since we have entries
+        assert!(!w.iter().any(|s| s.contains("index is empty")));
+        cleanup(&dir);
+    }
+
+    // ── Info after operations ────────────────────────────────────────────
+
+    #[test]
+    fn info_after_nodes() {
+        let dir = temp_dir("info_nodes");
+        let mut sm = SiteMap::open(&dir, 0).unwrap();
+        sm.put_node(&NdaNode::Int { value: 1 }).unwrap();
+        let info = sm.info();
+        assert_eq!(info.node_count, 1);
+        assert_eq!(info.kv_count, 0);
+        cleanup(&dir);
+    }
+
+    #[test]
+    fn info_after_snapshot() {
+        let dir = temp_dir("info_snap");
+        let mut sm = SiteMap::open(&dir, 0).unwrap();
+        let triples = vec![VcTriple { subject_hash: 1, predicate_id: 2, object_hash: 3 }];
+        sm.put_file_snapshot("test.rs", &triples).unwrap();
+        let info = sm.info();
+        assert_eq!(info.snapshot_count, 1);
+        cleanup(&dir);
+    }
+
+    // ── Entries by kind: multiple kinds ──────────────────────────────────
+
+    #[test]
+    fn entries_by_kind_multiple() {
+        let dir = temp_dir("kind_multi");
+        let mut sm = SiteMap::open(&dir, 0).unwrap();
+        sm.put_kv(1, 0, test_ndavec(&[1]), test_ndavec(&[2])).unwrap();
+        sm.put_node(&NdaNode::Int { value: 42 }).unwrap();
+        assert_eq!(sm.entries_by_kind(&EntryKind::Kv).len(), 1);
+        assert_eq!(sm.entries_by_kind(&EntryKind::Node).len(), 1);
+        assert_eq!(sm.entries_by_kind(&EntryKind::Program).len(), 0);
+        cleanup(&dir);
+    }
+
+    // ── Largest entries edge cases ───────────────────────────────────────
+
+    #[test]
+    fn largest_entries_zero() {
+        let dir = temp_dir("largest_zero");
+        let mut sm = SiteMap::open(&dir, 0).unwrap();
+        sm.put_kv(1, 0, test_ndavec(&[1]), test_ndavec(&[2])).unwrap();
+        let largest = sm.largest_entries(0);
+        assert!(largest.is_empty());
+        cleanup(&dir);
+    }
+
+    #[test]
+    fn largest_entries_more_than_available() {
+        let dir = temp_dir("largest_more");
+        let mut sm = SiteMap::open(&dir, 0).unwrap();
+        sm.put_kv(1, 0, test_ndavec(&[1]), test_ndavec(&[2])).unwrap();
+        let largest = sm.largest_entries(100);
+        assert_eq!(largest.len(), 1);
+        cleanup(&dir);
+    }
+
+    // ── Batch operations: edge cases ─────────────────────────────────────
+
+    #[test]
+    fn put_kv_batch_empty() {
+        let dir = temp_dir("batch_empty");
+        let mut sm = SiteMap::open(&dir, 0).unwrap();
+        let keys = sm.put_kv_batch(&[]).unwrap();
+        assert!(keys.is_empty());
+        assert_eq!(sm.len(), 0);
+        cleanup(&dir);
+    }
+
+    #[test]
+    fn put_nodes_batch_empty() {
+        let dir = temp_dir("batch_node_empty");
+        let mut sm = SiteMap::open(&dir, 0).unwrap();
+        let keys = sm.put_nodes_batch(&[]).unwrap();
+        assert!(keys.is_empty());
+        cleanup(&dir);
+    }
+
+    #[test]
+    fn register_strings_batch_empty() {
+        let dir = temp_dir("batch_str_empty");
+        let sm = SiteMap::open(&dir, 0).unwrap();
+        let hashes = sm.register_strings_batch(&[]).unwrap();
+        assert!(hashes.is_empty());
+        cleanup(&dir);
+    }
+
+    #[test]
+    fn register_strings_batch_dedup() {
+        let dir = temp_dir("batch_str_dup");
+        let sm = SiteMap::open(&dir, 0).unwrap();
+        let h1 = sm.register_strings_batch(&["hello", "hello"]).unwrap();
+        assert_eq!(h1[0], h1[1]); // Same string → same hash
+        cleanup(&dir);
+    }
+
+    #[test]
+    fn resolve_strings_batch_unknown() {
+        let dir = temp_dir("batch_str_unk");
+        let sm = SiteMap::open(&dir, 0).unwrap();
+        let resolved = sm.resolve_strings_batch(&[0xDEAD, 0xBEEF]);
+        assert_eq!(resolved.len(), 2);
+        assert!(resolved[0].is_none());
+        assert!(resolved[1].is_none());
+        cleanup(&dir);
+    }
+
+    // ── put_file_snapshots_batch ─────────────────────────────────────────
+
+    #[test]
+    fn put_file_snapshots_batch_works() {
+        let dir = temp_dir("batch_snap");
+        let mut sm = SiteMap::open(&dir, 0).unwrap();
+        let t1 = vec![VcTriple { subject_hash: 1, predicate_id: 2, object_hash: 3 }];
+        let t2 = vec![VcTriple { subject_hash: 4, predicate_id: 5, object_hash: 6 }];
+        let keys = sm.put_file_snapshots_batch(&[
+            ("file1.rs", &t1),
+            ("file2.rs", &t2),
+        ]).unwrap();
+        assert_eq!(keys.len(), 2);
+        assert_eq!(sm.len(), 2);
+        cleanup(&dir);
+    }
+
+    // ── put_program ──────────────────────────────────────────────────────
+
+    #[test]
+    fn put_program_works() {
+        let dir = temp_dir("program1");
+        let mut sm = SiteMap::open(&dir, 0).unwrap();
+        let node = NdaNode::Int { value: 42 };
+        let key = sm.put_program(&node).unwrap();
+        assert_ne!(key, 0);
+        // Should have both a node entry and a program entry
+        assert_eq!(sm.len(), 2);
+        cleanup(&dir);
+    }
+
+    #[test]
+    fn put_program_idempotent() {
+        let dir = temp_dir("program2");
+        let mut sm = SiteMap::open(&dir, 0).unwrap();
+        let node = NdaNode::Int { value: 42 };
+        let key1 = sm.put_program(&node).unwrap();
+        let key2 = sm.put_program(&node).unwrap();
+        assert_eq!(key1, key2);
+        cleanup(&dir);
+    }
+
+    // ── find_triples / find_live_triples ─────────────────────────────────
+
+    #[test]
+    fn find_live_triples_after_snapshot() {
+        let dir = temp_dir("live_triples1");
+        let mut sm = SiteMap::open(&dir, 0).unwrap();
+        let triples = vec![
+            VcTriple { subject_hash: 1, predicate_id: 2, object_hash: 3 },
+            VcTriple { subject_hash: 4, predicate_id: 5, object_hash: 6 },
+        ];
+        sm.put_file_snapshot("test.rs", &triples).unwrap();
+        let found = sm.find_live_triples(None, None, None);
+        assert_eq!(found.len(), 2);
+        cleanup(&dir);
+    }
+
+    #[test]
+    fn find_live_triples_by_subject() {
+        let dir = temp_dir("live_triples2");
+        let mut sm = SiteMap::open(&dir, 0).unwrap();
+        let triples = vec![
+            VcTriple { subject_hash: 1, predicate_id: 2, object_hash: 3 },
+            VcTriple { subject_hash: 4, predicate_id: 5, object_hash: 6 },
+        ];
+        sm.put_file_snapshot("test.rs", &triples).unwrap();
+        let found = sm.find_live_triples(Some(1), None, None);
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].subject_hash, 1);
+        cleanup(&dir);
+    }
+
+    // ── get_callers / get_dependencies ───────────────────────────────────
+
+    #[test]
+    fn get_callers_empty() {
+        let dir = temp_dir("callers1");
+        let sm = SiteMap::open(&dir, 0).unwrap();
+        assert!(sm.get_callers(0xDEAD).is_empty());
+        cleanup(&dir);
+    }
+
+    #[test]
+    fn get_dependencies_empty() {
+        let dir = temp_dir("deps1");
+        let sm = SiteMap::open(&dir, 0).unwrap();
+        assert!(sm.get_dependencies(0xDEAD).is_empty());
+        cleanup(&dir);
+    }
+
+    #[test]
+    fn get_callers_after_snapshot() {
+        let dir = temp_dir("callers2");
+        let mut sm = SiteMap::open(&dir, 0).unwrap();
+        // predicate_id=2 means "calls"
+        let triples = vec![
+            VcTriple { subject_hash: 100, predicate_id: 2, object_hash: 200 },
+        ];
+        sm.put_file_snapshot("test.rs", &triples).unwrap();
+        let callers = sm.get_callers(200);
+        assert_eq!(callers.len(), 1);
+        assert_eq!(callers[0], 100);
+        cleanup(&dir);
+    }
+
+    #[test]
+    fn get_dependencies_after_snapshot() {
+        let dir = temp_dir("deps2");
+        let mut sm = SiteMap::open(&dir, 0).unwrap();
+        let triples = vec![
+            VcTriple { subject_hash: 100, predicate_id: 3, object_hash: 200 },
+        ];
+        sm.put_file_snapshot("test.rs", &triples).unwrap();
+        let deps = sm.get_dependencies(100);
+        assert_eq!(deps.len(), 1);
+        assert_eq!(deps[0], 200);
+        cleanup(&dir);
+    }
+
+    // ── find_live_by_subjects / find_live_by_objects ─────────────────────
+
+    #[test]
+    fn find_live_by_subjects_works() {
+        let dir = temp_dir("bsubj");
+        let mut sm = SiteMap::open(&dir, 0).unwrap();
+        let triples = vec![
+            VcTriple { subject_hash: 1, predicate_id: 2, object_hash: 3 },
+            VcTriple { subject_hash: 4, predicate_id: 5, object_hash: 6 },
+        ];
+        sm.put_file_snapshot("test.rs", &triples).unwrap();
+        let found = sm.find_live_by_subjects(&[1, 4]);
+        assert_eq!(found.len(), 2);
+        let found2 = sm.find_live_by_subjects(&[1]);
+        assert_eq!(found2.len(), 1);
+        cleanup(&dir);
+    }
+
+    #[test]
+    fn find_live_by_objects_works() {
+        let dir = temp_dir("bobj");
+        let mut sm = SiteMap::open(&dir, 0).unwrap();
+        let triples = vec![
+            VcTriple { subject_hash: 1, predicate_id: 2, object_hash: 3 },
+            VcTriple { subject_hash: 4, predicate_id: 5, object_hash: 6 },
+        ];
+        sm.put_file_snapshot("test.rs", &triples).unwrap();
+        let found = sm.find_live_by_objects(&[3]);
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].object_hash, 3);
+        cleanup(&dir);
+    }
+
+    // ── find_live_by_predicate ───────────────────────────────────────────
+
+    #[test]
+    fn find_live_by_predicate_works() {
+        let dir = temp_dir("bpred");
+        let mut sm = SiteMap::open(&dir, 0).unwrap();
+        let triples = vec![
+            VcTriple { subject_hash: 1, predicate_id: 2, object_hash: 3 },
+            VcTriple { subject_hash: 4, predicate_id: 5, object_hash: 6 },
+            VcTriple { subject_hash: 7, predicate_id: 2, object_hash: 9 },
+        ];
+        sm.put_file_snapshot("test.rs", &triples).unwrap();
+        let found = sm.find_live_by_predicate(2);
+        assert_eq!(found.len(), 2);
+        let found2 = sm.find_live_by_predicate(5);
+        assert_eq!(found2.len(), 1);
+        let found3 = sm.find_live_by_predicate(99);
+        assert!(found3.is_empty());
+        cleanup(&dir);
+    }
+
+    // ── Compound queries ─────────────────────────────────────────────────
+
+    #[test]
+    fn find_by_subject_and_predicate() {
+        let dir = temp_dir("compound1");
+        let mut sm = SiteMap::open(&dir, 0).unwrap();
+        let triples = vec![
+            VcTriple { subject_hash: 1, predicate_id: 2, object_hash: 3 },
+            VcTriple { subject_hash: 1, predicate_id: 5, object_hash: 6 },
+        ];
+        sm.put_file_snapshot("test.rs", &triples).unwrap();
+        let found = sm.find_live_by_subject_and_predicate(1, 2);
+        assert_eq!(found.len(), 1);
+        cleanup(&dir);
+    }
+
+    #[test]
+    fn find_by_predicate_and_object() {
+        let dir = temp_dir("compound2");
+        let mut sm = SiteMap::open(&dir, 0).unwrap();
+        let triples = vec![
+            VcTriple { subject_hash: 1, predicate_id: 2, object_hash: 3 },
+            VcTriple { subject_hash: 4, predicate_id: 2, object_hash: 6 },
+        ];
+        sm.put_file_snapshot("test.rs", &triples).unwrap();
+        let found = sm.find_live_by_predicate_and_object(2, 3);
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].subject_hash, 1);
+        cleanup(&dir);
+    }
+
+    // ── Debug format ─────────────────────────────────────────────────────
+
+    #[test]
+    fn site_map_info_debug() {
+        let info = SiteMapInfo {
+            total_entries: 5, kv_count: 3, node_count: 1, program_count: 0, snapshot_count: 1,
+            total_bytes: 1000, root: 42, weight_root: 99, kv_cache_size: 10, kv_cache_max: 4096,
+            string_dict_size: 2, validation_issues: vec![],
+        };
+        let debug = format!("{:?}", info);
+        assert!(debug.contains("SiteMapInfo"));
+        assert!(debug.contains("total_entries: 5"));
+    }
+
+    #[test]
+    fn site_map_verify_report_debug() {
+        let report = SiteMapVerifyReport {
+            total_entries: 10, checked: 8, corrupt: 1, missing: 1, valid: 6, issues: vec![],
+        };
+        let debug = format!("{:?}", report);
+        assert!(debug.contains("SiteMapVerifyReport"));
+        assert!(debug.contains("corrupt: 1"));
+    }
+
+    // ── Pretty JSON ──────────────────────────────────────────────────────
+
+    #[test]
+    fn site_map_info_pretty_json() {
+        let info = SiteMapInfo {
+            total_entries: 0, kv_count: 0, node_count: 0, program_count: 0, snapshot_count: 0,
+            total_bytes: 0, root: 0, weight_root: 0, kv_cache_size: 0, kv_cache_max: 4096,
+            string_dict_size: 0, validation_issues: vec![],
+        };
+        let pretty = serde_json::to_string_pretty(&info).unwrap();
+        assert!(pretty.contains('\n'));
+    }
+
+    // ── Verify detailed: empty ───────────────────────────────────────────
+
+    #[test]
+    fn verify_detailed_empty() {
+        let dir = temp_dir("vdet_empty");
+        let sm = SiteMap::open(&dir, 0).unwrap();
+        let report = sm.verify_detailed();
+        assert_eq!(report.total_entries, 0);
+        assert_eq!(report.checked, 0);
+        assert_eq!(report.valid, 0);
+        cleanup(&dir);
+    }
+
+    // ── Triple analysis with data ────────────────────────────────────────
+
+    #[test]
+    fn triple_analysis_with_snapshots() {
+        let dir = temp_dir("analysis_data");
+        let mut sm = SiteMap::open(&dir, 0).unwrap();
+        let triples = vec![
+            VcTriple { subject_hash: 1, predicate_id: 2, object_hash: 3 },
+            VcTriple { subject_hash: 4, predicate_id: 2, object_hash: 6 },
+            VcTriple { subject_hash: 7, predicate_id: 5, object_hash: 9 },
+        ];
+        sm.put_file_snapshot("test.rs", &triples).unwrap();
+        let analysis = sm.triple_analysis();
+        assert_eq!(analysis.total_triples, 3);
+        assert_eq!(analysis.unique_predicates, 2);
+        assert!(analysis.predicate_distribution[0].count >= 2); // pred 2 has 2
+        cleanup(&dir);
+    }
+
+    // ── Root changes on operations ───────────────────────────────────────
+
+    #[test]
+    fn root_changes_after_kv() {
+        let dir = temp_dir("root_change");
+        let mut sm = SiteMap::open(&dir, 0).unwrap();
+        let root_before = sm.root();
+        sm.put_kv(1, 0, test_ndavec(&[1]), test_ndavec(&[2])).unwrap();
+        let root_after = sm.root();
+        assert_ne!(root_before, root_after);
+        cleanup(&dir);
+    }
+
+    // ── all_strings ──────────────────────────────────────────────────────
+
+    #[test]
+    fn all_strings_after_register() {
+        let dir = temp_dir("all_str");
+        let sm = SiteMap::open(&dir, 0).unwrap();
+        sm.register_string("hello").unwrap();
+        sm.register_string("world").unwrap();
+        let all = sm.all_strings();
+        assert_eq!(all.len(), 2);
+        cleanup(&dir);
+    }
+
+    #[test]
+    fn all_strings_empty() {
+        let dir = temp_dir("all_str_empty");
+        let sm = SiteMap::open(&dir, 0).unwrap();
+        let all = sm.all_strings();
+        assert!(all.is_empty());
+        cleanup(&dir);
+    }
 }
