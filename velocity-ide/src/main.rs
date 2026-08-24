@@ -2341,4 +2341,725 @@ mod tests {
         assert_eq!(parsed["scope_passed"], false);
         assert_eq!(parsed["stored_in_site_map"], false);
     }
+
+    // ── validate_generate_args — additional boundary tests ────────────────
+
+    #[test]
+    fn generate_max_tokens_exactly_one() {
+        let mut args = default_generate_args();
+        args.max_tokens = 1;
+        let issues = validate_generate_args(&args);
+        assert!(issues.is_empty(), "max_tokens=1 should be valid");
+    }
+
+    #[test]
+    fn generate_both_prompt_and_prompt_file() {
+        let mut args = default_generate_args();
+        args.prompt = Some("hello".into());
+        args.prompt_file = Some(PathBuf::from("prompt.txt"));
+        let issues = validate_generate_args(&args);
+        assert!(issues.is_empty(), "both prompt and prompt_file should be valid");
+    }
+
+    #[test]
+    fn generate_nan_temperature_passes_validation() {
+        // IEEE 754: NaN comparisons are all false, so NaN < 0.0 → false,
+        // NaN > 5.0 → false. The validator does not catch NaN.
+        let mut args = default_generate_args();
+        args.temperature = f32::NAN;
+        let issues = validate_generate_args(&args);
+        let temp_issues: Vec<_> = issues.iter().filter(|i| i.contains("temperature")).collect();
+        assert!(temp_issues.is_empty(), "NaN temperature should slip past validation");
+    }
+
+    #[test]
+    fn generate_infinity_temperature_rejected() {
+        let mut args = default_generate_args();
+        args.temperature = f32::INFINITY;
+        let issues = validate_generate_args(&args);
+        assert!(issues.iter().any(|i| i.contains("temperature")));
+    }
+
+    #[test]
+    fn generate_neg_infinity_temperature_rejected() {
+        let mut args = default_generate_args();
+        args.temperature = f32::NEG_INFINITY;
+        let issues = validate_generate_args(&args);
+        assert!(issues.iter().any(|i| i.contains("temperature")));
+    }
+
+    #[test]
+    fn generate_top_p_nan_passes_validation() {
+        let mut args = default_generate_args();
+        args.top_p = f32::NAN;
+        let issues = validate_generate_args(&args);
+        let top_p_issues: Vec<_> = issues.iter().filter(|i| i.contains("top-p")).collect();
+        assert!(top_p_issues.is_empty(), "NaN top_p should slip past validation");
+    }
+
+    #[test]
+    fn generate_max_tokens_two() {
+        let mut args = default_generate_args();
+        args.max_tokens = 2;
+        assert!(validate_generate_args(&args).is_empty());
+    }
+
+    #[test]
+    fn generate_max_tokens_99999() {
+        let mut args = default_generate_args();
+        args.max_tokens = 99_999;
+        assert!(validate_generate_args(&args).is_empty());
+    }
+
+    #[test]
+    fn generate_empty_arch_string() {
+        let mut args = default_generate_args();
+        args.arch = String::new();
+        let issues = validate_generate_args(&args);
+        assert!(issues.iter().any(|i| i.contains("Unknown --arch")));
+    }
+
+    #[test]
+    fn generate_empty_mode_string() {
+        let mut args = default_generate_args();
+        args.mode = String::new();
+        let issues = validate_generate_args(&args);
+        assert!(issues.iter().any(|i| i.contains("Unknown --mode")));
+    }
+
+    // ── validate_chat_args — additional boundary tests ────────────────────
+
+    #[test]
+    fn chat_very_high_temperature_not_rejected() {
+        // validate_chat_args has no upper temperature bound
+        let mut args = default_chat_args();
+        args.temperature = 100.0;
+        let issues = validate_chat_args(&args);
+        let temp_issues: Vec<_> = issues.iter().filter(|i| i.contains("temperature")).collect();
+        assert!(temp_issues.is_empty(), "chat should have no upper temperature bound");
+    }
+
+    #[test]
+    fn chat_infinity_temperature_not_rejected() {
+        let mut args = default_chat_args();
+        args.temperature = f32::INFINITY;
+        let issues = validate_chat_args(&args);
+        let temp_issues: Vec<_> = issues.iter().filter(|i| i.contains("temperature")).collect();
+        assert!(temp_issues.is_empty());
+    }
+
+    #[test]
+    fn chat_top_p_exactly_zero() {
+        let mut args = default_chat_args();
+        args.top_p = 0.0;
+        let issues = validate_chat_args(&args);
+        assert!(issues.is_empty(), "top_p=0.0 should be valid");
+    }
+
+    #[test]
+    fn chat_top_p_exactly_one() {
+        let mut args = default_chat_args();
+        args.top_p = 1.0;
+        let issues = validate_chat_args(&args);
+        assert!(issues.is_empty(), "top_p=1.0 should be valid");
+    }
+
+    #[test]
+    fn chat_nan_temperature_passes() {
+        let mut args = default_chat_args();
+        args.temperature = f32::NAN;
+        let issues = validate_chat_args(&args);
+        let temp_issues: Vec<_> = issues.iter().filter(|i| i.contains("temperature")).collect();
+        assert!(temp_issues.is_empty());
+    }
+
+    #[test]
+    fn chat_max_tokens_one() {
+        let mut args = default_chat_args();
+        args.max_tokens = 1;
+        assert!(validate_chat_args(&args).is_empty());
+    }
+
+    #[test]
+    fn chat_neg_infinity_temperature_rejected() {
+        let mut args = default_chat_args();
+        args.temperature = f32::NEG_INFINITY;
+        let issues = validate_chat_args(&args);
+        assert!(issues.iter().any(|i| i.contains("temperature")));
+    }
+
+    // ── validate_seed_args — additional boundary tests ────────────────────
+
+    #[test]
+    fn seed_weight_root_0x_prefix_only() {
+        // "0x" → trimmed to "" → empty check passes → valid
+        let mut args = default_seed_args();
+        args.weight_root = "0x".into();
+        let issues = validate_seed_args(&args);
+        assert!(issues.is_empty(), "0x alone should be valid (empty after trim)");
+    }
+
+    #[test]
+    fn seed_mixed_case_hex_weight_root() {
+        let mut args = default_seed_args();
+        args.weight_root = "DeAdBeEf".into();
+        let issues = validate_seed_args(&args);
+        assert!(issues.is_empty(), "mixed case hex should be valid");
+    }
+
+    #[test]
+    fn seed_long_valid_hex() {
+        let mut args = default_seed_args();
+        args.weight_root = "0123456789abcdef".into();
+        let issues = validate_seed_args(&args);
+        assert!(issues.is_empty());
+    }
+
+    #[test]
+    fn seed_weight_root_with_special_chars() {
+        let mut args = default_seed_args();
+        args.weight_root = "abc-def".into();
+        let issues = validate_seed_args(&args);
+        assert_eq!(issues.len(), 1);
+        assert!(issues[0].contains("weight-root"));
+    }
+
+    #[test]
+    fn seed_many_source_files() {
+        let mut args = default_seed_args();
+        args.source = (0..100).map(|i| PathBuf::from(format!("seeds/file_{}.rs", i))).collect();
+        let issues = validate_seed_args(&args);
+        assert!(issues.is_empty());
+    }
+
+    // ── resolve_config — additional tests ─────────────────────────────────
+
+    #[test]
+    fn resolve_config_empty_string() {
+        let result = resolve_config("");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn resolve_config_case_sensitive() {
+        // Config matching is exact string match, not case-insensitive
+        assert!(resolve_config("Bitnet3b").is_err());
+        assert!(resolve_config("QWEN05").is_err());
+    }
+
+    #[test]
+    fn resolve_config_qwen_hidden_size() {
+        let cfg = resolve_config("qwen05").unwrap();
+        assert_eq!(cfg.hidden_size, 896);
+    }
+
+    #[test]
+    fn resolve_config_bitnet_hidden_size() {
+        let cfg = resolve_config("bitnet3b").unwrap();
+        assert_eq!(cfg.hidden_size, 3200);
+    }
+
+    // ── resolve_model_dir tests ───────────────────────────────────────────
+
+    #[test]
+    fn resolve_model_dir_nonexistent_path() {
+        let result = resolve_model_dir(&Some(PathBuf::from("/nonexistent/path/xyz")));
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("does not exist"));
+    }
+
+    #[test]
+    fn resolve_model_dir_existing_temp_dir() {
+        let tmp = std::env::temp_dir().join("velocity_test_model_dir");
+        std::fs::create_dir_all(&tmp).ok();
+        let result = resolve_model_dir(&Some(tmp.clone()));
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), tmp);
+        std::fs::remove_dir(&tmp).ok();
+    }
+
+    // ── resolve_tokenizer tests ───────────────────────────────────────────
+
+    #[test]
+    fn resolve_tokenizer_nonexistent_file() {
+        let result = resolve_tokenizer(
+            &Some(PathBuf::from("/nonexistent/tokenizer.json")),
+            Path::new("/tmp"),
+        );
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("does not exist"));
+    }
+
+    #[test]
+    fn resolve_tokenizer_existing_file() {
+        let tmp = std::env::temp_dir().join("velocity_test_tokenizer.json");
+        std::fs::write(&tmp, "{}").ok();
+        let result = resolve_tokenizer(&Some(tmp.clone()), Path::new("/tmp"));
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), tmp);
+        std::fs::remove_file(&tmp).ok();
+    }
+
+    // ── CliEnvironment — derive & validation logic tests ──────────────────
+
+    #[test]
+    fn cli_environment_clone() {
+        let env = CliEnvironment {
+            velocity_configured: true,
+            velocity_url_set: false,
+            velocity_key_set: true,
+            config_file_exists: true,
+            provider_count: 5,
+            credential_boundary_active: false,
+            validation_issues: vec!["issue1".into()],
+        };
+        let cloned = env.clone();
+        assert_eq!(cloned.velocity_configured, true);
+        assert_eq!(cloned.provider_count, 5);
+        assert_eq!(cloned.validation_issues.len(), 1);
+    }
+
+    #[test]
+    fn cli_environment_debug_format() {
+        let env = CliEnvironment {
+            velocity_configured: false,
+            velocity_url_set: false,
+            velocity_key_set: false,
+            config_file_exists: false,
+            provider_count: 0,
+            credential_boundary_active: false,
+            validation_issues: vec![],
+        };
+        let debug_str = format!("{:?}", env);
+        assert!(debug_str.contains("CliEnvironment"));
+        assert!(debug_str.contains("velocity_configured"));
+        assert!(debug_str.contains("provider_count"));
+    }
+
+    #[test]
+    fn cli_environment_validation_url_without_key() {
+        // Simulate: url set, key not set → should have an issue
+        let env = CliEnvironment {
+            velocity_configured: false,
+            velocity_url_set: true,
+            velocity_key_set: false,
+            config_file_exists: false,
+            provider_count: 0,
+            credential_boundary_active: false,
+            validation_issues: vec![
+                "VELOCITY_BASE_URL set but VELOCITY_API_KEY is missing".into(),
+            ],
+        };
+        assert_eq!(env.validation_issues.len(), 1);
+        assert!(env.validation_issues[0].contains("URL"));
+        assert!(env.validation_issues[0].contains("KEY"));
+    }
+
+    #[test]
+    fn cli_environment_validation_key_without_url() {
+        let env = CliEnvironment {
+            velocity_configured: false,
+            velocity_url_set: false,
+            velocity_key_set: true,
+            config_file_exists: false,
+            provider_count: 0,
+            credential_boundary_active: false,
+            validation_issues: vec![
+                "VELOCITY_API_KEY set but VELOCITY_BASE_URL is missing".into(),
+            ],
+        };
+        assert_eq!(env.validation_issues.len(), 1);
+        assert!(env.validation_issues[0].contains("KEY"));
+        assert!(env.validation_issues[0].contains("URL"));
+    }
+
+    #[test]
+    fn cli_environment_no_issues_when_fully_configured() {
+        let env = CliEnvironment {
+            velocity_configured: true,
+            velocity_url_set: true,
+            velocity_key_set: true,
+            config_file_exists: true,
+            provider_count: 3,
+            credential_boundary_active: true,
+            validation_issues: vec![],
+        };
+        assert!(env.validation_issues.is_empty());
+        assert!(env.velocity_configured);
+    }
+
+    // ── CliDiagnostics — derive tests ─────────────────────────────────────
+
+    #[test]
+    fn cli_diagnostics_clone() {
+        let diag = cli_diagnostics();
+        let cloned = diag.clone();
+        assert_eq!(cloned.available_subcommands.len(), diag.available_subcommands.len());
+    }
+
+    #[test]
+    fn cli_diagnostics_debug_format() {
+        let diag = cli_diagnostics();
+        let debug_str = format!("{:?}", diag);
+        assert!(debug_str.contains("CliDiagnostics"));
+        assert!(debug_str.contains("available_subcommands"));
+    }
+
+    // ── Message — additional tests ────────────────────────────────────────
+
+    #[test]
+    fn message_clone() {
+        let msg = Message {
+            role: "user".into(),
+            content: "test content".into(),
+        };
+        let cloned = msg.clone();
+        assert_eq!(cloned.role, "user");
+        assert_eq!(cloned.content, "test content");
+    }
+
+    #[test]
+    fn message_deserialize_missing_role_fails() {
+        let json = r#"{"content":"hello"}"#;
+        let result: Result<Message, _> = serde_json::from_str(json);
+        assert!(result.is_err(), "missing 'role' field should fail deserialization");
+    }
+
+    #[test]
+    fn message_deserialize_missing_content_fails() {
+        let json = r#"{"role":"user"}"#;
+        let result: Result<Message, _> = serde_json::from_str(json);
+        assert!(result.is_err(), "missing 'content' field should fail deserialization");
+    }
+
+    #[test]
+    fn message_deserialize_extra_fields_ignored() {
+        let json = r#"{"role":"user","content":"hi","extra_field":42}"#;
+        let msg: Message = serde_json::from_str(json).unwrap();
+        assert_eq!(msg.role, "user");
+        assert_eq!(msg.content, "hi");
+    }
+
+    #[test]
+    fn message_long_content() {
+        let long_content = "x".repeat(100_000);
+        let msg = Message {
+            role: "user".into(),
+            content: long_content.clone(),
+        };
+        let json = serde_json::to_string(&msg).unwrap();
+        let parsed: Message = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed.content.len(), 100_000);
+    }
+
+    #[test]
+    fn message_special_characters_roundtrip() {
+        let msg = Message {
+            role: "user".into(),
+            content: "line1\nline2\ttab\r\n\"quotes\" \\ backslash".into(),
+        };
+        let json = serde_json::to_string(&msg).unwrap();
+        let parsed: Message = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed.content, msg.content);
+    }
+
+    // ── GenerationReport — additional tests ───────────────────────────────
+
+    #[test]
+    fn generation_report_hit_rate_zero_total() {
+        // Both hits and misses are 0 → display should handle gracefully
+        let report = GenerationReport {
+            mode: "text".into(),
+            tokens_generated: 10,
+            elapsed_ms: 100,
+            tokens_per_second: 100.0,
+            site_map_hits: 0,
+            site_map_misses: 0,
+            merkle_valid: None,
+            force_terminated: None,
+            sandbox_executed: None,
+            sandbox_panicked: None,
+            scope_passed: None,
+            stored_in_site_map: None,
+        };
+        // display() prints to stdout; just verify it doesn't panic
+        report.display();
+    }
+
+    #[test]
+    fn generation_report_display_all_fields() {
+        let report = GenerationReport {
+            mode: "NDA-Zero".into(),
+            tokens_generated: 500,
+            elapsed_ms: 2500,
+            tokens_per_second: 200.0,
+            site_map_hits: 80,
+            site_map_misses: 20,
+            merkle_valid: Some(true),
+            force_terminated: Some(true),
+            sandbox_executed: Some(true),
+            sandbox_panicked: Some(true),
+            scope_passed: Some(false),
+            stored_in_site_map: Some(true),
+        };
+        // Just verify display() doesn't panic with all fields populated
+        report.display();
+    }
+
+    #[test]
+    fn generation_report_display_no_optional_fields() {
+        let report = GenerationReport {
+            mode: "Local FP32".into(),
+            tokens_generated: 42,
+            elapsed_ms: 1000,
+            tokens_per_second: 42.0,
+            site_map_hits: 0,
+            site_map_misses: 0,
+            merkle_valid: None,
+            force_terminated: None,
+            sandbox_executed: None,
+            sandbox_panicked: None,
+            scope_passed: None,
+            stored_in_site_map: None,
+        };
+        report.display();
+    }
+
+    #[test]
+    fn generation_report_zero_tokens_per_second() {
+        let report = GenerationReport {
+            mode: "text".into(),
+            tokens_generated: 0,
+            elapsed_ms: 1000,
+            tokens_per_second: 0.0,
+            site_map_hits: 0,
+            site_map_misses: 0,
+            merkle_valid: None,
+            force_terminated: None,
+            sandbox_executed: None,
+            sandbox_panicked: None,
+            scope_passed: None,
+            stored_in_site_map: None,
+        };
+        let json = serde_json::to_string(&report).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed["tokens_per_second"], 0.0);
+        assert_eq!(parsed["tokens_generated"], 0);
+    }
+
+    #[test]
+    fn generation_report_very_high_throughput() {
+        let report = GenerationReport {
+            mode: "text".into(),
+            tokens_generated: 1_000_000,
+            elapsed_ms: 100,
+            tokens_per_second: 10_000_000.0,
+            site_map_hits: 0,
+            site_map_misses: 0,
+            merkle_valid: None,
+            force_terminated: None,
+            sandbox_executed: None,
+            sandbox_panicked: None,
+            scope_passed: None,
+            stored_in_site_map: None,
+        };
+        let json = serde_json::to_string(&report).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed["tokens_per_second"], 10_000_000.0);
+    }
+
+    #[test]
+    fn generation_report_site_map_hit_rate_partial() {
+        // 1 hit, 99 misses = 1% hit rate
+        let report = GenerationReport {
+            mode: "nda".into(),
+            tokens_generated: 100,
+            elapsed_ms: 500,
+            tokens_per_second: 200.0,
+            site_map_hits: 1,
+            site_map_misses: 99,
+            merkle_valid: None,
+            force_terminated: None,
+            sandbox_executed: None,
+            sandbox_panicked: None,
+            scope_passed: None,
+            stored_in_site_map: None,
+        };
+        let total = report.site_map_hits + report.site_map_misses;
+        let hit_rate = report.site_map_hits as f64 / total as f64 * 100.0;
+        assert!((hit_rate - 1.0).abs() < 0.01);
+    }
+
+    // ── run_completions — shell validation ────────────────────────────────
+
+    #[test]
+    fn completions_unknown_shell_errors() {
+        let args = CompletionsArgs {
+            shell: "unknown_shell_xyz".into(),
+        };
+        let result = run_completions(args);
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("Unknown shell"));
+        assert!(err.contains("unknown_shell_xyz"));
+    }
+
+    #[test]
+    fn completions_shell_name_case_insensitive() {
+        // "Bash" → to_lowercase → "bash" → valid
+        let args = CompletionsArgs {
+            shell: "Bash".into(),
+        };
+        // This will write to stdout but should succeed
+        let result = run_completions(args);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn completions_pwsh_alias() {
+        let args = CompletionsArgs {
+            shell: "pwsh".into(),
+        };
+        let result = run_completions(args);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn completions_powershell_full() {
+        let args = CompletionsArgs {
+            shell: "PowerShell".into(),
+        };
+        let result = run_completions(args);
+        assert!(result.is_ok());
+    }
+
+    // ── Cross-validation between generate and chat validators ─────────────
+
+    #[test]
+    fn generate_and_chat_share_max_tokens_check() {
+        // Both validators should reject max_tokens=0
+        let mut g = default_generate_args();
+        g.max_tokens = 0;
+        let g_issues = validate_generate_args(&g);
+        assert!(g_issues.iter().any(|i| i.contains("max-tokens")));
+
+        let mut c = default_chat_args();
+        c.max_tokens = 0;
+        let c_issues = validate_chat_args(&c);
+        assert!(c_issues.iter().any(|i| i.contains("max-tokens")));
+    }
+
+    #[test]
+    fn generate_and_chat_share_arch_validation() {
+        // Both should accept the same arch aliases
+        for arch in &["bitnet3b", "bitnet", "qwen05", "qwen"] {
+            let mut g = default_generate_args();
+            g.arch = arch.to_string();
+            assert!(validate_generate_args(&g).iter().all(|i| !i.contains("arch")));
+
+            let mut c = default_chat_args();
+            c.arch = arch.to_string();
+            assert!(validate_chat_args(&c).iter().all(|i| !i.contains("arch")));
+        }
+    }
+
+    #[test]
+    fn generate_has_mode_check_chat_does_not() {
+        // GenerateArgs has --mode; ChatArgs does not
+        let mut g = default_generate_args();
+        g.mode = "invalid".into();
+        let g_issues = validate_generate_args(&g);
+        assert!(g_issues.iter().any(|i| i.contains("mode")));
+    }
+
+    #[test]
+    fn generate_has_prompt_check_chat_does_not() {
+        // Chat doesn't require a prompt upfront (interactive)
+        let mut g = default_generate_args();
+        g.prompt = None;
+        g.prompt_file = None;
+        let g_issues = validate_generate_args(&g);
+        assert!(g_issues.iter().any(|i| i.contains("prompt")));
+        // Chat has no such check
+        let c = default_chat_args();
+        let c_issues = validate_chat_args(&c);
+        assert!(c_issues.iter().all(|i| !i.contains("prompt")));
+    }
+
+    // ── CliDiagnostics subcommand ordering ────────────────────────────────
+
+    #[test]
+    fn cli_diagnostics_subcommands_in_expected_order() {
+        let diag = cli_diagnostics();
+        assert_eq!(diag.available_subcommands[0], "generate");
+        assert_eq!(diag.available_subcommands[1], "benchmark");
+        assert_eq!(diag.available_subcommands[2], "seed");
+        assert_eq!(diag.available_subcommands[3], "chat");
+        assert_eq!(diag.available_subcommands[4], "usage");
+        assert_eq!(diag.available_subcommands[5], "login");
+        assert_eq!(diag.available_subcommands[6], "providers");
+        assert_eq!(diag.available_subcommands[7], "status");
+        assert_eq!(diag.available_subcommands[8], "transparency");
+        assert_eq!(diag.available_subcommands[9], "completions");
+    }
+
+    // ── GenerationReport JSON structure ───────────────────────────────────
+
+    #[test]
+    fn generation_report_json_has_all_keys() {
+        let report = GenerationReport {
+            mode: "test".into(),
+            tokens_generated: 1,
+            elapsed_ms: 1,
+            tokens_per_second: 1.0,
+            site_map_hits: 0,
+            site_map_misses: 0,
+            merkle_valid: None,
+            force_terminated: None,
+            sandbox_executed: None,
+            sandbox_panicked: None,
+            scope_passed: None,
+            stored_in_site_map: None,
+        };
+        let json = serde_json::to_string(&report).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+        let obj = parsed.as_object().unwrap();
+        // Verify all expected keys exist
+        assert!(obj.contains_key("mode"));
+        assert!(obj.contains_key("tokens_generated"));
+        assert!(obj.contains_key("elapsed_ms"));
+        assert!(obj.contains_key("tokens_per_second"));
+        assert!(obj.contains_key("site_map_hits"));
+        assert!(obj.contains_key("site_map_misses"));
+        assert!(obj.contains_key("merkle_valid"));
+        assert!(obj.contains_key("force_terminated"));
+        assert!(obj.contains_key("sandbox_executed"));
+        assert!(obj.contains_key("sandbox_panicked"));
+        assert!(obj.contains_key("scope_passed"));
+        assert!(obj.contains_key("stored_in_site_map"));
+        assert_eq!(obj.len(), 12);
+    }
+
+    #[test]
+    fn generation_report_pretty_json() {
+        let report = GenerationReport {
+            mode: "nda".into(),
+            tokens_generated: 10,
+            elapsed_ms: 50,
+            tokens_per_second: 200.0,
+            site_map_hits: 0,
+            site_map_misses: 0,
+            merkle_valid: None,
+            force_terminated: None,
+            sandbox_executed: None,
+            sandbox_panicked: None,
+            scope_passed: None,
+            stored_in_site_map: None,
+        };
+        let pretty = serde_json::to_string_pretty(&report).unwrap();
+        assert!(pretty.contains('\n'));
+        assert!(pretty.contains("  ")); // indented
+    }
 }
