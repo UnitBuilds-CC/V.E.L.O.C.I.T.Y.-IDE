@@ -888,4 +888,249 @@ mod tests {
         assert!(result.is_err());
         assert_eq!(result.unwrap_err(), "test error");
     }
+
+    // ── Block 111: expanded tests ────────────────────────────────────────────
+
+    #[test]
+    fn var_registry_default() {
+        let reg = VarRegistry::default();
+        assert_eq!(reg.total_slots(), 0);
+    }
+
+    #[test]
+    fn var_registry_idempotent() {
+        let reg = VarRegistry::new();
+        let slot1 = reg.get_or_create_slot(42);
+        let slot2 = reg.get_or_create_slot(42);
+        assert_eq!(slot1, slot2);
+        assert_eq!(reg.total_slots(), 1);
+    }
+
+    #[test]
+    fn var_registry_sequential_slots() {
+        let reg = VarRegistry::new();
+        let s0 = reg.get_or_create_slot(0xAA);
+        let s1 = reg.get_or_create_slot(0xBB);
+        let s2 = reg.get_or_create_slot(0xCC);
+        assert_eq!(s0, 0);
+        assert_eq!(s1, 1);
+        assert_eq!(s2, 2);
+        assert_eq!(reg.total_slots(), 3);
+    }
+
+    #[test]
+    fn jit_val_is_truthy_vector_positive() {
+        let nda = NdaVec::from_f32_slice(&[1.0, 2.0, 3.0]);
+        assert!(JitVal::Vector(Arc::new(nda)).is_truthy());
+    }
+
+    #[test]
+    fn jit_val_clone_preserves_scalar() {
+        let v = JitVal::Scalar(42, 3);
+        let v2 = v.clone();
+        match v2 {
+            JitVal::Scalar(val, scale) => {
+                assert_eq!(val, 42);
+                assert_eq!(scale, 3);
+            }
+            _ => panic!("expected Scalar"),
+        }
+    }
+
+    #[test]
+    fn jit_val_clone_preserves_float() {
+        let v = JitVal::Float(3.14);
+        let v2 = v.clone();
+        match v2 {
+            JitVal::Float(val) => assert!((val - 3.14).abs() < 1e-6),
+            _ => panic!("expected Float"),
+        }
+    }
+
+    #[test]
+    fn jit_state_new_initial_state() {
+        let (sm, _dir) = make_test_sitemap();
+        let state = JitState::new(&[1.0, 2.0], &sm, 8);
+        assert_eq!(state.stack.len(), 1);
+        assert_eq!(state.variables.len(), 8);
+        assert_eq!(state.matrix_count, 0);
+        assert_eq!(state.executed_nodes, 0);
+        assert!(state.print_buf.is_empty());
+        assert_eq!(state.heap.len(), 65536);
+        assert!(state.heap_allocations.is_empty());
+        assert!(state.mmio.is_empty());
+        assert!(state.interrupts.is_empty());
+    }
+
+    #[test]
+    fn jit_state_new_zero_slots() {
+        let (sm, _dir) = make_test_sitemap();
+        let state = JitState::new(&[1.0], &sm, 0);
+        assert_eq!(state.variables.len(), 0);
+    }
+
+    #[test]
+    fn is_truthy_positive_vector() {
+        let nda = NdaVec::from_f32_slice(&[1.0, 2.0, 3.0, 4.0]);
+        assert!(JitState::is_truthy(&nda));
+    }
+
+    #[test]
+    fn is_truthy_negative_vector() {
+        let nda = NdaVec::from_f32_slice(&[-5.0, -5.0, -5.0, -5.0]);
+        assert!(!JitState::is_truthy(&nda));
+    }
+
+    #[test]
+    fn validate_mmio_reserved_high_page() {
+        let (sm, _dir) = make_test_sitemap();
+        let mut state = JitState::new(&[1.0], &sm, 0);
+        state.mmio.insert(0xFFFF_F000, JitVal::Float(1.0));
+        let issues = validate_jit_state(&state);
+        assert!(issues.iter().any(|i| i.contains("reserved high page")));
+    }
+
+    #[test]
+    fn validate_mmio_normal_address_ok() {
+        let (sm, _dir) = make_test_sitemap();
+        let mut state = JitState::new(&[1.0], &sm, 0);
+        state.mmio.insert(0x1000, JitVal::Float(1.0));
+        let issues = validate_jit_state(&state);
+        assert!(issues.is_empty());
+    }
+
+    #[test]
+    fn jit_state_info_serializes() {
+        let (sm, _dir) = make_test_sitemap();
+        let state = JitState::new(&[1.0], &sm, 4);
+        let info = jit_state_info(&state);
+        let json = serde_json::to_string(&info).unwrap();
+        assert!(json.contains("\"stack_depth\":1"));
+        assert!(json.contains("\"heap_capacity_bytes\":65536"));
+    }
+
+    #[test]
+    fn jit_result_info_serializes() {
+        let result = JitResult {
+            output_vec: vec![1.0],
+            output_dim: 1,
+            elapsed_us: 10,
+            nodes_compiled: 5,
+            error: None,
+        };
+        let info = JitResultInfo::from_result(&result);
+        let json = serde_json::to_string(&info).unwrap();
+        assert!(json.contains("\"success\":true"));
+    }
+
+    #[test]
+    fn var_registry_info_serializes() {
+        let reg = VarRegistry::new();
+        reg.get_or_create_slot(1);
+        let info = reg.info();
+        let json = serde_json::to_string(&info).unwrap();
+        assert!(json.contains("\"total_slots\":1"));
+    }
+
+    #[test]
+    fn jit_program_info_serializes() {
+        let reg = VarRegistry::new();
+        let prog = JitProgram {
+            fns: vec![],
+            nodes_compiled: 0,
+            has_asm_kernel: false,
+            registry: reg,
+        };
+        let info = jit_program_info(&prog);
+        let json = serde_json::to_string(&info).unwrap();
+        assert!(json.contains("\"function_count\":0"));
+    }
+
+    #[test]
+    fn jit_program_run_empty() {
+        let (sm, _dir) = make_test_sitemap();
+        let reg = VarRegistry::new();
+        let prog = JitProgram {
+            fns: vec![],
+            nodes_compiled: 0,
+            has_asm_kernel: false,
+            registry: reg,
+        };
+        let result = prog.run(&[1.0, 2.0], &sm);
+        assert!(result.error.is_none());
+        assert!(result.output_dim > 0);
+    }
+
+    #[test]
+    fn jit_program_run_with_fn() {
+        let (sm, _dir) = make_test_sitemap();
+        let reg = VarRegistry::new();
+        let dummy_fn: JitFn = Arc::new(|state: &mut JitState<'_>| {
+            state.executed_nodes += 1;
+            Ok(JitControlFlow::Continue)
+        });
+        let prog = JitProgram {
+            fns: vec![dummy_fn],
+            nodes_compiled: 1,
+            has_asm_kernel: false,
+            registry: reg,
+        };
+        let result = prog.run(&[1.0], &sm);
+        assert!(result.error.is_none());
+        assert_eq!(result.nodes_compiled, 1);
+    }
+
+    #[test]
+    fn jit_program_run_sandboxed_empty() {
+        let (sm, _dir) = make_test_sitemap();
+        let reg = VarRegistry::new();
+        let prog = JitProgram {
+            fns: vec![],
+            nodes_compiled: 0,
+            has_asm_kernel: false,
+            registry: reg,
+        };
+        let result = prog.run_sandboxed(&[1.0], &sm);
+        assert!(!result.panicked);
+        assert!(result.error.is_none());
+    }
+
+    #[test]
+    fn jit_program_run_sandboxed_captures_error() {
+        let (sm, _dir) = make_test_sitemap();
+        let reg = VarRegistry::new();
+        let bad_fn: JitFn = Arc::new(|_: &mut JitState<'_>| Err("oops".to_string()));
+        let prog = JitProgram {
+            fns: vec![bad_fn],
+            nodes_compiled: 1,
+            has_asm_kernel: false,
+            registry: reg,
+        };
+        let result = prog.run_sandboxed(&[1.0], &sm);
+        assert!(!result.panicked);
+        assert_eq!(result.error.as_deref(), Some("oops"));
+    }
+
+    #[test]
+    fn run_sequence_multiple_continues() {
+        let (sm, _dir) = make_test_sitemap();
+        let mut state = JitState::new(&[1.0], &sm, 0);
+        let fns: Vec<JitFn> = (0..5).map(|_| {
+            Arc::new(|s: &mut JitState<'_>| {
+                s.executed_nodes += 1;
+                Ok(JitControlFlow::Continue)
+            }) as JitFn
+        }).collect();
+        let result = run_sequence(&fns, &mut state);
+        assert!(result.is_ok());
+        assert_eq!(state.executed_nodes, 5);
+    }
+
+    #[test]
+    fn jit_val_to_f32_vec_scalar_negative_scale() {
+        // 5 * 2^(-1) = 2.5
+        let s = JitVal::Scalar(5, -1);
+        let f32v = s.to_f32_vec();
+        assert!((f32v[0] - 2.5).abs() < 1e-6);
+    }
 }
