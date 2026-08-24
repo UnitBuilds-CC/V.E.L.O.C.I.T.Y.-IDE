@@ -1966,4 +1966,167 @@ mod tests {
         assert_eq!(info.output_bytes, 4_000_000);
         assert!(info.total_gpu_memory_estimate > 0);
     }
+
+    // ── Block 182: additional comprehensive tests ─────────────────────────
+
+    // ── JSON key counts ─────────────────────────────────────────────────
+
+    #[test]
+    fn config_json_key_count_is_4() {
+        let json = serde_json::to_string(&default_gemv_config()).unwrap();
+        let val: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(val.as_object().unwrap().len(), 4);
+    }
+
+    #[test]
+    fn info_json_key_count_is_8() {
+        let info = nda_gemv_info(&default_gemv_config());
+        let json = serde_json::to_string(&info).unwrap();
+        let val: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(val.as_object().unwrap().len(), 8);
+    }
+
+    // ── Equality via JSON ───────────────────────────────────────────────
+
+    #[test]
+    fn config_eq_via_json() {
+        let a = default_gemv_config();
+        let b = default_gemv_config();
+        assert_eq!(serde_json::to_string(&a).unwrap(), serde_json::to_string(&b).unwrap());
+    }
+
+    #[test]
+    fn config_neq_via_json_when_scales_differ() {
+        let a = default_gemv_config();
+        let mut b = default_gemv_config();
+        b.scales[0] = 99.0;
+        assert_ne!(serde_json::to_string(&a).unwrap(), serde_json::to_string(&b).unwrap());
+    }
+
+    #[test]
+    fn info_eq_via_json() {
+        let cfg = default_gemv_config();
+        let a = nda_gemv_info(&cfg);
+        let b = nda_gemv_info(&cfg);
+        assert_eq!(serde_json::to_string(&a).unwrap(), serde_json::to_string(&b).unwrap());
+    }
+
+    // ── Scales and version don't affect memory ──────────────────────────
+
+    #[test]
+    fn info_memory_independent_of_scales() {
+        let cfg1 = NdaGemvConfig { k: 128, n: 64, version: 1, scales: [1.0; 3] };
+        let cfg2 = NdaGemvConfig { k: 128, n: 64, version: 1, scales: [100.0, 0.001, -5.0] };
+        let i1 = nda_gemv_info(&cfg1);
+        let i2 = nda_gemv_info(&cfg2);
+        assert_eq!(i1.total_gpu_memory_estimate, i2.total_gpu_memory_estimate);
+        assert_eq!(i1.input_active_bytes, i2.input_active_bytes);
+        assert_eq!(i1.weight_active_bytes, i2.weight_active_bytes);
+        assert_eq!(i1.output_bytes, i2.output_bytes);
+    }
+
+    #[test]
+    fn info_memory_independent_of_version() {
+        let cfg1 = NdaGemvConfig { k: 128, n: 64, version: 1, scales: [1.0; 3] };
+        let cfg2 = NdaGemvConfig { k: 128, n: 64, version: 999, scales: [1.0; 3] };
+        let i1 = nda_gemv_info(&cfg1);
+        let i2 = nda_gemv_info(&cfg2);
+        assert_eq!(i1.total_gpu_memory_estimate, i2.total_gpu_memory_estimate);
+    }
+
+    // ── Input bytes formula ─────────────────────────────────────────────
+
+    #[test]
+    fn info_input_bytes_formula() {
+        for k in [128, 256, 512, 1024, 4096] {
+            let cfg = NdaGemvConfig { k, n: 64, version: 1, scales: [1.0; 3] };
+            let info = nda_gemv_info(&cfg);
+            assert_eq!(info.input_active_bytes, (k / 16) * 4);
+            assert_eq!(info.input_pos_bytes, (k / 16) * 4);
+            assert_eq!(info.input_active_bytes, info.input_pos_bytes);
+        }
+    }
+
+    // ── Weight bytes formula ────────────────────────────────────────────
+
+    #[test]
+    fn info_weight_bytes_formula_explicit() {
+        let cfg = NdaGemvConfig { k: 256, n: 128, version: 1, scales: [1.0; 3] };
+        let info = nda_gemv_info(&cfg);
+        // weight = (k/128) * n * 4 * 4 = (256/128) * 128 * 16 = 2 * 128 * 16 = 4096
+        assert_eq!(info.weight_active_bytes, 4096);
+        assert_eq!(info.weight_pos_bytes, 4096);
+    }
+
+    // ── Info config independence ────────────────────────────────────────
+
+    #[test]
+    fn info_config_independent_from_original() {
+        let mut cfg = default_gemv_config();
+        let info = nda_gemv_info(&cfg);
+        cfg.k = 99999;
+        assert_eq!(info.config.k, 128);
+    }
+
+    #[test]
+    fn info_clone_independent_issues() {
+        let mut cfg = default_gemv_config();
+        cfg.k = 0;
+        let info = nda_gemv_info(&cfg);
+        let mut cloned = info.clone();
+        cloned.validation_issues.push("extra".to_string());
+        assert_ne!(info.validation_issues.len(), cloned.validation_issues.len());
+    }
+
+    // ── Debug format details ────────────────────────────────────────────
+
+    #[test]
+    fn config_debug_contains_struct_name() {
+        let debug = format!("{:?}", default_gemv_config());
+        assert!(debug.contains("NdaGemvConfig"));
+    }
+
+    #[test]
+    fn info_debug_contains_struct_name() {
+        let info = nda_gemv_info(&default_gemv_config());
+        let debug = format!("{:?}", info);
+        assert!(debug.contains("NdaGemvInfo"));
+    }
+
+    // ── Compact JSON ────────────────────────────────────────────────────
+
+    #[test]
+    fn config_json_compact_no_whitespace() {
+        let json = serde_json::to_string(&default_gemv_config()).unwrap();
+        assert!(!json.contains(' '));
+        assert!(!json.contains('\n'));
+    }
+
+    // ── Validation combined ─────────────────────────────────────────────
+
+    #[test]
+    fn validate_k_zero_and_not_multiple_of_128() {
+        // k=0: triggers "k must be > 0"; 0%128==0 so no mod issue
+        let cfg = NdaGemvConfig { k: 0, n: 64, version: 1, scales: [1.0; 3] };
+        let issues = validate_nda_gemv_config(&cfg);
+        assert_eq!(issues.len(), 1);
+        assert!(issues[0].contains("k must"));
+    }
+
+    #[test]
+    fn validate_k_64_triggers_both_issues() {
+        // k=64: not 0 so no "k must be > 0"; 64%128!=0 so mod issue
+        let cfg = NdaGemvConfig { k: 64, n: 64, version: 1, scales: [1.0; 3] };
+        let issues = validate_nda_gemv_config(&cfg);
+        assert_eq!(issues.len(), 1);
+        assert!(issues[0].contains("multiple of 128"));
+    }
+
+    #[test]
+    fn validate_k_zero_n_zero() {
+        let cfg = NdaGemvConfig { k: 0, n: 0, version: 1, scales: [1.0; 3] };
+        let issues = validate_nda_gemv_config(&cfg);
+        // k=0 → "k must be > 0"; 0%128==0 no mod; n=0 → "n must be > 0"
+        assert_eq!(issues.len(), 2);
+    }
 }
