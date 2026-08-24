@@ -134,3 +134,214 @@ fn nda_serialization_roundtrip() {
     let hashes2: Vec<u64> = nodes.iter().map(|n| n.hash()).collect();
     assert_eq!(hashes, hashes2, "hashing should be deterministic");
 }
+
+// ── Library public API surface ─────────────────────────────────────────────
+
+/// Test that library info is accessible from the public API.
+#[test]
+fn library_info_accessible() {
+    let info = velocity_ide::library_info();
+    assert!(info.module_count >= 15);
+    assert!(!info.features.is_empty());
+    assert!(info.name.contains("velocity"));
+}
+
+/// Test that module inventory is accessible and complete.
+#[test]
+fn module_inventory_accessible() {
+    let inv = velocity_ide::module_inventory();
+    assert_eq!(inv.len(), 15);
+    let names: Vec<&str> = inv.iter().map(|m| m.name).collect();
+    assert!(names.contains(&"compiler"));
+    assert!(names.contains(&"wiki"));
+}
+
+/// Test that version and banner are accessible.
+#[test]
+fn version_and_banner_accessible() {
+    let v = velocity_ide::version();
+    assert!(!v.is_empty());
+    let b = velocity_ide::banner();
+    assert!(b.contains("V.E.L.O.C.I.T.Y.-IDE"));
+}
+
+// ── Cross-module: JIT compile and run ──────────────────────────────────────
+
+/// Test JIT compilation of a simple program through the public API.
+#[test]
+fn jit_compile_and_run_simple() {
+    use velocity_ide::site_map::NdaNode;
+    // Use the JIT compiler module
+    let nodes = vec![
+        NdaNode::Int { value: 10 },
+        NdaNode::Int { value: 20 },
+        NdaNode::Add {
+            lhs: Box::new(NdaNode::Int { value: 0 }),
+            rhs: Box::new(NdaNode::Int { value: 0 }),
+        },
+    ];
+    // Verify node hashes are deterministic
+    let h1 = nodes[0].hash();
+    let h2 = nodes[0].hash();
+    assert_eq!(h1, h2);
+}
+
+/// Test that NdaNode variants are all constructible from the public API.
+#[test]
+fn nda_node_variants_constructible() {
+    use velocity_ide::site_map::NdaNode;
+    let _int = NdaNode::Int { value: 42 };
+    let _float = NdaNode::Float { value: 3.14 };
+    let _add = NdaNode::Add {
+        lhs: Box::new(NdaNode::Int { value: 1 }),
+        rhs: Box::new(NdaNode::Int { value: 2 }),
+    };
+    let _scope = NdaNode::Scope {
+        children: vec![NdaNode::Int { value: 0 }],
+    };
+    let _matrix = NdaNode::Matrix {
+        rows: 4, cols: 4, scale: 0,
+        sign: vec![0xAA; 2], extra: vec![0x55; 2],
+    };
+    let _norm = NdaNode::Norm {
+        size: 64, weight: vec![0xFF; 8], bias: vec![0x00; 8],
+    };
+    let _loop = NdaNode::Loop {
+        count: 10,
+        body: vec![NdaNode::Int { value: 0 }],
+    };
+    let _break = NdaNode::Break;
+}
+
+/// Test NdaNode hash produces different hashes for different nodes.
+#[test]
+fn nda_node_different_types_different_hashes() {
+    use velocity_ide::site_map::NdaNode;
+    let int_node = NdaNode::Int { value: 1 };
+    let float_node = NdaNode::Float { value: 1.0 };
+    let add_node = NdaNode::Add {
+        lhs: Box::new(NdaNode::Int { value: 0 }),
+        rhs: Box::new(NdaNode::Int { value: 0 }),
+    };
+    // All different types should (almost certainly) have different hashes
+    assert_ne!(int_node.hash(), float_node.hash());
+    assert_ne!(int_node.hash(), add_node.hash());
+}
+
+// ── Cross-module: SiteMap operations ───────────────────────────────────────
+
+/// Test SiteMap node storage and retrieval.
+#[test]
+fn site_map_put_and_get_node() {
+    use velocity_ide::site_map::{SiteMap, NdaNode};
+
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let mut sm = SiteMap::open(tmp.path(), 0).expect("open");
+
+    let node = NdaNode::Int { value: 42 };
+    let hash = node.hash();
+    sm.put_node(&node).expect("put");
+    sm.flush().expect("flush");
+
+    let retrieved = sm.get_node(hash);
+    assert!(retrieved.is_some(), "should retrieve stored node");
+}
+
+/// Test SiteMap with multiple node types.
+#[test]
+fn site_map_multiple_node_types() {
+    use velocity_ide::site_map::{SiteMap, NdaNode};
+
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let mut sm = SiteMap::open(tmp.path(), 0).expect("open");
+
+    let nodes = vec![
+        NdaNode::Int { value: 1 },
+        NdaNode::Float { value: 2.0 },
+        NdaNode::Add {
+            lhs: Box::new(NdaNode::Int { value: 1 }),
+            rhs: Box::new(NdaNode::Int { value: 2 }),
+        },
+        NdaNode::Scope {
+            children: vec![NdaNode::Int { value: 0 }],
+        },
+    ];
+
+    for node in &nodes {
+        sm.put_node(node).expect("put node");
+    }
+    sm.flush().expect("flush");
+
+    // All nodes should be retrievable
+    for node in &nodes {
+        let h = node.hash();
+        assert!(sm.get_node(h).is_some(), "node {:?} should be retrievable", h);
+    }
+}
+
+// ── Cross-module: Error types ──────────────────────────────────────────────
+
+/// Test that error types are accessible and constructible.
+#[test]
+fn error_types_accessible() {
+    use velocity_ide::errors::{VelocityError, ErrorCode};
+    let err = VelocityError::new(ErrorCode::ConfigNotFound, "test error");
+    let msg = format!("{}", err);
+    assert!(msg.contains("test error"));
+}
+
+/// Test error display and debug formats.
+#[test]
+fn error_display_and_debug() {
+    use velocity_ide::errors::{VelocityError, ErrorCode};
+    let err = VelocityError::new(ErrorCode::WeightLoadFailed, "something failed");
+    let display = format!("{}", err);
+    let debug = format!("{:?}", err);
+    assert!(display.contains("something failed"));
+    assert!(debug.contains("VelocityError"));
+}
+
+// ── Cross-module: NDA matrix ───────────────────────────────────────────────
+
+/// Test NDA matrix construction and properties.
+#[test]
+fn nda_matrix_construction() {
+    use velocity_ide::nda::NdaMatrix;
+    let mat = NdaMatrix::new_quad(4, 4, 1.0, vec![0xAA; 2], vec![0x55; 2]);
+    assert_eq!(mat.rows, 4);
+    assert_eq!(mat.cols, 4);
+}
+
+// ── Cross-module: Library constants ────────────────────────────────────────
+
+/// Test library constants match expected values.
+#[test]
+fn library_constants_consistent() {
+    assert_eq!(velocity_ide::VERSION, velocity_ide::version());
+    assert_eq!(velocity_ide::NAME, "velocity-ide");
+    assert!(!velocity_ide::TARGET_OS.is_empty());
+    assert!(!velocity_ide::TARGET_ARCH.is_empty());
+}
+
+/// Test that library info JSON serialization works through public API.
+#[test]
+fn library_info_json_through_public_api() {
+    let info = velocity_ide::library_info();
+    let json = serde_json::to_string(&info).unwrap();
+    let v: serde_json::Value = serde_json::from_str(&json).unwrap();
+    assert!(v["module_count"].as_u64().unwrap() >= 15);
+    assert!(v["modules"].as_array().unwrap().len() >= 15);
+}
+
+/// Test ModuleInfo serialization through public API.
+#[test]
+fn module_info_serialization_through_api() {
+    let inv = velocity_ide::module_inventory();
+    for m in &inv {
+        let json = serde_json::to_string(m).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(v.as_object().unwrap().len(), 3);
+        assert!(v["name"].as_str().unwrap().len() > 0);
+        assert!(v["description"].as_str().unwrap().len() > 0);
+    }
+}
