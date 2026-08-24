@@ -998,4 +998,180 @@ mod tests {
         cfg.num_heads = 1;
         assert!(validate_benchmark_config(&cfg).is_empty());
     }
+
+    // ── Block 181: additional comprehensive tests ─────────────────────────
+
+    // ── JSON key counts ─────────────────────────────────────────────────
+
+    #[test]
+    fn config_json_has_exactly_4_keys() {
+        let json = serde_json::to_string(&BenchmarkConfig::default()).unwrap();
+        let val: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(val.as_object().unwrap().len(), 4);
+    }
+
+    #[test]
+    fn report_json_has_exactly_6_keys() {
+        let cfg = BenchmarkConfig::default();
+        let report = build_benchmark_report(&cfg, 100.0, 200.0);
+        let json = serde_json::to_string(&report).unwrap();
+        let val: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(val.as_object().unwrap().len(), 6);
+    }
+
+    // ── JSON roundtrip via Value ─────────────────────────────────────────
+
+    #[test]
+    fn config_json_roundtrip_via_value() {
+        let cfg = BenchmarkConfig {
+            num_tokens: 512, head_dim: 64, num_heads: 16, iterations: 1000,
+        };
+        let json = serde_json::to_string(&cfg).unwrap();
+        let val: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(val["num_tokens"], 512);
+        assert_eq!(val["head_dim"], 64);
+        assert_eq!(val["num_heads"], 16);
+        assert_eq!(val["iterations"], 1000);
+    }
+
+    #[test]
+    fn report_json_nested_config() {
+        let cfg = BenchmarkConfig::default();
+        let report = build_benchmark_report(&cfg, 100.0, 200.0);
+        let json = serde_json::to_string(&report).unwrap();
+        let val: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(val["config"]["num_tokens"], 256);
+        assert_eq!(val["config"]["head_dim"], 32);
+    }
+
+    // ── Equality via JSON ───────────────────────────────────────────────
+
+    #[test]
+    fn config_eq_via_json() {
+        let a = BenchmarkConfig::default();
+        let b = BenchmarkConfig::default();
+        assert_eq!(serde_json::to_string(&a).unwrap(), serde_json::to_string(&b).unwrap());
+    }
+
+    #[test]
+    fn config_neq_via_json() {
+        let a = BenchmarkConfig::default();
+        let mut b = BenchmarkConfig::default();
+        b.num_tokens = 999;
+        assert_ne!(serde_json::to_string(&a).unwrap(), serde_json::to_string(&b).unwrap());
+    }
+
+    // ── Speedup ratio formula ───────────────────────────────────────────
+
+    #[test]
+    fn report_speedup_ratio_contig_faster() {
+        let cfg = BenchmarkConfig::default();
+        let report = build_benchmark_report(&cfg, 50.0, 200.0);
+        // contig < ndakv → ratio = ndakv/contig = 200/50 = 4.0
+        assert_eq!(report.faster_method, "contig");
+        assert!((report.speedup_ratio - 4.0).abs() < 0.001);
+    }
+
+    #[test]
+    fn report_speedup_ratio_ndakv_faster() {
+        let cfg = BenchmarkConfig::default();
+        let report = build_benchmark_report(&cfg, 500.0, 100.0);
+        // contig >= ndakv → ratio = contig/ndakv = 500/100 = 5.0
+        assert_eq!(report.faster_method, "ndakv");
+        assert!((report.speedup_ratio - 5.0).abs() < 0.001);
+    }
+
+    #[test]
+    fn report_speedup_ratio_exactly_equal() {
+        let cfg = BenchmarkConfig::default();
+        let report = build_benchmark_report(&cfg, 100.0, 100.0);
+        // contig < ndakv → 100 < 100 → false → else → ratio = 100/100 = 1.0, "ndakv"
+        assert_eq!(report.faster_method, "ndakv");
+        assert!((report.speedup_ratio - 1.0).abs() < 0.001);
+    }
+
+    // ── Report config independence ──────────────────────────────────────
+
+    #[test]
+    fn report_config_independent_from_original() {
+        let mut cfg = BenchmarkConfig::default();
+        let report = build_benchmark_report(&cfg, 100.0, 200.0);
+        cfg.num_tokens = 9999;
+        assert_eq!(report.config.num_tokens, 256);
+    }
+
+    #[test]
+    fn report_clone_independent_issues() {
+        let mut cfg = BenchmarkConfig::default();
+        cfg.num_tokens = 0;
+        let report = build_benchmark_report(&cfg, 100.0, 200.0);
+        let mut cloned = report.clone();
+        cloned.validation_issues.push("extra".to_string());
+        assert_ne!(report.validation_issues.len(), cloned.validation_issues.len());
+    }
+
+    // ── Debug format details ────────────────────────────────────────────
+
+    #[test]
+    fn config_debug_contains_struct_name() {
+        let debug = format!("{:?}", BenchmarkConfig::default());
+        assert!(debug.contains("BenchmarkConfig"));
+    }
+
+    #[test]
+    fn report_debug_contains_struct_name() {
+        let cfg = BenchmarkConfig::default();
+        let report = build_benchmark_report(&cfg, 100.0, 200.0);
+        let debug = format!("{:?}", report);
+        assert!(debug.contains("BenchmarkReport"));
+    }
+
+    #[test]
+    fn report_debug_contains_timing() {
+        let cfg = BenchmarkConfig::default();
+        let report = build_benchmark_report(&cfg, 123.456, 789.012);
+        let debug = format!("{:?}", report);
+        assert!(debug.contains("123.456"));
+        assert!(debug.contains("789.012"));
+    }
+
+    // ── JSON value verification ─────────────────────────────────────────
+
+    #[test]
+    fn report_json_speedup_value() {
+        let cfg = BenchmarkConfig::default();
+        let report = build_benchmark_report(&cfg, 100.0, 300.0);
+        let json = serde_json::to_string(&report).unwrap();
+        let val: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(val["faster_method"], "contig");
+        assert!((val["speedup_ratio"].as_f64().unwrap() - 3.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn report_json_validation_issues_empty_for_valid() {
+        let cfg = BenchmarkConfig::default();
+        let report = build_benchmark_report(&cfg, 100.0, 200.0);
+        let json = serde_json::to_string(&report).unwrap();
+        let val: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert!(val["validation_issues"].as_array().unwrap().is_empty());
+    }
+
+    #[test]
+    fn report_json_validation_issues_nonempty_for_invalid() {
+        let mut cfg = BenchmarkConfig::default();
+        cfg.num_tokens = 0;
+        let report = build_benchmark_report(&cfg, 100.0, 200.0);
+        let json = serde_json::to_string(&report).unwrap();
+        let val: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert!(!val["validation_issues"].as_array().unwrap().is_empty());
+    }
+
+    // ── Config compact JSON ─────────────────────────────────────────────
+
+    #[test]
+    fn config_json_compact_no_whitespace() {
+        let json = serde_json::to_string(&BenchmarkConfig::default()).unwrap();
+        assert!(!json.contains(' '));
+        assert!(!json.contains('\n'));
+    }
 }
