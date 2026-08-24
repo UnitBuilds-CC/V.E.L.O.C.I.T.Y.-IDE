@@ -1,27 +1,13 @@
-Block 163: compiler/shaders/mod.rs — 28 new tests (102 total)
+test: velocity_client — 27 new tests (JSON key counts, clone, edge cases)
 
-JSON structure verification:
-- ShaderEntry JSON key count (4 keys), values, empty bytecode values
-- ShaderRegistry JSON key count (4 keys), values (17 shaders, 0 issues)
-- ShaderCategoryDistribution JSON key count (9 keys)
-- ShaderSizeStats JSON key count (6 keys), numeric values
-- Pretty JSON for ShaderEntry, ShaderRegistry, ShaderSizeStats, distribution
+Block 169: Added 27 new tests to velocity_client.rs covering:
+- JSON key count verification (ConnectionInfo=5, RetryConfigInfo=6, ClientDiagnostics=2, HealthResponse=3, UsageResponse=7)
+- VelocityConfig and RetryConfig clone independence
+- Debug format for config types
+- parse_toml duplicate keys (last wins), whitespace handling, multiple keys
+- fmt_number max u64, fmt_currency negative, fmt_percent large values
+- Sub-type deserialization (UsagePeriod, ModelUsage, DomainUsage, AssignmentCost, LatencyPercentiles, ModelLatency, AuditModelBreakdown, BillingPeriodDetail)
+- RetryConfig all-issues-combined, high exponent capping
+- URL builder multiple trailing slashes, auth header special chars
 
-Cross-validation and edge cases:
-- Cross-validate bytecode lengths match entry spv_words/spv_bytes for all 17 shaders
-- shader_entry bytes formula for 7 different word counts (1,2,5,10,50,100,1000)
-- find_shader for all 17 shaders by name
-- shader_category for multiple unknown names (empty, case-sensitive, trailing space)
-- Registry clone independence (modify original, clone unchanged)
-- ShaderEntry clone independence
-- Category distribution with mixed known/unknown shaders (8 categories)
-- Category distribution with only-unknown shaders (7 standard + other = 8)
-- Size stats with two shaders of different sizes
-- validate_spirv with single-word and zero-word bytecodes
-- Registry validate with only count mismatch (no total mismatch)
-- Registry validate with only total mismatch (no count mismatch)
-- shader_bytecode returns Some for all 17 exact names
-- shader_bytecode returns None for various unknowns (empty, case, spaces)
-- Distribution categories vec length for real registry (7, not 8)
-
-Full suite: 3992 lib + 6 integration = 3998 tests, 0 failures
+Total: 4157 lib tests, 0 failures

@@ -1757,4 +1757,299 @@ after_section = "also no"
         let home = dirs_next();
         assert!(home.is_some());
     }
+
+    // ─── JSON Key Count Verification ─────────────────────────────────────────
+
+    #[test]
+    fn connection_info_json_has_exactly_5_keys() {
+        let cfg = VelocityConfig {
+            base_url: "https://router.velocity.io".into(),
+            api_key: "vr_standard_abcdef1234567890".into(),
+        };
+        let info = cfg.connection_info();
+        let val: serde_json::Value = serde_json::to_value(&info).unwrap();
+        assert_eq!(val.as_object().unwrap().len(), 5);
+        assert!(val.get("base_url").is_some());
+        assert!(val.get("api_key_prefix").is_some());
+        assert!(val.get("api_key_length").is_some());
+        assert!(val.get("is_https").is_some());
+        assert!(val.get("validation_issues").is_some());
+    }
+
+    #[test]
+    fn retry_config_info_json_has_exactly_6_keys() {
+        let info = RetryConfig::default().info();
+        let val: serde_json::Value = serde_json::to_value(&info).unwrap();
+        assert_eq!(val.as_object().unwrap().len(), 6);
+        assert!(val.get("max_retries").is_some());
+        assert!(val.get("initial_backoff_ms").is_some());
+        assert!(val.get("max_backoff_ms").is_some());
+        assert!(val.get("jitter_enabled").is_some());
+        assert!(val.get("max_possible_delay_ms").is_some());
+        assert!(val.get("validation_issues").is_some());
+    }
+
+    #[test]
+    fn client_diagnostics_json_has_exactly_2_keys() {
+        let client = VelocityClient::new(VelocityConfig {
+            base_url: "http://localhost:8787".into(),
+            api_key: "vr_test_key_12345".into(),
+        });
+        let diag = client.diagnostics();
+        let val: serde_json::Value = serde_json::to_value(&diag).unwrap();
+        assert_eq!(val.as_object().unwrap().len(), 2);
+        assert!(val.get("connection").is_some());
+        assert!(val.get("retry").is_some());
+    }
+
+    #[test]
+    fn health_response_json_has_exactly_3_keys() {
+        let json = r#"{"status": "ok", "version": "1.4.0", "models_available": 12}"#;
+        let resp: HealthResponse = serde_json::from_str(json).unwrap();
+        let val: serde_json::Value = serde_json::to_value(&resp).unwrap();
+        assert_eq!(val.as_object().unwrap().len(), 3);
+    }
+
+    #[test]
+    fn usage_response_json_has_exactly_7_keys() {
+        let json = r#"{
+            "tier": "standard",
+            "tokens_used": 50000,
+            "tokens_limit": 1000000,
+            "cost_usd": 0.25,
+            "cost_limit_usd": 10.0,
+            "assignments_count": 42,
+            "period": {"start": "2026-08-01", "end": "2026-09-01"}
+        }"#;
+        let resp: UsageResponse = serde_json::from_str(json).unwrap();
+        let val: serde_json::Value = serde_json::to_value(&resp).unwrap();
+        assert_eq!(val.as_object().unwrap().len(), 7);
+    }
+
+    // ─── Clone & Debug ──────────────────────────────────────────────────────
+
+    #[test]
+    fn velocity_config_clone_independence() {
+        let original = VelocityConfig {
+            base_url: "https://router.velocity.io".into(),
+            api_key: "vr_standard_abcdef1234567890".into(),
+        };
+        let mut cloned = original.clone();
+        cloned.base_url = "http://localhost:9999".into();
+        cloned.api_key = "changed".into();
+        assert_eq!(original.base_url, "https://router.velocity.io");
+        assert_eq!(original.api_key, "vr_standard_abcdef1234567890");
+    }
+
+    #[test]
+    fn velocity_config_debug_format() {
+        let cfg = VelocityConfig {
+            base_url: "http://localhost:8787".into(),
+            api_key: "secret_key".into(),
+        };
+        let debug = format!("{:?}", cfg);
+        assert!(debug.contains("VelocityConfig"));
+        assert!(debug.contains("localhost"));
+    }
+
+    #[test]
+    fn retry_config_clone_independence() {
+        let original = RetryConfig::default();
+        let mut cloned = original.clone();
+        cloned.max_retries = 99;
+        cloned.jitter = false;
+        assert_eq!(original.max_retries, 3);
+        assert!(original.jitter);
+    }
+
+    #[test]
+    fn retry_config_debug_format() {
+        let cfg = RetryConfig::default();
+        let debug = format!("{:?}", cfg);
+        assert!(debug.contains("RetryConfig"));
+        assert!(debug.contains("max_retries"));
+    }
+
+    // ─── parse_toml Additional ───────────────────────────────────────────────
+
+    #[test]
+    fn parse_toml_duplicate_keys_last_wins() {
+        let content = r#"
+base_url = "http://first:8787"
+base_url = "http://second:8787"
+"#;
+        let parsed = parse_toml_simple(content);
+        assert_eq!(parsed.get("base_url").unwrap(), "http://second:8787");
+    }
+
+    #[test]
+    fn parse_toml_whitespace_in_values() {
+        let content = r#"  base_url = "http://localhost:8787"  "#;
+        let parsed = parse_toml_simple(content);
+        assert_eq!(parsed.get("base_url").unwrap(), "http://localhost:8787");
+    }
+
+    #[test]
+    fn parse_toml_multiple_keys() {
+        let content = r#"
+base_url = "http://localhost:8787"
+api_key = "vr_test_123"
+extra_key = "extra_value"
+"#;
+        let parsed = parse_toml_simple(content);
+        assert_eq!(parsed.len(), 3);
+        assert_eq!(parsed.get("extra_key").unwrap(), "extra_value");
+    }
+
+    // ─── fmt Additional Edge Cases ──────────────────────────────────────────
+
+    #[test]
+    fn fmt_number_max_u64() {
+        let result = fmt_number(u64::MAX);
+        assert_eq!(result, "18,446,744,073,709,551,615");
+    }
+
+    #[test]
+    fn fmt_currency_negative_amount() {
+        // Negative amounts are < 0.01 so they use 4-decimal format.
+        let result = fmt_currency(-1.50);
+        assert_eq!(result, "$-1.5000");
+    }
+
+    #[test]
+    fn fmt_percent_large_values() {
+        assert_eq!(fmt_percent(1000.0), "1000.0%");
+        assert_eq!(fmt_percent(999.99), "1000.0%");
+    }
+
+    // ─── Sub-type Deserialization ────────────────────────────────────────────
+
+    #[test]
+    fn usage_period_deserializes() {
+        let json = r#"{"start": "2026-01-01", "end": "2026-02-01"}"#;
+        let period: UsagePeriod = serde_json::from_str(json).unwrap();
+        assert_eq!(period.start, "2026-01-01");
+        assert_eq!(period.end, "2026-02-01");
+    }
+
+    #[test]
+    fn model_usage_deserializes() {
+        let json = r#"{"model_id": "gpt-4o", "assignments": 60, "tokens": 300000, "cost_usd": 1.50}"#;
+        let usage: ModelUsage = serde_json::from_str(json).unwrap();
+        assert_eq!(usage.model_id, "gpt-4o");
+        assert_eq!(usage.assignments, 60);
+        assert_eq!(usage.tokens, 300000);
+    }
+
+    #[test]
+    fn domain_usage_deserializes() {
+        let json = r#"{"domain": "gui_design", "assignments": 70, "tokens": 350000, "cost_usd": 1.75}"#;
+        let usage: DomainUsage = serde_json::from_str(json).unwrap();
+        assert_eq!(usage.domain, "gui_design");
+        assert_eq!(usage.assignments, 70);
+    }
+
+    #[test]
+    fn assignment_cost_deserializes() {
+        let json = r#"{"total_tokens": 5000, "total_cost_usd": 0.005}"#;
+        let cost: AssignmentCost = serde_json::from_str(json).unwrap();
+        assert_eq!(cost.total_tokens, 5000);
+        assert_eq!(cost.total_cost_usd, 0.005);
+    }
+
+    #[test]
+    fn latency_percentiles_field_values() {
+        let json = r#"{"p50_ms": 100, "p90_ms": 500, "p95_ms": 800, "p99_ms": 2000}"#;
+        let p: LatencyPercentiles = serde_json::from_str(json).unwrap();
+        assert_eq!(p.p50_ms, 100);
+        assert_eq!(p.p90_ms, 500);
+        assert_eq!(p.p95_ms, 800);
+        assert_eq!(p.p99_ms, 2000);
+    }
+
+    #[test]
+    fn model_latency_deserializes() {
+        let json = r#"{"model_id": "claude-3", "p50_ms": 50, "p90_ms": 200, "p95_ms": 400, "p99_ms": 1000, "request_count": 500}"#;
+        let ml: ModelLatency = serde_json::from_str(json).unwrap();
+        assert_eq!(ml.model_id, "claude-3");
+        assert_eq!(ml.request_count, 500);
+    }
+
+    #[test]
+    fn audit_model_breakdown_optional_domain() {
+        let json = r#"{
+            "model_id": "gpt-4o",
+            "provider": "openai",
+            "domain": null,
+            "tokens_used": 1000,
+            "input_tokens": 600,
+            "output_tokens": 400,
+            "cost_usd": 0.01,
+            "duration_ms": 500,
+            "success": true,
+            "routing_rationale": null
+        }"#;
+        let bd: AuditModelBreakdown = serde_json::from_str(json).unwrap();
+        assert!(bd.domain.is_none());
+        assert!(bd.routing_rationale.is_none());
+        assert_eq!(bd.tokens_used, 1000);
+    }
+
+    #[test]
+    fn billing_period_detail_deserializes() {
+        let json = r#"{"start": "2026-08-01", "end": "2026-09-01", "days_remaining": 15}"#;
+        let bp: BillingPeriodDetail = serde_json::from_str(json).unwrap();
+        assert_eq!(bp.days_remaining, 15);
+        assert_eq!(bp.end, "2026-09-01");
+    }
+
+    // ─── Retry Config Edge Cases ────────────────────────────────────────────
+
+    #[test]
+    fn retry_config_info_all_issues_combined() {
+        let cfg = RetryConfig {
+            max_retries: 0,
+            initial_backoff_ms: 0,
+            max_backoff_ms: 0,
+            jitter: false,
+        };
+        let info = cfg.info();
+        // max_retries=0 → issue, initial_backoff=0 → issue, max_backoff(0) < initial(0) → no (equal).
+        assert!(info.validation_issues.len() >= 2);
+        assert_eq!(info.max_possible_delay_ms, 0);
+    }
+
+    #[test]
+    fn retry_config_info_high_retry_exponent() {
+        // max_retries=20 → 100 * 2^20 = 104_857_600, capped at max=5000 → 5000.
+        let cfg = RetryConfig {
+            max_retries: 20,
+            initial_backoff_ms: 100,
+            max_backoff_ms: 5000,
+            jitter: false,
+        };
+        let info = cfg.info();
+        assert_eq!(info.max_possible_delay_ms, 5000);
+    }
+
+    // ─── URL Builder Additional ──────────────────────────────────────────────
+
+    #[test]
+    fn url_builder_multiple_trailing_slashes() {
+        let client = VelocityClient::new(VelocityConfig {
+            base_url: "http://localhost:8787///".into(),
+            api_key: "test".into(),
+        });
+        // trim_end_matches('/') removes all trailing slashes.
+        assert_eq!(client.url("/health"), "http://localhost:8787/health");
+    }
+
+    #[test]
+    fn auth_header_with_special_chars() {
+        let client = VelocityClient::new(VelocityConfig {
+            base_url: "http://localhost:8787".into(),
+            api_key: "vr_key-with-special!chars@123".into(),
+        });
+        assert_eq!(client.auth_header(), "Bearer vr_key-with-special!chars@123");
+    }
 }
