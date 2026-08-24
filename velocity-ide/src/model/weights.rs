@@ -2178,4 +2178,242 @@ mod tests {
         let loaded = load_fp32_bin(&path).unwrap();
         assert_eq!(loaded.len(), 120);
     }
+
+    // ── JSON key count verification ─────────────────────────────────────
+
+    #[test]
+    fn batch_load_report_json_has_exactly_5_keys() {
+        let report = BatchLoadReport {
+            files_attempted: 3, files_loaded: 2, files_failed: 1,
+            total_elapsed_us: 100, per_file_avg_us: 33.3,
+        };
+        let v: serde_json::Value = serde_json::from_str(&serde_json::to_string(&report).unwrap()).unwrap();
+        assert_eq!(v.as_object().unwrap().len(), 5);
+    }
+
+    #[test]
+    fn tensor_health_json_has_exactly_6_keys() {
+        let health = TensorHealth {
+            tensors_checked: 3, nan_count: 0, inf_count: 0,
+            zero_count: 0, healthy: true, issues: vec![],
+        };
+        let v: serde_json::Value = serde_json::from_str(&serde_json::to_string(&health).unwrap()).unwrap();
+        assert_eq!(v.as_object().unwrap().len(), 6);
+    }
+
+    #[test]
+    fn version_consistency_json_has_exactly_4_keys() {
+        let vc = VersionConsistency {
+            unique_versions: vec![2], consistent: true,
+            majority_version: Some(2), outlier_layers: vec![],
+        };
+        let v: serde_json::Value = serde_json::from_str(&serde_json::to_string(&vc).unwrap()).unwrap();
+        assert_eq!(v.as_object().unwrap().len(), 4);
+    }
+
+    #[test]
+    fn memory_breakdown_json_has_exactly_8_keys() {
+        let w = make_test_weights(1, 64, 128, 10);
+        let mb = w.memory_breakdown();
+        let v: serde_json::Value = serde_json::from_str(&serde_json::to_string(&mb).unwrap()).unwrap();
+        assert_eq!(v.as_object().unwrap().len(), 8);
+    }
+
+    #[test]
+    fn weights_load_report_json_has_exactly_6_keys() {
+        let report = WeightsLoadReport {
+            total_elapsed_us: 100, global_tensors_us: 20,
+            per_layer_us: 60, gpu_upload_us: 20,
+            layers_loaded: 4, per_layer_avg_us: 15.0,
+        };
+        let v: serde_json::Value = serde_json::from_str(&serde_json::to_string(&report).unwrap()).unwrap();
+        assert_eq!(v.as_object().unwrap().len(), 6);
+    }
+
+    // ── JSON roundtrip via Value ────────────────────────────────────────
+
+    #[test]
+    fn batch_load_report_json_roundtrip() {
+        let report = BatchLoadReport {
+            files_attempted: 5, files_loaded: 3, files_failed: 2,
+            total_elapsed_us: 500, per_file_avg_us: 100.0,
+        };
+        let v: serde_json::Value = serde_json::from_str(&serde_json::to_string(&report).unwrap()).unwrap();
+        assert_eq!(v["files_attempted"], 5);
+        assert_eq!(v["files_loaded"], 3);
+        assert_eq!(v["files_failed"], 2);
+    }
+
+    #[test]
+    fn tensor_health_json_roundtrip() {
+        let health = TensorHealth {
+            tensors_checked: 10, nan_count: 2, inf_count: 1,
+            zero_count: 3, healthy: false, issues: vec!["nan detected".into()],
+        };
+        let v: serde_json::Value = serde_json::from_str(&serde_json::to_string(&health).unwrap()).unwrap();
+        assert_eq!(v["tensors_checked"], 10);
+        assert_eq!(v["nan_count"], 2);
+        assert_eq!(v["healthy"], false);
+        assert_eq!(v["issues"][0], "nan detected");
+    }
+
+    // ── Clone tests ─────────────────────────────────────────────────────
+
+    #[test]
+    fn batch_load_report_clone() {
+        let report = BatchLoadReport {
+            files_attempted: 3, files_loaded: 2, files_failed: 1,
+            total_elapsed_us: 100, per_file_avg_us: 33.3,
+        };
+        let cloned = report.clone();
+        assert_eq!(cloned.files_attempted, report.files_attempted);
+        assert_eq!(cloned.files_loaded, report.files_loaded);
+    }
+
+    #[test]
+    fn tensor_health_clone() {
+        let health = TensorHealth {
+            tensors_checked: 5, nan_count: 0, inf_count: 0,
+            zero_count: 0, healthy: true, issues: vec![],
+        };
+        let cloned = health.clone();
+        assert_eq!(cloned.tensors_checked, health.tensors_checked);
+        assert_eq!(cloned.healthy, health.healthy);
+    }
+
+    #[test]
+    fn version_consistency_clone() {
+        let vc = VersionConsistency {
+            unique_versions: vec![1, 2], consistent: false,
+            majority_version: Some(2), outlier_layers: vec![0],
+        };
+        let cloned = vc.clone();
+        assert_eq!(cloned.unique_versions, vc.unique_versions);
+        assert_eq!(cloned.outlier_layers, vc.outlier_layers);
+    }
+
+    #[test]
+    fn memory_breakdown_clone() {
+        let w = make_test_weights(2, 64, 128, 10);
+        let mb = w.memory_breakdown();
+        let cloned = mb.clone();
+        assert_eq!(cloned.total_nda_bytes, mb.total_nda_bytes);
+        assert_eq!(cloned.embed_tokens_bytes, mb.embed_tokens_bytes);
+    }
+
+    #[test]
+    fn weights_summary_clone() {
+        let w = make_test_weights(1, 64, 128, 10);
+        let cfg = make_test_config(1, 64, 128, 10);
+        let summary = w.summary(&cfg);
+        let cloned = summary.clone();
+        assert_eq!(cloned.n_layers, summary.n_layers);
+        assert_eq!(cloned.nda_bytes, summary.nda_bytes);
+    }
+
+    // ── Debug format ────────────────────────────────────────────────────
+
+    #[test]
+    fn batch_load_report_debug() {
+        let report = BatchLoadReport {
+            files_attempted: 3, files_loaded: 2, files_failed: 1,
+            total_elapsed_us: 100, per_file_avg_us: 33.3,
+        };
+        let debug = format!("{:?}", report);
+        assert!(debug.contains("BatchLoadReport"));
+        assert!(debug.contains("files_attempted"));
+    }
+
+    #[test]
+    fn tensor_health_debug() {
+        let health = TensorHealth {
+            tensors_checked: 3, nan_count: 0, inf_count: 0,
+            zero_count: 0, healthy: true, issues: vec![],
+        };
+        let debug = format!("{:?}", health);
+        assert!(debug.contains("TensorHealth"));
+        assert!(debug.contains("tensors_checked"));
+    }
+
+    #[test]
+    fn memory_breakdown_debug() {
+        let w = make_test_weights(1, 64, 128, 10);
+        let mb = w.memory_breakdown();
+        let debug = format!("{:?}", mb);
+        assert!(debug.contains("MemoryBreakdown"));
+        assert!(debug.contains("embed_tokens_bytes"));
+    }
+
+    // ── Equality via JSON ───────────────────────────────────────────────
+
+    #[test]
+    fn batch_load_report_eq_via_json() {
+        let r1 = BatchLoadReport {
+            files_attempted: 3, files_loaded: 2, files_failed: 1,
+            total_elapsed_us: 100, per_file_avg_us: 33.3,
+        };
+        let r2 = r1.clone();
+        let j1: serde_json::Value = serde_json::from_str(&serde_json::to_string(&r1).unwrap()).unwrap();
+        let j2: serde_json::Value = serde_json::from_str(&serde_json::to_string(&r2).unwrap()).unwrap();
+        assert_eq!(j1, j2);
+    }
+
+    #[test]
+    fn tensor_health_neq_when_modified() {
+        let h1 = TensorHealth {
+            tensors_checked: 3, nan_count: 0, inf_count: 0,
+            zero_count: 0, healthy: true, issues: vec![],
+        };
+        let mut h2 = h1.clone();
+        h2.nan_count = 5;
+        let j1: serde_json::Value = serde_json::from_str(&serde_json::to_string(&h1).unwrap()).unwrap();
+        let j2: serde_json::Value = serde_json::from_str(&serde_json::to_string(&h2).unwrap()).unwrap();
+        assert_ne!(j1, j2);
+    }
+
+    // ── Edge cases ──────────────────────────────────────────────────────
+
+    #[test]
+    fn tensor_health_all_finite_is_healthy() {
+        let health = TensorHealth {
+            tensors_checked: 10, nan_count: 0, inf_count: 0,
+            zero_count: 5, healthy: true, issues: vec![],
+        };
+        assert!(health.healthy);
+    }
+
+    #[test]
+    fn version_consistency_empty_is_consistent() {
+        let vc = VersionConsistency {
+            unique_versions: vec![], consistent: true,
+            majority_version: None, outlier_layers: vec![],
+        };
+        assert!(vc.consistent);
+        assert!(vc.majority_version.is_none());
+    }
+
+    #[test]
+    fn memory_breakdown_per_layer_scales_linearly() {
+        let w2 = make_test_weights(2, 64, 128, 10);
+        let w4 = make_test_weights(4, 64, 128, 10);
+        let mb2 = w2.memory_breakdown();
+        let mb4 = w4.memory_breakdown();
+        assert_eq!(mb4.per_layer_nda_bytes, mb2.per_layer_nda_bytes * 2);
+    }
+
+    #[test]
+    fn weights_load_report_timing_sums() {
+        let report = WeightsLoadReport {
+            total_elapsed_us: 10000,
+            global_tensors_us: 2000,
+            per_layer_us: 6000,
+            gpu_upload_us: 2000,
+            layers_loaded: 4,
+            per_layer_avg_us: 1500.0,
+        };
+        // Parts don't necessarily sum to total (overhead), but all are positive
+        assert!(report.global_tensors_us > 0);
+        assert!(report.per_layer_us > 0);
+        assert!(report.gpu_upload_us > 0);
+    }
 }
