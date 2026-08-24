@@ -433,4 +433,322 @@ mod tests {
         let bad_snap = bad_cfg.snapshot();
         assert!(!bad_snap.validation_issues.is_empty());
     }
+
+    // ─── Validation edge cases ────────────────────────────────────────────
+
+    #[test]
+    fn test_validate_zero_n_heads() {
+        let mut cfg = ModelConfig::bitnet_3b();
+        cfg.n_heads = 0;
+        let issues = cfg.validate();
+        assert!(issues.iter().any(|i| i.contains("n_heads")));
+    }
+
+    #[test]
+    fn test_validate_zero_n_layers() {
+        let mut cfg = ModelConfig::bitnet_3b();
+        cfg.n_layers = 0;
+        let issues = cfg.validate();
+        assert!(issues.iter().any(|i| i.contains("n_layers")));
+    }
+
+    #[test]
+    fn test_validate_zero_vocab_size() {
+        let mut cfg = ModelConfig::bitnet_3b();
+        cfg.vocab_size = 0;
+        let issues = cfg.validate();
+        assert!(issues.iter().any(|i| i.contains("vocab_size")));
+    }
+
+    #[test]
+    fn test_validate_head_dim_mismatch() {
+        let mut cfg = ModelConfig::bitnet_3b();
+        cfg.head_dim = 42; // should be 100
+        let issues = cfg.validate();
+        assert!(issues.iter().any(|i| i.contains("head_dim")));
+    }
+
+    #[test]
+    fn test_validate_kv_dim_exceeds_hidden() {
+        let mut cfg = ModelConfig::bitnet_3b();
+        // n_kv_heads=32, head_dim=200 → kv_dim=6400 > hidden_size=3200
+        cfg.head_dim = 200;
+        cfg.n_heads = 16; // 3200/16=200 so head_dim check passes
+        cfg.n_kv_heads = 32;
+        let issues = cfg.validate();
+        assert!(issues.iter().any(|i| i.contains("KV dim")));
+    }
+
+    #[test]
+    fn test_validate_bad_gqa_ratio() {
+        let mut cfg = ModelConfig::bitnet_3b();
+        cfg.n_kv_heads = 3; // 32 % 3 != 0
+        let issues = cfg.validate();
+        assert!(issues.iter().any(|i| i.contains("n_heads") && i.contains("n_kv_heads")));
+    }
+
+    #[test]
+    fn test_validate_multiple_issues() {
+        let mut cfg = ModelConfig::bitnet_3b();
+        cfg.hidden_size = 0;
+        cfg.n_heads = 0;
+        cfg.n_layers = 0;
+        cfg.vocab_size = 0;
+        let issues = cfg.validate();
+        assert!(issues.len() >= 4);
+    }
+
+    // ─── Summary tests ────────────────────────────────────────────────────
+
+    #[test]
+    fn test_summary_bitnet() {
+        let cfg = ModelConfig::bitnet_3b();
+        let summary = cfg.summary();
+        assert!(summary.contains("26 layers"));
+        assert!(summary.contains("hidden=3200"));
+        assert!(summary.contains("ffn=8640"));
+        assert!(summary.contains("heads=32"));
+        assert!(summary.contains("kv_heads=32"));
+        assert!(summary.contains("head_dim=100"));
+        assert!(summary.contains("vocab=32000"));
+        assert!(summary.contains("alibi=false"));
+    }
+
+    #[test]
+    fn test_summary_contains_all_fields() {
+        let cfg = ModelConfig::qwen_coder_05b();
+        let summary = cfg.summary();
+        assert!(summary.contains("max_seq=2048"));
+        assert!(summary.contains("kv_heads=2"));
+        assert!(summary.contains("head_dim=64"));
+        assert!(summary.contains("vocab=151936"));
+    }
+
+    // ─── Snapshot field accuracy ──────────────────────────────────────────
+
+    #[test]
+    fn test_snapshot_field_values_bitnet() {
+        let cfg = ModelConfig::bitnet_3b();
+        let snap = cfg.snapshot();
+        assert_eq!(snap.n_layers, 26);
+        assert_eq!(snap.hidden_size, 3200);
+        assert_eq!(snap.ffn_size, 8640);
+        assert_eq!(snap.n_heads, 32);
+        assert_eq!(snap.n_kv_heads, 32);
+        assert_eq!(snap.head_dim, 100);
+        assert_eq!(snap.vocab_size, 32_000);
+        assert_eq!(snap.max_seq_len, 2048);
+        assert!(!snap.uses_alibi);
+        assert!(snap.fp32_memory_bytes > 0);
+        assert!(snap.nda_memory_bytes > 0);
+        assert!(snap.total_params > 0);
+        assert!(snap.validation_issues.is_empty());
+    }
+
+    #[test]
+    fn test_snapshot_field_values_qwen() {
+        let cfg = ModelConfig::qwen_coder_05b();
+        let snap = cfg.snapshot();
+        assert_eq!(snap.n_layers, 24);
+        assert_eq!(snap.hidden_size, 896);
+        assert_eq!(snap.n_heads, 14);
+        assert_eq!(snap.n_kv_heads, 2);
+        assert!(snap.uses_alibi);
+    }
+
+    #[test]
+    fn test_snapshot_memory_consistency() {
+        let cfg = ModelConfig::bitnet_3b();
+        let snap = cfg.snapshot();
+        assert_eq!(snap.fp32_memory_bytes, cfg.fp32_memory_bytes());
+        assert_eq!(snap.nda_memory_bytes, cfg.nda_memory_bytes());
+        assert_eq!(snap.total_params, cfg.total_param_count());
+    }
+
+    // ─── KV cache scaling ─────────────────────────────────────────────────
+
+    #[test]
+    fn test_kv_cache_zero_batch() {
+        let cfg = ModelConfig::bitnet_3b();
+        assert_eq!(cfg.kv_cache_bytes(0, 512), 0);
+    }
+
+    #[test]
+    fn test_kv_cache_zero_seq() {
+        let cfg = ModelConfig::bitnet_3b();
+        assert_eq!(cfg.kv_cache_bytes(4, 0), 0);
+    }
+
+    #[test]
+    fn test_kv_cache_scales_linearly_with_batch() {
+        let cfg = ModelConfig::bitnet_3b();
+        let b1 = cfg.kv_cache_bytes(1, 256);
+        let b4 = cfg.kv_cache_bytes(4, 256);
+        assert_eq!(b4, b1 * 4);
+    }
+
+    #[test]
+    fn test_kv_cache_scales_linearly_with_seq() {
+        let cfg = ModelConfig::bitnet_3b();
+        let s128 = cfg.kv_cache_bytes(2, 128);
+        let s512 = cfg.kv_cache_bytes(2, 512);
+        assert_eq!(s512, s128 * 4);
+    }
+
+    #[test]
+    fn test_kv_cache_bitnet_vs_qwen() {
+        let bitnet = ModelConfig::bitnet_3b();
+        let qwen = ModelConfig::qwen_coder_05b();
+        // bitnet: kv_dim = 32*100 = 3200, qwen: kv_dim = 2*64 = 128
+        let b = bitnet.kv_cache_bytes(1, 1);
+        let q = qwen.kv_cache_bytes(1, 1);
+        // bitnet per-layer kv = 2*3200*4 = 25600, qwen = 2*128*4 = 1024
+        // total: bitnet = 26*25600 = 665600, qwen = 24*1024 = 24576
+        assert_eq!(b, 26 * 2 * 3200 * 4);
+        assert_eq!(q, 24 * 2 * 128 * 4);
+    }
+
+    // ─── Attention type variants ──────────────────────────────────────────
+
+    #[test]
+    fn test_attention_type_mqa() {
+        let mut cfg = ModelConfig::bitnet_3b();
+        cfg.n_kv_heads = 1;
+        assert_eq!(cfg.attention_type(), "MQA");
+    }
+
+    #[test]
+    fn test_attention_type_gqa_intermediate() {
+        let mut cfg = ModelConfig::bitnet_3b();
+        cfg.n_kv_heads = 8; // 32/8 = 4 → GQA
+        assert_eq!(cfg.attention_type(), "GQA");
+    }
+
+    // ─── Memory estimation ────────────────────────────────────────────────
+
+    #[test]
+    fn test_fp32_memory_qwen() {
+        let cfg = ModelConfig::qwen_coder_05b();
+        let fp32 = cfg.fp32_memory_bytes();
+        assert_eq!(fp32, cfg.total_param_count() * 4);
+        assert!(fp32 > 0);
+    }
+
+    #[test]
+    fn test_nda_memory_qwen() {
+        let cfg = ModelConfig::qwen_coder_05b();
+        let nda = cfg.nda_memory_bytes();
+        let fp32 = cfg.fp32_memory_bytes();
+        assert!(nda > 0);
+        assert!(nda < fp32);
+    }
+
+    #[test]
+    fn test_nda_fp32_ratio_significant() {
+        // NDA should be substantially smaller than FP32 (at least 50% reduction)
+        let cfg = ModelConfig::bitnet_3b();
+        let ratio = cfg.nda_memory_bytes() as f64 / cfg.fp32_memory_bytes() as f64;
+        assert!(ratio < 0.5, "NDA/FP32 ratio should be < 0.5, got {}", ratio);
+    }
+
+    // ─── Ternary param count ──────────────────────────────────────────────
+
+    #[test]
+    fn test_ternary_param_count_bitnet_formula() {
+        let cfg = ModelConfig::bitnet_3b();
+        let kv_dim = cfg.n_kv_heads * cfg.head_dim; // 32*100=3200
+        let attn = cfg.hidden_size * cfg.hidden_size * 2 // Q + O
+            + cfg.hidden_size * kv_dim * 2; // K + V
+        let ffn = 2 * cfg.ffn_size * cfg.hidden_size + cfg.hidden_size * cfg.ffn_size;
+        let expected = cfg.n_layers * (attn + ffn);
+        assert_eq!(cfg.ternary_param_count(), expected);
+    }
+
+    #[test]
+    fn test_total_param_includes_embeddings() {
+        let cfg = ModelConfig::bitnet_3b();
+        let total = cfg.total_param_count();
+        let ternary = cfg.ternary_param_count();
+        let embed_overhead = total - ternary;
+        // embed_tokens + lm_head + final_norm
+        let expected_overhead = cfg.vocab_size * cfg.hidden_size * 2 + cfg.hidden_size;
+        assert_eq!(embed_overhead, expected_overhead);
+    }
+
+    // ─── Clone independence ───────────────────────────────────────────────
+
+    #[test]
+    fn test_config_clone_independent() {
+        let mut cfg = ModelConfig::bitnet_3b();
+        let original = cfg.clone();
+        cfg.hidden_size = 999;
+        assert_eq!(original.hidden_size, 3200);
+    }
+
+    // ─── ALiBi shift generation ───────────────────────────────────────────
+
+    #[test]
+    fn test_alibi_shifts_monotonically_increasing() {
+        let cfg = ModelConfig::qwen_coder_05b();
+        for w in cfg.alibi_shifts.windows(2) {
+            assert!(w[1] >= w[0], "ALiBi shifts should be non-decreasing");
+        }
+    }
+
+    #[test]
+    fn test_alibi_shifts_first_and_last() {
+        let cfg = ModelConfig::qwen_coder_05b();
+        // head 1: round(8*1/14) = round(0.571) = 1
+        assert_eq!(cfg.alibi_shifts[0], 1);
+        // head 14: round(8*14/14) = round(8.0) = 8
+        assert_eq!(cfg.alibi_shifts[13], 8);
+    }
+
+    // ─── Uses ALiBi ───────────────────────────────────────────────────────
+
+    #[test]
+    fn test_uses_alibi_with_shifts() {
+        let cfg = ModelConfig::qwen_coder_05b();
+        assert!(cfg.uses_alibi());
+        assert!(!cfg.alibi_shifts.is_empty());
+    }
+
+    #[test]
+    fn test_uses_alibi_without_shifts() {
+        let cfg = ModelConfig::bitnet_3b();
+        assert!(!cfg.uses_alibi());
+        assert!(cfg.alibi_shifts.is_empty());
+    }
+
+    // ─── Snapshot JSON roundtrip ──────────────────────────────────────────
+
+    #[test]
+    fn test_snapshot_json_contains_all_fields() {
+        let cfg = ModelConfig::qwen_coder_05b();
+        let snap = cfg.snapshot();
+        let json = serde_json::to_string(&snap).unwrap();
+        assert!(json.contains("\"n_layers\":24"));
+        assert!(json.contains("\"hidden_size\":896"));
+        assert!(json.contains("\"ffn_size\":4864"));
+        assert!(json.contains("\"n_heads\":14"));
+        assert!(json.contains("\"n_kv_heads\":2"));
+        assert!(json.contains("\"head_dim\":64"));
+        assert!(json.contains("\"vocab_size\":151936"));
+        assert!(json.contains("\"max_seq_len\":2048"));
+        assert!(json.contains("\"uses_alibi\":true"));
+        assert!(json.contains("\"fp32_memory_bytes\":"));
+        assert!(json.contains("\"nda_memory_bytes\":"));
+        assert!(json.contains("\"total_params\":"));
+        assert!(json.contains("\"validation_issues\":[]"));
+    }
+
+    // ─── Config Debug format ──────────────────────────────────────────────
+
+    #[test]
+    fn test_config_debug_format() {
+        let cfg = ModelConfig::bitnet_3b();
+        let debug = format!("{:?}", cfg);
+        assert!(debug.contains("ModelConfig"));
+        assert!(debug.contains("3200"));
+    }
 }
