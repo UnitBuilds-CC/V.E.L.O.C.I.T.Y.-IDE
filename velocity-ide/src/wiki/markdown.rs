@@ -998,4 +998,511 @@ mod tests {
         assert!(nested.join("files").exists());
         assert!(nested.join("symbols").exists());
     }
+
+    // ── Block 138: Extended tests ─────────────────────────────────────────
+
+    // --- render_page_markdown: breadcrumb variants ---
+
+    #[test]
+    fn render_page_symbol_breadcrumb() {
+        let model = make_model();
+        let page = &model.symbol_pages[0]; // main_fn
+        let md = render_page_markdown(page, &model);
+        assert!(md.contains("> [Wiki](../index.md) > Symbol > main_fn"));
+    }
+
+    #[test]
+    fn render_page_overview_breadcrumb() {
+        let model = make_model();
+        let md = render_page_markdown(&model.overview, &model);
+        assert!(md.contains("> [Wiki](../index.md) > Overview > Overview"));
+    }
+
+    // --- render_page_markdown: page-level TOC ---
+
+    #[test]
+    fn render_page_toc_lists_relationship_labels() {
+        let model = make_model();
+        let page = &model.file_pages[1]; // src/lib.rs has Defines + Calls
+        let md = render_page_markdown(page, &model);
+        assert!(md.contains("## Contents"));
+        assert!(md.contains("- [Defines](#-)"));
+        assert!(md.contains("- [Calls](#-)"));
+    }
+
+    #[test]
+    fn render_page_toc_includes_called_by_when_present() {
+        let model = make_model();
+        let page = &model.symbol_pages[0]; // main_fn has called_by
+        let md = render_page_markdown(page, &model);
+        assert!(md.contains("- [Called By](#called-by)"));
+    }
+
+    #[test]
+    fn render_page_toc_empty_when_no_relationships_or_calls() {
+        let model = make_model();
+        let page = &model.symbol_pages[2]; // unused_fn
+        let md = render_page_markdown(page, &model);
+        // Contents section exists but has no relationship entries
+        assert!(md.contains("## Contents"));
+        assert!(!md.contains("- [Called By]"));
+    }
+
+    // --- render_page_markdown: multiple relationship types ---
+
+    #[test]
+    fn render_page_multiple_relationship_types() {
+        let mut page = make_page(WikiPageKind::File, "multi.rs", "multi");
+        page.relationships = vec![
+            ("Defines".to_string(), vec!["alpha".to_string(), "beta".to_string()]),
+            ("Calls".to_string(), vec!["gamma".to_string()]),
+        ];
+        let model = make_model();
+        let md = render_page_markdown(&page, &model);
+        assert!(md.contains("## Defines"));
+        assert!(md.contains("- alpha"));
+        assert!(md.contains("- beta"));
+        assert!(md.contains("## Calls"));
+        assert!(md.contains("- gamma"));
+    }
+
+    // --- render_page_markdown: detail trimming ---
+
+    #[test]
+    fn render_page_detail_trims_trailing_whitespace() {
+        let mut page = make_page(WikiPageKind::Symbol, "trim_fn", "trim_fn");
+        page.detail = Some("Some detail text.   \n\n".to_string());
+        let model = make_model();
+        let md = render_page_markdown(&page, &model);
+        // trim_end() should remove trailing whitespace
+        assert!(md.contains("## Details"));
+        assert!(md.contains("Some detail text."));
+    }
+
+    // --- render_symbol_index ---
+
+    #[test]
+    fn symbol_index_empty_model() {
+        let model = empty_model();
+        let out = render_symbol_index(&model);
+        assert!(out.contains("# Symbol Index"));
+        assert!(out.contains("**Letters:**"));
+        // No letter sections when no symbols
+        assert!(!out.contains("## A"));
+    }
+
+    #[test]
+    fn symbol_index_letters_sorted_order() {
+        let model = make_model();
+        let out = render_symbol_index(&model);
+        // H (helper_fn), M (main_fn), U (unused_fn) — should be alphabetical
+        let h_pos = out.find("## H").unwrap();
+        let m_pos = out.find("## M").unwrap();
+        let u_pos = out.find("## U").unwrap();
+        assert!(h_pos < m_pos);
+        assert!(m_pos < u_pos);
+    }
+
+    #[test]
+    fn symbol_index_links_to_symbol_pages() {
+        let model = make_model();
+        let out = render_symbol_index(&model);
+        assert!(out.contains("[main_fn](symbols/main_fn.md)"));
+        assert!(out.contains("[helper_fn](symbols/helper_fn.md)"));
+    }
+
+    #[test]
+    fn symbol_index_non_ascii_first_char() {
+        let overview = make_page(WikiPageKind::Overview, "Overview", "index");
+        let sym = make_page(WikiPageKind::Symbol, "über_fn", "uber_fn");
+        let model = WikiModel {
+            generated_at: "test".to_string(),
+            stats_summary: "test".to_string(),
+            overview,
+            file_pages: vec![],
+            symbol_pages: vec![sym],
+        };
+        let out = render_symbol_index(&model);
+        // to_ascii_uppercase() only converts ASCII a-z, so 'ü' stays 'ü'
+        assert!(out.contains("## ü"));
+    }
+
+    // --- render_dependency_graph ---
+
+    #[test]
+    fn graph_empty_model_has_mermaid_block() {
+        let model = empty_model();
+        let out = render_dependency_graph(&model);
+        assert!(out.contains("```mermaid"));
+        assert!(out.contains("graph LR"));
+        assert!(out.contains("```"));
+    }
+
+    #[test]
+    fn graph_file_nodes_use_rect_shape() {
+        let model = make_model();
+        let out = render_dependency_graph(&model);
+        // File nodes use ["label"] shape
+        assert!(out.contains("[\""));
+    }
+
+    #[test]
+    fn graph_symbol_nodes_use_circle_shape() {
+        let model = make_model();
+        let out = render_dependency_graph(&model);
+        // Symbol nodes use (label) shape
+        assert!(out.contains("("));
+    }
+
+    #[test]
+    fn graph_long_title_truncated_at_20() {
+        let overview = make_page(WikiPageKind::Overview, "Overview", "index");
+        let long_title = "a".repeat(25);
+        let file = make_page(WikiPageKind::File, &long_title, "long");
+        let model = WikiModel {
+            generated_at: "test".to_string(),
+            stats_summary: "test".to_string(),
+            overview,
+            file_pages: vec![file],
+            symbol_pages: vec![],
+        };
+        let out = render_dependency_graph(&model);
+        // Title > 20 chars gets truncated to first 17 + "..."
+        assert!(out.contains("aaa..."));
+    }
+
+    #[test]
+    fn graph_short_title_not_truncated() {
+        let model = make_model();
+        let out = render_dependency_graph(&model);
+        // "src/main.rs" is 11 chars, should appear untruncated
+        assert!(out.contains("src/main.rs"));
+    }
+
+    #[test]
+    fn graph_calls_edge_label() {
+        // Create a model where a file Calls a symbol that exists
+        let overview = make_page(WikiPageKind::Overview, "Overview", "index");
+        let mut file = make_page(WikiPageKind::File, "src/caller.rs", "caller");
+        let sym = make_page(WikiPageKind::Symbol, "target_fn", "target_fn");
+        file.relationships = vec![("Calls".to_string(), vec!["target_fn".to_string()])];
+        let model = WikiModel {
+            generated_at: "test".to_string(),
+            stats_summary: "test".to_string(),
+            overview,
+            file_pages: vec![file],
+            symbol_pages: vec![sym],
+        };
+        let out = render_dependency_graph(&model);
+        assert!(out.contains("-->|calls|"));
+    }
+
+    #[test]
+    fn graph_defines_edge_label() {
+        let model = make_model();
+        let out = render_dependency_graph(&model);
+        assert!(out.contains("-->|defines|"));
+    }
+
+    // --- render_index ---
+
+    #[test]
+    fn index_no_files_omits_files_section() {
+        let model = empty_model();
+        let out = render_index(&model);
+        assert!(!out.contains("## Files"));
+    }
+
+    #[test]
+    fn index_no_symbols_omits_symbols_section() {
+        let overview = make_page(WikiPageKind::Overview, "Overview", "index");
+        let file = make_page(WikiPageKind::File, "src/main.rs", "main");
+        let model = WikiModel {
+            generated_at: "test".to_string(),
+            stats_summary: "test".to_string(),
+            overview,
+            file_pages: vec![file],
+            symbol_pages: vec![],
+        };
+        let out = render_index(&model);
+        assert!(out.contains("## Files"));
+        assert!(!out.contains("## Symbols"));
+    }
+
+    #[test]
+    fn index_has_project_wiki_heading() {
+        let model = make_model();
+        let out = render_index(&model);
+        assert!(out.starts_with("# Project Wiki\n"));
+    }
+
+    #[test]
+    fn index_has_generated_header() {
+        let model = make_model();
+        let out = render_index(&model);
+        assert!(out.contains("Generated from the Velocity site map"));
+        assert!(out.contains("2024-01-01T00:00:00Z"));
+        assert!(out.contains("5 pages, 3 relationships"));
+    }
+
+    #[test]
+    fn index_has_dependency_graph_link() {
+        let model = make_model();
+        let out = render_index(&model);
+        assert!(out.contains("- [Dependency Graph](graph.md)"));
+    }
+
+    #[test]
+    fn index_has_symbol_index_link() {
+        let model = make_model();
+        let out = render_index(&model);
+        assert!(out.contains("- [Symbol Index](symbol_index.md)"));
+    }
+
+    // --- link_for / find_page ---
+
+    #[test]
+    fn link_for_file_returns_module_aware_path() {
+        let model = make_model();
+        let link = link_for("src/main.rs", &model);
+        assert!(link.contains("../files/src/src-main-rs.md"));
+        assert!(link.starts_with("[src/main.rs]("));
+    }
+
+    #[test]
+    fn link_for_symbol_returns_symbols_path() {
+        let model = make_model();
+        let link = link_for("main_fn", &model);
+        assert_eq!(link, "[main_fn](../symbols/main_fn.md)");
+    }
+
+    #[test]
+    fn link_for_unknown_returns_plain_text() {
+        let model = make_model();
+        let link = link_for("does_not_exist", &model);
+        assert_eq!(link, "does_not_exist");
+    }
+
+    #[test]
+    fn find_page_finds_file() {
+        let model = make_model();
+        let found = find_page(&model, "src/main.rs");
+        assert!(found.is_some());
+        assert_eq!(found.unwrap().slug, "src-main-rs");
+    }
+
+    #[test]
+    fn find_page_finds_symbol() {
+        let model = make_model();
+        let found = find_page(&model, "helper_fn");
+        assert!(found.is_some());
+        assert_eq!(found.unwrap().slug, "helper_fn");
+    }
+
+    #[test]
+    fn find_page_returns_none_for_unknown() {
+        let model = make_model();
+        assert!(find_page(&model, "nonexistent").is_none());
+    }
+
+    // --- group_by_module edge cases ---
+
+    #[test]
+    fn group_by_module_empty_title_goes_to_root() {
+        let pages = vec![make_page(WikiPageKind::File, "", "empty")];
+        let groups = group_by_module(&pages);
+        assert!(groups.contains_key("root"));
+    }
+
+    #[test]
+    fn group_by_module_single_char_module() {
+        let pages = vec![make_page(WikiPageKind::File, "x/main.rs", "a")];
+        let groups = group_by_module(&pages);
+        assert!(groups.contains_key("x"));
+    }
+
+    // --- slugify_module edge cases ---
+
+    #[test]
+    fn slugify_module_empty_string() {
+        assert_eq!(slugify_module(""), "");
+    }
+
+    #[test]
+    fn slugify_module_all_special_chars() {
+        let result = slugify_module("!!!@@@");
+        assert_eq!(result, "");
+    }
+
+    #[test]
+    fn slugify_module_numbers_preserved() {
+        assert_eq!(slugify_module("src123"), "src123");
+    }
+
+    #[test]
+    fn slugify_module_mixed_case_and_special() {
+        assert_eq!(slugify_module("My-Module_v2"), "my-module-v2");
+    }
+
+    // --- Struct derives ---
+
+    #[test]
+    fn export_report_clone() {
+        let report = MarkdownExportReport {
+            elapsed_us: 100,
+            pages_written: 5,
+            total_bytes: 1000,
+            index_bytes: 200,
+            symbol_index_bytes: 150,
+            graph_bytes: 100,
+            modules_exported: 2,
+            validation_issues: vec!["issue".to_string()],
+        };
+        let cloned = report.clone();
+        assert_eq!(cloned.elapsed_us, 100);
+        assert_eq!(cloned.pages_written, 5);
+        assert_eq!(cloned.validation_issues.len(), 1);
+    }
+
+    #[test]
+    fn export_report_debug() {
+        let report = MarkdownExportReport {
+            elapsed_us: 0,
+            pages_written: 0,
+            total_bytes: 0,
+            index_bytes: 0,
+            symbol_index_bytes: 0,
+            graph_bytes: 0,
+            modules_exported: 0,
+            validation_issues: vec![],
+        };
+        let debug_str = format!("{:?}", report);
+        assert!(debug_str.contains("MarkdownExportReport"));
+    }
+
+    #[test]
+    fn render_info_clone() {
+        let info = MarkdownRenderInfo {
+            max_graph_nodes: 100,
+            has_files: true,
+            has_symbols: true,
+            module_count: 5,
+            total_pages: 50,
+        };
+        let cloned = info.clone();
+        assert_eq!(cloned.max_graph_nodes, 100);
+        assert_eq!(cloned.total_pages, 50);
+    }
+
+    #[test]
+    fn render_info_debug() {
+        let info = MarkdownRenderInfo {
+            max_graph_nodes: 50,
+            has_files: false,
+            has_symbols: false,
+            module_count: 0,
+            total_pages: 1,
+        };
+        let debug_str = format!("{:?}", info);
+        assert!(debug_str.contains("MarkdownRenderInfo"));
+    }
+
+    // --- export_markdown_reported edge cases ---
+
+    #[test]
+    fn export_reported_empty_model_modules_zero() {
+        let model = empty_model();
+        let dir = tempfile::tempdir().unwrap();
+        let (_, report) = export_markdown_reported(&model, dir.path()).unwrap();
+        assert_eq!(report.modules_exported, 0);
+    }
+
+    #[test]
+    fn export_reported_total_bytes_is_sum_of_parts() {
+        let model = make_model();
+        let dir = tempfile::tempdir().unwrap();
+        let (_, report) = export_markdown_reported(&model, dir.path()).unwrap();
+        // total_bytes should account for index + symbols + graph + all pages
+        assert!(report.total_bytes >= report.index_bytes
+            + report.symbol_index_bytes
+            + report.graph_bytes);
+    }
+
+    #[test]
+    fn export_reported_multiple_modules() {
+        let overview = make_page(WikiPageKind::Overview, "Overview", "index");
+        let files = vec![
+            make_page(WikiPageKind::File, "compiler/driver.rs", "driver"),
+            make_page(WikiPageKind::File, "compiler/jit.rs", "jit"),
+            make_page(WikiPageKind::File, "wiki/generate.rs", "generate"),
+        ];
+        let model = WikiModel {
+            generated_at: "test".to_string(),
+            stats_summary: "test".to_string(),
+            overview,
+            file_pages: files,
+            symbol_pages: vec![],
+        };
+        let dir = tempfile::tempdir().unwrap();
+        let (_, report) = export_markdown_reported(&model, dir.path()).unwrap();
+        assert_eq!(report.modules_exported, 2); // "compiler" and "wiki"
+    }
+
+    // --- generated_header ---
+
+    #[test]
+    fn generated_header_contains_timestamp_and_stats() {
+        let model = make_model();
+        let header = generated_header(&model);
+        assert!(header.contains("2024-01-01T00:00:00Z"));
+        assert!(header.contains("5 pages, 3 relationships"));
+        assert!(header.contains("Generated from the Velocity site map"));
+    }
+
+    #[test]
+    fn generated_header_ends_with_newline() {
+        let model = make_model();
+        let header = generated_header(&model);
+        assert!(header.ends_with('\n'));
+    }
+
+    // --- render_page_markdown: cross-link paths ---
+
+    #[test]
+    fn render_page_file_cross_link_uses_module_path() {
+        let model = make_model();
+        let page = &model.symbol_pages[0]; // main_fn, called_by src/main.rs
+        let md = render_page_markdown(page, &model);
+        // src/main.rs is a file, so link should include module path
+        assert!(md.contains("[src/main.rs](../files/src/src-main-rs.md)"));
+    }
+
+    #[test]
+    fn render_page_symbol_cross_link_uses_symbols_path() {
+        let model = make_model();
+        let page = &model.file_pages[0]; // src/main.rs, defines main_fn
+        let md = render_page_markdown(page, &model);
+        assert!(md.contains("[main_fn](../symbols/main_fn.md)"));
+    }
+
+    // --- render_page: file page for bare file (root module) ---
+
+    #[test]
+    fn render_page_bare_file_link_for_root_module() {
+        let overview = make_page(WikiPageKind::Overview, "Overview", "index");
+        let mut file = make_page(WikiPageKind::File, "main.rs", "main-rs");
+        file.relationships = vec![("Defines".to_string(), vec!["entry".to_string()])];
+        let mut sym = make_page(WikiPageKind::Symbol, "entry", "entry");
+        sym.called_by = vec!["main.rs".to_string()]; // main.rs calls entry
+        let model = WikiModel {
+            generated_at: "test".to_string(),
+            stats_summary: "test".to_string(),
+            overview,
+            file_pages: vec![file],
+            symbol_pages: vec![sym],
+        };
+        let md = render_page_markdown(&model.symbol_pages[0], &model);
+        // main.rs has '.', so module = "root"
+        assert!(md.contains("[main.rs](../files/root/main-rs.md)"));
+    }
 }
