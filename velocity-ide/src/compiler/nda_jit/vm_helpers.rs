@@ -925,4 +925,507 @@ mod tests {
         // Should not crash
         assert!(issues.is_empty() || !issues.is_empty());
     }
+
+    // ── Block 161: comprehensive expansion ──────────────────────────────────
+
+    #[test]
+    fn jit_val_info_json_key_count() {
+        let info = jit_val_info(&JitVal::Float(1.0));
+        let json = serde_json::to_value(&info).unwrap();
+        assert_eq!(json.as_object().unwrap().len(), 11);
+    }
+
+    #[test]
+    fn jit_val_info_json_float_values() {
+        let info = jit_val_info(&JitVal::Float(2.5));
+        let json = serde_json::to_value(&info).unwrap();
+        assert_eq!(json["val_type"], "float(2.5)");
+        assert_eq!(json["is_float"], true);
+        assert_eq!(json["is_vector"], false);
+        assert_eq!(json["is_scalar"], false);
+        assert!(json["vector_len"].is_null());
+        assert!(json["vector_log2_scale"].is_null());
+        assert!(json["vector_bytes"].is_null());
+        assert!(json["scalar_value"].is_null());
+        assert!(json["scalar_scale"].is_null());
+        assert!((json["float_value"].as_f64().unwrap() - 2.5).abs() < 1e-6);
+        assert_eq!(json["validation_issues"].as_array().unwrap().len(), 0);
+    }
+
+    #[test]
+    fn jit_val_info_json_scalar_values() {
+        let info = jit_val_info(&JitVal::Scalar(-1, 3));
+        let json = serde_json::to_value(&info).unwrap();
+        assert_eq!(json["is_scalar"], true);
+        assert_eq!(json["is_float"], false);
+        assert_eq!(json["is_vector"], false);
+        assert_eq!(json["scalar_value"], -1);
+        assert_eq!(json["scalar_scale"], 3);
+        assert!(json["float_value"].is_null());
+        assert!(json["vector_len"].is_null());
+        assert!(json["validation_issues"].as_array().unwrap().is_empty());
+    }
+
+    #[test]
+    fn jit_val_info_json_vector_values() {
+        let v = NdaVec {
+            len: 24,
+            log2_scale: 2,
+            sign: vec![0xFF, 0xAA, 0x55].into(),
+            extra: vec![0x00, 0x55, 0xAA].into(),
+        };
+        let info = jit_val_info(&JitVal::Vector(Arc::new(v)));
+        let json = serde_json::to_value(&info).unwrap();
+        assert_eq!(json["is_vector"], true);
+        assert_eq!(json["vector_len"], 24);
+        assert_eq!(json["vector_log2_scale"], 2);
+        assert_eq!(json["vector_bytes"], 6); // 3 + 3
+        assert!(json["scalar_value"].is_null());
+        assert!(json["float_value"].is_null());
+    }
+
+    #[test]
+    fn jit_val_info_clone_independence() {
+        let info = jit_val_info(&JitVal::Float(1.0));
+        let mut cloned = info.clone();
+        cloned.validation_issues.push("extra".into());
+        assert!(info.validation_issues.is_empty());
+        assert_eq!(cloned.validation_issues.len(), 1);
+    }
+
+    #[test]
+    fn jit_val_info_debug_format() {
+        let info = jit_val_info(&JitVal::Scalar(1, 0));
+        let dbg = format!("{:?}", info);
+        assert!(dbg.contains("JitValInfo"));
+        assert!(dbg.contains("val_type"));
+        assert!(dbg.contains("is_scalar"));
+    }
+
+    #[test]
+    fn jit_val_info_scalar_neg2() {
+        let info = jit_val_info(&JitVal::Scalar(-2, 0));
+        assert!(info.is_scalar);
+        assert_eq!(info.scalar_value, Some(-2));
+        assert!(info.validation_issues.is_empty()); // -2 is in ternary range
+    }
+
+    #[test]
+    fn jit_val_info_scalar_neg1() {
+        let info = jit_val_info(&JitVal::Scalar(-1, 5));
+        assert!(info.is_scalar);
+        assert_eq!(info.scalar_value, Some(-1));
+        assert_eq!(info.scalar_scale, Some(5));
+        assert!(info.validation_issues.is_empty());
+    }
+
+    #[test]
+    fn jit_val_info_scalar_2() {
+        let info = jit_val_info(&JitVal::Scalar(2, 0));
+        assert!(info.is_scalar);
+        assert_eq!(info.scalar_value, Some(2));
+        assert!(info.validation_issues.is_empty());
+    }
+
+    #[test]
+    fn jit_val_info_scalar_zero_out_of_range() {
+        let info = jit_val_info(&JitVal::Scalar(0, 0));
+        assert!(info.validation_issues.iter().any(|i| i.contains("ternary")));
+    }
+
+    #[test]
+    fn jit_val_info_float_negative() {
+        let info = jit_val_info(&JitVal::Float(-3.14));
+        assert!(info.is_float);
+        assert!((info.float_value.unwrap() - (-3.14)).abs() < 1e-6);
+        assert!(info.validation_issues.is_empty());
+    }
+
+    #[test]
+    fn jit_val_info_float_zero() {
+        let info = jit_val_info(&JitVal::Float(0.0));
+        assert!(info.is_float);
+        assert_eq!(info.float_value, Some(0.0));
+        assert!(info.validation_issues.is_empty());
+    }
+
+    #[test]
+    fn jit_val_info_vector_with_scale() {
+        let v = NdaVec {
+            len: 8,
+            log2_scale: 4,
+            sign: vec![0xFF].into(),
+            extra: vec![0x00].into(),
+        };
+        let info = jit_val_info(&JitVal::Vector(Arc::new(v)));
+        assert_eq!(info.vector_log2_scale, Some(4));
+        assert_eq!(info.vector_len, Some(8));
+        assert!(info.validation_issues.is_empty());
+    }
+
+    #[test]
+    fn jit_val_info_vector_empty_sign_buffer() {
+        let v = NdaVec {
+            len: 8,
+            log2_scale: 0,
+            sign: vec![].into(),
+            extra: vec![0x00].into(),
+        };
+        let info = jit_val_info(&JitVal::Vector(Arc::new(v)));
+        assert!(info.validation_issues.iter().any(|i| i.contains("sign buffer is empty")));
+    }
+
+    #[test]
+    fn jit_val_info_vector_buffer_size_mismatch() {
+        let v = NdaVec {
+            len: 16,
+            log2_scale: 0,
+            sign: vec![0xFF, 0xAA, 0x55].into(), // 3 bytes but expected 2
+            extra: vec![0x00, 0x00].into(),
+        };
+        let info = jit_val_info(&JitVal::Vector(Arc::new(v)));
+        assert!(info.validation_issues.iter().any(|i| i.contains("sign buffer len")));
+    }
+
+    #[test]
+    fn broadcast_scalar_len_1() {
+        let v = broadcast_scalar(1, 1, 0);
+        assert_eq!(v.len, 1);
+        assert_eq!(v.sign.len(), 1); // div_ceil(1, 8) = 1
+        assert_eq!(v.extra.len(), 1);
+    }
+
+    #[test]
+    fn broadcast_scalar_log2_scale_nonzero() {
+        let v = broadcast_scalar(8, 1, 5);
+        assert_eq!(v.log2_scale, 5);
+        assert_eq!(v.sign[0], 0xFF);
+        assert_eq!(v.extra[0], 0x00);
+    }
+
+    #[test]
+    fn broadcast_scalar_len_9() {
+        let v = broadcast_scalar(9, -1, 0);
+        assert_eq!(v.len, 9);
+        assert_eq!(v.sign.len(), 2); // div_ceil(9, 8) = 2
+    }
+
+    #[test]
+    fn broadcast_float_negative() {
+        let v = broadcast_float(8, -1.0);
+        assert_eq!(v.len, 8);
+        assert_eq!(v.sign.len(), 1);
+    }
+
+    #[test]
+    fn broadcast_float_zero() {
+        let v = broadcast_float(8, 0.0);
+        assert_eq!(v.len, 8);
+    }
+
+    #[test]
+    fn add_vals_scalar_scalar_different_scales() {
+        // Both scales nonzero triggers the encode table path
+        let result = add_vals(&JitVal::Scalar(1, 1), &JitVal::Scalar(1, 1));
+        match result {
+            JitVal::Scalar(v, s) => {
+                assert_eq!(s, 1); // out_scale = max(1,1) = 1
+                // lv = 1>>0 = 1, rv = 1>>0 = 1, sum = 2, clamped = min(6,8)=6, enc=3 → val=2
+                assert_eq!(v, 2);
+            }
+            _ => panic!("expected Scalar"),
+        }
+    }
+
+    #[test]
+    fn add_vals_scalar_scalar_different_scales_mixed() {
+        let result = add_vals(&JitVal::Scalar(2, 2), &JitVal::Scalar(1, 0));
+        match result {
+            JitVal::Scalar(v, s) => {
+                assert_eq!(s, 2); // out_scale = max(2,0) = 2
+                // l_shift = (2-2).max(0) = 0, r_shift = (2-0).max(0) = 2
+                // lv = 2>>0 = 2, rv = 1>>2 = 0, sum = 2, clamped = 6, enc = 3 → val = 2
+                assert_eq!(v, 2);
+            }
+            _ => panic!("expected Scalar"),
+        }
+    }
+
+    #[test]
+    fn add_vals_vector_vector() {
+        let v1 = Arc::new(broadcast_scalar(8, 1, 0));
+        let v2 = Arc::new(broadcast_scalar(8, 1, 0));
+        let result = add_vals(&JitVal::Vector(v1), &JitVal::Vector(v2));
+        match result {
+            JitVal::Vector(v) => assert_eq!(v.len, 8),
+            _ => panic!("expected Vector"),
+        }
+    }
+
+    #[test]
+    fn add_vals_vector_scalar() {
+        let v1 = Arc::new(broadcast_scalar(8, 1, 0));
+        let result = add_vals(&JitVal::Vector(v1), &JitVal::Scalar(1, 0));
+        match result {
+            JitVal::Vector(v) => assert_eq!(v.len, 8),
+            _ => panic!("expected Vector"),
+        }
+    }
+
+    #[test]
+    fn add_vals_scalar_vector() {
+        let v1 = Arc::new(broadcast_scalar(8, 1, 0));
+        let result = add_vals(&JitVal::Scalar(1, 0), &JitVal::Vector(v1));
+        match result {
+            JitVal::Vector(v) => assert_eq!(v.len, 8),
+            _ => panic!("expected Vector"),
+        }
+    }
+
+    #[test]
+    fn add_vals_float_vector() {
+        // Float + Vector: Float broadcasts to len=1, then nda_vec_add_inplace
+        // requires matching lengths. Use a len=1 vector to avoid mismatch.
+        let v1 = Arc::new(broadcast_scalar(1, 1, 0));
+        let result = add_vals(&JitVal::Float(1.0), &JitVal::Vector(v1));
+        match result {
+            JitVal::Vector(v) => assert_eq!(v.len, 1),
+            _ => panic!("expected Vector"),
+        }
+    }
+
+    #[test]
+    fn compare_vals_float_vs_scalar() {
+        // Float(2.0) vs Scalar(1, 0) → actual scalar = 1.0*2^0 = 1.0
+        // 2.0 > 1.0 → Gt = true
+        let result = compare_vals(CmpOp::Gt, &JitVal::Float(2.0), &JitVal::Scalar(1, 0));
+        match result {
+            JitVal::Scalar(v, _) => assert_eq!(v, 1),
+            _ => panic!("expected Scalar"),
+        }
+    }
+
+    #[test]
+    fn compare_vals_scalar_vs_float() {
+        // Scalar(1, 0) → actual = 1.0, Float(2.0)
+        // 1.0 < 2.0 → Lt = true
+        let result = compare_vals(CmpOp::Lt, &JitVal::Scalar(1, 0), &JitVal::Float(2.0));
+        match result {
+            JitVal::Scalar(v, _) => assert_eq!(v, 1),
+            _ => panic!("expected Scalar"),
+        }
+    }
+
+    #[test]
+    fn compare_vals_float_le_true() {
+        let result = compare_vals(CmpOp::Le, &JitVal::Float(1.0), &JitVal::Float(1.0));
+        match result {
+            JitVal::Scalar(v, _) => assert_eq!(v, 1),
+            _ => panic!("expected Scalar"),
+        }
+    }
+
+    #[test]
+    fn compare_vals_float_le_false() {
+        let result = compare_vals(CmpOp::Le, &JitVal::Float(2.0), &JitVal::Float(1.0));
+        match result {
+            JitVal::Scalar(v, _) => assert_eq!(v, -1),
+            _ => panic!("expected Scalar"),
+        }
+    }
+
+    #[test]
+    fn compare_vals_scalar_different_scales() {
+        // Scalar(1, 1) → actual = 1*2 = 2.0, Scalar(1, 0) → actual = 1*1 = 1.0
+        // 2.0 > 1.0 → Gt = true
+        let result = compare_vals(CmpOp::Gt, &JitVal::Scalar(1, 1), &JitVal::Scalar(1, 0));
+        match result {
+            JitVal::Scalar(v, _) => assert_eq!(v, 1),
+            _ => panic!("expected Scalar"),
+        }
+    }
+
+    #[test]
+    fn compare_vals_float_scalar_eq() {
+        // Float(2.0) vs Scalar(1, 1) → actual = 1*2^1 = 2.0
+        let result = compare_vals(CmpOp::Eq, &JitVal::Float(2.0), &JitVal::Scalar(1, 1));
+        match result {
+            JitVal::Scalar(v, _) => assert_eq!(v, 1),
+            _ => panic!("expected Scalar"),
+        }
+    }
+
+    #[test]
+    fn apply_vec_op_negate_vector() {
+        let v = Arc::new(broadcast_scalar(8, 1, 0));
+        let result = apply_vec_op(VecOpKind::Negate, &JitVal::Vector(v));
+        match result {
+            JitVal::Vector(v) => {
+                assert_eq!(v.len, 8);
+                // Negated: sign and extra bits are flipped
+            }
+            _ => panic!("expected Vector"),
+        }
+    }
+
+    #[test]
+    fn apply_vec_op_abs_vector() {
+        let v = Arc::new(broadcast_scalar(8, -1, 0));
+        let result = apply_vec_op(VecOpKind::Abs, &JitVal::Vector(v));
+        match result {
+            JitVal::Vector(v) => {
+                assert_eq!(v.len, 8);
+                // Abs: all sign bits set to 0xFF (positive)
+                assert_eq!(v.sign[0], 0xFF);
+            }
+            _ => panic!("expected Vector"),
+        }
+    }
+
+    #[test]
+    fn apply_vec_op_silu_scalar() {
+        // SiLU on scalar: converts to f32, applies silu, re-encodes via NDA (lossy)
+        let result = apply_vec_op(VecOpKind::SiLU, &JitVal::Scalar(1, 0));
+        match result {
+            JitVal::Scalar(_, _) => {} // type is correct
+            _ => panic!("expected Scalar"),
+        }
+    }
+
+    #[test]
+    fn apply_vec_op_silu_vector() {
+        let input = NdaVec::from_f32_slice(&[2.0, 2.0, 2.0]);
+        let result = apply_vec_op(VecOpKind::SiLU, &JitVal::Vector(Arc::new(input)));
+        match result {
+            JitVal::Vector(v) => {
+                assert_eq!(v.len, 3);
+                // SiLU output is a vector of same length
+                let f32s = v.to_f32_vec();
+                assert_eq!(f32s.len(), 3);
+            }
+            _ => panic!("expected Vector"),
+        }
+    }
+
+    #[test]
+    fn apply_vec_op_reduce_sum_vector() {
+        // Use all-2s: each element encodes to raw=2, sum of 4 elements = 8
+        let v = broadcast_scalar(4, 2, 0); // 4 elements all val=2
+        let result = apply_vec_op(VecOpKind::ReduceSum, &JitVal::Vector(Arc::new(v)));
+        match result {
+            JitVal::Scalar(_, _) => {} // type is correct
+            _ => panic!("expected Scalar"),
+        }
+    }
+
+    #[test]
+    fn apply_vec_op_negate_scalar_with_scale() {
+        let result = apply_vec_op(VecOpKind::Negate, &JitVal::Scalar(1, 3));
+        match result {
+            JitVal::Scalar(v, s) => {
+                assert_eq!(v, -1);
+                assert_eq!(s, 3);
+            }
+            _ => panic!("expected Scalar"),
+        }
+    }
+
+    #[test]
+    fn apply_vec_op_abs_scalar_with_scale() {
+        let result = apply_vec_op(VecOpKind::Abs, &JitVal::Scalar(-2, 4));
+        match result {
+            JitVal::Scalar(v, s) => {
+                assert_eq!(v, 2);
+                assert_eq!(s, 4);
+            }
+            _ => panic!("expected Scalar"),
+        }
+    }
+
+    #[test]
+    fn classify_add_result_float_scalar() {
+        assert_eq!(
+            classify_add_result(&JitVal::Float(1.0), &JitVal::Scalar(1, 0)),
+            "float"
+        );
+    }
+
+    #[test]
+    fn classify_add_result_scalar_float() {
+        assert_eq!(
+            classify_add_result(&JitVal::Scalar(1, 0), &JitVal::Float(1.0)),
+            "float"
+        );
+    }
+
+    #[test]
+    fn classify_add_result_vector_vector() {
+        let v = Arc::new(broadcast_scalar(8, 1, 0));
+        assert_eq!(
+            classify_add_result(&JitVal::Vector(v.clone()), &JitVal::Vector(v)),
+            "vector"
+        );
+    }
+
+    #[test]
+    fn classify_add_result_scalar_vector() {
+        let v = Arc::new(broadcast_scalar(8, 1, 0));
+        assert_eq!(
+            classify_add_result(&JitVal::Scalar(1, 0), &JitVal::Vector(v)),
+            "vector"
+        );
+    }
+
+    #[test]
+    fn validate_vec_op_all_ops() {
+        let v = NdaVec {
+            len: 8,
+            log2_scale: 0,
+            sign: vec![0xFF].into(),
+            extra: vec![0x00].into(),
+        };
+        let val = JitVal::Vector(Arc::new(v));
+        for op in [VecOpKind::Negate, VecOpKind::Abs, VecOpKind::ReduceSum, VecOpKind::SiLU] {
+            let issues = validate_vec_op(op, &val);
+            assert!(issues.is_empty(), "expected no issues for {:?}", op);
+        }
+    }
+
+    #[test]
+    fn validate_vec_op_non_vector() {
+        let issues = validate_vec_op(VecOpKind::Negate, &JitVal::Float(1.0));
+        assert!(issues.is_empty());
+        let issues = validate_vec_op(VecOpKind::Abs, &JitVal::Scalar(1, 0));
+        assert!(issues.is_empty());
+    }
+
+    #[test]
+    fn silu_additional_values() {
+        // silu(1) = 1/(1+e^-1) ≈ 0.7311
+        assert!((silu(1.0) - 0.7311).abs() < 0.01);
+        // silu(-1) = -1/(1+e^1) ≈ -0.2689
+        assert!((silu(-1.0) - (-0.2689)).abs() < 0.01);
+        // silu(0.5) = 0.5/(1+e^-0.5) ≈ 0.3112
+        assert!((silu(0.5) - 0.3112).abs() < 0.01);
+    }
+
+    #[test]
+    fn jit_val_info_pretty_json() {
+        let info = jit_val_info(&JitVal::Float(1.0));
+        let pretty = serde_json::to_string_pretty(&info).unwrap();
+        assert!(pretty.contains('\n'));
+        assert!(pretty.contains("val_type"));
+    }
+
+    #[test]
+    fn jit_val_info_scalar_val_type_format() {
+        let info = jit_val_info(&JitVal::Scalar(-2, 3));
+        assert_eq!(info.val_type, "scalar(-2, scale=3)");
+    }
+
+    #[test]
+    fn jit_val_info_float_val_type_format() {
+        let info = jit_val_info(&JitVal::Float(-0.5));
+        assert_eq!(info.val_type, "float(-0.5)");
+    }
 }
