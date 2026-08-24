@@ -1393,4 +1393,437 @@ mod tests {
         cfg.vocab_size = 1;
         assert!(validate_model_pipeline_config(&cfg).is_empty());
     }
+
+    // ── JSON key counts ──────────────────────────────────────────────────
+
+    #[test]
+    fn config_json_has_exactly_8_keys() {
+        let json = serde_json::to_string(&default_model_config()).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(v.as_object().unwrap().len(), 8);
+    }
+
+    #[test]
+    fn info_json_has_exactly_7_keys() {
+        let info = model_pipeline_info(&default_model_config());
+        let json = serde_json::to_string(&info).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(v.as_object().unwrap().len(), 7);
+    }
+
+    // ── JSON value verification ──────────────────────────────────────────
+
+    #[test]
+    fn config_json_n_layers_value() {
+        let json = serde_json::to_string(&default_model_config()).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(v["n_layers"], 4);
+    }
+
+    #[test]
+    fn config_json_hidden_size_value() {
+        let json = serde_json::to_string(&default_model_config()).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(v["hidden_size"], 256);
+    }
+
+    #[test]
+    fn config_json_ffn_size_value() {
+        let json = serde_json::to_string(&default_model_config()).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(v["ffn_size"], 1024);
+    }
+
+    #[test]
+    fn config_json_n_heads_value() {
+        let json = serde_json::to_string(&default_model_config()).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(v["n_heads"], 8);
+    }
+
+    #[test]
+    fn config_json_n_kv_heads_value() {
+        let json = serde_json::to_string(&default_model_config()).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(v["n_kv_heads"], 2);
+    }
+
+    #[test]
+    fn config_json_head_dim_value() {
+        let json = serde_json::to_string(&default_model_config()).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(v["head_dim"], 32);
+    }
+
+    #[test]
+    fn config_json_max_seq_len_value() {
+        let json = serde_json::to_string(&default_model_config()).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(v["max_seq_len"], 512);
+    }
+
+    #[test]
+    fn config_json_vocab_size_value() {
+        let json = serde_json::to_string(&default_model_config()).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(v["vocab_size"], 32000);
+    }
+
+    #[test]
+    fn info_json_per_layer_desc_value() {
+        let info = model_pipeline_info(&default_model_config());
+        let json = serde_json::to_string(&info).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(v["per_layer_descriptor_sets"], 10);
+    }
+
+    #[test]
+    fn info_json_validation_issues_is_array() {
+        let info = model_pipeline_info(&default_model_config());
+        let json = serde_json::to_string(&info).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert!(v["validation_issues"].is_array());
+        assert_eq!(v["validation_issues"].as_array().unwrap().len(), 0);
+    }
+
+    #[test]
+    fn info_json_config_is_nested_object() {
+        let info = model_pipeline_info(&default_model_config());
+        let json = serde_json::to_string(&info).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert!(v["config"].is_object());
+        assert_eq!(v["config"]["n_layers"], 4);
+    }
+
+    // ── Clone independence: info ─────────────────────────────────────────
+
+    #[test]
+    fn info_clone_independent_validation_issues() {
+        let mut cfg = default_model_config();
+        cfg.n_layers = 0;
+        let info = model_pipeline_info(&cfg);
+        let mut cloned = info.clone();
+        cloned.validation_issues.push("extra".into());
+        assert_ne!(cloned.validation_issues.len(), info.validation_issues.len());
+    }
+
+    #[test]
+    fn info_clone_independent_config() {
+        let info = model_pipeline_info(&default_model_config());
+        let mut cloned = info.clone();
+        cloned.config.n_layers = 999;
+        assert_ne!(cloned.config.n_layers, info.config.n_layers);
+    }
+
+    // ── Validation: exact issue texts ────────────────────────────────────
+
+    #[test]
+    fn validate_ffn_size_exact_text() {
+        let mut cfg = default_model_config();
+        cfg.ffn_size = 0;
+        assert_eq!(
+            validate_model_pipeline_config(&cfg)
+                .into_iter()
+                .find(|i| i.contains("ffn_size"))
+                .unwrap(),
+            "ffn_size must be > 0"
+        );
+    }
+
+    #[test]
+    fn validate_n_heads_exact_text() {
+        let mut cfg = default_model_config();
+        cfg.n_heads = 0;
+        assert_eq!(
+            validate_model_pipeline_config(&cfg)
+                .into_iter()
+                .find(|i| i.contains("n_heads"))
+                .unwrap(),
+            "n_heads must be > 0"
+        );
+    }
+
+    #[test]
+    fn validate_head_dim_exact_text() {
+        let mut cfg = default_model_config();
+        cfg.head_dim = 0;
+        assert_eq!(
+            validate_model_pipeline_config(&cfg)
+                .into_iter()
+                .find(|i| i.contains("head_dim"))
+                .unwrap(),
+            "head_dim must be > 0"
+        );
+    }
+
+    #[test]
+    fn validate_max_seq_len_exact_text() {
+        let mut cfg = default_model_config();
+        cfg.max_seq_len = 0;
+        assert_eq!(
+            validate_model_pipeline_config(&cfg)
+                .into_iter()
+                .find(|i| i.contains("max_seq_len"))
+                .unwrap(),
+            "max_seq_len must be > 0"
+        );
+    }
+
+    #[test]
+    fn validate_divisibility_includes_both_values() {
+        let mut cfg = default_model_config();
+        cfg.n_heads = 7;
+        cfg.n_kv_heads = 3;
+        let issues = validate_model_pipeline_config(&cfg);
+        let div_issue = issues.into_iter().find(|i| i.contains("divisible")).unwrap();
+        assert!(div_issue.contains("7"));
+        assert!(div_issue.contains("3"));
+    }
+
+    // ── Validation: hidden_size mod 4 edge cases ─────────────────────────
+
+    #[test]
+    fn validate_hidden_2_invalid() {
+        let mut cfg = default_model_config();
+        cfg.hidden_size = 2;
+        let issues = validate_model_pipeline_config(&cfg);
+        assert!(issues.iter().any(|i| i.contains("multiple of 4")));
+    }
+
+    #[test]
+    fn validate_hidden_8_valid() {
+        let mut cfg = default_model_config();
+        cfg.hidden_size = 8;
+        assert!(validate_model_pipeline_config(&cfg).is_empty());
+    }
+
+    #[test]
+    fn validate_hidden_1024_valid() {
+        let mut cfg = default_model_config();
+        cfg.hidden_size = 1024;
+        assert!(validate_model_pipeline_config(&cfg).is_empty());
+    }
+
+    #[test]
+    fn validate_hidden_4096_valid() {
+        let mut cfg = default_model_config();
+        cfg.hidden_size = 4096;
+        assert!(validate_model_pipeline_config(&cfg).is_empty());
+    }
+
+    // ── Info formula: various layer counts ───────────────────────────────
+
+    #[test]
+    fn info_total_desc_32_layers() {
+        let mut cfg = default_model_config();
+        cfg.n_layers = 32;
+        let info = model_pipeline_info(&cfg);
+        assert_eq!(info.total_descriptor_sets_estimate, 10 * 32 + 1);
+    }
+
+    #[test]
+    fn info_total_desc_100_layers() {
+        let mut cfg = default_model_config();
+        cfg.n_layers = 100;
+        let info = model_pipeline_info(&cfg);
+        assert_eq!(info.total_descriptor_sets_estimate, 1001);
+    }
+
+    #[test]
+    fn info_constants_independent_of_config() {
+        let mut cfg1 = default_model_config();
+        cfg1.n_layers = 1;
+        let mut cfg2 = default_model_config();
+        cfg2.n_layers = 1000;
+        let info1 = model_pipeline_info(&cfg1);
+        let info2 = model_pipeline_info(&cfg2);
+        assert_eq!(info1.shader_count, info2.shader_count);
+        assert_eq!(info1.pipeline_count, info2.pipeline_count);
+        assert_eq!(info1.buffer_count, info2.buffer_count);
+        assert_eq!(info1.per_layer_descriptor_sets, info2.per_layer_descriptor_sets);
+    }
+
+    // ── Large model configurations ───────────────────────────────────────
+
+    #[test]
+    fn large_model_70b_params() {
+        let cfg = ModelPipelineConfig {
+            n_layers: 80,
+            hidden_size: 8192,
+            ffn_size: 28672,
+            n_heads: 64,
+            n_kv_heads: 8,
+            head_dim: 128,
+            max_seq_len: 4096,
+            vocab_size: 128000,
+        };
+        let issues = validate_model_pipeline_config(&cfg);
+        assert!(issues.is_empty());
+        let info = model_pipeline_info(&cfg);
+        assert_eq!(info.total_descriptor_sets_estimate, 801);
+    }
+
+    #[test]
+    fn large_model_7b_params() {
+        let cfg = ModelPipelineConfig {
+            n_layers: 32,
+            hidden_size: 4096,
+            ffn_size: 11008,
+            n_heads: 32,
+            n_kv_heads: 32,
+            head_dim: 128,
+            max_seq_len: 2048,
+            vocab_size: 32000,
+        };
+        assert!(validate_model_pipeline_config(&cfg).is_empty());
+    }
+
+    #[test]
+    fn tiny_model_1_layer() {
+        let cfg = ModelPipelineConfig {
+            n_layers: 1,
+            hidden_size: 4,
+            ffn_size: 4,
+            n_heads: 1,
+            n_kv_heads: 1,
+            head_dim: 4,
+            max_seq_len: 1,
+            vocab_size: 1,
+        };
+        assert!(validate_model_pipeline_config(&cfg).is_empty());
+        let info = model_pipeline_info(&cfg);
+        assert_eq!(info.total_descriptor_sets_estimate, 11);
+    }
+
+    // ── Debug format details ─────────────────────────────────────────────
+
+    #[test]
+    fn config_debug_contains_all_field_names() {
+        let cfg = default_model_config();
+        let debug = format!("{:?}", cfg);
+        assert!(debug.contains("n_layers"));
+        assert!(debug.contains("hidden_size"));
+        assert!(debug.contains("ffn_size"));
+        assert!(debug.contains("n_heads"));
+        assert!(debug.contains("n_kv_heads"));
+        assert!(debug.contains("head_dim"));
+        assert!(debug.contains("max_seq_len"));
+        assert!(debug.contains("vocab_size"));
+    }
+
+    #[test]
+    fn info_debug_contains_all_field_names() {
+        let info = model_pipeline_info(&default_model_config());
+        let debug = format!("{:?}", info);
+        assert!(debug.contains("config"));
+        assert!(debug.contains("shader_count"));
+        assert!(debug.contains("pipeline_count"));
+        assert!(debug.contains("buffer_count"));
+        assert!(debug.contains("per_layer_descriptor_sets"));
+        assert!(debug.contains("total_descriptor_sets_estimate"));
+        assert!(debug.contains("validation_issues"));
+    }
+
+    #[test]
+    fn info_debug_contains_values() {
+        let info = model_pipeline_info(&default_model_config());
+        let debug = format!("{:?}", info);
+        assert!(debug.contains("41")); // total_descriptor_sets_estimate
+        assert!(debug.contains("7"));  // shader_count
+    }
+
+    // ── Validation: ffn_size edge cases ──────────────────────────────────
+
+    #[test]
+    fn validate_ffn_size_1_valid() {
+        let mut cfg = default_model_config();
+        cfg.ffn_size = 1;
+        assert!(validate_model_pipeline_config(&cfg).is_empty());
+    }
+
+    #[test]
+    fn validate_ffn_size_large_valid() {
+        let mut cfg = default_model_config();
+        cfg.ffn_size = 100000;
+        assert!(validate_model_pipeline_config(&cfg).is_empty());
+    }
+
+    // ── Validation: combined invalid fields ──────────────────────────────
+
+    #[test]
+    fn validate_all_fields_zero_except_hidden_4() {
+        let cfg = ModelPipelineConfig {
+            n_layers: 0,
+            hidden_size: 4, // valid (4%4==0, >0)
+            ffn_size: 0,
+            n_heads: 0,
+            n_kv_heads: 0,
+            head_dim: 0,
+            max_seq_len: 0,
+            vocab_size: 0,
+        };
+        let issues = validate_model_pipeline_config(&cfg);
+        // n_layers=0, ffn_size=0, n_heads=0, n_kv_heads=0, head_dim=0, max_seq_len=0, vocab_size=0
+        // = 7 issues (hidden_size=4 is valid, no divisibility issue since both 0)
+        assert_eq!(issues.len(), 7);
+    }
+
+    #[test]
+    fn validate_hidden_5_with_heads_not_divisible() {
+        let mut cfg = default_model_config();
+        cfg.hidden_size = 5; // mod 4 != 0
+        cfg.n_heads = 7;
+        cfg.n_kv_heads = 2; // 7 % 2 != 0
+        let issues = validate_model_pipeline_config(&cfg);
+        assert!(issues.iter().any(|i| i.contains("multiple of 4")));
+        assert!(issues.iter().any(|i| i.contains("divisible")));
+        assert_eq!(issues.len(), 2);
+    }
+
+    // ── Serialization: pretty JSON details ───────────────────────────────
+
+    #[test]
+    fn config_pretty_json_contains_newlines() {
+        let pretty = serde_json::to_string_pretty(&default_model_config()).unwrap();
+        let newline_count = pretty.chars().filter(|&c| c == '\n').count();
+        assert!(newline_count >= 8); // at least one per field + braces
+    }
+
+    #[test]
+    fn info_pretty_json_roundtrip_value() {
+        let info = model_pipeline_info(&default_model_config());
+        let pretty = serde_json::to_string_pretty(&info).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&pretty).unwrap();
+        assert_eq!(v["shader_count"], 7);
+        assert_eq!(v["buffer_count"], 5);
+    }
+
+    // ── Info: validation issues content ──────────────────────────────────
+
+    #[test]
+    fn info_issues_match_standalone_validation() {
+        let mut cfg = default_model_config();
+        cfg.n_layers = 0;
+        cfg.hidden_size = 3;
+        let info = model_pipeline_info(&cfg);
+        let standalone = validate_model_pipeline_config(&cfg);
+        assert_eq!(info.validation_issues, standalone);
+    }
+
+    #[test]
+    fn info_clean_config_empty_issues() {
+        let info = model_pipeline_info(&default_model_config());
+        assert!(info.validation_issues.is_empty());
+    }
+
+    #[test]
+    fn info_all_zeros_issues_count() {
+        let cfg = ModelPipelineConfig {
+            n_layers: 0, hidden_size: 0, ffn_size: 0,
+            n_heads: 0, n_kv_heads: 0, head_dim: 0,
+            max_seq_len: 0, vocab_size: 0,
+        };
+        let info = model_pipeline_info(&cfg);
+        assert_eq!(info.validation_issues.len(), 8);
+    }
 }
