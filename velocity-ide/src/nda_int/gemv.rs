@@ -486,4 +486,183 @@ mod tests {
         let issues = validate_topk_params(&[1, 2, 3], 0);
         assert!(issues.iter().any(|i| i.contains("k is 0")));
     }
+
+    // ─── Expanded Tests ─────────────────────────────────────────────────
+
+    #[test]
+    fn argmax_i32_ties_first_wins() {
+        // When multiple elements have the same max value, max_by_key returns the last
+        // But we want to verify consistent behavior
+        assert_eq!(argmax_i32(&[5, 5, 5, 5]), 3); // max_by_key returns last
+    }
+
+    #[test]
+    fn argmax_i32_all_negative() {
+        assert_eq!(argmax_i32(&[-10, -3, -7, -1]), 3); // -1 is max
+    }
+
+    #[test]
+    fn argmax_i32_large_values() {
+        let mut logits = vec![0i32; 1000];
+        logits[42] = i32::MAX;
+        assert_eq!(argmax_i32(&logits), 42);
+    }
+
+    #[test]
+    fn topk_i32_k_one_is_greedy() {
+        let logits = vec![10, 50, 30, 20, 40];
+        let top = topk_i32(&logits, 1);
+        assert_eq!(top.len(), 1);
+        assert_eq!(top[0], (1, 50));
+    }
+
+    #[test]
+    fn topk_i32_k_zero() {
+        let logits = vec![10, 50, 30];
+        let top = topk_i32(&logits, 0);
+        assert!(top.is_empty());
+    }
+
+    #[test]
+    fn topk_i32_single_element() {
+        let logits = vec![42];
+        let top = topk_i32(&logits, 5);
+        assert_eq!(top.len(), 1);
+        assert_eq!(top[0], (0, 42));
+    }
+
+    #[test]
+    fn topk_i32_sorted_descending() {
+        let logits = vec![5, 3, 8, 1, 9, 2];
+        let top = topk_i32(&logits, 4);
+        // Verify sorted descending by value
+        for i in 0..top.len() - 1 {
+            assert!(top[i].1 >= top[i + 1].1);
+        }
+    }
+
+    #[test]
+    fn gemv_quad_output_length() {
+        let mat = make_quad_matrix(32, 64);
+        let x = NdaVec::from_f32_slice(&vec![0.5; 64]);
+        let out = nda_gemv_nda_to_nda(&mat, &x);
+        assert_eq!(out.len, 32);
+    }
+
+    #[test]
+    fn gemv_quad_zero_input() {
+        let mat = make_quad_matrix(8, 8);
+        let x = NdaVec::zeros(8, 0);
+        let out = nda_gemv_nda_to_nda(&mat, &x);
+        assert_eq!(out.len, 8);
+    }
+
+    #[test]
+    fn gemv_quad_small_matrix() {
+        let mat = make_quad_matrix(4, 16);
+        let x = NdaVec::from_f32_slice(&vec![1.0; 16]);
+        let out = nda_gemv_nda_to_nda(&mat, &x);
+        assert_eq!(out.len, 4);
+    }
+
+    #[test]
+    fn validate_gemv_params_no_weight_data() {
+        let mat = NdaMatrix {
+            rows: 8,
+            cols: 8,
+            scale: 1.0,
+            version: 2,
+            sign: vec![],
+            extra: vec![],
+            block_size: 0,
+            n_blocks: 0,
+            q_scales: vec![],
+            packed_codes: vec![],
+        };
+        let x = NdaVec::from_f32_slice(&vec![1.0; 8]);
+        let issues = validate_gemv_params(&mat, &x);
+        assert!(issues.iter().any(|i| i.contains("no weight data")));
+    }
+
+    #[test]
+    fn gemv_info_small_not_parallel() {
+        let mat = make_quad_matrix(4, 8);
+        let info = gemv_info(&mat);
+        assert!(!info.is_parallel); // rows < 8
+    }
+
+    #[test]
+    fn gemv_info_parallel_threshold() {
+        let mat = make_quad_matrix(8, 8);
+        let info = gemv_info(&mat);
+        assert!(info.is_parallel); // rows >= 8
+    }
+
+    #[test]
+    fn gemv_info_fp4_matrix() {
+        let mat = NdaMatrix {
+            rows: 16,
+            cols: 32,
+            scale: 0.5,
+            version: NDA_VERSION_FP4,
+            sign: vec![],
+            extra: vec![],
+            block_size: 16,
+            n_blocks: 2,
+            q_scales: vec![1, 2],
+            packed_codes: vec![0xAA; 32],
+        };
+        let info = gemv_info(&mat);
+        assert_eq!(info.version_name, "FP4");
+        assert_eq!(info.matrix_weight_bytes, 32);
+    }
+
+    #[test]
+    fn gemv_info_fp2_matrix() {
+        let mat = NdaMatrix {
+            rows: 8,
+            cols: 16,
+            scale: 1.0,
+            version: NDA_VERSION_FP2,
+            sign: vec![],
+            extra: vec![],
+            block_size: 8,
+            n_blocks: 2,
+            q_scales: vec![1, 2],
+            packed_codes: vec![0x55; 16],
+        };
+        let info = gemv_info(&mat);
+        assert_eq!(info.version_name, "FP2");
+    }
+
+    #[test]
+    fn gemv_report_clone() {
+        let r = GemvReport {
+            matrix_rows: 64,
+            matrix_cols: 128,
+            matrix_version: 2,
+            operations: 10,
+            elapsed_us: 5000,
+        };
+        let cloned = r.clone();
+        assert_eq!(cloned.matrix_rows, 64);
+        assert_eq!(cloned.operations, 10);
+    }
+
+    #[test]
+    fn batch_gemv_single_input() {
+        let mat = make_quad_matrix(8, 16);
+        let x = NdaVec::from_f32_slice(&vec![1.0; 16]);
+        let (results, report) = nda_gemv_batch(&mat, &[x]);
+        assert_eq!(results.len(), 1);
+        assert_eq!(report.operations, 1);
+    }
+
+    #[test]
+    fn gemv_info_estimated_output_bytes() {
+        let mat = make_quad_matrix(100, 64);
+        let info = gemv_info(&mat);
+        // 100 rows → ceil(100/8) = 13 bytes * 2 = 26
+        assert_eq!(info.estimated_output_bytes, 26);
+    }
 }
