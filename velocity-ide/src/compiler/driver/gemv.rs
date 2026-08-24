@@ -634,4 +634,332 @@ mod tests {
         assert!(json.contains("\"input_buffer_bytes\""));
         assert!(json.contains("\"total_gpu_buffer_bytes\""));
     }
+
+    // ── Validation: zero weight_bytes ────────────────────────────────────
+
+    #[test]
+    fn validate_zero_weight_bytes() {
+        let cfg = GemvConfig {
+            k: 256, n: 128, is_ternary: false, weight_bytes: 0,
+        };
+        let issues = validate_gemv_config(&cfg);
+        assert!(issues.iter().any(|i| i.contains("weight_bytes")));
+    }
+
+    #[test]
+    fn validate_int4_wrong_weight_bytes() {
+        let cfg = GemvConfig {
+            k: 256, n: 128, is_ternary: false, weight_bytes: 999,
+        };
+        let issues = validate_gemv_config(&cfg);
+        assert!(issues.iter().any(|i| i.contains("int4 weight_bytes")));
+    }
+
+    #[test]
+    fn validate_ternary_k_zero_no_mod_issue() {
+        let cfg = GemvConfig {
+            k: 0, n: 128, is_ternary: true, weight_bytes: 1024,
+        };
+        let issues = validate_gemv_config(&cfg);
+        // k=0 triggers "k (columns) is 0"; 0%16==0 so no "multiple of 16" issue
+        assert!(issues.iter().any(|i| i.contains("k (columns)")));
+        assert!(!issues.iter().any(|i| i.contains("multiple of 16")));
+    }
+
+    // ── Validation: all zeros ────────────────────────────────────────────
+
+    #[test]
+    fn validate_all_zeros() {
+        let cfg = GemvConfig {
+            k: 0, n: 0, is_ternary: false, weight_bytes: 0,
+        };
+        let issues = validate_gemv_config(&cfg);
+        // k=0, n=0, weight_bytes=0; int4 expected=(0/2)*0=0, expected>0 is false so no mismatch
+        assert!(issues.iter().any(|i| i.contains("k")));
+        assert!(issues.iter().any(|i| i.contains("n")));
+        assert!(issues.iter().any(|i| i.contains("weight_bytes")));
+    }
+
+    #[test]
+    fn validate_all_zeros_ternary() {
+        let cfg = GemvConfig {
+            k: 0, n: 0, is_ternary: true, weight_bytes: 0,
+        };
+        let issues = validate_gemv_config(&cfg);
+        // k=0: "k (columns) is 0"; 0%16==0 no mod issue
+        // n=0, weight_bytes=0
+        // ternary expected=(0/16)*4*0=0, expected>0 false so no mismatch
+        assert_eq!(issues.len(), 3);
+    }
+
+    // ── Validation: multiple issues ──────────────────────────────────────
+
+    #[test]
+    fn validate_wrong_ternary_plus_zero_n() {
+        let cfg = GemvConfig {
+            k: 256, n: 0, is_ternary: true, weight_bytes: 999,
+        };
+        let issues = validate_gemv_config(&cfg);
+        // n=0 triggers "n (rows) is 0"
+        // weight_bytes mismatch: expected=(256/16)*4*0=0, expected>0 is false → no mismatch
+        assert!(issues.iter().any(|i| i.contains("n (rows)")));
+        assert_eq!(issues.len(), 1);
+    }
+
+    #[test]
+    fn validate_issues_order_deterministic() {
+        let cfg = GemvConfig { k: 0, n: 0, is_ternary: true, weight_bytes: 0 };
+        let i1 = validate_gemv_config(&cfg);
+        let i2 = validate_gemv_config(&cfg);
+        assert_eq!(i1, i2);
+    }
+
+    // ── Validation issue text ────────────────────────────────────────────
+
+    #[test]
+    fn validate_k_zero_issue_text() {
+        let cfg = GemvConfig { k: 0, n: 128, is_ternary: false, weight_bytes: 1024 };
+        assert_eq!(validate_gemv_config(&cfg)[0], "k (columns) is 0");
+    }
+
+    #[test]
+    fn validate_n_zero_issue_text() {
+        let cfg = GemvConfig { k: 256, n: 0, is_ternary: false, weight_bytes: 1024 };
+        assert_eq!(validate_gemv_config(&cfg)[0], "n (rows) is 0");
+    }
+
+    #[test]
+    fn validate_weight_bytes_zero_issue_text() {
+        let cfg = GemvConfig { k: 256, n: 128, is_ternary: false, weight_bytes: 0 };
+        assert_eq!(validate_gemv_config(&cfg)[0], "weight_bytes is 0");
+    }
+
+    #[test]
+    fn validate_ternary_mod_issue_includes_value() {
+        let cfg = GemvConfig { k: 100, n: 64, is_ternary: true, weight_bytes: 1024 };
+        let issues = validate_gemv_config(&cfg);
+        assert!(issues.iter().any(|i| i.contains("100")));
+    }
+
+    // ── Dispatch info: formulas ──────────────────────────────────────────
+
+    #[test]
+    fn dispatch_ternary_input_bytes() {
+        let cfg = GemvConfig {
+            k: 512, n: 256, is_ternary: true,
+            weight_bytes: (512 / 16) * 4 * 256,
+        };
+        let info = gemv_dispatch_info(&cfg);
+        assert_eq!(info.input_buffer_bytes, (512 / 16) * 4);
+    }
+
+    #[test]
+    fn dispatch_int4_input_bytes() {
+        let cfg = GemvConfig {
+            k: 256, n: 128, is_ternary: false,
+            weight_bytes: (256 / 2) * 128,
+        };
+        let info = gemv_dispatch_info(&cfg);
+        assert_eq!(info.input_buffer_bytes, 256 * 4);
+    }
+
+    #[test]
+    fn dispatch_output_bytes() {
+        let cfg = GemvConfig {
+            k: 128, n: 64, is_ternary: false, weight_bytes: (128 / 2) * 64,
+        };
+        let info = gemv_dispatch_info(&cfg);
+        assert_eq!(info.output_buffer_bytes, 64 * 4);
+    }
+
+    #[test]
+    fn dispatch_weight_buffer_equals_config() {
+        let cfg = GemvConfig {
+            k: 256, n: 128, is_ternary: true,
+            weight_bytes: (256 / 16) * 4 * 128,
+        };
+        let info = gemv_dispatch_info(&cfg);
+        assert_eq!(info.weight_buffer_bytes, cfg.weight_bytes);
+    }
+
+    #[test]
+    fn dispatch_total_formula() {
+        let cfg = GemvConfig {
+            k: 256, n: 128, is_ternary: false, weight_bytes: (256 / 2) * 128,
+        };
+        let info = gemv_dispatch_info(&cfg);
+        assert_eq!(
+            info.total_gpu_buffer_bytes,
+            info.input_buffer_bytes + info.weight_buffer_bytes + info.output_buffer_bytes
+        );
+    }
+
+    #[test]
+    fn dispatch_workgroup_ternary() {
+        let cfg = GemvConfig {
+            k: 256, n: 513, is_ternary: true,
+            weight_bytes: (256 / 16) * 4 * 513,
+        };
+        let info = gemv_dispatch_info(&cfg);
+        assert_eq!(info.workgroup_size, 256);
+        assert_eq!(info.workgroup_count, 513u32.div_ceil(256));
+    }
+
+    #[test]
+    fn dispatch_workgroup_int4() {
+        let cfg = GemvConfig {
+            k: 256, n: 65, is_ternary: false, weight_bytes: (256 / 2) * 65,
+        };
+        let info = gemv_dispatch_info(&cfg);
+        assert_eq!(info.workgroup_size, 64);
+        assert_eq!(info.workgroup_count, 65u32.div_ceil(64));
+    }
+
+    #[test]
+    fn dispatch_workgroup_exact_fit() {
+        let cfg = GemvConfig {
+            k: 128, n: 256, is_ternary: true,
+            weight_bytes: (128 / 16) * 4 * 256,
+        };
+        let info = gemv_dispatch_info(&cfg);
+        assert_eq!(info.workgroup_count, 1); // 256/256 = 1 exactly
+    }
+
+    #[test]
+    fn dispatch_descriptor_set_count() {
+        let cfg = GemvConfig {
+            k: 128, n: 64, is_ternary: false, weight_bytes: (128 / 2) * 64,
+        };
+        let info = gemv_dispatch_info(&cfg);
+        assert_eq!(info.descriptor_set_count, 3);
+    }
+
+    #[test]
+    fn dispatch_push_constant_bytes() {
+        let info = gemv_dispatch_info(&GemvConfig {
+            k: 128, n: 64, is_ternary: false, weight_bytes: (128 / 2) * 64,
+        });
+        assert_eq!(info.push_constant_bytes, 8);
+    }
+
+    #[test]
+    fn dispatch_preserves_config() {
+        let cfg = GemvConfig {
+            k: 256, n: 128, is_ternary: true, weight_bytes: (256 / 16) * 4 * 128,
+        };
+        let info = gemv_dispatch_info(&cfg);
+        assert_eq!(info.config.k, cfg.k);
+        assert_eq!(info.config.n, cfg.n);
+        assert_eq!(info.config.is_ternary, cfg.is_ternary);
+        assert_eq!(info.config.weight_bytes, cfg.weight_bytes);
+    }
+
+    // ── Struct derives ───────────────────────────────────────────────────
+
+    #[test]
+    fn config_clone() {
+        let cfg = GemvConfig { k: 256, n: 128, is_ternary: true, weight_bytes: 1024 };
+        let cloned = cfg.clone();
+        assert_eq!(cloned.k, cfg.k);
+        assert_eq!(cloned.n, cfg.n);
+        assert_eq!(cloned.is_ternary, cfg.is_ternary);
+        assert_eq!(cloned.weight_bytes, cfg.weight_bytes);
+    }
+
+    #[test]
+    fn config_clone_independent() {
+        let cfg = GemvConfig { k: 256, n: 128, is_ternary: true, weight_bytes: 1024 };
+        let mut cloned = cfg.clone();
+        cloned.k = 999;
+        assert_ne!(cfg.k, cloned.k);
+    }
+
+    #[test]
+    fn config_debug_format() {
+        let cfg = GemvConfig { k: 256, n: 128, is_ternary: true, weight_bytes: 1024 };
+        let debug = format!("{:?}", cfg);
+        assert!(debug.contains("GemvConfig"));
+        assert!(debug.contains("k: 256"));
+        assert!(debug.contains("is_ternary: true"));
+    }
+
+    #[test]
+    fn info_clone() {
+        let cfg = GemvConfig {
+            k: 256, n: 128, is_ternary: true,
+            weight_bytes: (256 / 16) * 4 * 128,
+        };
+        let info = gemv_dispatch_info(&cfg);
+        let cloned = info.clone();
+        assert_eq!(cloned.input_buffer_bytes, info.input_buffer_bytes);
+        assert_eq!(cloned.workgroup_count, info.workgroup_count);
+        assert_eq!(cloned.total_gpu_buffer_bytes, info.total_gpu_buffer_bytes);
+    }
+
+    #[test]
+    fn info_debug_format() {
+        let cfg = GemvConfig {
+            k: 128, n: 64, is_ternary: false, weight_bytes: (128 / 2) * 64,
+        };
+        let info = gemv_dispatch_info(&cfg);
+        let debug = format!("{:?}", info);
+        assert!(debug.contains("GemvDispatchInfo"));
+        assert!(debug.contains("workgroup_count"));
+    }
+
+    // ── Serialization ────────────────────────────────────────────────────
+
+    #[test]
+    fn config_json_all_fields() {
+        let cfg = GemvConfig { k: 256, n: 128, is_ternary: true, weight_bytes: 1024 };
+        let json = serde_json::to_string(&cfg).unwrap();
+        assert!(json.contains("\"k\""));
+        assert!(json.contains("\"n\""));
+        assert!(json.contains("\"is_ternary\""));
+        assert!(json.contains("\"weight_bytes\""));
+    }
+
+    #[test]
+    fn info_json_all_fields() {
+        let cfg = GemvConfig {
+            k: 128, n: 64, is_ternary: false, weight_bytes: (128 / 2) * 64,
+        };
+        let info = gemv_dispatch_info(&cfg);
+        let json = serde_json::to_string(&info).unwrap();
+        assert!(json.contains("config"));
+        assert!(json.contains("input_buffer_bytes"));
+        assert!(json.contains("weight_buffer_bytes"));
+        assert!(json.contains("output_buffer_bytes"));
+        assert!(json.contains("total_gpu_buffer_bytes"));
+        assert!(json.contains("workgroup_count"));
+        assert!(json.contains("workgroup_size"));
+        assert!(json.contains("descriptor_set_count"));
+        assert!(json.contains("push_constant_bytes"));
+        assert!(json.contains("validation_issues"));
+    }
+
+    #[test]
+    fn info_json_parseable_as_value() {
+        let cfg = GemvConfig {
+            k: 256, n: 128, is_ternary: true,
+            weight_bytes: (256 / 16) * 4 * 128,
+        };
+        let info = gemv_dispatch_info(&cfg);
+        let json = serde_json::to_string(&info).unwrap();
+        let value: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(value["descriptor_set_count"], 3);
+        assert_eq!(value["push_constant_bytes"], 8);
+        assert!(value["validation_issues"].is_array());
+    }
+
+    #[test]
+    fn info_pretty_json() {
+        let cfg = GemvConfig {
+            k: 128, n: 64, is_ternary: false, weight_bytes: (128 / 2) * 64,
+        };
+        let info = gemv_dispatch_info(&cfg);
+        let pretty = serde_json::to_string_pretty(&info).unwrap();
+        assert!(pretty.contains('\n'));
+        assert!(pretty.contains("  "));
+    }
 }
