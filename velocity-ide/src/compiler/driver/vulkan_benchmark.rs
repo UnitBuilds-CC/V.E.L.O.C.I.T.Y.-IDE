@@ -686,4 +686,316 @@ mod tests {
         assert!(json.contains("faster_method"));
         assert!(json.contains("contig"));
     }
+
+    // ── Validation: individual fields ────────────────────────────────────
+
+    #[test]
+    fn validate_zero_head_dim() {
+        let mut cfg = BenchmarkConfig::default();
+        cfg.head_dim = 0;
+        assert!(validate_benchmark_config(&cfg).iter().any(|i| i.contains("head_dim")));
+    }
+
+    #[test]
+    fn validate_zero_num_heads() {
+        let mut cfg = BenchmarkConfig::default();
+        cfg.num_heads = 0;
+        assert!(validate_benchmark_config(&cfg).iter().any(|i| i.contains("num_heads")));
+    }
+
+    #[test]
+    fn validate_zero_iterations_triggers_both() {
+        let mut cfg = BenchmarkConfig::default();
+        cfg.iterations = 0;
+        let issues = validate_benchmark_config(&cfg);
+        // 0 triggers both "must be > 0" and "should be >= 10"
+        assert!(issues.iter().any(|i| i.contains("must be > 0")));
+        assert!(issues.iter().any(|i| i.contains(">= 10")));
+        assert_eq!(issues.len(), 2);
+    }
+
+    // ── Validation: iteration boundaries ─────────────────────────────────
+
+    #[test]
+    fn validate_iterations_9_warns() {
+        let mut cfg = BenchmarkConfig::default();
+        cfg.iterations = 9;
+        assert!(validate_benchmark_config(&cfg).iter().any(|i| i.contains(">= 10")));
+    }
+
+    #[test]
+    fn validate_iterations_10_valid() {
+        let mut cfg = BenchmarkConfig::default();
+        cfg.iterations = 10;
+        assert!(validate_benchmark_config(&cfg).is_empty());
+    }
+
+    #[test]
+    fn validate_iterations_1_warns() {
+        let mut cfg = BenchmarkConfig::default();
+        cfg.iterations = 1;
+        let issues = validate_benchmark_config(&cfg);
+        assert!(issues.iter().any(|i| i.contains(">= 10")));
+        // 1 > 0, so no "must be > 0" issue
+        assert!(!issues.iter().any(|i| i.contains("must be > 0")));
+    }
+
+    #[test]
+    fn validate_iterations_max_valid() {
+        let mut cfg = BenchmarkConfig::default();
+        cfg.iterations = u32::MAX;
+        assert!(validate_benchmark_config(&cfg).is_empty());
+    }
+
+    // ── Validation: multiple issues ──────────────────────────────────────
+
+    #[test]
+    fn validate_all_zeros() {
+        let cfg = BenchmarkConfig {
+            num_tokens: 0,
+            head_dim: 0,
+            num_heads: 0,
+            iterations: 0,
+        };
+        let issues = validate_benchmark_config(&cfg);
+        // num_tokens=0, head_dim=0, num_heads=0, iterations=0 (triggers 2 issues)
+        assert_eq!(issues.len(), 5);
+    }
+
+    #[test]
+    fn validate_issues_order_deterministic() {
+        let cfg = BenchmarkConfig {
+            num_tokens: 0, head_dim: 0, num_heads: 0, iterations: 0,
+        };
+        let i1 = validate_benchmark_config(&cfg);
+        let i2 = validate_benchmark_config(&cfg);
+        assert_eq!(i1, i2);
+    }
+
+    // ── Validation issue text ────────────────────────────────────────────
+
+    #[test]
+    fn validate_tokens_issue_text() {
+        let mut cfg = BenchmarkConfig::default();
+        cfg.num_tokens = 0;
+        assert_eq!(validate_benchmark_config(&cfg)[0], "num_tokens must be > 0");
+    }
+
+    #[test]
+    fn validate_head_dim_issue_text() {
+        let mut cfg = BenchmarkConfig::default();
+        cfg.head_dim = 0;
+        assert_eq!(validate_benchmark_config(&cfg)[0], "head_dim must be > 0");
+    }
+
+    #[test]
+    fn validate_num_heads_issue_text() {
+        let mut cfg = BenchmarkConfig::default();
+        cfg.num_heads = 0;
+        assert_eq!(validate_benchmark_config(&cfg)[0], "num_heads must be > 0");
+    }
+
+    // ── Report calculations ──────────────────────────────────────────────
+
+    #[test]
+    fn report_equal_times() {
+        let cfg = BenchmarkConfig::default();
+        let report = build_benchmark_report(&cfg, 100.0, 100.0);
+        // contig >= ndakv is false (100 < 100 is false), so ndakv >= contig → ratio = 100/100 = 1.0
+        // Actually: contig < ndakv → 100 < 100 → false → else branch → ratio = 100/100 = 1.0, "ndakv"
+        assert_eq!(report.faster_method, "ndakv");
+        assert!((report.speedup_ratio - 1.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn report_contig_zero_ndakv_nonzero() {
+        let cfg = BenchmarkConfig::default();
+        let report = build_benchmark_report(&cfg, 0.0, 100.0);
+        assert_eq!(report.faster_method, "unknown");
+        assert_eq!(report.speedup_ratio, 0.0);
+    }
+
+    #[test]
+    fn report_contig_nonzero_ndakv_zero() {
+        let cfg = BenchmarkConfig::default();
+        let report = build_benchmark_report(&cfg, 100.0, 0.0);
+        assert_eq!(report.faster_method, "unknown");
+        assert_eq!(report.speedup_ratio, 0.0);
+    }
+
+    #[test]
+    fn report_very_small_times() {
+        let cfg = BenchmarkConfig::default();
+        let report = build_benchmark_report(&cfg, 0.001, 0.002);
+        assert_eq!(report.faster_method, "contig");
+        assert!((report.speedup_ratio - 2.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn report_very_large_times() {
+        let cfg = BenchmarkConfig::default();
+        let report = build_benchmark_report(&cfg, 1e12, 1e6);
+        assert_eq!(report.faster_method, "ndakv");
+        assert!((report.speedup_ratio - 1e6).abs() < 1.0);
+    }
+
+    #[test]
+    fn report_preserves_config() {
+        let cfg = BenchmarkConfig::default();
+        let report = build_benchmark_report(&cfg, 100.0, 200.0);
+        assert_eq!(report.config.num_tokens, cfg.num_tokens);
+        assert_eq!(report.config.head_dim, cfg.head_dim);
+        assert_eq!(report.config.num_heads, cfg.num_heads);
+        assert_eq!(report.config.iterations, cfg.iterations);
+    }
+
+    #[test]
+    fn report_preserves_timing_values() {
+        let cfg = BenchmarkConfig::default();
+        let report = build_benchmark_report(&cfg, 123.456, 789.012);
+        assert_eq!(report.contig_avg_us, 123.456);
+        assert_eq!(report.ndakv_avg_us, 789.012);
+    }
+
+    #[test]
+    fn report_with_invalid_config() {
+        let mut cfg = BenchmarkConfig::default();
+        cfg.num_tokens = 0;
+        let report = build_benchmark_report(&cfg, 100.0, 200.0);
+        assert!(!report.validation_issues.is_empty());
+        // Report still computes even with invalid config
+        assert_eq!(report.faster_method, "contig");
+    }
+
+    // ── Struct derives ───────────────────────────────────────────────────
+
+    #[test]
+    fn config_clone() {
+        let cfg = BenchmarkConfig::default();
+        let cloned = cfg.clone();
+        assert_eq!(cloned.num_tokens, cfg.num_tokens);
+        assert_eq!(cloned.head_dim, cfg.head_dim);
+        assert_eq!(cloned.num_heads, cfg.num_heads);
+        assert_eq!(cloned.iterations, cfg.iterations);
+    }
+
+    #[test]
+    fn config_clone_independent() {
+        let cfg = BenchmarkConfig::default();
+        let mut cloned = cfg.clone();
+        cloned.num_tokens = 999;
+        assert_ne!(cfg.num_tokens, cloned.num_tokens);
+    }
+
+    #[test]
+    fn config_debug_format() {
+        let cfg = BenchmarkConfig::default();
+        let debug = format!("{:?}", cfg);
+        assert!(debug.contains("BenchmarkConfig"));
+        assert!(debug.contains("num_tokens: 256"));
+    }
+
+    #[test]
+    fn report_clone() {
+        let cfg = BenchmarkConfig::default();
+        let report = build_benchmark_report(&cfg, 100.0, 200.0);
+        let cloned = report.clone();
+        assert_eq!(cloned.speedup_ratio, report.speedup_ratio);
+        assert_eq!(cloned.faster_method, report.faster_method);
+        assert_eq!(cloned.contig_avg_us, report.contig_avg_us);
+    }
+
+    #[test]
+    fn report_debug_format() {
+        let cfg = BenchmarkConfig::default();
+        let report = build_benchmark_report(&cfg, 100.0, 200.0);
+        let debug = format!("{:?}", report);
+        assert!(debug.contains("BenchmarkReport"));
+        assert!(debug.contains("speedup_ratio"));
+        assert!(debug.contains("faster_method"));
+    }
+
+    // ── Serialization ────────────────────────────────────────────────────
+
+    #[test]
+    fn config_json_all_fields() {
+        let cfg = BenchmarkConfig::default();
+        let json = serde_json::to_string(&cfg).unwrap();
+        assert!(json.contains("\"num_tokens\""));
+        assert!(json.contains("\"head_dim\""));
+        assert!(json.contains("\"num_heads\""));
+        assert!(json.contains("\"iterations\""));
+    }
+
+    #[test]
+    fn report_json_all_fields() {
+        let cfg = BenchmarkConfig::default();
+        let report = build_benchmark_report(&cfg, 100.0, 200.0);
+        let json = serde_json::to_string(&report).unwrap();
+        assert!(json.contains("config"));
+        assert!(json.contains("contig_avg_us"));
+        assert!(json.contains("ndakv_avg_us"));
+        assert!(json.contains("speedup_ratio"));
+        assert!(json.contains("faster_method"));
+        assert!(json.contains("validation_issues"));
+    }
+
+    #[test]
+    fn report_json_parseable_as_value() {
+        let cfg = BenchmarkConfig::default();
+        let report = build_benchmark_report(&cfg, 100.0, 200.0);
+        let json = serde_json::to_string(&report).unwrap();
+        let value: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(value["faster_method"], "contig");
+        assert!(value["validation_issues"].is_array());
+    }
+
+    #[test]
+    fn report_pretty_json() {
+        let cfg = BenchmarkConfig::default();
+        let report = build_benchmark_report(&cfg, 100.0, 200.0);
+        let pretty = serde_json::to_string_pretty(&report).unwrap();
+        assert!(pretty.contains('\n'));
+        assert!(pretty.contains("  "));
+    }
+
+    // ── Default impl ────────────────────────────────────────────────────
+
+    #[test]
+    fn default_config_values() {
+        let cfg = BenchmarkConfig::default();
+        assert_eq!(cfg.num_tokens, 256);
+        assert_eq!(cfg.head_dim, 32);
+        assert_eq!(cfg.num_heads, 32);
+        assert_eq!(cfg.iterations, 500);
+    }
+
+    #[test]
+    fn default_config_is_valid() {
+        let cfg = BenchmarkConfig::default();
+        assert!(validate_benchmark_config(&cfg).is_empty());
+    }
+
+    // ── Boundary values ──────────────────────────────────────────────────
+
+    #[test]
+    fn validate_1_token_valid() {
+        let mut cfg = BenchmarkConfig::default();
+        cfg.num_tokens = 1;
+        assert!(validate_benchmark_config(&cfg).is_empty());
+    }
+
+    #[test]
+    fn validate_1_head_dim_valid() {
+        let mut cfg = BenchmarkConfig::default();
+        cfg.head_dim = 1;
+        assert!(validate_benchmark_config(&cfg).is_empty());
+    }
+
+    #[test]
+    fn validate_1_num_heads_valid() {
+        let mut cfg = BenchmarkConfig::default();
+        cfg.num_heads = 1;
+        assert!(validate_benchmark_config(&cfg).is_empty());
+    }
 }
