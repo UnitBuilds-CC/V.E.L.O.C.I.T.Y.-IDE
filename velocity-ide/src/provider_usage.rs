@@ -2592,4 +2592,328 @@ mod tests {
         let summaries = snap.provider_summaries();
         assert!(summaries.is_empty());
     }
+
+    // ── Block 190: New tests ──────────────────────────────────────────────────
+
+    #[test]
+    fn usage_snapshot_info_json_key_count() {
+        let snap = make_test_snapshot();
+        let info = snap.info();
+        let v: serde_json::Value = serde_json::to_value(&info).unwrap();
+        assert_eq!(v.as_object().unwrap().len(), 9);
+    }
+
+    #[test]
+    fn provider_summary_json_key_count() {
+        let s = ProviderSummary {
+            provider: "openai".into(),
+            display_name: "OpenAI".into(),
+            key_valid: true,
+            cost_usd: 1.5,
+            tokens_used: 50000,
+            model_count: 2,
+            status: "ok".into(),
+        };
+        let v: serde_json::Value = serde_json::to_value(&s).unwrap();
+        assert_eq!(v.as_object().unwrap().len(), 7);
+    }
+
+    #[test]
+    fn cost_breakdown_json_key_count() {
+        let snap = make_test_snapshot();
+        let bd = snap.cost_breakdown();
+        let v: serde_json::Value = serde_json::to_value(&bd).unwrap();
+        assert_eq!(v.as_object().unwrap().len(), 4);
+    }
+
+    #[test]
+    fn provider_cost_json_key_count() {
+        let pc = ProviderCost {
+            provider: "openai".into(),
+            display_name: "OpenAI".into(),
+            cost_usd: 1.5,
+            percentage_of_total: 75.0,
+        };
+        let v: serde_json::Value = serde_json::to_value(&pc).unwrap();
+        assert_eq!(v.as_object().unwrap().len(), 4);
+    }
+
+    #[test]
+    fn provider_cost_estimate_json_key_count() {
+        let est = ProviderCostEstimate {
+            provider: "openai".into(),
+            display_name: "OpenAI".into(),
+            model: "gpt-4o".into(),
+            estimated_cost_usd: 1.23,
+        };
+        let v: serde_json::Value = serde_json::to_value(&est).unwrap();
+        assert_eq!(v.as_object().unwrap().len(), 4);
+    }
+
+    #[test]
+    fn usage_snapshot_info_json_types() {
+        let snap = make_test_snapshot();
+        let info = snap.info();
+        let v: serde_json::Value = serde_json::to_value(&info).unwrap();
+        assert!(v["generated_at"].is_string());
+        assert!(v["provider_count"].is_u64());
+        assert!(v["total_tokens"].is_u64());
+        assert!(v["total_cost_usd"].is_f64());
+        assert!(v["total_requests"].is_u64());
+        assert!(v["providers_with_valid_keys"].is_u64());
+        assert!(v["providers_with_usage_api"].is_u64());
+        assert!(v["total_models_tracked"].is_u64());
+        assert!(v["validation_issues"].is_array());
+    }
+
+    #[test]
+    fn cost_breakdown_percentages_sum_to_100() {
+        let snap = make_test_snapshot();
+        let bd = snap.cost_breakdown();
+        let pct_sum: f64 = bd.per_provider.iter().map(|p| p.percentage_of_total).sum();
+        assert!((pct_sum - 100.0).abs() < 0.01, "percentages sum to {}", pct_sum);
+    }
+
+    #[test]
+    fn cost_breakdown_sorted_descending_by_cost() {
+        let snap = make_test_snapshot();
+        let bd = snap.cost_breakdown();
+        for w in bd.per_provider.windows(2) {
+            assert!(w[0].cost_usd >= w[1].cost_usd,
+                "not sorted descending: {} < {}", w[0].cost_usd, w[1].cost_usd);
+        }
+    }
+
+    #[test]
+    fn estimate_cost_formula_exact() {
+        // gpt-4o-mini: $0.15/M input, $0.60/M output
+        // 2M input + 3M output = 0.15*2 + 0.60*3 = 0.30 + 1.80 = 2.10
+        let cost = estimate_cost(&Provider::Openai, "gpt-4o-mini", 2_000_000, 3_000_000).unwrap();
+        assert!((cost - 2.10).abs() < 0.001, "got {}", cost);
+    }
+
+    #[test]
+    fn estimate_cost_large_token_count() {
+        // Verify no overflow with large token counts
+        let cost = estimate_cost(&Provider::Openai, "gpt-4o", 1_000_000_000, 1_000_000_000);
+        assert!(cost.is_some());
+        let c = cost.unwrap();
+        // 1B tokens * $2.50/M + 1B * $10.00/M = $2500 + $10000 = $12500
+        assert!((c - 12500.0).abs() < 1.0, "got {}", c);
+    }
+
+    #[test]
+    fn from_str_loose_grok_alias() {
+        assert_eq!(Provider::from_str_loose("grok"), Some(Provider::Xai));
+        assert_eq!(Provider::from_str_loose("GROK"), Some(Provider::Xai));
+    }
+
+    #[test]
+    fn from_str_loose_copilot_alias() {
+        assert_eq!(Provider::from_str_loose("copilot"), Some(Provider::Github));
+        assert_eq!(Provider::from_str_loose("COPILOT"), Some(Provider::Github));
+    }
+
+    #[test]
+    fn from_str_loose_gemini_alias() {
+        assert_eq!(Provider::from_str_loose("gemini"), Some(Provider::Google));
+        assert_eq!(Provider::from_str_loose("GEMINI"), Some(Provider::Google));
+    }
+
+    #[test]
+    fn from_str_loose_claude_alias() {
+        assert_eq!(Provider::from_str_loose("claude"), Some(Provider::Anthropic));
+        assert_eq!(Provider::from_str_loose("CLAUDE"), Some(Provider::Anthropic));
+    }
+
+    #[test]
+    fn model_pricing_openai_count() {
+        assert_eq!(Provider::Openai.model_pricing().len(), 4);
+    }
+
+    #[test]
+    fn model_pricing_anthropic_count() {
+        assert_eq!(Provider::Anthropic.model_pricing().len(), 4);
+    }
+
+    #[test]
+    fn model_pricing_github_empty() {
+        assert!(Provider::Github.model_pricing().is_empty());
+    }
+
+    #[test]
+    fn model_pricing_all_positive() {
+        let all = [
+            Provider::Openai, Provider::Anthropic, Provider::Google,
+            Provider::Mistral, Provider::Cohere, Provider::Xai,
+        ];
+        for p in &all {
+            for (model, input, output) in p.model_pricing() {
+                assert!(input > 0.0, "{}: {} input price is 0", p, model);
+                assert!(output > 0.0, "{}: {} output price is 0", p, model);
+            }
+        }
+    }
+
+    #[test]
+    fn provider_summaries_model_count_matches_models() {
+        let snap = make_test_snapshot();
+        let summaries = snap.provider_summaries();
+        for (i, s) in summaries.iter().enumerate() {
+            assert_eq!(s.model_count, snap.providers[i].models.len(),
+                "provider {}: model_count {} != models.len() {}",
+                s.provider, s.model_count, snap.providers[i].models.len());
+        }
+    }
+
+    #[test]
+    fn usage_snapshot_json_roundtrip_via_value() {
+        let snap = make_test_snapshot();
+        let v: serde_json::Value = serde_json::to_value(&snap).unwrap();
+        let parsed: UsageSnapshot = serde_json::from_value(v).unwrap();
+        assert_eq!(parsed.total_tokens, snap.total_tokens);
+        assert_eq!(parsed.total_cost_usd, snap.total_cost_usd);
+        assert_eq!(parsed.total_requests, snap.total_requests);
+        assert_eq!(parsed.providers.len(), snap.providers.len());
+        assert_eq!(parsed.generated_at, snap.generated_at);
+    }
+
+    #[test]
+    fn provider_usage_json_optional_fields_absent() {
+        let pu = ProviderUsage {
+            provider: "test".into(),
+            display_name: "Test".into(),
+            key_valid: true,
+            has_usage_api: false,
+            tokens_used: 100,
+            cost_usd: 0.5,
+            request_count: 5,
+            period_start: None,
+            period_end: None,
+            status: "ok".into(),
+            models: vec![],
+        };
+        let json = serde_json::to_string(&pu).unwrap();
+        // None fields should serialize as null in JSON
+        assert!(json.contains("\"period_start\":null"));
+        assert!(json.contains("\"period_end\":null"));
+    }
+
+    #[test]
+    fn provider_usage_json_optional_fields_present() {
+        let pu = ProviderUsage {
+            provider: "test".into(),
+            display_name: "Test".into(),
+            key_valid: true,
+            has_usage_api: false,
+            tokens_used: 100,
+            cost_usd: 0.5,
+            request_count: 5,
+            period_start: Some("2025-01-01".into()),
+            period_end: Some("2025-01-31".into()),
+            status: "ok".into(),
+            models: vec![],
+        };
+        let json = serde_json::to_string(&pu).unwrap();
+        assert!(json.contains("\"period_start\":\"2025-01-01\""));
+        assert!(json.contains("\"period_end\":\"2025-01-31\""));
+    }
+
+    #[test]
+    fn snapshot_validate_empty_providers_reports_issue() {
+        let snap = UsageSnapshot {
+            generated_at: "test".into(),
+            providers: vec![],
+            total_tokens: 0,
+            total_cost_usd: 0.0,
+            total_requests: 0,
+        };
+        let issues = snap.validate();
+        assert!(issues.iter().any(|i| i.contains("No providers")));
+    }
+
+    #[test]
+    fn usage_snapshot_info_validation_issues_populated() {
+        let mut snap = make_test_snapshot();
+        snap.total_tokens = 999999; // mismatch
+        let info = snap.info();
+        assert!(!info.validation_issues.is_empty(),
+            "validation_issues should be populated for invalid snapshot");
+    }
+
+    #[test]
+    fn provider_debug_format_all_variants() {
+        let all = [
+            (Provider::Openai, "Openai"),
+            (Provider::Anthropic, "Anthropic"),
+            (Provider::Google, "Google"),
+            (Provider::Mistral, "Mistral"),
+            (Provider::Cohere, "Cohere"),
+            (Provider::Xai, "Xai"),
+            (Provider::Github, "Github"),
+        ];
+        for (p, name) in &all {
+            let debug = format!("{:?}", p);
+            assert!(debug.contains(name), "{:?} doesn't contain {}", debug, name);
+        }
+    }
+
+    #[test]
+    fn masked_key_empty_string() {
+        let cred = ProviderCredential {
+            provider: "openai".into(),
+            api_key: "".into(),
+            base_url: None,
+            model: None,
+        };
+        // 0 chars: not > 4 => else => "****"
+        assert_eq!(cred.masked_key(), "****");
+    }
+
+    #[test]
+    fn cost_breakdown_zero_total_percentages_all_zero() {
+        let snap = UsageSnapshot {
+            generated_at: "test".into(),
+            providers: vec![
+                ProviderUsage {
+                    provider: "a".into(), display_name: "A".into(),
+                    key_valid: true, has_usage_api: false,
+                    tokens_used: 0, cost_usd: 0.0, request_count: 0,
+                    period_start: None, period_end: None,
+                    status: "ok".into(), models: vec![],
+                },
+                ProviderUsage {
+                    provider: "b".into(), display_name: "B".into(),
+                    key_valid: true, has_usage_api: false,
+                    tokens_used: 0, cost_usd: 0.0, request_count: 0,
+                    period_start: None, period_end: None,
+                    status: "ok".into(), models: vec![],
+                },
+            ],
+            total_tokens: 0,
+            total_cost_usd: 0.0,
+            total_requests: 0,
+        };
+        let bd = snap.cost_breakdown();
+        for pc in &bd.per_provider {
+            assert!((pc.percentage_of_total - 0.0).abs() < 0.001);
+        }
+    }
+
+    #[test]
+    fn model_usage_json_roundtrip_via_value() {
+        let mu = ModelUsage {
+            model: "gpt-4o".into(),
+            tokens: 50000,
+            cost_usd: 1.23,
+            requests: 42,
+        };
+        let v: serde_json::Value = serde_json::to_value(&mu).unwrap();
+        assert_eq!(v.as_object().unwrap().len(), 4);
+        let parsed: ModelUsage = serde_json::from_value(v).unwrap();
+        assert_eq!(parsed.model, "gpt-4o");
+        assert_eq!(parsed.tokens, 50000);
+        assert!((parsed.cost_usd - 1.23).abs() < 0.001);
+        assert_eq!(parsed.requests, 42);
+    }
 }
