@@ -1099,4 +1099,403 @@ mod tests {
         assert!(json.contains("\"truncated\":true"));
         assert!(json.contains("\"first_token_id\":42"));
     }
+
+    // ─── Expanded Tests ─────────────────────────────────────────────────
+
+    #[test]
+    fn cache_hit_rate_all_hits() {
+        let m = ForwardMetrics {
+            site_map_hits: 100,
+            site_map_misses: 0,
+            kv_cache_size: 100,
+        };
+        assert!((m.cache_hit_rate() - 1.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn cache_hit_rate_all_misses() {
+        let m = ForwardMetrics {
+            site_map_hits: 0,
+            site_map_misses: 50,
+            kv_cache_size: 50,
+        };
+        assert!((m.cache_hit_rate() - 0.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn cache_hit_rate_single_hit() {
+        let m = ForwardMetrics {
+            site_map_hits: 1,
+            site_map_misses: 0,
+            kv_cache_size: 1,
+        };
+        assert!((m.cache_hit_rate() - 1.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn cache_hit_rate_single_miss() {
+        let m = ForwardMetrics {
+            site_map_hits: 0,
+            site_map_misses: 1,
+            kv_cache_size: 1,
+        };
+        assert!((m.cache_hit_rate() - 0.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn cache_hit_rate_fifty_fifty() {
+        let m = ForwardMetrics {
+            site_map_hits: 500,
+            site_map_misses: 500,
+            kv_cache_size: 1000,
+        };
+        assert!((m.cache_hit_rate() - 0.5).abs() < 1e-9);
+    }
+
+    #[test]
+    fn generation_report_us_per_token_single() {
+        let report = GenerationReport {
+            tokens_generated: 1,
+            prompt_tokens: 5,
+            stopped_at_eos: true,
+            truncated: false,
+            site_map_hits: 0,
+            site_map_misses: 0,
+            final_kv_cache_size: 10,
+            elapsed_us: 1234,
+            tokens_per_second: 810.0,
+            token_ids: vec![42],
+        };
+        assert!((report.us_per_token() - 1234.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn generation_report_total_tokens_zero() {
+        let report = GenerationReport {
+            tokens_generated: 0,
+            prompt_tokens: 0,
+            stopped_at_eos: false,
+            truncated: false,
+            site_map_hits: 0,
+            site_map_misses: 0,
+            final_kv_cache_size: 0,
+            elapsed_us: 0,
+            tokens_per_second: 0.0,
+            token_ids: vec![],
+        };
+        assert_eq!(report.total_tokens(), 0);
+    }
+
+    #[test]
+    fn generation_report_truncated_not_eos() {
+        let report = GenerationReport {
+            tokens_generated: 100,
+            prompt_tokens: 20,
+            stopped_at_eos: false,
+            truncated: true,
+            site_map_hits: 10,
+            site_map_misses: 90,
+            final_kv_cache_size: 200,
+            elapsed_us: 100_000,
+            tokens_per_second: 1000.0,
+            token_ids: (0..100).collect(),
+        };
+        assert!(!report.stopped_at_eos);
+        assert!(report.truncated);
+        assert_eq!(report.token_ids.len(), 100);
+        assert!((report.cache_hit_rate() - 0.1).abs() < 1e-9);
+    }
+
+    #[test]
+    fn generation_report_clone() {
+        let report = GenerationReport {
+            tokens_generated: 5,
+            prompt_tokens: 3,
+            stopped_at_eos: true,
+            truncated: false,
+            site_map_hits: 10,
+            site_map_misses: 5,
+            final_kv_cache_size: 20,
+            elapsed_us: 500,
+            tokens_per_second: 10000.0,
+            token_ids: vec![1, 2, 3, 4, 5],
+        };
+        let cloned = report.clone();
+        assert_eq!(cloned.tokens_generated, 5);
+        assert_eq!(cloned.token_ids, vec![1, 2, 3, 4, 5]);
+        assert!((cloned.cache_hit_rate() - report.cache_hit_rate()).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn norm_to_ndavec_single_element() {
+        let w = vec![2.0];
+        let v = norm_to_ndavec(&w);
+        assert_eq!(v.len, 1);
+        // Single positive element → bit 0 of sign set
+        assert_eq!(v.sign[0] & 0x01, 1);
+    }
+
+    #[test]
+    fn norm_to_ndavec_near_zero_values() {
+        let w = vec![1e-10, -1e-10];
+        let v = norm_to_ndavec(&w);
+        assert_eq!(v.len, 2);
+        // amax < 1e-8 → log2_scale = 0
+        assert_eq!(v.log2_scale, 0);
+    }
+
+    #[test]
+    fn norm_to_ndavec_eight_elements_full_byte() {
+        let w = vec![1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0];
+        let v = norm_to_ndavec(&w);
+        assert_eq!(v.len, 8);
+        // All 8 positive → full byte of sign bits
+        assert_eq!(v.sign[0], 0xFF);
+    }
+
+    #[test]
+    fn norm_to_ndavec_sixteen_elements_two_bytes() {
+        let w = vec![1.0; 16];
+        let v = norm_to_ndavec(&w);
+        assert_eq!(v.len, 16);
+        assert_eq!(v.sign.len(), 2);
+        assert_eq!(v.sign[0], 0xFF);
+        assert_eq!(v.sign[1], 0xFF);
+    }
+
+    #[test]
+    fn norm_to_ndavec_report_empty_input() {
+        let w: Vec<f32> = vec![];
+        let (vec, report) = norm_to_ndavec_report(&w);
+        assert_eq!(report.input_len, 0);
+        assert_eq!(report.output_len, 0);
+        assert!((report.abs_max - 0.0).abs() < f64::EPSILON);
+        // all() on empty iterator returns true
+        assert!(report.all_positive);
+        assert!(report.all_negative);
+        assert_eq!(vec.len, 0);
+    }
+
+    #[test]
+    fn norm_to_ndavec_report_zero_values() {
+        let w = vec![0.0, 0.0, 0.0];
+        let (_, report) = norm_to_ndavec_report(&w);
+        assert!((report.abs_max - 0.0).abs() < f64::EPSILON);
+        // 0.0 >= 0.0 is true → all_positive
+        assert!(report.all_positive);
+        // 0.0 < 0.0 is false → not all_negative
+        assert!(!report.all_negative);
+    }
+
+    #[test]
+    fn norm_to_ndavec_report_large_scale() {
+        let w = vec![100.0, -200.0, 50.0];
+        let (vec, report) = norm_to_ndavec_report(&w);
+        assert!((report.abs_max - 200.0).abs() < 1e-9);
+        assert!(vec.log2_scale > 0);
+        assert!(!report.all_positive);
+        assert!(!report.all_negative);
+    }
+
+    #[test]
+    fn norm_conversion_report_zero_len() {
+        let w: Vec<f32> = vec![];
+        let (_, report) = norm_to_ndavec_report(&w);
+        assert_eq!(report.input_len, 0);
+        assert_eq!(report.output_len, 0);
+        assert!((report.abs_max - 0.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn zero_kv_layer_multiple_pushes() {
+        let mut layer = ZeroKvLayer::new();
+        for i in 0..5 {
+            let k = NdaVec {
+                len: 8,
+                log2_scale: i as i8,
+                sign: vec![i as u8].into(),
+                extra: vec![0xAA].into(),
+            };
+            let v = NdaVec {
+                len: 8,
+                log2_scale: 0,
+                sign: vec![0xFF].into(),
+                extra: vec![0x55].into(),
+            };
+            layer.push(k, v);
+        }
+        assert_eq!(layer.len(), 5);
+        // Verify entries have different scales
+        assert_eq!(layer.entries[0].k.log2_scale, 0);
+        assert_eq!(layer.entries[4].k.log2_scale, 4);
+    }
+
+    #[test]
+    fn zero_kv_layer_empty_entries() {
+        let layer = ZeroKvLayer::new();
+        assert_eq!(layer.len(), 0);
+        assert!(layer.entries.is_empty());
+    }
+
+    #[test]
+    fn zero_transformer_info_with_issues() {
+        let info = ZeroTransformerInfo {
+            n_layers: 2,
+            n_heads: 4,
+            n_kv_heads: 2,
+            hidden_size: 64,
+            head_dim: 16,
+            vocab_size: 100,
+            max_seq_len: 256,
+            eos_token_id: 2,
+            total_kv_cached: 0,
+            per_layer_kv: vec![0, 0],
+            lm_head_rows: 100,
+            lm_head_stride: 8,
+            embed_tokens_bytes: 100 * 64 * 4,
+            validation_issues: vec![
+                "hidden_size is 0".to_string(),
+                "n_heads is 0".to_string(),
+            ],
+        };
+        assert_eq!(info.validation_issues.len(), 2);
+        let json = serde_json::to_string(&info).unwrap();
+        assert!(json.contains("hidden_size is 0"));
+    }
+
+    #[test]
+    fn zero_transformer_info_gqa_config() {
+        let info = ZeroTransformerInfo {
+            n_layers: 24,
+            n_heads: 32,
+            n_kv_heads: 8,
+            hidden_size: 4096,
+            head_dim: 128,
+            vocab_size: 32000,
+            max_seq_len: 2048,
+            eos_token_id: 2,
+            total_kv_cached: 500,
+            per_layer_kv: vec![20; 24],
+            lm_head_rows: 32000,
+            lm_head_stride: 512,
+            embed_tokens_bytes: 32000 * 4096 * 4,
+            validation_issues: vec![],
+        };
+        // GQA ratio: 32/8 = 4 Q heads per KV head
+        assert_eq!(info.n_heads / info.n_kv_heads, 4);
+        assert_eq!(info.total_kv_cached, 500);
+        assert_eq!(info.per_layer_kv.iter().sum::<usize>(), 480);
+    }
+
+    #[test]
+    fn generation_summary_elapsed_conversion() {
+        let report = GenerationReport {
+            tokens_generated: 10,
+            prompt_tokens: 5,
+            stopped_at_eos: false,
+            truncated: true,
+            site_map_hits: 0,
+            site_map_misses: 0,
+            final_kv_cache_size: 0,
+            elapsed_us: 1_500_000, // 1.5 seconds
+            tokens_per_second: 6.67,
+            token_ids: vec![1; 10],
+        };
+        let summary = ZeroTransformer::summarize_report(&report);
+        assert!((summary.elapsed_ms - 1500.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn generation_summary_single_token() {
+        let report = GenerationReport {
+            tokens_generated: 1,
+            prompt_tokens: 3,
+            stopped_at_eos: true,
+            truncated: false,
+            site_map_hits: 5,
+            site_map_misses: 5,
+            final_kv_cache_size: 10,
+            elapsed_us: 1000,
+            tokens_per_second: 1000.0,
+            token_ids: vec![42],
+        };
+        let summary = ZeroTransformer::summarize_report(&report);
+        assert_eq!(summary.first_token_id, Some(42));
+        assert_eq!(summary.last_token_id, Some(42));
+        assert_eq!(summary.tokens_generated, 1);
+    }
+
+    #[test]
+    fn forward_metrics_large_cache() {
+        let m = ForwardMetrics {
+            site_map_hits: 999_999,
+            site_map_misses: 1,
+            kv_cache_size: 1_000_000,
+        };
+        let rate = m.cache_hit_rate();
+        assert!(rate > 0.999);
+        assert!(rate < 1.0);
+    }
+
+    #[test]
+    fn norm_to_ndavec_report_preserves_vec_data() {
+        let w = vec![1.0, -1.0, 2.0, -2.0, 0.5];
+        let (vec, report) = norm_to_ndavec_report(&w);
+        assert_eq!(report.input_len, report.output_len);
+        assert_eq!(vec.len, 5);
+        // Bitmap bytes: ceil(5/8) = 1
+        assert_eq!(vec.sign.len(), 1);
+        assert_eq!(vec.extra.len(), 1);
+    }
+
+    #[test]
+    fn generation_report_many_tokens() {
+        let n = 1000;
+        let report = GenerationReport {
+            tokens_generated: n,
+            prompt_tokens: 100,
+            stopped_at_eos: false,
+            truncated: true,
+            site_map_hits: 5000,
+            site_map_misses: 5000,
+            final_kv_cache_size: 24 * n,
+            elapsed_us: 1_000_000,
+            tokens_per_second: n as f64,
+            token_ids: (0..n as u32).collect(),
+        };
+        assert_eq!(report.total_tokens(), n + 100);
+        assert!((report.cache_hit_rate() - 0.5).abs() < 1e-9);
+        assert!((report.us_per_token() - 1000.0).abs() < 1e-9);
+        assert_eq!(report.token_ids.len(), n as usize);
+    }
+
+    #[test]
+    fn norm_to_ndavec_alternating_signs() {
+        let w = vec![1.0, -1.0, 1.0, -1.0, 1.0, -1.0, 1.0, -1.0];
+        let v = norm_to_ndavec(&w);
+        // Alternating: bit 0,2,4,6 set (positive), bit 1,3,5,7 clear (negative)
+        assert_eq!(v.sign[0], 0x55); // 01010101
+    }
+
+    #[test]
+    fn zero_kv_entry_stores_ndavec() {
+        let entry = ZeroKvEntry {
+            k: NdaVec {
+                len: 16,
+                log2_scale: 3,
+                sign: vec![0xAA, 0x55].into(),
+                extra: vec![0xFF, 0x00].into(),
+            },
+            v: NdaVec {
+                len: 16,
+                log2_scale: -2,
+                sign: vec![0x00, 0xFF].into(),
+                extra: vec![0xAA, 0x55].into(),
+            },
+        };
+        assert_eq!(entry.k.len, 16);
+        assert_eq!(entry.k.log2_scale, 3);
+        assert_eq!(entry.v.len, 16);
+        assert_eq!(entry.v.log2_scale, -2);
+    }
 }
