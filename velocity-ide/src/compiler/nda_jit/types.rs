@@ -1133,4 +1133,347 @@ mod tests {
         let f32v = s.to_f32_vec();
         assert!((f32v[0] - 2.5).abs() < 1e-6);
     }
+
+    // ── JSON key counts ──────────────────────────────────────────────────
+
+    #[test]
+    fn jit_state_info_json_has_16_keys() {
+        let (sm, _dir) = make_test_sitemap();
+        let state = JitState::new(&[1.0], &sm, 0);
+        let info = jit_state_info(&state);
+        let json = serde_json::to_string(&info).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(v.as_object().unwrap().len(), 16);
+    }
+
+    #[test]
+    fn jit_result_info_json_has_7_keys() {
+        let result = JitResult {
+            output_vec: vec![], output_dim: 0, elapsed_us: 0,
+            nodes_compiled: 0, error: None,
+        };
+        let info = JitResultInfo::from_result(&result);
+        let json = serde_json::to_string(&info).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(v.as_object().unwrap().len(), 7);
+    }
+
+    #[test]
+    fn jit_program_info_json_has_5_keys() {
+        let reg = VarRegistry::new();
+        let prog = JitProgram { fns: vec![], nodes_compiled: 0, has_asm_kernel: false, registry: reg };
+        let info = jit_program_info(&prog);
+        let json = serde_json::to_string(&info).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(v.as_object().unwrap().len(), 5);
+    }
+
+    #[test]
+    fn var_registry_info_json_has_1_key() {
+        let reg = VarRegistry::new();
+        let info = reg.info();
+        let json = serde_json::to_string(&info).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(v.as_object().unwrap().len(), 1);
+    }
+
+    // ── JSON value verification ──────────────────────────────────────────
+
+    #[test]
+    fn jit_state_info_json_values() {
+        let (sm, _dir) = make_test_sitemap();
+        let mut state = JitState::new(&[1.0], &sm, 8);
+        state.variables[0] = Some(JitVal::Scalar(1, 0));
+        state.matrix_count = 5;
+        state.executed_nodes = 100;
+        let info = jit_state_info(&state);
+        let json = serde_json::to_string(&info).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(v["stack_depth"], 1);
+        assert_eq!(v["total_variable_slots"], 8);
+        assert_eq!(v["bound_variables"], 1);
+        assert_eq!(v["matrix_count"], 5);
+        assert_eq!(v["executed_nodes"], 100);
+        assert_eq!(v["heap_capacity_bytes"], 65536);
+    }
+
+    #[test]
+    fn jit_result_info_json_values() {
+        let result = JitResult {
+            output_vec: vec![1.0, 2.0], output_dim: 2, elapsed_us: 50,
+            nodes_compiled: 10, error: None,
+        };
+        let info = JitResultInfo::from_result(&result);
+        let json = serde_json::to_string(&info).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(v["output_dim"], 2);
+        assert_eq!(v["output_len"], 2);
+        assert_eq!(v["elapsed_us"], 50);
+        assert_eq!(v["nodes_compiled"], 10);
+        assert_eq!(v["has_error"], false);
+        assert_eq!(v["success"], true);
+    }
+
+    #[test]
+    fn jit_result_info_json_error_values() {
+        let result = JitResult {
+            output_vec: vec![], output_dim: 0, elapsed_us: 5,
+            nodes_compiled: 3, error: Some("fail".into()),
+        };
+        let info = JitResultInfo::from_result(&result);
+        let json = serde_json::to_string(&info).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(v["has_error"], true);
+        assert_eq!(v["success"], false);
+        assert_eq!(v["error_message"], "fail");
+    }
+
+    // ── Clone independence ───────────────────────────────────────────────
+
+    #[test]
+    fn jit_state_info_clone_independent() {
+        let (sm, _dir) = make_test_sitemap();
+        let state = JitState::new(&[1.0], &sm, 4);
+        let info = jit_state_info(&state);
+        let mut cloned = info.clone();
+        cloned.validation_issues.push("extra".into());
+        assert_ne!(cloned.validation_issues.len(), info.validation_issues.len());
+    }
+
+    #[test]
+    fn jit_result_info_clone_independent() {
+        let result = JitResult {
+            output_vec: vec![1.0], output_dim: 1, elapsed_us: 10,
+            nodes_compiled: 5, error: Some("err".into()),
+        };
+        let info = JitResultInfo::from_result(&result);
+        let mut cloned = info.clone();
+        cloned.error_message = Some("changed".into());
+        assert_ne!(cloned.error_message, info.error_message);
+    }
+
+    #[test]
+    fn jit_program_info_clone_independent() {
+        let reg = VarRegistry::new();
+        let prog = JitProgram { fns: vec![], nodes_compiled: 0, has_asm_kernel: false, registry: reg };
+        let info = jit_program_info(&prog);
+        let mut cloned = info.clone();
+        cloned.validation_issues.push("test".into());
+        assert_ne!(cloned.validation_issues.len(), info.validation_issues.len());
+    }
+
+    // ── Debug format ─────────────────────────────────────────────────────
+
+    #[test]
+    fn jit_control_flow_debug() {
+        assert!(format!("{:?}", JitControlFlow::Continue).contains("Continue"));
+        assert!(format!("{:?}", JitControlFlow::Break).contains("Break"));
+        assert!(format!("{:?}", JitControlFlow::Return).contains("Return"));
+    }
+
+    #[test]
+    fn jit_result_debug() {
+        let result = JitResult {
+            output_vec: vec![1.0], output_dim: 1, elapsed_us: 42,
+            nodes_compiled: 5, error: None,
+        };
+        let debug = format!("{:?}", result);
+        assert!(debug.contains("output_dim: 1"));
+        assert!(debug.contains("elapsed_us: 42"));
+        assert!(debug.contains("nodes_compiled: 5"));
+    }
+
+    // ── JitVal additional ────────────────────────────────────────────────
+
+    #[test]
+    fn jit_val_is_truthy_scalar_zero_scale() {
+        assert!(!JitVal::Scalar(0, 5).is_truthy());
+        assert!(JitVal::Scalar(1, 5).is_truthy());
+    }
+
+    #[test]
+    fn jit_val_to_f32_vec_float() {
+        let v = JitVal::Float(-2.5);
+        let f32v = v.to_f32_vec();
+        assert_eq!(f32v.len(), 1);
+        assert!((f32v[0] - (-2.5)).abs() < 1e-6);
+    }
+
+    #[test]
+    fn jit_val_to_f32_vec_scalar_zero() {
+        let s = JitVal::Scalar(0, 0);
+        let f32v = s.to_f32_vec();
+        assert!((f32v[0]).abs() < 1e-6);
+    }
+
+    #[test]
+    fn jit_val_to_f32_vec_scalar_large_scale() {
+        // 1 * 2^10 = 1024
+        let s = JitVal::Scalar(1, 10);
+        let f32v = s.to_f32_vec();
+        assert!((f32v[0] - 1024.0).abs() < 1e-2);
+    }
+
+    // ── JitState additional ──────────────────────────────────────────────
+
+    #[test]
+    fn jit_state_with_print_buffer() {
+        let (sm, _dir) = make_test_sitemap();
+        let mut state = JitState::new(&[1.0], &sm, 0);
+        state.print_buf.push("line1".into());
+        state.print_buf.push("line2".into());
+        let info = jit_state_info(&state);
+        assert_eq!(info.print_buffer_lines, 2);
+    }
+
+    #[test]
+    fn jit_state_full_utilization() {
+        let (sm, _dir) = make_test_sitemap();
+        let mut state = JitState::new(&[1.0], &sm, 2);
+        state.variables[0] = Some(JitVal::Scalar(1, 0));
+        state.variables[1] = Some(JitVal::Float(1.0));
+        let info = jit_state_info(&state);
+        assert!((info.variable_utilization - 1.0).abs() < 1e-9);
+        assert_eq!(info.bound_variables, 2);
+    }
+
+    // ── VarRegistry additional ───────────────────────────────────────────
+
+    #[test]
+    fn var_registry_many_slots() {
+        let reg = VarRegistry::new();
+        for i in 0..100 {
+            reg.get_or_create_slot(i);
+        }
+        assert_eq!(reg.total_slots(), 100);
+    }
+
+    #[test]
+    fn var_registry_info_json_value() {
+        let reg = VarRegistry::new();
+        reg.get_or_create_slot(0xAA);
+        reg.get_or_create_slot(0xBB);
+        let info = reg.info();
+        let json = serde_json::to_string(&info).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(v["total_slots"], 2);
+    }
+
+    // ── JitProgramInfo additional ────────────────────────────────────────
+
+    #[test]
+    fn jit_program_info_with_asm() {
+        let reg = VarRegistry::new();
+        let dummy_fn: JitFn = Arc::new(|_: &mut JitState<'_>| Ok(JitControlFlow::Continue));
+        let prog = JitProgram {
+            fns: vec![dummy_fn], nodes_compiled: 10, has_asm_kernel: true, registry: reg,
+        };
+        let info = jit_program_info(&prog);
+        assert!(info.has_asm_kernel);
+        assert_eq!(info.function_count, 1);
+        assert_eq!(info.nodes_compiled, 10);
+        assert!(info.validation_issues.is_empty());
+    }
+
+    #[test]
+    fn jit_program_info_json_values() {
+        let reg = VarRegistry::new();
+        let prog = JitProgram { fns: vec![], nodes_compiled: 0, has_asm_kernel: false, registry: reg };
+        let info = jit_program_info(&prog);
+        let json = serde_json::to_string(&info).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(v["function_count"], 0);
+        assert_eq!(v["nodes_compiled"], 0);
+        assert_eq!(v["has_asm_kernel"], false);
+        assert_eq!(v["variable_slots"], 0);
+    }
+
+    // ── run_sequence additional ──────────────────────────────────────────
+
+    #[test]
+    fn run_sequence_single_fn() {
+        let (sm, _dir) = make_test_sitemap();
+        let mut state = JitState::new(&[1.0], &sm, 0);
+        let fns: Vec<JitFn> = vec![
+            Arc::new(|s: &mut JitState<'_>| {
+                s.executed_nodes += 1;
+                Ok(JitControlFlow::Continue)
+            }),
+        ];
+        let result = run_sequence(&fns, &mut state);
+        assert!(result.is_ok());
+        assert_eq!(state.executed_nodes, 1);
+    }
+
+    #[test]
+    fn run_sequence_ten_fns() {
+        let (sm, _dir) = make_test_sitemap();
+        let mut state = JitState::new(&[1.0], &sm, 0);
+        let fns: Vec<JitFn> = (0..10).map(|_| {
+            Arc::new(|s: &mut JitState<'_>| {
+                s.executed_nodes += 1;
+                Ok(JitControlFlow::Continue)
+            }) as JitFn
+        }).collect();
+        let result = run_sequence(&fns, &mut state);
+        assert!(result.is_ok());
+        assert_eq!(state.executed_nodes, 10);
+    }
+
+    // ── Validate: edge cases ─────────────────────────────────────────────
+
+    #[test]
+    fn validate_jit_state_mmio_boundary() {
+        let (sm, _dir) = make_test_sitemap();
+        let mut state = JitState::new(&[1.0], &sm, 0);
+        // Just below reserved page — should be OK
+        state.mmio.insert(0xFFFE_FFFF, JitVal::Float(1.0));
+        let issues = validate_jit_state(&state);
+        assert!(issues.is_empty());
+    }
+
+    #[test]
+    fn validate_jit_state_interrupt_boundary() {
+        let (sm, _dir) = make_test_sitemap();
+        let mut state = JitState::new(&[1.0], &sm, 0);
+        // Exactly at max — should be OK
+        state.interrupts.insert(255, 0x01);
+        let issues = validate_jit_state(&state);
+        assert!(issues.is_empty());
+    }
+
+    #[test]
+    fn validate_jit_state_interrupt_just_over() {
+        let (sm, _dir) = make_test_sitemap();
+        let mut state = JitState::new(&[1.0], &sm, 0);
+        state.interrupts.insert(256, 0x01);
+        let issues = validate_jit_state(&state);
+        assert!(issues.iter().any(|i| i.contains("interrupt vector")));
+    }
+
+    // ── Pretty JSON ──────────────────────────────────────────────────────
+
+    #[test]
+    fn jit_state_info_pretty_json() {
+        let (sm, _dir) = make_test_sitemap();
+        let state = JitState::new(&[1.0], &sm, 0);
+        let info = jit_state_info(&state);
+        let pretty = serde_json::to_string_pretty(&info).unwrap();
+        assert!(pretty.contains('\n'));
+        let v: serde_json::Value = serde_json::from_str(&pretty).unwrap();
+        assert_eq!(v["heap_capacity_bytes"], 65536);
+    }
+
+    #[test]
+    fn jit_result_info_pretty_json() {
+        let result = JitResult {
+            output_vec: vec![], output_dim: 0, elapsed_us: 0,
+            nodes_compiled: 0, error: None,
+        };
+        let info = JitResultInfo::from_result(&result);
+        let pretty = serde_json::to_string_pretty(&info).unwrap();
+        assert!(pretty.contains('\n'));
+        let v: serde_json::Value = serde_json::from_str(&pretty).unwrap();
+        assert_eq!(v["success"], true);
+    }
 }
