@@ -1,15 +1,7 @@
-Block 201: x86_emitter.rs — 24 new tests (115 total)
+pipeline_nda.rs — 22 new tests (139 total), committed
 
-Coverage areas:
-- gemv_native: output size verification, correct dimensions with NdaMatrix::new_quad
-- is_pure_scalar: SiLU not eligible (only Negate/Abs/ReduceSum), nested Add of Loads,
-  if with impure then/else body
-- native_compile_info: Norm node interpreter-only, multiple variables count,
-  JSON all 11 fields present, total=eligible+interpreter invariant,
-  while sets both loop flags, no-ops flags for pure nodes,
-  empty has no flags, if without else still sets conditionals
-- count_nodes: empty while body, nested scopes, all CmpOp variants
-- emitter_diagnostic: short buffer (2 bytes), 3 bytes no ret, multiple issues count,
-  validation issues >= 2 for empty buffer
-- emitter operations: mov_eax_imm32 length, multiple mov_eax last wins,
-  multiple emits accumulate correctly
+Block 202: pipeline_nda.rs — NdaHead save magic bytes, forward sparse/negative input,
+PipelineMode mixed case + Auto never detected, cache_hit_rate boundary, top_opcodes n=1,
+snapshot elapsed_ms truncation, validate combinations, execution_summary field derivations,
+batch report field access, random_uniform properties, argmax_f32 additional cases,
+ensure_distribution preserves pre-filled, JSON field count

@@ -2820,4 +2820,294 @@ mod tests {
         assert_eq!(obj["scope_passed"], false);
         assert_eq!(obj["stored_in_site_map"], false);
     }
+
+    // ── Block 202: NdaHead save magic bytes ────────────────────────────────
+
+    #[test]
+    fn nda_head_save_starts_with_magic_bytes() {
+        use tempfile::NamedTempFile;
+        let head = NdaHead::zeros();
+        let file = NamedTempFile::new().unwrap();
+        head.save(file.path()).unwrap();
+        let buf = std::fs::read(file.path()).unwrap();
+        assert_eq!(&buf[..4], b"NDA\x01");
+    }
+
+    #[test]
+    fn nda_head_load_magic_must_match_exactly() {
+        use tempfile::NamedTempFile;
+        let file = NamedTempFile::new().unwrap();
+        // "NDA\x02" — wrong version byte
+        std::fs::write(file.path(), b"NDA\x02\x00\x00\x00\x00").unwrap();
+        let result = NdaHead::load(file.path());
+        assert!(result.is_err());
+    }
+
+    // ── Block 202: NdaHead forward with sparse input ────────────────────────
+
+    #[test]
+    fn nda_head_forward_sparse_input() {
+        let head = NdaHead::random();
+        let mut hidden = vec![0.0f32; 896];
+        hidden[42] = 1.0; // only one non-zero element
+        let logits = head.forward(&hidden);
+        assert_eq!(logits.len(), NdaOpcode::VOCAB_SIZE);
+        // Output should be deterministic for same input
+        let logits2 = head.forward(&hidden);
+        assert_eq!(logits, logits2);
+    }
+
+    #[test]
+    fn nda_head_forward_negative_hidden() {
+        let head = NdaHead::random();
+        let hidden = vec![-100.0f32; 896];
+        let logits = head.forward(&hidden);
+        // ReLU kills negative pre-activations, but large negative input
+        // through random weights can still produce positive pre-activations
+        assert_eq!(logits.len(), NdaOpcode::VOCAB_SIZE);
+    }
+
+    // ── Block 202: PipelineMode edge cases ─────────────────────────────────
+
+    #[test]
+    fn pipeline_mode_from_str_mixed_case() {
+        assert_eq!(PipelineMode::from_str("nDa"), PipelineMode::Nda);
+        assert_eq!(PipelineMode::from_str("Native"), PipelineMode::Nda);
+        assert_eq!(PipelineMode::from_str("Auto"), PipelineMode::Auto);
+    }
+
+    #[test]
+    fn pipeline_mode_auto_never_detected() {
+        // PipelineMode::detect never returns Auto — only Nda or Text
+        let prompts = ["", "implement", "what is", "hello", "def foo", "123"];
+        for p in &prompts {
+            let mode = PipelineMode::detect(p);
+            assert_ne!(mode, PipelineMode::Auto, "detect should never return Auto for: {}", p);
+        }
+    }
+
+    // ── Block 202: NdaGenStats formula edge cases ──────────────────────────
+
+    #[test]
+    fn cache_hit_rate_one_hit_zero_misses() {
+        let stats = NdaGenStats {
+            site_map_hits: 1,
+            site_map_misses: 0,
+            ..Default::default()
+        };
+        assert!((stats.cache_hit_rate() - 1.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn top_opcodes_n_one_returns_only_best() {
+        let mut stats = NdaGenStats::default();
+        stats.ensure_distribution();
+        stats.opcode_distribution[NdaOpcode::Scope as usize] = 5;
+        stats.opcode_distribution[NdaOpcode::Int as usize] = 50;
+        stats.opcode_distribution[NdaOpcode::Matrix as usize] = 20;
+        let top = stats.top_opcodes(1);
+        assert_eq!(top.len(), 1);
+        assert_eq!(top[0].0, NdaOpcode::Int);
+        assert_eq!(top[0].1, 50);
+    }
+
+    #[test]
+    fn nda_gen_stats_snapshot_elapsed_ms_truncates_u128_to_u64() {
+        let stats = NdaGenStats {
+            elapsed_ms: u128::from(u64::MAX),
+            ..Default::default()
+        };
+        let snap = stats.snapshot();
+        assert_eq!(snap.elapsed_ms, u64::MAX);
+    }
+
+    // ── Block 202: NdaGenerationResult validate combinations ───────────────
+
+    #[test]
+    fn generation_result_validate_only_force_terminated() {
+        let result = NdaGenerationResult {
+            nodes: vec![],
+            root_hash: 1,
+            valid: true,
+            force_terminated: true,
+            site_map_key: None,
+            sandbox: None,
+            scope: None,
+            stats: NdaGenStats::default(),
+            node_count: 5,
+        };
+        let warnings = result.validate();
+        assert_eq!(warnings.len(), 1, "expected 1 warning, got: {:?}", warnings);
+        assert!(warnings[0].contains("force-terminated"));
+    }
+
+    #[test]
+    fn generation_result_validate_invalid_and_zero_nodes() {
+        // Invalid + zero nodes: only "not valid" warning (zero-nodes warning requires valid=true)
+        let result = NdaGenerationResult {
+            nodes: vec![],
+            root_hash: 0,
+            valid: false,
+            force_terminated: false,
+            site_map_key: None,
+            sandbox: None,
+            scope: None,
+            stats: NdaGenStats::default(),
+            node_count: 0,
+        };
+        let warnings = result.validate();
+        assert_eq!(warnings.len(), 1, "expected 1 warning, got: {:?}", warnings);
+        assert!(warnings[0].contains("not valid"));
+    }
+
+    // ── Block 202: execution_summary field derivations ─────────────────────
+
+    #[test]
+    fn execution_summary_tokens_from_stats() {
+        let mut stats = NdaGenStats::default();
+        stats.tokens_emitted = 777;
+        let result = NdaGenerationResult {
+            nodes: vec![],
+            root_hash: 0,
+            valid: true,
+            force_terminated: false,
+            site_map_key: None,
+            sandbox: None,
+            scope: None,
+            stats,
+            node_count: 0,
+        };
+        let summary = result.execution_summary();
+        assert_eq!(summary.tokens_emitted, 777);
+    }
+
+    #[test]
+    fn execution_summary_cache_hit_rate_from_stats() {
+        let mut stats = NdaGenStats::default();
+        stats.site_map_hits = 9;
+        stats.site_map_misses = 1;
+        let result = NdaGenerationResult {
+            nodes: vec![],
+            root_hash: 0,
+            valid: true,
+            force_terminated: false,
+            site_map_key: None,
+            sandbox: None,
+            scope: None,
+            stats,
+            node_count: 0,
+        };
+        let summary = result.execution_summary();
+        assert!((summary.cache_hit_rate - 0.9).abs() < 0.01);
+    }
+
+    // ── Block 202: BatchGenerationReport field access ──────────────────────
+
+    #[test]
+    fn batch_report_results_accessible() {
+        let report = BatchGenerationReport {
+            prompt_count: 2,
+            results: vec![
+                BatchItemResult {
+                    index: 0, valid: true, force_terminated: false,
+                    tokens_emitted: 10, node_count: 2, elapsed_ms: 5,
+                    root_hash: 1, site_map_key: None, cache_hit_rate: 0.5,
+                },
+                BatchItemResult {
+                    index: 1, valid: false, force_terminated: true,
+                    tokens_emitted: 20, node_count: 0, elapsed_ms: 15,
+                    root_hash: 0, site_map_key: None, cache_hit_rate: 0.0,
+                },
+            ],
+            total_elapsed_ms: 20,
+            total_tokens: 30,
+            valid_count: 1,
+            truncated_count: 1,
+            avg_cache_hit_rate: 0.25,
+        };
+        assert_eq!(report.results[0].index, 0);
+        assert!(report.results[0].valid);
+        assert_eq!(report.results[1].index, 1);
+        assert!(report.results[1].force_terminated);
+        assert_eq!(report.total_tokens, 30);
+    }
+
+    // ── Block 202: random_uniform properties ───────────────────────────────
+
+    #[test]
+    fn random_uniform_single_element() {
+        let v = random_uniform(1, 1.0);
+        assert_eq!(v.len(), 1);
+        assert!(v[0].abs() <= 1.0 + 1e-6);
+    }
+
+    #[test]
+    fn random_uniform_not_all_same() {
+        let v = random_uniform(100, 1.0);
+        // With a PRNG, 100 values should not all be identical
+        let first = v[0];
+        assert!(v.iter().any(|&x| (x - first).abs() > 1e-9));
+    }
+
+    #[test]
+    fn random_uniform_negative_scale() {
+        // Scale is just a multiplier; negative scale should work
+        let v = random_uniform(50, -1.0);
+        assert_eq!(v.len(), 50);
+        // Values should be in [-1, 1] range (scale just flips sign)
+        for &val in &v {
+            assert!(val.abs() <= 1.0 + 1e-6);
+        }
+    }
+
+    // ── Block 202: argmax_f32 additional cases ─────────────────────────────
+
+    #[test]
+    fn argmax_f32_two_elements_first_wins() {
+        assert_eq!(argmax_f32(&[10.0, 5.0]), 0);
+    }
+
+    #[test]
+    fn argmax_f32_two_elements_second_wins() {
+        assert_eq!(argmax_f32(&[5.0, 10.0]), 1);
+    }
+
+    #[test]
+    fn argmax_f32_inf_values() {
+        assert_eq!(argmax_f32(&[f32::INFINITY, 1e30]), 0);
+    }
+
+    // ── Block 202: NdaGenStats ensure_distribution with pre-filled ─────────
+
+    #[test]
+    fn ensure_distribution_preserves_existing_nonzero() {
+        let mut stats = NdaGenStats::default();
+        stats.opcode_distribution = vec![7; NdaOpcode::VOCAB_SIZE];
+        stats.ensure_distribution(); // should NOT reset since non-empty
+        assert_eq!(stats.opcode_distribution[0], 7);
+        assert_eq!(stats.opcode_distribution[NdaOpcode::VOCAB_SIZE - 1], 7);
+    }
+
+    // ── Block 202: NdaGenerationResult JSON field count ────────────────────
+
+    #[test]
+    fn generation_result_json_field_count() {
+        let result = NdaGenerationResult {
+            nodes: vec![],
+            root_hash: 0,
+            valid: true,
+            force_terminated: false,
+            site_map_key: None,
+            sandbox: None,
+            scope: None,
+            stats: NdaGenStats::default(),
+            node_count: 0,
+        };
+        let json = serde_json::to_string(&result).unwrap();
+        let map: serde_json::Value = serde_json::from_str(&json).unwrap();
+        let obj = map.as_object().unwrap();
+        // root_hash, valid, force_terminated, site_map_key, stats, node_count
+        // (nodes, sandbox, scope are skipped)
+        assert_eq!(obj.len(), 6);
+    }
 }
