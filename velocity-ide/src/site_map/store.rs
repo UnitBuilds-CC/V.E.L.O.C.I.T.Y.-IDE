@@ -1365,3 +1365,770 @@ impl SiteMap {
         })
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::nda_int::NdaVec;
+    use crate::site_map::types::{EntryKind, SiteMapEntry, VcTriple};
+    use crate::site_map::verifier::NdaNode;
+
+    fn temp_dir(name: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("sitemap_store_test_{}", name));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    fn cleanup(dir: &Path) {
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    fn test_ndavec(values: &[i32]) -> NdaVec {
+        let f32_values: Vec<f32> = values.iter().map(|&v| v as f32).collect();
+        NdaVec::from_f32_slice(&f32_values)
+    }
+
+    // ── file_sha / verify_file_sha ──────────────────────────────────────────
+
+    #[test]
+    fn file_sha_deterministic() {
+        let data = b"hello world";
+        let sha1 = SiteMap::file_sha(data);
+        let sha2 = SiteMap::file_sha(data);
+        assert_eq!(sha1, sha2);
+    }
+
+    #[test]
+    fn file_sha_different_data() {
+        let sha1 = SiteMap::file_sha(b"hello");
+        let sha2 = SiteMap::file_sha(b"world");
+        assert_ne!(sha1, sha2);
+    }
+
+    #[test]
+    fn file_sha_empty_data() {
+        let sha = SiteMap::file_sha(b"");
+        assert!(!sha.is_empty());
+    }
+
+    #[test]
+    fn verify_file_sha_valid() {
+        let data = b"test data";
+        let sha = SiteMap::file_sha(data);
+        assert!(SiteMap::verify_file_sha(data, &sha));
+    }
+
+    #[test]
+    fn verify_file_sha_invalid() {
+        let data = b"test data";
+        assert!(!SiteMap::verify_file_sha(data, "deadbeef"));
+    }
+
+    #[test]
+    fn verify_file_sha_tampered() {
+        let data = b"test data";
+        let sha = SiteMap::file_sha(data);
+        assert!(!SiteMap::verify_file_sha(b"tampered", &sha));
+    }
+
+    // ── compute_index_root ──────────────────────────────────────────────────
+
+    #[test]
+    fn compute_index_root_empty() {
+        let root = SiteMap::compute_index_root(std::iter::empty());
+        assert_ne!(root, 0);
+    }
+
+    #[test]
+    fn compute_index_root_order_independent() {
+        let e1 = SiteMapEntry { kind: EntryKind::Kv, hash: 1, file: "a".into(), file_sha: "x".into(), size: 1 };
+        let e2 = SiteMapEntry { kind: EntryKind::Kv, hash: 2, file: "b".into(), file_sha: "y".into(), size: 2 };
+        let root_ab = SiteMap::compute_index_root(vec![&e1, &e2]);
+        let root_ba = SiteMap::compute_index_root(vec![&e2, &e1]);
+        assert_eq!(root_ab, root_ba);
+    }
+
+    #[test]
+    fn compute_index_root_different_entries() {
+        let e1 = SiteMapEntry { kind: EntryKind::Kv, hash: 1, file: "a".into(), file_sha: "x".into(), size: 1 };
+        let e2 = SiteMapEntry { kind: EntryKind::Kv, hash: 2, file: "b".into(), file_sha: "y".into(), size: 2 };
+        let root1 = SiteMap::compute_index_root(vec![&e1]);
+        let root2 = SiteMap::compute_index_root(vec![&e2]);
+        assert_ne!(root1, root2);
+    }
+
+    // ── extract_triples_recursive ───────────────────────────────────────────
+
+    #[test]
+    fn extract_triples_from_triple_node() {
+        let node = NdaNode::Triple { subject_hash: 10, predicate_id: 2, object_hash: 20 };
+        let mut triples = Vec::new();
+        SiteMap::extract_triples_recursive(&node, &mut triples);
+        assert_eq!(triples.len(), 1);
+        assert_eq!(triples[0].subject_hash, 10);
+        assert_eq!(triples[0].predicate_id, 2);
+        assert_eq!(triples[0].object_hash, 20);
+    }
+
+    #[test]
+    fn extract_triples_from_scope() {
+        let node = NdaNode::Scope { children: vec![
+            NdaNode::Triple { subject_hash: 1, predicate_id: 2, object_hash: 3 },
+            NdaNode::Triple { subject_hash: 4, predicate_id: 5, object_hash: 6 },
+        ]};
+        let mut triples = Vec::new();
+        SiteMap::extract_triples_recursive(&node, &mut triples);
+        assert_eq!(triples.len(), 2);
+    }
+
+    #[test]
+    fn extract_triples_from_loop_body() {
+        let node = NdaNode::Loop { count: 5, body: vec![
+            NdaNode::Triple { subject_hash: 1, predicate_id: 2, object_hash: 3 },
+        ]};
+        let mut triples = Vec::new();
+        SiteMap::extract_triples_recursive(&node, &mut triples);
+        assert_eq!(triples.len(), 1);
+    }
+
+    #[test]
+    fn extract_triples_from_if_branches() {
+        let node = NdaNode::If {
+            cond: Box::new(NdaNode::Triple { subject_hash: 1, predicate_id: 2, object_hash: 3 }),
+            then_body: vec![NdaNode::Triple { subject_hash: 4, predicate_id: 5, object_hash: 6 }],
+            else_body: Some(vec![NdaNode::Triple { subject_hash: 7, predicate_id: 8, object_hash: 9 }]),
+        };
+        let mut triples = Vec::new();
+        SiteMap::extract_triples_recursive(&node, &mut triples);
+        assert_eq!(triples.len(), 3);
+    }
+
+    #[test]
+    fn extract_triples_no_triples() {
+        let node = NdaNode::Int { value: 42 };
+        let mut triples = Vec::new();
+        SiteMap::extract_triples_recursive(&node, &mut triples);
+        assert!(triples.is_empty());
+    }
+
+    #[test]
+    fn extract_triples_nested() {
+        let node = NdaNode::Scope { children: vec![
+            NdaNode::Loop { count: 3, body: vec![
+                NdaNode::If {
+                    cond: Box::new(NdaNode::Int { value: 1 }),
+                    then_body: vec![NdaNode::Triple { subject_hash: 1, predicate_id: 2, object_hash: 3 }],
+                    else_body: None,
+                },
+            ]},
+        ]};
+        let mut triples = Vec::new();
+        SiteMap::extract_triples_recursive(&node, &mut triples);
+        assert_eq!(triples.len(), 1);
+    }
+
+    // ── filter_triples ──────────────────────────────────────────────────────
+
+    #[test]
+    fn filter_triples_no_filters() {
+        let sm = SiteMap::open(&temp_dir("filter1"), 0).unwrap();
+        let triples = vec![
+            VcTriple { subject_hash: 1, predicate_id: 2, object_hash: 3 },
+            VcTriple { subject_hash: 4, predicate_id: 5, object_hash: 6 },
+        ];
+        let result = sm.filter_triples(triples, None, None, None);
+        assert_eq!(result.len(), 2);
+        cleanup(&sm.base);
+    }
+
+    #[test]
+    fn filter_triples_by_subject() {
+        let sm = SiteMap::open(&temp_dir("filter2"), 0).unwrap();
+        let triples = vec![
+            VcTriple { subject_hash: 1, predicate_id: 2, object_hash: 3 },
+            VcTriple { subject_hash: 4, predicate_id: 5, object_hash: 6 },
+        ];
+        let result = sm.filter_triples(triples, Some(1), None, None);
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].subject_hash, 1);
+        cleanup(&sm.base);
+    }
+
+    #[test]
+    fn filter_triples_by_predicate() {
+        let sm = SiteMap::open(&temp_dir("filter3"), 0).unwrap();
+        let triples = vec![
+            VcTriple { subject_hash: 1, predicate_id: 2, object_hash: 3 },
+            VcTriple { subject_hash: 4, predicate_id: 5, object_hash: 6 },
+        ];
+        let result = sm.filter_triples(triples, None, Some(5), None);
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].predicate_id, 5);
+        cleanup(&sm.base);
+    }
+
+    #[test]
+    fn filter_triples_by_object() {
+        let sm = SiteMap::open(&temp_dir("filter4"), 0).unwrap();
+        let triples = vec![
+            VcTriple { subject_hash: 1, predicate_id: 2, object_hash: 3 },
+            VcTriple { subject_hash: 4, predicate_id: 5, object_hash: 6 },
+        ];
+        let result = sm.filter_triples(triples, None, None, Some(6));
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].object_hash, 6);
+        cleanup(&sm.base);
+    }
+
+    #[test]
+    fn filter_triples_combined() {
+        let sm = SiteMap::open(&temp_dir("filter5"), 0).unwrap();
+        let triples = vec![
+            VcTriple { subject_hash: 1, predicate_id: 2, object_hash: 3 },
+            VcTriple { subject_hash: 1, predicate_id: 5, object_hash: 3 },
+            VcTriple { subject_hash: 4, predicate_id: 2, object_hash: 6 },
+        ];
+        let result = sm.filter_triples(triples, Some(1), None, Some(3));
+        assert_eq!(result.len(), 2);
+        cleanup(&sm.base);
+    }
+
+    // ── open / basic accessors ──────────────────────────────────────────────
+
+    #[test]
+    fn open_creates_directories() {
+        let dir = temp_dir("open_dirs");
+        let sm = SiteMap::open(&dir, 0x1234).unwrap();
+        assert!(dir.join("kv").exists());
+        assert!(dir.join("nodes").exists());
+        assert!(dir.join("programs").exists());
+        cleanup(&dir);
+    }
+
+    #[test]
+    fn open_empty_has_zero_counts() {
+        let dir = temp_dir("open_empty");
+        let sm = SiteMap::open(&dir, 0).unwrap();
+        assert_eq!(sm.len(), 0);
+        assert!(sm.is_empty());
+        cleanup(&dir);
+    }
+
+    #[test]
+    fn open_preserves_weight_root() {
+        let dir = temp_dir("open_weight");
+        let sm = SiteMap::open(&dir, 0xABCD).unwrap();
+        assert_eq!(sm.weight_root(), 0xABCD);
+        cleanup(&dir);
+    }
+
+    // ── token_hash ──────────────────────────────────────────────────────────
+
+    #[test]
+    fn token_hash_deterministic() {
+        let dir = temp_dir("thash1");
+        let sm = SiteMap::open(&dir, 42).unwrap();
+        let h1 = sm.token_hash(1, 0);
+        let h2 = sm.token_hash(1, 0);
+        assert_eq!(h1, h2);
+        cleanup(&dir);
+    }
+
+    #[test]
+    fn token_hash_varies_with_token() {
+        let dir = temp_dir("thash2");
+        let sm = SiteMap::open(&dir, 42).unwrap();
+        let h1 = sm.token_hash(1, 0);
+        let h2 = sm.token_hash(2, 0);
+        assert_ne!(h1, h2);
+        cleanup(&dir);
+    }
+
+    #[test]
+    fn token_hash_varies_with_layer() {
+        let dir = temp_dir("thash3");
+        let sm = SiteMap::open(&dir, 42).unwrap();
+        let h1 = sm.token_hash(1, 0);
+        let h2 = sm.token_hash(1, 1);
+        assert_ne!(h1, h2);
+        cleanup(&dir);
+    }
+
+    #[test]
+    fn token_hash_varies_with_weight_root() {
+        let dir1 = temp_dir("thash4a");
+        let dir2 = temp_dir("thash4b");
+        let sm1 = SiteMap::open(&dir1, 1).unwrap();
+        let sm2 = SiteMap::open(&dir2, 2).unwrap();
+        assert_ne!(sm1.token_hash(1, 0), sm2.token_hash(1, 0));
+        cleanup(&dir1);
+        cleanup(&dir2);
+    }
+
+    // ── hash_string ─────────────────────────────────────────────────────────
+
+    #[test]
+    fn hash_string_deterministic() {
+        let dir = temp_dir("hstr1");
+        let sm = SiteMap::open(&dir, 0).unwrap();
+        let h1 = sm.hash_string("hello");
+        let h2 = sm.hash_string("hello");
+        assert_eq!(h1, h2);
+        cleanup(&dir);
+    }
+
+    #[test]
+    fn hash_string_different_strings() {
+        let dir = temp_dir("hstr2");
+        let sm = SiteMap::open(&dir, 0).unwrap();
+        assert_ne!(sm.hash_string("hello"), sm.hash_string("world"));
+        cleanup(&dir);
+    }
+
+    // ── put_kv ──────────────────────────────────────────────────────────────
+
+    #[test]
+    fn put_kv_stores_entry() {
+        let dir = temp_dir("putkv1");
+        let mut sm = SiteMap::open(&dir, 0).unwrap();
+        let k = test_ndavec(&[1, 2, 3]);
+        let v = test_ndavec(&[4, 5, 6]);
+        let key = sm.put_kv(1, 0, k, v).unwrap();
+        assert_ne!(key, 0);
+        assert_eq!(sm.len(), 1);
+        assert!(!sm.is_empty());
+        cleanup(&dir);
+    }
+
+    #[test]
+    fn put_kv_idempotent() {
+        let dir = temp_dir("putkv2");
+        let mut sm = SiteMap::open(&dir, 0).unwrap();
+        let k = test_ndavec(&[1, 2]);
+        let v = test_ndavec(&[3, 4]);
+        let key1 = sm.put_kv(1, 0, k.clone(), v.clone()).unwrap();
+        let key2 = sm.put_kv(1, 0, k, v).unwrap();
+        assert_eq!(key1, key2);
+        assert_eq!(sm.len(), 1);
+        cleanup(&dir);
+    }
+
+    #[test]
+    fn put_kv_multiple_distinct_keys() {
+        let dir = temp_dir("putkv3");
+        let mut sm = SiteMap::open(&dir, 0).unwrap();
+        sm.put_kv(1, 0, test_ndavec(&[1]), test_ndavec(&[2])).unwrap();
+        sm.put_kv(2, 0, test_ndavec(&[3]), test_ndavec(&[4])).unwrap();
+        assert_eq!(sm.len(), 2);
+        cleanup(&dir);
+    }
+
+    // ── put_node / get_node ─────────────────────────────────────────────────
+
+    #[test]
+    fn put_node_stores_and_get_retrieves() {
+        let dir = temp_dir("putnode1");
+        let mut sm = SiteMap::open(&dir, 0).unwrap();
+        let node = NdaNode::Int { value: 42 };
+        let key = sm.put_node(&node).unwrap();
+        let retrieved = sm.get_node(key);
+        assert!(retrieved.is_some());
+        cleanup(&dir);
+    }
+
+    #[test]
+    fn get_node_missing_returns_none() {
+        let dir = temp_dir("putnode2");
+        let sm = SiteMap::open(&dir, 0).unwrap();
+        assert!(sm.get_node(0xDEADBEEF).is_none());
+        cleanup(&dir);
+    }
+
+    // ── stats ───────────────────────────────────────────────────────────────
+
+    #[test]
+    fn stats_empty() {
+        let dir = temp_dir("stats1");
+        let sm = SiteMap::open(&dir, 0).unwrap();
+        let s = sm.stats();
+        assert_eq!(s.kv, 0);
+        assert_eq!(s.nodes, 0);
+        assert_eq!(s.total_entries, 0);
+        cleanup(&dir);
+    }
+
+    #[test]
+    fn stats_after_kv() {
+        let dir = temp_dir("stats2");
+        let mut sm = SiteMap::open(&dir, 0).unwrap();
+        sm.put_kv(1, 0, test_ndavec(&[1]), test_ndavec(&[2])).unwrap();
+        let s = sm.stats();
+        assert_eq!(s.kv, 1);
+        assert_eq!(s.total_entries, 1);
+        assert!(s.total_bytes > 0);
+        cleanup(&dir);
+    }
+
+    // ── validate / info / verify ────────────────────────────────────────────
+
+    #[test]
+    fn validate_empty_index() {
+        let dir = temp_dir("val1");
+        let sm = SiteMap::open(&dir, 0).unwrap();
+        let w = sm.validate();
+        assert!(w.iter().any(|s| s.contains("empty")));
+        cleanup(&dir);
+    }
+
+    #[test]
+    fn info_has_correct_counts() {
+        let dir = temp_dir("info1");
+        let mut sm = SiteMap::open(&dir, 0).unwrap();
+        sm.put_kv(1, 0, test_ndavec(&[1]), test_ndavec(&[2])).unwrap();
+        let info = sm.info();
+        assert_eq!(info.kv_count, 1);
+        assert_eq!(info.total_entries, 1);
+        assert_eq!(info.kv_cache_max, MAX_KV_CACHE_SIZE);
+        cleanup(&dir);
+    }
+
+    #[test]
+    fn verify_clean_after_put() {
+        let dir = temp_dir("verify1");
+        let mut sm = SiteMap::open(&dir, 0).unwrap();
+        sm.put_kv(1, 0, test_ndavec(&[1]), test_ndavec(&[2])).unwrap();
+        assert_eq!(sm.verify(), 0);
+        cleanup(&dir);
+    }
+
+    #[test]
+    fn verify_detailed_all_valid() {
+        let dir = temp_dir("vdet1");
+        let mut sm = SiteMap::open(&dir, 0).unwrap();
+        sm.put_kv(1, 0, test_ndavec(&[1]), test_ndavec(&[2])).unwrap();
+        let report = sm.verify_detailed();
+        assert_eq!(report.total_entries, 1);
+        assert_eq!(report.valid, 1);
+        assert_eq!(report.corrupt, 0);
+        assert_eq!(report.missing, 0);
+        cleanup(&dir);
+    }
+
+    // ── register_string / resolve_string ────────────────────────────────────
+
+    #[test]
+    fn register_and_resolve_string() {
+        let dir = temp_dir("str1");
+        let sm = SiteMap::open(&dir, 0).unwrap();
+        let hash = sm.register_string("hello").unwrap();
+        let resolved = sm.resolve_string(hash);
+        assert_eq!(resolved, Some("hello".to_string()));
+        cleanup(&dir);
+    }
+
+    #[test]
+    fn resolve_unknown_string() {
+        let dir = temp_dir("str2");
+        let sm = SiteMap::open(&dir, 0).unwrap();
+        assert_eq!(sm.resolve_string(0xDEADBEEF), None);
+        cleanup(&dir);
+    }
+
+    // ── entries_by_kind / largest_entries ───────────────────────────────────
+
+    #[test]
+    fn entries_by_kind_kv() {
+        let dir = temp_dir("kind1");
+        let mut sm = SiteMap::open(&dir, 0).unwrap();
+        sm.put_kv(1, 0, test_ndavec(&[1]), test_ndavec(&[2])).unwrap();
+        let kv_entries = sm.entries_by_kind(&EntryKind::Kv);
+        assert_eq!(kv_entries.len(), 1);
+        let node_entries = sm.entries_by_kind(&EntryKind::Node);
+        assert!(node_entries.is_empty());
+        cleanup(&dir);
+    }
+
+    #[test]
+    fn largest_entries_sorted() {
+        let dir = temp_dir("largest1");
+        let mut sm = SiteMap::open(&dir, 0).unwrap();
+        sm.put_kv(1, 0, test_ndavec(&[1]), test_ndavec(&[2])).unwrap();
+        sm.put_kv(2, 0, test_ndavec(&[1, 2, 3, 4, 5]), test_ndavec(&[6, 7, 8, 9, 10])).unwrap();
+        let largest = sm.largest_entries(1);
+        assert_eq!(largest.len(), 1);
+        cleanup(&dir);
+    }
+
+    // ── cache_utilization ───────────────────────────────────────────────────
+
+    #[test]
+    fn cache_utilization_empty() {
+        let dir = temp_dir("cache1");
+        let sm = SiteMap::open(&dir, 0).unwrap();
+        assert!((sm.cache_utilization() - 0.0).abs() < f64::EPSILON);
+        cleanup(&dir);
+    }
+
+    // ── export_summary ──────────────────────────────────────────────────────
+
+    #[test]
+    fn export_summary_fields() {
+        let dir = temp_dir("export1");
+        let sm = SiteMap::open(&dir, 0xABCD).unwrap();
+        let summary = sm.export_summary();
+        assert!(summary.root.contains("0000"));
+        assert!(summary.weight_root.contains("abcd"));
+        assert!(summary.cache_utilization.contains("0.0%"));
+        cleanup(&dir);
+    }
+
+    // ── entry_kind_name / validate_entry ────────────────────────────────────
+
+    #[test]
+    fn entry_kind_names() {
+        assert_eq!(SiteMap::entry_kind_name(&EntryKind::Kv), "KV");
+        assert_eq!(SiteMap::entry_kind_name(&EntryKind::Node), "Node");
+        assert_eq!(SiteMap::entry_kind_name(&EntryKind::Program), "Program");
+        assert_eq!(SiteMap::entry_kind_name(&EntryKind::Snapshot), "Snapshot");
+    }
+
+    #[test]
+    fn validate_entry_clean() {
+        let entry = SiteMapEntry { kind: EntryKind::Kv, hash: 1, file: "kv/1.kv".into(), file_sha: "abc".into(), size: 100 };
+        assert!(SiteMap::validate_entry(&entry).is_empty());
+    }
+
+    #[test]
+    fn validate_entry_empty_file() {
+        let entry = SiteMapEntry { kind: EntryKind::Kv, hash: 1, file: "".into(), file_sha: "abc".into(), size: 100 };
+        assert!(!SiteMap::validate_entry(&entry).is_empty());
+    }
+
+    #[test]
+    fn validate_entry_empty_sha() {
+        let entry = SiteMapEntry { kind: EntryKind::Kv, hash: 1, file: "a".into(), file_sha: "".into(), size: 100 };
+        assert!(!SiteMap::validate_entry(&entry).is_empty());
+    }
+
+    #[test]
+    fn validate_entry_zero_size() {
+        let entry = SiteMapEntry { kind: EntryKind::Kv, hash: 1, file: "a".into(), file_sha: "abc".into(), size: 0 };
+        assert!(!SiteMap::validate_entry(&entry).is_empty());
+    }
+
+    // ── Serialization ───────────────────────────────────────────────────────
+
+    #[test]
+    fn site_map_info_serializes() {
+        let info = SiteMapInfo {
+            total_entries: 1, kv_count: 1, node_count: 0, program_count: 0, snapshot_count: 0,
+            total_bytes: 100, root: 0, weight_root: 0, kv_cache_size: 0, kv_cache_max: 4096,
+            string_dict_size: 0, validation_issues: vec![],
+        };
+        let json = serde_json::to_string(&info).unwrap();
+        assert!(json.contains("\"total_entries\":1"));
+    }
+
+    #[test]
+    fn site_map_summary_serializes() {
+        let summary = SiteMapSummary {
+            stats: "test".into(), root: "0000".into(), weight_root: "abcd".into(),
+            cache_utilization: "0.0%".into(), validation_clean: true,
+        };
+        let json = serde_json::to_string(&summary).unwrap();
+        assert!(json.contains("\"validation_clean\":true"));
+    }
+
+    #[test]
+    fn store_operation_report_serializes() {
+        let report = StoreOperationReport {
+            operation: "put_kv".into(), elapsed_us: 100, entries_affected: 1, total_entries_after: 5,
+        };
+        let json = serde_json::to_string(&report).unwrap();
+        assert!(json.contains("\"operation\":\"put_kv\""));
+    }
+
+    #[test]
+    fn triple_analysis_serializes() {
+        let analysis = TripleAnalysis {
+            total_triples: 10, unique_predicates: 2,
+            predicate_distribution: vec![PredicateCount { predicate_id: 1, count: 7 }],
+            unique_subjects: 5, unique_objects: 3,
+        };
+        let json = serde_json::to_string(&analysis).unwrap();
+        assert!(json.contains("\"total_triples\":10"));
+    }
+
+    // ── Batch operations ────────────────────────────────────────────────────
+
+    #[test]
+    fn put_kv_batch_inserts() {
+        let dir = temp_dir("batch1");
+        let mut sm = SiteMap::open(&dir, 0).unwrap();
+        let items = vec![
+            (1, 0, test_ndavec(&[1]), test_ndavec(&[2])),
+            (2, 0, test_ndavec(&[3]), test_ndavec(&[4])),
+        ];
+        let keys = sm.put_kv_batch(&items).unwrap();
+        assert_eq!(keys.len(), 2);
+        assert_eq!(sm.len(), 2);
+        cleanup(&dir);
+    }
+
+    #[test]
+    fn put_nodes_batch_inserts() {
+        let dir = temp_dir("batch2");
+        let mut sm = SiteMap::open(&dir, 0).unwrap();
+        let nodes = vec![
+            NdaNode::Int { value: 1 },
+            NdaNode::Int { value: 2 },
+        ];
+        let node_refs: Vec<&NdaNode> = nodes.iter().collect();
+        let keys = sm.put_nodes_batch(&node_refs).unwrap();
+        assert_eq!(keys.len(), 2);
+        cleanup(&dir);
+    }
+
+    #[test]
+    fn register_strings_batch() {
+        let dir = temp_dir("batch3");
+        let sm = SiteMap::open(&dir, 0).unwrap();
+        let hashes = sm.register_strings_batch(&["hello", "world"]).unwrap();
+        assert_eq!(hashes.len(), 2);
+        assert_ne!(hashes[0], hashes[1]);
+        cleanup(&dir);
+    }
+
+    #[test]
+    fn resolve_strings_batch() {
+        let dir = temp_dir("batch4");
+        let sm = SiteMap::open(&dir, 0).unwrap();
+        let hashes = sm.register_strings_batch(&["hello", "world"]).unwrap();
+        let resolved = sm.resolve_strings_batch(&hashes);
+        assert_eq!(resolved.len(), 2);
+        assert_eq!(resolved[0], Some("hello".to_string()));
+        assert_eq!(resolved[1], Some("world".to_string()));
+        cleanup(&dir);
+    }
+
+    // ── get_any_node_hash ───────────────────────────────────────────────────
+
+    #[test]
+    fn get_any_node_hash_empty() {
+        let dir = temp_dir("anyhash1");
+        let sm = SiteMap::open(&dir, 0).unwrap();
+        assert!(sm.get_any_node_hash().is_none());
+        cleanup(&dir);
+    }
+
+    #[test]
+    fn get_any_node_hash_after_put() {
+        let dir = temp_dir("anyhash2");
+        let mut sm = SiteMap::open(&dir, 0).unwrap();
+        sm.put_node(&NdaNode::Int { value: 1 }).unwrap();
+        assert!(sm.get_any_node_hash().is_some());
+        cleanup(&dir);
+    }
+
+    // ── predicate index ─────────────────────────────────────────────────────
+
+    #[test]
+    fn invalidate_predicate_index() {
+        let dir = temp_dir("predinv1");
+        let sm = SiteMap::open(&dir, 0).unwrap();
+        sm.invalidate_predicate_index();
+        let idx = sm.predicate_index.lock_safe();
+        assert!(idx.is_none());
+        cleanup(&dir);
+    }
+
+    // ── Reported operations ─────────────────────────────────────────────────
+
+    #[test]
+    fn put_kv_reported_works() {
+        let dir = temp_dir("reported1");
+        let mut sm = SiteMap::open(&dir, 0).unwrap();
+        let (key, report) = sm.put_kv_reported(1, 0, test_ndavec(&[1]), test_ndavec(&[2])).unwrap();
+        assert_ne!(key, 0);
+        assert_eq!(report.operation, "put_kv");
+        assert_eq!(report.entries_affected, 1);
+        assert!(report.elapsed_us >= 1);
+        cleanup(&dir);
+    }
+
+    #[test]
+    fn put_node_reported_works() {
+        let dir = temp_dir("reported2");
+        let mut sm = SiteMap::open(&dir, 0).unwrap();
+        let node = NdaNode::Int { value: 42 };
+        let (key, report) = sm.put_node_reported(&node).unwrap();
+        assert_ne!(key, 0);
+        assert_eq!(report.operation, "put_node");
+        assert_eq!(report.entries_affected, 1);
+        cleanup(&dir);
+    }
+
+    #[test]
+    fn flush_report_works() {
+        let dir = temp_dir("reported3");
+        let sm = SiteMap::open(&dir, 0).unwrap();
+        let report = sm.flush_report().unwrap();
+        assert_eq!(report.operation, "flush");
+        assert!(report.elapsed_us >= 1);
+        cleanup(&dir);
+    }
+
+    // ── Persistence round-trip ──────────────────────────────────────────────
+
+    #[test]
+    fn flush_and_reopen() {
+        let dir = temp_dir("persist1");
+        {
+            let mut sm = SiteMap::open(&dir, 0xABCD).unwrap();
+            sm.put_kv(1, 0, test_ndavec(&[1]), test_ndavec(&[2])).unwrap();
+            sm.flush().unwrap();
+        }
+        let sm2 = SiteMap::open(&dir, 0xABCD).unwrap();
+        assert_eq!(sm2.len(), 1);
+        assert_eq!(sm2.weight_root(), 0xABCD);
+        cleanup(&dir);
+    }
+
+    // ── put_file_snapshot / remove_file_snapshot ────────────────────────────
+
+    #[test]
+    fn put_and_remove_file_snapshot() {
+        let dir = temp_dir("snapshot1");
+        let mut sm = SiteMap::open(&dir, 0).unwrap();
+        let triples = vec![VcTriple { subject_hash: 1, predicate_id: 2, object_hash: 3 }];
+        let key = sm.put_file_snapshot("test.rs", &triples).unwrap();
+        assert_ne!(key, 0);
+        assert_eq!(sm.len(), 1);
+        let removed = sm.remove_file_snapshot("test.rs").unwrap();
+        assert!(removed);
+        assert_eq!(sm.len(), 0);
+        cleanup(&dir);
+    }
+
+    #[test]
+    fn remove_nonexistent_snapshot() {
+        let dir = temp_dir("snapshot2");
+        let mut sm = SiteMap::open(&dir, 0).unwrap();
+        let removed = sm.remove_file_snapshot("nonexistent.rs").unwrap();
+        assert!(!removed);
+        cleanup(&dir);
+    }
+
+    // ── triple_analysis ─────────────────────────────────────────────────────
+
+    #[test]
+    fn triple_analysis_empty() {
+        let dir = temp_dir("analysis1");
+        let sm = SiteMap::open(&dir, 0).unwrap();
+        let analysis = sm.triple_analysis();
+        assert_eq!(analysis.total_triples, 0);
+        assert_eq!(analysis.unique_predicates, 0);
+        cleanup(&dir);
+    }
+}
