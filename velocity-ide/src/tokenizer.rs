@@ -1294,4 +1294,441 @@ mod tests {
         assert!(json.contains("\"unique_tokens\":50"));
         assert!(json.contains("\"coverage\":0.96"));
     }
+
+    // ── Block 98: byte↔unicode mapping tests ─────────────────────────────
+
+    #[test]
+    fn byte_to_unicode_printable_range_identity() {
+        // Bytes 33..=126 map to themselves (ASCII printable)
+        for b in 33u8..=126 {
+            assert_eq!(byte_to_unicode(b) as u32, b as u32);
+        }
+    }
+
+    #[test]
+    fn byte_to_unicode_control_bytes_map_above_256() {
+        // Control bytes (0..32) and whitespace map to Unicode 256+
+        for b in 0u8..32 {
+            let c = byte_to_unicode(b);
+            assert!((c as u32) >= 256, "byte {} mapped to {}", b, c as u32);
+        }
+        // Space (32) is also remapped
+        assert!((byte_to_unicode(32) as u32) >= 256);
+    }
+
+    #[test]
+    fn byte_to_unicode_all_bytes_produce_unique_chars() {
+        let mut seen = std::collections::HashSet::new();
+        for b in 0u8..=255 {
+            let c = byte_to_unicode(b);
+            assert!(seen.insert(c), "byte {} produced duplicate char {}", b, c as u32);
+        }
+        assert_eq!(seen.len(), 256);
+    }
+
+    #[test]
+    fn unicode_to_byte_full_roundtrip() {
+        // Every byte 0..=255 roundtrips through byte_to_unicode → unicode_to_byte
+        for b in 0u8..=255 {
+            let c = byte_to_unicode(b);
+            let recovered = unicode_to_byte(c);
+            assert_eq!(recovered, b, "roundtrip failed for byte {}", b);
+        }
+    }
+
+    // ── Block 98: encode/decode edge cases ───────────────────────────────
+
+    #[test]
+    fn encode_empty_string_no_bos() {
+        let tok = make_test_tokenizer();
+        let ids = tok.encode("", false);
+        assert!(ids.is_empty());
+    }
+
+    #[test]
+    fn encode_empty_string_with_bos() {
+        let tok = make_test_tokenizer();
+        let ids = tok.encode("", true);
+        assert_eq!(ids.len(), 1);
+        assert_eq!(ids[0], tok.bos_id);
+    }
+
+    #[test]
+    fn encode_bos_prepends_exactly_one_token() {
+        let tok = make_test_tokenizer();
+        let ids_no_bos = tok.encode("hi", false);
+        let ids_bos = tok.encode("hi", true);
+        assert_eq!(ids_bos.len(), ids_no_bos.len() + 1);
+        assert_eq!(ids_bos[0], tok.bos_id);
+        assert_eq!(&ids_bos[1..], &ids_no_bos[..]);
+    }
+
+    #[test]
+    fn decode_token_tiktoken_strips_special_tokens() {
+        let tok = make_test_tokenizer();
+        // <|endoftext|> in tiktoken mode → empty string
+        let endoftext_id = tok.vocab.get("<|endoftext|>").copied().unwrap();
+        assert_eq!(tok.decode_token(endoftext_id), "");
+    }
+
+    #[test]
+    fn decode_empty_slice() {
+        let tok = make_test_tokenizer();
+        assert_eq!(tok.decode(&[]), "");
+    }
+
+    #[test]
+    fn encode_batch_empty_list() {
+        let tok = make_test_tokenizer();
+        let results = tok.encode_batch(&[], false);
+        assert!(results.is_empty());
+    }
+
+    #[test]
+    fn encode_batch_single_empty_string() {
+        let tok = make_test_tokenizer();
+        let results = tok.encode_batch(&[""], false);
+        assert_eq!(results.len(), 1);
+        assert!(results[0].is_empty());
+    }
+
+    #[test]
+    fn count_tokens_empty_string() {
+        let tok = make_test_tokenizer();
+        assert_eq!(tok.count_tokens(""), 0);
+    }
+
+    #[test]
+    fn total_tokens_empty_batch() {
+        let tok = make_test_tokenizer();
+        assert_eq!(tok.total_tokens(&[]), 0);
+    }
+
+    // ── Block 98: budget boundary ────────────────────────────────────────
+
+    #[test]
+    fn exceeds_budget_exact_boundary() {
+        let tok = make_test_tokenizer();
+        // "hi" → 2 tokens; budget of exactly 2 → NOT exceeded
+        assert!(!tok.exceeds_budget("hi", 2));
+        // budget of 1 → exceeded
+        assert!(tok.exceeds_budget("hi", 1));
+        // budget of 0 → exceeded for non-empty
+        assert!(tok.exceeds_budget("hi", 0));
+        // empty text with budget 0 → not exceeded
+        assert!(!tok.exceeds_budget("", 0));
+    }
+
+    // ── Block 98: chunk_text advanced ────────────────────────────────────
+
+    #[test]
+    fn chunk_text_multiple_chunks() {
+        let tok = make_test_tokenizer();
+        // Each char = 1 token in tiktoken mode. "abcdefgh" = 8 tokens.
+        // With max_tokens=3, we need multiple chunks.
+        let text = "abc def ghi jkl";
+        let chunks = tok.chunk_text(text, 3);
+        assert!(chunks.len() >= 2, "expected multiple chunks, got {}", chunks.len());
+    }
+
+    #[test]
+    fn chunk_text_all_content_preserved() {
+        let tok = make_test_tokenizer();
+        let text = "hello world foo bar baz";
+        let chunks = tok.chunk_text(text, 4);
+        // Rejoin chunks — should approximately reconstruct original words
+        let rejoined: String = chunks.join(" ");
+        // Every original word should appear in the rejoined string
+        for word in text.split_whitespace() {
+            assert!(
+                rejoined.contains(word),
+                "word {:?} missing from rejoined chunks: {:?}",
+                word,
+                chunks
+            );
+        }
+    }
+
+    #[test]
+    fn chunk_text_splits_long_text() {
+        let tok = make_test_tokenizer();
+        // Use text with whitespace so chunker can split on word boundaries
+        let text = "ab cd ef gh ij kl mn op";
+        let max = 4;
+        let chunks = tok.chunk_text(text, max);
+        // Should produce multiple chunks for long text
+        assert!(chunks.len() >= 2, "expected multiple chunks, got {}", chunks.len());
+        // Each chunk should be strictly shorter than the original
+        for chunk in &chunks {
+            assert!(chunk.len() < text.len(), "chunk should be shorter than original");
+            assert!(!chunk.is_empty(), "no empty chunks");
+        }
+    }
+
+    // ── Block 98: estimate_text_length ───────────────────────────────────
+
+    #[test]
+    fn estimate_text_length_scales_linearly() {
+        let tok = make_test_tokenizer();
+        let est10 = tok.estimate_text_length_for_tokens(10);
+        let est20 = tok.estimate_text_length_for_tokens(20);
+        // 20 tokens should be approximately 2× 10 tokens (allow rounding)
+        let ratio = est20 as f64 / est10 as f64;
+        assert!(
+            (ratio - 2.0).abs() < 0.15,
+            "expected ratio ~2.0, got {}",
+            ratio
+        );
+    }
+
+    #[test]
+    fn estimate_text_length_zero_tokens() {
+        let tok = make_test_tokenizer();
+        assert_eq!(tok.estimate_text_length_for_tokens(0), 0);
+    }
+
+    // ── Block 98: validation edge cases ──────────────────────────────────
+
+    #[test]
+    fn tokenizer_validate_bad_eos() {
+        let tok = Tokenizer {
+            vocab: HashMap::from([("a".to_string(), 0)]),
+            id_to_token: vec![TokenRef::Owned("a".into())],
+            merges: HashMap::new(),
+            bos_id: 0,
+            eos_id: 999, // beyond vocabulary
+            is_tiktoken: false,
+            file_bytes: vec![],
+        };
+        let errors = tok.validate();
+        assert!(errors.iter().any(|e| e.contains("eos_id")));
+    }
+
+    #[test]
+    fn tokenizer_validate_vocab_id_beyond_id_to_token() {
+        let tok = Tokenizer {
+            vocab: HashMap::from([
+                ("a".to_string(), 0),
+                ("b".to_string(), 99), // id 99 but id_to_token only has 1 entry
+            ]),
+            id_to_token: vec![TokenRef::Owned("a".into())],
+            merges: HashMap::new(),
+            bos_id: 0,
+            eos_id: 0,
+            is_tiktoken: false,
+            file_bytes: vec![],
+        };
+        let errors = tok.validate();
+        assert!(
+            errors.iter().any(|e| e.contains("beyond id_to_token") || e.contains("99")),
+            "expected error about id beyond id_to_token, got: {:?}",
+            errors
+        );
+    }
+
+    // ── Block 98: encode_reported edge cases ─────────────────────────────
+
+    #[test]
+    fn encode_reported_empty_text() {
+        let tok = make_test_tokenizer();
+        let report = tok.encode_reported("", false);
+        assert_eq!(report.token_count, 0);
+        assert_eq!(report.bytes_per_token, 0.0);
+        assert_eq!(report.input_bytes, 0);
+    }
+
+    #[test]
+    fn encode_reported_unique_count_less_than_total() {
+        let tok = make_test_tokenizer();
+        // "hhh" → 3 tokens but only 1 unique
+        let report = tok.encode_reported("hhh", false);
+        assert_eq!(report.token_count, 3);
+        assert_eq!(report.unique_token_count, 1);
+    }
+
+    // ── Block 98: RLE advanced ───────────────────────────────────────────
+
+    #[test]
+    fn encode_rle_repeated_tokens_compress() {
+        let tok = make_test_tokenizer();
+        // "hhh" → 3 identical tokens → single RLE run
+        let rle = tok.encode_rle("hhh", false);
+        assert_eq!(rle.len(), 1);
+        assert_eq!(rle[0].1, 3); // run length = 3
+    }
+
+    #[test]
+    fn decode_rle_single_long_run() {
+        let tok = make_test_tokenizer();
+        // Single run of 5 copies of 'h' token
+        let h_id = tok.encode("h", false)[0];
+        let decoded = tok.decode_rle(&[(h_id, 5)]);
+        assert_eq!(decoded, "hhhhh");
+    }
+
+    // ── Block 98: vocabulary utilization ─────────────────────────────────
+
+    #[test]
+    fn vocabulary_utilization_all_fields_accurate() {
+        let tok = make_test_tokenizer();
+        let util = tok.vocabulary_utilization("hi");
+        assert_eq!(util.total_tokens, 2);
+        assert_eq!(util.unique_tokens, 2); // 'h' and 'i' are different
+        assert_eq!(util.in_vocabulary, 2); // both in vocab
+        assert_eq!(util.coverage, 1.0);
+        assert_eq!(util.vocab_size, tok.vocab_size());
+    }
+
+    #[test]
+    fn vocabulary_utilization_serializes_all_fields() {
+        let tok = make_test_tokenizer();
+        let util = tok.vocabulary_utilization("hi");
+        let json = serde_json::to_string(&util).unwrap();
+        assert!(json.contains("\"total_tokens\""));
+        assert!(json.contains("\"unique_tokens\""));
+        assert!(json.contains("\"in_vocabulary\""));
+        assert!(json.contains("\"coverage\""));
+        assert!(json.contains("\"vocab_size\""));
+    }
+
+    // ── Block 98: TokenizerInfo comprehensive ────────────────────────────
+
+    #[test]
+    fn tokenizer_info_all_fields_accurate() {
+        let tok = make_test_tokenizer();
+        let info = tok.info();
+        assert_eq!(info.vocab_size, tok.vocab_size());
+        assert_eq!(info.merge_count, tok.merge_count());
+        assert_eq!(info.bos_id, tok.bos_id);
+        assert_eq!(info.eos_id, tok.eos_id);
+        assert_eq!(info.is_tiktoken, tok.is_tiktoken());
+        assert_eq!(info.has_file_bytes, false);
+        assert!(info.special_token_count >= 3); // <s>, </s>, <|endoftext|>
+    }
+
+    // ── Block 98: decode_token with Slice variant (NDAT format) ─────────
+
+    #[test]
+    fn decode_token_slice_variant_ndat_format() {
+        // Build a minimal NDAT-format tokenizer with file_bytes
+        // Layout: header(24) + vocab_table(vocab_size*8) + merges_table(merges_count*20) + string_data
+        let vocab_size = 2u32;
+        let merges_count = 0u32;
+        let string_data_start = 24 + vocab_size as usize * 8 + merges_count as usize * 20;
+        let token_strings = ["hello", "world"];
+
+        // Build string data block and offset table
+        let mut string_data = Vec::new();
+        let mut offset_table = Vec::new();
+        for s in &token_strings {
+            let offset = string_data.len() as u32;
+            let len = s.len() as u32;
+            offset_table.extend_from_slice(&offset.to_le_bytes());
+            offset_table.extend_from_slice(&len.to_le_bytes());
+            string_data.extend_from_slice(s.as_bytes());
+        }
+
+        // Build header
+        let mut header = Vec::new();
+        header.extend_from_slice(b"NDAT"); // magic
+        header.extend_from_slice(&1u16.to_le_bytes()); // version
+        header.extend_from_slice(&vocab_size.to_le_bytes()); // vocab_size
+        header.extend_from_slice(&merges_count.to_le_bytes()); // merges_count
+        header.extend_from_slice(&0u32.to_le_bytes()); // bos_id
+        header.extend_from_slice(&1u32.to_le_bytes()); // eos_id
+        header.push(0); // is_tiktoken = false
+        header.push(0); // padding byte
+
+        let mut file_bytes = header;
+        file_bytes.extend_from_slice(&offset_table);
+        file_bytes.extend_from_slice(&string_data);
+
+        let mut vocab = HashMap::new();
+        vocab.insert("hello".to_string(), 0u32);
+        vocab.insert("world".to_string(), 1u32);
+
+        let tok = Tokenizer {
+            vocab,
+            id_to_token: vec![
+                TokenRef::Slice { offset: 0, len: 5 },
+                TokenRef::Slice { offset: 5, len: 5 },
+            ],
+            merges: HashMap::new(),
+            bos_id: 0,
+            eos_id: 1,
+            is_tiktoken: false,
+            file_bytes,
+        };
+
+        assert_eq!(tok.decode_token(0), "hello");
+        assert_eq!(tok.decode_token(1), "world");
+    }
+
+    // ── Block 98: split_into_words edge cases ────────────────────────────
+
+    #[test]
+    fn split_into_words_leading_spaces() {
+        let tok = make_test_tokenizer();
+        let words = tok.split_into_words("  hello");
+        assert_eq!(words.len(), 1);
+        assert_eq!(words[0].0, "hello");
+    }
+
+    #[test]
+    fn split_into_words_trailing_spaces() {
+        let tok = make_test_tokenizer();
+        let words = tok.split_into_words("hello  ");
+        assert_eq!(words.len(), 1);
+        assert_eq!(words[0].0, "hello");
+    }
+
+    #[test]
+    fn split_into_words_only_spaces() {
+        let tok = make_test_tokenizer();
+        let words = tok.split_into_words("   ");
+        assert!(words.is_empty());
+    }
+
+    // ── Block 98: token_frequency ordering ───────────────────────────────
+
+    #[test]
+    fn token_frequency_sorted_descending() {
+        let tok = make_test_tokenizer();
+        let freq = tok.token_frequency("hello", false);
+        // Verify sorted descending by count
+        for window in freq.windows(2) {
+            assert!(
+                window[0].1 >= window[1].1,
+                "not sorted descending: {:?} before {:?}",
+                window[0],
+                window[1]
+            );
+        }
+    }
+
+    #[test]
+    fn token_frequency_empty_text() {
+        let tok = make_test_tokenizer();
+        let freq = tok.token_frequency("", false);
+        assert!(freq.is_empty());
+    }
+
+    // ── Block 98: encode_with_offsets edge cases ─────────────────────────
+
+    #[test]
+    fn encode_with_offsets_empty_text() {
+        let tok = make_test_tokenizer();
+        let result = tok.encode_with_offsets("", false);
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn encode_with_offsets_offsets_monotonic() {
+        let tok = make_test_tokenizer();
+        let result = tok.encode_with_offsets("hello world", false);
+        for window in result.windows(2) {
+            assert!(window[1].1 >= window[0].1, "start offsets not monotonic");
+            assert!(window[1].2 >= window[0].2, "end offsets not monotonic");
+        }
+    }
 }
