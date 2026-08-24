@@ -449,6 +449,101 @@ pub struct RotateKeyResponse {
     pub old_key_revoked: bool,
 }
 
+/// Response from GET /v1/assignments/recent.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RecentAssignmentsResponse {
+    pub assignments: Vec<RecentAssignmentEntry>,
+    pub total: u64,
+}
+
+/// A single entry in the recent assignments list.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RecentAssignmentEntry {
+    pub id: String,
+    pub status: String,
+    pub created_at: Option<String>,
+    pub completed_at: Option<String>,
+    pub cost_usd: Option<f64>,
+    pub total_tokens: Option<u64>,
+    pub subtask_count: Option<u64>,
+    pub error: Option<String>,
+}
+
+/// Response from GET /v1/webhooks/stats.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WebhookStatsResponse {
+    pub webhooks: Vec<WebhookStatEntry>,
+    pub summary: WebhookStatsSummary,
+}
+
+/// Per-webhook delivery statistics.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WebhookStatEntry {
+    pub webhook_id: String,
+    pub delivered: u64,
+    pub failed: u64,
+    pub last_delivery: Option<String>,
+    pub last_failure: Option<String>,
+}
+
+/// Summary of all webhook delivery stats.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WebhookStatsSummary {
+    pub total_webhooks: u64,
+    pub total_delivered: u64,
+    pub total_failed: u64,
+}
+
+/// Response from GET /v1/rate-limits.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RateLimitsResponse {
+    pub tiers: HashMap<String, RateLimitTierInfo>,
+    pub headers: HashMap<String, String>,
+    pub webhook_events: Vec<String>,
+}
+
+/// Rate limit info for a single tier.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RateLimitTierInfo {
+    pub requests_per_minute: u64,
+    pub monthly_tokens: u64,
+    pub monthly_cost_usd: f64,
+    pub description: String,
+}
+
+/// Response from GET /v1/changelog.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ChangelogResponse {
+    pub versions: Vec<ChangelogVersion>,
+}
+
+/// A single version entry in the changelog.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ChangelogVersion {
+    pub version: String,
+    pub date: String,
+    pub changes: Vec<String>,
+}
+
+/// Response from GET /v1/models.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ModelsResponse {
+    pub models: Vec<ModelEntry>,
+    pub total: u64,
+}
+
+/// A single model in the catalog.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ModelEntry {
+    pub id: String,
+    pub label: String,
+    pub provider: String,
+    pub tier: String,
+    pub cost_input_per_mtok: f64,
+    pub cost_output_per_mtok: f64,
+    pub domains: Vec<String>,
+}
+
 // ─── Client ─────────────────────────────────────────────────────────────
 
 /// Synchronous HTTP client for the Velocity Router API.
@@ -697,6 +792,51 @@ impl VelocityClient {
             .context("failed to fetch assignment")?;
         resp.into_json()
             .context("failed to parse assignment response")
+    }
+
+    /// GET /v1/assignments/recent — list recent assignments (max 50, newest first).
+    pub fn get_recent_assignments(&self) -> Result<RecentAssignmentsResponse> {
+        let resp = self
+            .get_with_retry(&self.url("/v1/assignments/recent"), true)
+            .context("failed to fetch recent assignments")?;
+        resp.into_json()
+            .context("failed to parse recent assignments response")
+    }
+
+    /// GET /v1/webhooks/stats — webhook delivery statistics.
+    pub fn get_webhook_stats(&self) -> Result<WebhookStatsResponse> {
+        let resp = self
+            .get_with_retry(&self.url("/v1/webhooks/stats"), true)
+            .context("failed to fetch webhook stats")?;
+        resp.into_json()
+            .context("failed to parse webhook stats response")
+    }
+
+    /// GET /v1/rate-limits — public rate limit configuration per tier.
+    pub fn get_rate_limits(&self) -> Result<RateLimitsResponse> {
+        let resp = self
+            .get_with_retry(&self.url("/v1/rate-limits"), false)
+            .context("failed to fetch rate limits")?;
+        resp.into_json()
+            .context("failed to parse rate limits response")
+    }
+
+    /// GET /v1/changelog — version history.
+    pub fn get_changelog(&self) -> Result<ChangelogResponse> {
+        let resp = self
+            .get_with_retry(&self.url("/v1/changelog"), false)
+            .context("failed to fetch changelog")?;
+        resp.into_json()
+            .context("failed to parse changelog response")
+    }
+
+    /// GET /v1/models — public model catalog.
+    pub fn get_models(&self) -> Result<ModelsResponse> {
+        let resp = self
+            .get_with_retry(&self.url("/v1/models"), false)
+            .context("failed to fetch models catalog")?;
+        resp.into_json()
+            .context("failed to parse models response")
     }
 }
 
@@ -2051,5 +2191,120 @@ extra_key = "extra_value"
             api_key: "vr_key-with-special!chars@123".into(),
         });
         assert_eq!(client.auth_header(), "Bearer vr_key-with-special!chars@123");
+    }
+
+    // ─── Phase L: New Response Type Tests ─────────────────────────────────
+
+    #[test]
+    fn recent_assignments_response_deserializes() {
+        let json = r#"{
+            "assignments": [
+                {
+                    "id": "a123",
+                    "status": "Completed",
+                    "created_at": "2026-08-24T10:00:00Z",
+                    "completed_at": "2026-08-24T10:01:00Z",
+                    "cost_usd": 0.05,
+                    "total_tokens": 1500,
+                    "subtask_count": 3,
+                    "error": null
+                }
+            ],
+            "total": 1
+        }"#;
+        let resp: RecentAssignmentsResponse = serde_json::from_str(json).unwrap();
+        assert_eq!(resp.total, 1);
+        assert_eq!(resp.assignments.len(), 1);
+        assert_eq!(resp.assignments[0].id, "a123");
+        assert_eq!(resp.assignments[0].status, "Completed");
+        assert_eq!(resp.assignments[0].total_tokens, Some(1500));
+        assert!(resp.assignments[0].error.is_none());
+    }
+
+    #[test]
+    fn webhook_stats_response_deserializes() {
+        let json = r#"{
+            "webhooks": [
+                {
+                    "webhook_id": "wh_123",
+                    "delivered": 10,
+                    "failed": 2,
+                    "last_delivery": "2026-08-24T12:00:00Z",
+                    "last_failure": "2026-08-24T11:00:00Z"
+                }
+            ],
+            "summary": {
+                "total_webhooks": 1,
+                "total_delivered": 10,
+                "total_failed": 2
+            }
+        }"#;
+        let resp: WebhookStatsResponse = serde_json::from_str(json).unwrap();
+        assert_eq!(resp.summary.total_webhooks, 1);
+        assert_eq!(resp.summary.total_delivered, 10);
+        assert_eq!(resp.summary.total_failed, 2);
+        assert_eq!(resp.webhooks[0].delivered, 10);
+        assert_eq!(resp.webhooks[0].failed, 2);
+    }
+
+    #[test]
+    fn rate_limits_response_deserializes() {
+        let json = r#"{
+            "tiers": {
+                "lite": {
+                    "requests_per_minute": 10,
+                    "monthly_tokens": 500000,
+                    "monthly_cost_usd": 5.0,
+                    "description": "Free tier"
+                }
+            },
+            "headers": {
+                "X-RateLimit-Limit": "Max requests per window"
+            },
+            "webhook_events": ["assignment.completed"]
+        }"#;
+        let resp: RateLimitsResponse = serde_json::from_str(json).unwrap();
+        assert_eq!(resp.tiers.len(), 1);
+        assert_eq!(resp.tiers["lite"].requests_per_minute, 10);
+        assert_eq!(resp.webhook_events.len(), 1);
+    }
+
+    #[test]
+    fn changelog_response_deserializes() {
+        let json = r#"{
+            "versions": [
+                {
+                    "version": "0.5.0",
+                    "date": "2026-08-24",
+                    "changes": ["New endpoint", "Bug fix"]
+                }
+            ]
+        }"#;
+        let resp: ChangelogResponse = serde_json::from_str(json).unwrap();
+        assert_eq!(resp.versions.len(), 1);
+        assert_eq!(resp.versions[0].version, "0.5.0");
+        assert_eq!(resp.versions[0].changes.len(), 2);
+    }
+
+    #[test]
+    fn models_response_deserializes() {
+        let json = r#"{
+            "models": [
+                {
+                    "id": "deepseek-v3",
+                    "label": "DeepSeek V3",
+                    "provider": "deepseek",
+                    "tier": "standard",
+                    "cost_input_per_mtok": 0.27,
+                    "cost_output_per_mtok": 1.10,
+                    "domains": ["code_generation", "backend"]
+                }
+            ],
+            "total": 1
+        }"#;
+        let resp: ModelsResponse = serde_json::from_str(json).unwrap();
+        assert_eq!(resp.total, 1);
+        assert_eq!(resp.models[0].id, "deepseek-v3");
+        assert_eq!(resp.models[0].domains.len(), 2);
     }
 }
