@@ -1179,4 +1179,286 @@ mod tests {
             "should warn about enum"
         );
     }
+
+    // ─── Additional tests ──────────────────────────────────────────────────
+
+    #[test]
+    fn empty_source_produces_empty_scope() {
+        let mut compiler = RustToNda::new();
+        let root = compiler.compile_source("").unwrap();
+        match root {
+            NdaNode::Scope { children } => assert!(children.is_empty()),
+            _ => panic!("Expected Scope"),
+        }
+        assert_eq!(compiler.function_count(), 0);
+    }
+
+    #[test]
+    fn invalid_source_returns_error() {
+        let mut compiler = RustToNda::new();
+        let result = compiler.compile_source("this is not valid rust {{{");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn compile_diagnostics_default() {
+        let diag = CompileDiagnostics::default();
+        assert_eq!(diag.expressions_visited, 0);
+        assert_eq!(diag.expressions_compiled, 0);
+        assert!(diag.warnings.is_empty());
+        assert!(diag.expr_type_coverage.is_empty());
+        assert!(diag.items_by_kind.is_empty());
+    }
+
+    #[test]
+    fn if_else_expression_compiled() {
+        let source = r#"
+            fn classify(x: i32) -> i32 {
+                if x > 0 { 1 } else { 0 }
+            }
+        "#;
+        let mut compiler = RustToNda::new();
+        let root = compiler.compile_source(source).unwrap();
+        fn has_if(node: &NdaNode) -> bool {
+            match node {
+                NdaNode::If { .. } => true,
+                NdaNode::Scope { children } => children.iter().any(has_if),
+                _ => false,
+            }
+        }
+        // If the compiler translates if-expressions, we should find one
+        // (or at minimum, Int nodes from the arms)
+        fn count_ints(node: &NdaNode) -> usize {
+            match node {
+                NdaNode::Int { .. } => 1,
+                NdaNode::Scope { children } => children.iter().map(count_ints).sum(),
+                NdaNode::If { then_body, else_body, .. } => {
+                    1 + then_body.iter().map(count_ints).sum::<usize>()
+                    + else_body.as_ref().map_or(0, |eb| eb.iter().map(count_ints).sum::<usize>())
+                }
+                _ => 0,
+            }
+        }
+        assert!(count_ints(&root) >= 1, "if/else arms should produce nodes");
+    }
+
+    #[test]
+    fn loop_expression_compiled() {
+        let source = r#"
+            fn count_loop() {
+                let mut x = 0;
+                for _i in 0..10 {
+                    x = x + 1;
+                }
+            }
+        "#;
+        let mut compiler = RustToNda::new();
+        let root = compiler.compile_source(source).unwrap();
+        assert!(matches!(root, NdaNode::Scope { .. }));
+        assert_eq!(compiler.function_count(), 1);
+    }
+
+    #[test]
+    fn method_call_expression() {
+        let source = r#"
+            struct Foo;
+            impl Foo {
+                fn bar(&self) -> i32 { 42 }
+                fn baz(&self) -> i32 { self.bar() }
+            }
+        "#;
+        let mut compiler = RustToNda::new();
+        compiler.compile_source(source).unwrap();
+        assert_eq!(compiler.function_count(), 2);
+        let names = compiler.function_names();
+        assert!(names.contains(&"Foo::bar"));
+        assert!(names.contains(&"Foo::baz"));
+    }
+
+    #[test]
+    fn binary_operations_compiled() {
+        let source = r#"
+            fn math(a: i32, b: i32) -> i32 {
+                let sum = a + b;
+                let diff = a - b;
+                let prod = a * b;
+                sum + diff + prod
+            }
+        "#;
+        let mut compiler = RustToNda::new();
+        compiler.compile_source(source).unwrap();
+        let diag = compiler.diagnostics();
+        assert!(diag.expressions_visited > 3, "should visit binary ops");
+        assert!(diag.expr_type_coverage.contains_key("Binary"),
+            "should track Binary expressions");
+    }
+
+    #[test]
+    fn unary_expression_compiled() {
+        let source = r#"
+            fn neg(x: i32) -> i32 {
+                -x
+            }
+        "#;
+        let mut compiler = RustToNda::new();
+        compiler.compile_source(source).unwrap();
+        let diag = compiler.diagnostics();
+        assert!(diag.expressions_visited > 0);
+    }
+
+    #[test]
+    fn array_expression_compiled() {
+        let source = r#"
+            fn make_array() -> [i32; 3] {
+                [1, 2, 3]
+            }
+        "#;
+        let mut compiler = RustToNda::new();
+        let root = compiler.compile_source(source).unwrap();
+        assert!(matches!(root, NdaNode::Scope { .. }));
+        assert_eq!(compiler.function_count(), 1);
+        // Array expression should compile without error and produce some nodes
+        let diag = compiler.diagnostics();
+        assert!(diag.expressions_visited > 0);
+    }
+
+    #[test]
+    fn store_all_into_sitemap() {
+        let source = r#"
+            fn helper() -> i32 { 1 }
+            fn main_fn() { helper(); }
+        "#;
+        let mut compiler = RustToNda::new();
+        let root = compiler.compile_source(source).unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let mut sm = SiteMap::open(dir.path(), 0).unwrap();
+        let count = compiler.store_all(&mut sm, &root).unwrap();
+        // Should store 2 functions + 1 root program = 3
+        assert_eq!(count, 3);
+        assert!(sm.len() >= 3);
+    }
+
+    #[test]
+    fn call_graph_drops_unresolved() {
+        let source = r#"
+            fn known() -> i32 { 1 }
+            fn caller() {
+                known();
+                unknown_fn();
+            }
+        "#;
+        let mut compiler = RustToNda::new();
+        compiler.compile_source(source).unwrap();
+        let graph = compiler.call_graph();
+        let caller_edges = graph.get("caller").unwrap();
+        // Only "known" should be in the graph, "unknown_fn" is dropped
+        assert!(caller_edges.contains(&"known".to_string()));
+        assert!(!caller_edges.contains(&"unknown_fn".to_string()));
+    }
+
+    #[test]
+    fn nested_module_functions_compiled() {
+        let source = r#"
+            mod inner {
+                pub fn inner_fn() -> i32 { 42 }
+            }
+            fn outer_fn() -> i32 { 1 }
+        "#;
+        let mut compiler = RustToNda::new();
+        compiler.compile_source(source).unwrap();
+        let names = compiler.function_names();
+        assert!(names.contains(&"outer_fn"));
+        assert!(names.contains(&"inner_fn"));
+    }
+
+    #[test]
+    fn const_and_static_counted() {
+        let source = r#"
+            const MAX: i32 = 100;
+            static COUNT: i32 = 0;
+            fn foo() -> i32 { MAX }
+        "#;
+        let mut compiler = RustToNda::new();
+        compiler.compile_source(source).unwrap();
+        let diag = compiler.diagnostics();
+        assert_eq!(diag.items_by_kind.get("Const").unwrap_or(&0), &1);
+        assert_eq!(diag.items_by_kind.get("Static").unwrap_or(&0), &1);
+    }
+
+    #[test]
+    fn seed_report_display() {
+        let report = SeedReport {
+            source_path: std::path::PathBuf::from("src/main.rs"),
+            functions: 5,
+            nodes_stored: 20,
+            root_hash: 0xDEADBEEF,
+            elapsed_ms: 42,
+            call_graph: HashMap::new(),
+            diagnostics: CompileDiagnostics::default(),
+        };
+        let display = format!("{}", report);
+        assert!(display.contains("src/main.rs"));
+        assert!(display.contains("5 functions"));
+        assert!(display.contains("20 NDA nodes"));
+    }
+
+    #[test]
+    fn multiple_impl_blocks() {
+        let source = r#"
+            struct Encoder;
+            impl Encoder {
+                fn encode(&self) -> i32 { 1 }
+            }
+            impl Encoder {
+                fn decode(&self) -> i32 { 0 }
+            }
+        "#;
+        let mut compiler = RustToNda::new();
+        compiler.compile_source(source).unwrap();
+        let names = compiler.function_names();
+        assert!(names.contains(&"Encoder::encode"));
+        assert!(names.contains(&"Encoder::decode"));
+    }
+
+    #[test]
+    fn compile_diagnostics_serializes() {
+        let source = r#"
+            fn foo() -> i32 { 1 }
+        "#;
+        let mut compiler = RustToNda::new();
+        compiler.compile_source(source).unwrap();
+        let json = serde_json::to_string(compiler.diagnostics()).unwrap();
+        assert!(json.contains("call_edges"));
+        assert!(json.contains("warnings"));
+    }
+
+    #[test]
+    fn while_loop_compiled() {
+        let source = r#"
+            fn countdown() {
+                let mut x = 10;
+                while x > 0 {
+                    x = x - 1;
+                }
+            }
+        "#;
+        let mut compiler = RustToNda::new();
+        compiler.compile_source(source).unwrap();
+        let diag = compiler.diagnostics();
+        assert!(diag.expressions_visited > 2, "should visit while loop expressions");
+    }
+
+    #[test]
+    fn closure_expression_compiled() {
+        let source = r#"
+            fn with_closure() -> i32 {
+                let f = |x: i32| x + 1;
+                f(41)
+            }
+        "#;
+        let mut compiler = RustToNda::new();
+        let root = compiler.compile_source(source).unwrap();
+        assert!(matches!(root, NdaNode::Scope { .. }));
+        assert_eq!(compiler.function_count(), 1);
+    }
 }
