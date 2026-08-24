@@ -287,4 +287,267 @@ mod tests {
         assert!(json.contains("vector_len"));
         assert!(json.contains("total_serialized_bytes"));
     }
+
+    // ── Block 129: comprehensive tests ──────────────────────────────────────
+
+    // ── Serialization: size and header ───────────────────────────────────
+
+    #[test]
+    fn kv_serialized_size_formula() {
+        for len in [8usize, 16, 32, 64, 128, 256, 896] {
+            let kv = make_test_kv(len);
+            let bytes = kv.serialise();
+            let expected = 4 + 4 * len.div_ceil(8);
+            assert_eq!(bytes.len(), expected, "size mismatch for len={}", len);
+        }
+    }
+
+    #[test]
+    fn kv_header_contains_len_and_scale() {
+        let kv = make_test_kv(128);
+        let bytes = kv.serialise();
+        let len = u16::from_le_bytes([bytes[0], bytes[1]]) as usize;
+        assert_eq!(len, 128);
+        let log2_scale = bytes[2] as i8;
+        assert_eq!(log2_scale, 0);
+        assert_eq!(bytes[3], 0, "reserved byte should be 0");
+    }
+
+    #[test]
+    fn kv_roundtrip_various_sizes() {
+        for len in [8usize, 16, 64, 128, 256] {
+            let kv = make_test_kv(len);
+            let bytes = kv.serialise();
+            let kv2 = KvRecord::deserialise(&bytes).unwrap();
+            assert_eq!(kv.k.len, kv2.k.len, "roundtrip failed for len={}", len);
+            assert_eq!(kv.k.sign, kv2.k.sign);
+            assert_eq!(kv.k.extra, kv2.k.extra);
+            assert_eq!(kv.v.sign, kv2.v.sign);
+            assert_eq!(kv.v.extra, kv2.v.extra);
+        }
+    }
+
+    #[test]
+    fn kv_roundtrip_preserves_scale() {
+        let bitmap_bytes = 16usize.div_ceil(8);
+        let kv = KvRecord {
+            k: NdaVec { len: 16, log2_scale: 3, sign: vec![0xAA; bitmap_bytes].into(), extra: vec![0x55; bitmap_bytes].into() },
+            v: NdaVec { len: 16, log2_scale: 3, sign: vec![0x33; bitmap_bytes].into(), extra: vec![0xCC; bitmap_bytes].into() },
+        };
+        let bytes = kv.serialise();
+        let kv2 = KvRecord::deserialise(&bytes).unwrap();
+        assert_eq!(kv2.k.log2_scale, 3);
+        assert_eq!(kv2.v.log2_scale, 3);
+    }
+
+    #[test]
+    fn kv_deserialise_truncated_data() {
+        // len=64 needs 4+32=36 bytes, provide only 20
+        let mut data = vec![0u8; 20];
+        data[0] = 64;
+        data[1] = 0;
+        data[2] = 0; // scale
+        data[3] = 0; // reserved
+        let result = KvRecord::deserialise(&data);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn kv_deserialise_empty_data() {
+        let result = KvRecord::deserialise(&[]);
+        assert!(result.is_err());
+    }
+
+    // ── KvRecord info ────────────────────────────────────────────────────
+
+    #[test]
+    fn kv_info_small() {
+        let kv = make_test_kv(8);
+        let info = kv.info();
+        assert_eq!(info.vector_len, 8);
+        assert_eq!(info.bitmap_bytes, 1);
+        assert_eq!(info.total_serialized_bytes, 8); // 4 + 4*1
+        assert_eq!(info.k_sign_bytes, 1);
+        assert_eq!(info.v_sign_bytes, 1);
+    }
+
+    #[test]
+    fn kv_info_large() {
+        let kv = make_test_kv(896);
+        let info = kv.info();
+        assert_eq!(info.vector_len, 896);
+        assert_eq!(info.bitmap_bytes, 112);
+        assert_eq!(info.total_serialized_bytes, 4 + 4 * 112);
+    }
+
+    #[test]
+    fn kv_info_non_aligned() {
+        // len=10 → ceil(10/8) = 2 bitmap bytes
+        let kv = make_test_kv(10);
+        let info = kv.info();
+        assert_eq!(info.bitmap_bytes, 2);
+        assert_eq!(info.total_serialized_bytes, 4 + 4 * 2);
+    }
+
+    // ── KvRecord validate ────────────────────────────────────────────────
+
+    #[test]
+    fn kv_validate_zero_k_len() {
+        let kv = KvRecord {
+            k: NdaVec { len: 0, log2_scale: 0, sign: vec![].into(), extra: vec![].into() },
+            v: NdaVec { len: 8, log2_scale: 0, sign: vec![0; 1].into(), extra: vec![0; 1].into() },
+        };
+        let issues = kv.validate();
+        assert!(issues.iter().any(|i| i.contains("K vector has zero length")));
+    }
+
+    #[test]
+    fn kv_validate_zero_v_len() {
+        let kv = KvRecord {
+            k: NdaVec { len: 8, log2_scale: 0, sign: vec![0; 1].into(), extra: vec![0; 1].into() },
+            v: NdaVec { len: 0, log2_scale: 0, sign: vec![].into(), extra: vec![].into() },
+        };
+        let issues = kv.validate();
+        assert!(issues.iter().any(|i| i.contains("V vector has zero length")));
+    }
+
+    #[test]
+    fn kv_validate_scale_mismatch() {
+        let kv = KvRecord {
+            k: NdaVec { len: 16, log2_scale: 2, sign: vec![0; 2].into(), extra: vec![0; 2].into() },
+            v: NdaVec { len: 16, log2_scale: -1, sign: vec![0; 2].into(), extra: vec![0; 2].into() },
+        };
+        let issues = kv.validate();
+        assert!(issues.iter().any(|i| i.contains("scale mismatch")));
+    }
+
+    #[test]
+    fn kv_validate_sign_bytes_mismatch() {
+        // K has wrong number of sign bytes for len=16 (needs 2, has 3)
+        let kv = KvRecord {
+            k: NdaVec { len: 16, log2_scale: 0, sign: vec![0; 3].into(), extra: vec![0; 2].into() },
+            v: NdaVec { len: 16, log2_scale: 0, sign: vec![0; 2].into(), extra: vec![0; 2].into() },
+        };
+        let issues = kv.validate();
+        assert!(issues.iter().any(|i| i.contains("K sign bytes")));
+    }
+
+    #[test]
+    fn kv_validate_multiple_issues() {
+        let kv = KvRecord {
+            k: NdaVec { len: 0, log2_scale: 1, sign: vec![].into(), extra: vec![].into() },
+            v: NdaVec { len: 8, log2_scale: -1, sign: vec![0; 1].into(), extra: vec![0; 1].into() },
+        };
+        let issues = kv.validate();
+        assert!(issues.len() >= 3, "expected >=3 issues, got {}: {:?}", issues.len(), issues);
+    }
+
+    // ── validate_kv_bytes ────────────────────────────────────────────────
+
+    #[test]
+    fn validate_kv_bytes_empty() {
+        let issues = validate_kv_bytes(&[]);
+        assert!(issues.iter().any(|i| i.contains("too short")));
+    }
+
+    #[test]
+    fn validate_kv_bytes_three_bytes() {
+        let issues = validate_kv_bytes(&[1, 2, 3]);
+        assert!(issues.iter().any(|i| i.contains("too short")));
+    }
+
+    #[test]
+    fn validate_kv_bytes_zero_length_vectors() {
+        // Exactly 4 bytes with len=0
+        let data = [0u8; 4];
+        let issues = validate_kv_bytes(&data);
+        assert!(issues.iter().any(|i| i.contains("zero-length")));
+    }
+
+    #[test]
+    fn validate_kv_bytes_valid_small() {
+        let kv = make_test_kv(8);
+        let bytes = kv.serialise();
+        let issues = validate_kv_bytes(&bytes);
+        assert!(issues.is_empty(), "unexpected issues: {:?}", issues);
+    }
+
+    // ── Batch operations ─────────────────────────────────────────────────
+
+    #[test]
+    fn batch_serialize_empty() {
+        let records: Vec<KvRecord> = vec![];
+        let batch = batch_serialize(&records);
+        assert!(batch.is_empty());
+    }
+
+    #[test]
+    fn batch_validate_empty() {
+        let records: Vec<KvRecord> = vec![];
+        let results = batch_validate(&records);
+        assert!(results.is_empty());
+    }
+
+    #[test]
+    fn batch_serialize_single() {
+        let records = vec![make_test_kv(16)];
+        let batch = batch_serialize(&records);
+        assert_eq!(batch.len(), 1);
+    }
+
+    #[test]
+    fn batch_validate_with_invalid() {
+        let good = make_test_kv(16);
+        let bad = KvRecord {
+            k: NdaVec { len: 16, log2_scale: 0, sign: vec![0; 2].into(), extra: vec![0; 2].into() },
+            v: NdaVec { len: 8, log2_scale: 0, sign: vec![0; 1].into(), extra: vec![0; 1].into() },
+        };
+        let records = vec![good, bad];
+        let results = batch_validate(&records);
+        assert_eq!(results.len(), 2);
+        assert!(results[0].is_empty());
+        assert!(!results[1].is_empty());
+    }
+
+    // ── Struct derives ──────────────────────────────────────────────────
+
+    #[test]
+    fn kv_record_info_debug() {
+        let info = KvRecordInfo {
+            vector_len: 64, log2_scale: 2, bitmap_bytes: 8,
+            total_serialized_bytes: 36, k_sign_bytes: 8, v_sign_bytes: 8,
+        };
+        let dbg = format!("{:?}", info);
+        assert!(dbg.contains("KvRecordInfo"));
+        assert!(dbg.contains("vector_len"));
+    }
+
+    #[test]
+    fn kv_record_info_clone_independence() {
+        let info = KvRecordInfo {
+            vector_len: 128, log2_scale: 3, bitmap_bytes: 16,
+            total_serialized_bytes: 68, k_sign_bytes: 16, v_sign_bytes: 16,
+        };
+        let mut cloned = info.clone();
+        cloned.vector_len = 999;
+        cloned.total_serialized_bytes = 0;
+        assert_eq!(info.vector_len, 128);
+        assert_eq!(info.total_serialized_bytes, 68);
+    }
+
+    #[test]
+    fn kv_record_info_json_all_fields() {
+        let info = KvRecordInfo {
+            vector_len: 256, log2_scale: -2, bitmap_bytes: 32,
+            total_serialized_bytes: 132, k_sign_bytes: 32, v_sign_bytes: 32,
+        };
+        let json = serde_json::to_string(&info).unwrap();
+        let val: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(val["vector_len"], 256);
+        assert_eq!(val["log2_scale"], -2);
+        assert_eq!(val["bitmap_bytes"], 32);
+        assert_eq!(val["total_serialized_bytes"], 132);
+        assert_eq!(val["k_sign_bytes"], 32);
+        assert_eq!(val["v_sign_bytes"], 32);
+    }
 }
