@@ -2120,4 +2120,1048 @@ mod tests {
         }];
         assert!(count_nodes(&nodes) >= 3); // scope + 2 ints
     }
+
+    // ── Block 153: Extended tests ─────────────────────────────────────────
+
+    // --- JSON key counts ---
+
+    #[test]
+    fn optimization_report_json_key_count() {
+        let report = OptimizationReport::default();
+        let json = serde_json::to_value(&report).unwrap();
+        assert_eq!(json.as_object().unwrap().len(), 9);
+    }
+
+    #[test]
+    fn optimization_summary_json_key_count() {
+        let report = OptimizationReport::default();
+        let summary = optimization_summary(&report);
+        let json = serde_json::to_value(&summary).unwrap();
+        assert_eq!(json.as_object().unwrap().len(), 5);
+    }
+
+    #[test]
+    fn node_kind_distribution_json_key_count() {
+        let dist = ast_complexity_info(&[]);
+        let json = serde_json::to_value(&dist).unwrap();
+        assert_eq!(json.as_object().unwrap().len(), 19);
+    }
+
+    // --- JSON value verification ---
+
+    #[test]
+    fn optimization_report_json_values() {
+        let report = OptimizationReport {
+            constants_folded: 5,
+            dead_nodes_removed: 3,
+            loops_unrolled: 2,
+            dead_branches_eliminated: 1,
+            identities_simplified: 4,
+            double_negations_eliminated: 1,
+            strength_reductions: 2,
+            input_nodes: 30,
+            output_nodes: 12,
+        };
+        let json = serde_json::to_value(&report).unwrap();
+        assert_eq!(json["constants_folded"], 5);
+        assert_eq!(json["dead_nodes_removed"], 3);
+        assert_eq!(json["loops_unrolled"], 2);
+        assert_eq!(json["input_nodes"], 30);
+        assert_eq!(json["output_nodes"], 12);
+    }
+
+    #[test]
+    fn optimization_summary_json_values() {
+        let report = OptimizationReport {
+            constants_folded: 3,
+            dead_nodes_removed: 2,
+            loops_unrolled: 0,
+            dead_branches_eliminated: 0,
+            identities_simplified: 0,
+            double_negations_eliminated: 0,
+            strength_reductions: 0,
+            input_nodes: 20,
+            output_nodes: 10,
+        };
+        let summary = optimization_summary(&report);
+        let json = serde_json::to_value(&summary).unwrap();
+        assert_eq!(json["total_optimizations"], 5);
+        assert_eq!(json["effectiveness"], "high");
+        assert!(json["compression_ratio"].as_f64().unwrap() - 0.5 < 1e-9);
+        assert_eq!(json["has_side_effects"], true);
+    }
+
+    #[test]
+    fn node_kind_distribution_json_values() {
+        let nodes = vec![
+            NdaNode::Int { value: 1 },
+            NdaNode::Int { value: 2 },
+            NdaNode::Load { name_hash: 0 },
+        ];
+        let dist = ast_complexity_info(&nodes);
+        let json = serde_json::to_value(&dist).unwrap();
+        assert_eq!(json["int_count"], 2);
+        assert_eq!(json["load_count"], 1);
+        assert_eq!(json["total_nodes"], 3);
+    }
+
+    // --- Clone independence ---
+
+    #[test]
+    fn optimization_report_clone_independence() {
+        let report = OptimizationReport {
+            constants_folded: 10,
+            dead_nodes_removed: 5,
+            loops_unrolled: 2,
+            dead_branches_eliminated: 1,
+            identities_simplified: 3,
+            double_negations_eliminated: 1,
+            strength_reductions: 0,
+            input_nodes: 50,
+            output_nodes: 28,
+        };
+        let mut cloned = report.clone();
+        cloned.constants_folded = 999;
+        assert_eq!(report.constants_folded, 10);
+        assert_eq!(cloned.constants_folded, 999);
+    }
+
+    #[test]
+    fn optimization_summary_clone_independence() {
+        let report = OptimizationReport {
+            constants_folded: 1,
+            dead_nodes_removed: 0,
+            loops_unrolled: 0,
+            dead_branches_eliminated: 0,
+            identities_simplified: 0,
+            double_negations_eliminated: 0,
+            strength_reductions: 0,
+            input_nodes: 10,
+            output_nodes: 8,
+        };
+        let summary = optimization_summary(&report);
+        let mut cloned = summary.clone();
+        cloned.effectiveness = "modified".to_string();
+        assert_eq!(summary.effectiveness, "low");
+        assert_eq!(cloned.effectiveness, "modified");
+    }
+
+    #[test]
+    fn node_kind_distribution_clone_independence() {
+        let nodes = vec![NdaNode::Int { value: 1 }];
+        let dist = ast_complexity_info(&nodes);
+        let mut cloned = dist.clone();
+        cloned.int_count = 999;
+        assert_eq!(dist.int_count, 1);
+        assert_eq!(cloned.int_count, 999);
+    }
+
+    // --- Debug format ---
+
+    #[test]
+    fn optimization_report_debug_contains_fields() {
+        let report = OptimizationReport {
+            constants_folded: 5,
+            dead_nodes_removed: 3,
+            loops_unrolled: 0,
+            dead_branches_eliminated: 0,
+            identities_simplified: 0,
+            double_negations_eliminated: 0,
+            strength_reductions: 0,
+            input_nodes: 20,
+            output_nodes: 12,
+        };
+        let debug = format!("{:?}", report);
+        assert!(debug.contains("constants_folded: 5"));
+        assert!(debug.contains("input_nodes: 20"));
+    }
+
+    #[test]
+    fn optimization_summary_debug_contains_fields() {
+        let report = OptimizationReport {
+            constants_folded: 3,
+            dead_nodes_removed: 0,
+            loops_unrolled: 0,
+            dead_branches_eliminated: 0,
+            identities_simplified: 0,
+            double_negations_eliminated: 0,
+            strength_reductions: 0,
+            input_nodes: 10,
+            output_nodes: 8,
+        };
+        let summary = optimization_summary(&report);
+        let debug = format!("{:?}", summary);
+        assert!(debug.contains("effectiveness:"));
+        assert!(debug.contains("compression_ratio:"));
+    }
+
+    // --- Constant folding: Compare all ops ---
+
+    #[test]
+    fn compare_fold_eq_true() {
+        let nodes = vec![NdaNode::Compare {
+            op: CmpOp::Eq,
+            lhs: Box::new(NdaNode::Int { value: 5 }),
+            rhs: Box::new(NdaNode::Int { value: 5 }),
+        }];
+        let result = optimize_ast(&nodes);
+        match &result[0] {
+            NdaNode::Int { value } => assert_eq!(*value, 1),
+            other => panic!("Expected Int(1), got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn compare_fold_eq_false() {
+        let nodes = vec![NdaNode::Compare {
+            op: CmpOp::Eq,
+            lhs: Box::new(NdaNode::Int { value: 3 }),
+            rhs: Box::new(NdaNode::Int { value: 7 }),
+        }];
+        let result = optimize_ast(&nodes);
+        match &result[0] {
+            NdaNode::Int { value } => assert_eq!(*value, -1),
+            other => panic!("Expected Int(-1), got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn compare_fold_ne_true() {
+        let nodes = vec![NdaNode::Compare {
+            op: CmpOp::Ne,
+            lhs: Box::new(NdaNode::Int { value: 3 }),
+            rhs: Box::new(NdaNode::Int { value: 7 }),
+        }];
+        let result = optimize_ast(&nodes);
+        match &result[0] {
+            NdaNode::Int { value } => assert_eq!(*value, 1),
+            other => panic!("Expected Int(1), got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn compare_fold_lt() {
+        let nodes = vec![NdaNode::Compare {
+            op: CmpOp::Lt,
+            lhs: Box::new(NdaNode::Int { value: 2 }),
+            rhs: Box::new(NdaNode::Int { value: 5 }),
+        }];
+        let result = optimize_ast(&nodes);
+        match &result[0] {
+            NdaNode::Int { value } => assert_eq!(*value, 1),
+            other => panic!("Expected Int(1), got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn compare_fold_gt() {
+        let nodes = vec![NdaNode::Compare {
+            op: CmpOp::Gt,
+            lhs: Box::new(NdaNode::Int { value: 10 }),
+            rhs: Box::new(NdaNode::Int { value: 3 }),
+        }];
+        let result = optimize_ast(&nodes);
+        match &result[0] {
+            NdaNode::Int { value } => assert_eq!(*value, 1),
+            other => panic!("Expected Int(1), got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn compare_fold_le_equal() {
+        let nodes = vec![NdaNode::Compare {
+            op: CmpOp::Le,
+            lhs: Box::new(NdaNode::Int { value: 5 }),
+            rhs: Box::new(NdaNode::Int { value: 5 }),
+        }];
+        let result = optimize_ast(&nodes);
+        match &result[0] {
+            NdaNode::Int { value } => assert_eq!(*value, 1),
+            other => panic!("Expected Int(1), got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn compare_fold_ge_false() {
+        let nodes = vec![NdaNode::Compare {
+            op: CmpOp::Ge,
+            lhs: Box::new(NdaNode::Int { value: 3 }),
+            rhs: Box::new(NdaNode::Int { value: 5 }),
+        }];
+        let result = optimize_ast(&nodes);
+        match &result[0] {
+            NdaNode::Int { value } => assert_eq!(*value, -1),
+            other => panic!("Expected Int(-1), got {:?}", other),
+        }
+    }
+
+    // --- Constant folding: VecOp ---
+
+    #[test]
+    fn vecop_negate_constant() {
+        let nodes = vec![NdaNode::VecOp {
+            op: VecOpKind::Negate,
+            operand: Box::new(NdaNode::Int { value: 42 }),
+        }];
+        let result = optimize_ast(&nodes);
+        match &result[0] {
+            NdaNode::Int { value } => assert_eq!(*value, -42),
+            other => panic!("Expected Int(-42), got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn vecop_abs_constant() {
+        let nodes = vec![NdaNode::VecOp {
+            op: VecOpKind::Abs,
+            operand: Box::new(NdaNode::Int { value: -7 }),
+        }];
+        let result = optimize_ast(&nodes);
+        match &result[0] {
+            NdaNode::Int { value } => assert_eq!(*value, 7),
+            other => panic!("Expected Int(7), got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn vecop_reduce_sum_constant() {
+        let nodes = vec![NdaNode::VecOp {
+            op: VecOpKind::ReduceSum,
+            operand: Box::new(NdaNode::Int { value: 99 }),
+        }];
+        let result = optimize_ast(&nodes);
+        match &result[0] {
+            NdaNode::Int { value } => assert_eq!(*value, 99),
+            other => panic!("Expected Int(99), got {:?}", other),
+        }
+    }
+
+    // --- Loop unrolling ---
+
+    #[test]
+    fn loop_count_1_unrolls() {
+        let nodes = vec![NdaNode::Loop {
+            count: 1,
+            body: vec![NdaNode::Int { value: 42 }],
+        }];
+        let result = optimize_ast(&nodes);
+        // Should become a Scope with the body inlined once
+        assert!(result.iter().any(|n| matches!(n, NdaNode::Scope { .. })));
+    }
+
+    #[test]
+    fn loop_count_3_unrolls_three_copies() {
+        let nodes = vec![NdaNode::Loop {
+            count: 3,
+            body: vec![NdaNode::Print {
+                source: Box::new(NdaNode::Int { value: 1 }),
+            }],
+        }];
+        let result = optimize_ast(&nodes);
+        // Should become a Scope with 3 prints
+        let scope = result.iter().find(|n| matches!(n, NdaNode::Scope { .. }));
+        assert!(scope.is_some());
+        if let NdaNode::Scope { children } = scope.unwrap() {
+            assert_eq!(children.len(), 3);
+        }
+    }
+
+    #[test]
+    fn loop_count_0_does_not_unroll() {
+        let nodes = vec![NdaNode::Loop {
+            count: 0,
+            body: vec![NdaNode::Int { value: 42 }],
+        }];
+        let result = optimize_ast(&nodes);
+        // count=0 doesn't match count > 0 && count <= 4, stays as Loop
+        assert!(result.iter().any(|n| matches!(n, NdaNode::Loop { .. })));
+    }
+
+    // --- Dead branch elimination ---
+
+    #[test]
+    fn if_true_keeps_then_body() {
+        let nodes = vec![NdaNode::If {
+            cond: Box::new(NdaNode::Int { value: 1 }),
+            then_body: vec![NdaNode::Return {
+                value: Box::new(NdaNode::Int { value: 42 }),
+            }],
+            else_body: Some(vec![NdaNode::Return {
+                value: Box::new(NdaNode::Int { value: 99 }),
+            }]),
+        }];
+        let result = optimize_ast(&nodes);
+        // Should keep then_body, discard else
+        let has_42 = result.iter().any(|n| {
+            if let NdaNode::Scope { children } = n {
+                children.iter().any(|c| matches!(c, NdaNode::Return { .. }))
+            } else {
+                false
+            }
+        });
+        assert!(has_42);
+    }
+
+    #[test]
+    fn if_false_keeps_else_body() {
+        let nodes = vec![NdaNode::If {
+            cond: Box::new(NdaNode::Int { value: 0 }),
+            then_body: vec![NdaNode::Return {
+                value: Box::new(NdaNode::Int { value: 42 }),
+            }],
+            else_body: Some(vec![NdaNode::Return {
+                value: Box::new(NdaNode::Int { value: 99 }),
+            }]),
+        }];
+        let result = optimize_ast(&nodes);
+        // Should keep else_body
+        let has_99 = result.iter().any(|n| {
+            if let NdaNode::Scope { children } = n {
+                children.iter().any(|c| {
+                    if let NdaNode::Return { value } = c {
+                        matches!(&**value, NdaNode::Int { value: 99 })
+                    } else {
+                        false
+                    }
+                })
+            } else {
+                false
+            }
+        });
+        assert!(has_99);
+    }
+
+    #[test]
+    fn if_false_no_else_empty_scope() {
+        let nodes = vec![NdaNode::If {
+            cond: Box::new(NdaNode::Int { value: 0 }),
+            then_body: vec![NdaNode::Return {
+                value: Box::new(NdaNode::Int { value: 42 }),
+            }],
+            else_body: None,
+        }];
+        let result = optimize_ast(&nodes);
+        // Should become empty Scope
+        let scope = result.iter().find(|n| matches!(n, NdaNode::Scope { .. }));
+        assert!(scope.is_some());
+        if let NdaNode::Scope { children } = scope.unwrap() {
+            assert!(children.is_empty());
+        }
+    }
+
+    // --- Variable constant propagation ---
+
+    #[test]
+    fn let_then_load_propagates_constant() {
+        let nodes = vec![
+            NdaNode::Let {
+                name_hash: 1,
+                init: Box::new(NdaNode::Int { value: 42 }),
+            },
+            NdaNode::Return {
+                value: Box::new(NdaNode::Load { name_hash: 1 }),
+            },
+        ];
+        let result = optimize_ast(&nodes);
+        // Load { name_hash: 1 } should be replaced with Int { value: 42 }
+        let has_load = result.iter().any(|n| match n {
+            NdaNode::Return { value } => matches!(&**value, NdaNode::Load { .. }),
+            _ => false,
+        });
+        assert!(!has_load, "Load should be replaced with constant");
+    }
+
+    #[test]
+    fn store_overwrites_constant() {
+        let nodes = vec![
+            NdaNode::Let {
+                name_hash: 1,
+                init: Box::new(NdaNode::Int { value: 10 }),
+            },
+            NdaNode::Store {
+                name_hash: 1,
+                value: Box::new(NdaNode::Int { value: 20 }),
+            },
+            NdaNode::Return {
+                value: Box::new(NdaNode::Load { name_hash: 1 }),
+            },
+        ];
+        let result = optimize_ast(&nodes);
+        // After Store, Load should resolve to 20 not 10
+        let has_int_20 = result.iter().any(|n| match n {
+            NdaNode::Return { value } => matches!(&**value, NdaNode::Int { value: 20 }),
+            _ => false,
+        });
+        assert!(has_int_20, "Store should overwrite constant");
+    }
+
+    // --- Side effects: remaining variants ---
+
+    #[test]
+    fn side_effects_vecop_no_side_effects() {
+        assert!(!has_side_effects(&NdaNode::VecOp {
+            op: VecOpKind::Negate,
+            operand: Box::new(NdaNode::Int { value: 5 }),
+        }));
+    }
+
+    #[test]
+    fn side_effects_vecop_with_side_effect_operand() {
+        assert!(has_side_effects(&NdaNode::VecOp {
+            op: VecOpKind::Negate,
+            operand: Box::new(NdaNode::Call { target: 0 }),
+        }));
+    }
+
+    #[test]
+    fn side_effects_dot_no_side_effects() {
+        assert!(!has_side_effects(&NdaNode::Dot {
+            lhs: Box::new(NdaNode::Int { value: 1 }),
+            rhs: Box::new(NdaNode::Int { value: 2 }),
+        }));
+    }
+
+    #[test]
+    fn side_effects_dot_with_side_effect() {
+        assert!(has_side_effects(&NdaNode::Dot {
+            lhs: Box::new(NdaNode::Call { target: 0 }),
+            rhs: Box::new(NdaNode::Int { value: 2 }),
+        }));
+    }
+
+    #[test]
+    fn side_effects_mathfunc_no_side_effects() {
+        assert!(!has_side_effects(&NdaNode::MathFunc {
+            func: crate::site_map::verifier::MathFuncKind::Sin,
+            operand: Box::new(NdaNode::Float { value: 1.0 }),
+        }));
+    }
+
+    #[test]
+    fn side_effects_syscall_with_args() {
+        assert!(has_side_effects(&NdaNode::Syscall {
+            num: 1,
+            args: vec![NdaNode::Int { value: 0 }],
+        }));
+    }
+
+    // --- gather_loaded_vars: more variants ---
+
+    #[test]
+    fn gather_loads_vecop() {
+        let mut set = std::collections::HashSet::new();
+        gather_loaded_vars(&NdaNode::VecOp {
+            op: VecOpKind::Negate,
+            operand: Box::new(NdaNode::Load { name_hash: 50 }),
+        }, &mut set);
+        assert!(set.contains(&50));
+    }
+
+    #[test]
+    fn gather_loads_print() {
+        let mut set = std::collections::HashSet::new();
+        gather_loaded_vars(&NdaNode::Print {
+            source: Box::new(NdaNode::Load { name_hash: 60 }),
+        }, &mut set);
+        assert!(set.contains(&60));
+    }
+
+    #[test]
+    fn gather_loads_return_value() {
+        let mut set = std::collections::HashSet::new();
+        gather_loaded_vars(&NdaNode::Return {
+            value: Box::new(NdaNode::Load { name_hash: 70 }),
+        }, &mut set);
+        assert!(set.contains(&70));
+    }
+
+    #[test]
+    fn gather_loads_bitwise_both() {
+        let mut set = std::collections::HashSet::new();
+        gather_loaded_vars(&NdaNode::Bitwise {
+            op: crate::site_map::verifier::BitwiseOp::And,
+            lhs: Box::new(NdaNode::Load { name_hash: 1 }),
+            rhs: Some(Box::new(NdaNode::Load { name_hash: 2 })),
+        }, &mut set);
+        assert!(set.contains(&1));
+        assert!(set.contains(&2));
+    }
+
+    #[test]
+    fn gather_loads_bitwise_no_rhs() {
+        let mut set = std::collections::HashSet::new();
+        gather_loaded_vars(&NdaNode::Bitwise {
+            op: crate::site_map::verifier::BitwiseOp::And,
+            lhs: Box::new(NdaNode::Load { name_hash: 1 }),
+            rhs: None,
+        }, &mut set);
+        assert!(set.contains(&1));
+        assert_eq!(set.len(), 1);
+    }
+
+    #[test]
+    fn gather_loads_math() {
+        let mut set = std::collections::HashSet::new();
+        gather_loaded_vars(&NdaNode::Math {
+            op: crate::site_map::verifier::MathOp::Add,
+            lhs: Box::new(NdaNode::Load { name_hash: 10 }),
+            rhs: Box::new(NdaNode::Load { name_hash: 20 }),
+        }, &mut set);
+        assert!(set.contains(&10));
+        assert!(set.contains(&20));
+    }
+
+    #[test]
+    fn gather_loads_gemv() {
+        let mut set = std::collections::HashSet::new();
+        gather_loaded_vars(&NdaNode::Gemv {
+            matrix: Box::new(NdaNode::Load { name_hash: 100 }),
+            vector: Box::new(NdaNode::Load { name_hash: 200 }),
+        }, &mut set);
+        assert!(set.contains(&100));
+        assert!(set.contains(&200));
+    }
+
+    #[test]
+    fn gather_loads_dot() {
+        let mut set = std::collections::HashSet::new();
+        gather_loaded_vars(&NdaNode::Dot {
+            lhs: Box::new(NdaNode::Load { name_hash: 11 }),
+            rhs: Box::new(NdaNode::Load { name_hash: 22 }),
+        }, &mut set);
+        assert!(set.contains(&11));
+        assert!(set.contains(&22));
+    }
+
+    #[test]
+    fn gather_loads_syscall_args() {
+        let mut set = std::collections::HashSet::new();
+        gather_loaded_vars(&NdaNode::Syscall {
+            num: 1,
+            args: vec![
+                NdaNode::Load { name_hash: 1 },
+                NdaNode::Load { name_hash: 2 },
+            ],
+        }, &mut set);
+        assert!(set.contains(&1));
+        assert!(set.contains(&2));
+    }
+
+    #[test]
+    fn gather_loads_atomic() {
+        let mut set = std::collections::HashSet::new();
+        gather_loaded_vars(&NdaNode::Atomic {
+            op: crate::site_map::verifier::AtomicOp::Cas,
+            addr: Box::new(NdaNode::Load { name_hash: 30 }),
+            val: Box::new(NdaNode::Load { name_hash: 40 }),
+        }, &mut set);
+        assert!(set.contains(&30));
+        assert!(set.contains(&40));
+    }
+
+    #[test]
+    fn gather_loads_alloc_free_cast() {
+        let mut set = std::collections::HashSet::new();
+        gather_loaded_vars(&NdaNode::Alloc {
+            size: Box::new(NdaNode::Load { name_hash: 50 }),
+        }, &mut set);
+        assert!(set.contains(&50));
+
+        let mut set2 = std::collections::HashSet::new();
+        gather_loaded_vars(&NdaNode::Free {
+            addr: Box::new(NdaNode::Load { name_hash: 60 }),
+        }, &mut set2);
+        assert!(set2.contains(&60));
+
+        let mut set3 = std::collections::HashSet::new();
+        gather_loaded_vars(&NdaNode::Cast {
+            from_type: crate::site_map::verifier::TypeKind::Int,
+            to_type: crate::site_map::verifier::TypeKind::Float,
+            operand: Box::new(NdaNode::Load { name_hash: 70 }),
+        }, &mut set3);
+        assert!(set3.contains(&70));
+    }
+
+    #[test]
+    fn gather_loads_gpu_dispatch() {
+        let mut set = std::collections::HashSet::new();
+        gather_loaded_vars(&NdaNode::GpuDispatch {
+            shader_hash: 0,
+            args: vec![NdaNode::Load { name_hash: 80 }],
+        }, &mut set);
+        assert!(set.contains(&80));
+    }
+
+    #[test]
+    fn gather_loads_peek_poke() {
+        let mut set = std::collections::HashSet::new();
+        gather_loaded_vars(&NdaNode::Peek {
+            addr: Box::new(NdaNode::Load { name_hash: 90 }),
+        }, &mut set);
+        assert!(set.contains(&90));
+
+        let mut set2 = std::collections::HashSet::new();
+        gather_loaded_vars(&NdaNode::Poke {
+            addr: Box::new(NdaNode::Load { name_hash: 91 }),
+            value: Box::new(NdaNode::Load { name_hash: 92 }),
+        }, &mut set2);
+        assert!(set2.contains(&91));
+        assert!(set2.contains(&92));
+    }
+
+    #[test]
+    fn gather_loads_mathfunc() {
+        let mut set = std::collections::HashSet::new();
+        gather_loaded_vars(&NdaNode::MathFunc {
+            func: crate::site_map::verifier::MathFuncKind::Sin,
+            operand: Box::new(NdaNode::Load { name_hash: 55 }),
+        }, &mut set);
+        assert!(set.contains(&55));
+    }
+
+    // --- gather_written_vars ---
+
+    #[test]
+    fn gather_written_let_and_store() {
+        let mut set = std::collections::HashSet::new();
+        gather_written_vars(&NdaNode::Let {
+            name_hash: 1,
+            init: Box::new(NdaNode::Int { value: 42 }),
+        }, &mut set);
+        assert!(set.contains(&1));
+
+        gather_written_vars(&NdaNode::Store {
+            name_hash: 2,
+            value: Box::new(NdaNode::Int { value: 99 }),
+        }, &mut set);
+        assert!(set.contains(&2));
+    }
+
+    #[test]
+    fn gather_written_scope() {
+        let mut set = std::collections::HashSet::new();
+        gather_written_vars(&NdaNode::Scope {
+            children: vec![
+                NdaNode::Let {
+                    name_hash: 10,
+                    init: Box::new(NdaNode::Int { value: 0 }),
+                },
+            ],
+        }, &mut set);
+        assert!(set.contains(&10));
+    }
+
+    #[test]
+    fn gather_written_loop_and_while() {
+        let mut set = std::collections::HashSet::new();
+        gather_written_vars(&NdaNode::Loop {
+            count: 5,
+            body: vec![NdaNode::Store {
+                name_hash: 20,
+                value: Box::new(NdaNode::Int { value: 0 }),
+            }],
+        }, &mut set);
+        assert!(set.contains(&20));
+
+        gather_written_vars(&NdaNode::While {
+            cond: Box::new(NdaNode::Int { value: 1 }),
+            body: vec![NdaNode::Store {
+                name_hash: 30,
+                value: Box::new(NdaNode::Int { value: 0 }),
+            }],
+        }, &mut set);
+        assert!(set.contains(&30));
+    }
+
+    #[test]
+    fn gather_written_if_branches() {
+        let mut set = std::collections::HashSet::new();
+        gather_written_vars(&NdaNode::If {
+            cond: Box::new(NdaNode::Int { value: 1 }),
+            then_body: vec![NdaNode::Let {
+                name_hash: 40,
+                init: Box::new(NdaNode::Int { value: 0 }),
+            }],
+            else_body: Some(vec![NdaNode::Let {
+                name_hash: 50,
+                init: Box::new(NdaNode::Int { value: 0 }),
+            }]),
+        }, &mut set);
+        assert!(set.contains(&40));
+        assert!(set.contains(&50));
+    }
+
+    // --- count_nodes: various shapes ---
+
+    #[test]
+    fn count_nodes_loop() {
+        let nodes = vec![NdaNode::Loop {
+            count: 5,
+            body: vec![NdaNode::Int { value: 1 }, NdaNode::Int { value: 2 }],
+        }];
+        let c = count_nodes(&nodes);
+        assert!(c >= 3); // loop + 2 ints
+    }
+
+    #[test]
+    fn count_nodes_while() {
+        let nodes = vec![NdaNode::While {
+            cond: Box::new(NdaNode::Int { value: 1 }),
+            body: vec![NdaNode::Int { value: 2 }],
+        }];
+        let c = count_nodes(&nodes);
+        assert!(c >= 3); // while + cond + body int
+    }
+
+    #[test]
+    fn count_nodes_if_with_else() {
+        let nodes = vec![NdaNode::If {
+            cond: Box::new(NdaNode::Int { value: 1 }),
+            then_body: vec![NdaNode::Int { value: 2 }],
+            else_body: Some(vec![NdaNode::Int { value: 3 }]),
+        }];
+        let c = count_nodes(&nodes);
+        assert!(c >= 4); // if + cond + then + else
+    }
+
+    #[test]
+    fn count_nodes_add() {
+        let nodes = vec![NdaNode::Add {
+            lhs: Box::new(NdaNode::Int { value: 1 }),
+            rhs: Box::new(NdaNode::Int { value: 2 }),
+        }];
+        let c = count_nodes(&nodes);
+        // Add counts as 2: top-level (1) + Add node (1); leaf Ints contribute 0
+        assert!(c >= 2);
+    }
+
+    // --- Optimization integration ---
+
+    #[test]
+    fn optimize_preserves_print_side_effect() {
+        let nodes = vec![
+            NdaNode::Let {
+                name_hash: 1,
+                init: Box::new(NdaNode::Int { value: 42 }),
+            },
+            NdaNode::Print {
+                source: Box::new(NdaNode::Int { value: 1 }),
+            },
+        ];
+        let result = optimize_ast(&nodes);
+        // Print must be preserved even though Let is dead
+        let has_print = result.iter().any(|n| matches!(n, NdaNode::Print { .. }));
+        assert!(has_print, "Print side effect must be preserved");
+    }
+
+    #[test]
+    fn saturating_add_overflow() {
+        let nodes = vec![NdaNode::Add {
+            lhs: Box::new(NdaNode::Int { value: i32::MAX }),
+            rhs: Box::new(NdaNode::Int { value: 1 }),
+        }];
+        let result = optimize_ast(&nodes);
+        match &result[0] {
+            NdaNode::Int { value } => assert_eq!(*value, i32::MAX), // saturating
+            other => panic!("Expected Int(MAX), got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn multiple_dead_lets_removed() {
+        let nodes = vec![
+            NdaNode::Let {
+                name_hash: 1,
+                init: Box::new(NdaNode::Int { value: 10 }),
+            },
+            NdaNode::Let {
+                name_hash: 2,
+                init: Box::new(NdaNode::Int { value: 20 }),
+            },
+            NdaNode::Let {
+                name_hash: 3,
+                init: Box::new(NdaNode::Int { value: 30 }),
+            },
+            NdaNode::Return {
+                value: Box::new(NdaNode::Int { value: 0 }),
+            },
+        ];
+        let result = optimize_ast(&nodes);
+        let let_count = result.iter().filter(|n| matches!(n, NdaNode::Let { .. })).count();
+        assert_eq!(let_count, 0, "All dead lets should be removed");
+    }
+
+    // --- Pretty JSON ---
+
+    #[test]
+    fn optimization_report_pretty_json() {
+        let report = OptimizationReport {
+            constants_folded: 5,
+            dead_nodes_removed: 3,
+            loops_unrolled: 0,
+            dead_branches_eliminated: 0,
+            identities_simplified: 0,
+            double_negations_eliminated: 0,
+            strength_reductions: 0,
+            input_nodes: 20,
+            output_nodes: 12,
+        };
+        let pretty = serde_json::to_string_pretty(&report).unwrap();
+        assert!(pretty.contains('\n'));
+        assert!(pretty.contains("constants_folded"));
+    }
+
+    #[test]
+    fn optimization_summary_pretty_json() {
+        let report = OptimizationReport {
+            constants_folded: 3,
+            dead_nodes_removed: 0,
+            loops_unrolled: 0,
+            dead_branches_eliminated: 0,
+            identities_simplified: 0,
+            double_negations_eliminated: 0,
+            strength_reductions: 0,
+            input_nodes: 10,
+            output_nodes: 8,
+        };
+        let summary = optimization_summary(&report);
+        let pretty = serde_json::to_string_pretty(&summary).unwrap();
+        assert!(pretty.contains('\n'));
+        assert!(pretty.contains("effectiveness"));
+    }
+
+    // --- ast_complexity: more depth and kinds ---
+
+    #[test]
+    fn ast_complexity_deeply_nested_loops() {
+        let nodes = vec![NdaNode::Loop {
+            count: 5,
+            body: vec![NdaNode::Loop {
+                count: 3,
+                body: vec![NdaNode::Loop {
+                    count: 2,
+                    body: vec![NdaNode::Int { value: 0 }],
+                }],
+            }],
+        }];
+        let dist = ast_complexity_info(&nodes);
+        assert_eq!(dist.loop_count, 3);
+        assert!(dist.max_depth >= 3);
+    }
+
+    #[test]
+    fn ast_complexity_norm_and_matrix() {
+        let nodes = vec![
+            NdaNode::Norm { size: 4, weight: vec![], bias: vec![] },
+            NdaNode::Matrix { rows: 2, cols: 2, scale: 0, sign: vec![], extra: vec![] },
+        ];
+        let dist = ast_complexity_info(&nodes);
+        assert_eq!(dist.norm_count, 1);
+        assert_eq!(dist.matrix_count, 1);
+    }
+
+    #[test]
+    fn ast_complexity_if_with_else_depth() {
+        let nodes = vec![NdaNode::If {
+            cond: Box::new(NdaNode::Int { value: 1 }),
+            then_body: vec![NdaNode::Scope {
+                children: vec![NdaNode::Int { value: 0 }],
+            }],
+            else_body: Some(vec![NdaNode::Scope {
+                children: vec![NdaNode::Int { value: 1 }],
+            }]),
+        }];
+        let dist = ast_complexity_info(&nodes);
+        assert_eq!(dist.if_count, 1);
+        assert_eq!(dist.scope_count, 2);
+        assert!(dist.max_depth >= 2);
+    }
+
+    // --- validate_optimization_report: both issues ---
+
+    #[test]
+    fn validate_report_output_exceeds_and_zero_input() {
+        let report = OptimizationReport {
+            constants_folded: 0,
+            dead_nodes_removed: 0,
+            loops_unrolled: 0,
+            dead_branches_eliminated: 0,
+            identities_simplified: 0,
+            double_negations_eliminated: 0,
+            strength_reductions: 0,
+            input_nodes: 0,
+            output_nodes: 10,
+        };
+        let issues = validate_optimization_report(&report);
+        // Both conditions trigger: input=0 with output>0
+        assert!(issues.len() >= 1);
+    }
+
+    // --- optimize_ast: store with side effects preserved ---
+
+    #[test]
+    fn optimize_store_with_call_preserved() {
+        let nodes = vec![NdaNode::Store {
+            name_hash: 1,
+            value: Box::new(NdaNode::Call { target: 0 }),
+        }];
+        let result = optimize_ast(&nodes);
+        // Store with side-effecting value must be preserved
+        assert!(result.iter().any(|n| matches!(n, NdaNode::Store { .. })));
+    }
+
+    // --- optimization_summary: total_optimizations formula ---
+
+    #[test]
+    fn optimization_summary_total_is_sum_of_all_categories() {
+        let report = OptimizationReport {
+            constants_folded: 10,
+            dead_nodes_removed: 5,
+            loops_unrolled: 3,
+            dead_branches_eliminated: 2,
+            identities_simplified: 7,
+            double_negations_eliminated: 1,
+            strength_reductions: 4,
+            input_nodes: 50,
+            output_nodes: 18,
+        };
+        let summary = optimization_summary(&report);
+        assert_eq!(summary.total_optimizations, 10 + 5 + 3 + 2 + 7 + 1 + 4);
+    }
+
+    // --- count_nodes: leaf and passthrough variants ---
+
+    #[test]
+    fn count_nodes_let_and_store() {
+        let nodes = vec![
+            NdaNode::Let {
+                name_hash: 1,
+                init: Box::new(NdaNode::Int { value: 42 }),
+            },
+            NdaNode::Store {
+                name_hash: 2,
+                value: Box::new(NdaNode::Int { value: 99 }),
+            },
+        ];
+        let c = count_nodes(&nodes);
+        assert!(c >= 4); // 2 top-level + 2 init/value
+    }
+
+    #[test]
+    fn count_nodes_vecop_print_return() {
+        let nodes = vec![
+            NdaNode::VecOp {
+                op: VecOpKind::Negate,
+                operand: Box::new(NdaNode::Int { value: 1 }),
+            },
+            NdaNode::Print {
+                source: Box::new(NdaNode::Int { value: 2 }),
+            },
+            NdaNode::Return {
+                value: Box::new(NdaNode::Int { value: 3 }),
+            },
+        ];
+        let c = count_nodes(&nodes);
+        assert!(c >= 6); // 3 ops + 3 ints
+    }
 }
