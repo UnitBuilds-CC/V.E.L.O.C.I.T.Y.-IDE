@@ -560,6 +560,140 @@ impl Tokenizer {
     pub fn decode_with_ids(&self, ids: &[u32]) -> Vec<(u32, String)> {
         ids.iter().map(|&id| (id, self.decode_token(id))).collect()
     }
+
+    // ── Advanced Encoding ────────────────────────────────────────────────────
+
+    /// Compute token frequency distribution for a text.
+    /// Returns (token_id, count) pairs sorted by count descending.
+    pub fn token_frequency(&self, text: &str, add_bos: bool) -> Vec<(u32, usize)> {
+        let ids = self.encode(text, add_bos);
+        let mut freq: HashMap<u32, usize> = HashMap::new();
+        for id in ids {
+            *freq.entry(id).or_insert(0) += 1;
+        }
+        let mut result: Vec<(u32, usize)> = freq.into_iter().collect();
+        result.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+        result
+    }
+
+    /// Encode text with structured diagnostics.
+    pub fn encode_reported(&self, text: &str, add_bos: bool) -> EncodeReport {
+        let start = std::time::Instant::now();
+        let ids = self.encode(text, add_bos);
+        let elapsed = start.elapsed();
+
+        let unique_count = {
+            let mut seen = std::collections::HashSet::new();
+            for id in &ids {
+                seen.insert(*id);
+            }
+            seen.len()
+        };
+
+        let decoded = self.decode(&ids);
+        let roundtrip_ok = decoded == text;
+
+        EncodeReport {
+            token_count: ids.len(),
+            unique_token_count: unique_count,
+            input_bytes: text.len(),
+            output_bytes: decoded.len(),
+            bytes_per_token: if ids.is_empty() { 0.0 } else { text.len() as f64 / ids.len() as f64 },
+            elapsed_us: elapsed.as_micros() as u64,
+            roundtrip_ok,
+            has_bos: add_bos && ids.first().map_or(false, |&id| id == self.bos_id),
+        }
+    }
+
+    /// Run-length encode token IDs for compact storage.
+    /// Returns (token_id, run_length) pairs.
+    pub fn encode_rle(&self, text: &str, add_bos: bool) -> Vec<(u32, u32)> {
+        let ids = self.encode(text, add_bos);
+        let mut rle: Vec<(u32, u32)> = Vec::new();
+        for id in ids {
+            if let Some(last) = rle.last_mut() {
+                if last.0 == id {
+                    last.1 += 1;
+                    continue;
+                }
+            }
+            rle.push((id, 1));
+        }
+        rle
+    }
+
+    /// Decode run-length encoded token IDs back to a string.
+    pub fn decode_rle(&self, rle: &[(u32, u32)]) -> String {
+        let mut ids = Vec::new();
+        for &(id, count) in rle {
+            for _ in 0..count {
+                ids.push(id);
+            }
+        }
+        self.decode(&ids)
+    }
+
+    /// Split text into word-level tokens, preserving whitespace.
+    /// Returns (word, start_byte, end_byte) tuples.
+    pub fn split_into_words<'a>(&self, text: &'a str) -> Vec<(&'a str, usize, usize)> {
+        let mut words = Vec::new();
+        let mut start = None;
+        for (i, ch) in text.char_indices() {
+            if ch.is_whitespace() {
+                if let Some(s) = start.take() {
+                    words.push((&text[s..i], s, i));
+                }
+            } else if start.is_none() {
+                start = Some(i);
+            }
+        }
+        if let Some(s) = start {
+            words.push((&text[s..], s, text.len()));
+        }
+        words
+    }
+
+    /// Compute vocabulary utilization for a given text.
+    /// Returns the fraction of unique tokens that appear in the vocabulary.
+    pub fn vocabulary_utilization(&self, text: &str) -> VocabularyUtilization {
+        let ids = self.encode(text, false);
+        let total = ids.len();
+        let unique: std::collections::HashSet<u32> = ids.into_iter().collect();
+        let unique_count = unique.len();
+        let in_vocab = unique.iter().filter(|&&id| (id as usize) < self.id_to_token.len()).count();
+        let coverage = if unique_count == 0 { 1.0 } else { in_vocab as f64 / unique_count as f64 };
+
+        VocabularyUtilization {
+            total_tokens: total,
+            unique_tokens: unique_count,
+            in_vocabulary: in_vocab,
+            coverage: (coverage * 1000.0).round() / 1000.0,
+            vocab_size: self.vocab_size(),
+        }
+    }
+}
+
+/// Structured encoding diagnostics.
+#[derive(Debug, Clone, Serialize)]
+pub struct EncodeReport {
+    pub token_count: usize,
+    pub unique_token_count: usize,
+    pub input_bytes: usize,
+    pub output_bytes: usize,
+    pub bytes_per_token: f64,
+    pub elapsed_us: u64,
+    pub roundtrip_ok: bool,
+    pub has_bos: bool,
+}
+
+/// Vocabulary utilization report.
+#[derive(Debug, Clone, Serialize)]
+pub struct VocabularyUtilization {
+    pub total_tokens: usize,
+    pub unique_tokens: usize,
+    pub in_vocabulary: usize,
+    pub coverage: f64,
+    pub vocab_size: usize,
 }
 
 /// Diagnostic information about a tokenizer.
@@ -1005,5 +1139,159 @@ mod tests {
         for (id, _s) in &pairs {
             assert!((*id as usize) < tok.vocab_size());
         }
+    }
+
+    // ── Block 79: Advanced encoding tests ──────────────────────────────
+
+    #[test]
+    fn token_frequency_basic() {
+        let tok = make_test_tokenizer();
+        let freq = tok.token_frequency("hi", false);
+        assert!(!freq.is_empty());
+        // Each char in "hi" is unique, so each should appear once
+        for &(_, count) in &freq {
+            assert!(count >= 1);
+        }
+    }
+
+    #[test]
+    fn token_frequency_with_repeats() {
+        let tok = make_test_tokenizer();
+        let freq = tok.token_frequency("hhh", false);
+        // 'h' appears 3 times
+        assert!(!freq.is_empty());
+        let total: usize = freq.iter().map(|(_, c)| *c).sum();
+        assert_eq!(total, 3);
+    }
+
+    #[test]
+    fn encode_reported_basic() {
+        let tok = make_test_tokenizer();
+        let report = tok.encode_reported("hello", false);
+        assert_eq!(report.token_count, 5);
+        assert!(report.bytes_per_token > 0.0);
+        assert!(report.roundtrip_ok);
+        assert!(!report.has_bos);
+    }
+
+    #[test]
+    fn encode_reported_with_bos() {
+        let tok = make_test_tokenizer();
+        let report = tok.encode_reported("hi", true);
+        assert!(report.has_bos);
+        assert_eq!(report.token_count, 3); // bos + h + i
+    }
+
+    #[test]
+    fn encode_reported_serializes() {
+        let report = EncodeReport {
+            token_count: 10,
+            unique_token_count: 8,
+            input_bytes: 20,
+            output_bytes: 18,
+            bytes_per_token: 2.0,
+            elapsed_us: 100,
+            roundtrip_ok: true,
+            has_bos: false,
+        };
+        let json = serde_json::to_string(&report).unwrap();
+        assert!(json.contains("\"token_count\":10"));
+        assert!(json.contains("\"roundtrip_ok\":true"));
+    }
+
+    #[test]
+    fn encode_rle_basic() {
+        let tok = make_test_tokenizer();
+        let rle = tok.encode_rle("hi", false);
+        assert!(!rle.is_empty());
+        // Each char is different, so each run is length 1
+        for &(_, count) in &rle {
+            assert_eq!(count, 1);
+        }
+    }
+
+    #[test]
+    fn decode_rle_roundtrip() {
+        let tok = make_test_tokenizer();
+        let text = "hello";
+        let rle = tok.encode_rle(text, false);
+        let decoded = tok.decode_rle(&rle);
+        assert_eq!(decoded, text);
+    }
+
+    #[test]
+    fn decode_rle_empty() {
+        let tok = make_test_tokenizer();
+        let decoded = tok.decode_rle(&[]);
+        assert_eq!(decoded, "");
+    }
+
+    #[test]
+    fn split_into_words_basic() {
+        let tok = make_test_tokenizer();
+        let words = tok.split_into_words("hello world foo");
+        assert_eq!(words.len(), 3);
+        assert_eq!(words[0].0, "hello");
+        assert_eq!(words[1].0, "world");
+        assert_eq!(words[2].0, "foo");
+    }
+
+    #[test]
+    fn split_into_words_empty() {
+        let tok = make_test_tokenizer();
+        let words = tok.split_into_words("");
+        assert!(words.is_empty());
+    }
+
+    #[test]
+    fn split_into_words_multiple_spaces() {
+        let tok = make_test_tokenizer();
+        let words = tok.split_into_words("a  b   c");
+        assert_eq!(words.len(), 3);
+        assert_eq!(words[0].0, "a");
+        assert_eq!(words[1].0, "b");
+        assert_eq!(words[2].0, "c");
+    }
+
+    #[test]
+    fn split_into_words_offsets() {
+        let tok = make_test_tokenizer();
+        let text = "hello world";
+        let words = tok.split_into_words(text);
+        for (word, start, end) in &words {
+            assert_eq!(&text[*start..*end], *word);
+        }
+    }
+
+    #[test]
+    fn vocabulary_utilization_basic() {
+        let tok = make_test_tokenizer();
+        let util = tok.vocabulary_utilization("hello");
+        assert_eq!(util.total_tokens, 5);
+        assert!(util.unique_tokens > 0);
+        assert!(util.coverage <= 1.0);
+        assert!(util.coverage > 0.0);
+    }
+
+    #[test]
+    fn vocabulary_utilization_empty() {
+        let tok = make_test_tokenizer();
+        let util = tok.vocabulary_utilization("");
+        assert_eq!(util.total_tokens, 0);
+        assert_eq!(util.coverage, 1.0); // empty text = full coverage
+    }
+
+    #[test]
+    fn vocabulary_utilization_serializes() {
+        let util = VocabularyUtilization {
+            total_tokens: 100,
+            unique_tokens: 50,
+            in_vocabulary: 48,
+            coverage: 0.96,
+            vocab_size: 151936,
+        };
+        let json = serde_json::to_string(&util).unwrap();
+        assert!(json.contains("\"unique_tokens\":50"));
+        assert!(json.contains("\"coverage\":0.96"));
     }
 }
