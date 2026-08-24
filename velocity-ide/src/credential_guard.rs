@@ -1058,4 +1058,298 @@ mod tests {
         assert!(msg.contains("JIT code"));
         assert!(msg.contains("exfiltrate"));
     }
+
+    // ─── SecretString Additional ────────────────────────────────────────────
+
+    #[test]
+    fn secret_string_masked_exactly_12_chars() {
+        let s = SecretString::new("123456789012".to_string());
+        assert_eq!(s.masked(), "****");
+    }
+
+    #[test]
+    fn secret_string_masked_13_chars() {
+        let s = SecretString::new("1234567890abc".to_string());
+        let masked = s.masked();
+        assert!(masked.starts_with("1234"));
+        assert!(masked.ends_with("0abc"));
+        assert!(masked.contains("..."));
+    }
+
+    #[test]
+    fn secret_string_eq_secret_empty() {
+        let s = SecretString::new("".to_string());
+        assert!(s.eq_secret(""));
+        assert!(!s.eq_secret("nonempty"));
+    }
+
+    #[test]
+    fn secret_string_as_bytes_correct() {
+        let s = SecretString::new("hello".to_string());
+        assert_eq!(s.as_bytes(), b"hello");
+    }
+
+    #[test]
+    fn secret_string_unicode_content() {
+        let s = SecretString::new("caf\u{00e9}_key".to_string());
+        assert_eq!(s.as_str(), "caf\u{00e9}_key");
+        assert!(s.len() > 8);
+    }
+
+    #[test]
+    fn secret_string_debug_does_not_leak_length() {
+        let s = SecretString::new("x".repeat(100));
+        let debug = format!("{:?}", s);
+        assert!(debug.contains("100 bytes"));
+        assert!(!debug.contains("xxx"));
+    }
+
+    // ─── CredentialScope Additional ─────────────────────────────────────────
+
+    #[test]
+    fn credential_scope_load_env() {
+        let _g = ENV_LOCK.lock().unwrap();
+        std::env::set_var("TEST_SCOPE_LOAD_ENV_XYZ", "scope_secret_val");
+        let mut scope = CredentialScope::new();
+        let loaded = scope.load_env("TEST_SCOPE_LOAD_ENV_XYZ");
+        assert!(loaded.is_some());
+        assert_eq!(loaded.unwrap().as_str(), "scope_secret_val");
+        assert_eq!(scope.len(), 1);
+        assert_eq!(scope.label(0), Some("TEST_SCOPE_LOAD_ENV_XYZ"));
+        std::env::remove_var("TEST_SCOPE_LOAD_ENV_XYZ");
+    }
+
+    #[test]
+    fn credential_scope_load_env_missing() {
+        let mut scope = CredentialScope::new();
+        assert!(scope.load_env("DEFINITELY_NOT_SET_XYZ_123").is_none());
+        assert!(scope.is_empty());
+    }
+
+    #[test]
+    fn credential_scope_default_is_empty() {
+        let scope = CredentialScope::default();
+        assert!(scope.is_empty());
+        assert_eq!(scope.len(), 0);
+        assert_eq!(scope.scrubbed_at(), 0);
+    }
+
+    #[test]
+    fn credential_scope_debug_is_safe() {
+        let mut scope = CredentialScope::new();
+        scope.load_value("super_secret_value".to_string());
+        let debug = format!("{:?}", scope);
+        assert!(debug.contains("CredentialScope"));
+        assert!(!debug.contains("super_secret_value"));
+    }
+
+    #[test]
+    fn credential_scope_double_scrub_is_safe() {
+        let mut scope = CredentialScope::new();
+        scope.load_value("temp".to_string());
+        scope.scrub();
+        assert!(scope.is_empty());
+        scope.scrub();
+        assert!(scope.is_empty());
+        assert!(scope.scrubbed_at() > 0);
+    }
+
+    #[test]
+    fn credential_scope_secrets_slice() {
+        let mut scope = CredentialScope::new();
+        scope.load_value("a".to_string());
+        scope.load_value("b".to_string());
+        let secrets = scope.secrets();
+        assert_eq!(secrets.len(), 2);
+        assert_eq!(secrets[0].as_str(), "a");
+        assert_eq!(secrets[1].as_str(), "b");
+    }
+
+    #[test]
+    fn credential_scope_report_serializes_full() {
+        let mut scope = CredentialScope::new();
+        scope.load_labeled("key1", "val1".to_string());
+        scope.load_labeled("key2", "val2".to_string());
+        scope.record_scrubbed_env("ENV_A".to_string());
+        let report = scope.audit_report();
+        let json = serde_json::to_string(&report).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed["secret_count"], 2);
+        assert_eq!(parsed["labels"][0], "key1");
+        assert_eq!(parsed["env_vars_scrubbed"][0], "ENV_A");
+        assert_eq!(parsed["is_scrubbed"], false);
+    }
+
+    #[test]
+    fn credential_scope_load_value_label_format() {
+        let mut scope = CredentialScope::new();
+        scope.load_value("first".to_string());
+        scope.load_value("second".to_string());
+        scope.load_value("third".to_string());
+        assert_eq!(scope.label(0), Some("secret_0"));
+        assert_eq!(scope.label(1), Some("secret_1"));
+        assert_eq!(scope.label(2), Some("secret_2"));
+    }
+
+    // ─── Env Scrubbing Additional ───────────────────────────────────────────
+
+    #[test]
+    fn scrub_is_idempotent() {
+        let _g = ENV_LOCK.lock().unwrap();
+        std::env::set_var("VELOCITY_API_KEY", "vr_idempotent");
+        let first = scrub_sensitive_env_vars();
+        assert!(first.contains(&"VELOCITY_API_KEY".to_string()));
+        let second = scrub_sensitive_env_vars();
+        assert!(!second.contains(&"VELOCITY_API_KEY".to_string()));
+    }
+
+    #[test]
+    fn scrub_removes_gcp_credentials() {
+        let _g = ENV_LOCK.lock().unwrap();
+        std::env::set_var("GCP_SERVICE_ACCOUNT_KEY", "gcp_secret");
+        std::env::set_var("GOOGLE_APPLICATION_CREDENTIALS", "/path/to/creds.json");
+        let removed = scrub_sensitive_env_vars();
+        assert!(removed.contains(&"GCP_SERVICE_ACCOUNT_KEY".to_string()));
+        assert!(removed.contains(&"GOOGLE_APPLICATION_CREDENTIALS".to_string()));
+        assert!(std::env::var("GCP_SERVICE_ACCOUNT_KEY").is_err());
+    }
+
+    #[test]
+    fn scrub_removes_azure_credentials() {
+        let _g = ENV_LOCK.lock().unwrap();
+        std::env::set_var("AZURE_CLIENT_SECRET", "azure_secret");
+        std::env::set_var("AZURE_CLIENT_ID", "azure_id");
+        std::env::set_var("AZURE_TENANT_ID", "azure_tenant");
+        let removed = scrub_sensitive_env_vars();
+        assert!(removed.contains(&"AZURE_CLIENT_SECRET".to_string()));
+        assert!(removed.contains(&"AZURE_CLIENT_ID".to_string()));
+        assert!(removed.contains(&"AZURE_TENANT_ID".to_string()));
+    }
+
+    #[test]
+    fn scrub_removes_generic_secrets() {
+        let _g = ENV_LOCK.lock().unwrap();
+        std::env::set_var("JWT_SECRET", "jwt_val");
+        std::env::set_var("SESSION_SECRET", "session_val");
+        std::env::set_var("ENCRYPTION_KEY", "enc_val");
+        let removed = scrub_sensitive_env_vars();
+        assert!(removed.contains(&"JWT_SECRET".to_string()));
+        assert!(removed.contains(&"SESSION_SECRET".to_string()));
+        assert!(removed.contains(&"ENCRYPTION_KEY".to_string()));
+    }
+
+    #[test]
+    fn scrub_removes_docker_and_gpg() {
+        let _g = ENV_LOCK.lock().unwrap();
+        std::env::set_var("DOCKER_PASSWORD", "docker_pass");
+        std::env::set_var("DOCKER_TOKEN", "docker_tok");
+        std::env::set_var("GPG_AGENT_INFO", "/tmp/gpg-agent");
+        let removed = scrub_sensitive_env_vars();
+        assert!(removed.contains(&"DOCKER_PASSWORD".to_string()));
+        assert!(removed.contains(&"DOCKER_TOKEN".to_string()));
+        assert!(removed.contains(&"GPG_AGENT_INFO".to_string()));
+    }
+
+    #[test]
+    fn scrub_empty_when_nothing_set() {
+        let _g = ENV_LOCK.lock().unwrap();
+        scrub_sensitive_env_vars();
+        let removed = scrub_sensitive_env_vars();
+        assert!(removed.is_empty());
+    }
+
+    // ─── Boundary Audit Additional ──────────────────────────────────────────
+
+    #[test]
+    fn boundary_audit_warning_with_sockets() {
+        let audit = CredentialBoundaryAudit {
+            exposed_env_vars: vec![],
+            reachable_sockets: vec![("SSH_AUTH_SOCK".into(), "/tmp/agent.sock".into())],
+            accessible_config_dirs: vec![],
+            clean: false,
+        };
+        let msg = audit.warning_message().unwrap();
+        assert!(msg.contains("agent socket"));
+        assert!(msg.contains("SSH_AUTH_SOCK"));
+    }
+
+    #[test]
+    fn boundary_audit_warning_with_config_dirs() {
+        let audit = CredentialBoundaryAudit {
+            exposed_env_vars: vec![],
+            reachable_sockets: vec![],
+            accessible_config_dirs: vec!["/home/user/.ssh".into()],
+            clean: false,
+        };
+        let msg = audit.warning_message().unwrap();
+        assert!(msg.contains("config dir"));
+        assert!(msg.contains(".ssh"));
+    }
+
+    #[test]
+    fn boundary_audit_summary_clean() {
+        let audit = CredentialBoundaryAudit {
+            exposed_env_vars: vec![],
+            reachable_sockets: vec![],
+            accessible_config_dirs: vec![],
+            clean: true,
+        };
+        let summary = audit.summary();
+        assert!(summary.clean);
+        assert_eq!(summary.severity, "none");
+        assert_eq!(summary.total_issues, 0);
+    }
+
+    #[test]
+    fn boundary_audit_full_serialize() {
+        let audit = CredentialBoundaryAudit {
+            exposed_env_vars: vec!["A".into(), "B".into()],
+            reachable_sockets: vec![("SSH_AUTH_SOCK".into(), "/tmp/s".into())],
+            accessible_config_dirs: vec!["/home/.ssh".into()],
+            clean: false,
+        };
+        let json = serde_json::to_string(&audit).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed["exposed_env_vars"].as_array().unwrap().len(), 2);
+        assert_eq!(parsed["reachable_sockets"].as_array().unwrap().len(), 1);
+        assert_eq!(parsed["accessible_config_dirs"].as_array().unwrap().len(), 1);
+        assert_eq!(parsed["clean"], false);
+    }
+
+    #[test]
+    fn sensitive_config_paths_includes_all_expected() {
+        let paths = sensitive_config_paths();
+        if home_dir().is_some() {
+            let ends: Vec<&str> = paths.iter().map(|p| {
+                p.file_name().unwrap_or_default().to_str().unwrap_or_default()
+            }).collect();
+            assert!(ends.contains(&".ssh"));
+            assert!(ends.contains(&".aws"));
+            assert!(ends.contains(&".docker"));
+            assert!(ends.contains(&".kube"));
+            assert!(ends.contains(&".azure"));
+        }
+    }
+
+    #[test]
+    fn home_dir_returns_some_in_test_env() {
+        assert!(home_dir().is_some());
+    }
+
+    #[test]
+    fn audit_summary_serializes_all_fields() {
+        let summary = CredentialAuditSummary {
+            clean: true,
+            severity: "none".into(),
+            exposed_env_count: 0,
+            reachable_socket_count: 0,
+            accessible_config_dir_count: 0,
+            total_issues: 0,
+        };
+        let json = serde_json::to_string(&summary).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed["clean"], true);
+        assert_eq!(parsed["severity"], "none");
+        assert_eq!(parsed["total_issues"], 0);
+    }
 }
