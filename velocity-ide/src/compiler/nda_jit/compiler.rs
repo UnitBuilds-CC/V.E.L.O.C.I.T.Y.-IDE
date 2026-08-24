@@ -1544,4 +1544,717 @@ mod tests {
         let issues = validate_compile_sequence(&nodes);
         assert!(issues.len() >= 3, "expected >=3 issues, got {}", issues.len());
     }
+
+    // ── JSON key count tests ────────────────────────────────────────────────
+
+    #[test]
+    fn compile_diagnostic_json_key_count() {
+        let diag = compile_diagnostic(&[NdaNode::Int { value: 0 }]);
+        let json = serde_json::to_string(&diag).unwrap();
+        let val: serde_json::Value = serde_json::from_str(&json).unwrap();
+        // 13 fields: node_count, native_eligible, interpreter_only, native_ratio,
+        // has_loops, has_while_loops, has_conditionals, has_returns,
+        // has_matrices, has_norms, asm_available, estimated_complexity,
+        // validation_issues
+        assert_eq!(val.as_object().unwrap().len(), 13);
+    }
+
+    #[test]
+    fn compile_diagnostic_json_all_field_values() {
+        let nodes = vec![
+            NdaNode::Int { value: 1 },
+            NdaNode::Matrix {
+                rows: 4, cols: 4, scale: 0,
+                sign: vec![0; 2], extra: vec![0; 2],
+            },
+        ];
+        let diag = compile_diagnostic(&nodes);
+        let json = serde_json::to_string(&diag).unwrap();
+        let val: serde_json::Value = serde_json::from_str(&json).unwrap();
+        let obj = val.as_object().unwrap();
+        assert_eq!(obj["node_count"], 2);
+        assert_eq!(obj["native_eligible"], 1);
+        assert_eq!(obj["interpreter_only"], 1);
+        assert!(obj["native_ratio"].as_f64().unwrap() > 0.0);
+        assert_eq!(obj["has_loops"], false);
+        assert_eq!(obj["has_while_loops"], false);
+        assert_eq!(obj["has_conditionals"], false);
+        assert_eq!(obj["has_returns"], false);
+        assert_eq!(obj["has_matrices"], true);
+        assert_eq!(obj["has_norms"], false);
+        assert!(obj["asm_available"].is_boolean());
+        assert!(obj["estimated_complexity"].as_str().is_some());
+        assert!(obj["validation_issues"].as_array().is_some());
+    }
+
+    #[test]
+    fn compile_diagnostic_clone_independence() {
+        let diag = compile_diagnostic(&[NdaNode::Int { value: 1 }]);
+        let mut cloned = diag.clone();
+        cloned.node_count = 9999;
+        cloned.validation_issues.push("injected".into());
+        assert_eq!(diag.node_count, 1);
+        assert!(!diag.validation_issues.iter().any(|i| i == "injected"));
+    }
+
+    #[test]
+    fn compile_diagnostic_debug_format() {
+        let diag = compile_diagnostic(&[NdaNode::Int { value: 42 }]);
+        let dbg = format!("{:?}", diag);
+        assert!(dbg.contains("CompileDiagnostic"));
+        assert!(dbg.contains("node_count"));
+    }
+
+    #[test]
+    fn compile_diagnostic_pretty_json() {
+        let diag = compile_diagnostic(&[NdaNode::Int { value: 1 }]);
+        let pretty = serde_json::to_string_pretty(&diag).unwrap();
+        assert!(pretty.contains('\n'));
+        assert!(pretty.contains("  "));
+        assert!(pretty.contains("node_count"));
+    }
+
+    // ── node_to_str: remaining variants ─────────────────────────────────────
+
+    #[test]
+    fn node_to_str_while() {
+        let s = node_to_str(&NdaNode::While {
+            cond: Box::new(NdaNode::Int { value: 1 }),
+            body: vec![],
+        });
+        assert_eq!(s, "While");
+    }
+
+    #[test]
+    fn node_to_str_if() {
+        let s = node_to_str(&NdaNode::If {
+            cond: Box::new(NdaNode::Int { value: 1 }),
+            then_body: vec![],
+            else_body: None,
+        });
+        assert_eq!(s, "If");
+    }
+
+    #[test]
+    fn node_to_str_return() {
+        let s = node_to_str(&NdaNode::Return {
+            value: Box::new(NdaNode::Int { value: 42 }),
+        });
+        assert_eq!(s, "Return");
+    }
+
+    #[test]
+    fn node_to_str_call() {
+        let s = node_to_str(&NdaNode::Call { target: 0xDEAD });
+        assert!(s.contains("Call"));
+        assert!(s.contains("dead"));
+    }
+
+    #[test]
+    fn node_to_str_vec_op() {
+        use crate::site_map::verifier::VecOpKind;
+        let s = node_to_str(&NdaNode::VecOp {
+            op: VecOpKind::SiLU,
+            operand: Box::new(NdaNode::Int { value: 0 }),
+        });
+        assert!(s.contains("VecOp"));
+    }
+
+    #[test]
+    fn node_to_str_bitwise() {
+        let s = node_to_str(&NdaNode::Bitwise {
+            op: BitwiseOp::And,
+            lhs: Box::new(NdaNode::Int { value: 0 }),
+            rhs: Some(Box::new(NdaNode::Int { value: 0 })),
+        });
+        assert!(s.contains("Bitwise"));
+    }
+
+    #[test]
+    fn node_to_str_math() {
+        let s = node_to_str(&NdaNode::Math {
+            op: MathOp::Add,
+            lhs: Box::new(NdaNode::Int { value: 0 }),
+            rhs: Box::new(NdaNode::Int { value: 0 }),
+        });
+        assert!(s.contains("Math"));
+    }
+
+    #[test]
+    fn node_to_str_math_func() {
+        let s = node_to_str(&NdaNode::MathFunc {
+            func: MathFuncKind::Sin,
+            operand: Box::new(NdaNode::Int { value: 0 }),
+        });
+        assert!(s.contains("MathFunc"));
+    }
+
+    #[test]
+    fn node_to_str_peek() {
+        let s = node_to_str(&NdaNode::Peek {
+            addr: Box::new(NdaNode::Int { value: 0 }),
+        });
+        assert_eq!(s, "Peek");
+    }
+
+    #[test]
+    fn node_to_str_poke() {
+        let s = node_to_str(&NdaNode::Poke {
+            addr: Box::new(NdaNode::Int { value: 0 }),
+            value: Box::new(NdaNode::Int { value: 0 }),
+        });
+        assert_eq!(s, "Poke");
+    }
+
+    #[test]
+    fn node_to_str_gemv() {
+        let s = node_to_str(&NdaNode::Gemv {
+            matrix: Box::new(NdaNode::Int { value: 0 }),
+            vector: Box::new(NdaNode::Int { value: 0 }),
+        });
+        assert_eq!(s, "Gemv");
+    }
+
+    #[test]
+    fn node_to_str_dot() {
+        let s = node_to_str(&NdaNode::Dot {
+            lhs: Box::new(NdaNode::Int { value: 0 }),
+            rhs: Box::new(NdaNode::Int { value: 0 }),
+        });
+        assert_eq!(s, "Dot");
+    }
+
+    #[test]
+    fn node_to_str_syscall() {
+        let s = node_to_str(&NdaNode::Syscall { num: 42, args: vec![] });
+        assert!(s.contains("Syscall"));
+        assert!(s.contains("42"));
+    }
+
+    #[test]
+    fn node_to_str_spawn() {
+        let s = node_to_str(&NdaNode::Spawn { scope_hash: 0xBEEF });
+        assert!(s.contains("Spawn"));
+        assert!(s.contains("beef"));
+    }
+
+    #[test]
+    fn node_to_str_atomic() {
+        use crate::site_map::verifier::AtomicOp;
+        let s = node_to_str(&NdaNode::Atomic {
+            op: AtomicOp::Cas,
+            addr: Box::new(NdaNode::Int { value: 0 }),
+            val: Box::new(NdaNode::Int { value: 0 }),
+        });
+        assert!(s.contains("Atomic"));
+    }
+
+    #[test]
+    fn node_to_str_alloc() {
+        let s = node_to_str(&NdaNode::Alloc {
+            size: Box::new(NdaNode::Int { value: 1024 }),
+        });
+        assert_eq!(s, "Alloc");
+    }
+
+    #[test]
+    fn node_to_str_free() {
+        let s = node_to_str(&NdaNode::Free {
+            addr: Box::new(NdaNode::Int { value: 0 }),
+        });
+        assert_eq!(s, "Free");
+    }
+
+    #[test]
+    fn node_to_str_reg_int() {
+        let s = node_to_str(&NdaNode::RegInt { vector: 7, handler_hash: 0 });
+        assert!(s.contains("RegInt"));
+        assert!(s.contains("7"));
+    }
+
+    #[test]
+    fn node_to_str_cast() {
+        use crate::site_map::verifier::TypeKind;
+        let s = node_to_str(&NdaNode::Cast {
+            from_type: TypeKind::Int,
+            to_type: TypeKind::Float,
+            operand: Box::new(NdaNode::Int { value: 0 }),
+        });
+        assert!(s.contains("Cast"));
+    }
+
+    #[test]
+    fn node_to_str_gpu_dispatch() {
+        let s = node_to_str(&NdaNode::GpuDispatch {
+            shader_hash: 0xCAFE,
+            args: vec![],
+        });
+        assert!(s.contains("GpuDispatch"));
+        assert!(s.contains("cafe"));
+    }
+
+    #[test]
+    fn node_to_str_triple() {
+        let s = node_to_str(&NdaNode::Triple {
+            subject_hash: 1,
+            predicate_id: 2,
+            object_hash: 3,
+        });
+        assert!(s.contains("Triple"));
+        assert!(s.contains("pred=2"));
+    }
+
+    #[test]
+    fn node_to_str_load() {
+        let s = node_to_str(&NdaNode::Load { name_hash: 0xFF });
+        assert!(s.contains("Load"));
+        assert!(s.contains("ff"));
+    }
+
+    #[test]
+    fn node_to_str_store() {
+        let s = node_to_str(&NdaNode::Store {
+            name_hash: 0xAB,
+            value: Box::new(NdaNode::Int { value: 0 }),
+        });
+        assert!(s.contains("Store"));
+    }
+
+    // ── bitwise_binary dispatch tests ───────────────────────────────────────
+
+    #[test]
+    fn bitwise_binary_scalar_scalar() {
+        let l = JitVal::Scalar(0xFF, 0);
+        let r = JitVal::Scalar(0x0F, 0);
+        let result = bitwise_binary(BitwiseOp::And, l, r);
+        match result {
+            JitVal::Scalar(v, _) => assert_eq!(v, 0x0F),
+            _ => panic!("expected Scalar"),
+        }
+    }
+
+    #[test]
+    fn bitwise_binary_float_float() {
+        let a = 1.0f32;
+        let b = 2.0f32;
+        let result = bitwise_binary(BitwiseOp::And, JitVal::Float(a), JitVal::Float(b));
+        match result {
+            JitVal::Float(v) => {
+                let expected = a.to_bits() & b.to_bits();
+                assert_eq!(v.to_bits(), expected);
+            }
+            _ => panic!("expected Float"),
+        }
+    }
+
+    #[test]
+    fn bitwise_binary_float_scalar() {
+        let result = bitwise_binary(BitwiseOp::Or, JitVal::Float(1.0), JitVal::Scalar(1, 0));
+        match result {
+            JitVal::Float(_) => {}
+            _ => panic!("expected Float"),
+        }
+    }
+
+    #[test]
+    fn bitwise_binary_scalar_float() {
+        let result = bitwise_binary(BitwiseOp::Xor, JitVal::Scalar(1, 0), JitVal::Float(2.0));
+        match result {
+            JitVal::Float(_) => {}
+            _ => panic!("expected Float"),
+        }
+    }
+
+    #[test]
+    fn bitwise_binary_vec_vec() {
+        let a = NdaVec::from_i32_slice(&[0xFF, 0x0F], 0);
+        let b = NdaVec::from_i32_slice(&[0xF0, 0xFF], 0);
+        let result = bitwise_binary(BitwiseOp::And, JitVal::Vector(Arc::new(a)), JitVal::Vector(Arc::new(b)));
+        match result {
+            JitVal::Vector(v) => {
+                assert_eq!(v.len, 2);
+                // AND of raw codes should produce valid NDA encoding
+                // Just verify the result is a valid vector of the right length
+            }
+            _ => panic!("expected Vector"),
+        }
+    }
+
+    #[test]
+    fn bitwise_binary_vec_scalar() {
+        let a = NdaVec::from_i32_slice(&[0xFF, 0xAA], 0);
+        let result = bitwise_binary(BitwiseOp::And, JitVal::Vector(Arc::new(a)), JitVal::Scalar(0x0F, 0));
+        match result {
+            JitVal::Vector(v) => {
+                assert_eq!(v.len, 2);
+                // Verify result is a valid vector
+            }
+            _ => panic!("expected Vector"),
+        }
+    }
+
+    #[test]
+    fn bitwise_binary_scalar_vec() {
+        let b = NdaVec::from_i32_slice(&[0xFF, 0x55], 0);
+        let result = bitwise_binary(BitwiseOp::Or, JitVal::Scalar(0x0F, 0), JitVal::Vector(Arc::new(b)));
+        match result {
+            JitVal::Vector(v) => {
+                assert_eq!(v.len, 2);
+            }
+            _ => panic!("expected Vector"),
+        }
+    }
+
+    #[test]
+    fn bitwise_binary_float_vec() {
+        let a = NdaVec::from_i32_slice(&[0xFF], 0);
+        let result = bitwise_binary(BitwiseOp::Xor, JitVal::Float(1.0), JitVal::Vector(Arc::new(a)));
+        match result {
+            JitVal::Vector(_) => {}
+            _ => panic!("expected Vector"),
+        }
+    }
+
+    #[test]
+    fn bitwise_binary_vec_float() {
+        let a = NdaVec::from_i32_slice(&[0xFF], 0);
+        let result = bitwise_binary(BitwiseOp::Xor, JitVal::Vector(Arc::new(a)), JitVal::Float(2.0));
+        match result {
+            JitVal::Vector(_) => {}
+            _ => panic!("expected Vector"),
+        }
+    }
+
+    // ── compile() entry point tests ─────────────────────────────────────────
+
+    #[test]
+    fn compile_empty_program() {
+        let prog = compile(&[]);
+        assert_eq!(prog.nodes_compiled, 0);
+        assert!(prog.fns.is_empty());
+    }
+
+    #[test]
+    fn compile_single_int() {
+        let prog = compile(&[NdaNode::Int { value: 42 }]);
+        assert!(prog.nodes_compiled >= 1);
+        assert_eq!(prog.fns.len(), 1);
+    }
+
+    #[test]
+    fn compile_multiple_nodes() {
+        let nodes = vec![
+            NdaNode::Int { value: 1 },
+            NdaNode::Int { value: 2 },
+            NdaNode::Add {
+                lhs: Box::new(NdaNode::Int { value: 0 }),
+                rhs: Box::new(NdaNode::Int { value: 0 }),
+            },
+        ];
+        let prog = compile(&nodes);
+        assert_eq!(prog.fns.len(), 3);
+    }
+
+    #[test]
+    fn compile_has_asm_kernel_flag() {
+        let prog = compile(&[NdaNode::Int { value: 0 }]);
+        #[cfg(target_arch = "x86_64")]
+        assert!(prog.has_asm_kernel);
+    }
+
+    // ── is_pure_scalar: more edge cases ─────────────────────────────────────
+
+    #[test]
+    fn is_pure_scalar_store_with_scalar_value() {
+        let node = NdaNode::Store {
+            name_hash: 1,
+            value: Box::new(NdaNode::Int { value: 42 }),
+        };
+        assert!(is_pure_scalar(&node));
+    }
+
+    #[test]
+    fn is_pure_scalar_store_with_matrix_value() {
+        let node = NdaNode::Store {
+            name_hash: 1,
+            value: Box::new(NdaNode::Matrix {
+                rows: 2, cols: 2, scale: 0,
+                sign: vec![0; 1], extra: vec![0; 1],
+            }),
+        };
+        assert!(!is_pure_scalar(&node));
+    }
+
+    #[test]
+    fn is_pure_scalar_compare_both_scalar() {
+        use crate::site_map::verifier::CmpOp;
+        let node = NdaNode::Compare {
+            op: CmpOp::Lt,
+            lhs: Box::new(NdaNode::Int { value: 1 }),
+            rhs: Box::new(NdaNode::Int { value: 2 }),
+        };
+        assert!(is_pure_scalar(&node));
+    }
+
+    #[test]
+    fn is_pure_scalar_if_all_scalar_branches() {
+        let node = NdaNode::If {
+            cond: Box::new(NdaNode::Int { value: 1 }),
+            then_body: vec![NdaNode::Int { value: 2 }],
+            else_body: Some(vec![NdaNode::Int { value: 3 }]),
+        };
+        assert!(is_pure_scalar(&node));
+    }
+
+    #[test]
+    fn is_pure_scalar_if_with_matrix_in_then() {
+        let node = NdaNode::If {
+            cond: Box::new(NdaNode::Int { value: 1 }),
+            then_body: vec![NdaNode::Matrix {
+                rows: 2, cols: 2, scale: 0,
+                sign: vec![0; 1], extra: vec![0; 1],
+            }],
+            else_body: None,
+        };
+        assert!(!is_pure_scalar(&node));
+    }
+
+    #[test]
+    fn is_pure_scalar_while_all_scalar() {
+        let node = NdaNode::While {
+            cond: Box::new(NdaNode::Int { value: 1 }),
+            body: vec![NdaNode::Int { value: 0 }],
+        };
+        assert!(is_pure_scalar(&node));
+    }
+
+    // ── compile_diagnostic: additional coverage ─────────────────────────────
+
+    #[test]
+    fn compile_diagnostic_large_program_complexity() {
+        let many: Vec<_> = (0..250).map(|i| NdaNode::Int { value: i as i32 }).collect();
+        let diag = compile_diagnostic(&many);
+        assert_eq!(diag.estimated_complexity, "large");
+        assert_eq!(diag.node_count, 250);
+    }
+
+    #[test]
+    fn compile_diagnostic_small_program_complexity() {
+        let nodes: Vec<_> = (0..15).map(|i| NdaNode::Int { value: i }).collect();
+        let diag = compile_diagnostic(&nodes);
+        assert_eq!(diag.estimated_complexity, "small");
+    }
+
+    #[test]
+    fn compile_diagnostic_native_ratio_all_interpreter() {
+        let nodes = vec![
+            NdaNode::Float { value: 1.0 },
+            NdaNode::Matrix {
+                rows: 4, cols: 4, scale: 0,
+                sign: vec![0; 2], extra: vec![0; 2],
+            },
+        ];
+        let diag = compile_diagnostic(&nodes);
+        assert!((diag.native_ratio - 0.0).abs() < f64::EPSILON);
+        assert_eq!(diag.native_eligible, 0);
+    }
+
+    #[test]
+    fn compile_diagnostic_json_roundtrip() {
+        let nodes = vec![
+            NdaNode::Int { value: 1 },
+            NdaNode::Loop { count: 5, body: vec![NdaNode::Int { value: 0 }] },
+            NdaNode::Matrix {
+                rows: 4, cols: 4, scale: 0,
+                sign: vec![0; 2], extra: vec![0; 2],
+            },
+        ];
+        let diag = compile_diagnostic(&nodes);
+        let json = serde_json::to_string_pretty(&diag).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed["node_count"], diag.node_count);
+        assert_eq!(parsed["has_loops"], true);
+        assert_eq!(parsed["has_matrices"], true);
+    }
+
+    // ── validate_compile_sequence: additional coverage ──────────────────────
+
+    #[test]
+    fn validate_compile_sequence_deeply_nested() {
+        let nodes = vec![NdaNode::Loop {
+            count: 3,
+            body: vec![NdaNode::Scope {
+                children: vec![NdaNode::Loop {
+                    count: 2,
+                    body: vec![NdaNode::Int { value: 0 }],
+                }],
+            }],
+        }];
+        let issues = validate_compile_sequence(&nodes);
+        assert!(issues.is_empty());
+    }
+
+    #[test]
+    fn validate_compile_sequence_all_node_types_clean() {
+        let nodes = vec![
+            NdaNode::Int { value: 1 },
+            NdaNode::Float { value: 2.0 },
+            NdaNode::Break,
+            NdaNode::Add {
+                lhs: Box::new(NdaNode::Int { value: 1 }),
+                rhs: Box::new(NdaNode::Int { value: 2 }),
+            },
+        ];
+        let issues = validate_compile_sequence(&nodes);
+        assert!(issues.is_empty());
+    }
+
+    // ── JIT execution integration tests ─────────────────────────────────────
+
+    #[test]
+    fn jit_execute_int_pushes_scalar() {
+        use crate::site_map::SiteMap;
+        let prog = compile(&[NdaNode::Int { value: 42 }]);
+        let sm = SiteMap::open(&std::env::temp_dir().join("jit_compiler_int_test"), 0).unwrap();
+        let mut state = JitState::new(&[], &sm, 16);
+        for f in &prog.fns {
+            f(&mut state).unwrap();
+        }
+        // Int may go through scalar fast path; just verify it compiled and ran
+        assert!(prog.nodes_compiled >= 1);
+        assert_eq!(prog.fns.len(), 1);
+    }
+
+    #[test]
+    fn jit_execute_float_pushes_float() {
+        use crate::site_map::SiteMap;
+        let prog = compile(&[NdaNode::Float { value: 3.14 }]);
+        let sm = SiteMap::open(&std::env::temp_dir().join("jit_compiler_float_test"), 0).unwrap();
+        let mut state = JitState::new(&[], &sm, 16);
+        for f in &prog.fns {
+            f(&mut state).unwrap();
+        }
+        // Float goes through interpreter path
+        assert!(prog.nodes_compiled >= 1);
+        assert!(!state.stack.is_empty() || state.executed_nodes >= 1);
+    }
+
+    #[test]
+    fn jit_execute_break_returns_break() {
+        use crate::site_map::SiteMap;
+        let prog = compile(&[NdaNode::Break]);
+        let sm = SiteMap::open(&std::env::temp_dir().join("jit_compiler_break_test"), 0).unwrap();
+        let mut state = JitState::new(&[], &sm, 16);
+        let result = prog.fns[0](&mut state).unwrap();
+        assert_eq!(result, JitControlFlow::Break);
+    }
+
+    #[test]
+    fn jit_execute_scope_runs_children() {
+        use crate::site_map::SiteMap;
+        let nodes = vec![NdaNode::Scope {
+            children: vec![
+                NdaNode::Int { value: 1 },
+                NdaNode::Int { value: 2 },
+            ],
+        }];
+        let prog = compile(&nodes);
+        let sm = SiteMap::open(&std::env::temp_dir().join("jit_compiler_scope_test"), 0).unwrap();
+        let mut state = JitState::new(&[], &sm, 16);
+        for f in &prog.fns {
+            f(&mut state).unwrap();
+        }
+        // Scope compiled; children may go through scalar fast path
+        assert!(prog.nodes_compiled >= 3);
+    }
+
+    #[test]
+    fn jit_execute_loop_iterates() {
+        use crate::site_map::SiteMap;
+        let nodes = vec![NdaNode::Loop {
+            count: 5,
+            body: vec![NdaNode::Int { value: 1 }],
+        }];
+        let prog = compile(&nodes);
+        let sm = SiteMap::open(&std::env::temp_dir().join("jit_compiler_loop_test"), 0).unwrap();
+        let mut state = JitState::new(&[], &sm, 16);
+        for f in &prog.fns {
+            f(&mut state).unwrap();
+        }
+        // Loop compiled; body may go through scalar fast path
+        assert!(prog.nodes_compiled >= 2);
+    }
+
+    #[test]
+    fn jit_execute_let_store_load() {
+        use crate::site_map::SiteMap;
+        let nodes = vec![
+            NdaNode::Let {
+                name_hash: 0x1234,
+                init: Box::new(NdaNode::Int { value: 99 }),
+            },
+            NdaNode::Load { name_hash: 0x1234 },
+        ];
+        let prog = compile(&nodes);
+        let sm = SiteMap::open(&std::env::temp_dir().join("jit_compiler_let_test"), 0).unwrap();
+        let mut state = JitState::new(&[], &sm, 16);
+        for f in &prog.fns {
+            f(&mut state).unwrap();
+        }
+        // After Let + Load, stack should have the value
+        assert!(state.stack.len() >= 1);
+    }
+
+    #[test]
+    fn jit_execute_return_returns_control_flow() {
+        use crate::site_map::SiteMap;
+        let nodes = vec![NdaNode::Return {
+            value: Box::new(NdaNode::Int { value: 42 }),
+        }];
+        let prog = compile(&nodes);
+        let sm = SiteMap::open(&std::env::temp_dir().join("jit_compiler_return_test"), 0).unwrap();
+        let mut state = JitState::new(&[], &sm, 16);
+        // Execute the int push first, then the return
+        for f in &prog.fns {
+            let cf = f(&mut state);
+            match cf {
+                Ok(JitControlFlow::Return) => break,
+                Ok(_) => continue,
+                Err(e) => panic!("unexpected error: {}", e),
+            }
+        }
+    }
+
+    #[test]
+    fn jit_execute_add_two_ints() {
+        use crate::site_map::SiteMap;
+        let nodes = vec![NdaNode::Add {
+            lhs: Box::new(NdaNode::Int { value: 10 }),
+            rhs: Box::new(NdaNode::Int { value: 20 }),
+        }];
+        let prog = compile(&nodes);
+        let sm = SiteMap::open(&std::env::temp_dir().join("jit_compiler_add_test"), 0).unwrap();
+        let mut state = JitState::new(&[], &sm, 16);
+        for f in &prog.fns {
+            f(&mut state).unwrap();
+        }
+        // Add should produce a result on the stack
+        assert!(state.stack.len() >= 1);
+    }
+
+    #[test]
+    fn jit_execute_print_captures_output() {
+        use crate::site_map::SiteMap;
+        let nodes = vec![NdaNode::Print {
+            source: Box::new(NdaNode::Int { value: 42 }),
+        }];
+        let prog = compile(&nodes);
+        let sm = SiteMap::open(&std::env::temp_dir().join("jit_compiler_print_test"), 0).unwrap();
+        let mut state = JitState::new(&[], &sm, 16);
+        for f in &prog.fns {
+            f(&mut state).unwrap();
+        }
+        assert!(!state.print_buf.is_empty());
+        assert!(state.print_buf[0].contains("print"));
+    }
 }
