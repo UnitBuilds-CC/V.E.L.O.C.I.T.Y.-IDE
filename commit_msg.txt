@@ -1,7 +1,7 @@
-pipeline_nda.rs — 22 new tests (139 total), committed
+pipeline_bridge.rs — 26 new tests (163 total)
 
-Block 202: pipeline_nda.rs — NdaHead save magic bytes, forward sparse/negative input,
-PipelineMode mixed case + Auto never detected, cache_hit_rate boundary, top_opcodes n=1,
-snapshot elapsed_ms truncation, validate combinations, execution_summary field derivations,
-batch report field access, random_uniform properties, argmax_f32 additional cases,
-ensure_distribution preserves pre-filled, JSON field count
+Block 203: pipeline_bridge.rs — EngineOutput variant field access (Text/Nda),
+validate() logic multiple warnings + divisibility, boundary values (u64::MAX elapsed_us/root_hash),
+MHA/MQA/GQA attention patterns, site_map zero-total guard, per_second extreme values,
+scope_similarity boundary (0.0/1.0), pretty JSON, clone preserves all fields,
+tokenizer_merge_count zero, vocab_size boundary

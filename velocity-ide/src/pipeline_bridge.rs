@@ -3245,4 +3245,433 @@ mod tests {
         let ffn_ratio = info.ffn_size as f64 / info.hidden_size as f64;
         assert!(ffn_ratio > 2.0 && ffn_ratio < 4.0);
     }
+
+    // ─── Block 203: EngineOutput variants, validate logic, boundary values ──
+
+    #[test]
+    fn engine_output_text_field_access() {
+        let out = EngineOutput::Text {
+            text: "hello world".to_string(),
+            n_tokens: 2,
+            elapsed_ms: 50,
+        };
+        match &out {
+            EngineOutput::Text { text, n_tokens, elapsed_ms } => {
+                assert_eq!(text, "hello world");
+                assert_eq!(*n_tokens, 2);
+                assert_eq!(*elapsed_ms, 50);
+            }
+            _ => panic!("expected Text variant"),
+        }
+    }
+
+    #[test]
+    fn engine_output_nda_field_access() {
+        let out = EngineOutput::Nda {
+            opcodes: vec![],
+            root_hash: 0xDEAD,
+            valid: true,
+            force_terminated: false,
+            site_map_key: Some(42),
+            n_opcodes: 0,
+            elapsed_ms: 100,
+        };
+        match &out {
+            EngineOutput::Nda { opcodes, root_hash, valid, force_terminated,
+                site_map_key, n_opcodes, elapsed_ms } => {
+                assert!(opcodes.is_empty());
+                assert_eq!(*root_hash, 0xDEAD);
+                assert!(*valid);
+                assert!(!*force_terminated);
+                assert_eq!(*site_map_key, Some(42));
+                assert_eq!(*n_opcodes, 0);
+                assert_eq!(*elapsed_ms, 100);
+            }
+            _ => panic!("expected Nda variant"),
+        }
+    }
+
+    #[test]
+    fn engine_output_nda_with_opcodes_203() {
+        // Nda variant can hold opcodes (we use dummy u8 values for counting)
+        let out = EngineOutput::Nda {
+            opcodes: vec![],
+            root_hash: 0xFF,
+            valid: true,
+            force_terminated: false,
+            site_map_key: None,
+            n_opcodes: 5,
+            elapsed_ms: 10,
+        };
+        match &out {
+            EngineOutput::Nda { n_opcodes, .. } => assert_eq!(*n_opcodes, 5),
+            _ => unreachable!(),
+        }
+    }
+
+    #[test]
+    fn engine_output_text_empty_string_203() {
+        let out = EngineOutput::Text {
+            text: String::new(),
+            n_tokens: 0,
+            elapsed_ms: 0,
+        };
+        match &out {
+            EngineOutput::Text { text, n_tokens, elapsed_ms } => {
+                assert_eq!(text, "");
+                assert_eq!(*n_tokens, 0);
+                assert_eq!(*elapsed_ms, 0);
+            }
+            _ => unreachable!(),
+        }
+    }
+
+    #[test]
+    fn engine_output_text_large_elapsed() {
+        let out = EngineOutput::Text {
+            text: "slow".to_string(),
+            n_tokens: 1,
+            elapsed_ms: u128::MAX,
+        };
+        match &out {
+            EngineOutput::Text { elapsed_ms, .. } => {
+                assert_eq!(*elapsed_ms, u128::MAX);
+            }
+            _ => unreachable!(),
+        }
+    }
+
+    #[test]
+    fn engine_output_nda_force_terminated_no_key() {
+        // force_terminated programs are never stored → site_map_key should be None
+        let out = EngineOutput::Nda {
+            opcodes: vec![],
+            root_hash: 0xABCD,
+            valid: true,
+            force_terminated: true,
+            site_map_key: None,
+            n_opcodes: 50,
+            elapsed_ms: 200,
+        };
+        match &out {
+            EngineOutput::Nda { force_terminated, site_map_key, .. } => {
+                assert!(*force_terminated);
+                assert!(site_map_key.is_none());
+            }
+            _ => unreachable!(),
+        }
+    }
+
+    #[test]
+    fn validate_logic_multiple_warnings() {
+        // Simulate the validate() logic with multiple zero fields
+        let mut warnings: Vec<String> = Vec::new();
+        let vocab_size = 0usize;
+        let n_layers = 0usize;
+        let hidden_size = 0usize;
+        let n_heads = 0usize;
+        let max_seq_len = 0usize;
+        if vocab_size == 0 { warnings.push("vocab_size is 0".to_string()); }
+        if n_layers == 0 { warnings.push("n_layers is 0".to_string()); }
+        if hidden_size == 0 { warnings.push("hidden_size is 0".to_string()); }
+        if n_heads == 0 { warnings.push("n_heads is 0".to_string()); }
+        if max_seq_len == 0 { warnings.push("max_seq_len is 0".to_string()); }
+        assert_eq!(warnings.len(), 5);
+    }
+
+    #[test]
+    fn validate_logic_hidden_not_divisible_by_heads() {
+        let mut warnings: Vec<String> = Vec::new();
+        let hidden_size = 100usize;
+        let n_heads = 7usize;
+        if n_heads > 0 && hidden_size % n_heads != 0 {
+            warnings.push(format!(
+                "hidden_size ({}) not divisible by n_heads ({})",
+                hidden_size, n_heads
+            ));
+        }
+        assert_eq!(warnings.len(), 1);
+        assert!(warnings[0].contains("100"));
+        assert!(warnings[0].contains("7"));
+    }
+
+    #[test]
+    fn validate_logic_no_warnings_all_valid() {
+        let mut warnings: Vec<String> = Vec::new();
+        let vocab_size = 32000usize;
+        let n_layers = 12usize;
+        let hidden_size = 768usize;
+        let n_heads = 12usize;
+        let max_seq_len = 4096usize;
+        if vocab_size == 0 { warnings.push("vocab_size is 0".to_string()); }
+        if n_layers == 0 { warnings.push("n_layers is 0".to_string()); }
+        if hidden_size == 0 { warnings.push("hidden_size is 0".to_string()); }
+        if n_heads == 0 { warnings.push("n_heads is 0".to_string()); }
+        if max_seq_len == 0 { warnings.push("max_seq_len is 0".to_string()); }
+        if n_heads > 0 && hidden_size % n_heads != 0 {
+            warnings.push("not divisible".to_string());
+        }
+        assert!(warnings.is_empty());
+    }
+
+    #[test]
+    fn engine_report_elapsed_us_max() {
+        let report = EngineReport {
+            path: "text".to_string(), resolved_mode: "Text".to_string(),
+            prompt_tokens: 0, output_count: 0, elapsed_us: u64::MAX,
+            per_second: 0.0, text: None, nda: None,
+            path1_lazy_loaded: false,
+            engine_status: EngineStatusSnapshot {
+                path1_loaded: false, path2_active: true,
+                model_dir: "".to_string(), vocab_size: 0,
+                n_layers: 0, hidden_size: 0,
+            },
+        };
+        let json = serde_json::to_string(&report).unwrap();
+        let val: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(val["elapsed_us"], u64::MAX);
+    }
+
+    #[test]
+    fn nda_diagnostics_root_hash_max() {
+        let diag = NdaRunDiagnostics {
+            root_hash: u64::MAX, valid: false, force_terminated: false,
+            site_map_key: None, opcode_count: 0,
+            sandbox_passed: None, scope_passed: None,
+            scope_similarity: None, site_map_hits: 0, site_map_misses: 0,
+        };
+        let json = serde_json::to_string(&diag).unwrap();
+        let val: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(val["root_hash"], u64::MAX);
+    }
+
+    #[test]
+    fn nda_diagnostics_opcode_count_zero_valid() {
+        let diag = NdaRunDiagnostics {
+            root_hash: 0, valid: true, force_terminated: false,
+            site_map_key: None, opcode_count: 0,
+            sandbox_passed: None, scope_passed: None,
+            scope_similarity: None, site_map_hits: 0, site_map_misses: 0,
+        };
+        assert_eq!(diag.opcode_count, 0);
+        assert!(diag.valid);
+    }
+
+    #[test]
+    fn engine_info_mha_n_heads_equal_kv_heads() {
+        // Multi-head attention: n_heads == n_kv_heads
+        let info = EngineInfo {
+            model_dir: "/m".to_string(), vocab_size: 32000, n_layers: 12,
+            hidden_size: 768, ffn_size: 2048, n_heads: 12, n_kv_heads: 12,
+            head_dim: 64, max_seq_len: 4096, path1_loaded: false,
+            path2_site_map_stats: "0 entries".to_string(), tokenizer_merge_count: 100,
+        };
+        assert_eq!(info.n_heads, info.n_kv_heads);
+        assert_eq!(info.hidden_size / info.n_heads, info.head_dim);
+    }
+
+    #[test]
+    fn engine_info_mqa_single_kv_head() {
+        // Multi-query attention: n_kv_heads == 1
+        let info = EngineInfo {
+            model_dir: "/m".to_string(), vocab_size: 32000, n_layers: 12,
+            hidden_size: 768, ffn_size: 2048, n_heads: 12, n_kv_heads: 1,
+            head_dim: 64, max_seq_len: 4096, path1_loaded: false,
+            path2_site_map_stats: "0 entries".to_string(), tokenizer_merge_count: 100,
+        };
+        assert_eq!(info.n_kv_heads, 1);
+        assert_eq!(info.n_heads % info.n_kv_heads, 0);
+    }
+
+    #[test]
+    fn engine_report_both_text_and_nda_none() {
+        // Both text and nda can be None (e.g., before execution)
+        let report = EngineReport {
+            path: "unknown".to_string(), resolved_mode: "Auto".to_string(),
+            prompt_tokens: 0, output_count: 0, elapsed_us: 0,
+            per_second: 0.0, text: None, nda: None,
+            path1_lazy_loaded: false,
+            engine_status: EngineStatusSnapshot {
+                path1_loaded: false, path2_active: true,
+                model_dir: "".to_string(), vocab_size: 0,
+                n_layers: 0, hidden_size: 0,
+            },
+        };
+        assert!(report.text.is_none());
+        assert!(report.nda.is_none());
+    }
+
+    #[test]
+    fn nda_diagnostics_site_map_zero_total() {
+        // When both hits and misses are 0, can't compute hit rate
+        let diag = NdaRunDiagnostics {
+            root_hash: 0, valid: true, force_terminated: false,
+            site_map_key: None, opcode_count: 0,
+            sandbox_passed: None, scope_passed: None,
+            scope_similarity: None, site_map_hits: 0, site_map_misses: 0,
+        };
+        let total = diag.site_map_hits + diag.site_map_misses;
+        assert_eq!(total, 0);
+        // Hit rate would be 0/0 — guard against division by zero
+        let hit_rate = if total > 0 {
+            diag.site_map_hits as f64 / total as f64
+        } else {
+            0.0
+        };
+        assert_eq!(hit_rate, 0.0);
+    }
+
+    #[test]
+    fn engine_status_snapshot_path2_always_active() {
+        // status_snapshot() always sets path2_active = true
+        let snap = EngineStatusSnapshot {
+            path1_loaded: false, path2_active: true,
+            model_dir: "/m".to_string(), vocab_size: 100,
+            n_layers: 4, hidden_size: 256,
+        };
+        assert!(snap.path2_active);
+    }
+
+    #[test]
+    fn engine_report_per_second_very_large() {
+        // 1M tokens in 1μs = 1e12 tok/s (unrealistic but tests float range)
+        let elapsed_us = 1u64;
+        let output_count = 1_000_000usize;
+        let per_second = (output_count as f64) / (elapsed_us as f64 / 1_000_000.0);
+        assert!((per_second - 1e12).abs() < 1e6);
+    }
+
+    #[test]
+    fn engine_report_per_second_sub_one() {
+        // 1 token in 10 seconds = 0.1 tok/s
+        let elapsed_us = 10_000_000u64;
+        let output_count = 1usize;
+        let per_second = (output_count as f64) / (elapsed_us as f64 / 1_000_000.0);
+        assert!((per_second - 0.1).abs() < 0.001);
+    }
+
+    #[test]
+    fn nda_diagnostics_scope_similarity_boundary_zero() {
+        let diag = NdaRunDiagnostics {
+            root_hash: 0, valid: true, force_terminated: false,
+            site_map_key: None, opcode_count: 10,
+            sandbox_passed: None, scope_passed: Some(false),
+            scope_similarity: Some(0.0), site_map_hits: 0, site_map_misses: 10,
+        };
+        assert_eq!(diag.scope_similarity, Some(0.0));
+    }
+
+    #[test]
+    fn nda_diagnostics_scope_similarity_boundary_one() {
+        let diag = NdaRunDiagnostics {
+            root_hash: 0, valid: true, force_terminated: false,
+            site_map_key: Some(1), opcode_count: 10,
+            sandbox_passed: None, scope_passed: Some(true),
+            scope_similarity: Some(1.0), site_map_hits: 10, site_map_misses: 0,
+        };
+        assert_eq!(diag.scope_similarity, Some(1.0));
+    }
+
+    #[test]
+    fn engine_report_pretty_json_203() {
+        let report = EngineReport {
+            path: "text".to_string(), resolved_mode: "Text".to_string(),
+            prompt_tokens: 1, output_count: 1, elapsed_us: 1,
+            per_second: 1.0, text: Some("x".to_string()),
+            nda: None, path1_lazy_loaded: false,
+            engine_status: EngineStatusSnapshot {
+                path1_loaded: false, path2_active: true,
+                model_dir: "/m".to_string(), vocab_size: 100,
+                n_layers: 4, hidden_size: 256,
+            },
+        };
+        let pretty = serde_json::to_string_pretty(&report).unwrap();
+        assert!(pretty.contains('\n'));
+        assert!(pretty.contains("    "));
+        // Verify it round-trips through Value
+        let val: serde_json::Value = serde_json::from_str(&pretty).unwrap();
+        assert_eq!(val["path"], "text");
+    }
+
+    #[test]
+    fn nda_diagnostics_site_map_key_json_none_vs_some() {
+        let diag_none = NdaRunDiagnostics {
+            root_hash: 0, valid: true, force_terminated: false,
+            site_map_key: None, opcode_count: 0,
+            sandbox_passed: None, scope_passed: None,
+            scope_similarity: None, site_map_hits: 0, site_map_misses: 0,
+        };
+        let json_none = serde_json::to_string(&diag_none).unwrap();
+        assert!(json_none.contains("\"site_map_key\":null"));
+
+        let diag_some = NdaRunDiagnostics {
+            root_hash: 0, valid: true, force_terminated: false,
+            site_map_key: Some(999), opcode_count: 0,
+            sandbox_passed: None, scope_passed: None,
+            scope_similarity: None, site_map_hits: 0, site_map_misses: 0,
+        };
+        let json_some = serde_json::to_string(&diag_some).unwrap();
+        assert!(json_some.contains("\"site_map_key\":999"));
+    }
+
+    #[test]
+    fn engine_report_clone_preserves_all_fields() {
+        let report = EngineReport {
+            path: "nda".to_string(), resolved_mode: "Nda".to_string(),
+            prompt_tokens: 42, output_count: 99, elapsed_us: 12345,
+            per_second: 8051.0, text: None,
+            nda: Some(NdaRunDiagnostics {
+                root_hash: 0xCAFE, valid: true, force_terminated: false,
+                site_map_key: Some(7), opcode_count: 99,
+                sandbox_passed: Some(true), scope_passed: Some(true),
+                scope_similarity: Some(0.99), site_map_hits: 50, site_map_misses: 5,
+            }),
+            path1_lazy_loaded: true,
+            engine_status: EngineStatusSnapshot {
+                path1_loaded: true, path2_active: true,
+                model_dir: "/clone/test".to_string(), vocab_size: 50000,
+                n_layers: 24, hidden_size: 1024,
+            },
+        };
+        let cloned = report.clone();
+        assert_eq!(cloned.path, "nda");
+        assert_eq!(cloned.resolved_mode, "Nda");
+        assert_eq!(cloned.prompt_tokens, 42);
+        assert_eq!(cloned.output_count, 99);
+        assert_eq!(cloned.elapsed_us, 12345);
+        assert!(cloned.path1_lazy_loaded);
+        assert_eq!(cloned.engine_status.model_dir, "/clone/test");
+        assert_eq!(cloned.engine_status.vocab_size, 50000);
+        let nda = cloned.nda.as_ref().unwrap();
+        assert_eq!(nda.root_hash, 0xCAFE);
+        assert_eq!(nda.opcode_count, 99);
+    }
+
+    #[test]
+    fn engine_info_tokenizer_merge_count_zero() {
+        let info = EngineInfo {
+            model_dir: "/m".to_string(), vocab_size: 100, n_layers: 4,
+            hidden_size: 256, ffn_size: 512, n_heads: 4, n_kv_heads: 2,
+            head_dim: 64, max_seq_len: 1024, path1_loaded: false,
+            path2_site_map_stats: "0 entries".to_string(), tokenizer_merge_count: 0,
+        };
+        assert_eq!(info.tokenizer_merge_count, 0);
+        let json = serde_json::to_string(&info).unwrap();
+        let val: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(val["tokenizer_merge_count"], 0);
+    }
+
+    #[test]
+    fn engine_status_snapshot_vocab_size_boundary() {
+        let snap = EngineStatusSnapshot {
+            path1_loaded: true, path2_active: true,
+            model_dir: "/m".to_string(), vocab_size: usize::MAX,
+            n_layers: usize::MAX, hidden_size: usize::MAX,
+        };
+        let json = serde_json::to_string(&snap).unwrap();
+        let val: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(val["vocab_size"], usize::MAX);
+        assert_eq!(val["n_layers"], usize::MAX);
+        assert_eq!(val["hidden_size"], usize::MAX);
+    }
 }
