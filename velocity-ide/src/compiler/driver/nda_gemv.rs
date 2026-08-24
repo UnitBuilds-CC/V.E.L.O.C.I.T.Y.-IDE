@@ -1143,4 +1143,370 @@ mod tests {
         assert!(json.contains("total_gpu_memory_estimate"));
         assert!(json.contains("input_active_bytes"));
     }
+
+    // ── Validation: multiple issues ──────────────────────────────────────
+
+    #[test]
+    fn validate_zero_k_triggers_only_k_must() {
+        let mut cfg = default_gemv_config();
+        cfg.k = 0;
+        let issues = validate_nda_gemv_config(&cfg);
+        // k=0 triggers "k must be > 0" only; 0 % 128 == 0 so no "multiple" issue
+        assert!(issues.iter().any(|i| i.contains("k must")));
+        assert!(!issues.iter().any(|i| i.contains("multiple of 128")));
+        assert_eq!(issues.len(), 1);
+    }
+
+    #[test]
+    fn validate_all_three_issues() {
+        let mut cfg = default_gemv_config();
+        cfg.k = 64; // not multiple of 128, but > 0
+        cfg.n = 0;
+        let issues = validate_nda_gemv_config(&cfg);
+        // k=64: "k (64) must be a multiple of 128"
+        // n=0: "n must be > 0"
+        assert_eq!(issues.len(), 2);
+        assert!(issues.iter().any(|i| i.contains("multiple of 128")));
+        assert!(issues.iter().any(|i| i.contains("n must")));
+    }
+
+    #[test]
+    fn validate_k_not_multiple_of_128_nonzero() {
+        let mut cfg = default_gemv_config();
+        cfg.k = 256 + 64; // 320, not a multiple of 128
+        let issues = validate_nda_gemv_config(&cfg);
+        assert_eq!(issues.len(), 1);
+        assert!(issues[0].contains("multiple of 128"));
+    }
+
+    #[test]
+    fn validate_k_128_valid() {
+        let mut cfg = default_gemv_config();
+        cfg.k = 128;
+        assert!(validate_nda_gemv_config(&cfg).is_empty());
+    }
+
+    #[test]
+    fn validate_k_256_valid() {
+        let mut cfg = default_gemv_config();
+        cfg.k = 256;
+        assert!(validate_nda_gemv_config(&cfg).is_empty());
+    }
+
+    #[test]
+    fn validate_k_4096_valid() {
+        let mut cfg = default_gemv_config();
+        cfg.k = 4096;
+        assert!(validate_nda_gemv_config(&cfg).is_empty());
+    }
+
+    #[test]
+    fn validate_k_1_invalid() {
+        let mut cfg = default_gemv_config();
+        cfg.k = 1;
+        let issues = validate_nda_gemv_config(&cfg);
+        assert!(issues.iter().any(|i| i.contains("multiple of 128")));
+    }
+
+    #[test]
+    fn validate_n_1_valid() {
+        let mut cfg = default_gemv_config();
+        cfg.n = 1;
+        assert!(validate_nda_gemv_config(&cfg).is_empty());
+    }
+
+    #[test]
+    fn validate_n_max_valid() {
+        let mut cfg = default_gemv_config();
+        cfg.n = usize::MAX;
+        assert!(validate_nda_gemv_config(&cfg).is_empty());
+    }
+
+    // ── Validation issue text ────────────────────────────────────────────
+
+    #[test]
+    fn validate_k_zero_issue_text() {
+        let mut cfg = default_gemv_config();
+        cfg.k = 0;
+        let issues = validate_nda_gemv_config(&cfg);
+        assert_eq!(issues[0], "k must be > 0");
+    }
+
+    #[test]
+    fn validate_n_zero_issue_text() {
+        let mut cfg = default_gemv_config();
+        cfg.n = 0;
+        let issues = validate_nda_gemv_config(&cfg);
+        assert_eq!(issues[0], "n must be > 0");
+    }
+
+    #[test]
+    fn validate_k_multiple_issue_includes_value() {
+        let mut cfg = default_gemv_config();
+        cfg.k = 64;
+        let issues = validate_nda_gemv_config(&cfg);
+        assert!(issues[0].contains("64"));
+    }
+
+    #[test]
+    fn validate_issues_order_deterministic() {
+        let mut cfg = default_gemv_config();
+        cfg.k = 0;
+        cfg.n = 0;
+        let i1 = validate_nda_gemv_config(&cfg);
+        let i2 = validate_nda_gemv_config(&cfg);
+        assert_eq!(i1, i2);
+    }
+
+    // ── Info calculations ────────────────────────────────────────────────
+
+    #[test]
+    fn info_input_active_bytes_formula() {
+        let cfg = default_gemv_config();
+        let info = nda_gemv_info(&cfg);
+        // k/16 * 4 = 128/16 * 4 = 32
+        assert_eq!(info.input_active_bytes, cfg.k / 16 * 4);
+    }
+
+    #[test]
+    fn info_input_pos_bytes_equals_active() {
+        let info = nda_gemv_info(&default_gemv_config());
+        assert_eq!(info.input_pos_bytes, info.input_active_bytes);
+    }
+
+    #[test]
+    fn info_weight_active_bytes_formula() {
+        let cfg = default_gemv_config();
+        let info = nda_gemv_info(&cfg);
+        // (k/128) * n * 4 * 4 = (128/128) * 3200 * 16 = 51200
+        let expected = (cfg.k / 128) * cfg.n * 4 * 4;
+        assert_eq!(info.weight_active_bytes, expected);
+    }
+
+    #[test]
+    fn info_weight_pos_bytes_equals_active() {
+        let info = nda_gemv_info(&default_gemv_config());
+        assert_eq!(info.weight_pos_bytes, info.weight_active_bytes);
+    }
+
+    #[test]
+    fn info_output_bytes_formula() {
+        let cfg = default_gemv_config();
+        let info = nda_gemv_info(&cfg);
+        assert_eq!(info.output_bytes, cfg.n * 4);
+    }
+
+    #[test]
+    fn info_total_memory_formula() {
+        let cfg = default_gemv_config();
+        let info = nda_gemv_info(&cfg);
+        let expected = info.input_active_bytes * 2
+            + info.weight_active_bytes * 2
+            + info.output_bytes;
+        assert_eq!(info.total_gpu_memory_estimate, expected);
+    }
+
+    #[test]
+    fn info_minimal_config() {
+        let cfg = NdaGemvConfig {
+            k: 128,
+            n: 1,
+            version: 1,
+            scales: [1.0, 0.5, 0.25],
+        };
+        let info = nda_gemv_info(&cfg);
+        assert!(info.validation_issues.is_empty());
+        assert_eq!(info.input_active_bytes, 32); // 128/16*4
+        assert_eq!(info.output_bytes, 4); // 1*4
+        assert_eq!(info.weight_active_bytes, 16); // (128/128)*1*4*4
+        assert!(info.total_gpu_memory_estimate > 0);
+    }
+
+    #[test]
+    fn info_large_config() {
+        let cfg = NdaGemvConfig {
+            k: 8192,
+            n: 3200,
+            version: 1,
+            scales: [1.0, 1.0, 1.0],
+        };
+        let info = nda_gemv_info(&cfg);
+        assert!(info.validation_issues.is_empty());
+        assert_eq!(info.input_active_bytes, 8192 / 16 * 4);
+        assert_eq!(info.weight_active_bytes, (8192 / 128) * 3200 * 4 * 4);
+        assert!(info.total_gpu_memory_estimate > 1_000_000);
+    }
+
+    #[test]
+    fn info_preserves_config() {
+        let cfg = default_gemv_config();
+        let info = nda_gemv_info(&cfg);
+        assert_eq!(info.config.k, cfg.k);
+        assert_eq!(info.config.n, cfg.n);
+        assert_eq!(info.config.version, cfg.version);
+        assert_eq!(info.config.scales, cfg.scales);
+    }
+
+    #[test]
+    fn info_with_invalid_config_has_issues() {
+        let mut cfg = default_gemv_config();
+        cfg.k = 0;
+        cfg.n = 0;
+        let info = nda_gemv_info(&cfg);
+        assert!(!info.validation_issues.is_empty());
+        // Memory calculations still proceed even with invalid config
+        assert_eq!(info.output_bytes, 0); // n=0 → 0*4=0
+    }
+
+    // ── Struct derives ───────────────────────────────────────────────────
+
+    #[test]
+    fn config_clone() {
+        let cfg = default_gemv_config();
+        let cloned = cfg.clone();
+        assert_eq!(cloned.k, cfg.k);
+        assert_eq!(cloned.n, cfg.n);
+        assert_eq!(cloned.version, cfg.version);
+        assert_eq!(cloned.scales, cfg.scales);
+    }
+
+    #[test]
+    fn config_clone_independent() {
+        let cfg = default_gemv_config();
+        let mut cloned = cfg.clone();
+        cloned.k = 999;
+        assert_ne!(cfg.k, cloned.k);
+    }
+
+    #[test]
+    fn config_debug_format() {
+        let cfg = default_gemv_config();
+        let debug = format!("{:?}", cfg);
+        assert!(debug.contains("NdaGemvConfig"));
+        assert!(debug.contains("k: 128"));
+        assert!(debug.contains("n: 3200"));
+    }
+
+    #[test]
+    fn info_clone() {
+        let info = nda_gemv_info(&default_gemv_config());
+        let cloned = info.clone();
+        assert_eq!(cloned.input_active_bytes, info.input_active_bytes);
+        assert_eq!(cloned.output_bytes, info.output_bytes);
+        assert_eq!(cloned.total_gpu_memory_estimate, info.total_gpu_memory_estimate);
+        assert_eq!(cloned.validation_issues, info.validation_issues);
+    }
+
+    #[test]
+    fn info_debug_format() {
+        let info = nda_gemv_info(&default_gemv_config());
+        let debug = format!("{:?}", info);
+        assert!(debug.contains("NdaGemvInfo"));
+        assert!(debug.contains("input_active_bytes"));
+        assert!(debug.contains("output_bytes"));
+    }
+
+    // ── Serialization ────────────────────────────────────────────────────
+
+    #[test]
+    fn config_json_all_fields() {
+        let cfg = default_gemv_config();
+        let json = serde_json::to_string(&cfg).unwrap();
+        assert!(json.contains("\"k\""));
+        assert!(json.contains("\"n\""));
+        assert!(json.contains("\"version\""));
+        assert!(json.contains("\"scales\""));
+    }
+
+    #[test]
+    fn config_json_values_correct() {
+        let cfg = default_gemv_config();
+        let json = serde_json::to_string(&cfg).unwrap();
+        assert!(json.contains("128"));
+        assert!(json.contains("3200"));
+    }
+
+    #[test]
+    fn info_json_all_fields() {
+        let info = nda_gemv_info(&default_gemv_config());
+        let json = serde_json::to_string(&info).unwrap();
+        assert!(json.contains("config"));
+        assert!(json.contains("input_active_bytes"));
+        assert!(json.contains("input_pos_bytes"));
+        assert!(json.contains("weight_active_bytes"));
+        assert!(json.contains("weight_pos_bytes"));
+        assert!(json.contains("output_bytes"));
+        assert!(json.contains("total_gpu_memory_estimate"));
+        assert!(json.contains("validation_issues"));
+    }
+
+    #[test]
+    fn info_pretty_json() {
+        let info = nda_gemv_info(&default_gemv_config());
+        let pretty = serde_json::to_string_pretty(&info).unwrap();
+        assert!(pretty.contains('\n'));
+        assert!(pretty.contains("  "));
+    }
+
+    #[test]
+    fn info_json_parseable_as_value() {
+        let info = nda_gemv_info(&default_gemv_config());
+        let json = serde_json::to_string(&info).unwrap();
+        let value: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(value["input_active_bytes"], 32);
+        assert_eq!(value["output_bytes"], 12800);
+        assert!(value["validation_issues"].is_array());
+        assert!(value["validation_issues"].as_array().unwrap().is_empty());
+    }
+
+    #[test]
+    fn info_json_with_issues() {
+        let mut cfg = default_gemv_config();
+        cfg.k = 0;
+        let info = nda_gemv_info(&cfg);
+        let json = serde_json::to_string(&info).unwrap();
+        assert!(json.contains("validation_issues"));
+        assert!(json.contains("k must"));
+    }
+
+    // ── Scales variations ────────────────────────────────────────────────
+
+    #[test]
+    fn config_custom_scales() {
+        let cfg = NdaGemvConfig {
+            k: 256,
+            n: 64,
+            version: 2,
+            scales: [0.5, 0.25, 0.125],
+        };
+        assert!(validate_nda_gemv_config(&cfg).is_empty());
+        let info = nda_gemv_info(&cfg);
+        assert_eq!(info.config.scales[0], 0.5);
+        assert_eq!(info.config.scales[1], 0.25);
+        assert_eq!(info.config.scales[2], 0.125);
+    }
+
+    #[test]
+    fn config_zero_scales_still_valid() {
+        let mut cfg = default_gemv_config();
+        cfg.scales = [0.0, 0.0, 0.0];
+        // Validation only checks k and n, not scales
+        assert!(validate_nda_gemv_config(&cfg).is_empty());
+    }
+
+    #[test]
+    fn config_negative_scales_still_valid() {
+        let mut cfg = default_gemv_config();
+        cfg.scales = [-1.0, -0.5, 0.0];
+        assert!(validate_nda_gemv_config(&cfg).is_empty());
+    }
+
+    #[test]
+    fn config_version_variations() {
+        for v in [0, 1, 42, u32::MAX] {
+            let mut cfg = default_gemv_config();
+            cfg.version = v;
+            assert!(validate_nda_gemv_config(&cfg).is_empty());
+        }
+    }
 }
