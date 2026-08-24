@@ -1190,4 +1190,571 @@ ignored = true
         assert!(!diag.retry.jitter_enabled);
         assert!(diag.retry.validation_issues.is_empty());
     }
+
+    // ─── fmt_number Edge Cases ──────────────────────────────────────────────
+
+    #[test]
+    fn fmt_number_large_values() {
+        assert_eq!(fmt_number(1_000_000_000), "1,000,000,000");
+        assert_eq!(fmt_number(99_999_999), "99,999,999");
+        assert_eq!(fmt_number(10_000), "10,000");
+        assert_eq!(fmt_number(100_000), "100,000");
+    }
+
+    #[test]
+    fn fmt_number_single_digits() {
+        for i in 0..10 {
+            assert_eq!(fmt_number(i), i.to_string());
+        }
+    }
+
+    #[test]
+    fn fmt_number_boundary_values() {
+        assert_eq!(fmt_number(999), "999");
+        assert_eq!(fmt_number(1000), "1,000");
+        assert_eq!(fmt_number(999_999), "999,999");
+        assert_eq!(fmt_number(1_000_000), "1,000,000");
+    }
+
+    // ─── fmt_currency Edge Cases ────────────────────────────────────────────
+
+    #[test]
+    fn fmt_currency_boundary_at_one_cent() {
+        // Exactly $0.01 should use 2 decimal places.
+        assert_eq!(fmt_currency(0.01), "$0.01");
+        // Just below $0.01 should use 4 decimal places.
+        assert_eq!(fmt_currency(0.0099), "$0.0099");
+    }
+
+    #[test]
+    fn fmt_currency_large_amounts() {
+        assert_eq!(fmt_currency(999_999.99), "$999999.99");
+        assert_eq!(fmt_currency(1_234_567.89), "$1234567.89");
+    }
+
+    #[test]
+    fn fmt_currency_rounding() {
+        // 0.005 < 0.01 → 4-decimal format.
+        assert_eq!(fmt_currency(0.005), "$0.0050");
+        // 0.004 < 0.01 → 4-decimal format.
+        assert_eq!(fmt_currency(0.004), "$0.0040");
+    }
+
+    // ─── fmt_percent Edge Cases ─────────────────────────────────────────────
+
+    #[test]
+    fn fmt_percent_negative_and_over_hundred() {
+        assert_eq!(fmt_percent(-5.0), "-5.0%");
+        assert_eq!(fmt_percent(150.0), "150.0%");
+        assert_eq!(fmt_percent(99.99), "100.0%");
+    }
+
+    // ─── parse_toml Edge Cases ──────────────────────────────────────────────
+
+    #[test]
+    fn parse_toml_empty_content() {
+        let parsed = parse_toml_simple("");
+        assert!(parsed.is_empty());
+    }
+
+    #[test]
+    fn parse_toml_only_comments() {
+        let content = "# comment 1\n# comment 2\n";
+        let parsed = parse_toml_simple(content);
+        assert!(parsed.is_empty());
+    }
+
+    #[test]
+    fn parse_toml_value_with_equals_sign() {
+        // Values containing '=' should be preserved (split_once splits on first '=').
+        let content = r#"key = "val=ue""#;
+        let parsed = parse_toml_simple(content);
+        assert_eq!(parsed.get("key").unwrap(), "val=ue");
+    }
+
+    #[test]
+    fn parse_toml_keys_after_section_are_skipped() {
+        let content = r#"
+before = "yes"
+[section]
+inside = "no"
+after_section = "also no"
+"#;
+        let parsed = parse_toml_simple(content);
+        assert_eq!(parsed.get("before").unwrap(), "yes");
+        assert!(parsed.get("inside").is_none());
+        assert!(parsed.get("after_section").is_none());
+    }
+
+    #[test]
+    fn parse_toml_missing_key() {
+        let content = r#"base_url = "http://localhost:8787""#;
+        let parsed = parse_toml_simple(content);
+        assert!(parsed.get("nonexistent").is_none());
+        assert!(parsed.get("base_url").is_some());
+    }
+
+    // ─── URL Builder ────────────────────────────────────────────────────────
+
+    #[test]
+    fn url_builder_strips_trailing_slash() {
+        let client = VelocityClient::new(VelocityConfig {
+            base_url: "http://localhost:8787/".into(),
+            api_key: "vr_test_key".into(),
+        });
+        assert_eq!(client.url("/health"), "http://localhost:8787/health");
+    }
+
+    #[test]
+    fn url_builder_no_trailing_slash() {
+        let client = VelocityClient::new(VelocityConfig {
+            base_url: "http://localhost:8787".into(),
+            api_key: "vr_test_key".into(),
+        });
+        assert_eq!(client.url("/v1/usage"), "http://localhost:8787/v1/usage");
+    }
+
+    #[test]
+    fn auth_header_format() {
+        let client = VelocityClient::new(VelocityConfig {
+            base_url: "http://localhost:8787".into(),
+            api_key: "vr_standard_abc123".into(),
+        });
+        assert_eq!(client.auth_header(), "Bearer vr_standard_abc123");
+    }
+
+    // ─── Connection Info Additional ─────────────────────────────────────────
+
+    #[test]
+    fn connection_info_vr_admin_prefix() {
+        let cfg = VelocityConfig {
+            base_url: "https://router.velocity.io".into(),
+            api_key: "vr_admin_abcdef1234567890".into(),
+        };
+        let info = cfg.connection_info();
+        assert_eq!(info.api_key_prefix, "vr_admin...");
+        assert!(info.validation_issues.is_empty());
+    }
+
+    #[test]
+    fn connection_info_key_exactly_8_chars() {
+        let cfg = VelocityConfig {
+            base_url: "http://localhost:8787".into(),
+            api_key: "12345678".into(),
+        };
+        let info = cfg.connection_info();
+        assert_eq!(info.api_key_prefix, "12345678...");
+        assert_eq!(info.api_key_length, 8);
+        // 8 chars >= 8, so prefix is shown, but < 10 triggers short warning.
+        assert!(info.validation_issues.iter().any(|i| i.contains("too short")));
+    }
+
+    #[test]
+    fn connection_info_key_7_chars_shows_mask() {
+        let cfg = VelocityConfig {
+            base_url: "http://localhost:8787".into(),
+            api_key: "1234567".into(),
+        };
+        let info = cfg.connection_info();
+        assert_eq!(info.api_key_prefix, "***");
+    }
+
+    #[test]
+    fn connection_info_multiple_issues() {
+        let cfg = VelocityConfig {
+            base_url: "".into(),
+            api_key: "".into(),
+        };
+        let info = cfg.connection_info();
+        // Should have: empty base_url, bad scheme, empty key, short key.
+        assert!(info.validation_issues.len() >= 3);
+    }
+
+    // ─── Backoff Duration ───────────────────────────────────────────────────
+
+    #[test]
+    fn backoff_duration_attempt_zero_no_jitter() {
+        let client = VelocityClient::new(VelocityConfig {
+            base_url: "http://localhost:8787".into(),
+            api_key: "test".into(),
+        })
+        .with_retry_config(RetryConfig {
+            jitter: false,
+            ..RetryConfig::default()
+        });
+        // With no jitter, backoff_duration(200) = 200ms.
+        let d = client.backoff_duration(200);
+        assert_eq!(d.as_millis(), 200);
+    }
+
+    #[test]
+    fn backoff_duration_with_jitter_stays_in_range() {
+        let client = VelocityClient::new(VelocityConfig {
+            base_url: "http://localhost:8787".into(),
+            api_key: "test".into(),
+        })
+        .with_retry_config(RetryConfig {
+            jitter: true,
+            initial_backoff_ms: 1000,
+            max_backoff_ms: 50000,
+            ..RetryConfig::default()
+        });
+        // With base=1000, jitter is ±250 → range [750, 1250].
+        for _ in 0..50 {
+            let d = client.backoff_duration(1000);
+            let ms = d.as_millis();
+            assert!(ms >= 750 && ms <= 1250, "jitter out of range: {ms}");
+        }
+    }
+
+    #[test]
+    fn backoff_duration_zero_base_with_jitter() {
+        let client = VelocityClient::new(VelocityConfig {
+            base_url: "http://localhost:8787".into(),
+            api_key: "test".into(),
+        })
+        .with_retry_config(RetryConfig {
+            jitter: true,
+            ..RetryConfig::default()
+        });
+        // base=0 → jitter_range=0 → no jitter → 0ms.
+        let d = client.backoff_duration(0);
+        assert_eq!(d.as_millis(), 0);
+    }
+
+    // ─── RetryConfig Info ───────────────────────────────────────────────────
+
+    #[test]
+    fn retry_config_max_delay_calculation() {
+        // initial=100, max_retries=4 → 100 * 2^4 = 1600, capped at max=10000 → 1600.
+        let cfg = RetryConfig {
+            max_retries: 4,
+            initial_backoff_ms: 100,
+            max_backoff_ms: 10000,
+            jitter: true,
+        };
+        let info = cfg.info();
+        assert_eq!(info.max_possible_delay_ms, 1600);
+    }
+
+    #[test]
+    fn retry_config_max_delay_capped() {
+        // initial=1000, max_retries=10 → 1000 * 2^10 = 1_024_000, capped at max=5000 → 5000.
+        let cfg = RetryConfig {
+            max_retries: 10,
+            initial_backoff_ms: 1000,
+            max_backoff_ms: 5000,
+            jitter: false,
+        };
+        let info = cfg.info();
+        assert_eq!(info.max_possible_delay_ms, 5000);
+    }
+
+    #[test]
+    fn retry_config_info_serializes() {
+        let info = RetryConfig::default().info();
+        let json = serde_json::to_string(&info).unwrap();
+        assert!(json.contains("\"max_retries\":3"));
+        assert!(json.contains("\"jitter_enabled\":true"));
+    }
+
+    // ─── Response Type Serialization ────────────────────────────────────────
+
+    #[test]
+    fn usage_response_deserializes() {
+        let json = r#"{
+            "tier": "standard",
+            "tokens_used": 50000,
+            "tokens_limit": 1000000,
+            "cost_usd": 0.25,
+            "cost_limit_usd": 10.0,
+            "assignments_count": 42,
+            "period": {"start": "2026-08-01", "end": "2026-09-01"}
+        }"#;
+        let resp: UsageResponse = serde_json::from_str(json).unwrap();
+        assert_eq!(resp.tier, "standard");
+        assert_eq!(resp.tokens_used, 50000);
+        assert_eq!(resp.assignments_count, 42);
+        assert_eq!(resp.period.start, "2026-08-01");
+    }
+
+    #[test]
+    fn usage_summary_response_deserializes() {
+        let json = r#"{
+            "tier": "pro",
+            "tokens_used": 750000,
+            "tokens_limit": 2000000,
+            "token_quota_pct": 37.5,
+            "cost_usd": 3.75,
+            "cost_limit_usd": 20.0,
+            "cost_quota_pct": 18.75,
+            "assignments_count": 150,
+            "projected_tokens": 1500000,
+            "projected_cost_usd": 7.50,
+            "billing_period": {
+                "start": "2026-08-01",
+                "end": "2026-09-01",
+                "days_remaining": 9
+            },
+            "sparkline": [
+                {"label": "Aug 22", "tokens": 50000, "cost_usd": 0.25, "requests": 10}
+            ]
+        }"#;
+        let resp: UsageSummaryResponse = serde_json::from_str(json).unwrap();
+        assert_eq!(resp.tier, "pro");
+        assert_eq!(resp.token_quota_pct, 37.5);
+        assert_eq!(resp.billing_period.days_remaining, 9);
+        assert_eq!(resp.sparkline.len(), 1);
+    }
+
+    #[test]
+    fn rate_limit_response_deserializes() {
+        let json = r#"{
+            "key_label": "vr_stand...",
+            "tier": "standard",
+            "rate_limit": {"max_requests_per_minute": 60, "resets_in_secs": 45},
+            "tokens": {"used": 50000, "limit": 1000000, "quota_pct": 5.0, "projected_monthly": 200000},
+            "cost": {"used_usd": 0.25, "limit_usd": 10.0, "quota_pct": 2.5, "projected_monthly_usd": 1.0},
+            "billing_period": {"start": "2026-08-01", "resets_in_days": 9}
+        }"#;
+        let resp: RateLimitResponse = serde_json::from_str(json).unwrap();
+        assert_eq!(resp.rate_limit.max_requests_per_minute, 60);
+        assert_eq!(resp.tokens.quota_pct, 5.0);
+        assert_eq!(resp.cost.projected_monthly_usd, 1.0);
+        assert_eq!(resp.billing_period.resets_in_days, 9);
+    }
+
+    #[test]
+    fn health_response_deserializes() {
+        let json = r#"{"status": "ok", "version": "1.4.0", "models_available": 12}"#;
+        let resp: HealthResponse = serde_json::from_str(json).unwrap();
+        assert_eq!(resp.status, "ok");
+        assert_eq!(resp.version, "1.4.0");
+        assert_eq!(resp.models_available, 12);
+    }
+
+    #[test]
+    fn key_detail_response_deserializes() {
+        let json = r#"{
+            "hash": "abc123",
+            "label": "vr_stand...",
+            "tier": "standard",
+            "created_at": "2026-01-01T00:00:00Z",
+            "tokens_used": 50000,
+            "cost_usd": 0.25,
+            "assignments_count": 42,
+            "monthly_token_limit": 1000000,
+            "monthly_cost_limit_usd": 10.0
+        }"#;
+        let resp: KeyDetailResponse = serde_json::from_str(json).unwrap();
+        assert_eq!(resp.hash, "abc123");
+        assert_eq!(resp.tokens_used, 50000);
+        assert_eq!(resp.monthly_cost_limit_usd, 10.0);
+    }
+
+    #[test]
+    fn rotate_key_response_deserializes() {
+        let json = r#"{
+            "hash": "abc123",
+            "new_key": "vr_standard_newkey123",
+            "old_key_revoked": true
+        }"#;
+        let resp: RotateKeyResponse = serde_json::from_str(json).unwrap();
+        assert_eq!(resp.hash, "abc123");
+        assert_eq!(resp.new_key, "vr_standard_newkey123");
+        assert!(resp.old_key_revoked);
+    }
+
+    #[test]
+    fn assignment_request_serialization_minimal() {
+        let req = AssignmentRequest {
+            task: "write a function".into(),
+            tier: "standard".into(),
+            context: None,
+            file_paths: vec![],
+            max_cost_usd: None,
+        };
+        let json = serde_json::to_string(&req).unwrap();
+        assert!(json.contains("\"task\""));
+        assert!(json.contains("\"tier\""));
+        // Optional fields should be skipped.
+        assert!(!json.contains("\"context\""));
+        assert!(!json.contains("\"file_paths\""));
+        assert!(!json.contains("\"max_cost_usd\""));
+    }
+
+    #[test]
+    fn assignment_request_serialization_full() {
+        let req = AssignmentRequest {
+            task: "refactor module".into(),
+            tier: "pro".into(),
+            context: Some("Rust codebase".into()),
+            file_paths: vec!["src/main.rs".into(), "src/lib.rs".into()],
+            max_cost_usd: Some(0.50),
+        };
+        let json = serde_json::to_string(&req).unwrap();
+        assert!(json.contains("\"context\""));
+        assert!(json.contains("\"file_paths\""));
+        assert!(json.contains("\"max_cost_usd\""));
+        assert!(json.contains("src/main.rs"));
+    }
+
+    #[test]
+    fn assignment_response_deserializes() {
+        let json = r#"{
+            "id": "assign-001",
+            "status": "completed",
+            "created_at": "2026-08-23T10:00:00Z",
+            "completed_at": "2026-08-23T10:01:00Z",
+            "assembled_output": "fn main() {}",
+            "cost": {"total_tokens": 5000, "total_cost_usd": 0.005},
+            "error": null
+        }"#;
+        let resp: AssignmentResponse = serde_json::from_str(json).unwrap();
+        assert_eq!(resp.id, "assign-001");
+        assert_eq!(resp.status, "completed");
+        assert!(resp.completed_at.is_some());
+        assert_eq!(resp.cost.unwrap().total_tokens, 5000);
+        assert!(resp.error.is_none());
+    }
+
+    #[test]
+    fn assignment_response_error_case() {
+        let json = r#"{
+            "id": "assign-002",
+            "status": "failed",
+            "created_at": "2026-08-23T10:00:00Z",
+            "completed_at": null,
+            "assembled_output": null,
+            "cost": null,
+            "error": "model timeout"
+        }"#;
+        let resp: AssignmentResponse = serde_json::from_str(json).unwrap();
+        assert_eq!(resp.status, "failed");
+        assert!(resp.completed_at.is_none());
+        assert!(resp.cost.is_none());
+        assert_eq!(resp.error.unwrap(), "model timeout");
+    }
+
+    // ─── ClientDiagnostics ──────────────────────────────────────────────────
+
+    #[test]
+    fn client_diagnostics_clone() {
+        let client = VelocityClient::new(VelocityConfig {
+            base_url: "https://router.velocity.io".into(),
+            api_key: "vr_standard_abcdef1234567890".into(),
+        });
+        let diag = client.diagnostics();
+        let cloned = diag.clone();
+        assert_eq!(cloned.connection.base_url, diag.connection.base_url);
+        assert_eq!(cloned.retry.max_retries, diag.retry.max_retries);
+    }
+
+    #[test]
+    fn client_diagnostics_json_roundtrip() {
+        let client = VelocityClient::new(VelocityConfig {
+            base_url: "https://router.velocity.io".into(),
+            api_key: "vr_standard_abcdef1234567890".into(),
+        });
+        let diag = client.diagnostics();
+        let json = serde_json::to_string(&diag).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed["connection"]["base_url"], "https://router.velocity.io");
+        assert_eq!(parsed["connection"]["is_https"], true);
+        assert_eq!(parsed["retry"]["max_retries"], 3);
+    }
+
+    // ─── UsageDetailed & ModelUsage ─────────────────────────────────────────
+
+    #[test]
+    fn usage_detailed_deserializes() {
+        let json = r#"{
+            "label": "This period",
+            "tier": "standard",
+            "total_assignments": 100,
+            "total_tokens": 500000,
+            "total_cost_usd": 2.50,
+            "by_model": [
+                {"model_id": "gpt-4o", "assignments": 60, "tokens": 300000, "cost_usd": 1.50},
+                {"model_id": "claude-3.5-sonnet", "assignments": 40, "tokens": 200000, "cost_usd": 1.00}
+            ],
+            "by_domain": [
+                {"domain": "gui_design", "assignments": 70, "tokens": 350000, "cost_usd": 1.75},
+                {"domain": "code_gen", "assignments": 30, "tokens": 150000, "cost_usd": 0.75}
+            ]
+        }"#;
+        let resp: UsageDetailed = serde_json::from_str(json).unwrap();
+        assert_eq!(resp.total_assignments, 100);
+        assert_eq!(resp.by_model.len(), 2);
+        assert_eq!(resp.by_domain.len(), 2);
+        assert_eq!(resp.by_model[0].model_id, "gpt-4o");
+        assert_eq!(resp.by_domain[1].domain, "code_gen");
+    }
+
+    // ─── Transparency types ─────────────────────────────────────────────────
+
+    #[test]
+    fn available_model_deserializes() {
+        let json = r#"{
+            "id": "gpt-4o",
+            "label": "GPT-4o",
+            "provider": "openai",
+            "tier": "pro",
+            "cost_input_per_mtok": 5.0,
+            "cost_output_per_mtok": 15.0
+        }"#;
+        let model: AvailableModel = serde_json::from_str(json).unwrap();
+        assert_eq!(model.id, "gpt-4o");
+        assert_eq!(model.cost_input_per_mtok, 5.0);
+    }
+
+    #[test]
+    fn routing_decision_with_optional_rationale() {
+        let json = r#"{
+            "timestamp": "2026-08-23T12:00:00Z",
+            "assignment_id": "abc-123",
+            "domain": "gui_design",
+            "model_id": "gpt-4o",
+            "provider": "openai",
+            "input_tokens": 3000,
+            "output_tokens": 2000,
+            "total_tokens": 5000,
+            "cost_usd": 0.005,
+            "duration_ms": 1500,
+            "success": true,
+            "routing_rationale": null
+        }"#;
+        let decision: RoutingDecision = serde_json::from_str(json).unwrap();
+        assert!(decision.success);
+        assert!(decision.routing_rationale.is_none());
+    }
+
+    #[test]
+    fn routing_decision_with_rationale() {
+        let json = r#"{
+            "timestamp": "2026-08-23T12:00:00Z",
+            "assignment_id": "abc-123",
+            "domain": "gui_design",
+            "model_id": "gpt-4o",
+            "provider": "openai",
+            "input_tokens": 3000,
+            "output_tokens": 2000,
+            "total_tokens": 5000,
+            "cost_usd": 0.005,
+            "duration_ms": 1500,
+            "success": true,
+            "routing_rationale": "Best for GUI tasks"
+        }"#;
+        let decision: RoutingDecision = serde_json::from_str(json).unwrap();
+        assert_eq!(decision.routing_rationale.as_deref(), Some("Best for GUI tasks"));
+    }
+
+    // ─── dirs_next ──────────────────────────────────────────────────────────
+
+    #[test]
+    fn dirs_next_returns_some() {
+        // USERPROFILE or HOME should be set in any normal environment.
+        let home = dirs_next();
+        assert!(home.is_some());
+    }
 }
