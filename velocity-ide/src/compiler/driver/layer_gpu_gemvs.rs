@@ -742,4 +742,220 @@ mod tests {
         let info = layer.info();
         assert!(info.validation_issues.is_empty());
     }
+
+    // ── Block 185: JSON key counts ────────────────────────────────────────
+
+    #[test]
+    fn result_json_has_exactly_7_keys() {
+        let r = all_false_result();
+        let val: serde_json::Value = serde_json::from_str(
+            &serde_json::to_string(&r).unwrap()
+        ).unwrap();
+        assert_eq!(val.as_object().unwrap().len(), 7);
+    }
+
+    #[test]
+    fn info_json_has_exactly_8_keys() {
+        let info = sample_info();
+        let val: serde_json::Value = serde_json::from_str(
+            &serde_json::to_string(&info).unwrap()
+        ).unwrap();
+        assert_eq!(val.as_object().unwrap().len(), 8);
+    }
+
+    // ── Block 185: JSON roundtrip via Value ───────────────────────────────
+
+    #[test]
+    fn result_json_roundtrip_via_value() {
+        let mut r = all_false_result();
+        r.q_dispatched = true;
+        r.down_dispatched = true;
+        let json = serde_json::to_string(&r).unwrap();
+        let val: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(val["q_dispatched"], true);
+        assert_eq!(val["k_dispatched"], false);
+        assert_eq!(val["down_dispatched"], true);
+    }
+
+    #[test]
+    fn info_json_roundtrip_via_value() {
+        let info = sample_info();
+        let json = serde_json::to_string(&info).unwrap();
+        let val: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(val["attention_projections"], 4);
+        assert_eq!(val["ffn_projections"], 3);
+        assert_eq!(val["total_projections"], 7);
+        assert_eq!(val["has_full_attention"], true);
+    }
+
+    // ── Block 185: Debug format completeness ──────────────────────────────
+
+    #[test]
+    fn result_debug_has_all_seven_fields() {
+        let r = all_false_result();
+        let debug = format!("{:?}", r);
+        assert!(debug.contains("q_dispatched"));
+        assert!(debug.contains("k_dispatched"));
+        assert!(debug.contains("v_dispatched"));
+        assert!(debug.contains("o_dispatched"));
+        assert!(debug.contains("gate_dispatched"));
+        assert!(debug.contains("up_dispatched"));
+        assert!(debug.contains("down_dispatched"));
+    }
+
+    #[test]
+    fn info_debug_has_all_eight_fields() {
+        let info = sample_info();
+        let debug = format!("{:?}", info);
+        assert!(debug.contains("attention_projections"));
+        assert!(debug.contains("ffn_projections"));
+        assert!(debug.contains("total_projections"));
+        assert!(debug.contains("has_fused_qkv"));
+        assert!(debug.contains("has_fused_gate_up"));
+        assert!(debug.contains("has_full_attention"));
+        assert!(debug.contains("has_full_ffn"));
+        assert!(debug.contains("validation_issues"));
+    }
+
+    // ── Block 185: dispatched_count exhaustive ────────────────────────────
+
+    #[test]
+    fn result_dispatched_count_exactly_5() {
+        let mut r = all_false_result();
+        r.q_dispatched = true;
+        r.k_dispatched = true;
+        r.v_dispatched = true;
+        r.o_dispatched = true;
+        r.gate_dispatched = true;
+        assert_eq!(r.dispatched_count(), 5);
+    }
+
+    // ── Block 185: has_attention/has_ffn boundary ─────────────────────────
+
+    #[test]
+    fn result_has_attention_only_o() {
+        let mut r = all_false_result();
+        r.o_dispatched = true;
+        assert!(r.has_attention());
+        assert!(!r.has_ffn());
+    }
+
+    #[test]
+    fn result_has_ffn_only_down() {
+        let mut r = all_false_result();
+        r.down_dispatched = true;
+        assert!(!r.has_attention());
+        assert!(r.has_ffn());
+    }
+
+    // ── Block 185: Compact JSON ───────────────────────────────────────────
+
+    #[test]
+    fn result_compact_json() {
+        let r = all_false_result();
+        let json = serde_json::to_string(&r).unwrap();
+        assert!(!json.contains("\n"));
+    }
+
+    #[test]
+    fn info_compact_json() {
+        let info = sample_info();
+        let json = serde_json::to_string(&info).unwrap();
+        assert!(!json.contains("\n"));
+    }
+
+    // ── Block 185: Info formula verification ──────────────────────────────
+
+    #[test]
+    fn info_total_equals_attention_plus_ffn_various() {
+        for (attn, ffn) in [(0, 0), (1, 0), (0, 1), (4, 3), (2, 1), (3, 2)] {
+            let info = LayerGpuGemvsInfo {
+                attention_projections: attn,
+                ffn_projections: ffn,
+                total_projections: attn + ffn,
+                has_fused_qkv: false,
+                has_fused_gate_up: false,
+                has_full_attention: attn == 4,
+                has_full_ffn: ffn == 3,
+                validation_issues: vec![],
+            };
+            assert_eq!(info.total_projections, attn + ffn,
+                "failed for attn={}, ffn={}", attn, ffn);
+        }
+    }
+
+    #[test]
+    fn info_has_full_attention_only_at_4() {
+        for n in 0..=4 {
+            let info = LayerGpuGemvsInfo {
+                attention_projections: n,
+                ffn_projections: 0,
+                total_projections: n,
+                has_fused_qkv: false,
+                has_fused_gate_up: false,
+                has_full_attention: n == 4,
+                has_full_ffn: false,
+                validation_issues: vec![],
+            };
+            assert_eq!(info.has_full_attention, n == 4);
+        }
+    }
+
+    // ── Block 185: Validation issues edge cases ───────────────────────────
+
+    #[test]
+    fn info_with_single_validation_issue() {
+        let mut info = sample_info();
+        info.validation_issues = vec!["test issue".to_string()];
+        let json = serde_json::to_string(&info).unwrap();
+        let val: serde_json::Value = serde_json::from_str(&json).unwrap();
+        let issues = val["validation_issues"].as_array().unwrap();
+        assert_eq!(issues.len(), 1);
+        assert_eq!(issues[0].as_str().unwrap(), "test issue");
+    }
+
+    #[test]
+    fn info_empty_validation_issues_is_array() {
+        let info = sample_info();
+        let json = serde_json::to_string(&info).unwrap();
+        let val: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert!(val["validation_issues"].as_array().unwrap().is_empty());
+    }
+
+    // ── Block 185: Clone independence additional ──────────────────────────
+
+    #[test]
+    fn info_clone_validation_issues_independent() {
+        let mut info = sample_info();
+        info.validation_issues = vec!["original".to_string()];
+        let mut cloned = info.clone();
+        cloned.validation_issues.push("added".to_string());
+        assert_eq!(info.validation_issues.len(), 1);
+        assert_eq!(cloned.validation_issues.len(), 2);
+    }
+
+    // ── Block 185: JSON numeric types ─────────────────────────────────────
+
+    #[test]
+    fn result_json_values_are_booleans() {
+        let r = all_false_result();
+        let json = serde_json::to_string(&r).unwrap();
+        let val: serde_json::Value = serde_json::from_str(&json).unwrap();
+        for key in &["q_dispatched", "k_dispatched", "v_dispatched", "o_dispatched",
+                      "gate_dispatched", "up_dispatched", "down_dispatched"] {
+            assert!(val[key].is_boolean(), "{} should be boolean", key);
+        }
+    }
+
+    #[test]
+    fn info_json_numeric_types() {
+        let info = sample_info();
+        let json = serde_json::to_string(&info).unwrap();
+        let val: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert!(val["attention_projections"].is_number());
+        assert!(val["ffn_projections"].is_number());
+        assert!(val["total_projections"].is_number());
+        assert!(val["has_fused_qkv"].is_boolean());
+        assert!(val["validation_issues"].is_array());
+    }
 }
