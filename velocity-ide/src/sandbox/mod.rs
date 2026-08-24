@@ -91,6 +91,44 @@ impl SandboxResult {
             has_error: self.error.is_some(),
         }
     }
+
+    /// Compute throughput in operations per second.
+    pub fn throughput_ops_per_sec(&self) -> f64 {
+        if self.elapsed_us == 0 {
+            return 0.0;
+        }
+        (self.executed_nodes as f64) / (self.elapsed_us as f64 / 1_000_000.0)
+    }
+
+    /// Return the ratio of successful computation nodes to total executed.
+    /// Returns 0.0 if no nodes were executed.
+    pub fn computation_ratio(&self) -> f64 {
+        if self.executed_nodes == 0 {
+            return 0.0;
+        }
+        (self.matrix_count + self.norm_count) as f64 / self.executed_nodes as f64
+    }
+
+    /// Return a detailed execution profile with per-kind breakdown.
+    pub fn execution_profile(&self) -> SandboxExecutionProfile {
+        let mut sorted_kinds: Vec<(String, usize)> = self
+            .kind_counts
+            .iter()
+            .map(|(k, &v)| (k.clone(), v))
+            .collect();
+        sorted_kinds.sort_by(|a, b| b.1.cmp(&a.1));
+        SandboxExecutionProfile {
+            total_nodes: self.executed_nodes,
+            unique_kinds: self.kind_counts.len(),
+            top_kinds: sorted_kinds,
+            output_dim: self.output_dim,
+            output_log_lines: self.output_log.len(),
+            loop_iterations: self.loop_iterations,
+            elapsed_us: self.elapsed_us,
+            throughput_ops: self.throughput_ops_per_sec(),
+            computation_ratio: self.computation_ratio(),
+        }
+    }
 }
 
 /// Structured execution summary (safe to log).
@@ -108,6 +146,20 @@ pub struct SandboxExecutionSummary {
     pub has_error: bool,
 }
 
+/// Detailed execution profile with per-kind breakdown.
+#[derive(Debug, Clone, Serialize)]
+pub struct SandboxExecutionProfile {
+    pub total_nodes: usize,
+    pub unique_kinds: usize,
+    pub top_kinds: Vec<(String, usize)>,
+    pub output_dim: usize,
+    pub output_log_lines: usize,
+    pub loop_iterations: usize,
+    pub elapsed_us: u64,
+    pub throughput_ops: f64,
+    pub computation_ratio: f64,
+}
+
 /// Report from batch execution of multiple node sequences.
 #[derive(Debug, Clone, Serialize)]
 pub struct SandboxBatchReport {
@@ -117,6 +169,213 @@ pub struct SandboxBatchReport {
     pub total_elapsed_us: u64,
     pub total_nodes_executed: usize,
     pub per_run_summaries: Vec<SandboxExecutionSummary>,
+}
+
+impl SandboxBatchReport {
+    /// Return the success rate as a fraction [0.0, 1.0].
+    pub fn success_rate(&self) -> f64 {
+        if self.total_runs == 0 {
+            return 0.0;
+        }
+        self.successful as f64 / self.total_runs as f64
+    }
+
+    /// Return the average elapsed time per run in microseconds.
+    pub fn avg_elapsed_us(&self) -> f64 {
+        if self.total_runs == 0 {
+            return 0.0;
+        }
+        self.total_elapsed_us as f64 / self.total_runs as f64
+    }
+
+    /// Return the average nodes executed per run.
+    pub fn avg_nodes_per_run(&self) -> f64 {
+        if self.total_runs == 0 {
+            return 0.0;
+        }
+        self.total_nodes_executed as f64 / self.total_runs as f64
+    }
+
+    /// Validate the batch report for consistency.
+    pub fn validate(&self) -> Vec<String> {
+        let mut issues = Vec::new();
+        if self.total_runs == 0 {
+            issues.push("batch report has zero total runs".to_string());
+        }
+        if self.successful + self.failed != self.total_runs {
+            issues.push(format!(
+                "success({}) + failed({}) != total_runs({})",
+                self.successful, self.failed, self.total_runs
+            ));
+        }
+        if self.per_run_summaries.len() != self.total_runs {
+            issues.push(format!(
+                "per_run_summaries count ({}) != total_runs ({})",
+                self.per_run_summaries.len(),
+                self.total_runs
+            ));
+        }
+        issues
+    }
+}
+
+/// Estimate the resource requirements for executing a set of NDA nodes
+/// without actually running them.
+#[derive(Debug, Clone, Serialize)]
+pub struct ResourceEstimate {
+    pub node_count: usize,
+    pub matrix_count: usize,
+    pub norm_count: usize,
+    pub loop_count: usize,
+    pub variable_count: usize,
+    pub max_depth: usize,
+    pub estimated_memory_bytes: usize,
+    pub validation_issues: Vec<String>,
+}
+
+/// Estimate resource requirements for a node sequence without executing it.
+pub fn estimate_resource_usage(nodes: &[NdaNode]) -> ResourceEstimate {
+    let mut matrix_count = 0usize;
+    let mut norm_count = 0usize;
+    let mut loop_count = 0usize;
+    let mut variable_count = 0usize;
+    let mut max_depth = 0usize;
+
+    fn walk(
+        node: &NdaNode,
+        depth: usize,
+        max_depth: &mut usize,
+        matrices: &mut usize,
+        norms: &mut usize,
+        loops: &mut usize,
+        vars: &mut usize,
+    ) {
+        if depth > *max_depth {
+            *max_depth = depth;
+        }
+        match node {
+            NdaNode::Matrix { .. } => *matrices += 1,
+            NdaNode::Norm { .. } => *norms += 1,
+            NdaNode::Loop { body, .. } => {
+                *loops += 1;
+                for child in body {
+                    walk(child, depth + 1, max_depth, matrices, norms, loops, vars);
+                }
+            }
+            NdaNode::While { body, cond, .. } => {
+                *loops += 1;
+                walk(cond, depth + 1, max_depth, matrices, norms, loops, vars);
+                for child in body {
+                    walk(child, depth + 1, max_depth, matrices, norms, loops, vars);
+                }
+            }
+            NdaNode::If {
+                cond,
+                then_body,
+                else_body,
+            } => {
+                walk(cond, depth + 1, max_depth, matrices, norms, loops, vars);
+                for child in then_body {
+                    walk(child, depth + 1, max_depth, matrices, norms, loops, vars);
+                }
+                if let Some(eb) = else_body {
+                    for child in eb {
+                        walk(child, depth + 1, max_depth, matrices, norms, loops, vars);
+                    }
+                }
+            }
+            NdaNode::Scope { children } => {
+                for child in children {
+                    walk(child, depth + 1, max_depth, matrices, norms, loops, vars);
+                }
+            }
+            NdaNode::Let { init, .. } => {
+                *vars += 1;
+                walk(init, depth + 1, max_depth, matrices, norms, loops, vars);
+            }
+            NdaNode::Store { value, .. } => {
+                *vars += 1;
+                walk(value, depth + 1, max_depth, matrices, norms, loops, vars);
+            }
+            NdaNode::Compare { lhs, rhs, .. }
+            | NdaNode::Add { lhs, rhs }
+            | NdaNode::Math { lhs, rhs, .. }
+            | NdaNode::Dot { lhs, rhs }
+            | NdaNode::Poke { addr: lhs, value: rhs }
+            | NdaNode::Gemv { matrix: lhs, vector: rhs }
+            | NdaNode::Atomic { addr: lhs, val: rhs, .. } => {
+                walk(lhs, depth + 1, max_depth, matrices, norms, loops, vars);
+                walk(rhs, depth + 1, max_depth, matrices, norms, loops, vars);
+            }
+            NdaNode::Bitwise { lhs, rhs, .. } => {
+                walk(lhs, depth + 1, max_depth, matrices, norms, loops, vars);
+                if let Some(r) = rhs {
+                    walk(r, depth + 1, max_depth, matrices, norms, loops, vars);
+                }
+            }
+            NdaNode::VecOp { operand, .. }
+            | NdaNode::Print { source: operand }
+            | NdaNode::Return { value: operand }
+            | NdaNode::MathFunc { operand, .. }
+            | NdaNode::Peek { addr: operand }
+            | NdaNode::Alloc { size: operand }
+            | NdaNode::Free { addr: operand }
+            | NdaNode::Cast { operand, .. } => {
+                walk(operand, depth + 1, max_depth, matrices, norms, loops, vars);
+            }
+            NdaNode::Syscall { args, .. } | NdaNode::GpuDispatch { args, .. } => {
+                for arg in args {
+                    walk(arg, depth + 1, max_depth, matrices, norms, loops, vars);
+                }
+            }
+            // Leaf nodes.
+            NdaNode::Call { .. }
+            | NdaNode::Int { .. }
+            | NdaNode::Float { .. }
+            | NdaNode::Load { .. }
+            | NdaNode::Break
+            | NdaNode::Spawn { .. }
+            | NdaNode::RegInt { .. }
+            | NdaNode::Triple { .. } => {}
+        }
+    }
+
+    for node in nodes {
+        walk(
+            node,
+            0,
+            &mut max_depth,
+            &mut matrix_count,
+            &mut norm_count,
+            &mut loop_count,
+            &mut variable_count,
+        );
+    }
+
+    // Rough memory estimate: each node ~128 bytes + matrix/norm buffers.
+    let estimated_memory = nodes.len() * 128 + matrix_count * 4096 + norm_count * 512;
+
+    let mut issues = Vec::new();
+    if nodes.is_empty() {
+        issues.push("empty node sequence".to_string());
+    }
+    if loop_count > 100 {
+        issues.push(format!("deeply nested loops: {} loop nodes", loop_count));
+    }
+    if max_depth > 50 {
+        issues.push(format!("very deep tree: depth {}", max_depth));
+    }
+
+    ResourceEstimate {
+        node_count: nodes.len(),
+        matrix_count,
+        norm_count,
+        loop_count,
+        variable_count,
+        max_depth,
+        estimated_memory_bytes: estimated_memory,
+        validation_issues: issues,
+    }
 }
 
 pub struct NdaSandbox;
@@ -1203,5 +1462,292 @@ mod tests {
         assert_eq!(summary.executed_nodes, 5);
         assert_eq!(summary.unique_kinds, 2);
         assert_eq!(summary.output_log_lines, 1);
+    }
+
+    // ─── New diagnostic tests ──────────────────────────────────────────────────
+
+    #[test]
+    fn throughput_ops_per_sec_zero_elapsed() {
+        let result = SandboxResult {
+            executed_nodes: 10,
+            matrix_count: 0,
+            norm_count: 0,
+            output_vec: vec![],
+            output_dim: 0,
+            panicked: false,
+            error: None,
+            elapsed_us: 0,
+            kind_counts: HashMap::new(),
+            output_log: Vec::new(),
+            loop_iterations: 0,
+        };
+        assert_eq!(result.throughput_ops_per_sec(), 0.0);
+    }
+
+    #[test]
+    fn throughput_ops_per_sec_normal() {
+        let result = SandboxResult {
+            executed_nodes: 1000,
+            matrix_count: 0,
+            norm_count: 0,
+            output_vec: vec![],
+            output_dim: 0,
+            panicked: false,
+            error: None,
+            elapsed_us: 1_000_000, // 1 second
+            kind_counts: HashMap::new(),
+            output_log: Vec::new(),
+            loop_iterations: 0,
+        };
+        let tps = result.throughput_ops_per_sec();
+        assert!((tps - 1000.0).abs() < 1.0);
+    }
+
+    #[test]
+    fn computation_ratio_no_nodes() {
+        let result = SandboxResult {
+            executed_nodes: 0,
+            matrix_count: 0,
+            norm_count: 0,
+            output_vec: vec![],
+            output_dim: 0,
+            panicked: false,
+            error: None,
+            elapsed_us: 0,
+            kind_counts: HashMap::new(),
+            output_log: Vec::new(),
+            loop_iterations: 0,
+        };
+        assert_eq!(result.computation_ratio(), 0.0);
+    }
+
+    #[test]
+    fn computation_ratio_mixed() {
+        let result = SandboxResult {
+            executed_nodes: 10,
+            matrix_count: 3,
+            norm_count: 2,
+            output_vec: vec![],
+            output_dim: 0,
+            panicked: false,
+            error: None,
+            elapsed_us: 100,
+            kind_counts: HashMap::new(),
+            output_log: Vec::new(),
+            loop_iterations: 0,
+        };
+        let ratio = result.computation_ratio();
+        assert!((ratio - 0.5).abs() < 0.01); // 5/10 = 0.5
+    }
+
+    #[test]
+    fn execution_profile_serializes() {
+        let result = SandboxResult {
+            executed_nodes: 10,
+            matrix_count: 3,
+            norm_count: 2,
+            output_vec: vec![1.0],
+            output_dim: 1,
+            panicked: false,
+            error: None,
+            elapsed_us: 500,
+            kind_counts: {
+                let mut m = HashMap::new();
+                m.insert("Matrix".into(), 5);
+                m.insert("Norm".into(), 3);
+                m.insert("Int".into(), 2);
+                m
+            },
+            output_log: vec!["line1".into()],
+            loop_iterations: 10,
+        };
+        let profile = result.execution_profile();
+        assert_eq!(profile.total_nodes, 10);
+        assert_eq!(profile.unique_kinds, 3);
+        assert_eq!(profile.top_kinds[0].0, "Matrix");
+        assert_eq!(profile.top_kinds[0].1, 5);
+        assert!(profile.throughput_ops > 0.0);
+        let json = serde_json::to_string(&profile).unwrap();
+        assert!(json.contains("\"total_nodes\":10"));
+    }
+
+    #[test]
+    fn batch_report_success_rate() {
+        let report = SandboxBatchReport {
+            total_runs: 10,
+            successful: 7,
+            failed: 3,
+            total_elapsed_us: 10000,
+            total_nodes_executed: 100,
+            per_run_summaries: vec![],
+        };
+        assert!((report.success_rate() - 0.7).abs() < 0.01);
+        assert!((report.avg_elapsed_us() - 1000.0).abs() < 0.01);
+        assert!((report.avg_nodes_per_run() - 10.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn batch_report_zero_runs() {
+        let report = SandboxBatchReport {
+            total_runs: 0,
+            successful: 0,
+            failed: 0,
+            total_elapsed_us: 0,
+            total_nodes_executed: 0,
+            per_run_summaries: vec![],
+        };
+        assert_eq!(report.success_rate(), 0.0);
+        assert_eq!(report.avg_elapsed_us(), 0.0);
+        assert_eq!(report.avg_nodes_per_run(), 0.0);
+    }
+
+    #[test]
+    fn batch_report_validate_clean() {
+        let report = SandboxBatchReport {
+            total_runs: 2,
+            successful: 1,
+            failed: 1,
+            total_elapsed_us: 5000,
+            total_nodes_executed: 20,
+            per_run_summaries: vec![
+                SandboxExecutionSummary {
+                    success: true,
+                    executed_nodes: 10,
+                    matrix_count: 1,
+                    norm_count: 0,
+                    output_dim: 1,
+                    elapsed_us: 2000,
+                    loop_iterations: 0,
+                    unique_kinds: 1,
+                    output_log_lines: 0,
+                    has_error: false,
+                },
+                SandboxExecutionSummary {
+                    success: false,
+                    executed_nodes: 10,
+                    matrix_count: 0,
+                    norm_count: 0,
+                    output_dim: 0,
+                    elapsed_us: 3000,
+                    loop_iterations: 0,
+                    unique_kinds: 0,
+                    output_log_lines: 0,
+                    has_error: true,
+                },
+            ],
+        };
+        let issues = report.validate();
+        assert!(issues.is_empty());
+    }
+
+    #[test]
+    fn batch_report_validate_detects_imbalance() {
+        let report = SandboxBatchReport {
+            total_runs: 3,
+            successful: 1,
+            failed: 1, // 1 + 1 != 3
+            total_elapsed_us: 1000,
+            total_nodes_executed: 10,
+            per_run_summaries: vec![],
+        };
+        let issues = report.validate();
+        assert!(!issues.is_empty());
+        assert!(issues.iter().any(|i| i.contains("success")));
+    }
+
+    #[test]
+    fn batch_report_validate_detects_summary_mismatch() {
+        let report = SandboxBatchReport {
+            total_runs: 2,
+            successful: 2,
+            failed: 0,
+            total_elapsed_us: 1000,
+            total_nodes_executed: 10,
+            per_run_summaries: vec![], // should have 2
+        };
+        let issues = report.validate();
+        assert!(issues.iter().any(|i| i.contains("per_run_summaries")));
+    }
+
+    #[test]
+    fn estimate_resource_empty_nodes() {
+        let est = estimate_resource_usage(&[]);
+        assert_eq!(est.node_count, 0);
+        assert!(!est.validation_issues.is_empty());
+    }
+
+    #[test]
+    fn estimate_resource_simple_program() {
+        let nodes = vec![
+            NdaNode::Int { value: 42 },
+            NdaNode::Float { value: 3.14 },
+        ];
+        let est = estimate_resource_usage(&nodes);
+        assert_eq!(est.node_count, 2);
+        assert_eq!(est.matrix_count, 0);
+        assert_eq!(est.norm_count, 0);
+        assert_eq!(est.loop_count, 0);
+        assert!(est.validation_issues.is_empty());
+    }
+
+    #[test]
+    fn estimate_resource_counts_matrices_and_norms() {
+        let nodes = vec![
+            NdaNode::Matrix {
+                rows: 128,
+                cols: 896,
+                scale: 0,
+                sign: vec![0xAA; 128 * 112],
+                extra: vec![0x55; 128 * 112],
+            },
+            NdaNode::Norm {
+                size: 128,
+                weight: vec![0xFF; 16],
+                bias: vec![0x00; 16],
+            },
+        ];
+        let est = estimate_resource_usage(&nodes);
+        assert_eq!(est.matrix_count, 1);
+        assert_eq!(est.norm_count, 1);
+        assert!(est.estimated_memory_bytes > 0);
+    }
+
+    #[test]
+    fn estimate_resource_counts_loops_and_vars() {
+        let nodes = vec![
+            NdaNode::Let {
+                name_hash: 0x1234,
+                init: Box::new(NdaNode::Int { value: 0 }),
+            },
+            NdaNode::Loop {
+                count: 10,
+                body: vec![NdaNode::Int { value: 1 }],
+            },
+        ];
+        let est = estimate_resource_usage(&nodes);
+        assert_eq!(est.loop_count, 1);
+        assert_eq!(est.variable_count, 1);
+        assert!(est.max_depth > 0);
+    }
+
+    #[test]
+    fn estimate_resource_nested_scopes() {
+        let nodes = vec![NdaNode::Scope {
+            children: vec![NdaNode::Scope {
+                children: vec![NdaNode::Scope {
+                    children: vec![NdaNode::Int { value: 1 }],
+                }],
+            }],
+        }];
+        let est = estimate_resource_usage(&nodes);
+        assert_eq!(est.max_depth, 3);
+    }
+
+    #[test]
+    fn estimate_resource_serializes() {
+        let nodes = vec![NdaNode::Int { value: 1 }];
+        let est = estimate_resource_usage(&nodes);
+        let json = serde_json::to_string(&est).unwrap();
+        assert!(json.contains("\"node_count\":1"));
     }
 }
