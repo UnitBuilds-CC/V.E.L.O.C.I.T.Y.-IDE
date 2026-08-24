@@ -1487,4 +1487,220 @@ mod tests {
         let issues = validate_emitter_size(&emitter, 2_000_000);
         assert!(issues.iter().any(|i| i.contains("1MB")));
     }
+
+    // ── Block 108: count_nodes tests ────────────────────────────────────────
+
+    #[test]
+    fn count_nodes_int() {
+        assert_eq!(count_nodes(&NdaNode::Int { value: 42 }), 1);
+    }
+
+    #[test]
+    fn count_nodes_break() {
+        assert_eq!(count_nodes(&NdaNode::Break), 1);
+    }
+
+    #[test]
+    fn count_nodes_load() {
+        assert_eq!(count_nodes(&NdaNode::Load { name_hash: 0 }), 1);
+    }
+
+    #[test]
+    fn count_nodes_add() {
+        let node = NdaNode::Add {
+            lhs: Box::new(NdaNode::Int { value: 1 }),
+            rhs: Box::new(NdaNode::Int { value: 2 }),
+        };
+        assert_eq!(count_nodes(&node), 3); // Add + 2 Int
+    }
+
+    #[test]
+    fn count_nodes_let() {
+        let node = NdaNode::Let {
+            name_hash: 0,
+            init: Box::new(NdaNode::Int { value: 42 }),
+        };
+        assert_eq!(count_nodes(&node), 2); // Let + Int
+    }
+
+    #[test]
+    fn count_nodes_scope() {
+        let node = NdaNode::Scope {
+            children: vec![
+                NdaNode::Int { value: 1 },
+                NdaNode::Int { value: 2 },
+                NdaNode::Int { value: 3 },
+            ],
+        };
+        assert_eq!(count_nodes(&node), 4); // Scope + 3 Int
+    }
+
+    #[test]
+    fn count_nodes_loop() {
+        let node = NdaNode::Loop {
+            count: 10,
+            body: vec![NdaNode::Int { value: 0 }],
+        };
+        assert_eq!(count_nodes(&node), 2); // Loop + Int
+    }
+
+    #[test]
+    fn count_nodes_if_no_else() {
+        let node = NdaNode::If {
+            cond: Box::new(NdaNode::Int { value: 1 }),
+            then_body: vec![NdaNode::Int { value: 2 }],
+            else_body: None,
+        };
+        assert_eq!(count_nodes(&node), 3); // If + 2 Int
+    }
+
+    #[test]
+    fn count_nodes_if_with_else() {
+        let node = NdaNode::If {
+            cond: Box::new(NdaNode::Int { value: 1 }),
+            then_body: vec![NdaNode::Int { value: 2 }],
+            else_body: Some(vec![NdaNode::Int { value: 3 }]),
+        };
+        assert_eq!(count_nodes(&node), 4); // If + 3 Int
+    }
+
+    #[test]
+    fn count_nodes_nested() {
+        let node = NdaNode::Loop {
+            count: 5,
+            body: vec![NdaNode::If {
+                cond: Box::new(NdaNode::Int { value: 1 }),
+                then_body: vec![NdaNode::Add {
+                    lhs: Box::new(NdaNode::Load { name_hash: 0 }),
+                    rhs: Box::new(NdaNode::Int { value: 1 }),
+                }],
+                else_body: None,
+            }],
+        };
+        // Loop(1) + If(1) + Int(1) + Add(1) + Load(1) + Int(1) = 6
+        assert_eq!(count_nodes(&node), 6);
+    }
+
+    #[test]
+    fn count_nodes_while() {
+        let node = NdaNode::While {
+            cond: Box::new(NdaNode::Int { value: 1 }),
+            body: vec![NdaNode::Int { value: 0 }],
+        };
+        assert_eq!(count_nodes(&node), 3); // While + cond Int + body Int
+    }
+
+    #[test]
+    fn count_nodes_compare() {
+        let node = NdaNode::Compare {
+            op: CmpOp::Eq,
+            lhs: Box::new(NdaNode::Load { name_hash: 0 }),
+            rhs: Box::new(NdaNode::Int { value: 0 }),
+        };
+        assert_eq!(count_nodes(&node), 3); // Compare + Load + Int
+    }
+
+    // ── X86Emitter basic tests ──────────────────────────────────────────────
+
+    #[test]
+    fn emitter_new_is_empty() {
+        let emitter = X86Emitter::new();
+        assert!(emitter.buf.is_empty());
+    }
+
+    #[test]
+    fn emitter_default_is_empty() {
+        let emitter = X86Emitter::default();
+        assert!(emitter.buf.is_empty());
+    }
+
+    #[test]
+    fn emitter_emit_single_byte() {
+        let mut emitter = X86Emitter::new();
+        emitter.emit(0x90);
+        assert_eq!(emitter.buf.len(), 1);
+        assert_eq!(emitter.buf[0], 0x90);
+    }
+
+    #[test]
+    fn emitter_emit_slice() {
+        let mut emitter = X86Emitter::new();
+        emitter.emit_slice(&[0x48, 0x89, 0xE5]);
+        assert_eq!(emitter.buf.len(), 3);
+        assert_eq!(emitter.buf, vec![0x48, 0x89, 0xE5]);
+    }
+
+    #[test]
+    fn emitter_push_rbp_opcode() {
+        let mut emitter = X86Emitter::new();
+        emitter.push_rbp();
+        assert_eq!(emitter.buf, vec![0x55]);
+    }
+
+    #[test]
+    fn emitter_pop_rbp_opcode() {
+        let mut emitter = X86Emitter::new();
+        emitter.pop_rbp();
+        assert_eq!(emitter.buf, vec![0x5D]);
+    }
+
+    #[test]
+    fn emitter_mov_rbp_rsp_opcode() {
+        let mut emitter = X86Emitter::new();
+        emitter.mov_rbp_rsp();
+        assert_eq!(emitter.buf, vec![0x48, 0x89, 0xE5]);
+    }
+
+    #[test]
+    fn emitter_ret_opcode() {
+        let mut emitter = X86Emitter::new();
+        emitter.ret();
+        assert_eq!(emitter.buf, vec![0xC3]);
+    }
+
+    #[test]
+    fn emitter_mov_eax_imm32_encoding() {
+        let mut emitter = X86Emitter::new();
+        emitter.mov_eax_imm32(42);
+        assert_eq!(emitter.buf[0], 0xB8);
+        let imm = i32::from_le_bytes([emitter.buf[1], emitter.buf[2], emitter.buf[3], emitter.buf[4]]);
+        assert_eq!(imm, 42);
+    }
+
+    #[test]
+    fn emitter_mov_eax_negative_imm32() {
+        let mut emitter = X86Emitter::new();
+        emitter.mov_eax_imm32(-1);
+        let imm = i32::from_le_bytes([emitter.buf[1], emitter.buf[2], emitter.buf[3], emitter.buf[4]]);
+        assert_eq!(imm, -1);
+    }
+
+    #[test]
+    fn emitter_standard_prologue() {
+        let mut emitter = X86Emitter::new();
+        emitter.push_rbp();
+        emitter.mov_rbp_rsp();
+        assert_eq!(emitter.buf, vec![0x55, 0x48, 0x89, 0xE5]);
+    }
+
+    // ── native_compile_info extended tests ──────────────────────────────────
+
+    #[test]
+    fn native_compile_info_return_multi_node_warning() {
+        let nodes = vec![
+            NdaNode::Int { value: 1 },
+            NdaNode::Return { value: Box::new(NdaNode::Int { value: 0 }) },
+        ];
+        let info = native_compile_info(&nodes);
+        assert!(info.validation_issues.iter().any(|i| i.contains("return")));
+    }
+
+    #[test]
+    fn native_compile_info_serializes() {
+        let info = native_compile_info(&[NdaNode::Int { value: 0 }]);
+        let json = serde_json::to_string(&info).unwrap();
+        assert!(json.contains("total_nodes"));
+        assert!(json.contains("native_ratio"));
+        assert!(json.contains("variable_count"));
+    }
 }
