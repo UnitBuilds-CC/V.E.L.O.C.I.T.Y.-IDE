@@ -1144,4 +1144,525 @@ mod tests {
         assert!(json.contains("lock_metrics"));
         assert!(json.contains("lock_order"));
     }
+
+    // ── Block 132: comprehensive safety tests ──────────────────────────────
+
+    // ─── RwLock tests ───────────────────────────────────────────────────────
+
+    #[test]
+    fn rwlock_read_safe_basic() {
+        let lock = RwLock::new(42);
+        let guard = lock.read_safe();
+        assert_eq!(*guard, 42);
+    }
+
+    #[test]
+    fn rwlock_write_safe_basic() {
+        let lock = RwLock::new(0);
+        {
+            let mut guard = lock.write_safe();
+            *guard = 99;
+        }
+        let guard = lock.read_safe();
+        assert_eq!(*guard, 99);
+    }
+
+    #[test]
+    fn rwlock_try_read_free() {
+        let lock = RwLock::new(10);
+        let guard = lock.try_read_safe();
+        assert!(guard.is_some());
+        assert_eq!(*guard.unwrap(), 10);
+    }
+
+    #[test]
+    fn rwlock_try_read_contended() {
+        let lock = RwLock::new(10);
+        let _write_guard = lock.write().unwrap();
+        assert!(lock.try_read_safe().is_none());
+    }
+
+    #[test]
+    fn rwlock_try_write_free() {
+        let lock = RwLock::new(10);
+        let guard = lock.try_write_safe();
+        assert!(guard.is_some());
+    }
+
+    #[test]
+    fn rwlock_try_write_contended_by_reader() {
+        let lock = RwLock::new(10);
+        let _read_guard = lock.read().unwrap();
+        assert!(lock.try_write_safe().is_none());
+    }
+
+    #[test]
+    fn rwlock_multiple_readers() {
+        let lock = RwLock::new(42);
+        let r1 = lock.read_safe();
+        let r2 = lock.read_safe();
+        assert_eq!(*r1, 42);
+        assert_eq!(*r2, 42);
+    }
+
+    #[test]
+    fn rwlock_poison_recovery_read() {
+        let lock = Arc::new(RwLock::new(42));
+        let lock2 = lock.clone();
+        let handle = thread::spawn(move || {
+            let _guard = lock2.write().unwrap();
+            panic!("rwlock poison");
+        });
+        let _ = handle.join();
+        // Should recover from poisoning
+        let guard = lock.read_safe();
+        assert_eq!(*guard, 42);
+    }
+
+    #[test]
+    fn rwlock_poison_recovery_write() {
+        let lock = Arc::new(RwLock::new(42));
+        let lock2 = lock.clone();
+        let handle = thread::spawn(move || {
+            let _guard = lock2.write().unwrap();
+            panic!("rwlock poison write");
+        });
+        let _ = handle.join();
+        let mut guard = lock.write_safe();
+        *guard = 100;
+        drop(guard);
+        let guard = lock.read_safe();
+        assert_eq!(*guard, 100);
+    }
+
+    // ─── Arc<Mutex<T>> tests ────────────────────────────────────────────────
+
+    #[test]
+    fn arc_mutex_lock_safe() {
+        let m = Arc::new(Mutex::new(42));
+        let guard = m.lock_safe();
+        assert_eq!(*guard, 42);
+    }
+
+    #[test]
+    fn arc_mutex_try_lock_safe() {
+        let m = Arc::new(Mutex::new(42));
+        let guard = m.lock_safe();
+        assert!(m.try_lock_safe().is_none());
+        drop(guard);
+        assert!(m.try_lock_safe().is_some());
+    }
+
+    #[test]
+    fn arc_mutex_lock_timeout() {
+        let m = Arc::new(Mutex::new(42));
+        let guard = m.lock_timeout(Duration::from_millis(50));
+        assert!(guard.is_some());
+        assert_eq!(*guard.unwrap(), 42);
+    }
+
+    // ─── Arc<RwLock<T>> tests ───────────────────────────────────────────────
+
+    #[test]
+    fn arc_rwlock_read_safe() {
+        let lock = Arc::new(RwLock::new(42));
+        let guard = lock.read_safe();
+        assert_eq!(*guard, 42);
+    }
+
+    #[test]
+    fn arc_rwlock_write_safe() {
+        let lock = Arc::new(RwLock::new(0));
+        {
+            let mut guard = lock.write_safe();
+            *guard = 77;
+        }
+        let guard = lock.read_safe();
+        assert_eq!(*guard, 77);
+    }
+
+    #[test]
+    fn arc_rwlock_try_read_write() {
+        let lock = Arc::new(RwLock::new(10));
+        assert!(lock.try_read_safe().is_some());
+        assert!(lock.try_write_safe().is_some());
+    }
+
+    // ─── LockMetrics edge cases ─────────────────────────────────────────────
+
+    #[test]
+    fn lock_metrics_hold_time_zero() {
+        let m = LockMetrics::new();
+        m.record_acquire();
+        m.record_hold_time(0);
+        assert_eq!(m.total_hold_time_us(), 0);
+        assert_eq!(m.max_hold_time_us(), 0);
+        assert_eq!(m.avg_hold_time_us(), 0);
+    }
+
+    #[test]
+    fn lock_metrics_contention_rate_zero_acquisitions() {
+        let m = LockMetrics::new();
+        assert_eq!(m.contention_rate(), 0.0);
+    }
+
+    #[test]
+    fn lock_metrics_contention_rate_all_contention() {
+        let m = LockMetrics::new();
+        m.record_acquire();
+        m.record_contention();
+        assert!((m.contention_rate() - 1.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn lock_metrics_poison_rate_full() {
+        let m = LockMetrics::new();
+        m.record_acquire();
+        m.record_poison_recovery();
+        assert!((m.poison_rate() - 1.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn lock_metrics_timeout_rate_full() {
+        let m = LockMetrics::new();
+        m.record_acquire();
+        m.record_timeout();
+        assert!((m.timeout_rate() - 1.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn lock_metrics_multiple_hold_times_max_tracking() {
+        let m = LockMetrics::new();
+        m.record_acquire();
+        for &t in &[10, 50, 30, 200, 5, 100] {
+            m.record_hold_time(t);
+        }
+        assert_eq!(m.max_hold_time_us(), 200);
+        assert_eq!(m.total_hold_time_us(), 395);
+    }
+
+    #[test]
+    fn lock_metrics_default_equals_new() {
+        let m = LockMetrics::default();
+        assert_eq!(m.acquisitions(), 0);
+        assert_eq!(m.contention_events(), 0);
+        assert_eq!(m.poison_recoveries(), 0);
+        assert_eq!(m.timeout_events(), 0);
+        assert_eq!(m.total_hold_time_us(), 0);
+        assert_eq!(m.max_hold_time_us(), 0);
+    }
+
+    #[test]
+    fn lock_metrics_debug_format() {
+        let m = LockMetrics::new();
+        m.record_acquire();
+        let debug = format!("{:?}", m);
+        assert!(debug.contains("LockMetrics"));
+        assert!(debug.contains("acquisitions"));
+        assert!(debug.contains("contention"));
+    }
+
+    #[test]
+    fn lock_metrics_snapshot_all_fields() {
+        let m = LockMetrics::new();
+        m.record_acquire();
+        m.record_acquire();
+        m.record_acquire();
+        m.record_contention();
+        m.record_poison_recovery();
+        m.record_timeout();
+        m.record_timeout();
+        m.record_hold_time(300);
+        m.record_hold_time(100);
+
+        let snap = m.snapshot();
+        assert_eq!(snap.acquisitions, 3);
+        assert_eq!(snap.contention_events, 1);
+        assert_eq!(snap.poison_recoveries, 1);
+        assert_eq!(snap.timeout_events, 2);
+        assert_eq!(snap.total_hold_time_us, 400);
+        assert_eq!(snap.max_hold_time_us, 300);
+        assert_eq!(snap.avg_hold_time_us, 133); // 400 / 3 = 133
+    }
+
+    #[test]
+    fn lock_metrics_snapshot_debug_clone() {
+        let m = LockMetrics::new();
+        m.record_acquire();
+        let snap = m.snapshot();
+        let debug = format!("{:?}", snap);
+        assert!(debug.contains("LockMetricsSnapshot"));
+        let cloned = snap.clone();
+        assert_eq!(cloned.acquisitions, snap.acquisitions);
+        assert_eq!(cloned.avg_hold_time_us, snap.avg_hold_time_us);
+    }
+
+    // ─── Health score edge cases ────────────────────────────────────────────
+
+    #[test]
+    fn lock_health_score_zero_acquisitions() {
+        let m = LockMetrics::new();
+        // No acquisitions → all rates 0.0 → score = 1.0
+        let score = lock_health_score(&m);
+        assert!((score - 1.0).abs() < 0.001);
+    }
+
+    #[test]
+    fn lock_health_score_clamps_to_zero() {
+        let m = LockMetrics::new();
+        m.record_acquire();
+        // Max penalties: contention_rate=1.0 → 0.3, poison_rate=1.0 → 0.5, timeout_rate=1.0 → 0.2
+        // Total penalty = 1.0, score = 0.0
+        m.record_contention();
+        m.record_poison_recovery();
+        m.record_timeout();
+        let score = lock_health_score(&m);
+        assert!(score >= 0.0);
+        assert!((score - 0.0).abs() < 0.001);
+    }
+
+    #[test]
+    fn lock_health_score_only_contention() {
+        let m = LockMetrics::new();
+        m.record_acquire();
+        m.record_acquire();
+        m.record_contention();
+        // contention_rate = 0.5, penalty = 0.5 * 0.3 = 0.15
+        let score = lock_health_score(&m);
+        assert!((score - 0.85).abs() < 0.01);
+    }
+
+    #[test]
+    fn lock_health_score_only_poison() {
+        let m = LockMetrics::new();
+        m.record_acquire();
+        m.record_acquire();
+        m.record_poison_recovery();
+        // poison_rate = 0.5, penalty = 0.5 * 0.5 = 0.25
+        let score = lock_health_score(&m);
+        assert!((score - 0.75).abs() < 0.01);
+    }
+
+    #[test]
+    fn lock_health_score_only_timeout() {
+        let m = LockMetrics::new();
+        m.record_acquire();
+        m.record_acquire();
+        m.record_timeout();
+        // timeout_rate = 0.5, penalty = 0.5 * 0.2 = 0.1
+        let score = lock_health_score(&m);
+        assert!((score - 0.9).abs() < 0.01);
+    }
+
+    // ─── LockOrder extended tests ───────────────────────────────────────────
+
+    #[test]
+    fn lock_order_release_nonexistent_is_noop() {
+        let detector = LockOrder::new();
+        // Release without acquire — should not panic
+        detector.release(99);
+        assert_eq!(detector.violation_count(), 0);
+    }
+
+    #[test]
+    fn lock_order_validate_duplicate_levels() {
+        let detector = LockOrder::new();
+        // Acquire same level twice — validate should detect duplicate
+        detector.acquire(5);
+        detector.acquire(7); // ok, higher
+        // Now manually push another level 5 via a second acquire
+        // Actually, acquire(5) after acquire(7) is a violation, but it still pushes
+        detector.acquire(5); // violation: 5 <= 7
+        let warnings = detector.validate();
+        // Should have the violation warning
+        assert!(warnings.iter().any(|w| w.contains("violation")));
+        detector.release(5);
+        detector.release(7);
+        detector.release(5);
+    }
+
+    #[test]
+    fn lock_order_strictly_increasing() {
+        let detector = LockOrder::new();
+        assert!(detector.acquire(1));
+        assert!(detector.acquire(2));
+        assert!(detector.acquire(3));
+        assert_eq!(detector.violation_count(), 0);
+        detector.release(3);
+        detector.release(2);
+        detector.release(1);
+    }
+
+    #[test]
+    fn lock_order_default_equals_new() {
+        let detector = LockOrder::default();
+        assert_eq!(detector.violation_count(), 0);
+        assert!(detector.acquire(1));
+        detector.release(1);
+    }
+
+    #[test]
+    fn lock_order_snapshot_unique_threads() {
+        let detector = Arc::new(LockOrder::new());
+        let d2 = detector.clone();
+
+        detector.acquire(1);
+        let handle = thread::spawn(move || {
+            d2.acquire(1);
+            // Don't release — snapshot should see 2 unique threads
+        });
+        let _ = handle.join();
+
+        let snap = detector.snapshot();
+        assert_eq!(snap.held_lock_count, 2);
+        assert_eq!(snap.unique_threads, 2);
+
+        detector.release(1);
+    }
+
+    #[test]
+    fn lock_order_snapshot_serializes() {
+        let detector = LockOrder::new();
+        detector.acquire(1);
+        let snap = detector.snapshot();
+        let json = serde_json::to_string(&snap).unwrap();
+        assert!(json.contains("held_lock_count"));
+        assert!(json.contains("violation_count"));
+        assert!(json.contains("unique_threads"));
+        detector.release(1);
+    }
+
+    #[test]
+    fn lock_order_snapshot_debug_clone() {
+        let detector = LockOrder::new();
+        detector.acquire(1);
+        let snap = detector.snapshot();
+        let debug = format!("{:?}", snap);
+        assert!(debug.contains("LockOrderSnapshot"));
+        let cloned = snap.clone();
+        assert_eq!(cloned.held_lock_count, snap.held_lock_count);
+        assert_eq!(cloned.violation_count, snap.violation_count);
+        detector.release(1);
+    }
+
+    // ─── LockOrderGuard extended tests ──────────────────────────────────────
+
+    #[test]
+    fn lock_order_guard_was_safe() {
+        let guard = LockOrderGuard::new(100);
+        assert!(guard.was_safe());
+    }
+
+    // ─── InstrumentedMutex extended tests ───────────────────────────────────
+
+    #[test]
+    fn instrumented_mutex_deref_mut() {
+        let m = InstrumentedMutex::new("mut_test", vec![1, 2, 3]);
+        {
+            let mut guard = m.lock();
+            guard.push(4);
+        }
+        let guard = m.lock();
+        assert_eq!(*guard, vec![1, 2, 3, 4]);
+    }
+
+    #[test]
+    fn instrumented_mutex_try_lock_success() {
+        let m = InstrumentedMutex::new("try_ok", 42);
+        let guard = m.try_lock();
+        assert!(guard.is_some());
+        assert_eq!(*guard.unwrap(), 42);
+    }
+
+    #[test]
+    fn instrumented_mutex_debug_format() {
+        let m = InstrumentedMutex::<i32>::new("debug_test", 0);
+        let debug = format!("{:?}", m);
+        assert!(debug.contains("InstrumentedMutex"));
+        assert!(debug.contains("debug_test"));
+    }
+
+    #[test]
+    fn instrumented_mutex_records_metrics() {
+        let m_before = GLOBAL_LOCK_METRICS.acquisitions();
+        let lock = InstrumentedMutex::new("metrics_test", 0);
+        let guard = lock.lock();
+        drop(guard);
+        let m_after = GLOBAL_LOCK_METRICS.acquisitions();
+        assert!(m_after > m_before);
+    }
+
+    // ─── SafetyReport extended tests ────────────────────────────────────────
+
+    #[test]
+    fn safety_report_debug() {
+        let report = safety_report();
+        let debug = format!("{:?}", report);
+        assert!(debug.contains("SafetyReport"));
+        assert!(debug.contains("health_score"));
+    }
+
+    #[test]
+    fn safety_report_clone() {
+        let report = safety_report();
+        let cloned = report.clone();
+        assert_eq!(cloned.health_score, report.health_score);
+        assert_eq!(cloned.timestamp_us, report.timestamp_us);
+        assert_eq!(cloned.validation_warnings.len(), report.validation_warnings.len());
+    }
+
+    #[test]
+    fn safety_report_json_all_fields() {
+        let report = safety_report();
+        let json = serde_json::to_string(&report).unwrap();
+        assert!(json.contains("health_score"));
+        assert!(json.contains("lock_metrics"));
+        assert!(json.contains("lock_order"));
+        assert!(json.contains("validation_warnings"));
+        assert!(json.contains("timestamp_us"));
+        // Parse as Value to verify valid JSON
+        let val: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert!(val["health_score"].is_number());
+        assert!(val["timestamp_us"].is_number());
+        assert!(val["validation_warnings"].is_array());
+    }
+
+    // ─── TimedMutex Arc delegation ──────────────────────────────────────────
+
+    #[test]
+    fn arc_timed_mutex_timeout() {
+        let m = Arc::new(Mutex::new(42));
+        let _guard = m.lock().unwrap();
+        let result = m.lock_timeout(Duration::from_millis(5));
+        assert!(result.is_none());
+    }
+
+    // ─── LockMetrics summary edge cases ─────────────────────────────────────
+
+    #[test]
+    fn lock_metrics_summary_all_counters() {
+        let m = LockMetrics::new();
+        m.record_acquire();
+        m.record_acquire();
+        m.record_contention();
+        m.record_poison_recovery();
+        m.record_timeout();
+        m.record_hold_time(500);
+        let s = m.summary();
+        assert!(s.contains("2 acq"));
+        assert!(s.contains("1 contention"));
+        assert!(s.contains("1 poison"));
+        assert!(s.contains("1 timeout"));
+        assert!(s.contains("avg hold 250us")); // 500 / 2 acq
+        assert!(s.contains("max hold 500us"));
+    }
+
+    #[test]
+    fn lock_metrics_summary_zero_state() {
+        let m = LockMetrics::new();
+        let s = m.summary();
+        assert!(s.contains("0 acq"));
+        assert!(s.contains("avg hold 0us"));
+        assert!(s.contains("max hold 0us"));
+    }
 }
