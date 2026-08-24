@@ -262,6 +262,185 @@ impl WikiModel {
         merged
     }
 
+    /// Search filtered to a specific page kind.
+    pub fn search_by_kind(&self, query: &str, kind: WikiPageKind) -> Vec<WikiSearchResult> {
+        if query.is_empty() {
+            return Vec::new();
+        }
+        let query_lower = query.to_lowercase();
+        let query_terms: Vec<&str> = query_lower.split_whitespace().collect();
+
+        let pages = match kind {
+            WikiPageKind::Overview => std::iter::once(&self.overview).collect::<Vec<_>>(),
+            WikiPageKind::File => self.file_pages.iter().collect(),
+            WikiPageKind::Symbol => self.symbol_pages.iter().collect(),
+        };
+
+        let mut results: Vec<WikiSearchResult> = pages
+            .into_iter()
+            .filter_map(|page| {
+                let score = compute_relevance(page, &query_terms);
+                if score > 0 {
+                    Some(WikiSearchResult { page: page.clone(), score })
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        results.sort_by(|a, b| {
+            b.score.cmp(&a.score).then_with(|| a.page.title.cmp(&b.page.title))
+        });
+        results
+    }
+
+    /// Paginated search with limit and offset.
+    pub fn search_paginated(&self, query: &str, limit: usize, offset: usize) -> PaginatedSearchResult {
+        let all_results = self.search(query);
+        let total = all_results.len();
+        let page_results: Vec<WikiSearchResult> = all_results
+            .into_iter()
+            .skip(offset)
+            .take(limit)
+            .collect();
+
+        PaginatedSearchResult {
+            results: page_results,
+            total_matches: total,
+            offset,
+            limit,
+            has_more: total > offset + limit,
+        }
+    }
+
+    /// Prefix-based autocomplete for search suggestions.
+    /// Returns up to `limit` page titles that start with or contain the prefix.
+    pub fn autocomplete(&self, prefix: &str, limit: usize) -> Vec<AutocompleteSuggestion> {
+        if prefix.is_empty() {
+            return Vec::new();
+        }
+        let prefix_lower = prefix.to_lowercase();
+        let mut suggestions: Vec<AutocompleteSuggestion> = Vec::new();
+
+        for page in self.all_pages() {
+            let title_lower = page.title.to_lowercase();
+            if title_lower.starts_with(&prefix_lower) {
+                suggestions.push(AutocompleteSuggestion {
+                    title: page.title.clone(),
+                    slug: page.slug.clone(),
+                    kind: page.kind,
+                    match_type: "prefix",
+                });
+            } else if title_lower.contains(&prefix_lower) {
+                suggestions.push(AutocompleteSuggestion {
+                    title: page.title.clone(),
+                    slug: page.slug.clone(),
+                    kind: page.kind,
+                    match_type: "contains",
+                });
+            }
+        }
+
+        // Sort: prefix matches first, then contains; within each group alphabetical.
+        suggestions.sort_by(|a, b| {
+            a.match_type.cmp(&b.match_type).then_with(|| a.title.cmp(&b.title))
+        });
+        suggestions.truncate(limit);
+        suggestions
+    }
+
+    /// Fuzzy search using simple subsequence matching (typo-tolerant).
+    /// Returns pages where the query characters appear as a subsequence in the title.
+    pub fn fuzzy_search(&self, query: &str) -> Vec<WikiSearchResult> {
+        if query.is_empty() {
+            return Vec::new();
+        }
+        let query_lower = query.to_lowercase();
+        let query_chars: Vec<char> = query_lower.chars().collect();
+
+        let mut results: Vec<WikiSearchResult> = self
+            .all_pages()
+            .filter_map(|page| {
+                let title_lower = page.title.to_lowercase();
+                let title_chars: Vec<char> = title_lower.chars().collect();
+                if is_subsequence(&query_chars, &title_chars) {
+                    // Score inversely proportional to title length (tighter match = better).
+                    let score = if title_chars.is_empty() {
+                        1
+                    } else {
+                        (query_chars.len() as u32) * 10 / (title_chars.len() as u32)
+                    };
+                    Some(WikiSearchResult { page: page.clone(), score: score.max(1) })
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        results.sort_by(|a, b| {
+            b.score.cmp(&a.score).then_with(|| a.page.title.cmp(&b.page.title))
+        });
+        results
+    }
+
+    /// Generate a structured search report with diagnostics.
+    pub fn search_report(&self, query: &str) -> SearchReport {
+        let start = std::time::Instant::now();
+        let results = self.search(query);
+        let elapsed = start.elapsed();
+
+        let kind_counts = {
+            let mut counts = std::collections::HashMap::new();
+            for r in &results {
+                *counts.entry(r.page.kind.label().to_string()).or_insert(0usize) += 1;
+            }
+            let mut v: Vec<(String, usize)> = counts.into_iter().collect();
+            v.sort_by(|a, b| b.1.cmp(&a.1));
+            v
+        };
+
+        let top_score = results.first().map(|r| r.score).unwrap_or(0);
+        let avg_score = if results.is_empty() {
+            0.0
+        } else {
+            results.iter().map(|r| r.score as f64).sum::<f64>() / results.len() as f64
+        };
+
+        SearchReport {
+            query: query.to_string(),
+            total_matches: results.len(),
+            elapsed_us: elapsed.as_micros() as u64,
+            top_score,
+            average_score: (avg_score * 100.0).round() / 100.0,
+            results_by_kind: kind_counts,
+            top_results: results.iter().take(5).map(|r| r.page.title.clone()).collect(),
+        }
+    }
+
+    /// Get the most connected pages (by total relationship + called_by count).
+    pub fn most_connected_pages(&self, limit: usize) -> Vec<(&WikiPage, usize)> {
+        let mut scored: Vec<(&WikiPage, usize)> = self
+            .all_pages()
+            .map(|p| {
+                let rel_count: usize = p.relationships.iter().map(|(_, t)| t.len()).sum();
+                let total = rel_count + p.called_by.len();
+                (p, total)
+            })
+            .collect();
+        scored.sort_by(|a, b| b.1.cmp(&a.1));
+        scored.truncate(limit);
+        scored
+    }
+
+    /// Count pages by kind.
+    pub fn pages_by_kind(&self) -> Vec<(WikiPageKind, usize)> {
+        vec![
+            (WikiPageKind::Overview, 1),
+            (WikiPageKind::File, self.file_pages.len()),
+            (WikiPageKind::Symbol, self.symbol_pages.len()),
+        ]
+    }
+
     /// Validate a single wiki page for consistency.
     pub fn validate_page(page: &WikiPage) -> Vec<String> {
         let mut issues = Vec::new();
@@ -335,6 +514,48 @@ pub struct WikiGenerationReport {
     pub symbol_pages_generated: usize,
     pub total_pages: usize,
     pub validation_issues: Vec<String>,
+}
+
+/// A paginated search result.
+#[derive(Debug, Clone, Serialize)]
+pub struct PaginatedSearchResult {
+    pub results: Vec<WikiSearchResult>,
+    pub total_matches: usize,
+    pub offset: usize,
+    pub limit: usize,
+    pub has_more: bool,
+}
+
+/// An autocomplete suggestion.
+#[derive(Debug, Clone, Serialize)]
+pub struct AutocompleteSuggestion {
+    pub title: String,
+    pub slug: String,
+    pub kind: WikiPageKind,
+    pub match_type: &'static str,
+}
+
+/// Structured search diagnostics.
+#[derive(Debug, Clone, Serialize)]
+pub struct SearchReport {
+    pub query: String,
+    pub total_matches: usize,
+    pub elapsed_us: u64,
+    pub top_score: u32,
+    pub average_score: f64,
+    pub results_by_kind: Vec<(String, usize)>,
+    pub top_results: Vec<String>,
+}
+
+/// Check if `sub` is a subsequence of `full`.
+fn is_subsequence(sub: &[char], full: &[char]) -> bool {
+    let mut si = 0;
+    for &fc in full {
+        if si < sub.len() && sub[si] == fc {
+            si += 1;
+        }
+    }
+    si == sub.len()
 }
 
 /// A relationship edge in the wiki graph.
@@ -852,5 +1073,194 @@ mod inline_tests {
         let json = serde_json::to_string(&report).unwrap();
         assert!(json.contains("\"triples_processed\":100"));
         assert!(json.contains("\"total_pages\":61"));
+    }
+
+    // ─── Block 78: search improvements tests ────────────────────────────
+
+    #[test]
+    fn wiki_search_by_kind_file() {
+        let model = make_test_model();
+        let results = model.search_by_kind("main", WikiPageKind::File);
+        assert!(!results.is_empty());
+        for r in &results {
+            assert_eq!(r.page.kind, WikiPageKind::File);
+        }
+    }
+
+    #[test]
+    fn wiki_search_by_kind_symbol() {
+        let model = make_test_model();
+        let results = model.search_by_kind("fn", WikiPageKind::Symbol);
+        assert!(!results.is_empty());
+        for r in &results {
+            assert_eq!(r.page.kind, WikiPageKind::Symbol);
+        }
+    }
+
+    #[test]
+    fn wiki_search_by_kind_empty_query() {
+        let model = make_test_model();
+        let results = model.search_by_kind("", WikiPageKind::File);
+        assert!(results.is_empty());
+    }
+
+    #[test]
+    fn wiki_search_paginated_first_page() {
+        let model = make_test_model();
+        let result = model.search_paginated("fn", 2, 0);
+        assert!(result.results.len() <= 2);
+        assert_eq!(result.offset, 0);
+        assert_eq!(result.limit, 2);
+    }
+
+    #[test]
+    fn wiki_search_paginated_has_more() {
+        let model = make_test_model();
+        let result = model.search_paginated("fn", 1, 0);
+        assert_eq!(result.results.len(), 1);
+        assert!(result.has_more);
+    }
+
+    #[test]
+    fn wiki_search_paginated_offset() {
+        let model = make_test_model();
+        let result = model.search_paginated("fn", 100, 1000);
+        assert!(result.results.is_empty());
+        assert!(!result.has_more);
+    }
+
+    #[test]
+    fn wiki_autocomplete_prefix() {
+        let model = make_test_model();
+        let suggestions = model.autocomplete("main", 10);
+        assert!(!suggestions.is_empty());
+        // Prefix matches should come first
+        assert!(suggestions.iter().any(|s| s.match_type == "prefix"));
+    }
+
+    #[test]
+    fn wiki_autocomplete_empty_prefix() {
+        let model = make_test_model();
+        let suggestions = model.autocomplete("", 10);
+        assert!(suggestions.is_empty());
+    }
+
+    #[test]
+    fn wiki_autocomplete_limit() {
+        let model = make_test_model();
+        let suggestions = model.autocomplete("fn", 1);
+        assert!(suggestions.len() <= 1);
+    }
+
+    #[test]
+    fn wiki_fuzzy_search_subsequence() {
+        let model = make_test_model();
+        // "mnfn" should fuzzy-match "main_fn" (subsequence m-a-i-n-_-f-n)
+        let results = model.fuzzy_search("mnfn");
+        assert!(results.iter().any(|r| r.page.title == "main_fn"));
+    }
+
+    #[test]
+    fn wiki_fuzzy_search_empty() {
+        let model = make_test_model();
+        let results = model.fuzzy_search("");
+        assert!(results.is_empty());
+    }
+
+    #[test]
+    fn wiki_fuzzy_search_no_match() {
+        let model = make_test_model();
+        let results = model.fuzzy_search("zzzzz");
+        assert!(results.is_empty());
+    }
+
+    #[test]
+    fn wiki_search_report_basic() {
+        let model = make_test_model();
+        let report = model.search_report("main");
+        assert_eq!(report.query, "main");
+        assert!(report.total_matches > 0);
+        assert!(!report.top_results.is_empty());
+    }
+
+    #[test]
+    fn wiki_search_report_serializes() {
+        let report = SearchReport {
+            query: "test".to_string(),
+            total_matches: 5,
+            elapsed_us: 100,
+            top_score: 30,
+            average_score: 15.5,
+            results_by_kind: vec![("Symbol".to_string(), 3), ("File".to_string(), 2)],
+            top_results: vec!["a".to_string(), "b".to_string()],
+        };
+        let json = serde_json::to_string(&report).unwrap();
+        assert!(json.contains("\"total_matches\":5"));
+    }
+
+    #[test]
+    fn wiki_most_connected_pages() {
+        let model = make_test_model();
+        let connected = model.most_connected_pages(3);
+        assert!(!connected.is_empty());
+        // helper_fn has 2 called_by, should be top
+        assert_eq!(connected[0].0.title, "helper_fn");
+        assert!(connected[0].1 >= connected.last().unwrap().1);
+    }
+
+    #[test]
+    fn wiki_pages_by_kind() {
+        let model = make_test_model();
+        let counts = model.pages_by_kind();
+        assert_eq!(counts.len(), 3);
+        assert_eq!(counts[0], (WikiPageKind::Overview, 1));
+        assert_eq!(counts[1], (WikiPageKind::File, 1));
+        assert_eq!(counts[2], (WikiPageKind::Symbol, 3));
+    }
+
+    #[test]
+    fn is_subsequence_basic() {
+        let sub: Vec<char> = "abc".chars().collect();
+        let full: Vec<char> = "ahbgdc".chars().collect();
+        assert!(is_subsequence(&sub, &full));
+    }
+
+    #[test]
+    fn is_subsequence_false() {
+        let sub: Vec<char> = "axc".chars().collect();
+        let full: Vec<char> = "ahbgdc".chars().collect();
+        assert!(!is_subsequence(&sub, &full));
+    }
+
+    #[test]
+    fn is_subsequence_empty() {
+        let sub: Vec<char> = vec![];
+        let full: Vec<char> = "abc".chars().collect();
+        assert!(is_subsequence(&sub, &full));
+    }
+
+    #[test]
+    fn autocomplete_suggestion_serializes() {
+        let s = AutocompleteSuggestion {
+            title: "main_fn".to_string(),
+            slug: "main_fn".to_string(),
+            kind: WikiPageKind::Symbol,
+            match_type: "prefix",
+        };
+        let json = serde_json::to_string(&s).unwrap();
+        assert!(json.contains("\"match_type\":\"prefix\""));
+    }
+
+    #[test]
+    fn paginated_search_result_serializes() {
+        let r = PaginatedSearchResult {
+            results: vec![],
+            total_matches: 10,
+            offset: 5,
+            limit: 5,
+            has_more: false,
+        };
+        let json = serde_json::to_string(&r).unwrap();
+        assert!(json.contains("\"has_more\":false"));
     }
 }

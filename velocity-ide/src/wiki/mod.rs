@@ -11,4 +11,5 @@ pub mod markdown;
 mod tests;
 
 pub use generate::{build_wiki, WikiModel, WikiPage, WikiPageKind, WikiSearchResult};
+pub use generate::{PaginatedSearchResult, AutocompleteSuggestion, SearchReport};
 pub use markdown::{export_markdown, render_page_markdown};
