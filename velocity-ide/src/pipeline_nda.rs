@@ -1577,4 +1577,826 @@ mod tests {
     fn argmax_f32_negative_values() {
         assert_eq!(argmax_f32(&[-5.0, -1.0, -3.0]), 1);
     }
+
+    // ── Block 143: NdaHead save/load error cases ────────────────────────────
+
+    #[test]
+    fn nda_head_load_bad_magic() {
+        use tempfile::NamedTempFile;
+        let file = NamedTempFile::new().unwrap();
+        std::fs::write(file.path(), b"BAD!\x00\x00\x00\x00").unwrap();
+        let result = NdaHead::load(file.path());
+        assert!(result.is_err());
+        let err = format!("{}", result.err().unwrap());
+        assert!(err.contains("invalid NdaHead magic"), "got: {}", err);
+    }
+
+    #[test]
+    fn nda_head_load_wrong_size() {
+        use tempfile::NamedTempFile;
+        let file = NamedTempFile::new().unwrap();
+        // Write correct magic but too few floats
+        let mut buf = b"NDA\x01".to_vec();
+        for _ in 0..10 {
+            buf.extend_from_slice(&1.0f32.to_le_bytes());
+        }
+        std::fs::write(file.path(), &buf).unwrap();
+        let result = NdaHead::load(file.path());
+        assert!(result.is_err());
+        let err = format!("{}", result.err().unwrap());
+        assert!(err.contains("weight count mismatch"), "got: {}", err);
+    }
+
+    #[test]
+    fn nda_head_load_nonexistent_file() {
+        let result = NdaHead::load(std::path::Path::new("/nonexistent/path/head.bin"));
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn nda_head_save_load_roundtrip_all_weights() {
+        use tempfile::NamedTempFile;
+        let head = NdaHead::random();
+        let file = NamedTempFile::new().unwrap();
+        head.save(file.path()).unwrap();
+        let loaded = NdaHead::load(file.path()).unwrap();
+        // Check all weight arrays match
+        assert_eq!(head.w1.len(), loaded.w1.len());
+        assert_eq!(head.b1.len(), loaded.b1.len());
+        assert_eq!(head.w2.len(), loaded.w2.len());
+        assert_eq!(head.b2.len(), loaded.b2.len());
+        for (a, b) in head.w1.iter().zip(loaded.w1.iter()) {
+            assert!((a - b).abs() < 1e-9);
+        }
+        for (a, b) in head.b1.iter().zip(loaded.b1.iter()) {
+            assert!((a - b).abs() < 1e-9);
+        }
+        for (a, b) in head.w2.iter().zip(loaded.w2.iter()) {
+            assert!((a - b).abs() < 1e-9);
+        }
+        for (a, b) in head.b2.iter().zip(loaded.b2.iter()) {
+            assert!((a - b).abs() < 1e-9);
+        }
+    }
+
+    // ── Block 143: NdaHead forward with known weights ──────────────────────
+
+    #[test]
+    fn nda_head_forward_with_known_weights() {
+        // Create a head with known simple weights and verify the math
+        let mut head = NdaHead::zeros();
+        // Set w1[0][0] = 1.0 (first row, first column)
+        head.w1[0] = 1.0;
+        // Set b1[0] = 0.5
+        head.b1[0] = 0.5;
+        // Set w2[0][0] = 2.0 (first output row, first mid element)
+        head.w2[0] = 2.0;
+        // Set b2[0] = 0.1
+        head.b2[0] = 0.1;
+
+        let mut hidden = vec![0.0f32; 896];
+        hidden[0] = 3.0;
+
+        let logits = head.forward(&hidden);
+        // Layer 1, neuron 0: ReLU(1.0 * 3.0 + 0.5) = 3.5
+        // Layer 2, output 0: 2.0 * 3.5 + 0.1 = 7.1
+        assert!(
+            (logits[0] - 7.1).abs() < 1e-4,
+            "expected 7.1, got {}",
+            logits[0]
+        );
+    }
+
+    #[test]
+    fn nda_head_forward_relu_kills_negatives() {
+        let mut head = NdaHead::zeros();
+        // Set w1[0][0] = -1.0 and b1[0] = 0.0
+        head.w1[0] = -1.0;
+        // Set w2[0][0] = 1.0
+        head.w2[0] = 1.0;
+
+        let mut hidden = vec![0.0f32; 896];
+        hidden[0] = 5.0; // positive input
+
+        let logits = head.forward(&hidden);
+        // Layer 1, neuron 0: ReLU(-1.0 * 5.0 + 0.0) = ReLU(-5.0) = 0.0
+        // Layer 2, output 0: 1.0 * 0.0 + 0.0 = 0.0
+        assert!(
+            (logits[0] - 0.0).abs() < 1e-6,
+            "ReLU should kill negative pre-activation, got {}",
+            logits[0]
+        );
+    }
+
+    #[test]
+    fn nda_head_forward_zero_hidden_all_zero_output() {
+        let head = NdaHead::zeros();
+        let hidden = vec![0.0f32; 896];
+        let logits = head.forward(&hidden);
+        // All weights zero, all biases zero, zero hidden → all outputs zero
+        for (i, &l) in logits.iter().enumerate() {
+            assert!(l.abs() < 1e-9, "logits[{}] = {} expected 0", i, l);
+        }
+    }
+
+    #[test]
+    fn nda_head_forward_output_dim() {
+        let head = NdaHead::random();
+        let hidden = vec![0.5f32; 896];
+        let logits = head.forward(&hidden);
+        assert_eq!(logits.len(), NdaOpcode::VOCAB_SIZE);
+    }
+
+    // ── Block 143: PipelineMode edge cases ─────────────────────────────────
+
+    #[test]
+    fn pipeline_mode_detect_empty_string() {
+        // Empty string has no triggers → Text
+        assert_eq!(PipelineMode::detect(""), PipelineMode::Text);
+    }
+
+    #[test]
+    fn pipeline_mode_detect_case_insensitive() {
+        assert_eq!(PipelineMode::detect("IMPLEMENT foo"), PipelineMode::Nda);
+        assert_eq!(PipelineMode::detect("Write a function"), PipelineMode::Nda);
+        assert_eq!(PipelineMode::detect("DEFINE a class"), PipelineMode::Nda);
+        assert_eq!(PipelineMode::detect("STRUCT Foo"), PipelineMode::Nda);
+    }
+
+    #[test]
+    fn pipeline_mode_from_str_empty() {
+        // Empty string doesn't match "nda", "native", or "auto" → Text
+        assert_eq!(PipelineMode::from_str(""), PipelineMode::Text);
+    }
+
+    #[test]
+    fn pipeline_mode_from_str_whitespace() {
+        assert_eq!(PipelineMode::from_str("  "), PipelineMode::Text);
+    }
+
+    #[test]
+    fn pipeline_mode_derives() {
+        // Clone
+        let mode = PipelineMode::Nda;
+        let cloned = mode.clone();
+        assert_eq!(mode, cloned);
+
+        // Copy
+        let a = PipelineMode::Text;
+        let b = a; // copy
+        assert_eq!(a, b);
+
+        // Debug
+        let debug_str = format!("{:?}", PipelineMode::Auto);
+        assert_eq!(debug_str, "Auto");
+
+        // Eq
+        assert_eq!(PipelineMode::Nda, PipelineMode::Nda);
+        assert_ne!(PipelineMode::Text, PipelineMode::Nda);
+        assert_ne!(PipelineMode::Auto, PipelineMode::Text);
+    }
+
+    // ── Block 143: NdaGenStats edge cases ──────────────────────────────────
+
+    #[test]
+    fn top_opcodes_n_zero() {
+        let mut stats = NdaGenStats::default();
+        stats.ensure_distribution();
+        stats.opcode_distribution[NdaOpcode::Scope as usize] = 10;
+        let top = stats.top_opcodes(0);
+        assert!(top.is_empty());
+    }
+
+    #[test]
+    fn top_opcodes_all_same_count() {
+        let mut stats = NdaGenStats::default();
+        stats.ensure_distribution();
+        // Set all opcodes to the same count
+        for v in stats.opcode_distribution.iter_mut() {
+            *v = 5;
+        }
+        let top = stats.top_opcodes(5);
+        // Should return 5 opcodes, all with count 5
+        assert_eq!(top.len(), 5);
+        for (_, count) in &top {
+            assert_eq!(*count, 5);
+        }
+    }
+
+    #[test]
+    fn top_opcodes_without_ensure_distribution() {
+        // If ensure_distribution was never called, opcode_distribution is empty
+        let stats = NdaGenStats::default();
+        let top = stats.top_opcodes(5);
+        assert!(top.is_empty());
+    }
+
+    #[test]
+    fn snapshot_with_zero_distribution() {
+        let stats = NdaGenStats {
+            tokens_emitted: 10,
+            site_map_hits: 5,
+            site_map_misses: 5,
+            elapsed_ms: 100,
+            opcode_distribution: vec![],
+            peak_stack_depth: 2,
+            rep_penalty_applications: 3,
+        };
+        let snap = stats.snapshot();
+        assert_eq!(snap.unique_opcodes_emitted, 0);
+        assert_eq!(snap.tokens_emitted, 10);
+        assert!((snap.cache_hit_rate - 0.5).abs() < 0.01);
+    }
+
+    #[test]
+    fn nda_gen_stats_default_values() {
+        let stats = NdaGenStats::default();
+        assert_eq!(stats.tokens_emitted, 0);
+        assert_eq!(stats.site_map_hits, 0);
+        assert_eq!(stats.site_map_misses, 0);
+        assert_eq!(stats.elapsed_ms, 0);
+        assert!(stats.opcode_distribution.is_empty());
+        assert_eq!(stats.peak_stack_depth, 0);
+        assert_eq!(stats.rep_penalty_applications, 0);
+    }
+
+    #[test]
+    fn nda_gen_stats_clone() {
+        let mut stats = NdaGenStats::default();
+        stats.tokens_emitted = 42;
+        stats.site_map_hits = 10;
+        let cloned = stats.clone();
+        assert_eq!(cloned.tokens_emitted, 42);
+        assert_eq!(cloned.site_map_hits, 10);
+    }
+
+    // ── Block 143: NdaGenerationResult validate with sandbox/scope ─────────
+
+    #[test]
+    fn generation_result_validate_sandbox_panicked() {
+        let result = NdaGenerationResult {
+            nodes: vec![],
+            root_hash: 123,
+            valid: true,
+            force_terminated: false,
+            site_map_key: None,
+            sandbox: Some(crate::sandbox::SandboxResult {
+                executed_nodes: 5,
+                matrix_count: 1,
+                norm_count: 0,
+                output_vec: vec![1.0],
+                output_dim: 1,
+                panicked: true,
+                error: None,
+                elapsed_us: 100,
+                kind_counts: std::collections::HashMap::new(),
+                output_log: vec![],
+                loop_iterations: 0,
+            }),
+            scope: None,
+            stats: NdaGenStats::default(),
+            node_count: 5,
+        };
+        let warnings = result.validate();
+        assert!(warnings.iter().any(|w| w.contains("Sandbox execution panicked")));
+    }
+
+    #[test]
+    fn generation_result_validate_sandbox_error() {
+        let result = NdaGenerationResult {
+            nodes: vec![],
+            root_hash: 123,
+            valid: true,
+            force_terminated: false,
+            site_map_key: None,
+            sandbox: Some(crate::sandbox::SandboxResult {
+                executed_nodes: 5,
+                matrix_count: 1,
+                norm_count: 0,
+                output_vec: vec![1.0],
+                output_dim: 1,
+                panicked: false,
+                error: Some("out of memory".to_string()),
+                elapsed_us: 100,
+                kind_counts: std::collections::HashMap::new(),
+                output_log: vec![],
+                loop_iterations: 0,
+            }),
+            scope: None,
+            stats: NdaGenStats::default(),
+            node_count: 5,
+        };
+        let warnings = result.validate();
+        assert!(warnings.iter().any(|w| w.contains("Sandbox execution error")));
+        assert!(warnings.iter().any(|w| w.contains("out of memory")));
+    }
+
+    #[test]
+    fn generation_result_validate_scope_failed() {
+        let result = NdaGenerationResult {
+            nodes: vec![],
+            root_hash: 123,
+            valid: true,
+            force_terminated: false,
+            site_map_key: None,
+            sandbox: None,
+            scope: Some(crate::sandbox::scope_validator::ScopeValidation {
+                similarity: 0.05,
+                passed: false,
+                threshold: 0.10,
+                euclidean_distance: 1.5,
+                manhattan_distance: 2.0,
+                vector_dim: 896,
+            }),
+            stats: NdaGenStats::default(),
+            node_count: 5,
+        };
+        let warnings = result.validate();
+        assert!(warnings.iter().any(|w| w.contains("Scope validation failed")));
+        assert!(warnings.iter().any(|w| w.contains("0.05")));
+    }
+
+    #[test]
+    fn generation_result_validate_all_issues() {
+        let result = NdaGenerationResult {
+            nodes: vec![],
+            root_hash: 0,
+            valid: false,
+            force_terminated: true,
+            site_map_key: None,
+            sandbox: Some(crate::sandbox::SandboxResult {
+                executed_nodes: 0,
+                matrix_count: 0,
+                norm_count: 0,
+                output_vec: vec![],
+                output_dim: 0,
+                panicked: true,
+                error: Some("crash".to_string()),
+                elapsed_us: 0,
+                kind_counts: std::collections::HashMap::new(),
+                output_log: vec![],
+                loop_iterations: 0,
+            }),
+            scope: Some(crate::sandbox::scope_validator::ScopeValidation {
+                similarity: 0.01,
+                passed: false,
+                threshold: 0.10,
+                euclidean_distance: 2.0,
+                manhattan_distance: 3.0,
+                vector_dim: 896,
+            }),
+            stats: NdaGenStats::default(),
+            node_count: 0,
+        };
+        let warnings = result.validate();
+        // Should have: invalid, force-terminated, sandbox panicked, sandbox error, scope failed
+        assert!(warnings.len() >= 5, "expected >=5 warnings, got {}: {:?}", warnings.len(), warnings);
+    }
+
+    // ── Block 143: execution_summary with sandbox/scope ────────────────────
+
+    #[test]
+    fn execution_summary_with_sandbox_success() {
+        let result = NdaGenerationResult {
+            nodes: vec![],
+            root_hash: 0xABCD,
+            valid: true,
+            force_terminated: false,
+            site_map_key: Some(99),
+            sandbox: Some(crate::sandbox::SandboxResult {
+                executed_nodes: 10,
+                matrix_count: 2,
+                norm_count: 1,
+                output_vec: vec![1.0, 2.0],
+                output_dim: 2,
+                panicked: false,
+                error: None,
+                elapsed_us: 500,
+                kind_counts: std::collections::HashMap::new(),
+                output_log: vec![],
+                loop_iterations: 5,
+            }),
+            scope: Some(crate::sandbox::scope_validator::ScopeValidation {
+                similarity: 0.85,
+                passed: true,
+                threshold: 0.10,
+                euclidean_distance: 0.1,
+                manhattan_distance: 0.2,
+                vector_dim: 896,
+            }),
+            stats: NdaGenStats {
+                tokens_emitted: 50,
+                site_map_hits: 40,
+                site_map_misses: 10,
+                elapsed_ms: 200,
+                ..Default::default()
+            },
+            node_count: 10,
+        };
+        let summary = result.execution_summary();
+        assert!(summary.valid);
+        assert!(!summary.force_terminated);
+        assert_eq!(summary.node_count, 10);
+        assert_eq!(summary.tokens_emitted, 50);
+        assert_eq!(summary.elapsed_ms, 200);
+        assert!((summary.cache_hit_rate - 0.8).abs() < 0.01);
+        assert_eq!(summary.sandbox_passed, Some(true));
+        assert_eq!(summary.scope_passed, Some(true));
+        assert!(summary.stored_in_site_map);
+    }
+
+    #[test]
+    fn execution_summary_with_sandbox_failure() {
+        let result = NdaGenerationResult {
+            nodes: vec![],
+            root_hash: 0,
+            valid: true,
+            force_terminated: false,
+            site_map_key: None,
+            sandbox: Some(crate::sandbox::SandboxResult {
+                executed_nodes: 3,
+                matrix_count: 0,
+                norm_count: 0,
+                output_vec: vec![],
+                output_dim: 0,
+                panicked: true,
+                error: Some("segfault".to_string()),
+                elapsed_us: 10,
+                kind_counts: std::collections::HashMap::new(),
+                output_log: vec![],
+                loop_iterations: 0,
+            }),
+            scope: Some(crate::sandbox::scope_validator::ScopeValidation {
+                similarity: 0.02,
+                passed: false,
+                threshold: 0.10,
+                euclidean_distance: 5.0,
+                manhattan_distance: 8.0,
+                vector_dim: 896,
+            }),
+            stats: NdaGenStats::default(),
+            node_count: 3,
+        };
+        let summary = result.execution_summary();
+        assert_eq!(summary.sandbox_passed, Some(false));
+        assert_eq!(summary.scope_passed, Some(false));
+        assert!(!summary.stored_in_site_map);
+    }
+
+    // ── Block 143: Struct derives ──────────────────────────────────────────
+
+    #[test]
+    fn batch_generation_report_debug() {
+        let report = BatchGenerationReport {
+            prompt_count: 1,
+            results: vec![],
+            total_elapsed_ms: 100,
+            total_tokens: 50,
+            valid_count: 1,
+            truncated_count: 0,
+            avg_cache_hit_rate: 0.9,
+        };
+        let debug = format!("{:?}", report);
+        assert!(debug.contains("prompt_count: 1"));
+        assert!(debug.contains("valid_count: 1"));
+    }
+
+    #[test]
+    fn batch_item_result_debug() {
+        let item = BatchItemResult {
+            index: 3,
+            valid: true,
+            force_terminated: false,
+            tokens_emitted: 42,
+            node_count: 10,
+            elapsed_ms: 55,
+            root_hash: 0xBEEF,
+            site_map_key: Some(7),
+            cache_hit_rate: 0.75,
+        };
+        let debug = format!("{:?}", item);
+        assert!(debug.contains("index: 3"));
+        assert!(debug.contains("valid: true"));
+    }
+
+    #[test]
+    fn nda_gen_stats_snapshot_debug_clone() {
+        let snap = NdaGenStatsSnapshot {
+            tokens_emitted: 10,
+            site_map_hits: 5,
+            site_map_misses: 5,
+            elapsed_ms: 100,
+            cache_hit_rate: 0.5,
+            peak_stack_depth: 2,
+            rep_penalty_applications: 3,
+            unique_opcodes_emitted: 4,
+        };
+        let cloned = snap.clone();
+        assert_eq!(cloned.tokens_emitted, snap.tokens_emitted);
+        assert_eq!(cloned.unique_opcodes_emitted, snap.unique_opcodes_emitted);
+        let debug = format!("{:?}", snap);
+        assert!(debug.contains("tokens_emitted: 10"));
+    }
+
+    #[test]
+    fn nda_execution_summary_debug() {
+        let summary = NdaExecutionSummary {
+            valid: false,
+            force_terminated: true,
+            node_count: 0,
+            tokens_emitted: 100,
+            elapsed_ms: 500,
+            cache_hit_rate: 0.0,
+            sandbox_passed: None,
+            scope_passed: None,
+            stored_in_site_map: false,
+        };
+        let debug = format!("{:?}", summary);
+        assert!(debug.contains("force_terminated: true"));
+        assert!(debug.contains("stored_in_site_map: false"));
+    }
+
+    // ── Block 143: random_uniform edge cases ───────────────────────────────
+
+    #[test]
+    fn random_uniform_n_zero() {
+        let v = random_uniform(0, 1.0);
+        assert!(v.is_empty());
+    }
+
+    #[test]
+    fn random_uniform_scale_zero() {
+        let v = random_uniform(100, 0.0);
+        assert_eq!(v.len(), 100);
+        // All values should be 0.0 (or very close due to float arithmetic)
+        for &val in &v {
+            assert!(val.abs() < 1e-9, "expected 0.0 with scale=0, got {}", val);
+        }
+    }
+
+    #[test]
+    fn random_uniform_different_scales() {
+        let v1 = random_uniform(100, 0.1);
+        let v2 = random_uniform(100, 10.0);
+        // Values with larger scale should generally have larger magnitudes
+        let avg1: f32 = v1.iter().map(|x| x.abs()).sum::<f32>() / 100.0;
+        let avg2: f32 = v2.iter().map(|x| x.abs()).sum::<f32>() / 100.0;
+        assert!(avg2 > avg1, "larger scale should produce larger values: avg1={}, avg2={}", avg1, avg2);
+    }
+
+    // ── Block 143: argmax_f32 edge cases ───────────────────────────────────
+
+    #[test]
+    fn argmax_f32_empty_slice() {
+        // Empty slice → returns 0 (unwrap_or default)
+        assert_eq!(argmax_f32(&[]), 0);
+    }
+
+    #[test]
+    fn argmax_f32_all_equal() {
+        // max_by returns the LAST element on ties (Equal → later wins)
+        assert_eq!(argmax_f32(&[3.0, 3.0, 3.0]), 2);
+    }
+
+    #[test]
+    fn argmax_f32_with_nan() {
+        // NaN partial_cmp returns None → unwrap_or(Equal) → later element wins
+        // [NaN, 1.0, 2.0]: NaN vs 1.0 → Equal → keep 1.0 (idx 1); 1.0 vs 2.0 → Less → keep 2.0 (idx 2)
+        let result = argmax_f32(&[f32::NAN, 1.0, 2.0]);
+        assert_eq!(result, 2);
+    }
+
+    #[test]
+    fn argmax_f32_large_values() {
+        // Use values that are actually distinguishable in f32
+        assert_eq!(argmax_f32(&[1e30, 1e20, 0.0]), 0);
+    }
+
+    #[test]
+    fn argmax_f32_very_negative() {
+        // -1e30 is much larger than f32::MIN (-3.4e38)
+        assert_eq!(argmax_f32(&[f32::MIN, f32::MIN / 2.0, -1e30]), 2);
+    }
+
+    // ── Block 143: NdaGenStats serde ───────────────────────────────────────
+
+    #[test]
+    fn nda_gen_stats_serde_roundtrip() {
+        let mut stats = NdaGenStats::default();
+        stats.ensure_distribution();
+        stats.tokens_emitted = 200;
+        stats.site_map_hits = 150;
+        stats.site_map_misses = 50;
+        stats.elapsed_ms = 1000;
+        stats.peak_stack_depth = 5;
+        stats.rep_penalty_applications = 30;
+        stats.opcode_distribution[NdaOpcode::Scope as usize] = 100;
+        stats.opcode_distribution[NdaOpcode::Int as usize] = 60;
+
+        let json = serde_json::to_string(&stats).unwrap();
+        assert!(json.contains("\"tokens_emitted\":200"));
+        assert!(json.contains("\"site_map_hits\":150"));
+        assert!(json.contains("\"opcode_distribution\""));
+    }
+
+    // ── Block 143: BatchGenerationReport edge cases ────────────────────────
+
+    #[test]
+    fn batch_report_single_valid_result() {
+        let report = BatchGenerationReport {
+            prompt_count: 1,
+            results: vec![BatchItemResult {
+                index: 0,
+                valid: true,
+                force_terminated: false,
+                tokens_emitted: 100,
+                node_count: 20,
+                elapsed_ms: 200,
+                root_hash: 0xCAFE,
+                site_map_key: Some(42),
+                cache_hit_rate: 0.95,
+            }],
+            total_elapsed_ms: 200,
+            total_tokens: 100,
+            valid_count: 1,
+            truncated_count: 0,
+            avg_cache_hit_rate: 0.95,
+        };
+        assert_eq!(report.prompt_count, 1);
+        assert_eq!(report.results.len(), 1);
+        assert_eq!(report.valid_count, 1);
+        assert_eq!(report.truncated_count, 0);
+        let json = serde_json::to_string(&report).unwrap();
+        assert!(json.contains("\"avg_cache_hit_rate\":0.95"));
+    }
+
+    #[test]
+    fn batch_report_mixed_results() {
+        let report = BatchGenerationReport {
+            prompt_count: 3,
+            results: vec![
+                BatchItemResult {
+                    index: 0,
+                    valid: true,
+                    force_terminated: false,
+                    tokens_emitted: 50,
+                    node_count: 10,
+                    elapsed_ms: 100,
+                    root_hash: 1,
+                    site_map_key: Some(1),
+                    cache_hit_rate: 0.8,
+                },
+                BatchItemResult {
+                    index: 1,
+                    valid: true,
+                    force_terminated: true,
+                    tokens_emitted: 200,
+                    node_count: 0,
+                    elapsed_ms: 300,
+                    root_hash: 0,
+                    site_map_key: None,
+                    cache_hit_rate: 0.3,
+                },
+                BatchItemResult {
+                    index: 2,
+                    valid: false,
+                    force_terminated: false,
+                    tokens_emitted: 10,
+                    node_count: 0,
+                    elapsed_ms: 50,
+                    root_hash: 0,
+                    site_map_key: None,
+                    cache_hit_rate: 0.0,
+                },
+            ],
+            total_elapsed_ms: 450,
+            total_tokens: 260,
+            valid_count: 2,
+            truncated_count: 1,
+            avg_cache_hit_rate: 0.367,
+        };
+        assert_eq!(report.prompt_count, 3);
+        assert_eq!(report.valid_count, 2);
+        assert_eq!(report.truncated_count, 1);
+        assert_eq!(report.total_tokens, 260);
+    }
+
+    // ── Block 143: NdaGenerationResult serialization edge cases ────────────
+
+    #[test]
+    fn generation_result_serialize_with_site_map_key() {
+        let result = NdaGenerationResult {
+            nodes: vec![],
+            root_hash: 0,
+            valid: true,
+            force_terminated: false,
+            site_map_key: Some(u64::MAX),
+            sandbox: None,
+            scope: None,
+            stats: NdaGenStats::default(),
+            node_count: 0,
+        };
+        let json = serde_json::to_string(&result).unwrap();
+        assert!(json.contains(&format!("\"site_map_key\":{}", u64::MAX)));
+    }
+
+    #[test]
+    fn generation_result_serialize_without_site_map_key() {
+        let result = NdaGenerationResult {
+            nodes: vec![],
+            root_hash: 0,
+            valid: false,
+            force_terminated: false,
+            site_map_key: None,
+            sandbox: None,
+            scope: None,
+            stats: NdaGenStats::default(),
+            node_count: 0,
+        };
+        let json = serde_json::to_string(&result).unwrap();
+        assert!(json.contains("\"site_map_key\":null"));
+    }
+
+    #[test]
+    fn generation_result_validate_sandbox_success_no_warnings() {
+        // Sandbox that succeeded (no panic, no error) should not add warnings
+        let result = NdaGenerationResult {
+            nodes: vec![],
+            root_hash: 123,
+            valid: true,
+            force_terminated: false,
+            site_map_key: None,
+            sandbox: Some(crate::sandbox::SandboxResult {
+                executed_nodes: 10,
+                matrix_count: 2,
+                norm_count: 1,
+                output_vec: vec![1.0],
+                output_dim: 1,
+                panicked: false,
+                error: None,
+                elapsed_us: 100,
+                kind_counts: std::collections::HashMap::new(),
+                output_log: vec![],
+                loop_iterations: 0,
+            }),
+            scope: Some(crate::sandbox::scope_validator::ScopeValidation {
+                similarity: 0.5,
+                passed: true,
+                threshold: 0.10,
+                euclidean_distance: 0.5,
+                manhattan_distance: 0.8,
+                vector_dim: 896,
+            }),
+            stats: NdaGenStats::default(),
+            node_count: 10,
+        };
+        let warnings = result.validate();
+        assert!(warnings.is_empty(), "expected no warnings, got: {:?}", warnings);
+    }
+
+    // ── Block 143: NdaHead constants ───────────────────────────────────────
+
+    #[test]
+    fn nda_head_constants() {
+        assert_eq!(NdaHead::IN, 896);
+        assert_eq!(NdaHead::MID, 64);
+        assert_eq!(NdaHead::OUT, NdaOpcode::VOCAB_SIZE);
+    }
+
+    #[test]
+    fn nda_head_random_nonzero_weights() {
+        let head = NdaHead::random();
+        // Random head should have at least some non-zero weights
+        assert!(head.w1.iter().any(|&v| v.abs() > 1e-9));
+        assert!(head.w2.iter().any(|&v| v.abs() > 1e-9));
+    }
+
+    #[test]
+    fn nda_head_random_biases_zero() {
+        let head = NdaHead::random();
+        // Biases are initialized to zero even for random
+        assert!(head.b1.iter().all(|&v| v == 0.0));
+        assert!(head.b2.iter().all(|&v| v == 0.0));
+    }
+
+    // ── Block 143: PipelineMode detect substring matching ──────────────────
+
+    #[test]
+    fn pipeline_mode_detect_substring_trigger() {
+        // "implement" is a substring of "implementation"
+        assert_eq!(PipelineMode::detect("the implementation details"), PipelineMode::Nda);
+        // "write" is a substring of "rewrite"
+        assert_eq!(PipelineMode::detect("rewrite this function"), PipelineMode::Nda);
+        // "def " (with space) triggers NDA
+        assert_eq!(PipelineMode::detect("def my_function():"), PipelineMode::Nda);
+        // "class " (with space) triggers NDA
+        assert_eq!(PipelineMode::detect("class MyClass:"), PipelineMode::Nda);
+    }
+
+    #[test]
+    fn pipeline_mode_detect_no_trigger() {
+        assert_eq!(PipelineMode::detect("hello world"), PipelineMode::Text);
+        assert_eq!(PipelineMode::detect("the quick brown fox"), PipelineMode::Text);
+        assert_eq!(PipelineMode::detect("12345"), PipelineMode::Text);
+    }
 }
