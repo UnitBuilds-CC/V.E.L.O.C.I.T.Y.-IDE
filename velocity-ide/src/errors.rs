@@ -1783,4 +1783,372 @@ mod tests {
         assert!(ve.suggestion.is_some());
         assert!(ve.suggestion.as_ref().unwrap().contains("boundary"));
     }
+
+    // ── Block 188: Additional error coverage ──────────────────────────────
+
+    #[test]
+    fn velocity_error_json_key_count() {
+        let err = VelocityError::new(ErrorCode::RouterTimeout, "timeout");
+        let json = serde_json::to_string(&err).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+        // source is #[serde(skip)], so 4 keys: code, message, suggestion, context
+        assert_eq!(parsed.as_object().unwrap().len(), 4);
+        assert!(parsed.get("code").is_some());
+        assert!(parsed.get("message").is_some());
+        assert!(parsed.get("suggestion").is_some());
+        assert!(parsed.get("context").is_some());
+        assert!(parsed.get("source").is_none());
+    }
+
+    #[test]
+    fn velocity_error_json_roundtrip_via_value() {
+        let err = VelocityError::new(ErrorCode::ConfigNotFound, "no config")
+            .with_suggestion("check path")
+            .with_context("path", "/etc/velocity.toml");
+        let json = serde_json::to_string(&err).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed["message"], "no config");
+        assert_eq!(parsed["suggestion"], "check path");
+        let ctx = parsed["context"].as_array().unwrap();
+        assert_eq!(ctx.len(), 1);
+        let pair = ctx[0].as_array().unwrap();
+        assert_eq!(pair[0], "path");
+        assert_eq!(pair[1], "/etc/velocity.toml");
+    }
+
+    #[test]
+    fn velocity_error_json_types() {
+        let err = VelocityError::new(ErrorCode::IoError, "disk fail");
+        let json = serde_json::to_string(&err).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert!(parsed["code"].is_string());
+        assert!(parsed["message"].is_string());
+        assert!(parsed["suggestion"].is_null());
+        assert!(parsed["context"].is_array());
+    }
+
+    #[test]
+    fn error_summary_json_roundtrip_via_value() {
+        let summary = ErrorSummary {
+            total: 3,
+            by_category: vec![("router".into(), 2), ("config".into(), 1)],
+            retryable_count: 2,
+            security_count: 0,
+            unique_codes: vec!["E201".into(), "E100".into()],
+        };
+        let json = serde_json::to_string(&summary).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed["total"], 3);
+        assert_eq!(parsed["retryable_count"], 2);
+        let cats = parsed["by_category"].as_array().unwrap();
+        assert_eq!(cats.len(), 2);
+        assert_eq!(cats[0][0], "router");
+        assert_eq!(cats[0][1], 2);
+    }
+
+    #[test]
+    fn error_summary_json_types() {
+        let summary = summarize_errors(&[
+            VelocityError::new(ErrorCode::RouterTimeout, "t"),
+        ]);
+        let json = serde_json::to_string(&summary).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert!(parsed["total"].is_number());
+        assert!(parsed["by_category"].is_array());
+        assert!(parsed["retryable_count"].is_number());
+        assert!(parsed["security_count"].is_number());
+        assert!(parsed["unique_codes"].is_array());
+    }
+
+    #[test]
+    fn error_summary_clone_independence() {
+        let summary = summarize_errors(&[
+            VelocityError::new(ErrorCode::RouterTimeout, "a"),
+            VelocityError::new(ErrorCode::ConfigNotFound, "b"),
+        ]);
+        let mut cloned = summary.clone();
+        cloned.unique_codes.push("E999".into());
+        assert_eq!(summary.unique_codes.len(), 2);
+        assert_eq!(cloned.unique_codes.len(), 3);
+    }
+
+    #[test]
+    fn velocity_error_display_em_dash_separator() {
+        let err = VelocityError::new(ErrorCode::InternalError, "something broke");
+        let s = format!("{}", err);
+        // Display uses em-dash "—" (U+2014), not hyphen
+        assert!(s.contains("—"), "expected em-dash in: {}", s);
+        assert_eq!(s, "E999 — something broke");
+    }
+
+    #[test]
+    fn format_detailed_all_fields_present() {
+        let io_err = std::io::Error::new(std::io::ErrorKind::PermissionDenied, "access denied");
+        let err = VelocityError::new(ErrorCode::IoError, "read failed")
+            .with_source(io_err)
+            .with_suggestion("Check permissions")
+            .with_context("path", "/etc/secrets")
+            .with_context("user", "root");
+        let formatted = err.format_detailed();
+        assert!(formatted.contains("Error E900: read failed"));
+        assert!(formatted.contains("path: /etc/secrets"));
+        assert!(formatted.contains("user: root"));
+        assert!(formatted.contains("Suggestion: Check permissions"));
+        assert!(formatted.contains("Docs: https://velocity.dev/errors/E900"));
+        assert!(formatted.contains("Caused by: access denied"));
+        // Count lines: header + 2 context + suggestion + docs + caused by = 6
+        let lines: Vec<&str> = formatted.lines().collect();
+        assert_eq!(lines.len(), 6);
+    }
+
+    #[test]
+    fn router_error_auth_failed_is_security() {
+        let e = RouterError::AuthFailed;
+        let ve = e.to_velocity_error();
+        assert_eq!(ve.code, ErrorCode::RouterAuthFailed);
+        assert!(ve.is_security());
+        assert!(ve.suggestion.is_some());
+        assert!(ve.suggestion.as_ref().unwrap().contains("login"));
+    }
+
+    #[test]
+    fn model_error_invalid_arch_suggestion_text() {
+        let e = ModelError::InvalidArch { arch: "llama3".into() };
+        let ve = e.to_velocity_error();
+        assert!(ve.suggestion.is_some());
+        let sug = ve.suggestion.as_ref().unwrap();
+        assert!(sug.contains("qwen05"));
+        assert!(sug.contains("bitnet3b"));
+    }
+
+    #[test]
+    fn provider_error_key_invalid_suggestion_has_provider() {
+        let e = ProviderError::KeyInvalid { provider: "openai".into() };
+        let ve = e.to_velocity_error();
+        assert!(ve.suggestion.is_some());
+        assert!(ve.suggestion.as_ref().unwrap().contains("openai"));
+    }
+
+    #[test]
+    fn provider_error_rate_limited_suggestion() {
+        let e = ProviderError::RateLimited { provider: "anthropic".into() };
+        let ve = e.to_velocity_error();
+        assert_eq!(ve.code, ErrorCode::ProviderRateLimited);
+        assert!(ve.is_retryable());
+        assert!(ve.suggestion.is_some());
+        assert!(ve.suggestion.as_ref().unwrap().contains("router"));
+    }
+
+    #[test]
+    fn compile_error_wasm_to_velocity_chain() {
+        let ce = CompileError::Wasm("validation failed at opcode 42".into());
+        let ve: VelocityError = ce.into();
+        assert_eq!(ve.code, ErrorCode::CompileFailed);
+        assert_eq!(ve.category(), "pipeline");
+        assert!(ve.message.contains("WASM error"));
+        assert!(ve.message.contains("validation failed"));
+    }
+
+    #[test]
+    fn velocity_error_exit_code_general_is_1() {
+        let err = VelocityError::new(ErrorCode::IoError, "io");
+        assert_eq!(err.exit_code(), 1);
+        let err = VelocityError::new(ErrorCode::InvalidInput, "bad input");
+        assert_eq!(err.exit_code(), 1);
+        let err = VelocityError::new(ErrorCode::InternalError, "internal");
+        assert_eq!(err.exit_code(), 1);
+    }
+
+    #[test]
+    fn velocity_error_exit_code_security_fallback() {
+        // Security codes in non-named categories would get exit_code 13
+        // But all our security codes are in named categories (router, provider, pipeline, jit)
+        // So verify that security codes in named categories get their category exit code
+        let err = VelocityError::new(ErrorCode::SandBoxViolation, "violation");
+        assert_eq!(err.exit_code(), 7); // pipeline category
+        let err = VelocityError::new(ErrorCode::RouterAuthFailed, "auth");
+        assert_eq!(err.exit_code(), 3); // router category
+    }
+
+    #[test]
+    fn summarize_errors_single_error() {
+        let errors = vec![VelocityError::new(ErrorCode::IoError, "io")];
+        let summary = summarize_errors(&errors);
+        assert_eq!(summary.total, 1);
+        assert_eq!(summary.retryable_count, 0);
+        assert_eq!(summary.security_count, 0);
+        assert_eq!(summary.unique_codes.len(), 1);
+        assert_eq!(summary.unique_codes[0], "E900");
+        assert_eq!(summary.by_category.len(), 1);
+        assert_eq!(summary.by_category[0].0, "general");
+    }
+
+    #[test]
+    fn summarize_errors_all_same_code() {
+        let errors = vec![
+            VelocityError::new(ErrorCode::RouterTimeout, "a"),
+            VelocityError::new(ErrorCode::RouterTimeout, "b"),
+            VelocityError::new(ErrorCode::RouterTimeout, "c"),
+        ];
+        let summary = summarize_errors(&errors);
+        assert_eq!(summary.total, 3);
+        assert_eq!(summary.unique_codes.len(), 1);
+        assert_eq!(summary.unique_codes[0], "E201");
+        assert_eq!(summary.retryable_count, 3);
+    }
+
+    #[test]
+    fn error_code_debug_format_variants() {
+        let debug = format!("{:?}", ErrorCode::ConfigNotFound);
+        assert_eq!(debug, "ConfigNotFound");
+        let debug = format!("{:?}", ErrorCode::JitSandboxEscape);
+        assert_eq!(debug, "JitSandboxEscape");
+        let debug = format!("{:?}", ErrorCode::WikiSearchFailed);
+        assert_eq!(debug, "WikiSearchFailed");
+    }
+
+    #[test]
+    fn velocity_error_builder_chaining() {
+        let err = VelocityError::new(ErrorCode::InternalError, "test")
+            .with_context("k1", "v1")
+            .with_context("k2", "v2")
+            .with_suggestion("try again")
+            .with_source(std::io::Error::new(std::io::ErrorKind::Other, "inner"));
+        assert_eq!(err.context.len(), 2);
+        assert!(err.suggestion.is_some());
+        assert!(err.source.is_some());
+        assert_eq!(err.code, ErrorCode::InternalError);
+        assert_eq!(err.message, "test");
+    }
+
+    #[test]
+    fn sitemap_error_corrupt_suggestion_text() {
+        let e = SiteMapError::Corrupt { detail: "bad checksum".into() };
+        let ve = e.to_velocity_error();
+        assert!(ve.suggestion.is_some());
+        assert!(ve.suggestion.as_ref().unwrap().contains("index"));
+    }
+
+    #[test]
+    fn model_error_tokenizer_not_found_context() {
+        let e = ModelError::TokenizerNotFound { searched: vec!["/a/tok.json".into(), "/b/tok.json".into()] };
+        let ve = e.to_velocity_error();
+        assert_eq!(ve.code, ErrorCode::TokenizerNotFound);
+        assert!(ve.context.iter().any(|(k, _)| k == "searched"));
+        assert!(ve.suggestion.is_some());
+    }
+
+    #[test]
+    fn velocity_error_compact_json() {
+        let err = VelocityError::new(ErrorCode::IoError, "fail");
+        let compact = serde_json::to_string(&err).unwrap();
+        let pretty = serde_json::to_string_pretty(&err).unwrap();
+        // Compact should be shorter (no whitespace)
+        assert!(compact.len() < pretty.len());
+        // Both should parse to same value
+        let a: serde_json::Value = serde_json::from_str(&compact).unwrap();
+        let b: serde_json::Value = serde_json::from_str(&pretty).unwrap();
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn error_summary_debug_format() {
+        let summary = summarize_errors(&[
+            VelocityError::new(ErrorCode::RouterTimeout, "t"),
+        ]);
+        let debug = format!("{:?}", summary);
+        assert!(debug.contains("ErrorSummary"));
+        assert!(debug.contains("total"));
+        assert!(debug.contains("retryable_count"));
+    }
+
+    #[test]
+    fn velocity_error_empty_message() {
+        let err = VelocityError::new(ErrorCode::InternalError, "");
+        assert_eq!(err.message, "");
+        let s = format!("{}", err);
+        assert!(s.contains("E999"));
+    }
+
+    #[test]
+    fn credential_error_expired_context() {
+        let e = CredentialError::Expired { key: "cf_token".into() };
+        let ve = e.to_velocity_error();
+        assert_eq!(ve.code, ErrorCode::RouterAuthFailed);
+        assert!(ve.context.iter().any(|(k, v)| k == "key" && v == "cf_token"));
+        assert!(ve.is_security());
+    }
+
+    #[test]
+    fn error_code_serializes_as_string_in_json() {
+        let err = VelocityError::new(ErrorCode::RouterTimeout, "test");
+        let json = serde_json::to_string(&err).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+        // ErrorCode serializes as its variant name string
+        assert_eq!(parsed["code"].as_str().unwrap(), "RouterTimeout");
+    }
+
+    #[test]
+    fn velocity_error_context_json_structure() {
+        let err = VelocityError::new(ErrorCode::IoError, "fail")
+            .with_context("key1", "val1")
+            .with_context("key2", "val2");
+        let json = serde_json::to_string(&err).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+        let ctx = parsed["context"].as_array().unwrap();
+        assert_eq!(ctx.len(), 2);
+        // Each context entry is [key, value] array
+        let entry0 = ctx[0].as_array().unwrap();
+        assert_eq!(entry0[0], "key1");
+        assert_eq!(entry0[1], "val1");
+    }
+
+    #[test]
+    fn error_code_all_retryable_codes() {
+        let retryable: Vec<ErrorCode> = ErrorCode::all_codes()
+            .into_iter()
+            .filter(|c| c.is_retryable())
+            .collect();
+        assert_eq!(retryable.len(), 8);
+        // Verify each expected code is retryable
+        assert!(retryable.contains(&ErrorCode::RouterUnreachable));
+        assert!(retryable.contains(&ErrorCode::RouterTimeout));
+        assert!(retryable.contains(&ErrorCode::RouterRateLimited));
+        assert!(retryable.contains(&ErrorCode::RouterServerError));
+        assert!(retryable.contains(&ErrorCode::ProviderRateLimited));
+        assert!(retryable.contains(&ErrorCode::ProviderUnavailable));
+        assert!(retryable.contains(&ErrorCode::AssignmentTimeout));
+        assert!(retryable.contains(&ErrorCode::JitOptimizationFailed));
+    }
+
+    #[test]
+    fn error_code_all_security_codes() {
+        let security: Vec<ErrorCode> = ErrorCode::all_codes()
+            .into_iter()
+            .filter(|c| c.is_security())
+            .collect();
+        assert_eq!(security.len(), 4);
+        assert!(security.contains(&ErrorCode::RouterAuthFailed));
+        assert!(security.contains(&ErrorCode::ProviderKeyInvalid));
+        assert!(security.contains(&ErrorCode::SandBoxViolation));
+        assert!(security.contains(&ErrorCode::JitSandboxEscape));
+    }
+
+    #[test]
+    fn velocity_error_is_io_non_io_source() {
+        // A non-io source should not make is_io return true
+        let err = VelocityError::new(ErrorCode::InternalError, "wrapped")
+            .with_source(std::fmt::Error);
+        assert!(!err.is_io());
+    }
+
+    #[test]
+    fn velocity_error_format_detailed_source_without_suggestion() {
+        let io_err = std::io::Error::new(std::io::ErrorKind::NotFound, "file missing");
+        let err = VelocityError::new(ErrorCode::IoError, "read failed")
+            .with_source(io_err);
+        let formatted = err.format_detailed();
+        assert!(formatted.contains("Caused by: file missing"));
+        assert!(!formatted.contains("Suggestion:"));
+    }
 }

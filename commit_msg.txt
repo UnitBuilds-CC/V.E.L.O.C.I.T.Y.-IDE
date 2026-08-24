@@ -1,20 +1,33 @@
-Block 187: credential_guard.rs — 25 new tests (111 total)
+Block 188: errors.rs — 31 new tests (130 total)
 
 New tests cover:
-- JSON key counts for CredentialAuditSummary (6), CredentialScopeReport (6), CredentialBoundaryAudit (4)
-- JSON roundtrip via Value for all 3 diagnostic structs
-- JSON type verification for CredentialAuditSummary and CredentialBoundaryAudit
-- Clone independence for CredentialAuditSummary and CredentialScopeReport
-- Debug format for CredentialAuditSummary
-- Masked edge cases: 13-char boundary, empty string
-- SecretString zeroize then verify all bytes zero with length preserved
-- CredentialScope scrub preserves env_vars_scrubbed list
-- Audit report JSON contains no secret values
-- Env scrubbing: XAI_API_KEY, CR_PAT, AWS_SESSION_TOKEN, AWS_SECURITY_TOKEN
-- Audit env exposure dedup for SSH_AUTH_SOCK
-- Sensitive config paths: .npmrc, .pypirc, exact count (10)
-- Compact JSON (no whitespace)
-- Warning message structure with all 3 categories
-- SENSITIVE_ENV_VARS exact count (28)
+- JSON key count for VelocityError (4 keys: code, message, suggestion, context; source skipped)
+- JSON roundtrip via Value for VelocityError and ErrorSummary
+- JSON type verification for VelocityError and ErrorSummary fields
+- ErrorSummary clone independence (mutate clone, verify original unchanged)
+- VelocityError Display format uses em-dash (U+2014) separator
+- format_detailed with all fields present (6 lines: header, 2 context, suggestion, docs, caused by)
+- RouterError::AuthFailed converts to security error with login suggestion
+- ModelError::InvalidArch suggestion contains supported architectures
+- ProviderError::KeyInvalid suggestion contains provider name
+- ProviderError::RateLimited suggestion mentions router
+- CompileError::Wasm to VelocityError full chain
+- exit_code for general category = 1 (IoError, InvalidInput, InternalError)
+- exit_code security fallback for named categories
+- summarize_errors with single error and all-same-code edge cases
+- ErrorCode Debug format for multiple variants
+- VelocityError builder chaining (all methods compose)
+- SiteMapError::Corrupt suggestion text
+- ModelError::TokenizerNotFound context and suggestion
+- Compact vs pretty JSON equivalence
+- ErrorSummary debug format
+- VelocityError empty message handling
+- CredentialError::Expired context verification
+- ErrorCode serializes as variant name string in JSON
+- VelocityError context as array-of-arrays JSON structure
+- All 8 retryable codes enumerated and verified
+- All 4 security codes enumerated and verified
+- is_io with non-io source (std::fmt::Error) returns false
+- format_detailed with source but no suggestion
 
-Full suite: 4596 lib tests, 0 failures
+Full suite: 4627 lib tests, 0 failures
