@@ -1173,4 +1173,375 @@ mod tests {
         assert!(!info.is_empty());
         assert!(info.contains("Tier-1"));
     }
+
+    // ── Block 106: bitwise_i32 tests ────────────────────────────────────────
+
+    #[test]
+    fn bitwise_i32_and() {
+        assert_eq!(bitwise_i32(BitwiseOp::And, 0xFF00, 0x0FF0), 0x0F00);
+    }
+
+    #[test]
+    fn bitwise_i32_or() {
+        assert_eq!(bitwise_i32(BitwiseOp::Or, 0xFF00, 0x0FF0), 0xFFF0);
+    }
+
+    #[test]
+    fn bitwise_i32_xor() {
+        assert_eq!(bitwise_i32(BitwiseOp::Xor, 0xFF00, 0x0FF0), 0xF0F0);
+    }
+
+    #[test]
+    fn bitwise_i32_shl() {
+        assert_eq!(bitwise_i32(BitwiseOp::Shl, 1, 4), 16);
+        assert_eq!(bitwise_i32(BitwiseOp::Shl, 0xFF, 8), 0xFF00);
+    }
+
+    #[test]
+    fn bitwise_i32_shr() {
+        assert_eq!(bitwise_i32(BitwiseOp::Shr, 0xFF00, 8), 0xFF);
+    }
+
+    #[test]
+    fn bitwise_i32_not() {
+        assert_eq!(bitwise_i32(BitwiseOp::Not, 0, 0), !0i32);
+        assert_eq!(bitwise_i32(BitwiseOp::Not, 0xFF, 0), !0xFFi32);
+    }
+
+    #[test]
+    fn bitwise_i32_identity_properties() {
+        // AND with all-ones is identity
+        assert_eq!(bitwise_i32(BitwiseOp::And, 42, -1), 42);
+        // OR with zero is identity
+        assert_eq!(bitwise_i32(BitwiseOp::Or, 42, 0), 42);
+        // XOR with zero is identity
+        assert_eq!(bitwise_i32(BitwiseOp::Xor, 42, 0), 42);
+        // Shift left by 0 is identity
+        assert_eq!(bitwise_i32(BitwiseOp::Shl, 42, 0), 42);
+    }
+
+    // ── bitwise_f32 tests ───────────────────────────────────────────────────
+
+    #[test]
+    fn bitwise_f32_and() {
+        let a = 1.0f32;
+        let b = 2.0f32;
+        let result = bitwise_f32(BitwiseOp::And, a, b);
+        let expected_bits = a.to_bits() & b.to_bits();
+        assert_eq!(result.to_bits(), expected_bits);
+    }
+
+    #[test]
+    fn bitwise_f32_or() {
+        let a = 1.0f32;
+        let b = 2.0f32;
+        let result = bitwise_f32(BitwiseOp::Or, a, b);
+        let expected_bits = a.to_bits() | b.to_bits();
+        assert_eq!(result.to_bits(), expected_bits);
+    }
+
+    #[test]
+    fn bitwise_f32_not_flips_sign() {
+        // NOT on positive float should give negative (sign bit flipped)
+        let pos = 1.0f32;
+        let negated = bitwise_f32(BitwiseOp::Not, pos, 0.0);
+        assert!(negated.is_sign_negative() || negated.is_nan());
+    }
+
+    #[test]
+    fn bitwise_f32_xor_self_is_zero() {
+        let a = 3.14f32;
+        let result = bitwise_f32(BitwiseOp::Xor, a, a);
+        assert_eq!(result.to_bits(), 0u32);
+    }
+
+    // ── is_pure_scalar tests ────────────────────────────────────────────────
+
+    #[test]
+    fn is_pure_scalar_int() {
+        assert!(is_pure_scalar(&NdaNode::Int { value: 42 }));
+    }
+
+    #[test]
+    fn is_pure_scalar_break() {
+        assert!(is_pure_scalar(&NdaNode::Break));
+    }
+
+    #[test]
+    fn is_pure_scalar_load() {
+        assert!(is_pure_scalar(&NdaNode::Load { name_hash: 0 }));
+    }
+
+    #[test]
+    fn is_pure_scalar_float_is_not() {
+        assert!(!is_pure_scalar(&NdaNode::Float { value: 1.0 }));
+    }
+
+    #[test]
+    fn is_pure_scalar_matrix_is_not() {
+        assert!(!is_pure_scalar(&NdaNode::Matrix {
+            rows: 4, cols: 4, scale: 0,
+            sign: vec![0; 2], extra: vec![0; 2],
+        }));
+    }
+
+    #[test]
+    fn is_pure_scalar_norm_is_not() {
+        assert!(!is_pure_scalar(&NdaNode::Norm {
+            size: 64, weight: vec![0; 8], bias: vec![0; 8],
+        }));
+    }
+
+    #[test]
+    fn is_pure_scalar_let_with_scalar_init() {
+        let node = NdaNode::Let {
+            name_hash: 0,
+            init: Box::new(NdaNode::Int { value: 1 }),
+        };
+        assert!(is_pure_scalar(&node));
+    }
+
+    #[test]
+    fn is_pure_scalar_let_with_matrix_init() {
+        let node = NdaNode::Let {
+            name_hash: 0,
+            init: Box::new(NdaNode::Matrix {
+                rows: 4, cols: 4, scale: 0,
+                sign: vec![0; 2], extra: vec![0; 2],
+            }),
+        };
+        assert!(!is_pure_scalar(&node));
+    }
+
+    #[test]
+    fn is_pure_scalar_add_both_scalar() {
+        let node = NdaNode::Add {
+            lhs: Box::new(NdaNode::Int { value: 1 }),
+            rhs: Box::new(NdaNode::Int { value: 2 }),
+        };
+        assert!(is_pure_scalar(&node));
+    }
+
+    #[test]
+    fn is_pure_scalar_add_with_matrix() {
+        let node = NdaNode::Add {
+            lhs: Box::new(NdaNode::Int { value: 1 }),
+            rhs: Box::new(NdaNode::Matrix {
+                rows: 2, cols: 2, scale: 0,
+                sign: vec![0; 1], extra: vec![0; 1],
+            }),
+        };
+        assert!(!is_pure_scalar(&node));
+    }
+
+    #[test]
+    fn is_pure_scalar_loop_all_scalar_body() {
+        let node = NdaNode::Loop {
+            count: 10,
+            body: vec![NdaNode::Int { value: 0 }],
+        };
+        assert!(is_pure_scalar(&node));
+    }
+
+    #[test]
+    fn is_pure_scalar_scope_all_scalar() {
+        let node = NdaNode::Scope {
+            children: vec![
+                NdaNode::Int { value: 1 },
+                NdaNode::Load { name_hash: 0 },
+            ],
+        };
+        assert!(is_pure_scalar(&node));
+    }
+
+    #[test]
+    fn is_pure_scalar_return_is_not() {
+        assert!(!is_pure_scalar(&NdaNode::Return {
+            value: Box::new(NdaNode::Int { value: 0 }),
+        }));
+    }
+
+    // ── node_to_str tests ───────────────────────────────────────────────────
+
+    #[test]
+    fn node_to_str_int() {
+        let s = node_to_str(&NdaNode::Int { value: 42 });
+        assert_eq!(s, "Int(42)");
+    }
+
+    #[test]
+    fn node_to_str_break() {
+        assert_eq!(node_to_str(&NdaNode::Break), "Break");
+    }
+
+    #[test]
+    fn node_to_str_float() {
+        let s = node_to_str(&NdaNode::Float { value: 3.14 });
+        assert!(s.starts_with("Float("));
+        assert!(s.contains("3.14"));
+    }
+
+    #[test]
+    fn node_to_str_matrix() {
+        let s = node_to_str(&NdaNode::Matrix {
+            rows: 8, cols: 4, scale: 0,
+            sign: vec![0; 4], extra: vec![0; 4],
+        });
+        assert_eq!(s, "Matrix(8x4)");
+    }
+
+    #[test]
+    fn node_to_str_norm() {
+        let s = node_to_str(&NdaNode::Norm { size: 128, weight: vec![], bias: vec![] });
+        assert_eq!(s, "Norm(128)");
+    }
+
+    #[test]
+    fn node_to_str_loop() {
+        let s = node_to_str(&NdaNode::Loop { count: 10, body: vec![] });
+        assert_eq!(s, "Loop(count=10)");
+    }
+
+    #[test]
+    fn node_to_str_scope() {
+        let s = node_to_str(&NdaNode::Scope { children: vec![NdaNode::Int { value: 1 }] });
+        assert_eq!(s, "Scope(len=1)");
+    }
+
+    #[test]
+    fn node_to_str_print() {
+        let s = node_to_str(&NdaNode::Print { source: Box::new(NdaNode::Int { value: 0 }) });
+        assert_eq!(s, "Print");
+    }
+
+    #[test]
+    fn node_to_str_let() {
+        let s = node_to_str(&NdaNode::Let {
+            name_hash: 0xABCDEF,
+            init: Box::new(NdaNode::Int { value: 0 }),
+        });
+        assert!(s.contains("Let"));
+        assert!(s.contains("abcdef"));
+    }
+
+    #[test]
+    fn node_to_str_add() {
+        let s = node_to_str(&NdaNode::Add {
+            lhs: Box::new(NdaNode::Int { value: 1 }),
+            rhs: Box::new(NdaNode::Int { value: 2 }),
+        });
+        assert_eq!(s, "Add");
+    }
+
+    #[test]
+    fn node_to_str_compare() {
+        use crate::site_map::verifier::CmpOp;
+        let s = node_to_str(&NdaNode::Compare {
+            op: CmpOp::Eq,
+            lhs: Box::new(NdaNode::Int { value: 0 }),
+            rhs: Box::new(NdaNode::Int { value: 0 }),
+        });
+        assert!(s.contains("Compare"));
+    }
+
+    // ── compile_diagnostic extended tests ───────────────────────────────────
+
+    #[test]
+    fn compile_diagnostic_mixed_nodes() {
+        let nodes = vec![
+            NdaNode::Int { value: 1 },
+            NdaNode::Float { value: 2.0 },
+            NdaNode::Matrix {
+                rows: 4, cols: 4, scale: 0,
+                sign: vec![0; 2], extra: vec![0; 2],
+            },
+        ];
+        let diag = compile_diagnostic(&nodes);
+        assert_eq!(diag.node_count, 3);
+        // Int is native-eligible, Float and Matrix are not
+        assert_eq!(diag.native_eligible, 1);
+        assert_eq!(diag.interpreter_only, 2);
+    }
+
+    #[test]
+    fn compile_diagnostic_asm_available_matches_platform() {
+        let diag = compile_diagnostic(&[NdaNode::Int { value: 0 }]);
+        #[cfg(target_arch = "x86_64")]
+        assert!(diag.asm_available);
+    }
+
+    #[test]
+    fn compile_diagnostic_complexity_levels() {
+        // empty → "empty"
+        assert_eq!(compile_diagnostic(&[]).estimated_complexity, "empty");
+        // 1 node → "trivial"
+        assert_eq!(
+            compile_diagnostic(&[NdaNode::Int { value: 0 }]).estimated_complexity,
+            "trivial"
+        );
+        // many nodes → "moderate" or "complex"
+        let many: Vec<_> = (0..50).map(|_| NdaNode::Int { value: 0 }).collect();
+        let d = compile_diagnostic(&many);
+        assert!(
+            d.estimated_complexity == "medium" || d.estimated_complexity == "complex",
+            "expected medium/complex, got {}",
+            d.estimated_complexity
+        );
+    }
+
+    #[test]
+    fn compile_diagnostic_has_conditionals() {
+        let nodes = vec![NdaNode::If {
+            cond: Box::new(NdaNode::Int { value: 1 }),
+            then_body: vec![NdaNode::Int { value: 0 }],
+            else_body: None,
+        }];
+        let diag = compile_diagnostic(&nodes);
+        assert!(diag.has_conditionals);
+    }
+
+    #[test]
+    fn compile_diagnostic_has_returns() {
+        let nodes = vec![NdaNode::Return {
+            value: Box::new(NdaNode::Int { value: 42 }),
+        }];
+        let diag = compile_diagnostic(&nodes);
+        assert!(diag.has_returns);
+    }
+
+    // ── validate_compile_sequence extended tests ────────────────────────────
+
+    #[test]
+    fn validate_compile_sequence_nested_loops() {
+        let nodes = vec![NdaNode::Loop {
+            count: 5,
+            body: vec![NdaNode::Loop {
+                count: 3,
+                body: vec![NdaNode::Int { value: 0 }],
+            }],
+        }];
+        let issues = validate_compile_sequence(&nodes);
+        assert!(issues.is_empty());
+    }
+
+    #[test]
+    fn validate_compile_sequence_if_with_else() {
+        let nodes = vec![NdaNode::If {
+            cond: Box::new(NdaNode::Int { value: 1 }),
+            then_body: vec![NdaNode::Int { value: 2 }],
+            else_body: Some(vec![NdaNode::Int { value: 3 }]),
+        }];
+        let issues = validate_compile_sequence(&nodes);
+        assert!(issues.is_empty());
+    }
+
+    #[test]
+    fn validate_compile_sequence_multiple_issues() {
+        let nodes = vec![
+            NdaNode::Loop { count: 0, body: vec![] },  // zero iteration + empty body
+            NdaNode::Scope { children: vec![] },         // no children
+        ];
+        let issues = validate_compile_sequence(&nodes);
+        assert!(issues.len() >= 3, "expected >=3 issues, got {}", issues.len());
+    }
 }
