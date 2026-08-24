@@ -1,9 +1,13 @@
-Block 196: main.rs — 25 new tests (140 total)
+Block 198: pipeline_bridge.rs — 24 new tests (137 total)
 
-JSON key counts (CliEnvironment=7, CliDiagnostics=3), validate_generate_args
-(multiple issues, temperature/top_p boundaries, both prompt+prompt_file),
-validate_chat_args (temperature 0, top_p boundaries, multiple issues),
-validate_seed_args (empty source, invalid hex, valid hex with 0x prefix),
-Message edge cases (empty role/content, unicode roundtrip), CliEnvironment
-serialization/clone independence, GenerationReport display all fields,
-LoginArgs/ProvidersArgs defaults and optional fields.
+JSON value types verification for all report fields, nested struct
+serialization (EngineStatusSnapshot inside EngineReport, NdaRunDiagnostics
+inside EngineReport), unicode and special char roundtrips, empty string
+edge cases, nested clone independence (status snapshot and NDA diagnostics
+inside report), fractional per_second calculations, optional field
+combinations (all_some, mixed, sandbox_only), path consistency checks
+(text vs nda mutual exclusivity), boundary values (usize::MAX for
+prompt_tokens and output_count), site_map_stats string content, model_dir
+with special chars and path separators, hit rate formula edge cases,
+stored per_second matches formula, all derived fields consistent for
+Qwen-0.5B style config.

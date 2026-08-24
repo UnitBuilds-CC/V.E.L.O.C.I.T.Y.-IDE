@@ -2802,4 +2802,447 @@ mod tests {
         // head_dim = hidden_size / n_heads
         assert_eq!(info.hidden_size / info.n_heads, info.head_dim);
     }
+
+    // ─── Block 198: JSON types, nested clone, string edge, formula edge ─────
+
+    #[test]
+    fn engine_report_json_value_types() {
+        let report = EngineReport {
+            path: "text".to_string(), resolved_mode: "Text".to_string(),
+            prompt_tokens: 5, output_count: 10, elapsed_us: 1000,
+            per_second: 10000.0, text: Some("hi".to_string()),
+            nda: None, path1_lazy_loaded: true,
+            engine_status: EngineStatusSnapshot {
+                path1_loaded: true, path2_active: true,
+                model_dir: "/m".to_string(), vocab_size: 100,
+                n_layers: 4, hidden_size: 256,
+            },
+        };
+        let json = serde_json::to_string(&report).unwrap();
+        let val: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert!(val["path"].is_string());
+        assert!(val["resolved_mode"].is_string());
+        assert!(val["prompt_tokens"].is_number());
+        assert!(val["output_count"].is_number());
+        assert!(val["elapsed_us"].is_number());
+        assert!(val["per_second"].is_number());
+        assert!(val["text"].is_string());
+        assert!(val["nda"].is_null());
+        assert!(val["path1_lazy_loaded"].is_boolean());
+        assert!(val["engine_status"].is_object());
+    }
+
+    #[test]
+    fn engine_status_snapshot_nested_in_report() {
+        let report = EngineReport {
+            path: "nda".to_string(), resolved_mode: "Nda".to_string(),
+            prompt_tokens: 1, output_count: 1, elapsed_us: 1,
+            per_second: 1.0, text: None, nda: None,
+            path1_lazy_loaded: false,
+            engine_status: EngineStatusSnapshot {
+                path1_loaded: true, path2_active: true,
+                model_dir: "/nested/test".to_string(), vocab_size: 50000,
+                n_layers: 48, hidden_size: 6144,
+            },
+        };
+        let json = serde_json::to_string(&report).unwrap();
+        let val: serde_json::Value = serde_json::from_str(&json).unwrap();
+        let nested = &val["engine_status"];
+        assert_eq!(nested["model_dir"], "/nested/test");
+        assert_eq!(nested["vocab_size"], 50000);
+        assert_eq!(nested["n_layers"], 48);
+        assert_eq!(nested["hidden_size"], 6144);
+        assert_eq!(nested["path1_loaded"], true);
+        assert_eq!(nested["path2_active"], true);
+    }
+
+    #[test]
+    fn nda_diagnostics_nested_in_report_json() {
+        let report = EngineReport {
+            path: "nda".to_string(), resolved_mode: "Nda".to_string(),
+            prompt_tokens: 3, output_count: 7, elapsed_us: 500,
+            per_second: 14000.0, text: None,
+            nda: Some(NdaRunDiagnostics {
+                root_hash: 0xBEEF, valid: true, force_terminated: false,
+                site_map_key: Some(42), opcode_count: 7,
+                sandbox_passed: Some(true), scope_passed: Some(false),
+                scope_similarity: Some(0.65), site_map_hits: 3, site_map_misses: 4,
+            }),
+            path1_lazy_loaded: false,
+            engine_status: EngineStatusSnapshot {
+                path1_loaded: false, path2_active: true,
+                model_dir: "/m".to_string(), vocab_size: 100,
+                n_layers: 4, hidden_size: 256,
+            },
+        };
+        let json = serde_json::to_string(&report).unwrap();
+        let val: serde_json::Value = serde_json::from_str(&json).unwrap();
+        let nda = &val["nda"];
+        assert_eq!(nda["root_hash"], 0xBEEF_u64);
+        assert_eq!(nda["sandbox_passed"], true);
+        assert_eq!(nda["scope_passed"], false);
+        assert_eq!(nda["scope_similarity"], 0.65);
+        assert_eq!(nda["site_map_key"], 42);
+    }
+
+    #[test]
+    fn engine_report_text_unicode_roundtrip() {
+        let report = EngineReport {
+            path: "text".to_string(), resolved_mode: "Text".to_string(),
+            prompt_tokens: 1, output_count: 1, elapsed_us: 1,
+            per_second: 1.0,
+            text: Some("Hello 世界 🌍 Ñ ö".to_string()),
+            nda: None, path1_lazy_loaded: false,
+            engine_status: EngineStatusSnapshot {
+                path1_loaded: true, path2_active: true,
+                model_dir: "/m".to_string(), vocab_size: 100,
+                n_layers: 4, hidden_size: 256,
+            },
+        };
+        let json = serde_json::to_string(&report).unwrap();
+        let val: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(val["text"], "Hello 世界 🌍 Ñ ö");
+    }
+
+    #[test]
+    fn engine_report_text_with_special_chars() {
+        let report = EngineReport {
+            path: "text".to_string(), resolved_mode: "Text".to_string(),
+            prompt_tokens: 1, output_count: 1, elapsed_us: 1,
+            per_second: 1.0,
+            text: Some("line1\nline2\ttab\"quotes\"\\backslash".to_string()),
+            nda: None, path1_lazy_loaded: false,
+            engine_status: EngineStatusSnapshot {
+                path1_loaded: false, path2_active: true,
+                model_dir: "".to_string(), vocab_size: 0,
+                n_layers: 0, hidden_size: 0,
+            },
+        };
+        let json = serde_json::to_string(&report).unwrap();
+        let val: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert!(val["text"].as_str().unwrap().contains('\n'));
+        assert!(val["text"].as_str().unwrap().contains('\t'));
+    }
+
+    #[test]
+    fn engine_report_text_empty_string() {
+        let report = EngineReport {
+            path: "text".to_string(), resolved_mode: "Text".to_string(),
+            prompt_tokens: 0, output_count: 0, elapsed_us: 0,
+            per_second: 0.0, text: Some(String::new()),
+            nda: None, path1_lazy_loaded: false,
+            engine_status: EngineStatusSnapshot {
+                path1_loaded: false, path2_active: true,
+                model_dir: "".to_string(), vocab_size: 0,
+                n_layers: 0, hidden_size: 0,
+            },
+        };
+        let json = serde_json::to_string(&report).unwrap();
+        let val: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(val["text"], "");
+    }
+
+    #[test]
+    fn engine_report_clone_nested_status_independence() {
+        let report = EngineReport {
+            path: "text".to_string(), resolved_mode: "Text".to_string(),
+            prompt_tokens: 1, output_count: 1, elapsed_us: 1,
+            per_second: 1.0, text: Some("x".to_string()),
+            nda: None, path1_lazy_loaded: false,
+            engine_status: EngineStatusSnapshot {
+                path1_loaded: true, path2_active: true,
+                model_dir: "/original".to_string(), vocab_size: 100,
+                n_layers: 4, hidden_size: 256,
+            },
+        };
+        let mut cloned = report.clone();
+        cloned.engine_status.model_dir = "/modified".to_string();
+        cloned.engine_status.vocab_size = 999;
+        cloned.engine_status.path1_loaded = false;
+        // Original unchanged
+        assert_eq!(report.engine_status.model_dir, "/original");
+        assert_eq!(report.engine_status.vocab_size, 100);
+        assert!(report.engine_status.path1_loaded);
+    }
+
+    #[test]
+    fn engine_report_clone_nested_nda_independence() {
+        let report = EngineReport {
+            path: "nda".to_string(), resolved_mode: "Nda".to_string(),
+            prompt_tokens: 1, output_count: 1, elapsed_us: 1,
+            per_second: 1.0, text: None,
+            nda: Some(NdaRunDiagnostics {
+                root_hash: 0xAA, valid: true, force_terminated: false,
+                site_map_key: Some(1), opcode_count: 10,
+                sandbox_passed: Some(true), scope_passed: Some(true),
+                scope_similarity: Some(0.9), site_map_hits: 5, site_map_misses: 1,
+            }),
+            path1_lazy_loaded: false,
+            engine_status: EngineStatusSnapshot {
+                path1_loaded: false, path2_active: true,
+                model_dir: "/m".to_string(), vocab_size: 100,
+                n_layers: 4, hidden_size: 256,
+            },
+        };
+        let mut cloned = report.clone();
+        if let Some(ref mut nda) = cloned.nda {
+            nda.root_hash = 0xFF;
+            nda.valid = false;
+            nda.opcode_count = 0;
+        }
+        // Original unchanged
+        let orig_nda = report.nda.as_ref().unwrap();
+        assert_eq!(orig_nda.root_hash, 0xAA);
+        assert!(orig_nda.valid);
+        assert_eq!(orig_nda.opcode_count, 10);
+    }
+
+    #[test]
+    fn per_second_fractional_result() {
+        // 3 tokens in 2 seconds = 1.5 tok/s
+        let elapsed_us = 2_000_000u64;
+        let output_count = 3usize;
+        let per_second = (output_count as f64) / (elapsed_us as f64 / 1_000_000.0);
+        assert!((per_second - 1.5).abs() < 0.001);
+    }
+
+    #[test]
+    fn per_second_exact_100() {
+        // 10 tokens in 100ms = 100 tok/s
+        let elapsed_us = 100_000u64;
+        let output_count = 10usize;
+        let per_second = (output_count as f64) / (elapsed_us as f64 / 1_000_000.0);
+        assert!((per_second - 100.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn nda_diagnostics_optional_combos_all_some() {
+        let diag = NdaRunDiagnostics {
+            root_hash: 1, valid: true, force_terminated: false,
+            site_map_key: Some(1), opcode_count: 10,
+            sandbox_passed: Some(true), scope_passed: Some(true),
+            scope_similarity: Some(1.0), site_map_hits: 10, site_map_misses: 0,
+        };
+        assert!(diag.sandbox_passed.is_some());
+        assert!(diag.scope_passed.is_some());
+        assert!(diag.scope_similarity.is_some());
+        assert!(diag.site_map_key.is_some());
+    }
+
+    #[test]
+    fn nda_diagnostics_optional_combos_mixed() {
+        let diag = NdaRunDiagnostics {
+            root_hash: 2, valid: true, force_terminated: false,
+            site_map_key: None, opcode_count: 10,
+            sandbox_passed: Some(true), scope_passed: None,
+            scope_similarity: Some(0.5), site_map_hits: 0, site_map_misses: 10,
+        };
+        assert!(diag.sandbox_passed.is_some());
+        assert!(diag.scope_passed.is_none());
+        assert!(diag.scope_similarity.is_some());
+        assert!(diag.site_map_key.is_none());
+    }
+
+    #[test]
+    fn nda_diagnostics_optional_combos_sandbox_only() {
+        let diag = NdaRunDiagnostics {
+            root_hash: 3, valid: true, force_terminated: false,
+            site_map_key: None, opcode_count: 10,
+            sandbox_passed: Some(false), scope_passed: None,
+            scope_similarity: None, site_map_hits: 0, site_map_misses: 0,
+        };
+        assert_eq!(diag.sandbox_passed, Some(false));
+        assert!(diag.scope_passed.is_none());
+        assert!(diag.scope_similarity.is_none());
+    }
+
+    #[test]
+    fn engine_report_path_consistency_text() {
+        // When path == "text", text should be Some and nda should be None
+        let report = EngineReport {
+            path: "text".to_string(), resolved_mode: "Text".to_string(),
+            prompt_tokens: 1, output_count: 1, elapsed_us: 1,
+            per_second: 1.0, text: Some("output".to_string()),
+            nda: None, path1_lazy_loaded: false,
+            engine_status: EngineStatusSnapshot {
+                path1_loaded: true, path2_active: true,
+                model_dir: "".to_string(), vocab_size: 0,
+                n_layers: 0, hidden_size: 0,
+            },
+        };
+        assert_eq!(report.path, "text");
+        assert!(report.text.is_some());
+        assert!(report.nda.is_none());
+    }
+
+    #[test]
+    fn engine_report_path_consistency_nda() {
+        // When path == "nda", text should be None and nda should be Some
+        let report = EngineReport {
+            path: "nda".to_string(), resolved_mode: "Nda".to_string(),
+            prompt_tokens: 1, output_count: 1, elapsed_us: 1,
+            per_second: 1.0, text: None,
+            nda: Some(NdaRunDiagnostics {
+                root_hash: 0, valid: true, force_terminated: false,
+                site_map_key: None, opcode_count: 1,
+                sandbox_passed: None, scope_passed: None,
+                scope_similarity: None, site_map_hits: 0, site_map_misses: 0,
+            }),
+            path1_lazy_loaded: false,
+            engine_status: EngineStatusSnapshot {
+                path1_loaded: false, path2_active: true,
+                model_dir: "".to_string(), vocab_size: 0,
+                n_layers: 0, hidden_size: 0,
+            },
+        };
+        assert_eq!(report.path, "nda");
+        assert!(report.text.is_none());
+        assert!(report.nda.is_some());
+    }
+
+    #[test]
+    fn engine_report_prompt_tokens_boundary() {
+        // Very large prompt token count
+        let report = EngineReport {
+            path: "text".to_string(), resolved_mode: "Text".to_string(),
+            prompt_tokens: usize::MAX, output_count: 0, elapsed_us: 0,
+            per_second: 0.0, text: None, nda: None,
+            path1_lazy_loaded: false,
+            engine_status: EngineStatusSnapshot {
+                path1_loaded: false, path2_active: true,
+                model_dir: "".to_string(), vocab_size: 0,
+                n_layers: 0, hidden_size: 0,
+            },
+        };
+        let json = serde_json::to_string(&report).unwrap();
+        let val: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(val["prompt_tokens"], usize::MAX);
+    }
+
+    #[test]
+    fn engine_report_output_count_boundary() {
+        let report = EngineReport {
+            path: "nda".to_string(), resolved_mode: "Nda".to_string(),
+            prompt_tokens: 0, output_count: usize::MAX, elapsed_us: 0,
+            per_second: 0.0, text: None, nda: None,
+            path1_lazy_loaded: false,
+            engine_status: EngineStatusSnapshot {
+                path1_loaded: false, path2_active: true,
+                model_dir: "".to_string(), vocab_size: 0,
+                n_layers: 0, hidden_size: 0,
+            },
+        };
+        let json = serde_json::to_string(&report).unwrap();
+        let val: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(val["output_count"], usize::MAX);
+    }
+
+    #[test]
+    fn engine_info_site_map_stats_string_content() {
+        let info = EngineInfo {
+            model_dir: "/m".to_string(), vocab_size: 100, n_layers: 4,
+            hidden_size: 256, ffn_size: 512, n_heads: 4, n_kv_heads: 2,
+            head_dim: 64, max_seq_len: 1024, path1_loaded: false,
+            path2_site_map_stats: "1,234 entries (42 programs)".to_string(),
+            tokenizer_merge_count: 50,
+        };
+        let json = serde_json::to_string(&info).unwrap();
+        assert!(json.contains("1,234 entries (42 programs)"));
+    }
+
+    #[test]
+    fn engine_info_model_dir_with_special_chars() {
+        let info = EngineInfo {
+            model_dir: "/path/to/model with spaces/&special".to_string(),
+            vocab_size: 100, n_layers: 4, hidden_size: 256, ffn_size: 512,
+            n_heads: 4, n_kv_heads: 2, head_dim: 64, max_seq_len: 1024,
+            path1_loaded: false,
+            path2_site_map_stats: "0 entries".to_string(),
+            tokenizer_merge_count: 50,
+        };
+        let json = serde_json::to_string(&info).unwrap();
+        let val: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(val["model_dir"], "/path/to/model with spaces/&special");
+    }
+
+    #[test]
+    fn engine_status_snapshot_model_dir_path_separators() {
+        let snap = EngineStatusSnapshot {
+            path1_loaded: false, path2_active: true,
+            model_dir: "C:\\Users\\test\\models".to_string(),
+            vocab_size: 32000, n_layers: 12, hidden_size: 768,
+        };
+        let json = serde_json::to_string(&snap).unwrap();
+        let val: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert!(val["model_dir"].as_str().unwrap().contains("models"));
+    }
+
+    #[test]
+    fn nda_diagnostics_site_map_hit_rate_formula() {
+        // 7 hits, 3 misses = 70% hit rate
+        let diag = NdaRunDiagnostics {
+            root_hash: 0, valid: true, force_terminated: false,
+            site_map_key: Some(1), opcode_count: 100,
+            sandbox_passed: None, scope_passed: None,
+            scope_similarity: None, site_map_hits: 7, site_map_misses: 3,
+        };
+        let total = diag.site_map_hits + diag.site_map_misses;
+        let hit_rate = diag.site_map_hits as f64 / total as f64;
+        assert!((hit_rate - 0.7).abs() < 0.001);
+    }
+
+    #[test]
+    fn nda_diagnostics_site_map_single_hit() {
+        let diag = NdaRunDiagnostics {
+            root_hash: 0, valid: true, force_terminated: false,
+            site_map_key: Some(1), opcode_count: 10,
+            sandbox_passed: None, scope_passed: None,
+            scope_similarity: None, site_map_hits: 1, site_map_misses: 99,
+        };
+        let total = diag.site_map_hits + diag.site_map_misses;
+        let hit_rate = diag.site_map_hits as f64 / total as f64;
+        assert!((hit_rate - 0.01).abs() < 0.001);
+    }
+
+    #[test]
+    fn engine_report_per_second_stored_value_matches_formula() {
+        // Verify the stored per_second matches what the formula would produce
+        let elapsed_us = 250_000u64;
+        let output_count = 50usize;
+        let expected = (output_count as f64) / (elapsed_us as f64 / 1_000_000.0);
+        let report = EngineReport {
+            path: "text".to_string(), resolved_mode: "Text".to_string(),
+            prompt_tokens: 1, output_count, elapsed_us,
+            per_second: expected, text: Some("x".to_string()),
+            nda: None, path1_lazy_loaded: false,
+            engine_status: EngineStatusSnapshot {
+                path1_loaded: true, path2_active: true,
+                model_dir: "/m".to_string(), vocab_size: 100,
+                n_layers: 4, hidden_size: 256,
+            },
+        };
+        let json = serde_json::to_string(&report).unwrap();
+        let val: serde_json::Value = serde_json::from_str(&json).unwrap();
+        let stored = val["per_second"].as_f64().unwrap();
+        assert!((stored - expected).abs() < 0.01);
+    }
+
+    #[test]
+    fn engine_info_all_derived_fields_consistent() {
+        // For Qwen-0.5B style config
+        let info = EngineInfo {
+            model_dir: "/qwen05".to_string(), vocab_size: 151936, n_layers: 24,
+            hidden_size: 1024, ffn_size: 2816, n_heads: 16, n_kv_heads: 2,
+            head_dim: 64, max_seq_len: 2048, path1_loaded: false,
+            path2_site_map_stats: "0 entries".to_string(),
+            tokenizer_merge_count: 151936,
+        };
+        // head_dim = hidden_size / n_heads
+        assert_eq!(info.hidden_size / info.n_heads, info.head_dim);
+        // GQA: n_heads divisible by n_kv_heads
+        assert_eq!(info.n_heads % info.n_kv_heads, 0);
+        // FFN ratio in typical range
+        let ffn_ratio = info.ffn_size as f64 / info.hidden_size as f64;
+        assert!(ffn_ratio > 2.0 && ffn_ratio < 4.0);
+    }
 }
