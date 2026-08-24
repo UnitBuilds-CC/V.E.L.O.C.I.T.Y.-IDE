@@ -869,4 +869,307 @@ mod tests {
         assert!(json.contains("\"total_operations\":2"));
         assert!(json.contains("\"slowest_operation\":\"norm\""));
     }
+
+    // ─── Expanded Tests ─────────────────────────────────────────────────
+
+    #[test]
+    fn nda_embedding_from_f32_all_zeros() {
+        let embed = NdaEmbedding::from_f32(&[0.0, 0.0, 0.0, 0.0], 2, 2);
+        assert_eq!(embed.log2_scale, 0);
+        assert_eq!(embed.vocab_size, 2);
+        assert_eq!(embed.hidden_size, 2);
+        let w = embed.validate();
+        assert!(w.is_empty(), "expected no warnings, got: {:?}", w);
+    }
+
+    #[test]
+    fn nda_embedding_from_f32_large_values() {
+        let embed = NdaEmbedding::from_f32(&[100.0, -200.0, 50.0, -25.0], 2, 2);
+        assert!(embed.log2_scale > 0);
+        let w = embed.validate();
+        assert!(w.is_empty());
+    }
+
+    #[test]
+    fn nda_embedding_from_f32_single_token() {
+        let embed = NdaEmbedding::from_f32(&[1.0, -1.0, 0.5, -0.5], 1, 4);
+        assert_eq!(embed.vocab_size, 1);
+        assert_eq!(embed.hidden_size, 4);
+        let stride = embed.stride();
+        assert_eq!(stride, 1); // ceil(4/8) = 1
+        assert_eq!(embed.sign.len(), 1); // 1 token * 1 stride
+        assert_eq!(embed.extra.len(), 1);
+    }
+
+    #[test]
+    fn nda_embedding_get_returns_ndavec() {
+        let data = vec![
+            1.0, -1.0, 0.5, -0.5,  // token 0
+            2.0, -2.0, 1.0, -1.0,  // token 1
+        ];
+        let embed = NdaEmbedding::from_f32(&data, 2, 4);
+        let v0 = embed.get(0);
+        let v1 = embed.get(1);
+        assert_eq!(v0.len, 4);
+        assert_eq!(v1.len, 4);
+        assert_eq!(v0.log2_scale, embed.log2_scale);
+        assert_eq!(v1.log2_scale, embed.log2_scale);
+        // Different tokens should have different bitmaps
+        assert!(v0.sign != v1.sign || v0.extra != v1.extra || data[0] != data[4]);
+    }
+
+    #[test]
+    fn nda_embedding_stride_various_sizes() {
+        // hidden_size = 1 → stride = 1
+        let e1 = NdaEmbedding::from_f32(&[1.0], 1, 1);
+        assert_eq!(e1.stride(), 1);
+
+        // hidden_size = 7 → stride = 1
+        let e7 = NdaEmbedding::from_f32(&[1.0; 7], 1, 7);
+        assert_eq!(e7.stride(), 1);
+
+        // hidden_size = 8 → stride = 1
+        let e8 = NdaEmbedding::from_f32(&[1.0; 8], 1, 8);
+        assert_eq!(e8.stride(), 1);
+
+        // hidden_size = 9 → stride = 2
+        let e9 = NdaEmbedding::from_f32(&[1.0; 9], 1, 9);
+        assert_eq!(e9.stride(), 2);
+
+        // hidden_size = 16 → stride = 2
+        let e16 = NdaEmbedding::from_f32(&[1.0; 16], 1, 16);
+        assert_eq!(e16.stride(), 2);
+
+        // hidden_size = 128 → stride = 16
+        let e128 = NdaEmbedding::from_f32(&[1.0; 128], 1, 128);
+        assert_eq!(e128.stride(), 16);
+    }
+
+    #[test]
+    fn nda_embedding_validate_zero_hidden() {
+        let embed = NdaEmbedding {
+            vocab_size: 10,
+            hidden_size: 0,
+            log2_scale: 0,
+            sign: vec![],
+            extra: vec![],
+        };
+        let w = embed.validate();
+        assert!(w.iter().any(|s| s.contains("hidden_size is zero")));
+    }
+
+    #[test]
+    fn nda_embedding_validate_zero_vocab() {
+        let embed = NdaEmbedding {
+            vocab_size: 0,
+            hidden_size: 8,
+            log2_scale: 0,
+            sign: vec![],
+            extra: vec![],
+        };
+        let w = embed.validate();
+        assert!(w.iter().any(|s| s.contains("vocab_size is zero")));
+    }
+
+    #[test]
+    fn nda_embedding_validate_sign_mismatch() {
+        let embed = NdaEmbedding {
+            vocab_size: 2,
+            hidden_size: 8,
+            log2_scale: 0,
+            sign: vec![0xFF; 3], // expected 2*1=2, got 3
+            extra: vec![0xFF; 2],
+        };
+        let w = embed.validate();
+        assert!(w.iter().any(|s| s.contains("sign bytes mismatch")));
+    }
+
+    #[test]
+    fn nda_embedding_validate_extra_mismatch() {
+        let embed = NdaEmbedding {
+            vocab_size: 2,
+            hidden_size: 8,
+            log2_scale: 0,
+            sign: vec![0xFF; 2],
+            extra: vec![0xFF; 5], // expected 2
+        };
+        let w = embed.validate();
+        assert!(w.iter().any(|s| s.contains("extra bytes mismatch")));
+    }
+
+    #[test]
+    fn nda_embedding_info_bits_per_embedding() {
+        let embed = NdaEmbedding::from_f32(&[1.0; 64], 1, 64);
+        let info = embed.info();
+        assert_eq!(info.bits_per_embedding, 128); // 64 * 2 bits
+    }
+
+    #[test]
+    fn nda_embedding_info_total_bytes() {
+        let embed = NdaEmbedding::from_f32(&[1.0; 16], 4, 4);
+        let info = embed.info();
+        // stride = ceil(4/8) = 1, total sign bytes = 4*1 = 4, extra = 4
+        assert_eq!(info.total_bytes, 8);
+    }
+
+    #[test]
+    fn nda_embedding_debug_format() {
+        let embed = NdaEmbedding::from_f32(&[1.0, -1.0], 1, 2);
+        let debug = format!("{:?}", embed);
+        assert!(debug.contains("NdaEmbedding"));
+        assert!(debug.contains("vocab_size"));
+        assert!(debug.contains("sign_bytes"));
+    }
+
+    #[test]
+    fn alibi_slopes_single_head() {
+        let slopes = AliBiSlopes::new(1);
+        assert_eq!(slopes.n_heads, 1);
+        assert_eq!(slopes.shifts.len(), 1);
+        // 8 * 1 / 1 = 8.0 → clamp(1, 30) = 8
+        assert_eq!(slopes.shift(0), 8);
+    }
+
+    #[test]
+    fn alibi_slopes_two_heads() {
+        let slopes = AliBiSlopes::new(2);
+        // head 0: 8*1/2 = 4 → shift = 4
+        // head 1: 8*2/2 = 8 → shift = 8
+        assert_eq!(slopes.shift(0), 4);
+        assert_eq!(slopes.shift(1), 8);
+    }
+
+    #[test]
+    fn alibi_slopes_many_heads() {
+        let slopes = AliBiSlopes::new(32);
+        assert_eq!(slopes.shifts.len(), 32);
+        // All shifts should be in [1, 30]
+        for &s in &slopes.shifts {
+            assert!(s >= 1 && s <= 30, "shift {} out of range", s);
+        }
+    }
+
+    #[test]
+    fn alibi_slopes_info_unique_shifts() {
+        let slopes = AliBiSlopes::new(8);
+        let info = slopes.info();
+        assert_eq!(info.n_heads, 8);
+        assert!(info.unique_shifts > 0);
+        assert!(info.unique_shifts <= 8);
+    }
+
+    #[test]
+    fn alibi_slopes_info_invalid_empty() {
+        let slopes = AliBiSlopes {
+            shifts: vec![],
+            n_heads: 0,
+        };
+        let info = slopes.info();
+        assert!(!info.validation_issues.is_empty());
+        assert!(info.validation_issues.iter().any(|i| i.contains("0")));
+        assert!(info.validation_issues.iter().any(|i| i.contains("empty")));
+    }
+
+    #[test]
+    fn alibi_slopes_info_mismatched_lengths() {
+        let slopes = AliBiSlopes {
+            shifts: vec![4, 8],
+            n_heads: 5,
+        };
+        let info = slopes.info();
+        assert!(info.validation_issues.iter().any(|i| i.contains("!=")));
+    }
+
+    #[test]
+    fn validate_rms_norm_params_sign_extra_mismatch_x() {
+        let x = NdaVec {
+            len: 8,
+            log2_scale: 0,
+            sign: vec![0xFF; 2].into(), // 2 bytes
+            extra: vec![0xFF; 1].into(), // 1 byte — mismatch
+        };
+        let w = NdaVec::from_i32_slice(&[1, 1, 1, 1, 1, 1, 1, 1], 0);
+        let issues = validate_rms_norm_params(&x, &w, 2);
+        assert!(issues.iter().any(|i| i.contains("mismatch")));
+    }
+
+    #[test]
+    fn validate_rms_norm_params_sign_extra_mismatch_w() {
+        let x = NdaVec::from_i32_slice(&[1, 2, -1, -2], 0);
+        let w = NdaVec {
+            len: 4,
+            log2_scale: 0,
+            sign: vec![0xFF; 2].into(), // 2 bytes
+            extra: vec![0xFF; 1].into(), // 1 byte — mismatch
+        };
+        let issues = validate_rms_norm_params(&x, &w, 2);
+        assert!(issues.iter().any(|i| i.contains("mismatch")));
+    }
+
+    #[test]
+    fn summarize_ops_single_report() {
+        let reports = vec![
+            NdaOpsReport { operation: "gemv".into(), count: 100, total_elapsed_us: 5000, per_op_avg_us: 50.0 },
+        ];
+        let summary = summarize_ops(&reports);
+        assert_eq!(summary.total_operations, 1);
+        assert_eq!(summary.total_ops_count, 100);
+        assert_eq!(summary.total_elapsed_us, 5000);
+        assert!((summary.overall_avg_us - 50.0).abs() < 1e-9);
+        assert_eq!(summary.slowest_operation.as_deref(), Some("gemv"));
+        assert_eq!(summary.fastest_operation.as_deref(), Some("gemv"));
+    }
+
+    #[test]
+    fn summarize_ops_all_same_speed() {
+        let reports = vec![
+            NdaOpsReport { operation: "a".into(), count: 10, total_elapsed_us: 100, per_op_avg_us: 10.0 },
+            NdaOpsReport { operation: "b".into(), count: 10, total_elapsed_us: 100, per_op_avg_us: 10.0 },
+        ];
+        let summary = summarize_ops(&reports);
+        assert_eq!(summary.total_operations, 2);
+        assert_eq!(summary.total_ops_count, 20);
+        assert!((summary.overall_avg_us - 10.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn nda_ops_report_clone() {
+        let report = NdaOpsReport {
+            operation: "test_op".into(),
+            count: 42,
+            total_elapsed_us: 1234,
+            per_op_avg_us: 29.38,
+        };
+        let cloned = report.clone();
+        assert_eq!(cloned.operation, "test_op");
+        assert_eq!(cloned.count, 42);
+        assert!((cloned.per_op_avg_us - 29.38).abs() < 1e-9);
+    }
+
+    #[test]
+    fn validate_binary_op_empty_vecs() {
+        let a = NdaVec { len: 0, log2_scale: 0, sign: vec![].into(), extra: vec![].into() };
+        let b = NdaVec { len: 0, log2_scale: 0, sign: vec![].into(), extra: vec![].into() };
+        let w = validate_binary_op(&a, &b);
+        // Same length (0) — no length mismatch, but validate() flags zero length
+        assert!(w.iter().any(|s| s.contains("zero length")));
+    }
+
+    #[test]
+    fn nda_embedding_from_f32_negative_values() {
+        let embed = NdaEmbedding::from_f32(&[-1.0, -2.0, -3.0, -4.0], 1, 4);
+        let v = embed.get(0);
+        assert_eq!(v.len, 4);
+        // All negative → sign bits all clear
+        assert_eq!(v.sign[0] & 0x0F, 0x00);
+    }
+
+    #[test]
+    fn nda_embedding_stride_byte_count() {
+        let embed = NdaEmbedding::from_f32(&[1.0; 24], 3, 8);
+        // stride = ceil(8/8) = 1, total sign bytes = 3*1 = 3
+        assert_eq!(embed.stride(), 1);
+        assert_eq!(embed.sign.len(), 3);
+        assert_eq!(embed.extra.len(), 3);
+    }
 }
