@@ -1097,4 +1097,355 @@ mod tests {
             assert!(!name.is_empty(), "display_name for {:?} is empty", tok);
         }
     }
+
+    // ── Display name: exact values ───────────────────────────────────────
+
+    #[test]
+    fn display_name_keywords_exact() {
+        assert_eq!(Token::Fn.display_name(), "'fn'");
+        assert_eq!(Token::Let.display_name(), "'let'");
+        assert_eq!(Token::Loop.display_name(), "'loop'");
+        assert_eq!(Token::While.display_name(), "'while'");
+        assert_eq!(Token::If.display_name(), "'if'");
+        assert_eq!(Token::Else.display_name(), "'else'");
+        assert_eq!(Token::Return.display_name(), "'return'");
+        assert_eq!(Token::Break.display_name(), "'break'");
+        assert_eq!(Token::Print.display_name(), "'print'");
+    }
+
+    #[test]
+    fn display_name_type_keywords_exact() {
+        assert_eq!(Token::Vec.display_name(), "'vec'");
+        assert_eq!(Token::Matrix.display_name(), "'matrix'");
+        assert_eq!(Token::Norm.display_name(), "'norm'");
+        assert_eq!(Token::Int.display_name(), "'int'");
+    }
+
+    #[test]
+    fn display_name_builtin_keywords_exact() {
+        assert_eq!(Token::Add.display_name(), "'add'");
+        assert_eq!(Token::Silu.display_name(), "'silu'");
+        assert_eq!(Token::Negate.display_name(), "'negate'");
+        assert_eq!(Token::Abs.display_name(), "'abs'");
+        assert_eq!(Token::ReduceSum.display_name(), "'reduce_sum'");
+    }
+
+    #[test]
+    fn display_name_operators_exact() {
+        assert_eq!(Token::Eq.display_name(), "'=='");
+        assert_eq!(Token::Ne.display_name(), "'!='");
+        assert_eq!(Token::Lt.display_name(), "'<'");
+        assert_eq!(Token::Gt.display_name(), "'>'");
+        assert_eq!(Token::Le.display_name(), "'<='");
+        assert_eq!(Token::Ge.display_name(), "'>='");
+        assert_eq!(Token::Assign.display_name(), "'='");
+        assert_eq!(Token::Plus.display_name(), "'+'");
+        assert_eq!(Token::Minus.display_name(), "'-'");
+        assert_eq!(Token::Star.display_name(), "'*'");
+        assert_eq!(Token::Slash.display_name(), "'/'");
+        assert_eq!(Token::Percent.display_name(), "'%'");
+        assert_eq!(Token::Arrow.display_name(), "'->'");
+        assert_eq!(Token::Dot.display_name(), "'.'");
+    }
+
+    #[test]
+    fn display_name_delimiters_exact() {
+        assert_eq!(Token::LParen.display_name(), "'('");
+        assert_eq!(Token::RParen.display_name(), "')'");
+        assert_eq!(Token::LBrace.display_name(), "'{'");
+        assert_eq!(Token::RBrace.display_name(), "'}'");
+        assert_eq!(Token::LBracket.display_name(), "'['");
+        assert_eq!(Token::RBracket.display_name(), "']'");
+        assert_eq!(Token::Comma.display_name(), "','");
+        assert_eq!(Token::Semi.display_name(), "';'");
+        assert_eq!(Token::Colon.display_name(), "':'");
+        assert_eq!(Token::Pipe.display_name(), "'|'");
+        assert_eq!(Token::Amp.display_name(), "'&'");
+    }
+
+    #[test]
+    fn display_name_literals_exact() {
+        assert_eq!(Token::Ident("x".into()).display_name(), "identifier");
+        assert_eq!(Token::IntLit(0).display_name(), "integer literal");
+        assert_eq!(Token::FloatLit(0.0).display_name(), "float literal");
+        assert_eq!(Token::StringLit("".into()).display_name(), "string literal");
+    }
+
+    // ── Located struct ───────────────────────────────────────────────────
+
+    #[test]
+    fn located_clone() {
+        let loc = Located { token: Token::Fn, line: 1, col: 1 };
+        let cloned = loc.clone();
+        assert_eq!(cloned.line, 1);
+        assert_eq!(cloned.col, 1);
+        assert_eq!(cloned.token, Token::Fn);
+    }
+
+    #[test]
+    fn located_debug_format() {
+        let loc = Located { token: Token::IntLit(42), line: 3, col: 5 };
+        let debug = format!("{:?}", loc);
+        assert!(debug.contains("line: 3"));
+        assert!(debug.contains("col: 5"));
+    }
+
+    // ── Lexer initialization ─────────────────────────────────────────────
+
+    #[test]
+    fn lexer_new_starts_at_line_1_col_1() {
+        let lexer = NdaLexer::new("test");
+        assert_eq!(lexer.line, 1);
+        assert_eq!(lexer.col, 1);
+        assert_eq!(lexer.pos, 0);
+    }
+
+    // ── Tokenization: complex programs ───────────────────────────────────
+
+    #[test]
+    fn lex_multiline_program() {
+        let src = "fn main() {\n  let x = 10;\n  let y = 20;\n}";
+        let mut lexer = NdaLexer::new(src);
+        let tokens = lexer.tokenize().unwrap();
+        // fn main ( ) { let x = 10 ; let y = 20 ; } Eof
+        assert_eq!(tokens.len(), 17);
+        assert_eq!(tokens.last().unwrap().token, Token::Eof);
+    }
+
+    #[test]
+    fn lex_nested_braces() {
+        let src = "{{}}";
+        let mut lexer = NdaLexer::new(src);
+        let tokens = lexer.tokenize().unwrap();
+        assert_eq!(tokens[0].token, Token::LBrace);
+        assert_eq!(tokens[1].token, Token::LBrace);
+        assert_eq!(tokens[2].token, Token::RBrace);
+        assert_eq!(tokens[3].token, Token::RBrace);
+    }
+
+    #[test]
+    fn lex_mixed_operators_sequence() {
+        let src = "a+b-c*d/e%f";
+        let mut lexer = NdaLexer::new(src);
+        let tokens = lexer.tokenize().unwrap();
+        // a + b - c * d / e % f Eof
+        assert_eq!(tokens.len(), 12);
+    }
+
+    // ── Number edge cases ────────────────────────────────────────────────
+
+    #[test]
+    fn lex_large_integer() {
+        let src = "999999999";
+        let mut lexer = NdaLexer::new(src);
+        let tokens = lexer.tokenize().unwrap();
+        assert_eq!(tokens[0].token, Token::IntLit(999999999));
+    }
+
+    #[test]
+    fn lex_dot_then_number() {
+        // The lexer matches '.' as Dot operator before number check,
+        // so ".5" becomes Dot + IntLit(5)
+        let src = ".5";
+        let mut lexer = NdaLexer::new(src);
+        let tokens = lexer.tokenize().unwrap();
+        assert_eq!(tokens[0].token, Token::Dot);
+        assert_eq!(tokens[1].token, Token::IntLit(5));
+    }
+
+    #[test]
+    fn lex_float_negative_exponent() {
+        let src = "1e-2";
+        let mut lexer = NdaLexer::new(src);
+        // The lexer reads '1', then 'e', then '-' stops the number (so 1e is invalid)
+        // Actually: the lexer reads digits, '.', 'e', 'E' — so '1e' then '-' stops
+        // Let's see what happens: "1e" is parsed, then '-' stops
+        // Actually, looking at the code: it reads '1', then 'e' (is_float=true), then '-' is not digit/dot/e/E so stops
+        // "1e" won't parse as f64 → error
+        // But wait, the test for "1e10" works. "1e-2" would read "1e" then stop at '-'.
+        // "1e" doesn't parse → error
+        let result = lexer.tokenize();
+        // This will error because "1e" is not a valid float
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn lex_hex_zero() {
+        let src = "0x0";
+        let mut lexer = NdaLexer::new(src);
+        let tokens = lexer.tokenize().unwrap();
+        assert_eq!(tokens[0].token, Token::IntLit(0));
+    }
+
+    #[test]
+    fn lex_multiple_numbers() {
+        let src = "1 2 3 4 5";
+        let mut lexer = NdaLexer::new(src);
+        let tokens = lexer.tokenize().unwrap();
+        assert_eq!(tokens[0].token, Token::IntLit(1));
+        assert_eq!(tokens[1].token, Token::IntLit(2));
+        assert_eq!(tokens[2].token, Token::IntLit(3));
+        assert_eq!(tokens[3].token, Token::IntLit(4));
+        assert_eq!(tokens[4].token, Token::IntLit(5));
+    }
+
+    // ── String edge cases ────────────────────────────────────────────────
+
+    #[test]
+    fn lex_string_with_spaces() {
+        let src = r#""hello   world""#;
+        let mut lexer = NdaLexer::new(src);
+        let tokens = lexer.tokenize().unwrap();
+        assert_eq!(tokens[0].token, Token::StringLit("hello   world".to_string()));
+    }
+
+    #[test]
+    fn lex_two_adjacent_strings() {
+        let src = r#""a""b""#;
+        let mut lexer = NdaLexer::new(src);
+        let tokens = lexer.tokenize().unwrap();
+        assert_eq!(tokens[0].token, Token::StringLit("a".to_string()));
+        assert_eq!(tokens[1].token, Token::StringLit("b".to_string()));
+    }
+
+    // ── Identifier edge cases ────────────────────────────────────────────
+
+    #[test]
+    fn lex_single_letter_ident() {
+        let src = "x";
+        let mut lexer = NdaLexer::new(src);
+        let tokens = lexer.tokenize().unwrap();
+        assert_eq!(tokens[0].token, Token::Ident("x".to_string()));
+    }
+
+    #[test]
+    fn lex_underscore_only_ident() {
+        let src = "_";
+        let mut lexer = NdaLexer::new(src);
+        let tokens = lexer.tokenize().unwrap();
+        assert_eq!(tokens[0].token, Token::Ident("_".to_string()));
+    }
+
+    #[test]
+    fn lex_long_ident() {
+        let src = "abcdefghijklmnopqrstuvwxyz";
+        let mut lexer = NdaLexer::new(src);
+        let tokens = lexer.tokenize().unwrap();
+        assert_eq!(tokens[0].token, Token::Ident("abcdefghijklmnopqrstuvwxyz".to_string()));
+    }
+
+    // ── Keyword boundaries ───────────────────────────────────────────────
+
+    #[test]
+    fn lex_fn_not_keyword_when_followed_by_alpha() {
+        let src = "fnx";
+        let mut lexer = NdaLexer::new(src);
+        let tokens = lexer.tokenize().unwrap();
+        assert_eq!(tokens[0].token, Token::Ident("fnx".to_string()));
+    }
+
+    #[test]
+    fn lex_let_not_keyword_with_digits() {
+        let src = "let1";
+        let mut lexer = NdaLexer::new(src);
+        let tokens = lexer.tokenize().unwrap();
+        assert_eq!(tokens[0].token, Token::Ident("let1".to_string()));
+    }
+
+    #[test]
+    fn lex_if_followed_by_underscore() {
+        let src = "if_cond";
+        let mut lexer = NdaLexer::new(src);
+        let tokens = lexer.tokenize().unwrap();
+        assert_eq!(tokens[0].token, Token::Ident("if_cond".to_string()));
+    }
+
+    // ── Error recovery details ───────────────────────────────────────────
+
+    #[test]
+    fn error_recovery_error_text_contains_line_col() {
+        let src = "@";
+        let mut lexer = NdaLexer::new(src);
+        let (_, errors) = lexer.tokenize_with_errors();
+        assert!(!errors.is_empty());
+        assert!(errors[0].contains("1:"));
+    }
+
+    #[test]
+    fn error_recovery_preserves_good_tokens() {
+        let src = "let @ = 1";
+        let mut lexer = NdaLexer::new(src);
+        let (tokens, errors) = lexer.tokenize_with_errors();
+        assert_eq!(errors.len(), 1);
+        // Should have: let, =, 1, Eof (plus possibly more)
+        assert!(tokens.iter().any(|t| t.token == Token::Let));
+        assert!(tokens.iter().any(|t| t.token == Token::IntLit(1)));
+    }
+
+    #[test]
+    fn error_recovery_ends_with_eof() {
+        let src = "@@@";
+        let mut lexer = NdaLexer::new(src);
+        let (tokens, errors) = lexer.tokenize_with_errors();
+        assert_eq!(tokens.last().unwrap().token, Token::Eof);
+        assert_eq!(errors.len(), 3);
+    }
+
+    // ── Line/col tracking advanced ───────────────────────────────────────
+
+    #[test]
+    fn lex_col_tracking_after_newline() {
+        let src = "a\n  b";
+        let mut lexer = NdaLexer::new(src);
+        let tokens = lexer.tokenize().unwrap();
+        assert_eq!(tokens[0].line, 1);
+        assert_eq!(tokens[0].col, 1);
+        assert_eq!(tokens[1].line, 2);
+        assert_eq!(tokens[1].col, 3); // after 2 spaces
+    }
+
+    #[test]
+    fn lex_multiple_newlines_tracking() {
+        let src = "a\n\n\nb";
+        let mut lexer = NdaLexer::new(src);
+        let tokens = lexer.tokenize().unwrap();
+        assert_eq!(tokens[0].line, 1); // a
+        assert_eq!(tokens[1].line, 4); // b
+    }
+
+    // ── Comment edge cases ───────────────────────────────────────────────
+
+    #[test]
+    fn lex_comment_at_end_of_file() {
+        let src = "x // comment";
+        let mut lexer = NdaLexer::new(src);
+        let tokens = lexer.tokenize().unwrap();
+        assert_eq!(tokens[0].token, Token::Ident("x".to_string()));
+        assert_eq!(tokens[1].token, Token::Eof);
+    }
+
+    #[test]
+    fn lex_multiple_comments() {
+        let src = "// first\n// second\nx";
+        let mut lexer = NdaLexer::new(src);
+        let tokens = lexer.tokenize().unwrap();
+        assert_eq!(tokens[0].token, Token::Ident("x".to_string()));
+        assert_eq!(tokens[1].token, Token::Eof);
+    }
+
+    // ── Token equality ───────────────────────────────────────────────────
+
+    #[test]
+    fn token_eq_same_variant() {
+        assert_eq!(Token::Fn, Token::Fn);
+        assert_eq!(Token::IntLit(42), Token::IntLit(42));
+        assert_eq!(Token::Ident("x".into()), Token::Ident("x".into()));
+    }
+
+    #[test]
+    fn token_ne_different_variant() {
+        assert_ne!(Token::Fn, Token::Let);
+        assert_ne!(Token::IntLit(1), Token::IntLit(2));
+        assert_ne!(Token::Ident("a".into()), Token::Ident("b".into()));
+    }
 }
