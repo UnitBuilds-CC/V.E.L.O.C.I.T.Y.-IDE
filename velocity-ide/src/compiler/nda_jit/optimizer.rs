@@ -1449,4 +1449,265 @@ mod tests {
         assert!(json.contains("total_nodes"));
         assert!(json.contains("int_count"));
     }
+
+    // ── Block 106: has_side_effects tests ────────────────────────────────────
+
+    #[test]
+    fn side_effects_int_is_false() {
+        assert!(!has_side_effects(&NdaNode::Int { value: 42 }));
+    }
+
+    #[test]
+    fn side_effects_load_is_false() {
+        assert!(!has_side_effects(&NdaNode::Load { name_hash: 0 }));
+    }
+
+    #[test]
+    fn side_effects_float_is_false() {
+        assert!(!has_side_effects(&NdaNode::Float { value: 1.0 }));
+    }
+
+    #[test]
+    fn side_effects_break_is_false() {
+        assert!(!has_side_effects(&NdaNode::Break));
+    }
+
+    #[test]
+    fn side_effects_call_is_true() {
+        assert!(has_side_effects(&NdaNode::Call { target: 0 }));
+    }
+
+    #[test]
+    fn side_effects_print_is_true() {
+        assert!(has_side_effects(&NdaNode::Print {
+            source: Box::new(NdaNode::Int { value: 0 }),
+        }));
+    }
+
+    #[test]
+    fn side_effects_return_is_true() {
+        assert!(has_side_effects(&NdaNode::Return {
+            value: Box::new(NdaNode::Int { value: 0 }),
+        }));
+    }
+
+    #[test]
+    fn side_effects_peek_is_true() {
+        assert!(has_side_effects(&NdaNode::Peek {
+            addr: Box::new(NdaNode::Int { value: 0 }),
+        }));
+    }
+
+    #[test]
+    fn side_effects_poke_is_true() {
+        assert!(has_side_effects(&NdaNode::Poke {
+            addr: Box::new(NdaNode::Int { value: 0 }),
+            value: Box::new(NdaNode::Int { value: 1 }),
+        }));
+    }
+
+    #[test]
+    fn side_effects_syscall_is_true() {
+        assert!(has_side_effects(&NdaNode::Syscall { num: 0, args: vec![] }));
+    }
+
+    #[test]
+    fn side_effects_let_delegates_to_init() {
+        // let x = 42 → no side effects
+        assert!(!has_side_effects(&NdaNode::Let {
+            name_hash: 0,
+            init: Box::new(NdaNode::Int { value: 42 }),
+        }));
+        // let x = print(1) → has side effects
+        assert!(has_side_effects(&NdaNode::Let {
+            name_hash: 0,
+            init: Box::new(NdaNode::Print { source: Box::new(NdaNode::Int { value: 1 }) }),
+        }));
+    }
+
+    #[test]
+    fn side_effects_add_delegates_to_children() {
+        assert!(!has_side_effects(&NdaNode::Add {
+            lhs: Box::new(NdaNode::Int { value: 1 }),
+            rhs: Box::new(NdaNode::Int { value: 2 }),
+        }));
+        assert!(has_side_effects(&NdaNode::Add {
+            lhs: Box::new(NdaNode::Call { target: 0 }),
+            rhs: Box::new(NdaNode::Int { value: 2 }),
+        }));
+    }
+
+    #[test]
+    fn side_effects_scope_any_child() {
+        assert!(!has_side_effects(&NdaNode::Scope {
+            children: vec![NdaNode::Int { value: 1 }, NdaNode::Load { name_hash: 0 }],
+        }));
+        assert!(has_side_effects(&NdaNode::Scope {
+            children: vec![NdaNode::Call { target: 0 }],
+        }));
+    }
+
+    #[test]
+    fn side_effects_loop_body() {
+        assert!(!has_side_effects(&NdaNode::Loop {
+            count: 5,
+            body: vec![NdaNode::Int { value: 0 }],
+        }));
+        assert!(has_side_effects(&NdaNode::Loop {
+            count: 5,
+            body: vec![NdaNode::Print { source: Box::new(NdaNode::Int { value: 0 }) }],
+        }));
+    }
+
+    // ── gather_loaded_vars tests ─────────────────────────────────────────────
+
+    #[test]
+    fn gather_loads_simple() {
+        let mut set = std::collections::HashSet::new();
+        gather_loaded_vars(&NdaNode::Load { name_hash: 42 }, &mut set);
+        assert!(set.contains(&42));
+        assert_eq!(set.len(), 1);
+    }
+
+    #[test]
+    fn gather_loads_from_add() {
+        let mut set = std::collections::HashSet::new();
+        gather_loaded_vars(&NdaNode::Add {
+            lhs: Box::new(NdaNode::Load { name_hash: 1 }),
+            rhs: Box::new(NdaNode::Load { name_hash: 2 }),
+        }, &mut set);
+        assert!(set.contains(&1));
+        assert!(set.contains(&2));
+        assert_eq!(set.len(), 2);
+    }
+
+    #[test]
+    fn gather_loads_from_let_init() {
+        let mut set = std::collections::HashSet::new();
+        gather_loaded_vars(&NdaNode::Let {
+            name_hash: 10,
+            init: Box::new(NdaNode::Load { name_hash: 99 }),
+        }, &mut set);
+        assert!(set.contains(&99));
+        // name_hash 10 is a store target, not a load
+        assert!(!set.contains(&10));
+    }
+
+    #[test]
+    fn gather_loads_int_is_empty() {
+        let mut set = std::collections::HashSet::new();
+        gather_loaded_vars(&NdaNode::Int { value: 42 }, &mut set);
+        assert!(set.is_empty());
+    }
+
+    #[test]
+    fn gather_loads_nested_scope() {
+        let mut set = std::collections::HashSet::new();
+        gather_loaded_vars(&NdaNode::Scope {
+            children: vec![
+                NdaNode::Load { name_hash: 1 },
+                NdaNode::Loop {
+                    count: 5,
+                    body: vec![NdaNode::Load { name_hash: 2 }],
+                },
+            ],
+        }, &mut set);
+        assert!(set.contains(&1));
+        assert!(set.contains(&2));
+    }
+
+    #[test]
+    fn gather_loads_if_branches() {
+        let mut set = std::collections::HashSet::new();
+        gather_loaded_vars(&NdaNode::If {
+            cond: Box::new(NdaNode::Load { name_hash: 10 }),
+            then_body: vec![NdaNode::Load { name_hash: 20 }],
+            else_body: Some(vec![NdaNode::Load { name_hash: 30 }]),
+        }, &mut set);
+        assert!(set.contains(&10));
+        assert!(set.contains(&20));
+        assert!(set.contains(&30));
+    }
+
+    // ── Optimization tests ──────────────────────────────────────────────────
+
+    #[test]
+    fn constant_folding_nested_add() {
+        // (1 + 2) + 3 → 6
+        let nodes = vec![NdaNode::Add {
+            lhs: Box::new(NdaNode::Add {
+                lhs: Box::new(NdaNode::Int { value: 1 }),
+                rhs: Box::new(NdaNode::Int { value: 2 }),
+            }),
+            rhs: Box::new(NdaNode::Int { value: 3 }),
+        }];
+        let result = optimize_ast(&nodes);
+        match &result[0] {
+            NdaNode::Int { value } => assert_eq!(*value, 6),
+            other => panic!("Expected Int(6), got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn optimize_preserves_return() {
+        let nodes = vec![NdaNode::Return {
+            value: Box::new(NdaNode::Int { value: 42 }),
+        }];
+        let result = optimize_ast(&nodes);
+        assert!(!result.is_empty());
+        assert!(result.iter().any(|n| matches!(n, NdaNode::Return { .. })));
+    }
+
+    #[test]
+    fn optimize_empty_input() {
+        let result = optimize_ast(&[]);
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn optimize_ast_with_report_empty() {
+        let (result, report) = optimize_ast_with_report(&[]);
+        assert!(result.is_empty());
+        assert_eq!(report.input_nodes, 0);
+    }
+
+    #[test]
+    fn ast_complexity_while_and_scope() {
+        let nodes = vec![
+            NdaNode::While {
+                cond: Box::new(NdaNode::Int { value: 1 }),
+                body: vec![NdaNode::Scope {
+                    children: vec![NdaNode::Int { value: 0 }],
+                }],
+            },
+        ];
+        let dist = ast_complexity_info(&nodes);
+        assert_eq!(dist.while_count, 1);
+        assert_eq!(dist.scope_count, 1);
+    }
+
+    #[test]
+    fn optimization_report_default() {
+        let report = OptimizationReport::default();
+        assert_eq!(report.constants_folded, 0);
+        assert_eq!(report.input_nodes, 0);
+        assert_eq!(report.output_nodes, 0);
+    }
+
+    #[test]
+    fn validate_report_clean() {
+        let report = OptimizationReport {
+            constants_folded: 5,
+            dead_nodes_removed: 2,
+            loops_unrolled: 0,
+            dead_branches_eliminated: 0,
+            identities_simplified: 1,
+            double_negations_eliminated: 0,
+            strength_reductions: 0,
+            input_nodes: 20,
+            output_nodes: 12,
+        };
+        let issues = validate_optimization_report(&report);
+        assert!(issues.is_empty(), "issues: {:?}", issues);
+    }
 }
