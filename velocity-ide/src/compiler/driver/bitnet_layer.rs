@@ -826,4 +826,294 @@ mod tests {
         assert!(json.contains("ternary_dispatches"));
         assert!(json.contains("workgroup_sizes"));
     }
+
+    // ── Validation: individual fields ────────────────────────────────────
+
+    #[test]
+    fn validate_zero_ffn() {
+        let mut cfg = default_bitnet_config();
+        cfg.ffn_size = 0;
+        assert!(validate_bitnet_config(&cfg).iter().any(|i| i.contains("ffn_size")));
+    }
+
+    #[test]
+    fn validate_zero_n_heads() {
+        let mut cfg = default_bitnet_config();
+        cfg.n_heads = 0;
+        assert!(validate_bitnet_config(&cfg).iter().any(|i| i.contains("n_heads")));
+    }
+
+    #[test]
+    fn validate_zero_head_dim() {
+        let mut cfg = default_bitnet_config();
+        cfg.head_dim = 0;
+        assert!(validate_bitnet_config(&cfg).iter().any(|i| i.contains("head_dim")));
+    }
+
+    #[test]
+    fn validate_hidden_16_valid() {
+        let mut cfg = default_bitnet_config();
+        cfg.hidden_size = 16;
+        cfg.n_heads = 1;
+        cfg.head_dim = 16;
+        assert!(validate_bitnet_config(&cfg).is_empty());
+    }
+
+    #[test]
+    fn validate_hidden_256_valid() {
+        let mut cfg = default_bitnet_config();
+        cfg.hidden_size = 256;
+        cfg.n_heads = 4;
+        cfg.head_dim = 64;
+        assert!(validate_bitnet_config(&cfg).is_empty());
+    }
+
+    #[test]
+    fn validate_hidden_1_invalid() {
+        let mut cfg = default_bitnet_config();
+        cfg.hidden_size = 1;
+        let issues = validate_bitnet_config(&cfg);
+        assert!(issues.iter().any(|i| i.contains("multiple of 16")));
+    }
+
+    #[test]
+    fn validate_zero_hidden_no_mod_issue() {
+        let mut cfg = default_bitnet_config();
+        cfg.hidden_size = 0;
+        let issues = validate_bitnet_config(&cfg);
+        // 0%16==0, so no "multiple of 16" issue
+        assert!(!issues.iter().any(|i| i.contains("multiple of 16")));
+        assert!(issues.iter().any(|i| i.contains("hidden_size must")));
+    }
+
+    // ── Validation: head dimension check ─────────────────────────────────
+
+    #[test]
+    fn validate_heads_match_valid() {
+        let mut cfg = default_bitnet_config();
+        cfg.hidden_size = 512;
+        cfg.n_heads = 8;
+        cfg.head_dim = 64;
+        assert!(validate_bitnet_config(&cfg).is_empty());
+    }
+
+    #[test]
+    fn validate_both_zero_no_mismatch() {
+        let mut cfg = default_bitnet_config();
+        cfg.n_heads = 0;
+        cfg.head_dim = 0;
+        let issues = validate_bitnet_config(&cfg);
+        // Guarded by n_heads!=0 && head_dim!=0, so no mismatch issue
+        assert!(!issues.iter().any(|i| i.contains("!=")));
+    }
+
+    // ── Validation: all zeros ────────────────────────────────────────────
+
+    #[test]
+    fn validate_all_zeros() {
+        let cfg = BitNetLayerConfig {
+            hidden_size: 0, ffn_size: 0, n_heads: 0, head_dim: 0,
+        };
+        let issues = validate_bitnet_config(&cfg);
+        // hidden=0 (1 issue, 0%16==0 no mod), ffn=0, n_heads=0, head_dim=0
+        // No mismatch (guarded)
+        assert_eq!(issues.len(), 4);
+    }
+
+    #[test]
+    fn validate_issues_order_deterministic() {
+        let cfg = BitNetLayerConfig {
+            hidden_size: 0, ffn_size: 0, n_heads: 0, head_dim: 0,
+        };
+        let i1 = validate_bitnet_config(&cfg);
+        let i2 = validate_bitnet_config(&cfg);
+        assert_eq!(i1, i2);
+    }
+
+    // ── Validation issue text ────────────────────────────────────────────
+
+    #[test]
+    fn validate_hidden_zero_text() {
+        let mut cfg = default_bitnet_config();
+        cfg.hidden_size = 0;
+        assert_eq!(validate_bitnet_config(&cfg)[0], "hidden_size must be > 0");
+    }
+
+    #[test]
+    fn validate_bad_hidden_includes_value() {
+        let mut cfg = default_bitnet_config();
+        cfg.hidden_size = 300;
+        let issues = validate_bitnet_config(&cfg);
+        assert!(issues[0].contains("300"));
+    }
+
+    // ── Dispatch plan ────────────────────────────────────────────────────
+
+    #[test]
+    fn dispatch_plan_workgroup_count() {
+        let plan = bitnet_dispatch_plan(3200, 8640);
+        assert_eq!(plan.workgroup_sizes.len(), 8);
+        // First 4 use hidden_size, last 3 use ffn_size, last 1 uses hidden_size
+        let h = (3200u32).div_ceil(256);
+        let f = (8640u32).div_ceil(256);
+        assert_eq!(plan.workgroup_sizes[0], (h, 3200));
+        assert_eq!(plan.workgroup_sizes[4], (f, 8640));
+        assert_eq!(plan.workgroup_sizes[7], (h, 3200));
+    }
+
+    #[test]
+    fn dispatch_plan_total_equals_sum() {
+        let plan = bitnet_dispatch_plan(256, 1024);
+        assert_eq!(
+            plan.total_dispatches,
+            plan.ternary_dispatches + plan.activation_dispatches
+        );
+    }
+
+    #[test]
+    fn dispatch_plan_small_input() {
+        let plan = bitnet_dispatch_plan(1, 1);
+        assert_eq!(plan.workgroup_sizes[0], (1u32.div_ceil(256), 3200));
+    }
+
+    // ── Info calculations ────────────────────────────────────────────────
+
+    #[test]
+    fn info_weight_bytes_formula() {
+        let cfg = default_bitnet_config();
+        let info = bitnet_layer_info(&cfg);
+        let expected = cfg.hidden_size * cfg.hidden_size * 4 * 4
+            + cfg.hidden_size * cfg.ffn_size * 4 * 2
+            + cfg.ffn_size * cfg.hidden_size * 4;
+        assert_eq!(info.total_weight_bytes_estimate, expected);
+    }
+
+    #[test]
+    fn info_weight_buffers_is_7() {
+        assert_eq!(bitnet_layer_info(&default_bitnet_config()).weight_buffers, 7);
+    }
+
+    #[test]
+    fn info_preserves_config() {
+        let cfg = default_bitnet_config();
+        let info = bitnet_layer_info(&cfg);
+        assert_eq!(info.config.hidden_size, cfg.hidden_size);
+        assert_eq!(info.config.ffn_size, cfg.ffn_size);
+    }
+
+    #[test]
+    fn info_with_invalid_config() {
+        let mut cfg = default_bitnet_config();
+        cfg.hidden_size = 0;
+        let info = bitnet_layer_info(&cfg);
+        assert!(!info.validation_issues.is_empty());
+        assert_eq!(info.total_weight_bytes_estimate, 0);
+    }
+
+    // ── Struct derives ───────────────────────────────────────────────────
+
+    #[test]
+    fn config_clone() {
+        let cfg = default_bitnet_config();
+        let cloned = cfg.clone();
+        assert_eq!(cloned.hidden_size, cfg.hidden_size);
+        assert_eq!(cloned.ffn_size, cfg.ffn_size);
+    }
+
+    #[test]
+    fn config_clone_independent() {
+        let cfg = default_bitnet_config();
+        let mut cloned = cfg.clone();
+        cloned.hidden_size = 999;
+        assert_ne!(cfg.hidden_size, cloned.hidden_size);
+    }
+
+    #[test]
+    fn config_debug_format() {
+        let cfg = default_bitnet_config();
+        let debug = format!("{:?}", cfg);
+        assert!(debug.contains("BitNetLayerConfig"));
+        assert!(debug.contains("3200"));
+    }
+
+    #[test]
+    fn info_clone() {
+        let info = bitnet_layer_info(&default_bitnet_config());
+        let cloned = info.clone();
+        assert_eq!(cloned.weight_buffers, info.weight_buffers);
+        assert_eq!(cloned.total_weight_bytes_estimate, info.total_weight_bytes_estimate);
+    }
+
+    #[test]
+    fn info_debug_format() {
+        let info = bitnet_layer_info(&default_bitnet_config());
+        let debug = format!("{:?}", info);
+        assert!(debug.contains("BitNetLayerInfo"));
+        assert!(debug.contains("dispatch_plan"));
+    }
+
+    #[test]
+    fn dispatch_plan_clone() {
+        let plan = bitnet_dispatch_plan(256, 1024);
+        let cloned = plan.clone();
+        assert_eq!(cloned.total_dispatches, plan.total_dispatches);
+        assert_eq!(cloned.workgroup_sizes, plan.workgroup_sizes);
+    }
+
+    // ── Serialization ────────────────────────────────────────────────────
+
+    #[test]
+    fn config_json_all_fields() {
+        let cfg = default_bitnet_config();
+        let json = serde_json::to_string(&cfg).unwrap();
+        assert!(json.contains("\"hidden_size\""));
+        assert!(json.contains("\"ffn_size\""));
+        assert!(json.contains("\"n_heads\""));
+        assert!(json.contains("\"head_dim\""));
+    }
+
+    #[test]
+    fn info_json_all_fields() {
+        let info = bitnet_layer_info(&default_bitnet_config());
+        let json = serde_json::to_string(&info).unwrap();
+        assert!(json.contains("config"));
+        assert!(json.contains("dispatch_plan"));
+        assert!(json.contains("weight_buffers"));
+        assert!(json.contains("total_weight_bytes_estimate"));
+        assert!(json.contains("validation_issues"));
+    }
+
+    #[test]
+    fn info_json_parseable_as_value() {
+        let info = bitnet_layer_info(&default_bitnet_config());
+        let json = serde_json::to_string(&info).unwrap();
+        let value: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(value["weight_buffers"], 7);
+        assert!(value["validation_issues"].is_array());
+    }
+
+    #[test]
+    fn info_pretty_json() {
+        let info = bitnet_layer_info(&default_bitnet_config());
+        let pretty = serde_json::to_string_pretty(&info).unwrap();
+        assert!(pretty.contains('\n'));
+    }
+
+    // ── Boundary values ──────────────────────────────────────────────────
+
+    #[test]
+    fn validate_ffn_1_valid() {
+        let mut cfg = default_bitnet_config();
+        cfg.ffn_size = 1;
+        assert!(validate_bitnet_config(&cfg).iter().all(|i| !i.contains("ffn_size")));
+    }
+
+    #[test]
+    fn validate_n_heads_1_valid() {
+        let mut cfg = default_bitnet_config();
+        cfg.n_heads = 1;
+        cfg.head_dim = 3200;
+        cfg.hidden_size = 3200;
+        assert!(validate_bitnet_config(&cfg).iter().all(|i| !i.contains("n_heads")));
+    }
 }
