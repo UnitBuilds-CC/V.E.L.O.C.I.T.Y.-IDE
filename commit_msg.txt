@@ -1,27 +1,13 @@
-Block 189: safety.rs — 29 new tests (111 total)
+pipeline_nda.rs: 29 new tests (117 total)
 
-New tests cover:
-- JSON key count for LockMetricsSnapshot (7), LockOrderSnapshot (3), SafetyReport (5)
-- JSON roundtrip via Value for all 3 diagnostic structs
-- JSON type verification for LockMetricsSnapshot and LockOrderSnapshot fields
-- Clone independence for LockMetricsSnapshot, LockOrderSnapshot, SafetyReport
-- avg_hold_time_us formula: total_hold_time / acquisitions
-- contention_rate formula: contention_events / acquisitions
-- poison_rate formula: poison_recoveries / acquisitions
-- timeout_rate formula: timeout_events / acquisitions
-- lock_health_score formula: 1.0 - (contention*0.3 + poison*0.5 + timeout*0.2)
-- lock_health_score mixed penalties (10 acq, 2 contention, 1 poison, 1 timeout)
-- LockOrder acquire/release snapshot tracking
-- LockOrder validate with violation count matching
-- LockOrder multiple violations counted correctly
-- InstrumentedMutex try_lock records contention metric
-- InstrumentedGuard deref and deref_mut work correctly
-- SafetyReport validation_warnings empty in clean state
-- SafetyReport timestamp_us > 0
-- SafetyReport lock_metrics match global metrics
-- LockMetricsSnapshot debug format
-- Compact vs pretty JSON equivalence
-- LockMetrics reset clears all 6 counters
-- LockOrderGuard multiple levels released on drop
-
-Full suite: 4656 lib tests, 0 failures
+JSON key counts: NdaGenStatsSnapshot(8), NdaExecutionSummary(9),
+BatchItemResult(9), BatchGenerationReport(7). Serde skip fields:
+nodes, sandbox, scope not in JSON. cache_hit_rate formula: exact
+fraction, single hit/miss, large numbers. top_opcodes: sorted
+descending, single opcode. ensure_distribution: vocab-sized,
+idempotent. Clone independence for NdaGenStatsSnapshot. NdaHead:
+save file size, different inputs, nonzero output, too-short file.
+PipelineMode: native alias, unknown defaults, struct/func/fn triggers.
+execution_summary: stored_in_site_map false, elapsed_ms u64 cast.
+snapshot unique_opcodes counts all nonzero. NdaGenStats debug format.
+random_uniform mean near zero. NdaExecutionSummary all fields JSON.
