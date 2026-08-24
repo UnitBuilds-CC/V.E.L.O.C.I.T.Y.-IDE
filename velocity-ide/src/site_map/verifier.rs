@@ -2005,4 +2005,596 @@ mod tests {
         assert_eq!(dist.unique_opcodes, 2); // Int and Float
         assert_eq!(dist.total_tokens, 3);
     }
+
+    // ── Block 139: Extended tests ─────────────────────────────────────────
+
+    // --- NdaOpcode: specific category values ---
+
+    #[test]
+    fn opcode_category_specific_values() {
+        assert_eq!(NdaOpcode::Scope.category(), "structure");
+        assert_eq!(NdaOpcode::Matrix.category(), "computation");
+        assert_eq!(NdaOpcode::Bit0.category(), "payload");
+        assert_eq!(NdaOpcode::Loop.category(), "control_flow");
+        assert_eq!(NdaOpcode::Let.category(), "variable");
+        assert_eq!(NdaOpcode::Add.category(), "arithmetic");
+        assert_eq!(NdaOpcode::Print.category(), "io");
+        assert_eq!(NdaOpcode::Peek.category(), "memory");
+        assert_eq!(NdaOpcode::Syscall.category(), "system");
+        assert_eq!(NdaOpcode::Cast.category(), "type_system");
+        assert_eq!(NdaOpcode::GpuDispatch.category(), "gpu");
+        assert_eq!(NdaOpcode::Triple.category(), "semantic");
+    }
+
+    #[test]
+    fn opcode_name_specific_values() {
+        assert_eq!(NdaOpcode::Scope.name(), "SCOPE");
+        assert_eq!(NdaOpcode::EndScope.name(), "END_SCOPE");
+        assert_eq!(NdaOpcode::Bit0.name(), "0");
+        assert_eq!(NdaOpcode::Bit1.name(), "1");
+        assert_eq!(NdaOpcode::MathFunc.name(), "MATH_FUNC");
+        assert_eq!(NdaOpcode::RegInt.name(), "REG_INT");
+        assert_eq!(NdaOpcode::GpuDispatch.name(), "GPU_DISPATCH");
+    }
+
+    // --- NdaOpcode: boolean predicates ---
+
+    #[test]
+    fn opcode_is_control_flow() {
+        assert!(NdaOpcode::Loop.is_control_flow());
+        assert!(NdaOpcode::While.is_control_flow());
+        assert!(NdaOpcode::If.is_control_flow());
+        assert!(NdaOpcode::Break.is_control_flow());
+        assert!(!NdaOpcode::Int.is_control_flow());
+        assert!(!NdaOpcode::Add.is_control_flow());
+    }
+
+    #[test]
+    fn opcode_is_arithmetic() {
+        assert!(NdaOpcode::Add.is_arithmetic());
+        assert!(NdaOpcode::VecOp.is_arithmetic());
+        assert!(NdaOpcode::Bitwise.is_arithmetic());
+        assert!(NdaOpcode::Math.is_arithmetic());
+        assert!(NdaOpcode::MathFunc.is_arithmetic());
+        assert!(NdaOpcode::Dot.is_arithmetic());
+        assert!(NdaOpcode::Gemv.is_arithmetic());
+        assert!(!NdaOpcode::Int.is_arithmetic());
+        assert!(!NdaOpcode::Print.is_arithmetic());
+    }
+
+    #[test]
+    fn opcode_is_io() {
+        assert!(NdaOpcode::Print.is_io());
+        assert!(NdaOpcode::Return.is_io());
+        assert!(!NdaOpcode::Int.is_io());
+        assert!(!NdaOpcode::Load.is_io());
+    }
+
+    #[test]
+    fn opcode_is_variable() {
+        assert!(NdaOpcode::Let.is_variable());
+        assert!(NdaOpcode::Load.is_variable());
+        assert!(NdaOpcode::Store.is_variable());
+        assert!(NdaOpcode::Compare.is_variable());
+        assert!(!NdaOpcode::Int.is_variable());
+    }
+
+    #[test]
+    fn opcode_is_memory() {
+        assert!(NdaOpcode::Peek.is_memory());
+        assert!(NdaOpcode::Poke.is_memory());
+        assert!(NdaOpcode::Alloc.is_memory());
+        assert!(NdaOpcode::Free.is_memory());
+        assert!(!NdaOpcode::Int.is_memory());
+    }
+
+    #[test]
+    fn opcode_is_computation() {
+        assert!(NdaOpcode::Matrix.is_computation());
+        assert!(NdaOpcode::Norm.is_computation());
+        assert!(NdaOpcode::Call.is_computation());
+        assert!(NdaOpcode::Gemv.is_computation());
+        assert!(NdaOpcode::Dot.is_computation());
+        assert!(!NdaOpcode::Int.is_computation());
+    }
+
+    // --- opcode_info for various opcodes ---
+
+    #[test]
+    fn opcode_info_all_fields_for_scope() {
+        let info = opcode_info(NdaOpcode::Scope);
+        assert_eq!(info.opcode, 0);
+        assert_eq!(info.name, "SCOPE");
+        assert_eq!(info.category, "structure");
+        assert!(!info.description.is_empty());
+        assert!(!info.is_control_flow);
+        assert!(!info.is_arithmetic);
+        assert!(!info.is_io);
+        assert!(!info.is_variable);
+        assert!(!info.is_memory);
+        assert!(!info.is_computation);
+    }
+
+    #[test]
+    fn opcode_info_serializes_all_fields() {
+        let info = opcode_info(NdaOpcode::Loop);
+        let json = serde_json::to_string(&info).unwrap();
+        assert!(json.contains("\"opcode\":9"));
+        assert!(json.contains("\"name\":\"LOOP\""));
+        assert!(json.contains("\"is_control_flow\":true"));
+    }
+
+    // --- opcode_distribution edge cases ---
+
+    #[test]
+    fn opcode_distribution_multiple_roots() {
+        let ops = vec![NdaOpcode::Root, NdaOpcode::Root, NdaOpcode::Int];
+        let dist = opcode_distribution(&ops);
+        assert!(dist.validation_issues.iter().any(|i| i.contains("multiple ROOT")));
+    }
+
+    #[test]
+    fn opcode_distribution_scope_imbalance_values() {
+        let ops = vec![NdaOpcode::Scope, NdaOpcode::Scope, NdaOpcode::EndScope];
+        let dist = opcode_distribution(&ops);
+        assert!(dist.validation_issues.iter().any(|i| i.contains("2") && i.contains("1")));
+    }
+
+    #[test]
+    fn opcode_distribution_category_counts_sum_to_total() {
+        let ops = vec![
+            NdaOpcode::Scope, NdaOpcode::Int, NdaOpcode::Bit0,
+            NdaOpcode::Loop, NdaOpcode::Let, NdaOpcode::Add,
+            NdaOpcode::Print, NdaOpcode::Peek, NdaOpcode::Syscall,
+            NdaOpcode::Cast, NdaOpcode::GpuDispatch, NdaOpcode::Triple,
+        ];
+        let dist = opcode_distribution(&ops);
+        let sum = dist.structure_count + dist.computation_count + dist.payload_count
+            + dist.control_flow_count + dist.variable_count + dist.arithmetic_count
+            + dist.io_count + dist.memory_count + dist.system_count
+            + dist.type_system_count + dist.gpu_count + dist.semantic_count;
+        assert_eq!(sum, dist.total_tokens);
+    }
+
+    #[test]
+    fn opcode_distribution_clone_and_debug() {
+        let dist = opcode_distribution(&[NdaOpcode::Int]);
+        let cloned = dist.clone();
+        assert_eq!(cloned.total_tokens, 1);
+        let debug = format!("{:?}", dist);
+        assert!(debug.contains("OpcodeDistribution"));
+    }
+
+    // --- MerkleVerifier edge cases ---
+
+    #[test]
+    fn verifier_is_valid_false_without_roots() {
+        let v = MerkleVerifier::new();
+        assert!(!v.is_valid());
+    }
+
+    #[test]
+    fn verifier_is_valid_false_with_only_claimed() {
+        let mut v = MerkleVerifier::new();
+        v.claimed_root = Some(42);
+        assert!(!v.is_valid());
+    }
+
+    #[test]
+    fn verifier_record_root_sets_computed() {
+        let mut v = MerkleVerifier::new();
+        let leaf = NdaNode::Int { value: 7 };
+        v.push_leaf(&leaf);
+        // record_root should set computed_root from the last hash on stack
+        v.record_root(leaf.hash());
+        assert_eq!(v.info().has_computed_root, true);
+        assert_eq!(v.info().has_claimed_root, true);
+    }
+
+    #[test]
+    fn verifier_info_empty_stack_issue() {
+        let mut v = MerkleVerifier::new();
+        v.stack.clear(); // force empty stack
+        let info = v.info();
+        assert!(info.validation_issues.iter().any(|i| i.contains("empty scope stack")));
+        assert!(!info.is_consistent);
+    }
+
+    #[test]
+    fn verifier_info_claimed_without_computed() {
+        let mut v = MerkleVerifier::new();
+        v.claimed_root = Some(0x1234);
+        // computed_root is None
+        let info = v.info();
+        assert!(info.validation_issues.iter().any(|i| i.contains("computed root is missing")));
+    }
+
+    #[test]
+    fn verifier_depth_with_nested_scopes() {
+        let mut v = MerkleVerifier::new();
+        assert_eq!(v.depth(), 1);
+        v.open_scope();
+        assert_eq!(v.depth(), 2);
+        v.open_scope();
+        assert_eq!(v.depth(), 3);
+        v.close_scope().unwrap();
+        assert_eq!(v.depth(), 2);
+        v.close_scope().unwrap();
+        assert_eq!(v.depth(), 1);
+    }
+
+    #[test]
+    fn verifier_default_equals_new() {
+        let v = MerkleVerifier::default();
+        assert_eq!(v.depth(), 1);
+        assert!(v.is_consistent());
+        assert!(!v.is_valid());
+    }
+
+    // --- validate_node: remaining variants ---
+
+    #[test]
+    fn validate_node_while_propagates_cond_issues() {
+        let node = NdaNode::While {
+            cond: Box::new(NdaNode::Matrix {
+                rows: 0, cols: 0, scale: 0, sign: vec![], extra: vec![],
+            }),
+            body: vec![NdaNode::Break],
+        };
+        let issues = validate_node(&node);
+        assert!(issues.iter().any(|i| i.contains("while cond")));
+    }
+
+    #[test]
+    fn validate_node_if_propagates_cond_issues() {
+        let node = NdaNode::If {
+            cond: Box::new(NdaNode::Matrix {
+                rows: 0, cols: 0, scale: 0, sign: vec![], extra: vec![],
+            }),
+            then_body: vec![NdaNode::Break],
+            else_body: None,
+        };
+        let issues = validate_node(&node);
+        assert!(issues.iter().any(|i| i.contains("if cond")));
+    }
+
+    #[test]
+    fn validate_node_if_else_propagates() {
+        let node = NdaNode::If {
+            cond: Box::new(NdaNode::Int { value: 1 }),
+            then_body: vec![NdaNode::Break],
+            else_body: Some(vec![NdaNode::Matrix {
+                rows: 0, cols: 0, scale: 0, sign: vec![], extra: vec![],
+            }]),
+        };
+        let issues = validate_node(&node);
+        assert!(issues.iter().any(|i| i.contains("else[0]")));
+    }
+
+    #[test]
+    fn validate_node_compare_propagates() {
+        let node = NdaNode::Compare {
+            op: CmpOp::Eq,
+            lhs: Box::new(NdaNode::Matrix {
+                rows: 0, cols: 0, scale: 0, sign: vec![], extra: vec![],
+            }),
+            rhs: Box::new(NdaNode::Int { value: 1 }),
+        };
+        let issues = validate_node(&node);
+        assert!(issues.iter().any(|i| i.contains("cmp lhs")));
+    }
+
+    #[test]
+    fn validate_node_let_propagates() {
+        let node = NdaNode::Let {
+            name_hash: 42,
+            init: Box::new(NdaNode::Matrix {
+                rows: 0, cols: 0, scale: 0, sign: vec![], extra: vec![],
+            }),
+        };
+        let issues = validate_node(&node);
+        assert!(issues.iter().any(|i| i.contains("let init")));
+    }
+
+    #[test]
+    fn validate_node_store_propagates() {
+        let node = NdaNode::Store {
+            name_hash: 1,
+            value: Box::new(NdaNode::Matrix {
+                rows: 0, cols: 0, scale: 0, sign: vec![], extra: vec![],
+            }),
+        };
+        let issues = validate_node(&node);
+        assert!(issues.iter().any(|i| i.contains("store value")));
+    }
+
+    #[test]
+    fn validate_node_add_propagates() {
+        let node = NdaNode::Add {
+            lhs: Box::new(NdaNode::Int { value: 1 }),
+            rhs: Box::new(NdaNode::Matrix {
+                rows: 0, cols: 0, scale: 0, sign: vec![], extra: vec![],
+            }),
+        };
+        let issues = validate_node(&node);
+        assert!(issues.iter().any(|i| i.contains("add rhs")));
+    }
+
+    #[test]
+    fn validate_node_vecop_propagates() {
+        let node = NdaNode::VecOp {
+            op: VecOpKind::SiLU,
+            operand: Box::new(NdaNode::Matrix {
+                rows: 0, cols: 0, scale: 0, sign: vec![], extra: vec![],
+            }),
+        };
+        let issues = validate_node(&node);
+        assert!(issues.iter().any(|i| i.contains("vecop operand")));
+    }
+
+    #[test]
+    fn validate_node_print_propagates() {
+        let node = NdaNode::Print {
+            source: Box::new(NdaNode::Matrix {
+                rows: 0, cols: 0, scale: 0, sign: vec![], extra: vec![],
+            }),
+        };
+        let issues = validate_node(&node);
+        assert!(issues.iter().any(|i| i.contains("print source")));
+    }
+
+    #[test]
+    fn validate_node_return_propagates() {
+        let node = NdaNode::Return {
+            value: Box::new(NdaNode::Matrix {
+                rows: 0, cols: 0, scale: 0, sign: vec![], extra: vec![],
+            }),
+        };
+        let issues = validate_node(&node);
+        assert!(issues.iter().any(|i| i.contains("return value")));
+    }
+
+    #[test]
+    fn validate_node_bitwise_propagates() {
+        let node = NdaNode::Bitwise {
+            op: BitwiseOp::And,
+            lhs: Box::new(NdaNode::Matrix {
+                rows: 0, cols: 0, scale: 0, sign: vec![], extra: vec![],
+            }),
+            rhs: Some(Box::new(NdaNode::Int { value: 1 })),
+        };
+        let issues = validate_node(&node);
+        assert!(issues.iter().any(|i| i.contains("bitwise lhs")));
+    }
+
+    #[test]
+    fn validate_node_clean_leaf_variants() {
+        let leaves = vec![
+            NdaNode::Call { target: 0 },
+            NdaNode::Int { value: 0 },
+            NdaNode::Float { value: 0.0 },
+            NdaNode::Load { name_hash: 0 },
+            NdaNode::Break,
+            NdaNode::Spawn { scope_hash: 0 },
+            NdaNode::RegInt { vector: 0, handler_hash: 0 },
+            NdaNode::Triple { subject_hash: 0, predicate_id: 0, object_hash: 0 },
+        ];
+        for node in &leaves {
+            let issues = validate_node(node);
+            assert!(issues.is_empty(), "leaf {:?} had issues: {:?}", node_kind_name(node), issues);
+        }
+    }
+
+    // --- node_kind_name: all variants ---
+
+    #[test]
+    fn node_kind_name_all_variants() {
+        let cases = vec![
+            (NdaNode::Matrix { rows: 1, cols: 1, scale: 0, sign: vec![0], extra: vec![] }, "Matrix"),
+            (NdaNode::Norm { size: 1, weight: vec![0], bias: vec![0] }, "Norm"),
+            (NdaNode::Call { target: 0 }, "Call"),
+            (NdaNode::Int { value: 0 }, "Int"),
+            (NdaNode::Scope { children: vec![] }, "Scope"),
+            (NdaNode::Loop { count: 1, body: vec![] }, "Loop"),
+            (NdaNode::Break, "Break"),
+            (NdaNode::Float { value: 0.0 }, "Float"),
+            (NdaNode::Triple { subject_hash: 0, predicate_id: 0, object_hash: 0 }, "Triple"),
+        ];
+        for (node, expected) in cases {
+            assert_eq!(node_kind_name(&node), expected);
+        }
+    }
+
+    // --- estimated_memory_bytes: more variants ---
+
+    #[test]
+    fn estimated_memory_bytes_norm_includes_buffers() {
+        let node = NdaNode::Norm {
+            size: 8,
+            weight: vec![0; 32],
+            bias: vec![0; 32],
+        };
+        let bytes = estimated_memory_bytes(&node);
+        assert!(bytes >= 64); // weight + bias
+    }
+
+    #[test]
+    fn estimated_memory_bytes_nested_scopes() {
+        let inner = NdaNode::Scope { children: vec![NdaNode::Int { value: 1 }] };
+        let outer = NdaNode::Scope { children: vec![inner] };
+        let bytes = estimated_memory_bytes(&outer);
+        assert!(bytes > estimated_memory_bytes(&NdaNode::Int { value: 1 }));
+    }
+
+    // --- CmpOp specific symbols ---
+
+    #[test]
+    fn cmp_op_specific_symbols() {
+        assert_eq!(CmpOp::Eq.symbol(), "==");
+        assert_eq!(CmpOp::Ne.symbol(), "!=");
+        assert_eq!(CmpOp::Lt.symbol(), "<");
+        assert_eq!(CmpOp::Gt.symbol(), ">");
+        assert_eq!(CmpOp::Le.symbol(), "<=");
+        assert_eq!(CmpOp::Ge.symbol(), ">=");
+    }
+
+    // --- MathOp specific symbols ---
+
+    #[test]
+    fn math_op_specific_symbols() {
+        assert_eq!(MathOp::Add.symbol(), "+");
+        assert_eq!(MathOp::Sub.symbol(), "-");
+        assert_eq!(MathOp::Mul.symbol(), "*");
+        assert_eq!(MathOp::Div.symbol(), "/");
+    }
+
+    // --- Sub-enum specific names ---
+
+    #[test]
+    fn vec_op_kind_specific_names() {
+        assert_eq!(VecOpKind::SiLU.name(), "silu");
+        assert_eq!(VecOpKind::Negate.name(), "negate");
+        assert_eq!(VecOpKind::Abs.name(), "abs");
+        assert_eq!(VecOpKind::ReduceSum.name(), "reduce_sum");
+    }
+
+    #[test]
+    fn bitwise_op_specific_names() {
+        assert_eq!(BitwiseOp::And.name(), "and");
+        assert_eq!(BitwiseOp::Or.name(), "or");
+        assert_eq!(BitwiseOp::Xor.name(), "xor");
+        assert_eq!(BitwiseOp::Not.name(), "not");
+        assert_eq!(BitwiseOp::Shl.name(), "shl");
+        assert_eq!(BitwiseOp::Shr.name(), "shr");
+    }
+
+    #[test]
+    fn math_func_kind_specific_names() {
+        assert_eq!(MathFuncKind::Sin.name(), "sin");
+        assert_eq!(MathFuncKind::Cos.name(), "cos");
+        assert_eq!(MathFuncKind::Sqrt.name(), "sqrt");
+        assert_eq!(MathFuncKind::Exp.name(), "exp");
+    }
+
+    #[test]
+    fn atomic_op_specific_names() {
+        assert_eq!(AtomicOp::Cas.name(), "cas");
+        assert_eq!(AtomicOp::Faa.name(), "faa");
+    }
+
+    #[test]
+    fn type_kind_specific_names() {
+        assert_eq!(TypeKind::Int.name(), "int");
+        assert_eq!(TypeKind::Float.name(), "float");
+        assert_eq!(TypeKind::Vector.name(), "vector");
+    }
+
+    // --- NdaNode hash: more variants ---
+
+    #[test]
+    fn hash_all_leaf_variants_deterministic() {
+        let nodes = vec![
+            NdaNode::Int { value: 42 },
+            NdaNode::Float { value: 3.14 },
+            NdaNode::Call { target: 123 },
+            NdaNode::Load { name_hash: 456 },
+            NdaNode::Break,
+            NdaNode::Spawn { scope_hash: 789 },
+            NdaNode::RegInt { vector: 0, handler_hash: 111 },
+            NdaNode::Triple { subject_hash: 1, predicate_id: 2, object_hash: 3 },
+        ];
+        for node in &nodes {
+            assert_eq!(node.hash(), node.hash(), "hash not deterministic for {:?}", node_kind_name(node));
+        }
+    }
+
+    #[test]
+    fn hash_scope_empty_vs_nonempty() {
+        let empty = NdaNode::Scope { children: vec![] };
+        let nonempty = NdaNode::Scope { children: vec![NdaNode::Int { value: 1 }] };
+        assert_ne!(empty.hash(), nonempty.hash());
+    }
+
+    // --- OpcodeInfo clone/debug ---
+
+    #[test]
+    fn opcode_info_clone_and_debug() {
+        let info = opcode_info(NdaOpcode::Matrix);
+        let cloned = info.clone();
+        assert_eq!(cloned.name, "MATRIX");
+        let debug = format!("{:?}", info);
+        assert!(debug.contains("OpcodeInfo"));
+    }
+
+    // --- MerkleVerifierInfo serialization ---
+
+    #[test]
+    fn verifier_info_serializes() {
+        let v = MerkleVerifier::new();
+        let info = v.info();
+        let json = serde_json::to_string(&info).unwrap();
+        assert!(json.contains("\"stack_depth\":1"));
+        assert!(json.contains("\"is_consistent\":true"));
+    }
+
+    // --- validate_node: syscall/gpu_dispatch args ---
+
+    #[test]
+    fn validate_node_syscall_propagates() {
+        let node = NdaNode::Syscall {
+            num: 1,
+            args: vec![NdaNode::Matrix {
+                rows: 0, cols: 0, scale: 0, sign: vec![], extra: vec![],
+            }],
+        };
+        let issues = validate_node(&node);
+        assert!(issues.iter().any(|i| i.contains("syscall arg[0]")));
+    }
+
+    #[test]
+    fn validate_node_gpu_dispatch_propagates() {
+        let node = NdaNode::GpuDispatch {
+            shader_hash: 0,
+            args: vec![NdaNode::Matrix {
+                rows: 0, cols: 0, scale: 0, sign: vec![], extra: vec![],
+            }],
+        };
+        let issues = validate_node(&node);
+        assert!(issues.iter().any(|i| i.contains("gpu arg[0]")));
+    }
+
+    #[test]
+    fn validate_node_alloc_propagates() {
+        let node = NdaNode::Alloc {
+            size: Box::new(NdaNode::Matrix {
+                rows: 0, cols: 0, scale: 0, sign: vec![], extra: vec![],
+            }),
+        };
+        let issues = validate_node(&node);
+        assert!(issues.iter().any(|i| i.contains("alloc size")));
+    }
+
+    #[test]
+    fn validate_node_free_propagates() {
+        let node = NdaNode::Free {
+            addr: Box::new(NdaNode::Matrix {
+                rows: 0, cols: 0, scale: 0, sign: vec![], extra: vec![],
+            }),
+        };
+        let issues = validate_node(&node);
+        assert!(issues.iter().any(|i| i.contains("free addr")));
+    }
+
+    #[test]
+    fn validate_node_cast_propagates() {
+        let node = NdaNode::Cast {
+            from_type: TypeKind::Int,
+            to_type: TypeKind::Float,
+            operand: Box::new(NdaNode::Matrix {
+                rows: 0, cols: 0, scale: 0, sign: vec![], extra: vec![],
+            }),
+        };
+        let issues = validate_node(&node);
+        assert!(issues.iter().any(|i| i.contains("cast operand")));
+    }
 }
