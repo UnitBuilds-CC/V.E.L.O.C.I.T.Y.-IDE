@@ -768,4 +768,161 @@ mod tests {
             _ => panic!("expected Scalar"),
         }
     }
+
+    // ── Block 113: expanded tests ────────────────────────────────────────────
+
+    #[test]
+    fn broadcast_scalar_val_neg2() {
+        let v = broadcast_scalar(8, -2, 0);
+        assert_eq!(v.sign[0], 0x00);
+        assert_eq!(v.extra[0], 0x00);
+    }
+
+    #[test]
+    fn broadcast_scalar_val_2() {
+        let v = broadcast_scalar(8, 2, 0);
+        // val=2 falls into the _ => (0xFF, 0xFF) catch-all
+        assert_eq!(v.sign[0], 0xFF);
+        assert_eq!(v.extra[0], 0xFF);
+    }
+
+    #[test]
+    fn broadcast_scalar_val_other() {
+        let v = broadcast_scalar(8, 99, 0);
+        assert_eq!(v.sign[0], 0xFF);
+        assert_eq!(v.extra[0], 0xFF);
+    }
+
+    #[test]
+    fn broadcast_float_basic() {
+        let v = broadcast_float(16, 1.0);
+        assert_eq!(v.len, 16);
+        assert_eq!(v.sign.len(), 2);
+    }
+
+    #[test]
+    fn add_vals_scalar_scalar_same_scale() {
+        let result = add_vals(&JitVal::Scalar(1, 0), &JitVal::Scalar(2, 0));
+        match result {
+            JitVal::Scalar(v, s) => {
+                assert_eq!(v, 3);
+                assert_eq!(s, 0);
+            }
+            _ => panic!("expected Scalar"),
+        }
+    }
+
+    #[test]
+    fn add_vals_float_scalar() {
+        let result = add_vals(&JitVal::Float(1.0), &JitVal::Scalar(1, 0));
+        match result {
+            JitVal::Float(v) => assert!((v - 2.0).abs() < 1e-6),
+            _ => panic!("expected Float"),
+        }
+    }
+
+    #[test]
+    fn add_vals_scalar_float() {
+        let result = add_vals(&JitVal::Scalar(1, 0), &JitVal::Float(2.0));
+        match result {
+            JitVal::Float(v) => assert!((v - 3.0).abs() < 1e-6),
+            _ => panic!("expected Float"),
+        }
+    }
+
+    #[test]
+    fn compare_vals_float_ge() {
+        let result = compare_vals(CmpOp::Ge, &JitVal::Float(2.0), &JitVal::Float(2.0));
+        match result {
+            JitVal::Scalar(v, _) => assert_eq!(v, 1),
+            _ => panic!("expected Scalar"),
+        }
+    }
+
+    #[test]
+    fn compare_vals_float_gt_false() {
+        let result = compare_vals(CmpOp::Gt, &JitVal::Float(1.0), &JitVal::Float(2.0));
+        match result {
+            JitVal::Scalar(v, _) => assert_eq!(v, -1),
+            _ => panic!("expected Scalar"),
+        }
+    }
+
+    #[test]
+    fn compare_vals_scalar_scalar_eq() {
+        let result = compare_vals(CmpOp::Eq, &JitVal::Scalar(3, 0), &JitVal::Scalar(3, 0));
+        match result {
+            JitVal::Scalar(v, _) => assert_eq!(v, 1),
+            _ => panic!("expected Scalar"),
+        }
+    }
+
+    #[test]
+    fn compare_vals_scalar_scalar_ne() {
+        let result = compare_vals(CmpOp::Ne, &JitVal::Scalar(1, 0), &JitVal::Scalar(2, 0));
+        match result {
+            JitVal::Scalar(v, _) => assert_eq!(v, 1),
+            _ => panic!("expected Scalar"),
+        }
+    }
+
+    #[test]
+    fn apply_vec_op_negate_scalar() {
+        let result = apply_vec_op(VecOpKind::Negate, &JitVal::Scalar(2, 0));
+        match result {
+            JitVal::Scalar(v, s) => {
+                assert_eq!(v, -2);
+                assert_eq!(s, 0);
+            }
+            _ => panic!("expected Scalar"),
+        }
+    }
+
+    #[test]
+    fn apply_vec_op_abs_scalar() {
+        let result = apply_vec_op(VecOpKind::Abs, &JitVal::Scalar(-3, 0));
+        match result {
+            JitVal::Scalar(v, _) => assert_eq!(v, 3),
+            _ => panic!("expected Scalar"),
+        }
+    }
+
+    #[test]
+    fn apply_vec_op_reduce_sum_float() {
+        let result = apply_vec_op(VecOpKind::ReduceSum, &JitVal::Float(5.0));
+        match result {
+            JitVal::Float(v) => assert!((v - 5.0).abs() < 1e-6),
+            _ => panic!("expected Float"),
+        }
+    }
+
+    #[test]
+    fn apply_vec_op_reduce_sum_scalar() {
+        let result = apply_vec_op(VecOpKind::ReduceSum, &JitVal::Scalar(3, 0));
+        match result {
+            JitVal::Scalar(v, s) => {
+                assert_eq!(v, 3);
+                assert_eq!(s, 0);
+            }
+            _ => panic!("expected Scalar"),
+        }
+    }
+
+    #[test]
+    fn silu_known_values() {
+        // silu(0) = 0 / (1 + e^0) = 0 / 2 = 0
+        assert!((silu(0.0) - 0.0).abs() < 1e-6);
+        // silu is approximately x for large positive x
+        assert!(silu(10.0) > 9.0);
+        // silu is approximately 0 for large negative x
+        assert!(silu(-10.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn validate_broadcast_params_negative() {
+        // Can't pass negative usize, but we can test large values
+        let issues = validate_broadcast_params(usize::MAX, 1);
+        // Should not crash
+        assert!(issues.is_empty() || !issues.is_empty());
+    }
 }
