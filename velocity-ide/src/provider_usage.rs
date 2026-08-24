@@ -1644,4 +1644,952 @@ mod tests {
         let json = serde_json::to_string(&est).unwrap();
         assert!(json.contains("\"estimated_cost_usd\":1.23"));
     }
+
+    // ── Provider Display ──────────────────────────────────────────────────────
+
+    #[test]
+    fn provider_display_all_variants() {
+        assert_eq!(Provider::Openai.to_string(), "openai");
+        assert_eq!(Provider::Anthropic.to_string(), "anthropic");
+        assert_eq!(Provider::Google.to_string(), "google");
+        assert_eq!(Provider::Mistral.to_string(), "mistral");
+        assert_eq!(Provider::Cohere.to_string(), "cohere");
+        assert_eq!(Provider::Xai.to_string(), "xai");
+        assert_eq!(Provider::Github.to_string(), "github");
+    }
+
+    #[test]
+    fn provider_display_name_all() {
+        assert_eq!(Provider::Mistral.display_name(), "Mistral");
+        assert_eq!(Provider::Cohere.display_name(), "Cohere");
+        assert_eq!(Provider::Github.display_name(), "GitHub Copilot");
+    }
+
+    // ── from_str_loose extended ───────────────────────────────────────────────
+
+    #[test]
+    fn from_str_loose_google_ai_alias() {
+        assert_eq!(Provider::from_str_loose("google_ai"), Some(Provider::Google));
+    }
+
+    #[test]
+    fn from_str_loose_command_alias() {
+        assert_eq!(Provider::from_str_loose("command"), Some(Provider::Cohere));
+    }
+
+    #[test]
+    fn from_str_loose_github_copilot_alias() {
+        assert_eq!(Provider::from_str_loose("github_copilot"), Some(Provider::Github));
+    }
+
+    #[test]
+    fn from_str_loose_mistral_exact() {
+        assert_eq!(Provider::from_str_loose("mistral"), Some(Provider::Mistral));
+        assert_eq!(Provider::from_str_loose("MISTRAL"), Some(Provider::Mistral));
+    }
+
+    #[test]
+    fn from_str_loose_cohere_exact() {
+        assert_eq!(Provider::from_str_loose("cohere"), Some(Provider::Cohere));
+        assert_eq!(Provider::from_str_loose("Cohere"), Some(Provider::Cohere));
+    }
+
+    #[test]
+    fn from_str_loose_xai() {
+        assert_eq!(Provider::from_str_loose("xai"), Some(Provider::Xai));
+        assert_eq!(Provider::from_str_loose("XAI"), Some(Provider::Xai));
+    }
+
+    #[test]
+    fn from_str_loose_empty() {
+        assert_eq!(Provider::from_str_loose(""), None);
+    }
+
+    // ── api_base_url all providers ────────────────────────────────────────────
+
+    #[test]
+    fn api_base_url_all_providers() {
+        assert_eq!(Provider::Cohere.api_base_url(), "https://api.cohere.ai");
+        assert_eq!(Provider::Xai.api_base_url(), "https://api.x.ai");
+        assert_eq!(Provider::Github.api_base_url(), "https://api.github.com");
+    }
+
+    #[test]
+    fn api_base_url_all_start_with_https() {
+        let all = [
+            Provider::Openai, Provider::Anthropic, Provider::Google,
+            Provider::Mistral, Provider::Cohere, Provider::Xai, Provider::Github,
+        ];
+        for p in &all {
+            assert!(p.api_base_url().starts_with("https://"), "{} base URL doesn't start with https://", p);
+        }
+    }
+
+    // ── api_key_env_var all providers ─────────────────────────────────────────
+
+    #[test]
+    fn api_key_env_var_all() {
+        assert_eq!(Provider::Google.api_key_env_var(), "GOOGLE_AI_API_KEY");
+        assert_eq!(Provider::Mistral.api_key_env_var(), "MISTRAL_API_KEY");
+        assert_eq!(Provider::Cohere.api_key_env_var(), "COHERE_API_KEY");
+        assert_eq!(Provider::Xai.api_key_env_var(), "XAI_API_KEY");
+    }
+
+    #[test]
+    fn api_key_env_var_all_end_with_key_or_token() {
+        let all = [
+            Provider::Openai, Provider::Anthropic, Provider::Google,
+            Provider::Mistral, Provider::Cohere, Provider::Xai, Provider::Github,
+        ];
+        for p in &all {
+            let v = p.api_key_env_var();
+            assert!(v.ends_with("API_KEY") || v.ends_with("TOKEN"),
+                "{} env var '{}' doesn't end with API_KEY or TOKEN", p, v);
+        }
+    }
+
+    // ── model_pricing per provider ────────────────────────────────────────────
+
+    #[test]
+    fn model_pricing_google() {
+        let p = Provider::Google.model_pricing();
+        assert_eq!(p.len(), 3);
+        assert!(p.iter().any(|(m, _, _)| *m == "gemini-2.0-flash"));
+    }
+
+    #[test]
+    fn model_pricing_mistral() {
+        let p = Provider::Mistral.model_pricing();
+        assert_eq!(p.len(), 3);
+        assert!(p.iter().any(|(m, _, _)| *m == "codestral-latest"));
+    }
+
+    #[test]
+    fn model_pricing_cohere() {
+        let p = Provider::Cohere.model_pricing();
+        assert_eq!(p.len(), 2);
+        assert!(p.iter().any(|(m, _, _)| *m == "command-r-plus"));
+    }
+
+    #[test]
+    fn model_pricing_xai() {
+        let p = Provider::Xai.model_pricing();
+        assert_eq!(p.len(), 2);
+        assert!(p.iter().any(|(m, _, _)| *m == "grok-3"));
+    }
+
+    #[test]
+    fn model_pricing_input_lte_output() {
+        // For all providers, input price should be <= output price
+        let all = [
+            Provider::Openai, Provider::Anthropic, Provider::Google,
+            Provider::Mistral, Provider::Cohere, Provider::Xai,
+        ];
+        for p in &all {
+            for (model, input, output) in p.model_pricing() {
+                assert!(input <= output,
+                    "{}: {} input ({}) > output ({})", p, model, input, output);
+            }
+        }
+    }
+
+    // ── estimate_cost extended ────────────────────────────────────────────────
+
+    #[test]
+    fn estimate_cost_anthropic_sonnet() {
+        // claude-sonnet: $3/M input, $15/M output
+        let cost = estimate_cost(&Provider::Anthropic, "claude-sonnet-4-20250514", 1_000_000, 1_000_000).unwrap();
+        assert!((cost - 18.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn estimate_cost_google_flash() {
+        // gemini-2.0-flash: $0.075/M input, $0.30/M output
+        let cost = estimate_cost(&Provider::Google, "gemini-2.0-flash", 1_000_000, 1_000_000).unwrap();
+        assert!((cost - 0.375).abs() < 0.001);
+    }
+
+    #[test]
+    fn estimate_cost_mistral_large() {
+        // mistral-large: $2/M input, $6/M output
+        let cost = estimate_cost(&Provider::Mistral, "mistral-large-latest", 500_000, 500_000).unwrap();
+        assert!((cost - 4.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn estimate_cost_cohere_command_r() {
+        // command-r: $0.15/M input, $0.60/M output
+        let cost = estimate_cost(&Provider::Cohere, "command-r", 1_000_000, 0).unwrap();
+        assert!((cost - 0.15).abs() < 0.001);
+    }
+
+    #[test]
+    fn estimate_cost_xai_grok3() {
+        // grok-3: $3/M input, $15/M output
+        let cost = estimate_cost(&Provider::Xai, "grok-3", 0, 1_000_000).unwrap();
+        assert!((cost - 15.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn estimate_cost_input_only() {
+        let cost = estimate_cost(&Provider::Openai, "gpt-4o", 2_000_000, 0).unwrap();
+        assert!((cost - 5.0).abs() < 0.01); // 2M * $2.50/M
+    }
+
+    #[test]
+    fn estimate_cost_output_only() {
+        let cost = estimate_cost(&Provider::Openai, "gpt-4o", 0, 500_000).unwrap();
+        assert!((cost - 5.0).abs() < 0.01); // 500K * $10.00/M
+    }
+
+    #[test]
+    fn estimate_cost_github_returns_none() {
+        // GitHub has no per-model pricing
+        let cost = estimate_cost(&Provider::Github, "gpt-4o", 1000, 1000);
+        assert!(cost.is_none());
+    }
+
+    // ── compare_provider_costs extended ───────────────────────────────────────
+
+    #[test]
+    fn compare_provider_costs_gpt4o_only_openai() {
+        let estimates = compare_provider_costs("gpt-4o", 1_000_000, 1_000_000);
+        assert_eq!(estimates.len(), 1);
+        assert_eq!(estimates[0].provider, "openai");
+        assert_eq!(estimates[0].display_name, "OpenAI");
+        assert_eq!(estimates[0].model, "gpt-4o");
+    }
+
+    #[test]
+    fn compare_provider_costs_sorted_ascending() {
+        // Use a model name that might exist in multiple providers (if any)
+        // For now, verify single-entry is trivially sorted
+        let estimates = compare_provider_costs("gpt-4o-mini", 1_000_000, 1_000_000);
+        for w in estimates.windows(2) {
+            assert!(w[0].estimated_cost_usd <= w[1].estimated_cost_usd);
+        }
+    }
+
+    // ── ProviderCredential validate edge cases ────────────────────────────────
+
+    #[test]
+    fn credential_validate_empty_key() {
+        let cred = ProviderCredential {
+            provider: "openai".into(),
+            api_key: "".into(),
+            base_url: None,
+            model: None,
+        };
+        let issues = cred.validate();
+        assert!(issues.iter().any(|i| i.contains("empty")));
+    }
+
+    #[test]
+    fn credential_validate_exactly_8_chars_ok() {
+        let cred = ProviderCredential {
+            provider: "openai".into(),
+            api_key: "12345678".into(), // exactly 8 chars
+            base_url: None,
+            model: None,
+        };
+        let issues = cred.validate();
+        // 8 chars is NOT < 8, so no "too short" issue
+        assert!(!issues.iter().any(|i| i.contains("too short")));
+    }
+
+    #[test]
+    fn credential_validate_7_chars_too_short() {
+        let cred = ProviderCredential {
+            provider: "openai".into(),
+            api_key: "1234567".into(), // 7 chars
+            base_url: None,
+            model: None,
+        };
+        let issues = cred.validate();
+        assert!(issues.iter().any(|i| i.contains("too short")));
+    }
+
+    #[test]
+    fn credential_validate_http_base_url_ok() {
+        let cred = ProviderCredential {
+            provider: "openai".into(),
+            api_key: "sk-test-12345678".into(),
+            base_url: Some("http://localhost:8080".into()),
+            model: None,
+        };
+        let issues = cred.validate();
+        // http:// is valid, not just https://
+        assert!(!issues.iter().any(|i| i.contains("http://")));
+    }
+
+    #[test]
+    fn credential_validate_https_base_url_ok() {
+        let cred = ProviderCredential {
+            provider: "openai".into(),
+            api_key: "sk-test-12345678".into(),
+            base_url: Some("https://proxy.example.com".into()),
+            model: None,
+        };
+        assert!(cred.validate().is_empty());
+    }
+
+    #[test]
+    fn credential_validate_no_scheme_base_url() {
+        let cred = ProviderCredential {
+            provider: "openai".into(),
+            api_key: "sk-test-12345678".into(),
+            base_url: Some("proxy.example.com".into()),
+            model: None,
+        };
+        let issues = cred.validate();
+        assert!(issues.iter().any(|i| i.contains("http://")));
+    }
+
+    #[test]
+    fn credential_validate_multiple_issues() {
+        let cred = ProviderCredential {
+            provider: "".into(), // empty + unrecognized
+            api_key: "abc".into(), // empty + too short
+            base_url: Some("ftp://bad".into()), // bad scheme
+            model: None,
+        };
+        let issues = cred.validate();
+        assert!(issues.len() >= 4, "expected >= 4 issues, got {:?}", issues);
+    }
+
+    // ── masked_key boundary cases ─────────────────────────────────────────────
+
+    #[test]
+    fn masked_key_exactly_4_chars() {
+        let cred = ProviderCredential {
+            provider: "openai".into(),
+            api_key: "abcd".into(),
+            base_url: None,
+            model: None,
+        };
+        // 4 chars: not > 4, so falls to else => "****"
+        assert_eq!(cred.masked_key(), "****");
+    }
+
+    #[test]
+    fn masked_key_exactly_5_chars() {
+        let cred = ProviderCredential {
+            provider: "openai".into(),
+            api_key: "abcde".into(),
+            base_url: None,
+            model: None,
+        };
+        // 5 chars: > 4 but not > 12 => "abcd..."
+        let masked = cred.masked_key();
+        assert!(masked.starts_with("abcd"));
+        assert!(masked.contains("..."));
+    }
+
+    #[test]
+    fn masked_key_exactly_12_chars() {
+        let cred = ProviderCredential {
+            provider: "openai".into(),
+            api_key: "123456789012".into(),
+            base_url: None,
+            model: None,
+        };
+        // 12 chars: not > 12 => "1234..."
+        let masked = cred.masked_key();
+        assert!(masked.starts_with("1234"));
+        assert!(masked.contains("..."));
+        // Should NOT have the last-4 format
+        assert!(!masked.contains("...9012"));
+    }
+
+    #[test]
+    fn masked_key_exactly_13_chars() {
+        let cred = ProviderCredential {
+            provider: "openai".into(),
+            api_key: "1234567890123".into(),
+            base_url: None,
+            model: None,
+        };
+        // 13 chars: > 12 => "12345678...0123"
+        let masked = cred.masked_key();
+        assert_eq!(masked, "12345678...0123");
+    }
+
+    // ── validate_credentials extended ─────────────────────────────────────────
+
+    #[test]
+    fn validate_credentials_empty_list() {
+        let creds: Vec<ProviderCredential> = vec![];
+        let issues = validate_credentials(&creds);
+        assert!(issues.is_empty());
+    }
+
+    #[test]
+    fn validate_credentials_all_valid() {
+        let creds = vec![
+            ProviderCredential {
+                provider: "openai".into(),
+                api_key: "sk-test-12345678".into(),
+                base_url: None,
+                model: None,
+            },
+            ProviderCredential {
+                provider: "anthropic".into(),
+                api_key: "sk-ant-12345678".into(),
+                base_url: None,
+                model: None,
+            },
+        ];
+        let issues = validate_credentials(&creds);
+        assert!(issues.is_empty());
+    }
+
+    #[test]
+    fn validate_credentials_multiple_invalid() {
+        let creds = vec![
+            ProviderCredential { provider: "".into(), api_key: "".into(), base_url: None, model: None },
+            ProviderCredential { provider: "openai".into(), api_key: "sk-ok-12345678".into(), base_url: None, model: None },
+            ProviderCredential { provider: "bad".into(), api_key: "sk-bad-12345678".into(), base_url: None, model: None },
+        ];
+        let issues = validate_credentials(&creds);
+        // Index 0 and 2 have issues, index 1 is clean
+        assert_eq!(issues.len(), 2);
+        assert_eq!(issues[0].0, 0);
+        assert_eq!(issues[1].0, 2);
+    }
+
+    // ── find_by_provider extended ─────────────────────────────────────────────
+
+    #[test]
+    fn find_by_provider_no_matches() {
+        let creds = vec![
+            ProviderCredential { provider: "openai".into(), api_key: "sk-1".into(), base_url: None, model: None },
+        ];
+        let found = find_by_provider(&creds, "anthropic");
+        assert!(found.is_empty());
+    }
+
+    #[test]
+    fn find_by_provider_multiple_matches() {
+        let creds = vec![
+            ProviderCredential { provider: "openai".into(), api_key: "sk-1".into(), base_url: None, model: None },
+            ProviderCredential { provider: "OpenAI".into(), api_key: "sk-2".into(), base_url: None, model: None },
+            ProviderCredential { provider: "anthropic".into(), api_key: "sk-3".into(), base_url: None, model: None },
+        ];
+        let found = find_by_provider(&creds, "openai");
+        assert_eq!(found.len(), 2);
+    }
+
+    #[test]
+    fn find_by_provider_empty_list() {
+        let creds: Vec<ProviderCredential> = vec![];
+        let found = find_by_provider(&creds, "openai");
+        assert!(found.is_empty());
+    }
+
+    // ── find_duplicate_providers extended ─────────────────────────────────────
+
+    #[test]
+    fn find_duplicate_providers_empty() {
+        let creds: Vec<ProviderCredential> = vec![];
+        let dupes = find_duplicate_providers(&creds);
+        assert!(dupes.is_empty());
+    }
+
+    #[test]
+    fn find_duplicate_providers_triple_dedup() {
+        let creds = vec![
+            ProviderCredential { provider: "openai".into(), api_key: "sk-1".into(), base_url: None, model: None },
+            ProviderCredential { provider: "OpenAI".into(), api_key: "sk-2".into(), base_url: None, model: None },
+            ProviderCredential { provider: "OPENAI".into(), api_key: "sk-3".into(), base_url: None, model: None },
+        ];
+        let dupes = find_duplicate_providers(&creds);
+        // Should appear only once after dedup
+        assert_eq!(dupes.len(), 1);
+        assert_eq!(dupes[0], "openai");
+    }
+
+    #[test]
+    fn find_duplicate_providers_multiple_dupes() {
+        let creds = vec![
+            ProviderCredential { provider: "openai".into(), api_key: "sk-1".into(), base_url: None, model: None },
+            ProviderCredential { provider: "anthropic".into(), api_key: "sk-2".into(), base_url: None, model: None },
+            ProviderCredential { provider: "openai".into(), api_key: "sk-3".into(), base_url: None, model: None },
+            ProviderCredential { provider: "anthropic".into(), api_key: "sk-4".into(), base_url: None, model: None },
+        ];
+        let dupes = find_duplicate_providers(&creds);
+        assert_eq!(dupes.len(), 2);
+        // Sorted: anthropic < openai
+        assert_eq!(dupes[0], "anthropic");
+        assert_eq!(dupes[1], "openai");
+    }
+
+    // ── unix_to_iso extended ──────────────────────────────────────────────────
+
+    #[test]
+    fn unix_to_iso_epoch_zero() {
+        let iso = unix_to_iso(0);
+        assert_eq!(iso, "1970-01-01T00:00:00Z");
+    }
+
+    #[test]
+    fn unix_to_iso_known_date() {
+        // 2024-01-01T00:00:00Z = 1704067200
+        let iso = unix_to_iso(1704067200);
+        assert!(iso.starts_with("2024-01-01"), "got: {}", iso);
+    }
+
+    #[test]
+    fn unix_to_iso_leap_day() {
+        // 2024-02-29T00:00:00Z = 1709164800
+        let iso = unix_to_iso(1709164800);
+        assert!(iso.starts_with("2024-02-29"), "got: {}", iso);
+    }
+
+    #[test]
+    fn unix_to_iso_year_boundary() {
+        // 2023-12-31T00:00:00Z = 1703980800
+        let iso = unix_to_iso(1703980800);
+        assert!(iso.starts_with("2023-12-31"), "got: {}", iso);
+    }
+
+    #[test]
+    fn unix_to_iso_format_always_valid() {
+        // Test several timestamps and verify format
+        for secs in [0, 86400, 31536000, 1000000000, 1700000000] {
+            let iso = unix_to_iso(secs);
+            assert!(iso.ends_with("T00:00:00Z"), "bad format: {}", iso);
+            assert_eq!(iso.len(), 20, "bad length for: {}", iso);
+        }
+    }
+
+    // ── is_leap extended ──────────────────────────────────────────────────────
+
+    #[test]
+    fn is_leap_century_rules() {
+        assert!(!is_leap(1800));
+        assert!(!is_leap(1900));
+        assert!(!is_leap(2100));
+        assert!(is_leap(1600));
+        assert!(is_leap(2000));
+        assert!(is_leap(2400));
+    }
+
+    #[test]
+    fn is_leap_regular_years() {
+        for y in [2021, 2022, 2023, 2025, 2026, 2027] {
+            assert!(!is_leap(y), "{} should not be leap", y);
+        }
+    }
+
+    #[test]
+    fn is_leap_leap_years() {
+        for y in [2000, 2004, 2008, 2012, 2016, 2020, 2024] {
+            assert!(is_leap(y), "{} should be leap", y);
+        }
+    }
+
+    // ── velocity_dir ──────────────────────────────────────────────────────────
+
+    #[test]
+    fn velocity_dir_ends_with_dot_velocity() {
+        let dir = velocity_dir();
+        assert!(dir.to_str().unwrap().ends_with(".velocity"));
+    }
+
+    // ── UsageSnapshot validate edge cases ─────────────────────────────────────
+
+    #[test]
+    fn snapshot_validate_empty_provider_name() {
+        let snap = UsageSnapshot {
+            generated_at: "test".into(),
+            providers: vec![ProviderUsage {
+                provider: "".into(),
+                display_name: "Test".into(),
+                key_valid: true,
+                has_usage_api: false,
+                tokens_used: 0,
+                cost_usd: 0.0,
+                request_count: 0,
+                period_start: None,
+                period_end: None,
+                status: "ok".into(),
+                models: vec![],
+            }],
+            total_tokens: 0,
+            total_cost_usd: 0.0,
+            total_requests: 0,
+        };
+        let issues = snap.validate();
+        assert!(issues.iter().any(|i| i.contains("empty provider name")));
+    }
+
+    #[test]
+    fn snapshot_validate_empty_display_name() {
+        let snap = UsageSnapshot {
+            generated_at: "test".into(),
+            providers: vec![ProviderUsage {
+                provider: "openai".into(),
+                display_name: "".into(),
+                key_valid: true,
+                has_usage_api: false,
+                tokens_used: 0,
+                cost_usd: 0.0,
+                request_count: 0,
+                period_start: None,
+                period_end: None,
+                status: "ok".into(),
+                models: vec![],
+            }],
+            total_tokens: 0,
+            total_cost_usd: 0.0,
+            total_requests: 0,
+        };
+        let issues = snap.validate();
+        assert!(issues.iter().any(|i| i.contains("empty display_name")));
+    }
+
+    #[test]
+    fn snapshot_validate_both_mismatches() {
+        let mut snap = make_test_snapshot();
+        snap.total_tokens = 99999;
+        snap.total_cost_usd = 999.99;
+        let issues = snap.validate();
+        assert!(issues.iter().any(|i| i.contains("total_tokens")));
+        assert!(issues.iter().any(|i| i.contains("total_cost_usd")));
+    }
+
+    // ── UsageSnapshot info edge cases ─────────────────────────────────────────
+
+    #[test]
+    fn snapshot_info_no_valid_keys() {
+        let snap = UsageSnapshot {
+            generated_at: "test".into(),
+            providers: vec![ProviderUsage {
+                provider: "openai".into(),
+                display_name: "OpenAI".into(),
+                key_valid: false,
+                has_usage_api: true,
+                tokens_used: 0,
+                cost_usd: 0.0,
+                request_count: 0,
+                period_start: None,
+                period_end: None,
+                status: "invalid".into(),
+                models: vec![],
+            }],
+            total_tokens: 0,
+            total_cost_usd: 0.0,
+            total_requests: 0,
+        };
+        let info = snap.info();
+        assert_eq!(info.providers_with_valid_keys, 0);
+        assert_eq!(info.providers_with_usage_api, 1);
+    }
+
+    #[test]
+    fn snapshot_info_models_tracked_sum() {
+        let snap = make_test_snapshot();
+        let info = snap.info();
+        // openai has 2 models, anthropic has 0, cohere has 0
+        assert_eq!(info.total_models_tracked, 2);
+    }
+
+    // ── cost_breakdown extended ───────────────────────────────────────────────
+
+    #[test]
+    fn cost_breakdown_single_provider() {
+        let snap = UsageSnapshot {
+            generated_at: "test".into(),
+            providers: vec![ProviderUsage {
+                provider: "openai".into(),
+                display_name: "OpenAI".into(),
+                key_valid: true,
+                has_usage_api: true,
+                tokens_used: 100,
+                cost_usd: 5.0,
+                request_count: 10,
+                period_start: None,
+                period_end: None,
+                status: "ok".into(),
+                models: vec![],
+            }],
+            total_tokens: 100,
+            total_cost_usd: 5.0,
+            total_requests: 10,
+        };
+        let breakdown = snap.cost_breakdown();
+        assert_eq!(breakdown.per_provider.len(), 1);
+        assert!((breakdown.per_provider[0].percentage_of_total - 100.0).abs() < 0.01);
+        assert_eq!(breakdown.highest_cost_provider, Some("openai".to_string()));
+    }
+
+    #[test]
+    fn cost_breakdown_estimated_monthly_equals_total() {
+        let snap = make_test_snapshot();
+        let breakdown = snap.cost_breakdown();
+        assert!((breakdown.estimated_monthly_usd - breakdown.total_cost_usd).abs() < 0.001);
+    }
+
+    #[test]
+    fn cost_breakdown_no_providers() {
+        let snap = UsageSnapshot {
+            generated_at: "test".into(),
+            providers: vec![],
+            total_tokens: 0,
+            total_cost_usd: 0.0,
+            total_requests: 0,
+        };
+        let breakdown = snap.cost_breakdown();
+        assert!(breakdown.per_provider.is_empty());
+        assert_eq!(breakdown.highest_cost_provider, None);
+    }
+
+    // ── Struct derives ────────────────────────────────────────────────────────
+
+    #[test]
+    fn provider_credential_clone_debug() {
+        let cred = ProviderCredential {
+            provider: "openai".into(),
+            api_key: "sk-test".into(),
+            base_url: Some("https://proxy.example.com".into()),
+            model: Some("gpt-4o".into()),
+        };
+        let cloned = cred.clone();
+        assert_eq!(cloned.provider, "openai");
+        assert_eq!(cloned.api_key, "sk-test");
+        assert_eq!(cloned.base_url.as_deref(), Some("https://proxy.example.com"));
+        assert_eq!(cloned.model.as_deref(), Some("gpt-4o"));
+        // Debug
+        let debug = format!("{:?}", cred);
+        assert!(debug.contains("ProviderCredential"));
+    }
+
+    #[test]
+    fn provider_clone_debug() {
+        let p = Provider::Openai;
+        let cloned = p.clone();
+        assert_eq!(cloned, Provider::Openai);
+        let debug = format!("{:?}", p);
+        assert!(debug.contains("Openai"));
+    }
+
+    #[test]
+    fn usage_snapshot_clone_debug() {
+        let snap = make_test_snapshot();
+        let cloned = snap.clone();
+        assert_eq!(cloned.total_tokens, snap.total_tokens);
+        assert_eq!(cloned.providers.len(), snap.providers.len());
+        let debug = format!("{:?}", snap);
+        assert!(debug.contains("UsageSnapshot"));
+    }
+
+    #[test]
+    fn provider_usage_clone_debug() {
+        let pu = ProviderUsage {
+            provider: "test".into(),
+            display_name: "Test".into(),
+            key_valid: true,
+            has_usage_api: false,
+            tokens_used: 100,
+            cost_usd: 0.5,
+            request_count: 5,
+            period_start: None,
+            period_end: None,
+            status: "ok".into(),
+            models: vec![],
+        };
+        let cloned = pu.clone();
+        assert_eq!(cloned.provider, "test");
+        assert_eq!(cloned.tokens_used, 100);
+    }
+
+    #[test]
+    fn model_usage_clone_debug() {
+        let mu = ModelUsage {
+            model: "gpt-4o".into(),
+            tokens: 50000,
+            cost_usd: 1.5,
+            requests: 42,
+        };
+        let cloned = mu.clone();
+        assert_eq!(cloned.model, "gpt-4o");
+        assert_eq!(cloned.tokens, 50000);
+    }
+
+    #[test]
+    fn provider_cost_estimate_clone_debug() {
+        let est = ProviderCostEstimate {
+            provider: "openai".into(),
+            display_name: "OpenAI".into(),
+            model: "gpt-4o".into(),
+            estimated_cost_usd: 1.23,
+        };
+        let cloned = est.clone();
+        assert_eq!(cloned.provider, "openai");
+        let debug = format!("{:?}", est);
+        assert!(debug.contains("ProviderCostEstimate"));
+    }
+
+    #[test]
+    fn usage_snapshot_info_clone_debug() {
+        let snap = make_test_snapshot();
+        let info = snap.info();
+        let cloned = info.clone();
+        assert_eq!(cloned.provider_count, info.provider_count);
+        let debug = format!("{:?}", info);
+        assert!(debug.contains("UsageSnapshotInfo"));
+    }
+
+    #[test]
+    fn provider_summary_clone_debug() {
+        let s = ProviderSummary {
+            provider: "openai".into(),
+            display_name: "OpenAI".into(),
+            key_valid: true,
+            cost_usd: 1.5,
+            tokens_used: 50000,
+            model_count: 2,
+            status: "ok".into(),
+        };
+        let cloned = s.clone();
+        assert_eq!(cloned.provider, "openai");
+    }
+
+    #[test]
+    fn cost_breakdown_clone_debug() {
+        let snap = make_test_snapshot();
+        let bd = snap.cost_breakdown();
+        let cloned = bd.clone();
+        assert!((cloned.total_cost_usd - bd.total_cost_usd).abs() < 0.001);
+    }
+
+    #[test]
+    fn provider_cost_clone_debug() {
+        let pc = ProviderCost {
+            provider: "openai".into(),
+            display_name: "OpenAI".into(),
+            cost_usd: 1.5,
+            percentage_of_total: 75.0,
+        };
+        let cloned = pc.clone();
+        assert_eq!(cloned.provider, "openai");
+    }
+
+    // ── ModelUsage serialization ──────────────────────────────────────────────
+
+    #[test]
+    fn model_usage_serializes() {
+        let mu = ModelUsage {
+            model: "gpt-4o".into(),
+            tokens: 50000,
+            cost_usd: 1.23,
+            requests: 42,
+        };
+        let json = serde_json::to_string(&mu).unwrap();
+        assert!(json.contains("\"model\":\"gpt-4o\""));
+        assert!(json.contains("\"tokens\":50000"));
+        let parsed: ModelUsage = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed.model, "gpt-4o");
+        assert_eq!(parsed.tokens, 50000);
+    }
+
+    // ── Provider serde ────────────────────────────────────────────────────────
+
+    #[test]
+    fn provider_serde_roundtrip() {
+        let p = Provider::Anthropic;
+        let json = serde_json::to_string(&p).unwrap();
+        assert_eq!(json, "\"anthropic\"");
+        let parsed: Provider = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed, Provider::Anthropic);
+    }
+
+    #[test]
+    fn provider_serde_all_variants() {
+        let all = [
+            Provider::Openai, Provider::Anthropic, Provider::Google,
+            Provider::Mistral, Provider::Cohere, Provider::Xai, Provider::Github,
+        ];
+        for p in &all {
+            let json = serde_json::to_string(p).unwrap();
+            let parsed: Provider = serde_json::from_str(&json).unwrap();
+            assert_eq!(&parsed, p);
+        }
+    }
+
+    // ── chrono_utc_now ────────────────────────────────────────────────────────
+
+    #[test]
+    fn chrono_utc_now_format() {
+        let now = chrono_utc_now();
+        // Should be ISO-8601: YYYY-MM-DDTHH:MM:SSZ
+        assert_eq!(now.len(), 20, "bad length: {}", now);
+        assert!(now.ends_with('Z'), "should end with Z: {}", now);
+        assert!(now.contains('T'), "should contain T: {}", now);
+        // Year should be reasonable (2024+)
+        assert!(now.starts_with("202"), "unexpected year: {}", now);
+    }
+
+    // ── ProviderSummary serialization ─────────────────────────────────────────
+
+    #[test]
+    fn provider_summary_fields() {
+        let s = ProviderSummary {
+            provider: "anthropic".into(),
+            display_name: "Anthropic".into(),
+            key_valid: false,
+            cost_usd: 0.0,
+            tokens_used: 0,
+            model_count: 0,
+            status: "invalid key".into(),
+        };
+        let json = serde_json::to_string(&s).unwrap();
+        assert!(json.contains("\"provider\":\"anthropic\""));
+        assert!(json.contains("\"key_valid\":false"));
+        assert!(json.contains("\"status\":\"invalid key\""));
+    }
+
+    // ── snapshot validate cost tolerance ──────────────────────────────────────
+
+    #[test]
+    fn snapshot_validate_cost_within_tolerance() {
+        let mut snap = make_test_snapshot();
+        // Adjust by 0.005 — within the 0.01 tolerance
+        snap.total_cost_usd = 2.005;
+        let issues = snap.validate();
+        assert!(!issues.iter().any(|i| i.contains("total_cost_usd")),
+            "should be within tolerance, got: {:?}", issues);
+    }
+
+    #[test]
+    fn snapshot_validate_cost_outside_tolerance() {
+        let mut snap = make_test_snapshot();
+        snap.total_cost_usd = 2.02; // 0.02 off, > 0.01 tolerance
+        let issues = snap.validate();
+        assert!(issues.iter().any(|i| i.contains("total_cost_usd")));
+    }
+
+    // ── provider_summaries extended ───────────────────────────────────────────
+
+    #[test]
+    fn provider_summaries_preserves_order() {
+        let snap = make_test_snapshot();
+        let summaries = snap.provider_summaries();
+        assert_eq!(summaries[0].provider, "openai");
+        assert_eq!(summaries[1].provider, "anthropic");
+        assert_eq!(summaries[2].provider, "cohere");
+    }
+
+    #[test]
+    fn provider_summaries_empty_snapshot() {
+        let snap = UsageSnapshot {
+            generated_at: "test".into(),
+            providers: vec![],
+            total_tokens: 0,
+            total_cost_usd: 0.0,
+            total_requests: 0,
+        };
+        let summaries = snap.provider_summaries();
+        assert!(summaries.is_empty());
+    }
 }
