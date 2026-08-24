@@ -414,4 +414,197 @@ mod tests {
         assert_eq!(final_i, 0);
         assert_eq!(sum_delta, 0);
     }
+
+    // ── Block 110: expanded tests ────────────────────────────────────────────
+
+    #[test]
+    fn closed_form_negative_step() {
+        // count=4, step=-1: i goes 0,-1,-2,-3 -> final_i=-4, sum=0+(-1)+(-2)+(-3)=-6
+        let (final_i, sum_delta) = symbolic_loop_closed_form(4, -1);
+        assert_eq!(final_i, -4);
+        assert_eq!(sum_delta, -6);
+    }
+
+    #[test]
+    fn closed_form_zero_step() {
+        let (final_i, sum_delta) = symbolic_loop_closed_form(10, 0);
+        assert_eq!(final_i, 0);
+        assert_eq!(sum_delta, 0);
+    }
+
+    #[test]
+    fn closed_form_large_count() {
+        let (final_i, sum_delta) = symbolic_loop_closed_form(1000, 1);
+        assert_eq!(final_i, 1000);
+        assert_eq!(sum_delta, 1000 * 999 / 2);
+    }
+
+    #[test]
+    fn validate_body_too_large() {
+        let body: Vec<NdaNode> = (0..101).map(|_| NdaNode::Int { value: 0 }).collect();
+        let issues = validate_symbolic_loop_params(10, &body);
+        assert!(issues.iter().any(|i| i.contains("too large")));
+    }
+
+    #[test]
+    fn validate_body_exactly_100_ok() {
+        let body: Vec<NdaNode> = (0..100).map(|_| NdaNode::Int { value: 0 }).collect();
+        let issues = validate_symbolic_loop_params(10, &body);
+        assert!(issues.is_empty());
+    }
+
+    #[test]
+    fn validate_multiple_issues() {
+        let issues = validate_symbolic_loop_params(0, &[]);
+        assert!(issues.len() >= 2); // zero count + empty body
+    }
+
+    #[test]
+    fn analyze_reversed_increment() {
+        // Int + Load instead of Load + Int
+        let var_hash: u64 = 0x01;
+        let body = vec![
+            NdaNode::Store {
+                name_hash: var_hash,
+                value: Box::new(NdaNode::Add {
+                    lhs: Box::new(NdaNode::Int { value: 3 }),
+                    rhs: Box::new(NdaNode::Load { name_hash: var_hash }),
+                }),
+            },
+            NdaNode::Int { value: 0 },
+        ];
+        let info = analyze_loop_body(10, &body);
+        assert!(info.has_increment_pattern);
+        let pat = info.detected_pattern;
+        // only increment, no accumulator → no full pattern
+        assert!(pat.is_none());
+    }
+
+    #[test]
+    fn analyze_reversed_accumulator() {
+        // Load + Load reversed for accumulator
+        let i_hash: u64 = 0xAAAA;
+        let sum_hash: u64 = 0xBBBB;
+        let body = vec![
+            make_inc_store(i_hash, 1),
+            NdaNode::Store {
+                name_hash: sum_hash,
+                value: Box::new(NdaNode::Add {
+                    lhs: Box::new(NdaNode::Load { name_hash: i_hash }),
+                    rhs: Box::new(NdaNode::Load { name_hash: sum_hash }),
+                }),
+            },
+        ];
+        let info = analyze_loop_body(10, &body);
+        assert!(info.has_increment_pattern);
+        assert!(info.has_accumulator_pattern);
+        assert!(info.detected_pattern.is_some());
+    }
+
+    #[test]
+    fn analyze_same_var_for_inc_and_acc_not_eligible() {
+        // sum_hash == i_hash → not eligible
+        let var_hash: u64 = 0xAAAA;
+        let body = vec![
+            make_inc_store(var_hash, 1),
+            make_acc_store(var_hash, var_hash),
+        ];
+        let info = analyze_loop_body(10, &body);
+        assert!(info.has_increment_pattern);
+        assert!(info.has_accumulator_pattern);
+        // But pattern should be None because sum_hash == i_hash
+        assert!(info.detected_pattern.is_none());
+    }
+
+    #[test]
+    fn detect_body_too_long() {
+        let body = vec![
+            make_inc_store(0x01, 1),
+            make_acc_store(0x02, 0x01),
+            NdaNode::Int { value: 99 },
+        ];
+        let mut emitter = X86Emitter::new();
+        let registry = VarRegistry::new();
+        let result = detect_and_compile_symbolic_loop(10, &body, &mut emitter, &registry).unwrap();
+        assert!(!result); // body.len() != 2 → false
+    }
+
+    #[test]
+    fn detect_body_wrong_shape() {
+        let body = vec![
+            NdaNode::Int { value: 1 },
+            NdaNode::Int { value: 2 },
+        ];
+        let mut emitter = X86Emitter::new();
+        let registry = VarRegistry::new();
+        let result = detect_and_compile_symbolic_loop(10, &body, &mut emitter, &registry).unwrap();
+        assert!(!result);
+    }
+
+    #[test]
+    fn detect_eligible_pattern_emits_bytes() {
+        let i_hash: u64 = 0xAAAA;
+        let sum_hash: u64 = 0xBBBB;
+        let body = vec![
+            make_inc_store(i_hash, 1),
+            make_acc_store(sum_hash, i_hash),
+        ];
+        let mut emitter = X86Emitter::new();
+        let registry = VarRegistry::new();
+        let result = detect_and_compile_symbolic_loop(10, &body, &mut emitter, &registry).unwrap();
+        assert!(result);
+        assert!(!emitter.buf.is_empty());
+    }
+
+    #[test]
+    fn pattern_struct_equality() {
+        let p1 = SymbolicLoopPattern {
+            increment_var_hash: 1, increment_step: 2,
+            accumulator_var_hash: 3, added_var_hash: 1,
+            is_native_eligible: true,
+        };
+        let p2 = p1.clone();
+        assert_eq!(p1, p2);
+    }
+
+    #[test]
+    fn pattern_struct_serializes() {
+        let p = SymbolicLoopPattern {
+            increment_var_hash: 0xAA, increment_step: 3,
+            accumulator_var_hash: 0xBB, added_var_hash: 0xAA,
+            is_native_eligible: true,
+        };
+        let json = serde_json::to_string(&p).unwrap();
+        assert!(json.contains("\"increment_step\":3"));
+        assert!(json.contains("\"is_native_eligible\":true"));
+    }
+
+    #[test]
+    fn loop_analysis_info_serializes() {
+        let info = LoopAnalysisInfo {
+            body_node_count: 2,
+            has_increment_pattern: true,
+            has_accumulator_pattern: false,
+            detected_pattern: None,
+            validation_issues: vec![],
+        };
+        let json = serde_json::to_string(&info).unwrap();
+        assert!(json.contains("\"body_node_count\":2"));
+        assert!(json.contains("\"has_increment_pattern\":true"));
+    }
+
+    #[test]
+    fn loop_analysis_info_with_pattern() {
+        let i_hash: u64 = 0x01;
+        let sum_hash: u64 = 0x02;
+        let body = vec![
+            make_inc_store(i_hash, 1),
+            make_acc_store(sum_hash, i_hash),
+        ];
+        let info = analyze_loop_body(5, &body);
+        assert!(info.detected_pattern.is_some());
+        let pat = info.detected_pattern.unwrap();
+        assert_eq!(pat.increment_step, 1);
+        assert!(info.validation_issues.is_empty());
+    }
 }
