@@ -23,6 +23,7 @@ use std::{
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use serde::{Deserialize, Serialize};
+use velocity_client::VelocityConfig;
 
 // ─── CLI definition ────────────────────────────────────────────────────────
 
@@ -233,6 +234,146 @@ struct CompletionsArgs {
     shell: String,
 }
 
+// ─── Diagnostics & Validation ────────────────────────────────────────────────
+
+/// Snapshot of the CLI environment: config files, env vars, provider keys.
+#[derive(Debug, Clone, Serialize)]
+pub struct CliEnvironment {
+    pub velocity_configured: bool,
+    pub velocity_url_set: bool,
+    pub velocity_key_set: bool,
+    pub config_file_exists: bool,
+    pub provider_count: usize,
+    pub credential_boundary_active: bool,
+    pub validation_issues: Vec<String>,
+}
+
+/// Inspect the CLI environment without making network calls.
+pub fn inspect_environment() -> CliEnvironment {
+    let url_set = std::env::var("VELOCITY_BASE_URL").is_ok();
+    let key_set = std::env::var("VELOCITY_API_KEY").is_ok();
+    let config_file_exists = velocity_client::dirs_next()
+        .map(|h: std::path::PathBuf| h.join(".velocity").join("config.toml").exists())
+        .unwrap_or(false);
+    let provider_count = provider_usage::load_credentials()
+        .map(|c| c.len())
+        .unwrap_or(0);
+    let velocity_configured = url_set && key_set || config_file_exists;
+    // credential_guard scrubs env vars on account load; check if scrub happened.
+    let credential_boundary_active = std::env::var("VELOCITY_API_KEY").is_err()
+        && config_file_exists;
+    let mut issues = Vec::new();
+    if !velocity_configured {
+        issues.push("Velocity Router not configured (no env vars or config file)".into());
+    }
+    if url_set && !key_set {
+        issues.push("VELOCITY_BASE_URL set but VELOCITY_API_KEY is missing".into());
+    }
+    if key_set && !url_set {
+        issues.push("VELOCITY_API_KEY set but VELOCITY_BASE_URL is missing".into());
+    }
+    CliEnvironment {
+        velocity_configured,
+        velocity_url_set: url_set,
+        velocity_key_set: key_set,
+        config_file_exists,
+        provider_count,
+        credential_boundary_active,
+        validation_issues: issues,
+    }
+}
+
+/// Validate generate arguments before dispatching to a backend.
+fn validate_generate_args(args: &GenerateArgs) -> Vec<String> {
+    let mut issues = Vec::new();
+    if args.max_tokens == 0 {
+        issues.push("--max-tokens must be > 0".into());
+    }
+    if args.max_tokens > 100_000 {
+        issues.push("--max-tokens exceeds 100,000 (likely unintended)".into());
+    }
+    if args.temperature < 0.0 {
+        issues.push("--temperature must be >= 0.0".into());
+    }
+    if args.temperature > 5.0 {
+        issues.push("--temperature exceeds 5.0 (likely unintended)".into());
+    }
+    if args.top_p < 0.0 || args.top_p > 1.0 {
+        issues.push("--top-p must be between 0.0 and 1.0".into());
+    }
+    match args.arch.as_str() {
+        "bitnet3b" | "bitnet" | "qwen05" | "qwen" => {}
+        other => issues.push(format!("Unknown --arch '{}'. Use 'bitnet3b' or 'qwen05'.", other)),
+    }
+    match args.mode.as_str() {
+        "text" | "nda" | "auto" => {}
+        other => issues.push(format!("Unknown --mode '{}'. Use 'text', 'nda', or 'auto'.", other)),
+    }
+    if args.prompt.is_none() && args.prompt_file.is_none() {
+        issues.push("Either --prompt or --prompt-file must be provided".into());
+    }
+    issues
+}
+
+/// Validate chat arguments.
+fn validate_chat_args(args: &ChatArgs) -> Vec<String> {
+    let mut issues = Vec::new();
+    if args.max_tokens == 0 {
+        issues.push("--max-tokens must be > 0".into());
+    }
+    if args.temperature < 0.0 {
+        issues.push("--temperature must be >= 0.0".into());
+    }
+    if args.top_p < 0.0 || args.top_p > 1.0 {
+        issues.push("--top-p must be between 0.0 and 1.0".into());
+    }
+    match args.arch.as_str() {
+        "bitnet3b" | "bitnet" | "qwen05" | "qwen" => {}
+        other => issues.push(format!("Unknown --arch '{}'. Use 'bitnet3b' or 'qwen05'.", other)),
+    }
+    issues
+}
+
+/// Validate seed arguments.
+fn validate_seed_args(args: &SeedArgs) -> Vec<String> {
+    let mut issues = Vec::new();
+    if args.source.is_empty() {
+        issues.push("No source files specified. Use --source seeds/*.rs".into());
+    }
+    // Validate weight_root is valid hex.
+    let hex = args.weight_root.trim_start_matches("0x");
+    if !hex.is_empty() && u64::from_str_radix(hex, 16).is_err() {
+        issues.push(format!("Invalid --weight-root hex: '{}'", args.weight_root));
+    }
+    issues
+}
+
+/// Diagnostic summary of the CLI configuration and environment.
+#[derive(Debug, Clone, Serialize)]
+pub struct CliDiagnostics {
+    pub environment: CliEnvironment,
+    pub velocity_config: Option<velocity_client::ConnectionInfo>,
+    pub available_subcommands: Vec<&'static str>,
+}
+
+/// Build a full CLI diagnostic snapshot.
+pub fn cli_diagnostics() -> CliDiagnostics {
+    let env = inspect_environment();
+    let velocity_config = if env.velocity_configured {
+        VelocityConfig::load().ok().map(|c| c.connection_info())
+    } else {
+        None
+    };
+    CliDiagnostics {
+        environment: env,
+        velocity_config,
+        available_subcommands: vec![
+            "generate", "benchmark", "seed", "chat", "usage",
+            "login", "providers", "status", "transparency", "completions",
+        ],
+    }
+}
+
 // ─── Entry point ───────────────────────────────────────────────────────────
 
 fn main() -> Result<()> {
@@ -243,12 +384,45 @@ fn main() -> Result<()> {
     if cli.verbose {
         log::info!("Verbose mode enabled");
         log::info!("velocity-ide v{}", env!("CARGO_PKG_VERSION"));
+        let env = inspect_environment();
+        log::info!("Velocity configured: {}", env.velocity_configured);
+        log::info!("Provider keys: {}", env.provider_count);
+        if !env.validation_issues.is_empty() {
+            for issue in &env.validation_issues {
+                log::warn!("Environment: {}", issue);
+            }
+        }
     }
 
     match cli.command {
-        Command::Chat(args) => run_chat(args),
-        Command::Seed(args) => run_seed(args),
+        Command::Chat(args) => {
+            let issues = validate_chat_args(&args);
+            if !issues.is_empty() {
+                for issue in &issues {
+                    eprintln!("Error: {}", issue);
+                }
+                anyhow::bail!("Invalid chat arguments ({} issue(s))", issues.len());
+            }
+            run_chat(args)
+        }
+        Command::Seed(args) => {
+            let issues = validate_seed_args(&args);
+            if !issues.is_empty() {
+                for issue in &issues {
+                    eprintln!("Error: {}", issue);
+                }
+                anyhow::bail!("Invalid seed arguments ({} issue(s))", issues.len());
+            }
+            run_seed(args)
+        }
         Command::Generate(args) => {
+            let issues = validate_generate_args(&args);
+            if !issues.is_empty() {
+                for issue in &issues {
+                    eprintln!("Error: {}", issue);
+                }
+                anyhow::bail!("Invalid generate arguments ({} issue(s))", issues.len());
+            }
             if args.zero_float {
                 let mode = crate::pipeline_nda::PipelineMode::from_str(&args.mode);
                 if mode != crate::pipeline_nda::PipelineMode::Text {
@@ -286,7 +460,7 @@ fn main() -> Result<()> {
         Command::Usage(args) => run_usage(args, cli.json),
         Command::Login(args) => run_login(args),
         Command::Providers(args) => run_providers(args, cli.json),
-        Command::Status => run_status(cli.json),
+        Command::Status => run_status(cli.json, cli.verbose),
         Command::Transparency => run_transparency(cli.json),
         Command::Completions(args) => run_completions(args),
     }
@@ -1050,6 +1224,15 @@ fn run_login(args: LoginArgs) -> Result<()> {
         base_url: args.url,
         api_key: args.key,
     };
+
+    // Validate before saving.
+    let warnings = config.validate();
+    if !warnings.is_empty() {
+        for w in &warnings {
+            eprintln!("Warning: {}", w);
+        }
+    }
+
     config.save()?;
 
     println!();
@@ -1243,8 +1426,42 @@ fn run_providers(args: ProvidersArgs, json: bool) -> Result<()> {
 
 // ─── Status ──────────────────────────────────────────────────────────────
 
-fn run_status(json: bool) -> Result<()> {
+fn run_status(json: bool, verbose: bool) -> Result<()> {
     use velocity_client::VelocityClient;
+
+    // Extended diagnostics in verbose mode.
+    if verbose {
+        let diag = cli_diagnostics();
+        if json {
+            println!("{}", serde_json::to_string_pretty(&diag)?);
+            return Ok(());
+        }
+        println!();
+        println!("=== CLI Environment ===");
+        println!();
+        println!("  Velocity configured:  {}", diag.environment.velocity_configured);
+        println!("  Config file exists:   {}", diag.environment.config_file_exists);
+        println!("  Provider keys:        {}", diag.environment.provider_count);
+        println!("  Credential boundary:  {}", diag.environment.credential_boundary_active);
+        if let Some(ref conn) = diag.velocity_config {
+            println!("  Router URL:           {}", conn.base_url);
+            println!("  HTTPS:                {}", conn.is_https);
+            println!("  API key prefix:       {}", conn.api_key_prefix);
+            if !conn.validation_issues.is_empty() {
+                for issue in &conn.validation_issues {
+                    println!("  WARNING: {}", issue);
+                }
+            }
+        }
+        if !diag.environment.validation_issues.is_empty() {
+            println!();
+            println!("  Environment Issues:");
+            for issue in &diag.environment.validation_issues {
+                println!("    - {}", issue);
+            }
+        }
+        println!();
+    }
 
     let client = VelocityClient::from_env()?;
 

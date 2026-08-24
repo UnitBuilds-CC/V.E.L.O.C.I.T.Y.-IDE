@@ -117,7 +117,7 @@ fn parse_toml_simple(content: &str) -> HashMap<String, String> {
 }
 
 /// Simple home directory lookup without adding a dependency.
-fn dirs_next() -> Option<std::path::PathBuf> {
+pub fn dirs_next() -> Option<std::path::PathBuf> {
     std::env::var_os("USERPROFILE")
         .or_else(|| std::env::var_os("HOME"))
         .map(std::path::PathBuf::from)
