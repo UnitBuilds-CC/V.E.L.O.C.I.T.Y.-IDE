@@ -306,6 +306,96 @@ pub fn ast_structural_hash(nodes: &[NdaNode]) -> u64 {
     hasher.finish()
 }
 
+/// Estimate the memory footprint of cached JIT programs.
+pub fn jit_cache_memory_estimate() -> JitCacheMemoryReport {
+    let cache = JIT_CACHE.lock_safe();
+    let mut total_programs = 0;
+    let mut total_nodes = 0;
+    let mut estimated_bytes = 0u64;
+    for (hash, program) in cache.iter() {
+        total_programs += 1;
+        total_nodes += program.nodes_compiled;
+        // Rough estimate: each compiled node uses ~256 bytes of executable memory
+        estimated_bytes += program.nodes_compiled as u64 * 256;
+        // Hash key overhead
+        estimated_bytes += 8;
+        // Arc overhead
+        estimated_bytes += 16;
+    }
+    JitCacheMemoryReport {
+        cached_programs: total_programs,
+        total_compiled_nodes: total_nodes,
+        estimated_bytes,
+        estimated_kb: estimated_bytes as f64 / 1024.0,
+    }
+}
+
+/// Report on JIT cache memory usage.
+#[derive(Debug, Clone, Serialize)]
+pub struct JitCacheMemoryReport {
+    pub cached_programs: usize,
+    pub total_compiled_nodes: usize,
+    pub estimated_bytes: u64,
+    pub estimated_kb: f64,
+}
+
+/// Estimate AST complexity (node count, depth, branching factor).
+pub fn ast_complexity(nodes: &[NdaNode]) -> AstComplexity {
+    let mut total_nodes = 0;
+    let mut max_depth = 0;
+    let mut control_flow_count = 0;
+
+    fn walk(node: &NdaNode, depth: usize, total: &mut usize, max_d: &mut usize, cf: &mut usize) {
+        *total += 1;
+        if depth > *max_d {
+            *max_d = depth;
+        }
+        match node {
+            NdaNode::Scope { children } => {
+                for c in children { walk(c, depth + 1, total, max_d, cf); }
+            }
+            NdaNode::Loop { body, .. } => {
+                *cf += 1;
+                for c in body { walk(c, depth + 1, total, max_d, cf); }
+            }
+            NdaNode::While { cond, body } => {
+                *cf += 1;
+                walk(cond, depth + 1, total, max_d, cf);
+                for c in body { walk(c, depth + 1, total, max_d, cf); }
+            }
+            NdaNode::If { cond, then_body, else_body } => {
+                *cf += 1;
+                walk(cond, depth + 1, total, max_d, cf);
+                for c in then_body { walk(c, depth + 1, total, max_d, cf); }
+                if let Some(eb) = else_body {
+                    for c in eb { walk(c, depth + 1, total, max_d, cf); }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    for node in nodes {
+        walk(node, 1, &mut total_nodes, &mut max_depth, &mut control_flow_count);
+    }
+
+    AstComplexity {
+        total_nodes,
+        max_depth,
+        control_flow_count,
+        root_count: nodes.len(),
+    }
+}
+
+/// AST complexity diagnostic.
+#[derive(Debug, Clone, Serialize)]
+pub struct AstComplexity {
+    pub total_nodes: usize,
+    pub max_depth: usize,
+    pub control_flow_count: usize,
+    pub root_count: usize,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -423,5 +513,96 @@ mod tests {
         let json = serde_json::to_string(&info).unwrap();
         assert!(json.contains("cached_programs"));
         assert!(json.contains("total_compiled_nodes"));
+    }
+
+    // ─── Block 82: JIT cache diagnostics tests ─────────────────────────
+
+    #[test]
+    fn jit_cache_memory_estimate_empty() {
+        jit_cache_clear();
+        let report = jit_cache_memory_estimate();
+        assert_eq!(report.cached_programs, 0);
+        assert_eq!(report.estimated_bytes, 0);
+    }
+
+    #[test]
+    fn jit_cache_memory_estimate_serializes() {
+        let report = JitCacheMemoryReport {
+            cached_programs: 5,
+            total_compiled_nodes: 100,
+            estimated_bytes: 25600,
+            estimated_kb: 25.0,
+        };
+        let json = serde_json::to_string(&report).unwrap();
+        assert!(json.contains("\"cached_programs\":5"));
+        assert!(json.contains("\"estimated_kb\":25.0"));
+    }
+
+    #[test]
+    fn ast_complexity_simple() {
+        let nodes = vec![NdaNode::Int { value: 1 }, NdaNode::Int { value: 2 }];
+        let c = ast_complexity(&nodes);
+        assert_eq!(c.total_nodes, 2);
+        assert_eq!(c.max_depth, 1);
+        assert_eq!(c.control_flow_count, 0);
+        assert_eq!(c.root_count, 2);
+    }
+
+    #[test]
+    fn ast_complexity_with_loop() {
+        let nodes = vec![NdaNode::Loop {
+            count: 10,
+            body: vec![NdaNode::Int { value: 1 }, NdaNode::Int { value: 2 }],
+        }];
+        let c = ast_complexity(&nodes);
+        assert_eq!(c.total_nodes, 3); // loop + 2 ints
+        assert_eq!(c.max_depth, 2);
+        assert_eq!(c.control_flow_count, 1);
+    }
+
+    #[test]
+    fn ast_complexity_with_if() {
+        let nodes = vec![NdaNode::If {
+            cond: Box::new(NdaNode::Int { value: 1 }),
+            then_body: vec![NdaNode::Int { value: 2 }],
+            else_body: Some(vec![NdaNode::Int { value: 3 }]),
+        }];
+        let c = ast_complexity(&nodes);
+        assert_eq!(c.total_nodes, 4); // if + cond + then + else
+        assert_eq!(c.control_flow_count, 1);
+    }
+
+    #[test]
+    fn ast_complexity_nested() {
+        let nodes = vec![NdaNode::Loop {
+            count: 5,
+            body: vec![NdaNode::Loop {
+                count: 3,
+                body: vec![NdaNode::Int { value: 1 }],
+            }],
+        }];
+        let c = ast_complexity(&nodes);
+        assert_eq!(c.max_depth, 3); // root -> outer loop -> inner loop -> int
+        assert_eq!(c.control_flow_count, 2);
+    }
+
+    #[test]
+    fn ast_complexity_empty() {
+        let c = ast_complexity(&[]);
+        assert_eq!(c.total_nodes, 0);
+        assert_eq!(c.max_depth, 0);
+    }
+
+    #[test]
+    fn ast_complexity_serializes() {
+        let c = AstComplexity {
+            total_nodes: 10,
+            max_depth: 3,
+            control_flow_count: 2,
+            root_count: 1,
+        };
+        let json = serde_json::to_string(&c).unwrap();
+        assert!(json.contains("\"total_nodes\":10"));
+        assert!(json.contains("\"max_depth\":3"));
     }
 }
