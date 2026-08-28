@@ -21,18 +21,18 @@ pub struct IdePalette {
 
 impl IdePalette {
     pub fn dark() -> Self {
-        // Warm, softened near-black with a faint plum tint for a cozy feel.
+        // Modern AI-first IDE: near-black with green accent for a fresh, productive feel.
         Self {
-            bg_primary: Color32::from_rgb(22, 22, 28),
-            bg_secondary: Color32::from_rgb(29, 29, 36),
-            bg_tertiary: Color32::from_rgb(38, 38, 47),
-            text: Color32::from_rgb(228, 226, 234),
-            text_muted: Color32::from_rgb(142, 142, 160),
-            accent: Color32::from_rgb(183, 156, 255),
-            border: Color32::from_rgb(47, 47, 58),
-            success: Color32::from_rgb(126, 211, 155),
-            warning: Color32::from_rgb(240, 200, 120),
-            error: Color32::from_rgb(240, 140, 140),
+            bg_primary: Color32::from_rgb(18, 18, 22),
+            bg_secondary: Color32::from_rgb(26, 26, 32),
+            bg_tertiary: Color32::from_rgb(36, 36, 44),
+            text: Color32::from_rgb(232, 232, 240),
+            text_muted: Color32::from_rgb(148, 148, 168),
+            accent: Color32::from_rgb(34, 197, 94), // Green accent like reference UI
+            border: Color32::from_rgb(52, 52, 64),
+            success: Color32::from_rgb(34, 197, 94),
+            warning: Color32::from_rgb(250, 204, 21),
+            error: Color32::from_rgb(239, 68, 68),
         }
     }
 

@@ -115,6 +115,8 @@ pub struct VelocityApp {
 
     pub chat: ChatPanelState,
     pub command_output: String,
+    /// Floating input bar text (modern chat-style input at bottom of main area).
+    pub chat_input: String,
 
     pub account_usage: Vec<AccountUsageView>,
     pub usage_date: String,
@@ -907,6 +909,7 @@ impl VelocityApp {
             dock_state: Some(DockState::new(tabs)),
             chat_history: String::new(),
             command_output: String::from("V.E.L.O.C.I.T.Y. IDE initialized.\n"),
+            chat_input: String::new(),
             command_palette: CommandPalette {
                 open: false,
                 query: String::new(),

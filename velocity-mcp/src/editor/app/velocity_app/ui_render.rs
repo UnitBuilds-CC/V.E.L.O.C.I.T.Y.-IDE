@@ -812,330 +812,151 @@ impl eframe::App for VelocityApp {
 
         // Keep the application chrome visually distinct from the dock. A fixed
         // height and opaque frame prevent it from disappearing into a dark workspace.
+        // Minimal top bar: File/Edit/View/Help only. All other navigation moves to
+        // the command palette (Ctrl+Shift+P) or the task-centric left sidebar.
         egui::Panel::top("toolbar")
             .frame(
                 egui::Frame::new()
                     .fill(palette.bg_secondary)
                     .stroke(egui::Stroke::new(1.0, palette.border))
-                    .inner_margin(egui::Margin::symmetric(10, 4)),
+                    .inner_margin(egui::Margin::symmetric(12, 6)),
             )
             .show(ui, |ui: &mut egui::Ui| {
-                ui.set_min_height(30.0);
+                ui.set_min_height(32.0);
                 ui.horizontal(|ui| {
-                    ui.spacing_mut().item_spacing.x = 6.0;
+                    ui.spacing_mut().item_spacing.x = 4.0;
 
-                    if self.use_unified_header {
-                        ui.label(
-                            egui::RichText::new("VELOCITY")
-                                .strong()
-                                .color(palette.accent),
-                        );
-                        ui.separator();
-                        // A fixed set of compact menus avoids controls wrapping or moving when
-                        // profiles change, while every primary surface stays within two clicks.
-                        ui.menu_button(egui::RichText::new("Velocity").strong(), |ui| {
-                            if ui.button("Command Palette  Ctrl+Shift+P").clicked() {
-                                self.open_command_palette();
-                                ui.close();
-                            }
-                            if ui.button("Keyboard Shortcuts  F1").clicked() {
-                                self.show_shortcuts = true;
-                                ui.close();
-                            }
-                            ui.separator();
-                            if ui.button("Settings  Ctrl+,").clicked() {
-                                self.focus_panel(TabKind::Settings);
-                                ui.close();
-                            }
-                        });
-                        ui.menu_button("File", |ui| {
-                            if ui.button("New File  Ctrl+N").clicked() {
-                                self.open_editor(None);
-                                ui.close();
-                            }
-                            if ui.button("Open Fileâ€¦  Ctrl+O").clicked() {
-                                self.open_file_dialog();
-                                ui.close();
-                            }
-                            if ui.button("Quick Open  Ctrl+P").clicked() {
-                                self.open_quick_open();
-                                ui.close();
-                            }
-                            ui.separator();
-                            if ui.button("Save  Ctrl+S").clicked() {
-                                self.save_active();
-                                ui.close();
-                            }
-                            if ui.button("Save All  Ctrl+Shift+S").clicked() {
-                                self.save_all();
-                                ui.close();
-                            }
-                        });
-                        ui.menu_button("Navigate", |ui| {
-                            if ui.button("Chat  Ctrl+J").clicked() {
-                                self.focus_panel(TabKind::Chat);
-                                ui.close();
-                            }
-                            if ui.button("Search  Ctrl+Shift+F").clicked() {
-                                self.focus_panel(TabKind::Search);
-                                ui.close();
-                            }
-                            if ui
-                                .button("Research browser")
-                                .on_hover_text("Open the native browser and research workspace.")
-                                .clicked()
-                            {
-                                self.open_browse_workspace();
-                                ui.close();
-                            }
-                            if ui
-                                .button("Review changes")
-                                .on_hover_text("Inspect uncommitted work and recent Git history.")
-                                .clicked()
-                            {
-                                self.focus_panel(TabKind::Changes);
-                                ui.close();
-                            }
-                            ui.separator();
-                            if ui.button("Output  Ctrl+`").clicked() {
-                                self.focus_panel(TabKind::Output);
-                                ui.close();
-                            }
-                            if ui.button("Terminal").clicked() {
-                                self.focus_panel(TabKind::Terminal);
-                                ui.close();
-                            }
-                            if ui.button("Settings  Ctrl+,").clicked() {
-                                self.focus_panel(TabKind::Settings);
-                                ui.close();
-                            }
-                        });
-                        ui.menu_button("Build", |ui| {
-                            if ui.button("Build  Ctrl+B").clicked() {
-                                self.build_active();
-                                ui.close();
-                            }
-                            if ui.button("Run  Ctrl+R").clicked() {
-                                self.run_active();
-                                ui.close();
-                            }
-                            ui.separator();
-                            for (label, panel) in [
-                                ("Test generator", TabKind::TestGenerator),
-                                ("Test coverage", TabKind::Coverage),
-                                ("Deploy pipeline", TabKind::Pipeline),
-                                ("Debugger", TabKind::Debugger),
-                                ("Language servers", TabKind::LanguageServers),
-                                ("Snippets", TabKind::Snippets),
-                                ("Inline suggestions", TabKind::InlineSuggestions),
-                                ("Precompiled cache", TabKind::PrecompCache),
-                            ] {
-                                if ui.button(label).clicked() {
-                                    self.focus_panel(panel);
-                                    ui.close();
-                                }
-                            }
-                        });
-                        ui.menu_button("Agents", |ui| {
-                            for (label, panel) in [
-                                ("Live activity", TabKind::Activity),
-                                ("Agent roster", TabKind::Agents),
-                                ("Background agents", TabKind::BackgroundAgents),
-                                ("Live orchestration", TabKind::LiveOrchestration),
-                                ("Task queue", TabKind::Queue),
-                                ("Timeline", TabKind::Timeline),
-                                ("Mission metrics", TabKind::Metrics),
-                                ("Conflict resolver", TabKind::ConflictResolver),
-                                ("Improvement engine", TabKind::ImprovementEngine),
-                                ("Continuity ledger", TabKind::ContinuationLedger),
-                            ] {
-                                if ui.button(label).clicked() {
-                                    self.focus_panel(panel);
-                                    ui.close();
-                                }
-                            }
-                        });
-                        ui.menu_button("Knowledge", |ui| {
-                            for (label, panel) in [
-                                ("Knowledge base", TabKind::Knowledge),
-                                ("Wiki", TabKind::Wiki),
-                                ("Code graph", TabKind::Graph),
-                                ("Semantic search", TabKind::SemanticSearch),
-                                ("Bookmarks", TabKind::Bookmarks),
-                                ("Favorites", TabKind::Favorites),
-                                ("Agent memory", TabKind::AgentMemory),
-                                ("Shared memory", TabKind::SharedMemory),
-                                ("Persistent memory", TabKind::PersistentMemory),
-                                ("Recent changes", TabKind::Changes),
-                            ] {
-                                if ui.button(label).clicked() {
-                                    self.focus_panel(panel);
-                                    ui.close();
-                                }
-                            }
-                        });
-                        ui.menu_button("Automate", |ui| {
-                            for (label, panel) in [
-                                ("Workflows", TabKind::Workflows),
-                                ("Triggers", TabKind::Triggers),
-                                ("Automation flows", TabKind::Flows),
-                                ("Automation targets", TabKind::Targets),
-                                ("Execution logs", TabKind::Logs),
-                                ("Recordings", TabKind::Recordings),
-                                ("Voice commands", TabKind::Voice),
-                                ("Multimodal attachments", TabKind::Multimodal),
-                                ("Accessibility audit", TabKind::AccessibilityAudit),
-                                ("Governance", TabKind::Governance),
-                            ] {
-                                if ui.button(label).clicked() {
-                                    self.focus_panel(panel);
-                                    ui.close();
-                                }
-                            }
-                        });
-                        ui.menu_button("Workspace", |ui| {
-                            ui.label(
-                                egui::RichText::new("Workspace tools")
-                                    .small()
-                                    .color(palette.text_muted),
-                            );
-                            ui.separator();
-                            for (label, panel) in [
-                                ("Extensions", TabKind::Extensions),
-                                ("Plugin registry", TabKind::PluginRegistry),
-                                ("Skills", TabKind::SkillFiles),
-                                ("Collaboration", TabKind::Collaboration),
-                                ("Peers", TabKind::Peers),
-                                ("Usage", TabKind::Usage),
-                            ] {
-                                if ui.button(label).clicked() {
-                                    self.focus_panel(panel);
-                                    ui.close();
-                                }
-                            }
-                            ui.separator();
-                            if ui.button("New NDA document").clicked() {
-                                self.new_nda_document();
-                                ui.close();
-                            }
-                            if ui.button("Import active file to NDA").clicked() {
-                                self.import_file_to_nda();
-                                ui.close();
-                            }
-                            if ui.button("Open NDA browser viewer").clicked() {
-                                self.open_nda_viewer();
-                                ui.close();
-                            }
-                        });
-                        let active_mode = self.appearance.profile;
-                        ui.menu_button(
-                            egui::RichText::new(format!(
-                                "Layouts: {} {} â–¾",
-                                active_mode.glyph(),
-                                active_mode.short_label()
-                            ))
-                            .color(palette.accent),
-                            |ui| {
-                                ui.label(
-                                    egui::RichText::new("Workspaces")
-                                        .small()
-                                        .color(palette.text_muted),
-                                );
-                                // Build and Mission are the product-level workspaces.
-                                // Specialized profiles remain available without competing
-                                // with the default mental model.
-                                for mode in [
-                                    crate::editor::theme::WorkspaceProfile::Coder,
-                                    crate::editor::theme::WorkspaceProfile::MissionControl,
-                                ] {
-                                    let selected = mode == active_mode;
-                                    let label = mode.short_label();
-                                    if ui
-                                        .selectable_label(
-                                            selected,
-                                            format!(
-                                                "{} {}  {}",
-                                                mode.glyph(),
-                                                label,
-                                                mode.shortcut_hint()
-                                            ),
-                                        )
-                                        .on_hover_text(mode.description())
-                                        .clicked()
-                                    {
-                                        self.set_work_mode(mode);
-                                        ui.close();
-                                    }
-                                }
-                                ui.separator();
-                                ui.label(
-                                    egui::RichText::new("Specialized layouts")
-                                        .small()
-                                        .color(palette.text_muted),
-                                );
-                                for mode in [
-                                    crate::editor::theme::WorkspaceProfile::AutomationOperator,
-                                    crate::editor::theme::WorkspaceProfile::Accessibility,
-                                ] {
-                                    if ui
-                                        .selectable_label(
-                                            mode == active_mode,
-                                            format!(
-                                                "{} {}  {}",
-                                                mode.glyph(),
-                                                mode.label(),
-                                                mode.shortcut_hint()
-                                            ),
-                                        )
-                                        .on_hover_text(mode.description())
-                                        .clicked()
-                                    {
-                                        self.set_work_mode(mode);
-                                        ui.close();
-                                    }
-                                }
-                            },
-                        );
-                    } else {
-                        // `use_unified_header` is always true; this branch is kept
-                        // as a placeholder for a potential lightweight header mode.
-                    }
-
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if ui
-                            .small_button(if self.right_sidebar_visible {
-                                "â–¸"
-                            } else {
-                                "â—‚"
-                            })
-                            .on_hover_text("Toggle right panel  (Ctrl+Shift+E)")
-                            .clicked()
-                        {
-                            self.toggle_right_sidebar();
+                    // Standard menu bar: File / Edit / View / Help
+                    ui.menu_button("File", |ui| {
+                        if ui.button("New File  Ctrl+N").clicked() {
+                            self.open_editor(None);
+                            ui.close();
                         }
+                        if ui.button("Open File\u{2026}  Ctrl+O").clicked() {
+                            self.open_file_dialog();
+                            ui.close();
+                        }
+                        if ui.button("Quick Open  Ctrl+P").clicked() {
+                            self.open_quick_open();
+                            ui.close();
+                        }
+                        ui.separator();
+                        if ui.button("Save  Ctrl+S").clicked() {
+                            self.save_active();
+                            ui.close();
+                        }
+                        if ui.button("Save All  Ctrl+Shift+S").clicked() {
+                            self.save_all();
+                            ui.close();
+                        }
+                        ui.separator();
+                        if ui.button("Settings  Ctrl+,").clicked() {
+                            self.focus_panel(TabKind::Settings);
+                            ui.close();
+                        }
+                    });
+
+                    ui.menu_button("Edit", |ui| {
+                        if ui.button("Command Palette  Ctrl+Shift+P").clicked() {
+                            self.open_command_palette();
+                            ui.close();
+                        }
+                        if ui.button("Find & Replace  Ctrl+Shift+F").clicked() {
+                            self.focus_panel(TabKind::Search);
+                            ui.close();
+                        }
+                        ui.separator();
+                        if ui.button("Keyboard Shortcuts  F1").clicked() {
+                            self.show_shortcuts = true;
+                            ui.close();
+                        }
+                    });
+
+                    ui.menu_button("View", |ui| {
+                        if ui.button("Toggle Sidebar  Ctrl+E").clicked() {
+                            self.toggle_left_sidebar();
+                            ui.close();
+                        }
+                        if ui.button("Toggle Right Panel  Ctrl+Shift+E").clicked() {
+                            self.toggle_right_sidebar();
+                            ui.close();
+                        }
+                        ui.separator();
+                        if ui.button("Chat  Ctrl+J").clicked() {
+                            self.focus_panel(TabKind::Chat);
+                            ui.close();
+                        }
+                        if ui.button("Terminal  Ctrl+`").clicked() {
+                            self.focus_panel(TabKind::Terminal);
+                            ui.close();
+                        }
+                        if ui.button("Output").clicked() {
+                            self.focus_panel(TabKind::Output);
+                            ui.close();
+                        }
+                        ui.separator();
+                        // Workspace mode switcher
+                        ui.label(
+                            egui::RichText::new("Workspaces")
+                                .small()
+                                .color(palette.text_muted),
+                        );
+                        let active_mode = self.appearance.profile;
+                        for mode in [
+                            crate::editor::theme::WorkspaceProfile::Coder,
+                            crate::editor::theme::WorkspaceProfile::MissionControl,
+                            crate::editor::theme::WorkspaceProfile::AutomationOperator,
+                            crate::editor::theme::WorkspaceProfile::Accessibility,
+                        ] {
+                            let selected = mode == active_mode;
+                            if ui
+                                .selectable_label(selected, format!("{} {}", mode.glyph(), mode.short_label()))
+                                .on_hover_text(mode.description())
+                                .clicked()
+                            {
+                                self.set_work_mode(mode);
+                                ui.close();
+                            }
+                        }
+                    });
+
+                    ui.menu_button("Help", |ui| {
+                        if ui.button("Documentation").clicked() {
+                            ui.close();
+                        }
+                        if ui.button("Report Issue").clicked() {
+                            ui.close();
+                        }
+                        ui.separator();
+                        ui.label(
+                            egui::RichText::new("Velocity IDE v2.1.0")
+                                .small()
+                                .color(palette.text_muted),
+                        );
+                    });
+
+                    // Right-aligned: minimal toggle buttons
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        ui.spacing_mut().item_spacing.x = 4.0;
+                        // Sidebar toggles as compact icons
+                        let left_icon = if self.left_sidebar_visible { "\u{25C0}" } else { "\u{25B6}" };
                         if ui
-                            .small_button(if self.left_sidebar_visible {
-                                "â—‚"
-                            } else {
-                                "â–¸"
-                            })
+                            .small_button(left_icon)
                             .on_hover_text("Toggle sidebar  (Ctrl+E)")
                             .clicked()
                         {
                             self.toggle_left_sidebar();
                         }
+                        let right_icon = if self.right_sidebar_visible { "\u{25B6}" } else { "\u{25C0}" };
                         if ui
-                            .button("Workspace")
-                            .on_hover_text("Switch workspace  (Ctrl+Shift+W)")
+                            .small_button(right_icon)
+                            .on_hover_text("Toggle right panel  (Ctrl+Shift+E)")
                             .clicked()
                         {
-                            self.workspace_switcher_open = true;
-                            self.workspace_switcher_selected = 0;
-                            self.workspace_switcher_just_opened = true;
+                            self.toggle_right_sidebar();
                         }
                     });
                 });
-                ui.add_space(2.0);
             });
 
         // Symbol enclosing the cursor â€” used to highlight the Outline entry and
@@ -1210,73 +1031,148 @@ impl eframe::App for VelocityApp {
                 .default_size(self.left_sidebar_width)
                 .show(ui, |ui: &mut egui::Ui| {
                     // Clamp sidebar width to prevent runaway expansion
-                    let w = ui.available_width().clamp(180.0, 420.0);
+                    let w = ui.available_width().clamp(220.0, 380.0);
                     ui.set_max_width(w);
                     self.left_sidebar_width = w;
+
+                    // ─ Primary CTA: New Task ─
+                    ui.add_space(8.0);
+                    let new_task_clicked = ui
+                        .add_sized(
+                            [ui.available_width(), 36.0],
+                            egui::Button::new(
+                                egui::RichText::new("+  New Task")
+                                    .strong()
+                                    .size(14.0),
+                            )
+                            .fill(palette.accent.gamma_multiply(0.25))
+                            .stroke(egui::Stroke::new(1.0, palette.accent)),
+                        )
+                        .clicked();
+                    if new_task_clicked {
+                        self.open_command_palette();
+                    }
+                    ui.add_space(12.0);
+
+                    // ── Workspaces Section ──
+                    ui.label(
+                        egui::RichText::new("Workspaces")
+                            .small()
+                            .strong()
+                            .color(palette.text_muted),
+                    );
                     ui.add_space(6.0);
 
-                    // Project selector (compact dropdown)
+                    // Current workspace card (highlighted)
                     let current_name = self
                         .workspace_root
                         .file_name()
                         .unwrap_or_default()
                         .to_string_lossy()
                         .to_string();
-                    let projects = self.projects.clone();
-                    egui::ComboBox::from_id_salt("project_selector")
-                        .selected_text(current_name)
-                        .width(160.0)
-                        .show_ui(ui, |ui| {
-                            for proj in &projects {
-                                let name = proj
-                                    .file_name()
-                                    .unwrap_or_default()
-                                    .to_string_lossy()
-                                    .to_string();
-                                let is_current = proj == &self.workspace_root;
-                                if ui.selectable_label(is_current, &name).clicked() && !is_current {
-                                    let new_path = proj.clone();
-                                    if new_path.is_dir() {
-                                        self.workspace_root = new_path.clone();
-                                        self.reload_workspace_provider_settings();
-                                        self.restore_workspace_preferences();
-                                        self.apply_appearance(&ctx);
-                                        let _ = self.agent_tx.send(
-                                            crate::agent::UiToAgentMessage::SetWorkspace(
-                                                new_path.clone(),
-                                            ),
-                                        );
-                                        let _ = self.agent_tx.send(
-                                            crate::agent::UiToAgentMessage::ApplySessionState {
-                                                provider: self.provider,
-                                                model: self.selected_model.clone(),
-                                                thinking: self.thinking_enabled,
-                                            },
-                                        );
-                                        self.status_message = format!(
-                                            "Switched to {:?}",
-                                            proj.file_name().unwrap_or_default()
-                                        );
-                                    }
-                                }
-                            }
+                    egui::Frame::new()
+                        .fill(palette.bg_tertiary)
+                        .corner_radius(egui::CornerRadius::same(8))
+                        .inner_margin(egui::Margin::symmetric(10, 8))
+                        .show(ui, |ui| {
+                            ui.horizontal(|ui| {
+                                // Workspace icon
+                                ui.label(
+                                    egui::RichText::new("\u{1F4C1}")
+                                        .size(16.0),
+                                );
+                                ui.vertical(|ui| {
+                                    ui.label(
+                                        egui::RichText::new(&current_name)
+                                            .strong()
+                                            .size(13.0),
+                                    );
+                                    ui.label(
+                                        egui::RichText::new("Active workspace")
+                                            .small()
+                                            .color(palette.text_muted),
+                                    );
+                                });
+                            });
                         });
-
-                    // Add-project affordance: button toggles an inline path input.
                     ui.add_space(4.0);
-                    if ui.button("+ Add project\u{2026}").clicked() {
-                        self.show_add_project_ui = !self.show_add_project_ui;
+
+                    // Other projects (compact list)
+                    let projects = self.projects.clone();
+                    for proj in &projects {
+                        if proj == &self.workspace_root {
+                            continue;
+                        }
+                        let name = proj
+                            .file_name()
+                            .unwrap_or_default()
+                            .to_string_lossy()
+                            .to_string();
+                        let resp = ui
+                            .horizontal(|ui| {
+                                ui.add_space(8.0);
+                                ui.label(
+                                    egui::RichText::new("\u{1F4C1}")
+                                        .size(14.0)
+                                        .color(palette.text_muted),
+                                );
+                                ui.add_space(6.0);
+                                ui.label(
+                                    egui::RichText::new(&name)
+                                        .size(12.0)
+                                        .color(palette.text),
+                                );
+                            });
+                        if resp.response.clicked() {
+                            if proj.is_dir() {
+                                self.workspace_root = proj.clone();
+                                self.reload_workspace_provider_settings();
+                                self.restore_workspace_preferences();
+                                self.apply_appearance(&ctx);
+                                let _ = self.agent_tx.send(
+                                    crate::agent::UiToAgentMessage::SetWorkspace(proj.clone()),
+                                );
+                                let _ = self.agent_tx.send(
+                                    crate::agent::UiToAgentMessage::ApplySessionState {
+                                        provider: self.provider,
+                                        model: self.selected_model.clone(),
+                                        thinking: self.thinking_enabled,
+                                    },
+                                );
+                                self.status_message = format!(
+                                    "Switched to {:?}",
+                                    proj.file_name().unwrap_or_default()
+                                );
+                            }
+                        }
                     }
+
+                    // Add project button
+                    ui.add_space(4.0);
+                    ui.horizontal(|ui| {
+                        ui.add_space(8.0);
+                        if ui
+                            .small_button(
+                                egui::RichText::new("+ Add project")
+                                    .size(11.0)
+                                    .color(palette.accent),
+                            )
+                            .clicked()
+                        {
+                            self.show_add_project_ui = !self.show_add_project_ui;
+                        }
+                    });
                     if self.show_add_project_ui {
+                        ui.add_space(4.0);
                         ui.horizontal(|ui| {
                             ui.add(
                                 egui::TextEdit::singleline(&mut self.new_project_path_input)
                                     .desired_width(140.0)
-                                    .hint_text("/path/to/project"),
+                                    .hint_text("/path/to/project")
+                                    .font(egui::FontId::new(11.0, egui::FontFamily::Monospace)),
                             );
-                            if ui.button("Add").clicked() {
-                                let p =
-                                    std::path::PathBuf::from(self.new_project_path_input.trim());
+                            if ui.small_button("Add").clicked() {
+                                let p = std::path::PathBuf::from(self.new_project_path_input.trim());
                                 if p.is_dir() && !self.projects.contains(&p) {
                                     self.projects.push(p.clone());
                                     self.workspace_root = p;
@@ -1300,390 +1196,135 @@ impl eframe::App for VelocityApp {
                                 self.new_project_path_input.clear();
                                 self.show_add_project_ui = false;
                             }
-                            if ui.button("Cancel").clicked() {
+                            if ui.small_button("Cancel").clicked() {
                                 self.new_project_path_input.clear();
                                 self.show_add_project_ui = false;
                             }
                         });
                     }
 
+                    ui.add_space(12.0);
                     ui.separator();
+                    ui.add_space(8.0);
 
-                    // Tab selector - mode-specific sidebar tabs
-                    let mode_cfg =
-                        crate::editor::mode_config::mode_config_for(self.appearance.profile);
-                    let sidebar_tabs = mode_cfg.left_tabs();
-                    self.left_sidebar_tab = crate::editor::sidebar_tabs::render_sidebar_tab_strip(
-                        ui,
-                        sidebar_tabs,
-                        self.left_sidebar_tab,
-                        palette,
+                    // ── Quick Navigation ──
+                    ui.label(
+                        egui::RichText::new("Navigate")
+                            .small()
+                            .strong()
+                            .color(palette.text_muted),
                     );
-                    ui.separator();
+                    ui.add_space(4.0);
 
-                    // Dispatch content based on the actual SidebarTab enum
-                    let active_sidebar_tab = sidebar_tabs.get(self.left_sidebar_tab).copied();
-                    use crate::editor::sidebar_tabs::SidebarTab as ST;
-                    match active_sidebar_tab {
-                        Some(ST::Outline) => {
-                            let outline: (Option<PathBuf>, Vec<crate::editor::search::FileSymbol>) =
-                                self.active_tab
-                                    .as_ref()
-                                    .and_then(|id| {
-                                        let path = self.tab_path(id).cloned();
-                                        let buf = self.buffers.get(id)?;
-                                        Some((
-                                            path,
-                                            crate::editor::search::extract_file_symbols(
-                                                buf.content(),
-                                            ),
-                                        ))
-                                    })
-                                    .unwrap_or((None, Vec::new()));
-                            egui::ScrollArea::vertical().show(ui, |ui| {
-                                if outline.1.is_empty() {
-                                    ui.add_space(18.0);
-                                    ui.vertical_centered(|ui| {
+                    let nav_items = [
+                        ("\u{1F50D}", "Search", "Ctrl+Shift+F"),
+                        ("\u{1F4AC}", "Chat", "Ctrl+J"),
+                        ("\u{1F4C2}", "File Tree", ""),
+                        ("\u{1F504}", "Git", ""),
+                    ];
+                    for (icon, label, shortcut) in &nav_items {
+                        let resp = ui
+                            .horizontal(|ui| {
+                                ui.add_space(8.0);
+                                ui.label(egui::RichText::new(*icon).size(13.0));
+                                ui.add_space(6.0);
+                                ui.label(
+                                    egui::RichText::new(*label)
+                                        .size(12.0)
+                                        .color(palette.text),
+                                );
+                                if !shortcut.is_empty() {
+                                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                                         ui.label(
-                                            egui::RichText::new("No symbols in the active file")
-                                                .small()
+                                            egui::RichText::new(*shortcut)
+                                                .size(9.0)
                                                 .color(palette.text_muted),
                                         );
                                     });
-                                } else {
-                                    for sym in &outline.1 {
-                                        let is_active =
-                                            active_symbol.as_deref() == Some(sym.name.as_str());
-                                        let resp = ui
-                                            .horizontal(|ui| {
-                                                ui.label(
-                                                    egui::RichText::new("\u{0192}")
-                                                        .monospace()
-                                                        .size(11.0)
-                                                        .color(palette.accent),
-                                                );
-                                                ui.selectable_label(
-                                                    false,
-                                                    egui::RichText::new(&sym.name).color(
-                                                        if is_active {
-                                                            palette.accent
-                                                        } else {
-                                                            palette.text
-                                                        },
-                                                    ),
-                                                )
-                                            })
-                                            .inner;
-                                        if is_active {
-                                            resp.scroll_to_me(Some(egui::Align::Center));
-                                        }
-                                        if resp.clicked() {
-                                            if let Some(path) = outline.0.clone() {
-                                                self.push_nav_location();
-                                                self.open_editor(Some(path));
-                                                self.pending_cursor_line = Some(sym.line);
-                                            }
-                                        }
-                                    }
                                 }
                             });
-                        }
-                        Some(ST::Timeline) => {
-                            let timeline_snapshot =
-                                crate::editor::task_timeline::TaskTimelineSnapshot::new(
-                                    &self.task_timeline,
-                                );
-                            render_task_timeline(ui, &timeline_snapshot, palette);
-                        }
-                        Some(ST::Git) => {
-                            // Use the full git state
-                            let branch = if self.git_state.branch.is_empty() {
-                                super::super::helpers::get_git_branch(&self.workspace_root)
-                            } else {
-                                Some(self.git_state.branch.clone())
-                            };
-                            let changed: Vec<PathBuf> = self
-                                .git_state
-                                .entries
-                                .iter()
-                                .map(|e| e.path.clone())
-                                .collect();
-                            let data = crate::editor::sidebar_tabs::GitTabData {
-                                branch: branch.as_deref(),
-                                changed_files: &changed,
-                                workspace_root: &self.workspace_root,
-                                status_entries: &self.git_state.entries,
-                            };
-                            let git_action =
-                                crate::editor::sidebar_tabs::render_git_content(ui, &data, palette);
-                            let root = self.workspace_root.clone();
-                            match git_action {
-                                crate::editor::sidebar_tabs::GitTabAction::OpenFile(f) => {
-                                    self.open_editor(Some(f));
-                                }
-                                crate::editor::sidebar_tabs::GitTabAction::StageFile(f) => {
-                                    self.git_state.stage_file(&root, &f);
-                                }
-                                crate::editor::sidebar_tabs::GitTabAction::UnstageFile(f) => {
-                                    self.git_state.unstage_file(&root, &f);
-                                }
-                                crate::editor::sidebar_tabs::GitTabAction::StageAll => {
-                                    self.git_state.stage_all(&root);
-                                }
-                                crate::editor::sidebar_tabs::GitTabAction::UnstageAll => {
-                                    // Unstage each staged file
-                                    let staged: Vec<PathBuf> = self
-                                        .git_state
-                                        .entries
-                                        .iter()
-                                        .filter(|e| e.staged)
-                                        .map(|e| e.path.clone())
-                                        .collect();
-                                    for f in staged {
-                                        self.git_state.unstage_file(&root, &f);
+                        if resp.response.clicked() {
+                            match *label {
+                                "Search" => self.focus_panel(TabKind::Search),
+                                "Chat" => self.focus_panel(TabKind::Chat),
+                                "File Tree" => {
+                                    // Switch to file tree tab
+                                    let mode_cfg = crate::editor::mode_config::mode_config_for(self.appearance.profile);
+                                    let sidebar_tabs = mode_cfg.left_tabs();
+                                    if let Some(idx) = sidebar_tabs.iter().position(|t| matches!(t, crate::editor::sidebar_tabs::SidebarTab::Files)) {
+                                        self.left_sidebar_tab = idx;
                                     }
                                 }
-                                crate::editor::sidebar_tabs::GitTabAction::None => {}
-                            }
-                            // Commit UI
-                            ui.separator();
-                            ui.horizontal(|ui| {
-                                ui.add(
-                                    egui::TextEdit::singleline(&mut self.git_state.commit_message)
-                                        .hint_text("Commit message\u{2026}")
-                                        .desired_width(ui.available_width() - 60.0),
-                                );
-                                if ui.small_button("Commit").clicked()
-                                    && !self.git_state.commit_message.is_empty()
-                                {
-                                    let root = self.workspace_root.clone();
-                                    let _ = self.git_state.commit(&root);
-                                }
-                            });
-                            // Refresh button
-                            if ui.small_button("\u{21bb} Refresh").clicked() {
-                                let root = self.workspace_root.clone();
-                                self.git_state.refresh(&root);
-                            }
-                        }
-                        Some(ST::Search) => {
-                            self.search_panel(ui);
-                        }
-                        Some(ST::Browse) => {
-                            self.browse_panel(ui);
-                        }
-                        Some(ST::Flows) => {
-                            let flows: Vec<crate::editor::sidebar_tabs::FlowEntry> = self
-                                .orchestrator
-                                .graph
-                                .tasks
-                                .values()
-                                .map(|t| crate::editor::sidebar_tabs::FlowEntry {
-                                    name: t.title.clone(),
-                                    status: if self.orchestrator.execution_running {
-                                        "running"
-                                    } else {
-                                        "idle"
-                                    },
-                                    step_count: t.scope.len(),
-                                })
-                                .collect();
-                            crate::editor::sidebar_tabs::render_flows_content(ui, &flows, palette);
-                        }
-                        Some(ST::Targets) => {
-                            let targets: Vec<crate::editor::sidebar_tabs::TargetEntry> = self
-                                .projects
-                                .iter()
-                                .map(|p| crate::editor::sidebar_tabs::TargetEntry {
-                                    url: p.to_string_lossy().to_string(),
-                                    label: p
-                                        .file_name()
-                                        .unwrap_or_default()
-                                        .to_string_lossy()
-                                        .to_string(),
-                                    last_visited: None,
-                                })
-                                .collect();
-                            crate::editor::sidebar_tabs::render_targets_content(
-                                ui, &targets, palette,
-                            );
-                        }
-                        Some(ST::Recordings) => {
-                            crate::editor::sidebar_tabs::render_recordings_content(
-                                ui,
-                                &self.recordings,
-                                palette,
-                            );
-                        }
-                        Some(ST::Logs) => {
-                            crate::editor::sidebar_tabs::render_logs_content(
-                                ui,
-                                &self.command_output,
-                                self.task_timeline.event_count(),
-                                palette,
-                            );
-                        }
-                        Some(ST::Agents) => {
-                            let snapshot = self.orchestrator.dashboard_snapshot();
-                            let agents: Vec<crate::editor::sidebar_tabs::AgentEntry> = snapshot
-                                .tasks
-                                .iter()
-                                .filter(|t| t.status_label == "Running")
-                                .map(|t| crate::editor::sidebar_tabs::AgentEntry {
-                                    id: t.id,
-                                    label: t.title.clone(),
-                                    status: "running",
-                                    tasks_done: snapshot.done_tasks,
-                                })
-                                .collect();
-                            crate::editor::sidebar_tabs::render_agents_content(
-                                ui, &agents, palette,
-                            );
-                        }
-                        Some(ST::Queue) => {
-                            let snapshot = self.orchestrator.dashboard_snapshot();
-                            let queue: Vec<crate::editor::sidebar_tabs::QueueEntry> = snapshot
-                                .tasks
-                                .iter()
-                                .map(|t| crate::editor::sidebar_tabs::QueueEntry {
-                                    id: t.id,
-                                    title: t.title.clone(),
-                                    status: match t.status_label.as_str() {
-                                        "Pending" => "Pending",
-                                        "Running" => "Running",
-                                        "Done" => "Done",
-                                        "Failed" => "Failed",
-                                        "Follow-up" => "Follow-up",
-                                        _ => "Unknown",
-                                    },
-                                })
-                                .collect();
-                            crate::editor::sidebar_tabs::render_queue_content(ui, &queue, palette);
-                        }
-                        Some(ST::Metrics) => {
-                            let snapshot = self.orchestrator.dashboard_snapshot();
-                            let metrics = crate::editor::sidebar_tabs::MetricsSnapshot {
-                                tasks_completed: snapshot.done_tasks,
-                                tasks_failed: snapshot.failed_tasks,
-                                tasks_pending: snapshot.pending_tasks,
-                                avg_duration_ms: 0,
-                                total_tokens: 0,
-                            };
-                            crate::editor::sidebar_tabs::render_metrics_content(
-                                ui, &metrics, palette,
-                            );
-                        }
-                        Some(ST::Favorites) => {
-                            let ws = self.workspace_root.clone();
-                            if let Some(file) =
-                                crate::editor::sidebar_tabs::render_favorites_content(
-                                    ui,
-                                    &self.favorite_files,
-                                    &ws,
-                                    palette,
-                                )
-                            {
-                                self.open_editor(Some(file));
-                            }
-                        }
-                        Some(ST::Bookmarks) => {
-                            let ws = self.workspace_root.clone();
-                            if let Some((file, line)) =
-                                crate::editor::sidebar_tabs::render_bookmarks_content(
-                                    ui,
-                                    &self.bookmarks,
-                                    &ws,
-                                    palette,
-                                )
-                            {
-                                self.open_editor(Some(file));
-                                self.pending_cursor_line = Some(line);
-                            }
-                        }
-                        Some(ST::AccessibilityAudit) => {
-                            crate::editor::sidebar_tabs::render_audit_content(
-                                ui,
-                                &self.audit_findings,
-                                palette,
-                            );
-                        }
-                        _ => {
-                            // Default: file tree
-                            let active_path = self
-                                .active_tab
-                                .as_ref()
-                                .and_then(|id| self.tab_path(id))
-                                .cloned();
-                            egui::ScrollArea::vertical().show(ui, |ui| {
-                                if let Some(tree) = self.file_tree.take() {
-                                    let root = tree.clone();
-                                    fn render_tree_node(
-                                        ui: &mut egui::Ui,
-                                        node: &FileNode,
-                                        app: &mut VelocityApp,
-                                        active_path: &Option<PathBuf>,
-                                        palette: crate::editor::theme::IdePalette,
-                                    ) {
-                                        if let Some(children) = &node.children {
-                                            for child in children {
-                                                if child.is_dir {
-                                                    ui.collapsing(
-                                                        egui::RichText::new(&child.name)
-                                                            .color(palette.text_muted)
-                                                            .strong(),
-                                                        |ui| {
-                                                            render_tree_node(
-                                                                ui,
-                                                                child,
-                                                                app,
-                                                                active_path,
-                                                                palette,
-                                                            );
-                                                        },
-                                                    );
-                                                } else {
-                                                    let is_active = active_path
-                                                        .as_ref()
-                                                        .map(|p| p == &child.path)
-                                                        .unwrap_or(false);
-                                                    let icon = crate::editor::search::icon_for_path(
-                                                        &child.path,
-                                                    );
-                                                    let clicked = ui
-                                                        .horizontal(|ui| {
-                                                            ui.add_space(2.0);
-                                                            ui.label(
-                                                                egui::RichText::new(icon)
-                                                                    .monospace()
-                                                                    .size(10.0)
-                                                                    .color(palette.text_muted),
-                                                            );
-                                                            let name =
-                                                                egui::RichText::new(&child.name)
-                                                                    .color(if is_active {
-                                                                        palette.accent
-                                                                    } else {
-                                                                        palette.text
-                                                                    });
-                                                            ui.selectable_label(is_active, name)
-                                                                .clicked()
-                                                        })
-                                                        .inner;
-                                                    if clicked {
-                                                        app.open_editor(Some(child.path.clone()));
-                                                    }
-                                                }
-                                            }
-                                        }
+                                "Git" => {
+                                    let mode_cfg = crate::editor::mode_config::mode_config_for(self.appearance.profile);
+                                    let sidebar_tabs = mode_cfg.left_tabs();
+                                    if let Some(idx) = sidebar_tabs.iter().position(|t| matches!(t, crate::editor::sidebar_tabs::SidebarTab::Git)) {
+                                        self.left_sidebar_tab = idx;
                                     }
-                                    render_tree_node(ui, &root, self, &active_path, palette);
-                                    self.file_tree = Some(tree);
                                 }
-                            });
+                                _ => {}
+                            }
                         }
                     }
+
+                    ui.add_space(12.0);
+                    ui.separator();
+                    ui.add_space(8.0);
+
+                    // ── Bottom Section: Knowledge, Automations, Extensions ──
+                    let bottom_items = [
+                        ("\u{1F4DA}", "Knowledge Center"),
+                        ("\u{2699}\u{FE0F}", "Automations"),
+                        ("\u{1F9E9}", "Extensions"),
+                    ];
+                    for (icon, label) in &bottom_items {
+                        ui.horizontal(|ui| {
+                            ui.add_space(8.0);
+                            ui.label(egui::RichText::new(*icon).size(13.0));
+                            ui.add_space(6.0);
+                            ui.label(
+                                egui::RichText::new(*label)
+                                    .size(12.0)
+                                    .color(palette.text),
+                            );
+                        });
+                    }
+
+                    // ── User Identity (anchored at bottom) ──
+                    ui.add_space(12.0);
+                    ui.separator();
+                    ui.add_space(8.0);
+                    ui.horizontal(|ui| {
+                        ui.add_space(8.0);
+                        // Avatar circle
+                        egui::Frame::new()
+                            .fill(palette.accent.gamma_multiply(0.3))
+                            .corner_radius(egui::CornerRadius::same(12))
+                            .inner_margin(egui::Margin::same(6))
+                            .show(ui, |ui| {
+                                ui.label(
+                                    egui::RichText::new("IV")
+                                        .size(11.0)
+                                        .strong()
+                                        .color(palette.accent),
+                                );
+                            });
+                        ui.add_space(8.0);
+                        ui.vertical(|ui| {
+                            ui.label(
+                                egui::RichText::new("Ian Visser")
+                                    .size(12.0)
+                                    .strong(),
+                            );
+                            ui.label(
+                                egui::RichText::new("UnitBuilds")
+                                    .size(10.0)
+                                    .color(palette.text_muted),
+                            );
+                        });
+                    });
                 });
-            self.left_sidebar_width = panel_response.response.rect.width().clamp(180.0, 420.0);
+            self.left_sidebar_width = panel_response.response.rect.width().clamp(220.0, 380.0);
         }
 
         if self.right_sidebar_visible {
@@ -2094,6 +1735,144 @@ impl eframe::App for VelocityApp {
                     }
                 });
         }
+
+        // ── Floating Input Bar ──
+        // Modern chat-style input at the bottom of the main area.
+        // Replaces the scattered command palette / chat panel / terminal model.
+        let input_bar_height = 56.0;
+        egui::Panel::bottom("input_bar")
+            .frame(
+                egui::Frame::new()
+                    .fill(palette.bg_secondary)
+                    .stroke(egui::Stroke::new(1.0, palette.border))
+                    .inner_margin(egui::Margin::symmetric(12, 8)),
+            )
+            .show(ui, |ui: &mut egui::Ui| {
+                ui.set_min_height(input_bar_height);
+                ui.horizontal(|ui| {
+                    ui.spacing_mut().item_spacing.x = 8.0;
+
+                    // Attachment button
+                    if ui
+                        .small_button(
+                            egui::RichText::new("\u{1F4CE}")
+                                .size(14.0)
+                                .color(palette.text_muted),
+                        )
+                        .on_hover_text("Attach file or image")
+                        .clicked()
+                    {
+                        self.open_file_dialog();
+                    }
+
+                    // Main input field
+                    let response = ui.add(
+                        egui::TextEdit::singleline(&mut self.chat_input)
+                            .hint_text("Continue this task...")
+                            .desired_width(ui.available_width() - 200.0)
+                            .font(egui::FontId::new(13.0, egui::FontFamily::Proportional)),
+                    );
+
+                    // Submit on Enter
+                    if response.lost_focus()
+                        && ui.input(|i| i.key_pressed(egui::Key::Enter))
+                        && !self.chat_input.trim().is_empty()
+                    {
+                        let message = self.chat_input.clone();
+                        self.chat_input.clear();
+                        // Send to agent
+                        let _ = self.agent_tx.send(
+                            crate::agent::UiToAgentMessage::UserPrompt(message),
+                        );
+                    }
+
+                    // Access level dropdown
+                    ui.menu_button(
+                        egui::RichText::new("\u{26A0} Full access")
+                            .size(11.0)
+                            .color(palette.warning),
+                        |ui| {
+                            if ui.button("Full access").clicked() {
+                                ui.close();
+                            }
+                            if ui.button("Read only").clicked() {
+                                ui.close();
+                            }
+                            if ui.button("Ask first").clicked() {
+                                ui.close();
+                            }
+                        },
+                    );
+
+                    // Model selector
+                    ui.menu_button(
+                        egui::RichText::new(format!("\u{26A1} {}", 
+                            if self.selected_model.is_empty() { "default" } else { &self.selected_model }
+                        ))
+                        .size(11.0)
+                        .color(palette.accent),
+                        |ui| {
+                            ui.label(
+                                egui::RichText::new("Select model")
+                                    .small()
+                                    .color(palette.text_muted),
+                            );
+                            ui.separator();
+                            // Show available models from provider
+                            for model in &self.available_models {
+                                let selected = model.id == self.selected_model;
+                                if ui.selectable_label(selected, &model.label).clicked() {
+                                    self.selected_model = model.id.clone();
+                                    let _ = self.agent_tx.send(
+                                        crate::agent::UiToAgentMessage::ApplySessionState {
+                                            provider: self.provider,
+                                            model: self.selected_model.clone(),
+                                            thinking: self.thinking_enabled,
+                                        },
+                                    );
+                                    ui.close();
+                                }
+                            }
+                        },
+                    );
+
+                    // Mic button (placeholder for voice input)
+                    if ui
+                        .small_button(
+                            egui::RichText::new("\u{1F3A4}")
+                                .size(14.0)
+                                .color(palette.text_muted),
+                        )
+                        .on_hover_text("Voice input (coming soon)")
+                        .clicked()
+                    {
+                        // Voice input not yet implemented
+                    }
+
+                    // Send button
+                    let can_send = !self.chat_input.trim().is_empty();
+                    if ui
+                        .add_enabled(
+                            can_send,
+                            egui::Button::new(
+                                egui::RichText::new("\u{27A4}")
+                                    .size(16.0)
+                                    .strong(),
+                            )
+                            .fill(if can_send { palette.accent } else { palette.bg_tertiary })
+                            .min_size(egui::Vec2::new(32.0, 32.0)),
+                        )
+                        .clicked()
+                        && can_send
+                    {
+                        let message = self.chat_input.clone();
+                        self.chat_input.clear();
+                        let _ = self.agent_tx.send(
+                            crate::agent::UiToAgentMessage::UserPrompt(message),
+                        );
+                    }
+                });
+            });
 
         self.command_palette_ui(&ctx);
         self.quick_open_ui(&ctx);

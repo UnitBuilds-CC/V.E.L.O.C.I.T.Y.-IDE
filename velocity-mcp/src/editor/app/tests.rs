@@ -347,6 +347,7 @@ fn mirror_worker_events_into_timeline_appends_only_new_events() {
         dock_state: None,
         chat: ChatPanelState::default(),
         command_output: String::new(),
+        chat_input: String::new(),
         account_usage: Vec::new(),
         usage_date: String::new(),
         command_palette: CommandPalette {
@@ -634,6 +635,7 @@ fn clearing_worker_event_tracking_allows_replay_after_replan() {
         dock_state: None,
         chat: ChatPanelState::default(),
         command_output: String::new(),
+        chat_input: String::new(),
         account_usage: Vec::new(),
         usage_date: String::new(),
         command_palette: CommandPalette {
