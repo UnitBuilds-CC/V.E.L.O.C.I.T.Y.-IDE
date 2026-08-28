@@ -564,4 +564,125 @@ mod tests {
         let v = serde_json::json!({ "base_url": "https://x.example" });
         assert_eq!(arg_domain(&v), Some("https://x.example".to_string()));
     }
+
+    #[test]
+    fn gate_tool_call_allows_with_no_policy() {
+        let tmp = tempfile::tempdir().unwrap();
+        let result = gate_tool_call(tmp.path(), "read_file", &serde_json::json!({}));
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn gate_tool_call_denies_with_policy() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mut engine = PolicyEngine::default();
+        engine.rules.push(Rule {
+            tool: "run_command".to_string(),
+            effect: RuleEffect::Deny,
+            path_prefix: None,
+            domain: None,
+        });
+        engine.save(tmp.path()).unwrap();
+
+        let result = gate_tool_call(tmp.path(), "run_command", &serde_json::json!({}));
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("blocked by policy"));
+    }
+
+    #[test]
+    fn approval_queue_deny_lifecycle() {
+        let mut queue = ApprovalQueue::default();
+        let id = queue.enqueue("write_file", "write to protected path");
+        assert_eq!(queue.pending().len(), 1);
+        assert!(queue.deny(&id));
+        assert_eq!(queue.pending().len(), 0);
+        assert_eq!(queue.items[0].status, ApprovalStatus::Denied);
+    }
+
+    #[test]
+    fn approval_queue_deny_nonexistent_returns_false() {
+        let mut queue = ApprovalQueue::default();
+        assert!(!queue.deny("nonexistent-id"));
+        assert!(!queue.approve("nonexistent-id"));
+    }
+
+    #[test]
+    fn budget_exhausted_by_cost() {
+        let budget = Budget {
+            max_tokens: None,
+            max_cost_cents: Some(100),
+        };
+        assert!(!budget.exhausted(0, 50));
+        assert!(budget.exhausted(0, 100));
+        assert!(budget.exhausted(0, 200));
+    }
+
+    #[test]
+    fn budget_with_no_limits_never_exhausts() {
+        let budget = Budget {
+            max_tokens: None,
+            max_cost_cents: None,
+        };
+        assert!(!budget.exhausted(u64::MAX, u64::MAX));
+    }
+
+    #[test]
+    fn wildcard_rule_matches_any_tool() {
+        let mut engine = PolicyEngine::default();
+        engine.rules.push(Rule {
+            tool: "*".to_string(),
+            effect: RuleEffect::RequireApproval,
+            path_prefix: None,
+            domain: None,
+        });
+        assert_eq!(
+            engine.evaluate(&ActionContext::tool("anything_at_all")),
+            Decision::NeedsApproval
+        );
+    }
+
+    #[test]
+    fn decision_labels() {
+        assert_eq!(Decision::Allow.label(), "allow");
+        assert_eq!(Decision::Deny.label(), "deny");
+        assert_eq!(Decision::NeedsApproval.label(), "needs-approval");
+    }
+
+    #[test]
+    fn rule_effect_labels() {
+        assert_eq!(RuleEffect::Allow.label(), "allow");
+        assert_eq!(RuleEffect::Deny.label(), "deny");
+        assert_eq!(RuleEffect::RequireApproval.label(), "require-approval");
+    }
+
+    #[test]
+    fn arg_path_returns_none_for_missing_keys() {
+        let v = serde_json::json!({"unrelated": "value"});
+        assert_eq!(arg_path(&v), None);
+        let v = serde_json::json!({});
+        assert_eq!(arg_path(&v), None);
+    }
+
+    #[test]
+    fn arg_domain_returns_none_for_missing_keys() {
+        let v = serde_json::json!({"path": "/some/path"});
+        assert_eq!(arg_domain(&v), None);
+    }
+
+    #[test]
+    fn approval_status_labels() {
+        assert_eq!(ApprovalStatus::Pending.label(), "pending");
+        assert_eq!(ApprovalStatus::Approved.label(), "approved");
+        assert_eq!(ApprovalStatus::Denied.label(), "denied");
+    }
+
+    #[test]
+    fn queue_is_empty_and_len() {
+        let mut queue = ApprovalQueue::default();
+        assert!(queue.is_empty());
+        assert_eq!(queue.len(), 0);
+        queue.enqueue("tool", "summary");
+        assert!(!queue.is_empty());
+        assert_eq!(queue.len(), 1);
+    }
 }

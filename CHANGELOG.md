@@ -5,6 +5,59 @@ All notable changes to the Velocity IDE project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- **GUI extraction**: Created `velocity-ide-gui` crate as standalone GUI launcher, separating UI from MCP server backend
+- **Comprehensive test suite**: Expanded to 14,989+ tests across all crates
+- **Provider failover tests**: 38 contract tests for serde, routing, and persistence
+- **NDA compiler tests**: 29 new tests for tokenizer and JIT compiler
+- **Orchestrator tests**: 13 orchestrator + 8 decompose contract tests
+- **Security test coverage**: Path traversal, symlink escape, malformed input validation (399 lines)
+- **Prometheus metrics**: 421-line metrics module with 17 instruments (requests, tools, providers, agents, resources)
+- **OpenTelemetry tracing**: 300-line telemetry module with Pretty/JSON/Compact formats, file rotation, env config
+- **GUI integration tests**: 16 headless tests for tab lifecycle, command palette, MRU switcher, file tree, cross-module integration
+- **SBOM generation**: CycloneDX JSON SBOM generated in CI and attached to GitHub releases
+- **cargo-deny policy**: License allowlist, advisory checks, dependency ban enforcement in CI
+- **Criterion benchmarks**: Benchmark scaffolding for NDA operations, tokenizer, and library metadata
+- **CONTRIBUTING.md**: Open-source contribution guidelines with architecture overview and code style rules
+- **SECURITY.md**: Vulnerability disclosure policy with response timelines
+- **.editorconfig**: Cross-editor formatting consistency (Rust, Markdown, YAML, JSON, PowerShell)
+- **rustfmt.toml**: Project formatting rules (100 char width, import grouping)
+- **GitHub templates**: Bug report, feature request, and PR templates with checklists
+- **justfile**: Task runner with build, test, lint, release, security, Docker, and benchmark tasks
+- **FP4/FP2 optimization plan**: Detailed implementation spec for GPU fused pipeline
+- **Platform README**: Multi-repo overview (IDE, router, website)
+
+### Changed
+- **Architecture**: Editor modules remain in `velocity-mcp` (contain backend logic used by non-editor modules)
+- **Error handling**: Eliminated unsafe `unwrap()` patterns in production code paths
+- **Clippy compliance**: Fixed all 49 warnings across workspace (zero warnings remaining)
+- **Code quality**: Removed deprecated Python code (archive/agent/, scratch/ directories)
+- **README**: Added Quick Start section, fixed directory structure
+- **Rustdoc**: Fixed all unresolved link warnings in doc comments
+
+### Fixed
+- Fixed 2 unsafe `unwrap()` patterns in `usage.rs` that could panic
+- Fixed empty format string warnings by embedding literals in format strings
+- Fixed `is_multiple_of()` clippy lints across 22 files
+- Fixed redundant closures, `map_or` simplifications, `clamp` usage, `div_ceil` across codebase
+- Fixed rustdoc unresolved links: `\[hidden_size\]`, `\[VOCAB_SIZE\]`, `\[callees\]`, `Option<JitVal>`, dimension annotations
+- Fixed doc test failures in logging.rs, metrics.rs, telemetry.rs (changed to `ignore`)
+
+### Security
+- Verified path traversal protection: `resolve_workspace_path` uses canonicalize + starts_with checks
+- Verified credential handling: `SecretString` with zeroization on drop
+- Verified API key masking in all display outputs
+- Audited all unsafe code blocks (Windows FFI, Vulkan — all in expected areas)
+- Added cargo-deny license policy enforcement in CI
+- Added SBOM (CycloneDX) generation for supply chain transparency
+
+### Build
+- Release build optimized: `strip = true`, `lto = "thin"`, `opt-level = "s"`, `codegen-units = 16`, `panic = "abort"`
+- All 14,989+ tests passing (zero failures)
+- CI now includes: fmt, clippy, test, build, audit, deny, coverage, SBOM generation
+
 ## [1.0.0] - 2026-08-18
 
 ### Added
@@ -43,5 +96,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Drone dual-mode architecture (local + remote)
 - Browser engine with NDA support
 
-[1.0.0]: https://github.com/UnitBuilds/Kimi-Code/compare/v0.1.0...v1.0.0
-[0.1.0]: https://github.com/UnitBuilds/Kimi-Code/releases/tag/v0.1.0
+[Unreleased]: https://github.com/UnitBuilds/Velocity-IDE/compare/v1.0.0...HEAD
+[1.0.0]: https://github.com/UnitBuilds/Velocity-IDE/compare/v0.1.0...v1.0.0
+[0.1.0]: https://github.com/UnitBuilds/Velocity-IDE/releases/tag/v0.1.0

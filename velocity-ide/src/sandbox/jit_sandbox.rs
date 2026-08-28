@@ -465,8 +465,9 @@ mod tests {
         let nodes = vec![NdaNode::Int { value: 42 }];
         let _ = NdaJitSandbox::run(&nodes, &[1.0], &site_map);
         let info = jit_cache_info();
-        // Cache may or may not have entries depending on parallel test execution
-        assert!(info.total_compiled_nodes >= 0); // just verify it doesn't panic
+        // Cache may or may not have entries depending on parallel test execution.
+        // Just verify the call doesn't panic.
+        let _ = info.total_compiled_nodes;
     }
 
     #[test]
@@ -483,9 +484,9 @@ mod tests {
         let info = jit_cache_info();
         // After clear, cached_programs may be 0 or >0 if another test
         // populated the cache between our clear() and info() calls.
-        // Just verify the info function works and values are non-negative.
-        assert!(info.cached_programs >= 0);
-        assert!(info.total_compiled_nodes >= 0);
+        // Just verify the info function works without panicking.
+        let _ = info.cached_programs;
+        let _ = info.total_compiled_nodes;
     }
 
     #[test]

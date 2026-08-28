@@ -226,7 +226,7 @@ pub fn compile_with_report(source: &str) -> Result<ParseReport, String> {
     // Count resolved edges (calls whose target matches a known function hash)
     let known_hashes: std::collections::HashSet<u64> = final_hashes.values().cloned().collect();
     for calls in all_calls.values() {
-        for (target, call_name) in calls {
+        for call_name in calls.values() {
             if let Some(&hash) = fn_hashes.get(call_name) {
                 if known_hashes.contains(&hash) {
                     resolved_edges += 1;
@@ -2017,7 +2017,7 @@ mod tests {
             let mut has_while = false;
             match node {
                 NdaNode::Let { .. } => has_let = true,
-                NdaNode::While { cond, body } => {
+                NdaNode::While { cond: _, body } => {
                     has_while = true;
                     // Check that body contains a Store (decrement)
                     let has_store = body.iter().any(|c| matches!(c, NdaNode::Store { .. }));

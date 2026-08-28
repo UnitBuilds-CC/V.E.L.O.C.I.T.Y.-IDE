@@ -229,3 +229,103 @@ impl ConnectorKind {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn generic_connector_has_no_auth() {
+        let cfg = ConnectorConfig::generic("g1", "Generic", "https://api.example.com");
+        assert_eq!(cfg.kind, ConnectorKind::GenericRest);
+        assert_eq!(cfg.base_url, "https://api.example.com");
+        assert!(cfg.auth_secret.is_none());
+        assert!(!cfg.requires_secret());
+    }
+
+    #[test]
+    fn github_connector_preset() {
+        let cfg = ConnectorConfig::github("gh", "GitHub", Some("token_handle".to_string()));
+        assert_eq!(cfg.kind, ConnectorKind::GitHub);
+        assert_eq!(cfg.base_url, "https://api.github.com");
+        assert!(cfg.requires_secret());
+        assert!(cfg.headers.iter().any(|(k, _)| k == "Accept"));
+        assert!(cfg.headers.iter().any(|(k, _)| k == "X-GitHub-Api-Version"));
+    }
+
+    #[test]
+    fn slack_connector_preset() {
+        let cfg = ConnectorConfig::slack("sl", "Slack", Some("slack_tok".to_string()));
+        assert_eq!(cfg.kind, ConnectorKind::Slack);
+        assert_eq!(cfg.base_url, "https://slack.com/api");
+        assert!(cfg.requires_secret());
+    }
+
+    #[test]
+    fn gitlab_connector_uses_header_auth() {
+        let cfg = ConnectorConfig::gitlab("gl", "GitLab", Some("gl_token".to_string()));
+        assert_eq!(cfg.kind, ConnectorKind::GitLab);
+        assert_eq!(cfg.base_url, "https://gitlab.com/api/v4");
+        assert!(cfg.requires_secret());
+        match &cfg.auth {
+            AuthScheme::Header { name } => assert_eq!(name, "PRIVATE-TOKEN"),
+            _ => panic!("Expected Header auth scheme"),
+        }
+    }
+
+    #[test]
+    fn jira_connector_includes_cloud_id() {
+        let cfg = ConnectorConfig::jira("j", "Jira", "my-cloud-123", Some("jira_tok".to_string()));
+        assert!(cfg.base_url.contains("my-cloud-123"));
+        assert_eq!(cfg.kind, ConnectorKind::Jira);
+    }
+
+    #[test]
+    fn discord_connector_preset() {
+        let cfg = ConnectorConfig::discord("d", "Discord", Some("bot_tok".to_string()));
+        assert_eq!(cfg.base_url, "https://discord.com/api/v10");
+        assert!(cfg.headers.iter().any(|(k, v)| k == "Content-Type" && v == "application/json"));
+    }
+
+    #[test]
+    fn notion_connector_has_version_header() {
+        let cfg = ConnectorConfig::notion("n", "Notion", Some("notion_tok".to_string()));
+        assert!(cfg.headers.iter().any(|(k, v)| k == "Notion-Version" && v == "2022-06-28"));
+    }
+
+    #[test]
+    fn webhook_connector_no_auth() {
+        let cfg = ConnectorConfig::webhook("wh", "Hook", "https://hooks.example.com/abc");
+        assert_eq!(cfg.kind, ConnectorKind::Webhook);
+        assert!(!cfg.requires_secret());
+        assert!(cfg.auth_secret.is_none());
+    }
+
+    #[test]
+    fn connector_kind_labels() {
+        assert_eq!(ConnectorKind::GenericRest.label(), "generic");
+        assert_eq!(ConnectorKind::Webhook.label(), "webhook");
+        assert_eq!(ConnectorKind::GitHub.label(), "github");
+        assert_eq!(ConnectorKind::GitLab.label(), "gitlab");
+        assert_eq!(ConnectorKind::Jira.label(), "jira");
+        assert_eq!(ConnectorKind::Slack.label(), "slack");
+        assert_eq!(ConnectorKind::Discord.label(), "discord");
+        assert_eq!(ConnectorKind::Notion.label(), "notion");
+    }
+
+    #[test]
+    fn auth_scheme_default_is_none() {
+        let scheme: AuthScheme = Default::default();
+        assert_eq!(scheme, AuthScheme::None);
+    }
+
+    #[test]
+    fn connector_config_serde_roundtrip() {
+        let cfg = ConnectorConfig::github("gh", "GitHub", Some("handle".to_string()));
+        let json = serde_json::to_string(&cfg).unwrap();
+        let loaded: ConnectorConfig = serde_json::from_str(&json).unwrap();
+        assert_eq!(loaded.id, cfg.id);
+        assert_eq!(loaded.base_url, cfg.base_url);
+        assert_eq!(loaded.kind, cfg.kind);
+    }
+}

@@ -766,9 +766,9 @@ pub fn uri_to_path(uri: &str) -> PathBuf {
     PathBuf::from(stripped.replace('/', std::path::MAIN_SEPARATOR_STR))
 }
 
-// ═══════════════════════════════════════════════════════════════════════════
+// ---------------------------------------------------------------------------
 // LSP Stdout Reader Thread
-// ═══════════════════════════════════════════════════════════════════════════
+// ---------------------------------------------------------------------------
 
 /// Background thread that reads JSON-RPC messages from a language server's stdout.
 /// Parses Content-Length headers, reads the JSON body, and deposits messages into
@@ -1162,7 +1162,7 @@ mod tests {
         assert!(!inbox.reader_alive);
     }
 
-    // ─── I1: interactive intelligence parsers ──────────────────────────────
+    // --- I1: interactive intelligence parsers ------------------------------
 
     #[test]
     fn parse_definition_single_location() {

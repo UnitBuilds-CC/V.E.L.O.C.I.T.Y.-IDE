@@ -139,9 +139,9 @@ impl VelocityApp {
             let available_height = ui.available_height();
             let gallery_height = (available_height * 0.58).max(200.0);
 
-            // ═══════════════════════════════════════════════════════════════
+            // ---------------------------------------------------------------
             // GALLERY SECTION
-            // ═══════════════════════════════════════════════════════════════
+            // ---------------------------------------------------------------
             ui.allocate_ui(egui::Vec2::new(ui.available_width(), gallery_height), |ui| {
                 egui::ScrollArea::vertical().id_salt("team_gallery_scroll").show(ui, |ui| {
                     let teams_snapshot: Vec<(String, String, usize, bool)> = self.expert_teams.iter()
@@ -298,7 +298,7 @@ impl VelocityApp {
                 });
             });
 
-            // ═══════════════════════════════════════════════════════════════
+            // ---------------------------------------------------------------
             // TEAM BUILDER CHAT SECTION
             // Small live log panel showing recent TeamManager entries
             ui.add_space(6.0);
@@ -310,7 +310,7 @@ impl VelocityApp {
             });
 
             // TEAM BUILDER CHAT SECTION
-            // ═══════════════════════════════════════════════════════════════
+            // ---------------------------------------------------------------
             if let Some(sel) = newly_selected {
                 self.selected_member_id = sel;
             }

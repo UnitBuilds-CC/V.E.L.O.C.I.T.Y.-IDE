@@ -51,7 +51,7 @@ pub fn validate_nda_gemv_config(cfg: &NdaGemvConfig) -> Vec<String> {
     if cfg.n == 0 {
         issues.push("n must be > 0".into());
     }
-    if cfg.k % 128 != 0 {
+    if !cfg.k.is_multiple_of(128) {
         issues.push(format!(
             "k ({}) must be a multiple of 128 for NDA packing",
             cfg.k
@@ -2066,6 +2066,7 @@ mod tests {
         let info = nda_gemv_info(&cfg);
         cfg.k = 99999;
         assert_eq!(info.config.k, 128);
+        assert_eq!(cfg.k, 99999);
     }
 
     #[test]

@@ -1,0 +1,108 @@
+# Pre-commit hooks configuration for Velocity IDE
+# See: https://pre-commit.com/
+
+repos:
+  # Rust formatting
+  - repo: local
+    hooks:
+      - id: cargo-fmt
+        name: cargo fmt
+        description: Format Rust code
+        entry: cargo fmt --all --
+        language: system
+        types: [rust]
+        pass_filenames: false
+
+  # Rust linting
+  - repo: local
+    hooks:
+      - id: cargo-clippy
+        name: cargo clippy
+        description: Lint Rust code
+        entry: cargo clippy --workspace --all-targets -- -D warnings
+        language: system
+        types: [rust]
+        pass_filenames: false
+
+  # General file checks
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v4.5.0
+    hooks:
+      - id: trailing-whitespace
+        name: Trim trailing whitespace
+        description: Trims trailing whitespace
+        entry: trailing-whitespace-fixer
+        language: python
+        types: [text]
+        stages: [commit, push, manual]
+
+      - id: end-of-file-fixer
+        name: Fix end of file
+        description: Ensures files end with a newline
+        entry: end-of-file-fixer
+        language: python
+        types: [text]
+        stages: [commit, push, manual]
+
+      - id: check-yaml
+        name: Check YAML
+        description: Check YAML files for syntax errors
+        entry: check-yaml
+        language: python
+        types: [yaml]
+
+      - id: check-toml
+        name: Check TOML
+        description: Check TOML files for syntax errors
+        entry: check-toml
+        language: python
+        types: [toml]
+
+      - id: check-json
+        name: Check JSON
+        description: Check JSON files for syntax errors
+        entry: check-json
+        language: python
+        types: [json]
+
+      - id: check-merge-conflict
+        name: Check merge conflicts
+        description: Check for files that contain merge conflict strings
+        entry: check-merge-conflict
+        language: python
+        types: [text]
+
+      - id: check-added-large-files
+        name: Check for large files
+        description: Prevent giant files from being committed
+        entry: check-added-large-files
+        language: python
+        args: ['--maxkb=1000']
+
+      - id: no-commit-to-branch
+        name: Don't commit to main/master
+        description: Prevent committing directly to main/master branch
+        entry: no-commit-to-branch
+        language: python
+        args: ['--branch', 'main', '--branch', 'master']
+
+  # Security checks
+  - repo: local
+    hooks:
+      - id: cargo-audit
+        name: cargo audit
+        description: Audit dependencies for security vulnerabilities
+        entry: cargo audit
+        language: system
+        types: [rust]
+        pass_filenames: false
+        stages: [push, manual]
+
+      - id: cargo-deny
+        name: cargo deny
+        description: Check dependencies for license and policy compliance
+        entry: cargo deny check
+        language: system
+        types: [rust]
+        pass_filenames: false
+        stages: [push, manual]

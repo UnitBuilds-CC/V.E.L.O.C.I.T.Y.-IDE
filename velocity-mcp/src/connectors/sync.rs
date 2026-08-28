@@ -617,4 +617,119 @@ mod tests {
         assert_eq!(SyncDirection::PushOnly.label(), "push");
         assert_eq!(SyncDirection::BiDirectional.label(), "bidirectional");
     }
+
+    #[test]
+    fn sync_result_total_changes() {
+        let r = SyncResult {
+            pulled: 5,
+            pushed: 3,
+            conflicts: 1,
+            errors: vec![],
+        };
+        assert_eq!(r.total_changes(), 8);
+        assert!(!r.has_errors());
+    }
+
+    #[test]
+    fn sync_result_has_errors() {
+        let r = SyncResult {
+            pulled: 0,
+            pushed: 0,
+            conflicts: 0,
+            errors: vec!["timeout".to_string()],
+        };
+        assert!(r.has_errors());
+    }
+
+    #[test]
+    fn due_rules_skips_disabled() {
+        let mut engine = SyncEngine::new();
+        let mut rule = test_rule();
+        rule.enabled = false;
+        rule.last_sync = Some(now_secs() - 120);
+        engine.add_rule(rule);
+        assert_eq!(engine.due_rules(now_secs()).len(), 0);
+    }
+
+    #[test]
+    fn due_rules_skips_zero_interval() {
+        let mut engine = SyncEngine::new();
+        let mut rule = test_rule();
+        rule.poll_interval_secs = 0; // manual only
+        engine.add_rule(rule);
+        assert_eq!(engine.due_rules(now_secs()).len(), 0);
+    }
+
+    #[test]
+    fn due_rules_includes_never_synced() {
+        let mut engine = SyncEngine::new();
+        let mut rule = test_rule();
+        rule.last_sync = None;
+        engine.add_rule(rule);
+        assert_eq!(engine.due_rules(now_secs()).len(), 1);
+    }
+
+    #[test]
+    fn push_only_skips_pull() {
+        let mut engine = SyncEngine::new();
+        let mut rule = test_rule();
+        rule.direction = SyncDirection::PushOnly;
+        engine.add_rule(rule);
+        engine.track_item(test_item("rule1", "i1"));
+        engine.mark_remote_dirty("rule1", "i1");
+        assert_eq!(engine.item_action("rule1:i1"), SyncAction::SkipPush);
+    }
+
+    #[test]
+    fn item_action_missing_key_returns_none() {
+        let engine = SyncEngine::new();
+        assert_eq!(engine.item_action("nonexistent:key"), SyncAction::None);
+    }
+
+    #[test]
+    fn item_action_missing_rule_returns_none() {
+        let mut engine = SyncEngine::new();
+        // Item exists but rule doesn't
+        engine.track_item(test_item("missing_rule", "i1"));
+        engine.mark_local_dirty("missing_rule", "i1");
+        assert_eq!(engine.item_action("missing_rule:i1"), SyncAction::None);
+    }
+
+    #[test]
+    fn resolve_conflict_nonexistent_returns_false() {
+        let mut engine = SyncEngine::new();
+        assert!(!engine.resolve_conflict("no_such_id", ConflictResolution::KeepLocal));
+    }
+
+    #[test]
+    fn max_conflicts_eviction() {
+        let mut engine = SyncEngine::new();
+        engine.max_conflicts = 3;
+        for i in 0..5 {
+            engine.record_conflict(
+                "rule1",
+                &format!("item{}", i),
+                serde_json::json!({}),
+                serde_json::json!({}),
+            );
+        }
+        assert_eq!(engine.conflicts.len(), 3);
+    }
+
+    #[test]
+    fn update_last_sync_timestamp() {
+        let mut engine = SyncEngine::new();
+        let mut rule = test_rule();
+        rule.last_sync = Some(0);
+        engine.add_rule(rule);
+        engine.update_last_sync("rule1");
+        let rule = &engine.rules["rule1"];
+        assert!(rule.last_sync.unwrap() > 0);
+    }
+
+    #[test]
+    fn update_last_sync_missing_rule_no_panic() {
+        let mut engine = SyncEngine::new();
+        engine.update_last_sync("nonexistent"); // should not panic
+    }
 }

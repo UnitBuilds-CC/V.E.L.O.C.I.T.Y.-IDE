@@ -313,4 +313,94 @@ mod tests {
         assert!(!bus.is_locked_by_other("agent-1", path));
         assert!(bus.is_locked_by_other("agent-2", path));
     }
+
+    #[test]
+    fn reset_clears_all_state() {
+        let bus = CoordinationBus::new();
+        let path = Path::new("locked.txt");
+        bus.claim_file("agent-1", path);
+        bus.report_progress("agent-1", 50.0, "working");
+        bus.request_help("agent-1", "agent-2", "help me");
+
+        bus.reset();
+
+        assert!(bus.locked_files().is_empty());
+        assert!(bus.all_progress().is_empty());
+        assert!(bus.pending_help_for("agent-2").is_empty());
+        // After reset, the file is no longer locked
+        assert!(!bus.is_locked_by_other("agent-2", path));
+    }
+
+    #[test]
+    fn locked_files_returns_all_claims() {
+        let bus = CoordinationBus::new();
+        bus.claim_file("agent-1", Path::new("a.txt"));
+        bus.claim_file("agent-2", Path::new("b.txt"));
+        bus.claim_file("agent-1", Path::new("c.txt"));
+
+        let locked = bus.locked_files();
+        assert_eq!(locked.len(), 3);
+        let agents: Vec<&str> = locked.iter().map(|(_, a)| a.as_str()).collect();
+        assert!(agents.contains(&"agent-1"));
+        assert!(agents.contains(&"agent-2"));
+    }
+
+    #[test]
+    fn drain_returns_all_pending_messages() {
+        let bus = CoordinationBus::new();
+        bus.broadcast(AgentBroadcast::AgentFinished {
+            agent_id: "a1".to_string(),
+            summary: "done".to_string(),
+        });
+        bus.report_progress("a1", 100.0, "finished");
+
+        let msgs = bus.drain();
+        assert!(msgs.len() >= 2);
+        // After drain, no more messages
+        assert!(bus.drain().is_empty());
+    }
+
+    #[test]
+    fn try_recv_returns_none_when_empty() {
+        let bus = CoordinationBus::new();
+        assert!(bus.try_recv().is_none());
+    }
+
+    #[test]
+    fn release_file_by_non_owner_is_noop() {
+        let bus = CoordinationBus::new();
+        let path = Path::new("test.txt");
+        bus.claim_file("agent-1", path);
+        // agent-2 tries to release agent-1's file — should not remove it
+        bus.release_file("agent-2", path);
+        assert!(bus.is_locked_by_other("agent-2", path));
+    }
+
+    #[test]
+    fn multiple_help_requests_accumulate() {
+        let bus = CoordinationBus::new();
+        bus.request_help("a1", "a2", "task1");
+        bus.request_help("a3", "a2", "task2");
+        bus.request_help("a1", "a2", "task3");
+
+        let pending = bus.pending_help_for("a2");
+        assert_eq!(pending.len(), 3);
+    }
+
+    #[test]
+    fn progress_is_clamped_to_100() {
+        let bus = CoordinationBus::new();
+        bus.report_progress("a1", 150.0, "over 100");
+        let progress = bus.all_progress();
+        assert_eq!(progress.len(), 1);
+        assert_eq!(progress[0].percent, 100.0);
+    }
+
+    #[test]
+    fn default_bus_is_empty() {
+        let bus = CoordinationBus::default();
+        assert!(bus.locked_files().is_empty());
+        assert!(bus.all_progress().is_empty());
+        assert!(bus.drain().is_empty());
+    }
 }

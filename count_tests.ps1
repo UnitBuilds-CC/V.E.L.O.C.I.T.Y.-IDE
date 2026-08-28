@@ -1,4 +1,4 @@
-Get-ChildItem -Recurse "C:\Users\visse\OneDrive\Documents\Velocity-IDE\Kimi-Code\velocity-ide\src\*.rs" | ForEach-Object {
+Get-ChildItem -Recurse "C:\Users\visse\OneDrive\Documents\Velocity-IDE\Velocity-IDE\velocity-ide\src\*.rs" | ForEach-Object {
     $lines = (Get-Content $_.FullName | Measure-Object -Line).Lines
     $tests = (Select-String -Path $_.FullName -Pattern '#\[test\]' | Measure-Object).Count
     if ($tests -gt 0) {

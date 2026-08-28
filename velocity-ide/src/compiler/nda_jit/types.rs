@@ -88,7 +88,7 @@ impl JitVal {
 pub struct JitState<'a> {
     /// The stack of data flowing through the network.
     pub stack: Vec<JitVal>,
-    /// Variable bindings: slot_index → Option<JitVal> (pre-allocated and dynamic growing).
+    /// Variable bindings: slot_index → `Option<JitVal>` (pre-allocated and dynamic growing).
     pub variables: Vec<Option<JitVal>>,
     /// Pointer to the site map for `Call` resolution.
     pub site_map: &'a SiteMap,

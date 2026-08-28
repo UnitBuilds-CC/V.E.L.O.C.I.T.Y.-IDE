@@ -339,4 +339,87 @@ mod tests {
         assert_eq!(diag.errors, vec!["legacy error".to_string()]);
         assert_eq!(diag.warnings, vec!["legacy warning".to_string()]);
     }
+
+    #[test]
+    fn encode_decode_roundtrip() {
+        let original = "hello\tworld\nnew line\r\\backslash";
+        let encoded = encode_nda_text(original);
+        let decoded = decode_nda_text(&encoded);
+        assert_eq!(decoded, original);
+    }
+
+    #[test]
+    fn encode_escapes_special_chars() {
+        assert_eq!(encode_nda_text("a\tb"), "a\\tb");
+        assert_eq!(encode_nda_text("a\nb"), "a\\nb");
+        assert_eq!(encode_nda_text("a\\b"), "a\\\\b");
+    }
+
+    #[test]
+    fn decode_handles_unknown_escape() {
+        // Unknown escape sequences should preserve the character
+        assert_eq!(decode_nda_text("a\\xb"), "axb");
+        assert_eq!(decode_nda_text("\\"), "\\"); // trailing backslash
+    }
+
+    #[test]
+    fn parse_nda_empty_returns_none() {
+        assert!(parse_diagnostics_nda("").is_none());
+    }
+
+    #[test]
+    fn parse_nda_missing_summary_returns_none() {
+        let raw = "build-diagnostics version 2\ntimestamp_ms 100\nsuccess true\n";
+        assert!(parse_diagnostics_nda(raw).is_none()); // no summary
+    }
+
+    #[test]
+    fn parse_nda_v2_with_issues() {
+        let raw = "build-diagnostics version 2\ntimestamp_ms 50\nsuccess false\nsummary test summary\nerror_count 1\nwarning_count 1\nissue\terror\t0\tfirst error\nissue\twarning\t0\tfirst warning\n";
+        let diag = parse_diagnostics_nda(raw).unwrap();
+        assert_eq!(diag.timestamp_ms, 50);
+        assert!(!diag.success);
+        assert_eq!(diag.summary, "test summary");
+        assert_eq!(diag.errors, vec!["first error".to_string()]);
+        assert_eq!(diag.warnings, vec!["first warning".to_string()]);
+    }
+
+    #[test]
+    fn diagnostics_paths_are_correct() {
+        let root = std::path::Path::new("/tmp/test");
+        assert_eq!(
+            diagnostics_path(root),
+            std::path::PathBuf::from("/tmp/test/.velocity/build_diagnostics.json")
+        );
+        assert_eq!(
+            diagnostics_nda_path(root),
+            std::path::PathBuf::from("/tmp/test/.velocity/build_diagnostics.nda")
+        );
+    }
+
+    #[test]
+    fn read_diagnostics_missing_returns_default() {
+        let tmp = tempfile::tempdir().unwrap();
+        let diag = read_latest_diagnostics(tmp.path());
+        assert_eq!(diag.summary, "No diagnostics available");
+        assert!(!diag.success);
+        assert!(diag.errors.is_empty());
+    }
+
+    #[test]
+    fn serialize_diagnostics_nda_format() {
+        let diag = BuildDiagnostics {
+            timestamp_ms: 100,
+            success: true,
+            errors: vec![],
+            warnings: vec!["warn1".to_string()],
+            summary: "all good".to_string(),
+        };
+        let serialized = serialize_diagnostics_nda(&diag);
+        assert!(serialized.starts_with("build-diagnostics version 2\n"));
+        assert!(serialized.contains("timestamp_ms 100"));
+        assert!(serialized.contains("success true"));
+        assert!(serialized.contains("warning_count 1"));
+        assert!(serialized.contains("issue\twarning\t0\twarn1"));
+    }
 }

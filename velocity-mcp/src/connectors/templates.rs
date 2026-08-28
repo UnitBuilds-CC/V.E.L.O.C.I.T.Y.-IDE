@@ -567,4 +567,80 @@ mod tests {
         let t = find_template("jira").unwrap();
         assert!(t.connector.base_url.contains("{cloud_id}"));
     }
+
+    #[test]
+    fn templates_have_nonempty_descriptions() {
+        for t in all_templates() {
+            assert!(
+                !t.description.is_empty(),
+                "Template '{}' should have a description",
+                t.id
+            );
+        }
+    }
+
+    #[test]
+    fn instantiate_sync_rules_have_connector_id() {
+        let t = find_template("gitlab").unwrap();
+        let rules = t.instantiate_sync_rules("gl1");
+        for rule in &rules {
+            assert_eq!(rule.connector_id, "gl1");
+            assert!(!rule.enabled); // templates start disabled
+            assert!(rule.last_sync.is_none());
+        }
+    }
+
+    #[test]
+    fn instantiate_webhooks_filter_incoming() {
+        // Slack template only has outgoing webhooks
+        let t = find_template("slack").unwrap();
+        let whs = t.instantiate_outgoing_webhooks("sl1", "https://hook.example.com");
+        assert_eq!(whs.len(), 3);
+        for wh in &whs {
+            assert_eq!(wh.url, "https://hook.example.com");
+            assert!(!wh.enabled); // templates start disabled
+            assert_eq!(wh.fire_count, 0);
+        }
+    }
+
+    #[test]
+    fn jira_template_has_no_webhooks() {
+        let t = find_template("jira").unwrap();
+        assert!(t.webhooks.is_empty());
+        let whs = t.instantiate_outgoing_webhooks("j1", "https://hook.example.com");
+        assert!(whs.is_empty());
+    }
+
+    #[test]
+    fn connector_template_instantiation_without_secret() {
+        let t = find_template("github").unwrap();
+        let cfg = t.instantiate_connector("gh1", "My GitHub", None);
+        assert!(cfg.auth_secret.is_none());
+        assert!(cfg.requires_secret()); // still needs one for bearer auth
+    }
+
+    #[test]
+    fn all_categories_have_labels() {
+        let categories = vec![
+            IntegrationCategory::SourceControl,
+            IntegrationCategory::ProjectManagement,
+            IntegrationCategory::Communication,
+            IntegrationCategory::Documentation,
+            IntegrationCategory::CI_CD,
+            IntegrationCategory::Monitoring,
+            IntegrationCategory::Custom,
+        ];
+        for cat in categories {
+            assert!(!cat.label().is_empty());
+        }
+    }
+
+    #[test]
+    fn sync_rule_ids_are_unique() {
+        let t = find_template("github").unwrap();
+        let rules = t.instantiate_sync_rules("gh1");
+        let ids: Vec<&str> = rules.iter().map(|r| r.id.as_str()).collect();
+        let unique: std::collections::HashSet<&str> = ids.iter().copied().collect();
+        assert_eq!(ids.len(), unique.len());
+    }
 }

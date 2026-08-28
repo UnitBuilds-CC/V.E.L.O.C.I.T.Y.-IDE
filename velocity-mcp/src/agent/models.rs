@@ -324,4 +324,132 @@ mod tests {
         assert_eq!(AiProvider::from_slug("nonexistent"), None);
         assert_eq!(AiProvider::from_slug(""), None);
     }
+
+    #[test]
+    fn all_providers_have_unique_slugs() {
+        let providers = vec![
+            AiProvider::CloudflareWorkersAi,
+            AiProvider::OpenRouter,
+            AiProvider::AzureOpenAi,
+            AiProvider::LocalOllama,
+            AiProvider::OpenAI,
+            AiProvider::Anthropic,
+            AiProvider::GoogleVertex,
+            AiProvider::Deepseek,
+            AiProvider::AlibabaQwen,
+            AiProvider::AwsBedrock,
+            AiProvider::Groq,
+            AiProvider::Mistral,
+            AiProvider::TogetherAi,
+            AiProvider::FireworksAi,
+            AiProvider::Perplexity,
+            AiProvider::Cerebras,
+        ];
+        let mut slugs = std::collections::HashSet::new();
+        for p in &providers {
+            assert!(slugs.insert(p.slug()), "duplicate slug: {}", p.slug());
+        }
+        assert_eq!(slugs.len(), providers.len());
+    }
+
+    #[test]
+    fn all_providers_have_unique_labels() {
+        let providers = vec![
+            AiProvider::CloudflareWorkersAi,
+            AiProvider::OpenRouter,
+            AiProvider::AzureOpenAi,
+            AiProvider::LocalOllama,
+            AiProvider::OpenAI,
+            AiProvider::Anthropic,
+            AiProvider::GoogleVertex,
+            AiProvider::Deepseek,
+            AiProvider::AlibabaQwen,
+            AiProvider::AwsBedrock,
+            AiProvider::Groq,
+            AiProvider::Mistral,
+            AiProvider::TogetherAi,
+            AiProvider::FireworksAi,
+            AiProvider::Perplexity,
+            AiProvider::Cerebras,
+        ];
+        let mut labels = std::collections::HashSet::new();
+        for p in &providers {
+            assert!(labels.insert(p.label()), "duplicate label: {}", p.label());
+        }
+    }
+
+    #[test]
+    fn slug_from_slug_roundtrip_for_all_providers() {
+        let providers = vec![
+            AiProvider::CloudflareWorkersAi,
+            AiProvider::OpenRouter,
+            AiProvider::AzureOpenAi,
+            AiProvider::LocalOllama,
+            AiProvider::OpenAI,
+            AiProvider::Anthropic,
+            AiProvider::GoogleVertex,
+            AiProvider::Deepseek,
+            AiProvider::AlibabaQwen,
+            AiProvider::AwsBedrock,
+            AiProvider::Groq,
+            AiProvider::Mistral,
+            AiProvider::TogetherAi,
+            AiProvider::FireworksAi,
+            AiProvider::Perplexity,
+            AiProvider::Cerebras,
+        ];
+        for p in &providers {
+            let slug = p.slug();
+            let parsed = AiProvider::from_slug(slug);
+            assert_eq!(parsed, Some(*p), "from_slug('{}') should return {:?}", slug, p);
+        }
+    }
+
+    #[test]
+    fn provider_count_is_16() {
+        let providers = vec![
+            AiProvider::CloudflareWorkersAi,
+            AiProvider::OpenRouter,
+            AiProvider::AzureOpenAi,
+            AiProvider::LocalOllama,
+            AiProvider::OpenAI,
+            AiProvider::Anthropic,
+            AiProvider::GoogleVertex,
+            AiProvider::Deepseek,
+            AiProvider::AlibabaQwen,
+            AiProvider::AwsBedrock,
+            AiProvider::Groq,
+            AiProvider::Mistral,
+            AiProvider::TogetherAi,
+            AiProvider::FireworksAi,
+            AiProvider::Perplexity,
+            AiProvider::Cerebras,
+        ];
+        assert_eq!(providers.len(), 16, "Expected 16 providers");
+    }
+
+    #[test]
+    fn all_provider_aliases_resolve() {
+        // Cloudflare aliases
+        assert_eq!(AiProvider::from_slug("cf"), Some(AiProvider::CloudflareWorkersAi));
+        assert_eq!(AiProvider::from_slug("workers-ai"), Some(AiProvider::CloudflareWorkersAi));
+        // OpenRouter aliases
+        assert_eq!(AiProvider::from_slug("or"), Some(AiProvider::OpenRouter));
+        // Azure aliases
+        assert_eq!(AiProvider::from_slug("azure_openai"), Some(AiProvider::AzureOpenAi));
+        // Ollama aliases
+        assert_eq!(AiProvider::from_slug("local"), Some(AiProvider::LocalOllama));
+        // Anthropic aliases
+        assert_eq!(AiProvider::from_slug("claude"), Some(AiProvider::Anthropic));
+        // Vertex aliases
+        assert_eq!(AiProvider::from_slug("google"), Some(AiProvider::GoogleVertex));
+        assert_eq!(AiProvider::from_slug("google_vertex"), Some(AiProvider::GoogleVertex));
+        // Alibaba aliases
+        assert_eq!(AiProvider::from_slug("qwen"), Some(AiProvider::AlibabaQwen));
+        assert_eq!(AiProvider::from_slug("dashscope"), Some(AiProvider::AlibabaQwen));
+        // Bedrock aliases
+        assert_eq!(AiProvider::from_slug("aws"), Some(AiProvider::AwsBedrock));
+        // Perplexity alias
+        assert_eq!(AiProvider::from_slug("pplx"), Some(AiProvider::Perplexity));
+    }
 }

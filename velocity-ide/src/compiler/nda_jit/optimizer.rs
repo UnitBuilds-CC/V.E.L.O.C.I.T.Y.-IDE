@@ -969,7 +969,7 @@ pub fn optimization_summary(report: &OptimizationReport) -> OptimizationSummary 
     }
     .to_string();
 
-    let mut issues = validate_optimization_report(report);
+    let issues = validate_optimization_report(report);
 
     OptimizationSummary {
         compression_ratio: ratio,

@@ -510,4 +510,130 @@ mod tests {
         assert_eq!(store.entries_by_tag("web").len(), 1);
         assert_eq!(store.entries_by_tag("python").len(), 0);
     }
+
+    #[test]
+    fn all_category_labels_roundtrip() {
+        let categories = vec![
+            KnowledgeCategory::Architecture,
+            KnowledgeCategory::Conventions,
+            KnowledgeCategory::KnownIssues,
+            KnowledgeCategory::Guides,
+            KnowledgeCategory::ProjectFacts,
+            KnowledgeCategory::AgentPatterns,
+            KnowledgeCategory::Notes,
+        ];
+        for cat in categories {
+            let label = cat.label();
+            let parsed = KnowledgeCategory::from_label(label);
+            assert_eq!(parsed, Some(cat), "roundtrip failed for {:?}", cat);
+        }
+    }
+
+    #[test]
+    fn update_nonexistent_entry_returns_false() {
+        let mut store = SharedMemoryStore::new();
+        assert!(!store.update_entry("nonexistent", "content"));
+    }
+
+    #[test]
+    fn remove_nonexistent_entry_returns_false() {
+        let mut store = SharedMemoryStore::new();
+        assert!(!store.remove_entry("nonexistent"));
+    }
+
+    #[test]
+    fn resolve_nonexistent_annotation_returns_false() {
+        let mut store = SharedMemoryStore::new();
+        assert!(!store.resolve_annotation("nonexistent"));
+    }
+
+    #[test]
+    fn remove_nonexistent_annotation_returns_false() {
+        let mut store = SharedMemoryStore::new();
+        assert!(!store.remove_annotation("nonexistent"));
+    }
+
+    #[test]
+    fn team_only_visible_to_all_users() {
+        let mut store = SharedMemoryStore::new();
+        let id = store.add_entry(
+            "Team Note",
+            "Content",
+            KnowledgeCategory::Notes,
+            "user1",
+            vec![],
+        );
+        store.entries.get_mut(&id).unwrap().access = KnowledgeAccess::TeamOnly;
+
+        assert_eq!(store.visible_to("user1").len(), 1);
+        assert_eq!(store.visible_to("user2").len(), 1); // TeamOnly visible to all
+    }
+
+    #[test]
+    fn search_is_case_insensitive() {
+        let mut store = SharedMemoryStore::new();
+        store.add_entry(
+            "API Design",
+            "We use REST for all APIs",
+            KnowledgeCategory::Conventions,
+            "u1",
+            vec![],
+        );
+        assert_eq!(store.search("rest").len(), 1);
+        assert_eq!(store.search("REST").len(), 1);
+        assert_eq!(store.search("api").len(), 1);
+    }
+
+    #[test]
+    fn annotations_for_file_filters_correctly() {
+        let mut store = SharedMemoryStore::new();
+        store.add_annotation("a.rs", 1, None, "note1", "u1", AnnotationKind::Note);
+        store.add_annotation("b.rs", 5, None, "note2", "u1", AnnotationKind::Todo);
+        store.add_annotation("a.rs", 10, Some(20), "note3", "u2", AnnotationKind::Warning);
+
+        assert_eq!(store.annotations_for_file("a.rs").len(), 2);
+        assert_eq!(store.annotations_for_file("b.rs").len(), 1);
+        assert_eq!(store.annotations_for_file("c.rs").len(), 0);
+    }
+
+    #[test]
+    fn annotation_with_range_end_line() {
+        let mut store = SharedMemoryStore::new();
+        let id = store.add_annotation("file.rs", 10, Some(50), "range note", "u1", AnnotationKind::Note);
+        let ann = store.annotations.get(&id).unwrap();
+        assert_eq!(ann.line, 10);
+        assert_eq!(ann.end_line, Some(50));
+    }
+
+    #[test]
+    fn set_pinned_on_nonexistent_is_noop() {
+        let mut store = SharedMemoryStore::new();
+        store.set_pinned("nonexistent", true); // should not panic
+    }
+
+    #[test]
+    fn record_view_on_nonexistent_is_noop() {
+        let mut store = SharedMemoryStore::new();
+        store.record_view("nonexistent"); // should not panic
+    }
+
+    #[test]
+    fn persistence_roundtrip() {
+        let dir = tempfile::tempdir().unwrap();
+        {
+            let mut store = SharedMemoryStore::new();
+            store.add_entry(
+                "Title",
+                "Content",
+                KnowledgeCategory::Guides,
+                "user1",
+                vec!["tag1".to_string()],
+            );
+            store.add_annotation("file.rs", 1, None, "note", "u1", AnnotationKind::Todo);
+            store.save(dir.path()).unwrap();
+        }
+        let loaded = SharedMemoryStore::load(dir.path());
+        assert_eq!(loaded.entries.len(), 1);
+        assert_eq!(loaded.annotations.len(), 1);
+    }
 }

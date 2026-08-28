@@ -1,0 +1,37 @@
+[package]
+name = "velocity-ide-gui"
+version = "1.0.0"
+edition = "2021"
+authors = ["UnitBuilds <ian@unitbuilds.com>"]
+description = "V.E.L.O.C.I.T.Y. IDE — Native egui/eframe workspace editor"
+
+[[bin]]
+name = "velocity_ide_gui"
+path = "src/main.rs"
+
+[dependencies]
+velocity_mcp = { path = "../velocity-mcp" }
+velocity-ide = { path = "../velocity-ide" }
+eframe = "0.35.0"
+egui = "0.35.0"
+egui_dock = "0.20"
+epaint = "0.35.0"
+ropey = "1.6"
+syntect = { version = "5.2", default-features = false, features = ["default-fancy"] }
+image = { version = "0.24", default-features = false, features = ["png", "jpeg", "gif", "bmp", "webp"] }
+crossbeam-channel = "0.5"
+dirs = "5"
+notify = "7"
+portable-pty = "0.9"
+log = "0.4"
+env_logger = "0.11"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+thiserror = "2"
+anyhow = "1"
+
+[build-dependencies]
+winres = "0.1"
+
+[dev-dependencies]
+tempfile = "3.27.0"

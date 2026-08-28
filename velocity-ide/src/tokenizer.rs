@@ -601,7 +601,7 @@ impl Tokenizer {
             bytes_per_token: if ids.is_empty() { 0.0 } else { text.len() as f64 / ids.len() as f64 },
             elapsed_us: elapsed.as_micros() as u64,
             roundtrip_ok,
-            has_bos: add_bos && ids.first().map_or(false, |&id| id == self.bos_id),
+            has_bos: add_bos && ids.first().is_some_and(|&id| id == self.bos_id),
         }
     }
 
@@ -1115,7 +1115,7 @@ mod tests {
         let tok = make_test_tokenizer();
         let result = tok.encode_with_offsets("hi", false);
         assert_eq!(result.len(), 2); // 'h' and 'i'
-        for (id, start, end) in &result {
+        for (_id, start, end) in &result {
             assert!(*start <= 2);
             assert!(*end <= 2);
         }
@@ -1614,7 +1614,7 @@ mod tests {
         // Layout: header(24) + vocab_table(vocab_size*8) + merges_table(merges_count*20) + string_data
         let vocab_size = 2u32;
         let merges_count = 0u32;
-        let string_data_start = 24 + vocab_size as usize * 8 + merges_count as usize * 20;
+        let _string_data_start = 24 + vocab_size as usize * 8 + merges_count as usize * 20;
         let token_strings = ["hello", "world"];
 
         // Build string data block and offset table
@@ -1814,6 +1814,7 @@ mod tests {
         let cloned = report.clone();
         report.token_count = 999;
         assert_eq!(cloned.token_count, 10);
+        assert_eq!(report.token_count, 999);
     }
 
     #[test]
@@ -1825,6 +1826,7 @@ mod tests {
         let cloned = util.clone();
         util.coverage = 0.0;
         assert!((cloned.coverage - 0.93).abs() < 0.001);
+        assert!((util.coverage - 0.0).abs() < 0.001);
     }
 
     #[test]
@@ -1836,6 +1838,7 @@ mod tests {
         let cloned = info.clone();
         info.vocab_size = 0;
         assert_eq!(cloned.vocab_size, 100);
+        assert_eq!(info.vocab_size, 0);
     }
 
     // ── Block 183: Debug format ───────────────────────────────────────────

@@ -33,7 +33,7 @@ This guide walks you through setting up your development environment, building t
 The repository is a Rust workspace (`resolver = "2"`) with five member crates:
 
 ```text
-Kimi-Code/
+Velocity-IDE/
 ├── velocity-mcp/          # MCP Server + Native IDE Editor (257 files)
 │   ├── src/
 │   │   ├── agent/         # 4-provider reasoning loop, dispatch, peer bridge

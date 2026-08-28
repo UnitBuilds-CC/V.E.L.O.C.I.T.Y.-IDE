@@ -63,7 +63,7 @@ pub fn validate_qwen_config(cfg: &QwenLayerConfig) -> Vec<String> {
     if cfg.head_dim == 0 {
         issues.push("head_dim must be > 0".into());
     }
-    if cfg.n_kv_heads != 0 && cfg.n_heads != 0 && cfg.n_heads % cfg.n_kv_heads != 0 {
+    if cfg.n_kv_heads != 0 && cfg.n_heads != 0 && !cfg.n_heads.is_multiple_of(cfg.n_kv_heads) {
         issues.push(format!(
             "n_heads ({}) must be divisible by n_kv_heads ({})",
             cfg.n_heads, cfg.n_kv_heads
@@ -997,6 +997,7 @@ mod tests {
         let mut cloned = cfg.clone();
         cloned.hidden_size = 9999;
         assert_eq!(cfg.hidden_size, 2304);
+        assert_eq!(cloned.hidden_size, 9999);
     }
 
     #[test]
@@ -1013,6 +1014,7 @@ mod tests {
         let mut cloned = plan.clone();
         cloned.int4_dispatches = 999;
         assert_eq!(plan.int4_dispatches, 7);
+        assert_eq!(cloned.int4_dispatches, 999);
     }
 
     #[test]

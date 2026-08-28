@@ -1,8 +1,4 @@
 fn main() {
-    #[cfg(target_os = "windows")]
-    {
-        let mut res = winres::WindowsResource::new();
-        res.set_icon("assets/logo.ico");
-        res.compile().unwrap();
-    }
+    // Window icon resource is now in the velocity-ide-gui crate.
+    // This binary is a headless MCP server and does not need a custom icon.
 }

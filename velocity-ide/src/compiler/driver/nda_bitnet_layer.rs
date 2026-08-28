@@ -46,7 +46,7 @@ pub fn validate_nda_bitnet_config(cfg: &NdaBitNetLayerConfig) -> Vec<String> {
     if cfg.hidden_size == 0 {
         issues.push("hidden_size must be > 0".into());
     }
-    if cfg.hidden_size % 128 != 0 {
+    if !cfg.hidden_size.is_multiple_of(128) {
         issues.push(format!(
             "hidden_size ({}) must be a multiple of 128 for NDA packing",
             cfg.hidden_size
@@ -2041,6 +2041,7 @@ mod tests {
         cfg.hidden_size = 9999;
         // info.config should not be affected
         assert_eq!(info.config.hidden_size, 3200);
+        assert_eq!(cfg.hidden_size, 9999);
     }
 
     // ── Debug format content ─────────────────────────────────────────────

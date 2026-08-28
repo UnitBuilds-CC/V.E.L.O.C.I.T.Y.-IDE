@@ -328,4 +328,124 @@ mod tests {
             Some("kimi-k2")
         );
     }
+
+    #[test]
+    fn task_requirements_for_all_kinds() {
+        let kinds = vec![
+            (AgentTaskKind::Refactor, true, true, true),
+            (AgentTaskKind::BugFix, true, true, false),
+            (AgentTaskKind::Test, true, false, false),
+            (AgentTaskKind::Documentation, false, false, true),
+            (AgentTaskKind::Analysis, false, true, true),
+            (AgentTaskKind::Planning, false, true, true),
+            (AgentTaskKind::Merge, true, true, true),
+            (AgentTaskKind::DesktopAutomation, true, true, true),
+        ];
+        for (kind, needs_tools, needs_reasoning, prefers_long) in kinds {
+            let req = TaskRequirements::for_kind(kind);
+            assert_eq!(req.needs_tools, needs_tools, "{:?} needs_tools", kind);
+            assert_eq!(req.needs_reasoning, needs_reasoning, "{:?} needs_reasoning", kind);
+            assert_eq!(req.prefers_long_context, prefers_long, "{:?} prefers_long", kind);
+        }
+    }
+
+    #[test]
+    fn rank_models_empty_list() {
+        let ranked = ModelQualityIndex::rank_models(
+            AgentTaskKind::Test,
+            AiProvider::CloudflareWorkersAi,
+            &[],
+        );
+        assert!(ranked.is_empty());
+    }
+
+    #[test]
+    fn recommend_model_for_task_empty_returns_none() {
+        let result = ModelQualityIndex::recommend_model_for_task(
+            AgentTaskKind::Test,
+            AiProvider::CloudflareWorkersAi,
+            &[],
+        );
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn recommend_model_for_task_returns_best() {
+        let models = vec![
+            ModelInfo {
+                id: "provider/basic".to_string(),
+                label: "basic".to_string(),
+                api_style: ApiStyle::OpenAiChat,
+                supports_tools: false,
+                supports_thinking: false,
+            },
+            ModelInfo {
+                id: "provider/kimi-k2.7".to_string(),
+                label: "kimi-k2.7".to_string(),
+                api_style: ApiStyle::OpenAiTools,
+                supports_tools: true,
+                supports_thinking: true,
+            },
+        ];
+        let best = ModelQualityIndex::recommend_model_for_task(
+            AgentTaskKind::Refactor,
+            AiProvider::CloudflareWorkersAi,
+            &models,
+        )
+        .unwrap();
+        assert_eq!(best.label, "kimi-k2.7");
+    }
+
+    #[test]
+    fn should_switch_provider_for_unreliable_tools() {
+        // Perplexity has native_tools_reliable = false
+        let suggestion = ModelQualityIndex::should_switch_provider(
+            AgentTaskKind::Refactor, // needs tools
+            AiProvider::Perplexity,
+        );
+        assert!(suggestion.is_some());
+    }
+
+    #[test]
+    fn should_switch_provider_none_for_good_provider() {
+        // Cloudflare has reliable tools and good parallelism
+        let suggestion = ModelQualityIndex::should_switch_provider(
+            AgentTaskKind::Refactor,
+            AiProvider::CloudflareWorkersAi,
+        );
+        assert!(suggestion.is_none());
+    }
+
+    #[test]
+    fn provider_capabilities_count() {
+        let caps = ModelQualityIndex::provider_capabilities();
+        assert_eq!(caps.len(), 16);
+    }
+
+    #[test]
+    fn score_model_penalizes_no_tools_for_refactor() {
+        let req = TaskRequirements::for_kind(AgentTaskKind::Refactor);
+        let caps = ProviderCapability {
+            provider: AiProvider::CloudflareWorkersAi,
+            native_tools_reliable: true,
+            good_for_parallelism: true,
+        };
+        let no_tools = ModelInfo {
+            id: "basic".to_string(),
+            label: "basic".to_string(),
+            api_style: ApiStyle::OpenAiChat,
+            supports_tools: false,
+            supports_thinking: false,
+        };
+        let with_tools = ModelInfo {
+            id: "advanced".to_string(),
+            label: "advanced".to_string(),
+            api_style: ApiStyle::OpenAiTools,
+            supports_tools: true,
+            supports_thinking: true,
+        };
+        let score_no = ModelQualityIndex::score_model(&no_tools, req, caps);
+        let score_yes = ModelQualityIndex::score_model(&with_tools, req, caps);
+        assert!(score_yes > score_no);
+    }
 }

@@ -16,10 +16,10 @@ struct FileSymbolEntry {
     line: Option<usize>,
 }
 
-/// Cached, grouped view of the site map: files → defined symbols.
+/// Cached, grouped view of the site map: files ? defined symbols.
 #[derive(Clone, Debug, Default)]
 struct ExplorerModel {
-    /// relative file path → symbols it defines (predicate 1), sorted by name.
+    /// relative file path ? symbols it defines (predicate 1), sorted by name.
     files: BTreeMap<String, Vec<FileSymbolEntry>>,
 }
 
@@ -119,7 +119,7 @@ impl MerkleGraphView {
             let sm_ok = crate::automation::open_workspace_site_map(workspace_root).ok();
 
             ui.columns(2, |cols| {
-                // Left: drill-down tree (files → symbols).
+                // Left: drill-down tree (files ? symbols).
                 cols[0].vertical(|ui| {
                     egui::ScrollArea::vertical()
                         .id_salt("explorer_tree")

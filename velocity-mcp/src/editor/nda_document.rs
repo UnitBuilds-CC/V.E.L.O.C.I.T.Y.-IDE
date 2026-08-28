@@ -48,7 +48,7 @@ fn identity_path(workspace_root: &Path) -> PathBuf {
     workspace_root.join(".velocity").join("nda_identity.json")
 }
 
-/// Resolve the author identity: configured workspace identity → git config →
+/// Resolve the author identity: configured workspace identity ? git config ?
 /// OS username. The tier that produced the result is recorded in `source`.
 pub fn resolve_author(workspace_root: &Path) -> Author {
     // Tier 1: configured workspace identity.
@@ -1416,12 +1416,12 @@ const CSV_COL_WIDTH: u16 = 140;
 
 /// Convert an existing file into a renderable portable NDA document.
 ///
-/// * **CSV/TSV** → semantic triples (`row:N` / `col:<header>` / value) plus a
+/// * **CSV/TSV** ? semantic triples (`row:N` / `col:<header>` / value) plus a
 ///   DrawText table grid (header row + bounded data rows).
-/// * **Images** → decoded and re-encoded to PNG (normalizing any supported
+/// * **Images** ? decoded and re-encoded to PNG (normalizing any supported
 ///   input), embedded as a `data:image/png;base64,…` DrawImage with the real
 ///   dimensions (capped to [`MAX_IMAGE_DIM`]).
-/// * **Text/code** → wrapped DrawText lines plus content triples.
+/// * **Text/code** ? wrapped DrawText lines plus content triples.
 ///
 /// PDF/DOCX/XLSX have no in-house parser and are intentionally out of scope;
 /// they fall through to the text extractor and error with a clear message.

@@ -75,7 +75,7 @@ pub fn validate_pipeline_config(cfg: &PipelineConfig) -> Vec<String> {
     if cfg.head_dim == 0 {
         issues.push("head_dim must be > 0".into());
     }
-    if cfg.n_kv_heads != 0 && cfg.n_heads != 0 && cfg.n_heads % cfg.n_kv_heads != 0 {
+    if cfg.n_kv_heads != 0 && cfg.n_heads != 0 && !cfg.n_heads.is_multiple_of(cfg.n_kv_heads) {
         issues.push(format!(
             "n_heads ({}) must be divisible by n_kv_heads ({})",
             cfg.n_heads, cfg.n_kv_heads
@@ -103,6 +103,7 @@ pub fn validate_pipeline_config(cfg: &PipelineConfig) -> Vec<String> {
 }
 
 /// Compute the dispatch plan for a single layer (pure function, no GPU needed).
+#[allow(clippy::too_many_arguments)]
 pub fn compute_layer_dispatch_plan(
     layer_index: usize,
     has_bias_q: bool,
@@ -1363,6 +1364,8 @@ mod tests {
         cloned.total_dispatches = 0;
         assert_eq!(plan.layer_index, 7);
         assert_ne!(plan.total_dispatches, 0);
+        assert_eq!(cloned.layer_index, 999);
+        assert_eq!(cloned.total_dispatches, 0);
     }
 
     #[test]

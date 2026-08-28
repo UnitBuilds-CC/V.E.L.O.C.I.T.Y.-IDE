@@ -135,7 +135,7 @@ pub struct InlineSuggestionEngine {
     pub recent_suggestions: Vec<String>,
     /// Max cache size.
     pub cache_size: usize,
-    /// Reuse cache: request key → previously produced completion. Avoids
+    /// Reuse cache: request key ? previously produced completion. Avoids
     /// re-querying the model for identical contexts (latency + cost saving).
     pub suggestion_cache: Vec<(String, String)>,
     /// Interaction history for acceptance telemetry.

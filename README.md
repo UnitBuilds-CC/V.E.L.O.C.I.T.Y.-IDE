@@ -1,6 +1,43 @@
 # V.E.L.O.C.I.T.Y. Cognitive IDE
 
-A premium, high-performance developer workspace and autonomous agentic environment built in pure Rust. V.E.L.O.C.I.T.Y. combines a native GPU-accelerated window interface with a pure-Rust browser control plane (`velocity-browser`), a self-correcting agentic compiler loop, and crisp sub-1k LOC component architecture.
+A premium, high-performance developer workspace and autonomous agentic environment built in pure Rust. V.E.L.O.C.I.T.Y. combines a native GPU-accelerated interface with a pure-Rust browser control plane (`velocity-browser`), a self-correcting agentic compiler loop, and crisp sub-1k LOC component architecture.
+
+---
+
+## Quick Start
+
+### Prerequisites
+
+- Rust 1.75+ (stable)
+- Git
+- System dependencies (see [Deployment Guide](docs/DEPLOYMENT.md))
+
+### Build & Run
+
+```bash
+# Clone the repository
+git clone https://github.com/UnitBuilds/Velocity-IDE.git
+cd Velocity-IDE
+
+# Build all crates
+cargo build --release
+
+# Run the GUI
+cargo run --release --bin velocity_ide
+
+# Or run the MCP server (headless)
+cargo run --release --bin velocity_mcp -- --mode stdio
+```
+
+### Run Tests
+
+```bash
+# Run all 8,883 tests
+cargo test --workspace
+
+# Run with coverage
+cargo llvm-cov --workspace --lcov
+```
 
 ---
 
@@ -34,80 +71,88 @@ A premium, high-performance developer workspace and autonomous agentic environme
 ## Directory Structure
 
 ```text
-velocity-workspace/
-├── velocity-mcp/          # Rust MCP Server & Native IDE Editor
-│   ├── src/
-│   │   ├── agent/                # 4-provider reasoning loops, dispatchers, & NDA state
-│   │   ├── registry/             # System, browser, & desktop tool definitions
-│   │   ├── editor/               # GUI panels (app, chat, smart_sidebar, task_timeline, graph_view)
-│   │   ├── automation/           # Task routing, mediator edit locks, AST watcher
-│   │   ├── ipc/                  # Shared memory telemetry
-│   │   ├── orchestrator/         # Worker scheduling, worktree isolation, blueprint DAG
-│   │   └── wa/                   # Windows UI Automation & cross-platform desktop adapter
-│   └── Cargo.toml
-├── velocity-browser/      # Pure-Rust Browser Control Plane
-│   ├── src/
-│   │   ├── dom/                  # Slab DOM tree & mutation observers
-│   │   ├── layout/               # Flexbox & grid track solvers
-│   │   ├── js/                   # JS virtual machine & Wasm interpreter
-│   │   ├── net/                  # HTTP/2/3, TLS fingerprint rotator, WebSocket
-│   │   ├── agentic/              # AOM tree, OCR engine, action predictor
-│   │   ├── screencast.rs         # Frame sequence recording & metadata
-│   │   └── vector_memory.rs      # Spatial AOM site vector store
-│   └── Cargo.toml
-├── velocity-ide/          # Compiler & Shader Pipeline
-│   ├── src/
-│   │   ├── compiler/             # Lexer, parser, JIT sandbox, Wasm runner, Fuzzer
-│   │   └── site_map/             # Merkle AST graph & SiteMap database
-│   └── Cargo.toml
-└── Cargo.toml             # Rust workspace manifest
+Velocity-IDE/
+├── Velocity-IDE/                # V.E.L.O.C.I.T.Y. Cognitive IDE (Rust workspace)
+│   ├── velocity-mcp/            # MCP Server & Native IDE Editor
+│   │   ├── src/
+│   │   │   ├── agent/           # 4-provider reasoning loops, dispatchers, & NDA state
+│   │   │   ├── registry/        # System, browser, & desktop tool definitions
+│   │   │   ├── editor/          # GUI panels (app, chat, smart_sidebar, task_timeline, graph_view)
+│   │   │   ├── automation/      # Task routing, mediator edit locks, AST watcher
+│   │   │   ├── ipc/             # Shared memory telemetry
+│   │   │   ├── orchestrator/    # Worker scheduling, worktree isolation, blueprint DAG
+│   │   │   ├── health.rs        # Health check endpoints
+│   │   │   └── wa/              # Windows UI Automation & cross-platform desktop adapter
+│   │   └── Cargo.toml
+│   ├── velocity-browser/        # Pure-Rust Browser Control Plane
+│   │   ├── src/
+│   │   │   ├── dom/             # Slab DOM tree & mutation observers
+│   │   │   ├── layout/          # Flexbox & grid track solvers
+│   │   │   ├── js/              # JS virtual machine & Wasm interpreter
+│   │   │   ├── net/             # HTTP/2/3, TLS fingerprint rotator, WebSocket
+│   │   │   ├── agentic/         # AOM tree, OCR engine, action predictor
+│   │   │   ├── screencast.rs    # Frame sequence recording & metadata
+│   │   │   └── vector_memory.rs # Spatial AOM site vector store
+│   │   └── Cargo.toml
+│   ├── velocity-ide/            # Compiler & Shader Pipeline
+│   │   ├── src/
+│   │   │   ├── compiler/        # Lexer, parser, JIT sandbox, Wasm runner, Fuzzer
+│   │   │   ├── logging.rs       # Structured logging configuration
+│   │   │   └── site_map/        # Merkle AST graph & SiteMap database
+│   │   └── Cargo.toml
+│   ├── docs/                    # Documentation
+│   │   ├── DEPLOYMENT.md        # Deployment guide
+│   │   └── RUNBOOK.md           # Operational runbook
+│   └── Cargo.toml               # Rust workspace manifest
+├── velocity-router/             # Multi-model orchestration service (separate repo)
+├── velocity-website/            # Marketing & dashboard (separate repo)
+└── memory/                      # Shared memory artifacts
 ```
 
 ---
 
 ## Configuration
 
-Configure your environment in a `.env` file at the workspace root:
+Configure your environment in `~/.velocity/config.toml`:
 
-```env
-# Primary LLM Provider ("cloudflare", "openrouter", "azure", or "ollama")
-LLM_PROVIDER=cloudflare
+```toml
+[general]
+workspace = "/path/to/workspace"
+log_level = "info"
 
-# OpenRouter
-OPENROUTER_API_KEY=your-openrouter-key
-OPENROUTER_MODEL=tencent/hy3:free
+[providers.openai]
+api_key = "sk-..."
+base_url = "https://api.openai.com/v1"
 
-# Azure OpenAI
-AZURE_OPENAI_API_KEY=your-azure-key
-AZURE_OPENAI_ENDPOINT=https://your-resource.openai.azure.com/
-AZURE_OPENAI_DEPLOYMENT=gpt-4o
-AZURE_OPENAI_API_VERSION=2024-06-01
+[providers.anthropic]
+api_key = "sk-ant-..."
 
-# Local Ollama
-OLLAMA_HOST=http://localhost:11434
-OLLAMA_MODEL=llama3.2
+[providers.cloudflare]
+api_key = "..."
+account_id = "..."
 ```
 
----
+Or use environment variables:
 
-## Getting Started
-
-### Run the IDE
-
-To launch the native editor workspace:
-
-```powershell
-cargo run --manifest-path velocity-mcp/Cargo.toml -- --editor
+```bash
+export VELOCITY_API_KEY=your-api-key
+export RUST_LOG=info
 ```
 
-### Run Tests & Validation
+See [Deployment Guide](docs/DEPLOYMENT.md) for full configuration options.
 
-To check and test all crates across the workspace:
+## Documentation
 
-```powershell
-# Typecheck full workspace
-cargo check --workspace
+- **[Deployment Guide](docs/DEPLOYMENT.md)** — Installation, Docker, Kubernetes, and production deployment
+- **[Operational Runbook](docs/RUNBOOK.md)** — Monitoring, incident response, and maintenance procedures
+- **[CHANGELOG](CHANGELOG.md)** — Version history and release notes
 
-# Run all 123 unit tests
-cargo test --workspace
-```
+## Support
+
+- **GitHub Issues:** [Report bugs](https://github.com/UnitBuilds/Velocity-IDE/issues)
+- **GitHub Discussions:** [Ask questions](https://github.com/UnitBuilds/Velocity-IDE/discussions)
+- **Email:** support@velocity-ide.com
+
+## License
+
+See [LICENSE](LICENSE) for details.

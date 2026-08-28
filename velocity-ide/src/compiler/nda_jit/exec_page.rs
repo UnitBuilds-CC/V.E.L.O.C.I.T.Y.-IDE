@@ -151,7 +151,7 @@ impl ExecPage {
         }
 
         // Check page alignment (4KB pages)
-        let page_aligned = addr % 4096 == 0;
+        let page_aligned = addr.is_multiple_of(4096);
         if !page_aligned && !self.ptr.is_null() {
             issues.push(format!(
                 "exec page address 0x{:x} is not page-aligned",
@@ -193,7 +193,7 @@ pub fn validate_exec_page_size(size: usize) -> Vec<String> {
     }
 
     // Warn about non-page-aligned sizes (wastes memory)
-    if size % 4096 != 0 && size > 0 {
+    if !size.is_multiple_of(4096) && size > 0 {
         let rounded = (size + 4095) & !4095;
         issues.push(format!(
             "allocation size {} is not page-aligned; OS will round up to {}",

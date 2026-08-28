@@ -533,5 +533,94 @@ mod tests {
         assert_eq!(SessionStatus::Active.label(), "active");
         assert_eq!(SessionStatus::Paused.label(), "paused");
         assert_eq!(SessionStatus::Completed.label(), "completed");
+        assert_eq!(SessionStatus::Abandoned.label(), "abandoned");
+    }
+
+    #[test]
+    fn team_role_labels() {
+        assert_eq!(TeamRole::Owner.label(), "owner");
+        assert_eq!(TeamRole::Admin.label(), "admin");
+        assert_eq!(TeamRole::Editor.label(), "editor");
+        assert_eq!(TeamRole::Viewer.label(), "viewer");
+    }
+
+    #[test]
+    fn unknown_user_has_no_permissions() {
+        let mgr = CollaborationManager::new();
+        assert!(!mgr.check_permission("nonexistent", Permission::ViewSessions));
+        assert!(!mgr.check_permission("nonexistent", Permission::ManageTeam));
+    }
+
+    #[test]
+    fn list_users_returns_all() {
+        let mut mgr = CollaborationManager::new();
+        mgr.add_user(test_user("u1", TeamRole::Editor));
+        mgr.add_user(test_user("u2", TeamRole::Admin));
+        mgr.add_user(test_user("u3", TeamRole::Viewer));
+        assert_eq!(mgr.list_users().len(), 3);
+    }
+
+    #[test]
+    fn list_sessions_returns_all() {
+        let mut mgr = CollaborationManager::new();
+        mgr.add_user(test_user("admin", TeamRole::Admin));
+        let _s1 = mgr.create_session("admin", "Session 1").unwrap();
+        let _s2 = mgr.create_session("admin", "Session 2").unwrap();
+        assert_eq!(mgr.list_sessions().len(), 2);
+    }
+
+    #[test]
+    fn join_nonexistent_session_fails() {
+        let mut mgr = CollaborationManager::new();
+        mgr.add_user(test_user("viewer", TeamRole::Viewer));
+        assert!(mgr.join_session("viewer", "nonexistent").is_err());
+    }
+
+    #[test]
+    fn send_message_to_nonexistent_session_fails() {
+        let mut mgr = CollaborationManager::new();
+        assert!(mgr
+            .send_message("bad_id", "u1", "hi", MessageKind::UserChat)
+            .is_err());
+    }
+
+    #[test]
+    fn message_retention_trims_old_messages() {
+        let mut mgr = CollaborationManager::new();
+        mgr.add_user(test_user("u1", TeamRole::Editor));
+        let sess_id = mgr.create_session("u1", "Chat").unwrap();
+        // Set max_messages very low to test trimming
+        mgr.sessions.get_mut(&sess_id).unwrap().max_messages = 3;
+        for i in 0..5 {
+            mgr.send_message(&sess_id, "u1", &format!("msg {i}"), MessageKind::UserChat)
+                .unwrap();
+        }
+        assert_eq!(mgr.sessions[&sess_id].messages.len(), 3);
+        // Oldest messages were trimmed; only the last 3 remain
+        assert_eq!(mgr.sessions[&sess_id].messages[0].content, "msg 2");
+    }
+
+    #[test]
+    fn join_session_idempotent() {
+        let mut mgr = CollaborationManager::new();
+        mgr.add_user(test_user("admin", TeamRole::Admin));
+        mgr.add_user(test_user("viewer", TeamRole::Viewer));
+        let sess_id = mgr.create_session("admin", "Test").unwrap();
+        mgr.join_session("viewer", &sess_id).unwrap();
+        mgr.join_session("viewer", &sess_id).unwrap(); // second join is no-op
+        assert_eq!(mgr.sessions[&sess_id].participants.len(), 2);
+    }
+
+    #[test]
+    fn set_status_on_nonexistent_session() {
+        let mut mgr = CollaborationManager::new();
+        // Should silently do nothing
+        mgr.set_session_status("nonexistent", SessionStatus::Active);
+    }
+
+    #[test]
+    fn remove_nonexistent_user() {
+        let mut mgr = CollaborationManager::new();
+        assert!(!mgr.remove_user("ghost"));
     }
 }

@@ -1,4 +1,4 @@
-//! Speculative pre-computation: pre-indexes scoped files before agent workers
+﻿//! Speculative pre-computation: pre-indexes scoped files before agent workers
 //! spawn, providing warm context caches that accelerate agent execution.
 
 use crate::safety::SafeMutex;

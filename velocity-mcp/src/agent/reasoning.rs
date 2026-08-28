@@ -377,4 +377,70 @@ mod tests {
         tree.mark_explored(&r);
         assert_eq!(tree.unexplored().len(), 1);
     }
+
+    #[test]
+    fn leaf_count_tracks_leaves() {
+        let mut tree = ReasoningTree::new("test");
+        let r = tree.add_root("root", 0.5);
+        assert_eq!(tree.leaf_count(), 1); // root is a leaf
+        let c1 = tree.add_child(&r, "child1", 0.5).unwrap();
+        let c2 = tree.add_child(&r, "child2", 0.5).unwrap();
+        assert_eq!(tree.leaf_count(), 2); // root now has children, c1+c2 are leaves
+    }
+
+    #[test]
+    fn thought_evaluation_scores_and_labels() {
+        assert_eq!(ThoughtEvaluation::Promising.label(), "promising");
+        assert_eq!(ThoughtEvaluation::Neutral.label(), "neutral");
+        assert_eq!(ThoughtEvaluation::Unlikely.label(), "unlikely");
+        assert_eq!(ThoughtEvaluation::Invalid.label(), "invalid");
+
+        assert!((ThoughtEvaluation::Promising.score() - 0.8).abs() < 0.001);
+        assert!((ThoughtEvaluation::Neutral.score() - 0.5).abs() < 0.001);
+        assert!((ThoughtEvaluation::Unlikely.score() - 0.2).abs() < 0.001);
+        assert!((ThoughtEvaluation::Invalid.score() - 0.0).abs() < 0.001);
+    }
+
+    #[test]
+    fn evaluate_blends_confidence() {
+        let mut tree = ReasoningTree::new("test");
+        let r = tree.add_root("root", 0.6);
+        tree.evaluate(&r, ThoughtEvaluation::Promising); // (0.6 + 0.8) / 2 = 0.7
+        let thought = &tree.thoughts[&r];
+        assert!((thought.confidence - 0.7).abs() < 0.001);
+    }
+
+    #[test]
+    fn add_child_with_invalid_parent_returns_none() {
+        let mut tree = ReasoningTree::new("test");
+        let result = tree.add_child("nonexistent", "child", 0.5);
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn best_path_empty_tree() {
+        let tree = ReasoningTree::new("test");
+        assert!(tree.best_path().is_empty());
+    }
+
+    #[test]
+    fn summary_display_format() {
+        let mut tree = ReasoningTree::new("How to optimize?");
+        let r = tree.add_root("Cache layer", 0.8);
+        tree.add_child(&r, "Redis", 0.9).unwrap();
+        tree.evaluate(&r, ThoughtEvaluation::Promising);
+
+        let summary = tree.summary();
+        let display = summary.display();
+        assert!(display.contains("Problem:"));
+        assert!(display.contains("Thoughts:"));
+        assert!(display.contains("Best confidence:"));
+    }
+
+    #[test]
+    fn confidence_clamped_on_add() {
+        let mut tree = ReasoningTree::new("test");
+        let r = tree.add_root("root", 1.5); // should clamp to 1.0
+        assert!((tree.thoughts[&r].confidence - 1.0).abs() < 0.001);
+    }
 }

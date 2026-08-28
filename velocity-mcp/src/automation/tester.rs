@@ -162,4 +162,41 @@ mod tests {
         assert!(report.success);
         assert!(report.summary.contains("No test functions"));
     }
+
+    #[test]
+    fn test_jit_sandbox_missing_file_returns_error() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let missing = temp_dir.path().join("nonexistent.rs");
+        let result = run_jit_tests_in_sandbox(&temp_dir.path().to_path_buf(), &missing);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("not found"));
+    }
+
+    #[test]
+    fn test_jit_sandbox_discovers_bench_functions() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let test_file = temp_dir.path().join("bench_test.rs");
+        std::fs::write(
+            &test_file,
+            "fn test_alpha() {}\nfn bench_beta() {}\nfn helper() {}",
+        )
+        .unwrap();
+
+        let report = run_jit_tests_in_sandbox(&temp_dir.path().to_path_buf(), &test_file).unwrap();
+        // Should discover 2 functions (test_alpha + bench_beta), not helper
+        assert!(report.summary.contains("2"));
+    }
+
+    #[test]
+    fn test_report_default_values() {
+        let report = TestReport {
+            success: true,
+            stdout: "output".to_string(),
+            stderr: String::new(),
+            summary: "done".to_string(),
+        };
+        assert!(report.success);
+        assert_eq!(report.stdout, "output");
+        assert!(report.stderr.is_empty());
+    }
 }

@@ -12,7 +12,7 @@
 #define MyAppName       "V.E.L.O.C.I.T.Y."
 #define MyAppFullName   "V.E.L.O.C.I.T.Y. Cognitive IDE"
 #define MyAppPublisher  "UnitBuilds-CC"
-#define MyAppURL        "https://github.com/UnitBuilds/Kimi-Code"
+#define MyAppURL        "https://github.com/UnitBuilds/Velocity-IDE"
 #define MyAppExeName    "velocity_mcp.exe"
 
 [Setup]

@@ -892,8 +892,8 @@ pub struct CompileDiagnostic {
 
 /// Analyze nodes for JIT compilation characteristics without compiling.
 pub fn compile_diagnostic(nodes: &[NdaNode]) -> CompileDiagnostic {
-    let node_count = nodes.iter().map(|n| count_nodes(n)).sum::<usize>();
-    let native_eligible = nodes.iter().filter(|n| is_pure_scalar(n)).map(|n| count_nodes(n)).sum::<usize>();
+    let node_count = nodes.iter().map(count_nodes).sum::<usize>();
+    let native_eligible = nodes.iter().filter(|n| is_pure_scalar(n)).map(count_nodes).sum::<usize>();
     let interpreter_only = node_count.saturating_sub(native_eligible);
     let native_ratio = if node_count > 0 { native_eligible as f64 / node_count as f64 } else { 0.0 };
 

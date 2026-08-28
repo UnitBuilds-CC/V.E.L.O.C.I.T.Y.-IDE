@@ -1,4 +1,4 @@
-use super::helpers::*;
+﻿use super::helpers::*;
 use super::render::desktop_automation_runtime_validation_brief;
 use super::types::*;
 use super::wa::*;

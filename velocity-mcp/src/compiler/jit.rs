@@ -60,3 +60,63 @@ impl JitCompiler {
         Ok(spirv_template)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn jit_compile_with_weights() {
+        let weights = vec![7i8, 3, -1];
+        let result = JitCompiler::compile_inlined_weights(&weights).unwrap();
+        // SPIR-V binary should start with the magic number
+        assert_eq!(result[0], 0x07230203, "SPIR-V magic number");
+    }
+
+    #[test]
+    fn jit_compile_empty_weights() {
+        let weights: Vec<i8> = vec![];
+        let result = JitCompiler::compile_inlined_weights(&weights).unwrap();
+        assert_eq!(result[0], 0x07230203);
+        // Empty weights → placeholder value defaults to 1
+        // Find the patched constant instruction
+        for i in 0..(result.len() - 3) {
+            if result[i] == 0x0004002b && result[i + 2] == 0x00000020 {
+                assert_eq!(result[i + 3], 1, "empty weights should default to 1");
+                break;
+            }
+        }
+    }
+
+    #[test]
+    fn jit_patches_first_weight() {
+        let weights = vec![99i8];
+        let result = JitCompiler::compile_inlined_weights(&weights).unwrap();
+        // Find the patched constant
+        for i in 0..(result.len() - 3) {
+            if result[i] == 0x0004002b && result[i + 2] == 0x00000020 {
+                assert_eq!(result[i + 3], 99, "should patch with first weight value");
+                break;
+            }
+        }
+    }
+
+    #[test]
+    fn jit_spirv_has_valid_version() {
+        let result = JitCompiler::compile_inlined_weights(&[1]).unwrap();
+        // Version word should be SPIR-V 1.3 = 0x00010300
+        assert_eq!(result[1], 0x00010300, "SPIR-V version should be 1.3");
+    }
+
+    #[test]
+    fn jit_spirv_has_generator_magic() {
+        let result = JitCompiler::compile_inlined_weights(&[1]).unwrap();
+        assert_eq!(result[2], 0x000d000b, "generator magic should be V-NCE JIT");
+    }
+
+    #[test]
+    fn jit_output_is_nonempty() {
+        let result = JitCompiler::compile_inlined_weights(&[0]).unwrap();
+        assert!(result.len() > 10, "SPIR-V binary should have substantial content");
+    }
+}

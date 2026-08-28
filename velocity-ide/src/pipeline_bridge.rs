@@ -249,7 +249,7 @@ impl DualPathEngine {
         if self.cfg.max_seq_len == 0 {
             warnings.push("max_seq_len is 0".to_string());
         }
-        if self.cfg.n_heads > 0 && self.cfg.hidden_size % self.cfg.n_heads != 0 {
+        if self.cfg.n_heads > 0 && !self.cfg.hidden_size.is_multiple_of(self.cfg.n_heads) {
             warnings.push(format!(
                 "hidden_size ({}) not divisible by n_heads ({})",
                 self.cfg.hidden_size, self.cfg.n_heads
@@ -1907,6 +1907,11 @@ mod tests {
         assert!(diag.valid);
         assert_eq!(diag.site_map_key, Some(42));
         assert_eq!(diag.opcode_count, 100);
+        // Clone mutated
+        assert_eq!(cloned.root_hash, 0xFFFF);
+        assert!(!cloned.valid);
+        assert_eq!(cloned.site_map_key, None);
+        assert_eq!(cloned.opcode_count, 0);
     }
 
     #[test]
@@ -2511,6 +2516,8 @@ mod tests {
         cloned.opcode_count = 0;
         assert_eq!(diag.root_hash, 0x1234);
         assert_eq!(diag.opcode_count, 100);
+        assert_eq!(cloned.root_hash, 0);
+        assert_eq!(cloned.opcode_count, 0);
     }
 
     #[test]

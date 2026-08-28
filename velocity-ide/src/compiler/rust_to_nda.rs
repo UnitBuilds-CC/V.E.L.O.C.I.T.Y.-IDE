@@ -902,7 +902,7 @@ pub struct SeedReport {
     pub nodes_stored: usize,
     pub root_hash: u64,
     pub elapsed_ms: u128,
-    /// Resolved call graph: caller → [callees].
+    /// Resolved call graph: caller → callees.
     pub call_graph: HashMap<String, Vec<String>>,
     /// Compilation diagnostics.
     pub diagnostics: CompileDiagnostics,

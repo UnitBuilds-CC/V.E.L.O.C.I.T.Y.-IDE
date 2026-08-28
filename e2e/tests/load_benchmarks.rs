@@ -108,15 +108,15 @@ fn bench_concurrent_clients() {
 
     // Spawn clients
     let handles: Vec<_> = (0..num_clients)
-        .map(|client_id| {
+        .map(|_client_id| {
             let total_requests = total_requests.clone();
-            let start = start_clone.clone();
+            let _start = start_clone.clone();
 
             std::thread::spawn(move || {
                 // Each client gets its own stdin/stdout
                 // Note: In a real benchmark, we'd use separate connections
                 // For now, we simulate by having each thread do sequential requests
-                for i in 0..requests_per_client {
+                for _i in 0..requests_per_client {
                     total_requests.fetch_add(1, Ordering::SeqCst);
                     std::thread::sleep(Duration::from_millis(1)); // Simulate work
                 }

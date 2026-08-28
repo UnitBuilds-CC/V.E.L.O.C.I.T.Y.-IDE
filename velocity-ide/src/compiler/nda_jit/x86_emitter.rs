@@ -190,8 +190,8 @@ pub struct NativeCompileInfo {
 
 /// Analyze an AST tree for native compilation potential without emitting code.
 pub fn native_compile_info(nodes: &[NdaNode]) -> NativeCompileInfo {
-    let total = nodes.iter().map(|n| count_nodes(n)).sum::<usize>();
-    let native_eligible = nodes.iter().filter(|n| is_pure_scalar(n)).map(|n| count_nodes(n)).sum::<usize>();
+    let total = nodes.iter().map(count_nodes).sum::<usize>();
+    let native_eligible = nodes.iter().filter(|n| is_pure_scalar(n)).map(count_nodes).sum::<usize>();
     let interpreter_only = total.saturating_sub(native_eligible);
     let native_ratio = if total > 0 { native_eligible as f64 / total as f64 } else { 0.0 };
 
@@ -218,7 +218,7 @@ pub fn native_compile_info(nodes: &[NdaNode]) -> NativeCompileInfo {
         native_eligible_nodes: native_eligible,
         interpreter_only_nodes: interpreter_only,
         native_ratio,
-        is_fully_native: nodes.iter().all(|n| is_pure_scalar(n)),
+        is_fully_native: nodes.iter().all(is_pure_scalar),
         has_loops,
         has_while_loops,
         has_conditionals,

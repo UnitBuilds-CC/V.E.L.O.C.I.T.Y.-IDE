@@ -329,7 +329,7 @@ impl VelocityError {
     pub fn is_io(&self) -> bool {
         self.code == ErrorCode::IoError
             || self.code == ErrorCode::SiteMapIoError
-            || self.source.as_ref().map_or(false, |s| s.downcast_ref::<std::io::Error>().is_some())
+            || self.source.as_ref().is_some_and(|s| s.downcast_ref::<std::io::Error>().is_some())
     }
 
     /// Map to a process exit code for CLI usage.

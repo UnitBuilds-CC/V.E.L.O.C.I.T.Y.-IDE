@@ -41,13 +41,13 @@ use crate::{
 /// inference we keep it in f32 (the head is tiny — 232 KB — so float cost
 /// is negligible compared to the 89 MB NDA weight forward pass).
 pub struct NdaHead {
-    /// Layer 1 weights: [64, 896]  (out_features × in_features, row-major)
+    /// Layer 1 weights: \[64, 896\]  (out_features × in_features, row-major)
     pub w1: Vec<f32>,
-    /// Layer 1 bias: [64]
+    /// Layer 1 bias: \[64\]
     pub b1: Vec<f32>,
-    /// Layer 2 weights: [9, 64]
+    /// Layer 2 weights: \[9, 64\]
     pub w2: Vec<f32>,
-    /// Layer 2 bias: [9]
+    /// Layer 2 bias: \[9\]
     pub b2: Vec<f32>,
 }
 
@@ -80,7 +80,7 @@ impl NdaHead {
         }
     }
 
-    /// Forward pass: hidden[896] → logits[VOCAB_SIZE].
+    /// Forward pass: hidden\[896\] → logits\[VOCAB_SIZE\].
     /// Pure f32 — the head is only small, float cost is negligible.
     pub fn forward(&self, hidden: &[f32]) -> [f32; NdaOpcode::VOCAB_SIZE] {
         debug_assert_eq!(hidden.len(), Self::IN);
@@ -743,8 +743,8 @@ impl NdaPipeline {
 
             on_opcode(opcode);
             stats.tokens_emitted += 1;
-            if (best_op as usize) < NdaOpcode::VOCAB_SIZE {
-                stats.opcode_distribution[best_op as usize] += 1;
+            if best_op < NdaOpcode::VOCAB_SIZE {
+                stats.opcode_distribution[best_op] += 1;
             }
             stats.peak_stack_depth = stats.peak_stack_depth.max(self.verifier.stack.len());
             current_opcode_id = best_op as u32;
@@ -2631,6 +2631,8 @@ mod tests {
         cloned.unique_opcodes_emitted = 0;
         assert_eq!(snap.tokens_emitted, 100);
         assert_eq!(snap.unique_opcodes_emitted, 5);
+        assert_eq!(cloned.tokens_emitted, 999);
+        assert_eq!(cloned.unique_opcodes_emitted, 0);
     }
 
     // ── Block 194: NdaHead save file size ───────────────────────────────────

@@ -1,4 +1,4 @@
-use crate::editor::bracket_match::find_matching_bracket;
+﻿use crate::editor::bracket_match::find_matching_bracket;
 use crate::editor::theme::AppearanceSettings;
 use eframe::egui;
 use eframe::egui::{Color32, Response, TextEdit, TextFormat};

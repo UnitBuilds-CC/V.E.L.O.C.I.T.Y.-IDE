@@ -1,4 +1,4 @@
-use crate::safety::SafeMutex;
+﻿use crate::safety::SafeMutex;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, LazyLock, Mutex};
@@ -363,7 +363,7 @@ impl NativeBrowserBridge {
     }
 
     /// Visible text of the current page (title + body text, whitespace
-    /// collapsed) — the token-cheapest full read of a page.
+    /// collapsed) â€” the token-cheapest full read of a page.
     pub fn page_text(&self) -> String {
         self.active_session.page_text()
     }
@@ -584,7 +584,7 @@ impl NativeBrowserBridge {
     // -- Phase 5: Enhanced Agent Tools ----------------------------------------
 
     /// Wait for an element matching role/name to appear in the AOM.
-    /// Polls up to `timeout_ms` (simulated — in our sync model, just checks once
+    /// Polls up to `timeout_ms` (simulated â€” in our sync model, just checks once
     /// since scripts have already executed during page load).
     pub fn agent_wait_for(
         &self,
@@ -695,7 +695,7 @@ impl NativeBrowserBridge {
     /// The page's navigation map: every `<a href>` as
     /// `(node_id, link_text, href)`, in document order. Optional
     /// case-insensitive filter over text and href. The token-cheap answer to
-    /// "where can I go from here" — the AOM view names links but never shows
+    /// "where can I go from here" â€” the AOM view names links but never shows
     /// their targets.
     pub fn links(&self, filter: &str) -> Vec<(usize, String, String)> {
         let Some(tree) = &self.active_session.dom_tree else {
@@ -786,7 +786,7 @@ impl NativeBrowserBridge {
 
     /// Score a native action from its observed result and record it in the
     /// outcome history. All signals derive from the NDA delta and status
-    /// string — nothing is self-reported.
+    /// string â€” nothing is self-reported.
     pub fn record_outcome(
         &mut self,
         action: &str,

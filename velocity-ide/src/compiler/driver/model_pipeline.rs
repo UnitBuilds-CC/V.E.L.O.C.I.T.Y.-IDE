@@ -47,7 +47,7 @@ pub fn validate_model_pipeline_config(cfg: &ModelPipelineConfig) -> Vec<String> 
     if cfg.hidden_size == 0 {
         issues.push("hidden_size must be > 0".into());
     }
-    if cfg.hidden_size % 4 != 0 {
+    if !cfg.hidden_size.is_multiple_of(4) {
         issues.push(format!(
             "hidden_size ({}) must be a multiple of 4 (float buffer alignment)",
             cfg.hidden_size
@@ -71,7 +71,7 @@ pub fn validate_model_pipeline_config(cfg: &ModelPipelineConfig) -> Vec<String> 
     if cfg.vocab_size == 0 {
         issues.push("vocab_size must be > 0".into());
     }
-    if cfg.n_kv_heads != 0 && cfg.n_heads != 0 && cfg.n_heads % cfg.n_kv_heads != 0 {
+    if cfg.n_kv_heads != 0 && cfg.n_heads != 0 && !cfg.n_heads.is_multiple_of(cfg.n_kv_heads) {
         issues.push(format!(
             "n_heads ({}) must be divisible by n_kv_heads ({})",
             cfg.n_heads, cfg.n_kv_heads

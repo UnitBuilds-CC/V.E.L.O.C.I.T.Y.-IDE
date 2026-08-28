@@ -416,4 +416,99 @@ mod tests {
         mem.remember("k", "some content here", &["t"], 0.5);
         assert!(mem.recall("   ", 5).is_empty());
     }
+
+    #[test]
+    fn is_empty_on_fresh_store() {
+        let dir = tempfile::tempdir().unwrap();
+        let mem = PersistentMemory::open(dir.path());
+        assert!(mem.is_empty());
+        assert_eq!(mem.len(), 0);
+    }
+
+    #[test]
+    fn is_empty_after_remember() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut mem = PersistentMemory::open(dir.path());
+        mem.remember("key", "content", &["t"], 0.5);
+        assert!(!mem.is_empty());
+        assert_eq!(mem.len(), 1);
+    }
+
+    #[test]
+    fn iter_returns_all_entries() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut mem = PersistentMemory::open(dir.path());
+        mem.remember("k1", "content 1", &["a"], 0.5);
+        mem.remember("k2", "content 2", &["b"], 0.7);
+        mem.remember("k3", "content 3", &["c"], 0.9);
+
+        let entries: Vec<&MemoryEntry> = mem.iter().collect();
+        assert_eq!(entries.len(), 3);
+    }
+
+    #[test]
+    fn reinforce_nonexistent_key_is_noop() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut mem = PersistentMemory::open(dir.path());
+        mem.reinforce("ghost", 0.5); // should not panic
+        assert!(mem.is_empty());
+    }
+
+    #[test]
+    fn save_when_clean_is_noop() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut mem = PersistentMemory::open(dir.path());
+        mem.remember("k", "content", &["t"], 0.5);
+        mem.save().unwrap(); // first save
+        // Now dirty is false; second save should be a no-op
+        assert!(mem.save().is_ok());
+    }
+
+    #[test]
+    fn remember_updates_existing_entry() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut mem = PersistentMemory::open(dir.path());
+        mem.remember("k", "original", &["t1"], 0.8);
+        mem.remember("k", "updated", &["t2"], 0.6);
+
+        assert_eq!(mem.len(), 1);
+        let entry = mem.iter().next().unwrap();
+        assert_eq!(entry.content, "updated");
+        assert_eq!(entry.tags, vec!["t2"]);
+        // Score is averaged: (0.8 + 0.6) / 2 = 0.7
+        assert!((entry.score - 0.7).abs() < 0.001);
+    }
+
+    #[test]
+    fn score_is_clamped_to_0_1() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut mem = PersistentMemory::open(dir.path());
+        mem.remember("k", "content", &["t"], 1.5); // above 1.0
+        let entry = mem.iter().next().unwrap();
+        assert!(entry.score <= 1.0);
+
+        mem.remember("k2", "content", &["t"], -0.5); // below 0.0
+        let entry2 = mem.entries.get("k2").unwrap();
+        assert!(entry2.score >= 0.0);
+    }
+
+    #[test]
+    fn cosine_sim_empty_returns_zero() {
+        let a: Vec<String> = vec![];
+        let b = vec!["hello".to_string()];
+        assert_eq!(cosine_similarity(&a, &b), 0.0);
+        assert_eq!(cosine_similarity(&b, &a), 0.0);
+    }
+
+    #[test]
+    fn tokenize_filters_short_terms() {
+        let terms = tokenize("I am a big fan of Rust");
+        // "I", "a" are single chars -> filtered out
+        assert!(!terms.contains(&"i".to_string()));
+        assert!(!terms.contains(&"a".to_string()));
+        assert!(terms.contains(&"am".to_string()));
+        assert!(terms.contains(&"big".to_string()));
+        assert!(terms.contains(&"fan".to_string()));
+        assert!(terms.contains(&"rust".to_string()));
+    }
 }

@@ -26,7 +26,7 @@ pub struct ModelConfig {
     /// RoPE base frequency θ (used by FP32 path; ignored by zero-float ALiBi path)
     pub rope_theta: f32,
     /// ALiBi right-shift amounts per head (zero-float path only).
-    /// bias = (q_pos − k_pos) >> alibi_shifts[head]  (pure bit-shift, no multiply)
+    /// bias = (q_pos − k_pos) >> alibi_shifts\[head\]  (pure bit-shift, no multiply)
     /// Empty = use RoPE instead.
     #[allow(dead_code)]
     pub alibi_shifts: Vec<u8>,
@@ -122,13 +122,13 @@ impl ModelConfig {
         if self.vocab_size == 0 {
             issues.push("vocab_size must be > 0".into());
         }
-        if self.n_heads > 0 && self.hidden_size % self.n_heads != 0 {
+        if self.n_heads > 0 && !self.hidden_size.is_multiple_of(self.n_heads) {
             issues.push(format!(
                 "hidden_size ({}) must be divisible by n_heads ({})",
                 self.hidden_size, self.n_heads
             ));
         }
-        if self.n_kv_heads > 0 && self.n_heads % self.n_kv_heads != 0 {
+        if self.n_kv_heads > 0 && !self.n_heads.is_multiple_of(self.n_kv_heads) {
             issues.push(format!(
                 "n_heads ({}) must be divisible by n_kv_heads ({})",
                 self.n_heads, self.n_kv_heads

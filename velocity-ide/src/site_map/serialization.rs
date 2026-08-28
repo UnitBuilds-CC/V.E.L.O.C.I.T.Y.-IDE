@@ -1837,7 +1837,7 @@ mod tests {
         };
         let result = roundtrip(&node);
         match result {
-            NdaNode::Bitwise { op, lhs, rhs } => {
+            NdaNode::Bitwise { op, lhs: _, rhs } => {
                 assert_eq!(op, BitwiseOp::Not);
                 assert!(rhs.is_none());
             }
@@ -2432,6 +2432,8 @@ mod tests {
         report.deserialization_verified = true;
         assert_eq!(cloned.nodes_serialized, 10);
         assert!(!cloned.deserialization_verified);
+        assert_eq!(report.nodes_serialized, 0);
+        assert!(report.deserialization_verified);
     }
 
     // ── Int boundary values ────────────────────────────────────────────

@@ -533,4 +533,148 @@ mod tests {
         assert!(ids.contains(&"gitlab"));
         assert!(ids.contains(&"notion"));
     }
+
+    #[test]
+    fn token_no_expiry_never_expires() {
+        let token = OAuth2Token {
+            access_token: "t".to_string(),
+            token_type: "Bearer".to_string(),
+            expires_in: None,
+            refresh_token: None,
+            issued_at: 0,
+            scope: None,
+        };
+        assert!(!token.is_expired());
+        assert_eq!(token.remaining_secs(), u64::MAX);
+    }
+
+    #[test]
+    fn token_zero_expiry_is_expired() {
+        let token = OAuth2Token {
+            access_token: "t".to_string(),
+            token_type: "Bearer".to_string(),
+            expires_in: Some(0),
+            refresh_token: None,
+            issued_at: now_secs() - 100,
+            scope: None,
+        };
+        assert!(token.is_expired());
+        assert_eq!(token.remaining_secs(), 0);
+    }
+
+    #[test]
+    fn needs_refresh_no_token() {
+        let mgr = OAuth2Manager::new();
+        assert!(!mgr.needs_refresh("nonexistent"));
+    }
+
+    #[test]
+    fn needs_refresh_no_refresh_token() {
+        let mut mgr = OAuth2Manager::new();
+        let token = OAuth2Token {
+            access_token: "expired".to_string(),
+            token_type: "Bearer".to_string(),
+            expires_in: Some(0),
+            refresh_token: None, // no refresh token
+            issued_at: now_secs() - 100,
+            scope: None,
+        };
+        mgr.tokens.insert("p".to_string(), token);
+        assert!(!mgr.needs_refresh("p")); // expired but no refresh token
+    }
+
+    #[test]
+    fn build_refresh_request_success() {
+        let mut mgr = OAuth2Manager::new();
+        mgr.register_provider(test_provider());
+        let token = OAuth2Token {
+            access_token: "old".to_string(),
+            token_type: "Bearer".to_string(),
+            expires_in: Some(3600),
+            refresh_token: Some("refresh_me".to_string()),
+            issued_at: now_secs(),
+            scope: None,
+        };
+        mgr.tokens.insert("test".to_string(), token);
+
+        let (url, body) = mgr.build_refresh_request("test").unwrap();
+        assert_eq!(url, "https://auth.example.com/token");
+        assert!(body.contains("grant_type=refresh_token"));
+        assert!(body.contains("refresh_token=refresh_me"));
+        assert!(body.contains("client_id=client123"));
+    }
+
+    #[test]
+    fn build_refresh_request_no_provider() {
+        let mgr = OAuth2Manager::new();
+        assert!(mgr.build_refresh_request("nonexistent").is_err());
+    }
+
+    #[test]
+    fn build_refresh_request_no_token() {
+        let mut mgr = OAuth2Manager::new();
+        mgr.register_provider(test_provider());
+        assert!(mgr.build_refresh_request("test").is_err());
+    }
+
+    #[test]
+    fn build_refresh_request_no_refresh_token() {
+        let mut mgr = OAuth2Manager::new();
+        mgr.register_provider(test_provider());
+        let token = OAuth2Token {
+            access_token: "t".to_string(),
+            token_type: "Bearer".to_string(),
+            expires_in: Some(3600),
+            refresh_token: None,
+            issued_at: now_secs(),
+            scope: None,
+        };
+        mgr.tokens.insert("test".to_string(), token);
+        assert!(mgr.build_refresh_request("test").is_err());
+    }
+
+    #[test]
+    fn update_token_replaces_existing() {
+        let mut mgr = OAuth2Manager::new();
+        let token1 = OAuth2Token {
+            access_token: "first".to_string(),
+            token_type: "Bearer".to_string(),
+            expires_in: Some(3600),
+            refresh_token: None,
+            issued_at: now_secs(),
+            scope: None,
+        };
+        mgr.tokens.insert("p".to_string(), token1);
+
+        let token2 = OAuth2Token {
+            access_token: "second".to_string(),
+            token_type: "Bearer".to_string(),
+            expires_in: Some(7200),
+            refresh_token: None,
+            issued_at: now_secs(),
+            scope: None,
+        };
+        mgr.update_token("p", token2);
+        assert_eq!(mgr.tokens["p"].access_token, "second");
+    }
+
+    #[test]
+    fn complete_authorization_unknown_state() {
+        let mut mgr = OAuth2Manager::new();
+        let token = OAuth2Token {
+            access_token: "t".to_string(),
+            token_type: "Bearer".to_string(),
+            expires_in: Some(3600),
+            refresh_token: None,
+            issued_at: now_secs(),
+            scope: None,
+        };
+        assert!(mgr.complete_authorization("unknown_state", "code", token).is_err());
+    }
+
+    #[test]
+    fn save_without_workspace_fails() {
+        let mgr = OAuth2Manager::new();
+        assert!(mgr.save().is_err());
+    }
 }

@@ -38,13 +38,13 @@ pub struct BatchPackingReport {
 /// Validate that a byte slice is properly aligned and sized for u32 reinterpretation.
 pub fn validate_u32_alignment(data: &[u8], ctx: &str) -> Vec<String> {
     let mut issues = Vec::new();
-    if data.len() % 4 != 0 {
+    if !data.len().is_multiple_of(4) {
         issues.push(format!(
             "{ctx}: byte length {} is not a multiple of 4",
             data.len()
         ));
     }
-    if (data.as_ptr() as usize) % 4 != 0 {
+    if !(data.as_ptr() as usize).is_multiple_of(4) {
         issues.push(format!("{ctx}: pointer is not 4-byte aligned"));
     }
     issues
@@ -59,7 +59,7 @@ pub fn validate_pack_dims(k: usize, n: usize, data_len: usize, ctx: &str) -> Vec
     if n == 0 {
         issues.push(format!("{ctx}: n dimension is zero"));
     }
-    if k % 16 != 0 {
+    if !k.is_multiple_of(16) {
         issues.push(format!(
             "{ctx}: k={k} is not a multiple of 16 (required for uvec4 packing)"
         ));
@@ -83,7 +83,7 @@ pub fn validate_nda_pack_dims(k: usize, n: usize, data_len: usize, ctx: &str) ->
     if n == 0 {
         issues.push(format!("{ctx}: n dimension is zero"));
     }
-    if k % 128 != 0 {
+    if !k.is_multiple_of(128) {
         issues.push(format!(
             "{ctx}: k={k} is not a multiple of 128 (required for NDA packing)"
         ));
@@ -222,7 +222,7 @@ pub fn validate_inputs_nda(data: &[u32], ctx: &str) -> Vec<String> {
     if data.is_empty() {
         issues.push(format!("{ctx}: input is empty"));
     }
-    if data.len() % 8 != 0 {
+    if !data.len().is_multiple_of(8) {
         issues.push(format!(
             "{ctx}: length {} is not a multiple of 8 (need 8 words per col-group-of-128)",
             data.len()
@@ -1014,7 +1014,7 @@ mod tests {
     #[test]
     fn pack_uvec4_report_invalid_has_zero_output() {
         let input = vec![0u8; 5]; // bad alignment
-        let (result, report) = pack_weights_uvec4_report(&input, 64, 4);
+        let (_result, report) = pack_weights_uvec4_report(&input, 64, 4);
         assert_eq!(report.output_bytes, 0);
         assert!(!report.valid);
     }
@@ -1031,7 +1031,7 @@ mod tests {
     #[test]
     fn pack_nda_report_invalid_has_zero_output() {
         let input = vec![0u8; 10];
-        let ((act, pos), report) = pack_weights_nda_report(&input, 128, 1);
+        let ((_act, _pos), report) = pack_weights_nda_report(&input, 128, 1);
         assert_eq!(report.output_bytes, 0);
         assert!(!report.valid);
     }

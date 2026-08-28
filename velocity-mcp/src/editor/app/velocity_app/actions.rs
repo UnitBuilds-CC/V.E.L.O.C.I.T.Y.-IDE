@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+﻿use std::path::PathBuf;
 
 use super::super::helpers::*;
 use super::super::types::*;
@@ -773,7 +773,7 @@ impl VelocityApp {
     }
 
     /// Snapshot the active editor's file/line onto the back stack. Called before
-    /// a jump so it can be unwound with Alt+←. Clears the forward stack.
+    /// a jump so it can be unwound with Alt+â†. Clears the forward stack.
     pub fn push_nav_location(&mut self) {
         let Some(id) = self.active_tab.clone() else {
             return;
@@ -797,7 +797,7 @@ impl VelocityApp {
         }
     }
 
-    /// Navigate to the previous location (Alt+←).
+    /// Navigate to the previous location (Alt+â†).
     pub fn nav_back(&mut self) {
         let Some(loc) = self.nav_back.pop() else {
             self.status_message = "Nothing to go back to".into();
@@ -814,7 +814,7 @@ impl VelocityApp {
         self.restore_nav_location(loc);
     }
 
-    /// Navigate forward again after going back (Alt+→).
+    /// Navigate forward again after going back (Alt+â†’).
     pub fn nav_forward(&mut self) {
         let Some(loc) = self.nav_forward.pop() else {
             self.status_message = "Nothing to go forward to".into();

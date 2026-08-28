@@ -343,7 +343,7 @@ impl WikiModel {
 
         // Sort: prefix matches first, then contains; within each group alphabetical.
         suggestions.sort_by(|a, b| {
-            a.match_type.cmp(&b.match_type).then_with(|| a.title.cmp(&b.title))
+            (&a.match_type, &a.title).cmp(&(&b.match_type, &b.title))
         });
         suggestions.truncate(limit);
         suggestions

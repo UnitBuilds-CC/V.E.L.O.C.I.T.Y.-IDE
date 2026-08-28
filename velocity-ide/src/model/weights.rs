@@ -337,11 +337,11 @@ pub struct LayerWeights {
 
 /// All weights for the complete BitNet-3B model.
 pub struct ModelWeights {
-    /// Token embedding table [vocab_size × hidden_size]
+    /// Token embedding table \[vocab_size × hidden_size\]
     pub embed_tokens: Vec<f32>,
-    /// LM head projection [vocab_size × hidden_size]
+    /// LM head projection \[vocab_size × hidden_size\]
     pub lm_head: Vec<f32>,
-    /// Final RMSNorm scale [hidden_size]
+    /// Final RMSNorm scale \[hidden_size\]
     pub final_norm: Vec<f32>,
     /// One entry per transformer layer
     pub layers: Vec<LayerWeights>,
@@ -964,8 +964,8 @@ impl ModelWeights {
 
         MemoryBreakdown {
             embed_tokens_bytes: embed_bytes,
-            lm_head_bytes: lm_head_bytes,
-            final_norm_bytes: final_norm_bytes,
+            lm_head_bytes,
+            final_norm_bytes,
             per_layer_nda_bytes: per_layer_nda,
             per_layer_norm_bytes: per_layer_norm,
             per_layer_bias_bytes: per_layer_bias,

@@ -429,10 +429,8 @@ pub fn audit_env_exposure() -> Vec<String> {
     }
 
     for var in SOCKET_ENV_VARS {
-        if std::env::var(var).is_ok() {
-            if !exposed.contains(&var.to_string()) {
-                exposed.push(var.to_string());
-            }
+        if std::env::var(var).is_ok() && !exposed.contains(&var.to_string()) {
+            exposed.push(var.to_string());
         }
     }
 
@@ -555,10 +553,8 @@ impl CredentialBoundaryAudit {
             "none"
         } else if !self.exposed_env_vars.is_empty() && !self.reachable_sockets.is_empty() {
             "critical" // env vars + sockets = active exfiltration path
-        } else if !self.exposed_env_vars.is_empty() {
-            "high" // env vars present but no sockets
-        } else if !self.reachable_sockets.is_empty() {
-            "high" // sockets reachable
+        } else if !self.exposed_env_vars.is_empty() || !self.reachable_sockets.is_empty() {
+            "high" // env vars or sockets present
         } else {
             "medium" // only config dirs accessible
         }

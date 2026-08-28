@@ -268,7 +268,7 @@ fn batch_kv_insert_and_root_recomputed_once() {
     assert_eq!(keys.len(), 5);
     assert_eq!(sm.stats().kv, 5);
     // All keys should be retrievable
-    for (i, key) in keys.iter().enumerate() {
+    for (i, _key) in keys.iter().enumerate() {
         let (k, v) = sm.get_kv(i as u32, 0).unwrap();
         assert_eq!(k.sign, items[i].2.sign);
         assert_eq!(v.sign, items[i].3.sign);

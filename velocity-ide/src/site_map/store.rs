@@ -1599,7 +1599,7 @@ mod tests {
     #[test]
     fn open_creates_directories() {
         let dir = temp_dir("open_dirs");
-        let sm = SiteMap::open(&dir, 0x1234).unwrap();
+        let _sm = SiteMap::open(&dir, 0x1234).unwrap();
         assert!(dir.join("kv").exists());
         assert!(dir.join("nodes").exists());
         assert!(dir.join("programs").exists());

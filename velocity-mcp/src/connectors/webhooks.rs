@@ -563,4 +563,101 @@ mod tests {
             Some("deploy".to_string())
         );
     }
+
+    #[test]
+    fn extract_event_type_invalid_json() {
+        assert_eq!(extract_event_type("not json", "github"), None);
+        assert_eq!(extract_event_type("{}", "github"), None); // no "action" key
+    }
+
+    #[test]
+    fn constant_time_equal_strings() {
+        assert!(constant_time_eq("hello", "hello"));
+        assert!(!constant_time_eq("hello", "world"));
+    }
+
+    #[test]
+    fn constant_time_different_lengths() {
+        assert!(!constant_time_eq("short", "longer_string"));
+        assert!(!constant_time_eq("", "a"));
+    }
+
+    #[test]
+    fn constant_time_empty_strings() {
+        assert!(constant_time_eq("", ""));
+    }
+
+    #[test]
+    fn webhook_event_roundtrip() {
+        let events = vec![
+            WebhookEvent::WorkflowCompleted,
+            WebhookEvent::WorkflowFailed,
+            WebhookEvent::CriticalAlert,
+            WebhookEvent::FileChanged,
+            WebhookEvent::BuildCompleted,
+            WebhookEvent::BuildFailed,
+            WebhookEvent::TaskStarted,
+            WebhookEvent::TaskCompleted,
+        ];
+        for event in events {
+            let label = event.label();
+            let parsed = WebhookEvent::from_label(label);
+            assert_eq!(parsed, event);
+        }
+    }
+
+    #[test]
+    fn matching_outgoing_skips_disabled() {
+        let mut mgr = WebhookManager::new();
+        let mut wh = test_outgoing();
+        wh.enabled = false;
+        mgr.register_outgoing(wh);
+        assert_eq!(mgr.matching_outgoing(&WebhookEvent::BuildFailed).len(), 0);
+    }
+
+    #[test]
+    fn record_fire_nonexistent_id_no_panic() {
+        let mut mgr = WebhookManager::new();
+        mgr.record_fire("nonexistent", Some(200)); // should not panic
+    }
+
+    #[test]
+    fn remove_outgoing_and_incoming() {
+        let mut mgr = WebhookManager::new();
+        mgr.register_outgoing(test_outgoing());
+        mgr.register_incoming(test_incoming());
+        assert!(mgr.remove_outgoing("wh1"));
+        assert!(!mgr.remove_outgoing("wh1"));
+        assert!(mgr.remove_incoming("in1"));
+        assert!(!mgr.remove_incoming("in1"));
+    }
+
+    #[test]
+    fn incoming_payload_with_signature_required() {
+        let mut mgr = WebhookManager::new();
+        let mut wh = test_incoming();
+        wh.verify_secret = Some("my_secret".to_string());
+        mgr.register_incoming(wh);
+
+        // Without signature should fail
+        let result = mgr.receive_payload("in1", "{}", None);
+        assert!(result.is_err());
+
+        // With correct signature should succeed
+        let sig = compute_hmac_hex("my_secret", "{}");
+        let result = mgr.receive_payload("in1", "{}", Some(&sig));
+        assert!(result.is_ok());
+        assert!(result.unwrap().verified);
+    }
+
+    #[test]
+    fn incoming_payload_wrong_signature() {
+        let mut mgr = WebhookManager::new();
+        let mut wh = test_incoming();
+        wh.verify_secret = Some("my_secret".to_string());
+        mgr.register_incoming(wh);
+
+        let result = mgr.receive_payload("in1", "{}", Some("wrong_sig"));
+        assert!(result.is_err()); // Invalid signature returns Err
+    }
 }

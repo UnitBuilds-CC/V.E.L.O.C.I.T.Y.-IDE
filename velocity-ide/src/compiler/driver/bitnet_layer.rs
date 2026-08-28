@@ -52,7 +52,7 @@ pub fn validate_bitnet_config(cfg: &BitNetLayerConfig) -> Vec<String> {
     if cfg.hidden_size == 0 {
         issues.push("hidden_size must be > 0".into());
     }
-    if cfg.hidden_size % 16 != 0 {
+    if !cfg.hidden_size.is_multiple_of(16) {
         issues.push(format!(
             "hidden_size ({}) must be a multiple of 16 for uvec4 packing",
             cfg.hidden_size

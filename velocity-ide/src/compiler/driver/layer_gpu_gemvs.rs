@@ -562,6 +562,7 @@ mod tests {
         let mut cloned = r.clone();
         cloned.q_dispatched = false;
         assert!(r.q_dispatched); // original unchanged
+        assert!(!cloned.q_dispatched); // clone mutated independently
     }
 
     #[test]

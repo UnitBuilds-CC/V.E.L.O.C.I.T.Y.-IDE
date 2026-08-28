@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+﻿use std::path::PathBuf;
 
 use super::super::types::*;
 use super::struct_def::VelocityApp;
@@ -48,7 +48,7 @@ impl VelocityApp {
 
         if let Some(ref id) = dominated {
             if self.active_tab.as_ref() == Some(id) {
-                // Panel is active — toggle it off.
+                // Panel is active â€” toggle it off.
                 let id = id.clone();
                 self.tabs.retain(|t| t.id != id);
                 self.buffers.remove(&id);
@@ -58,7 +58,7 @@ impl VelocityApp {
             }
         }
 
-        // Panel is either not open or not active — focus/open it.
+        // Panel is either not open or not active â€” focus/open it.
         self.focus_panel(kind);
     }
 
@@ -99,7 +99,7 @@ impl VelocityApp {
     }
 
     /// True for `.nda` files that live in internal state dirs (`.velocity/`,
-    /// `memory/`) — those are at-rest envelopes, never routed to the NDA editor.
+    /// `memory/`) â€” those are at-rest envelopes, never routed to the NDA editor.
     pub(crate) fn is_internal_nda_path(path: &std::path::Path) -> bool {
         path.components()
             .any(|c| matches!(c.as_os_str().to_str(), Some(".velocity") | Some("memory")))
@@ -436,7 +436,7 @@ impl VelocityApp {
         self.save_workspace_preferences();
     }
 
-    // ─── IDE Feature Helpers ───────────────────────────────────────────────
+    // â”€â”€â”€ IDE Feature Helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     /// Toggle breakpoint on the current cursor line.
     pub fn toggle_breakpoint_current_line(&mut self) {
@@ -888,7 +888,7 @@ impl VelocityApp {
         // Determine the binary to debug based on workspace type
         let cargo_toml = self.workspace_root.join("Cargo.toml");
         if cargo_toml.exists() {
-            // Rust project — look for the target binary
+            // Rust project â€” look for the target binary
             let target_dir = self.workspace_root.join("target").join("debug");
             let project_name = self
                 .workspace_root
@@ -943,7 +943,7 @@ impl VelocityApp {
         }
     }
 
-    // ─── Semantic Search Integration ─────────────────────────────────────────
+    // â”€â”€â”€ Semantic Search Integration â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     /// Run a semantic (TF-IDF similarity) search and produce SearchHit results.
     pub fn run_semantic_search(&mut self) {
@@ -970,7 +970,7 @@ impl VelocityApp {
         }
     }
 
-    // ─── Inline Suggestions LLM Wiring ───────────────────────────────────────
+    // â”€â”€â”€ Inline Suggestions LLM Wiring â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     /// Request an inline ghost-text suggestion from the configured LLM provider.
     /// Called on cursor pause after debounce timer (see code_editor integration).
@@ -1101,7 +1101,7 @@ impl VelocityApp {
             });
     }
 
-    // ─── Deploy Pipeline UI Integration ──────────────────────────────────────
+    // â”€â”€â”€ Deploy Pipeline UI Integration â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     /// Initialize the deploy pipeline from workspace configuration.
     pub fn init_deploy_pipeline(&mut self) {
@@ -1114,7 +1114,7 @@ impl VelocityApp {
         }
     }
 
-    /// Trigger a full deploy run (build → test → package → deploy).
+    /// Trigger a full deploy run (build â†’ test â†’ package â†’ deploy).
     pub fn trigger_deploy(&mut self) {
         self.init_deploy_pipeline();
         if let Some(ref mut pipeline) = self.deploy_pipeline {

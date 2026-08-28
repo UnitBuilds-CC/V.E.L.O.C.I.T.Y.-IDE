@@ -140,7 +140,7 @@ pub struct LoopAnalysisInfo {
 
 /// Analyze a loop body for symbolic optimization opportunities without emitting code.
 pub fn analyze_loop_body(count: u32, body: &[NdaNode]) -> LoopAnalysisInfo {
-    let mut issues = validate_symbolic_loop_params(count, body);
+    let issues = validate_symbolic_loop_params(count, body);
     let mut increment_var = None;
     let mut accumulator_var = None;
 
@@ -648,6 +648,8 @@ mod tests {
         cloned.is_native_eligible = false;
         assert_eq!(p.increment_step, 2);
         assert!(p.is_native_eligible);
+        assert_eq!(cloned.increment_step, 99);
+        assert!(!cloned.is_native_eligible);
     }
 
     #[test]

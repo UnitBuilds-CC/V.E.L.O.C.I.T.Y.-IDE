@@ -1174,7 +1174,7 @@ pub fn validate_node(node: &NdaNode) -> Vec<String> {
                 issues.push(format!("matrix has zero dimension: {}x{}", rows, cols));
             }
             let expected_bits = (*rows as usize) * (*cols as usize);
-            let expected_sign_bytes = (expected_bits + 7) / 8;
+            let expected_sign_bytes = expected_bits.div_ceil(8);
             if sign.len() != expected_sign_bytes {
                 issues.push(format!(
                     "matrix sign bytes mismatch: expected {} for {}x{}, got {}",

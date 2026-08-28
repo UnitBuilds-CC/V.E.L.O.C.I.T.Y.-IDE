@@ -1,5 +1,9 @@
 // V.E.L.O.C.I.T.Y.-IDE — main entry point
 
+// Public API surfaces are defined across modules for future wiring.
+// These items are intentionally available but not yet called from main.
+#![allow(dead_code)]
+
 mod compiler;
 mod model;
 mod nda;
@@ -1295,7 +1299,7 @@ fn run_providers(args: ProvidersArgs, json: bool) -> Result<()> {
             println!();
             println!("=== Configured Provider API Keys ===");
             println!();
-            println!("  {:<16} {:<20} {}", "Provider", "API Key", "Base URL");
+            println!("  {:<16} {:<20} Base URL", "Provider", "API Key");
             println!("  {}", "-".repeat(60));
             for c in &creds {
                 let masked = if c.api_key.len() > 12 {
@@ -1389,7 +1393,7 @@ fn run_providers(args: ProvidersArgs, json: bool) -> Result<()> {
             println!();
 
             // Print results.
-            println!("  {:<16} {:<8} {:>12} {:>10}  {}", "Provider", "Valid", "Tokens", "Cost", "Status");
+            println!("  {:<16} {:<8} {:>12} {:>10}  Status", "Provider", "Valid", "Tokens", "Cost");
             println!("  {}", "-".repeat(75));
             for p in &snapshot.providers {
                 let valid = if p.key_valid { "yes" } else { "NO" };
@@ -1532,14 +1536,11 @@ fn run_status(json: bool, verbose: bool) -> Result<()> {
     }
 
     // Rate limit info.
-    match client.get_rate_limit() {
-        Ok(rl) => {
-            println!();
-            println!("  Rate:      {} req/min (resets in {}s)",
-                rl.rate_limit.max_requests_per_minute, rl.rate_limit.resets_in_secs);
-            println!("  Billing:   resets in {} days", rl.billing_period.resets_in_days);
-        }
-        Err(_) => {}
+    if let Ok(rl) = client.get_rate_limit() {
+        println!();
+        println!("  Rate:      {} req/min (resets in {}s)",
+            rl.rate_limit.max_requests_per_minute, rl.rate_limit.resets_in_secs);
+        println!("  Billing:   resets in {} days", rl.billing_period.resets_in_days);
     }
 
     println!();
@@ -1583,7 +1584,7 @@ fn run_transparency(json: bool) -> Result<()> {
     // Recent routing decisions.
     if !t.recent_routing_decisions.is_empty() {
         println!("  Recent Routing Decisions (last {}):", t.recent_routing_decisions.len());
-        println!("  {:<24} {:<20} {:<14} {}", "Domain", "Model", "Tokens", "Rationale");
+        println!("  {:<24} {:<20} {:<14} Rationale", "Domain", "Model", "Tokens");
         println!("  {}", "-".repeat(90));
         for d in t.recent_routing_decisions.iter().take(20) {
             let rationale = d.routing_rationale.as_deref().unwrap_or("-");

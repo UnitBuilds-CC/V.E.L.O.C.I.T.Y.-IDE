@@ -732,6 +732,7 @@ mod tests {
         let cloned = r.clone();
         r.operations = 999;
         assert_eq!(cloned.operations, 5);
+        assert_eq!(r.operations, 999);
     }
 
     #[test]

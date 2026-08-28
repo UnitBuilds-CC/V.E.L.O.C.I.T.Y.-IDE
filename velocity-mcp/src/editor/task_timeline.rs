@@ -1,4 +1,4 @@
-//! Task Timeline - Zero-allocation ring buffer for task history with visual rendering.
+﻿//! Task Timeline - Zero-allocation ring buffer for task history with visual rendering.
 //!
 //! Provides a circular buffer of task events with immutable snapshot rendering.
 

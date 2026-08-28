@@ -208,3 +208,236 @@ impl NdaEmbeddedTokenizer {
         self.tokenizer.decode(tokens)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ─── Tokenizer tests ───────────────────────────────────────────────────
+
+    #[test]
+    fn tokenizer_new_has_ascii_vocab() {
+        let tok = Tokenizer::new();
+        // 0..128 are valid ASCII chars; 128..255 all map to U+FFFD (replacement char)
+        // so unique entries from 0..=255 are ~129, plus common words and code keywords
+        assert!(tok.vocab_size() >= 130, "should have at least ASCII + replacement char entries");
+    }
+
+    #[test]
+    fn tokenizer_vocab_includes_common_words() {
+        let tok = Tokenizer::new();
+        // Common English words should get dedicated token IDs (> 255)
+        let encoded = tok.encode("the");
+        assert_eq!(encoded.len(), 1, "'the' should be a single token");
+        assert!(encoded[0] > 255, "'the' should have a vocab ID > 255");
+    }
+
+    #[test]
+    fn tokenizer_vocab_includes_code_keywords() {
+        let tok = Tokenizer::new();
+        let encoded = tok.encode("fn");
+        assert_eq!(encoded.len(), 1, "'fn' should be a single token");
+        assert!(encoded[0] > 255, "'fn' should have a vocab ID > 255");
+    }
+
+    #[test]
+    fn tokenizer_encode_decode_roundtrip() {
+        let tok = Tokenizer::new();
+        let text = "hello world";
+        let encoded = tok.encode(text);
+        let decoded = tok.decode(&encoded);
+        assert_eq!(decoded, text);
+    }
+
+    #[test]
+    fn tokenizer_encode_decode_code() {
+        let tok = Tokenizer::new();
+        let text = "fn main() { let x = 42; }";
+        let encoded = tok.encode(text);
+        let decoded = tok.decode(&encoded);
+        assert_eq!(decoded, text);
+    }
+
+    #[test]
+    fn tokenizer_empty_string() {
+        let tok = Tokenizer::new();
+        let encoded = tok.encode("");
+        assert!(encoded.is_empty(), "empty string should produce no tokens");
+        let decoded = tok.decode(&encoded);
+        assert_eq!(decoded, "");
+    }
+
+    #[test]
+    fn tokenizer_single_char() {
+        let tok = Tokenizer::new();
+        for ch in ['a', 'Z', '0', ' ', '\n'] {
+            let s = ch.to_string();
+            let encoded = tok.encode(&s);
+            assert!(!encoded.is_empty(), "char '{}' should encode", ch);
+            let decoded = tok.decode(&encoded);
+            assert_eq!(decoded, s, "roundtrip failed for char '{}'", ch);
+        }
+    }
+
+    #[test]
+    fn tokenizer_ascii_bytes_fallback() {
+        let tok = Tokenizer::new();
+        // Each ASCII byte should map to its byte value as token ID
+        for b in 0u8..=127 {
+            let ch = (b as char).to_string();
+            let encoded = tok.encode(&ch);
+            assert_eq!(encoded.len(), 1, "ASCII byte {} should be single token", b);
+            assert_eq!(encoded[0], b as u32, "ASCII byte {} should map to ID {}", b, b);
+        }
+    }
+
+    #[test]
+    fn tokenizer_unknown_id_decodes_to_placeholder() {
+        let tok = Tokenizer::new();
+        let decoded = tok.decode(&[999999]);
+        assert!(decoded.contains("<unk:"), "unknown ID should produce <unk:N> placeholder");
+    }
+
+    #[test]
+    fn tokenizer_whitespace_roundtrip() {
+        let tok = Tokenizer::new();
+        let text = "  \n\t  ";
+        let encoded = tok.encode(text);
+        let decoded = tok.decode(&encoded);
+        assert_eq!(decoded, text);
+    }
+
+    #[test]
+    fn tokenizer_greedy_matching() {
+        let tok = Tokenizer::new();
+        // "    " (4 spaces) is in the code_words list, so it should be a single token
+        let encoded = tok.encode("    ");
+        assert_eq!(encoded.len(), 1, "4-space indent should be a single token");
+    }
+
+    #[test]
+    fn tokenizer_vocab_size_stable() {
+        let tok1 = Tokenizer::new();
+        let tok2 = Tokenizer::new();
+        assert_eq!(tok1.vocab_size(), tok2.vocab_size());
+    }
+
+    #[test]
+    fn tokenizer_unicode_fallback() {
+        let tok = Tokenizer::new();
+        // Unicode chars not in vocab fall back to UTF-8 byte encoding.
+        // Each byte is looked up individually; bytes > 127 map to U+FFFD.
+        // Verify the encoding doesn't panic and produces some tokens.
+        let text = "\u{00e9}"; // é (UTF-8: 0xC3 0xA9)
+        let encoded = tok.encode(text);
+        assert!(!encoded.is_empty(), "unicode should still encode");
+        // The decoded form may differ because high bytes map to replacement char
+        let decoded = tok.decode(&encoded);
+        assert!(!decoded.is_empty(), "decoded should produce some output");
+    }
+
+    // ─── NdaEmbeddingTable tests ──────────────────────────────────────────
+
+    #[test]
+    fn embedding_table_dimensions() {
+        let table = NdaEmbeddingTable::new(300, 128);
+        // packed_len = 128 / 32 = 4
+        let (active, pos) = table.lookup(0);
+        assert_eq!(active.len(), 4, "active bitmap should have packed_len words");
+        assert_eq!(pos.len(), 4, "positive bitmap should have packed_len words");
+    }
+
+    #[test]
+    fn embedding_table_deterministic() {
+        let t1 = NdaEmbeddingTable::new(300, 128);
+        let t2 = NdaEmbeddingTable::new(300, 128);
+        for token_id in 0..10 {
+            let (a1, p1) = t1.lookup(token_id);
+            let (a2, p2) = t2.lookup(token_id);
+            assert_eq!(a1, a2, "active bitmap for token {} should be deterministic", token_id);
+            assert_eq!(p1, p2, "positive bitmap for token {} should be deterministic", token_id);
+        }
+    }
+
+    #[test]
+    fn embedding_table_different_tokens_differ() {
+        let table = NdaEmbeddingTable::new(300, 128);
+        let (a0, _) = table.lookup(0);
+        let (a1, _) = table.lookup(1);
+        // Very unlikely that two different tokens have identical embeddings
+        assert!(a0 != a1, "different tokens should have different active bitmaps");
+    }
+
+    #[test]
+    fn embedding_table_wraps_around() {
+        let table = NdaEmbeddingTable::new(10, 64);
+        // lookup(10) should wrap to lookup(0) via modulo
+        let (a_wrap, p_wrap) = table.lookup(10);
+        let (a0, p0) = table.lookup(0);
+        assert_eq!(a_wrap, a0);
+        assert_eq!(p_wrap, p0);
+    }
+
+    #[test]
+    fn embedding_table_sparsity() {
+        // ~30% of bits should be active (set)
+        let table = NdaEmbeddingTable::new(100, 1024);
+        let (active, _) = table.lookup(42);
+        let total_bits = active.len() * 32;
+        let active_bits: usize = active.iter().map(|w| w.count_ones() as usize).sum();
+        let ratio = active_bits as f64 / total_bits as f64;
+        // Allow wide margin: 10% to 50%
+        assert!(ratio > 0.10 && ratio < 0.50,
+            "sparsity ratio {} should be around 30%", ratio);
+    }
+
+    #[test]
+    fn embedding_table_positive_subset_of_active() {
+        // Positive bits should be a subset of active bits
+        let table = NdaEmbeddingTable::new(100, 256);
+        for token_id in 0..50 {
+            let (active, pos) = table.lookup(token_id);
+            for (a, p) in active.iter().zip(pos.iter()) {
+                assert_eq!(a & p, *p, "positive bits must be subset of active bits for token {}", token_id);
+            }
+        }
+    }
+
+    // ─── NdaEmbeddedTokenizer tests ───────────────────────────────────────
+
+    #[test]
+    fn embedded_tokenizer_encode_and_embed() {
+        let et = NdaEmbeddedTokenizer::new(128);
+        let (token_ids, embeds) = et.encode_and_embed("hello");
+        assert!(!token_ids.is_empty(), "should produce token IDs");
+        assert_eq!(token_ids.len(), embeds.len(), "each token should have an embedding");
+    }
+
+    #[test]
+    fn embedded_tokenizer_decode() {
+        let et = NdaEmbeddedTokenizer::new(128);
+        let text = "fn main";
+        let (token_ids, _) = et.encode_and_embed(text);
+        let decoded = et.decode(&token_ids);
+        assert_eq!(decoded, text);
+    }
+
+    #[test]
+    fn embedded_tokenizer_empty_input() {
+        let et = NdaEmbeddedTokenizer::new(64);
+        let (token_ids, embeds) = et.encode_and_embed("");
+        assert!(token_ids.is_empty());
+        assert!(embeds.is_empty());
+    }
+
+    #[test]
+    fn embedded_tokenizer_embeddings_have_correct_dims() {
+        let dim = 256;
+        let et = NdaEmbeddedTokenizer::new(dim);
+        let (_, embeds) = et.encode_and_embed("test");
+        for (active, pos) in &embeds {
+            assert_eq!(active.len(), dim / 32, "active bitmap packed_len");
+            assert_eq!(pos.len(), dim / 32, "positive bitmap packed_len");
+        }
+    }
+}

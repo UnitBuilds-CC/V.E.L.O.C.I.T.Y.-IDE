@@ -1,4 +1,4 @@
-use crate::agent::{ModelInfo, UiToAgentMessage};
+﻿use crate::agent::{ModelInfo, UiToAgentMessage};
 use crate::editor::theme::IdePalette;
 use crossbeam_channel::Sender;
 use eframe::egui;
@@ -740,7 +740,7 @@ fn render_input(
                     let attachment_input_width = (ui.available_width() - 78.0).max(0.0);
                     ui.add(
                         egui::TextEdit::singleline(&mut state.attach_input)
-                            .hint_text("Attach file path…")
+                            .hint_text("Attach file pathâ€¦")
                             .desired_width(attachment_input_width),
                     );
                     if ui.small_button("Attach").clicked() {

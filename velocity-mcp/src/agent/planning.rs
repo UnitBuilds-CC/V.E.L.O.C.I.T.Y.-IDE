@@ -613,4 +613,123 @@ mod tests {
         assert!(display.contains("Goal:"));
         assert!(display.contains("Steps:"));
     }
+
+    #[test]
+    fn fail_step_marks_failed() {
+        let mut plan = Plan::new("Test");
+        plan.status = PlanStatus::Executing;
+        let s1 = plan.add_step("Step 1", "Do it", vec![], 1);
+        let s2 = plan.add_step("Step 2", "Do it", vec![], 1);
+
+        // complete_step checks if all steps are terminal and updates plan status.
+        plan.complete_step(&s1, "ok");
+        plan.fail_step(&s2);
+        assert_eq!(plan.steps[0].status, StepStatus::Completed);
+        assert_eq!(plan.steps[1].status, StepStatus::Failed);
+        // fail_step does not auto-update plan status (only complete_step does).
+        // Verify the step is correctly marked.
+        assert!(plan.steps[1].status.is_terminal());
+    }
+
+    #[test]
+    fn skip_step_marks_skipped() {
+        let mut plan = Plan::new("Test");
+        let s1 = plan.add_step("Step 1", "Do it", vec![], 1);
+        plan.skip_step(&s1);
+        assert_eq!(plan.steps[0].status, StepStatus::Skipped);
+        assert!(plan.steps[0].status.is_terminal());
+    }
+
+    #[test]
+    fn blocked_steps_identified() {
+        let mut plan = Plan::new("Test");
+        plan.status = PlanStatus::Executing;
+        let s1 = plan.add_step("First", "Do first", vec![], 1);
+        let _s2 = plan.add_step("Second", "Depends on first", vec![s1.clone()], 1);
+
+        let blocked = plan.blocked_steps();
+        assert_eq!(blocked.len(), 1);
+        assert_eq!(blocked[0].id, _s2);
+    }
+
+    #[test]
+    fn validate_all_marks_every_step() {
+        let mut plan = Plan::new("Test");
+        plan.add_step("A", "a", vec![], 1);
+        plan.add_step("B", "b", vec![], 2);
+        plan.add_step("C", "c", vec![], 3);
+        assert!(plan.steps.iter().all(|s| !s.validated));
+        plan.validate_all();
+        assert!(plan.steps.iter().all(|s| s.validated));
+    }
+
+    #[test]
+    fn complexity_is_clamped() {
+        let mut plan = Plan::new("Test");
+        let s1 = plan.add_step("Low", "x", vec![], 0); // clamped to 1
+        let s2 = plan.add_step("High", "x", vec![], 99); // clamped to 5
+        assert_eq!(plan.steps[0].complexity, 1);
+        assert_eq!(plan.steps[1].complexity, 5);
+    }
+
+    #[test]
+    fn step_status_labels_and_terminal() {
+        assert_eq!(StepStatus::Pending.label(), "pending");
+        assert_eq!(StepStatus::InProgress.label(), "in_progress");
+        assert_eq!(StepStatus::Completed.label(), "completed");
+        assert_eq!(StepStatus::Failed.label(), "failed");
+        assert_eq!(StepStatus::Skipped.label(), "skipped");
+        assert_eq!(StepStatus::Blocked.label(), "blocked");
+
+        assert!(!StepStatus::Pending.is_terminal());
+        assert!(!StepStatus::InProgress.is_terminal());
+        assert!(StepStatus::Completed.is_terminal());
+        assert!(StepStatus::Failed.is_terminal());
+        assert!(StepStatus::Skipped.is_terminal());
+    }
+
+    #[test]
+    fn plan_status_labels() {
+        assert_eq!(PlanStatus::Drafting.label(), "drafting");
+        assert_eq!(PlanStatus::Ready.label(), "ready");
+        assert_eq!(PlanStatus::Executing.label(), "executing");
+        assert_eq!(PlanStatus::Completed.label(), "completed");
+        assert_eq!(PlanStatus::Failed.label(), "failed");
+        assert_eq!(PlanStatus::Abandoned.label(), "abandoned");
+    }
+
+    #[test]
+    fn next_step_returns_none_in_drafting() {
+        let mut plan = Plan::new("Test");
+        plan.add_step("Step", "do", vec![], 1);
+        // Status is Drafting — next_step should return None.
+        assert!(plan.next_step().is_none());
+    }
+
+    #[test]
+    fn decompose_test_task() {
+        let plan = decompose_task("Verify the test suite passes");
+        assert!(plan.steps.len() >= 3);
+        // First step should have no dependencies.
+        assert!(plan.steps[0].depends_on.is_empty());
+        // Subsequent steps should chain.
+        assert!(!plan.steps[1].depends_on.is_empty());
+    }
+
+    #[test]
+    fn empty_plan_has_zero_progress_and_confidence() {
+        let plan = Plan::new("Empty");
+        assert_eq!(plan.progress(), 0.0);
+        assert_eq!(plan.overall_confidence(), 0.0);
+    }
+
+    #[test]
+    fn confidence_is_clamped() {
+        let mut plan = Plan::new("Test");
+        let s1 = plan.add_step("Step", "do", vec![], 1);
+        plan.set_confidence(&s1, 1.5); // should clamp to 1.0
+        assert!((plan.steps[0].confidence - 1.0).abs() < 0.001);
+        plan.set_confidence(&s1, -0.5); // should clamp to 0.0
+        assert!(plan.steps[0].confidence.abs() < 0.001);
+    }
 }

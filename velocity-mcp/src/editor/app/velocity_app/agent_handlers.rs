@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+﻿use std::collections::HashSet;
 use std::path::PathBuf;
 
 use super::super::helpers::*;
@@ -553,7 +553,7 @@ impl VelocityApp {
                     // Auto-checkpoint on first file-modifying tool in a session
                     if self.agent_ui_state.metrics.tool_call_count == 1 {
                         let label = format!("Before agent: {}", tool_name);
-                        // Clean workspace or no git — skip silently on error
+                        // Clean workspace or no git â€” skip silently on error
                         if self.checkpoint_manager.create_checkpoint(&label).is_ok() {
                             self.toasts.push(crate::editor::toast::Toast::info(format!(
                                 "\u{1F4BE} Checkpoint: {}",

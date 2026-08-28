@@ -1,4 +1,4 @@
-use eframe::egui;
+﻿use eframe::egui;
 use std::path::PathBuf;
 
 use crate::editor::agent_ui_render::{render_agent_metrics, RenderSnapshot};
@@ -585,7 +585,7 @@ impl VelocityApp {
             } else if cmd && i.key_pressed(egui::Key::Num4) {
                 self.set_work_mode(crate::editor::theme::WorkspaceProfile::Accessibility);
             }
-            // ─── Panel toggle shortcuts ───
+            // â”€â”€â”€ Panel toggle shortcuts â”€â”€â”€
             else if cmd && shift && i.key_pressed(egui::Key::Y) {
                 self.toggle_orchestrator();
             } else if cmd && shift && i.key_pressed(egui::Key::F) {
@@ -603,7 +603,7 @@ impl VelocityApp {
             } else if cmd && i.modifiers.alt && i.key_pressed(egui::Key::R) {
                 self.rollback_deploy();
             }
-            // ─── IDE Editor Shortcuts ───
+            // â”€â”€â”€ IDE Editor Shortcuts â”€â”€â”€
             else if cmd && i.key_pressed(egui::Key::F) {
                 // Find in current buffer
                 if let Some(id) = &self.active_tab {
@@ -853,7 +853,7 @@ impl eframe::App for VelocityApp {
                                 self.open_editor(None);
                                 ui.close();
                             }
-                            if ui.button("Open File…  Ctrl+O").clicked() {
+                            if ui.button("Open Fileâ€¦  Ctrl+O").clicked() {
                                 self.open_file_dialog();
                                 ui.close();
                             }
@@ -1030,7 +1030,7 @@ impl eframe::App for VelocityApp {
                         let active_mode = self.appearance.profile;
                         ui.menu_button(
                             egui::RichText::new(format!(
-                                "Layouts: {} {} ▾",
+                                "Layouts: {} {} â–¾",
                                 active_mode.glyph(),
                                 active_mode.short_label()
                             ))
@@ -1104,9 +1104,9 @@ impl eframe::App for VelocityApp {
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         if ui
                             .small_button(if self.right_sidebar_visible {
-                                "▸"
+                                "â–¸"
                             } else {
-                                "◂"
+                                "â—‚"
                             })
                             .on_hover_text("Toggle right panel  (Ctrl+Shift+E)")
                             .clicked()
@@ -1115,9 +1115,9 @@ impl eframe::App for VelocityApp {
                         }
                         if ui
                             .small_button(if self.left_sidebar_visible {
-                                "◂"
+                                "â—‚"
                             } else {
-                                "▸"
+                                "â–¸"
                             })
                             .on_hover_text("Toggle sidebar  (Ctrl+E)")
                             .clicked()
@@ -1138,7 +1138,7 @@ impl eframe::App for VelocityApp {
                 ui.add_space(2.0);
             });
 
-        // Symbol enclosing the cursor — used to highlight the Outline entry and
+        // Symbol enclosing the cursor â€” used to highlight the Outline entry and
         // to drive the symbol context panel below.
         let mut active_symbol = None;
         if let Some(active_id) = &self.active_tab {
@@ -1717,7 +1717,7 @@ impl eframe::App for VelocityApp {
                         self.smart_sidebar.add_diagnostic(0, true, "workspace", 0, 0, "Build errors require attention");
                     }
 
-                    // ── Active changes (collapsible) ──
+                    // â”€â”€ Active changes (collapsible) â”€â”€
                     if let Some(change_preview) = &active_change_preview {
                         self.smart_sidebar.add_quick_action(0, "Review current changes", &change_preview.file_label, 0);
                         let changes_header = if self.right_changes_collapsed { "\u{25b8} Changes" } else { "\u{25be} Changes" };
@@ -1754,7 +1754,7 @@ impl eframe::App for VelocityApp {
                         ui.separator();
                     }
 
-                    // ── Symbol context (collapsible) ──
+                    // â”€â”€ Symbol context (collapsible) â”€â”€
                     // Recompute callers/deps only when the active symbol changes; the
                     // site map itself is cached (TTL) so we never re-read index.json per frame.
                     if self.cached_relation_symbol != active_symbol {
@@ -1921,7 +1921,7 @@ impl eframe::App for VelocityApp {
             }
         });
 
-        // ─── Bottom Panel: Terminal | Problems | Debug | Output ───
+        // â”€â”€â”€ Bottom Panel: Terminal | Problems | Debug | Output â”€â”€â”€
         if !self.bottom_panel_state.collapsed {
             egui::Panel::bottom("ide_bottom_panel")
                 .default_size(self.bottom_panel_state.panel_height)

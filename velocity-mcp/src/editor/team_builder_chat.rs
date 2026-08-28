@@ -1,4 +1,4 @@
-//! Team Builder Chat - A focused conversational interface for creating expert
+﻿//! Team Builder Chat - A focused conversational interface for creating expert
 //! teams via natural language. Uses a headless sub-agent with team-specific
 //! tools (create_expert_team, create_skill_file) to build teams from descriptions.
 

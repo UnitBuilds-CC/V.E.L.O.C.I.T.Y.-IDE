@@ -121,7 +121,7 @@ pub struct ScopeValidationBatch {
 /// Validate that the threshold is in the valid range [-1.0, 1.0].
 pub fn validate_scope_threshold(threshold: f32) -> Vec<String> {
     let mut issues = Vec::new();
-    if threshold < -1.0 || threshold > 1.0 {
+    if !(-1.0..=1.0).contains(&threshold) {
         issues.push(format!(
             "threshold {} is outside valid cosine similarity range [-1.0, 1.0]",
             threshold

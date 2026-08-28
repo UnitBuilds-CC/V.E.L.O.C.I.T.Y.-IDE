@@ -4,13 +4,13 @@ use serde::Serialize;
 
 /// Binary layout of a `.kv` file (little-endian):
 ///
-///   [0..2]   len:        u16   — vector length (number of elements)
-///   [2]      log2_scale: i8    — shared scale for K and V
-///   [3]      reserved:   u8
-///   [4..]    k_sign:     ceil(len/8) bytes
-///   [..]     k_extra:    ceil(len/8) bytes
-///   [..]     v_sign:     ceil(len/8) bytes
-///   [..]     v_extra:    ceil(len/8) bytes
+///   \[0..2\]   len:        u16   — vector length (number of elements)
+///   \[2\]      log2_scale: i8    — shared scale for K and V
+///   \[3\]      reserved:   u8
+///   \[4..\]    k_sign:     ceil(len/8) bytes
+///   \[..\]     k_extra:    ceil(len/8) bytes
+///   \[..\]     v_sign:     ceil(len/8) bytes
+///   \[..\]     v_extra:    ceil(len/8) bytes
 ///
 /// Total: 4 + 4 × ceil(len/8) bytes.  For hidden=896: 4 + 448 = 452 bytes.
 pub struct KvRecord {
@@ -533,6 +533,8 @@ mod tests {
         cloned.total_serialized_bytes = 0;
         assert_eq!(info.vector_len, 128);
         assert_eq!(info.total_serialized_bytes, 68);
+        assert_eq!(cloned.vector_len, 999);
+        assert_eq!(cloned.total_serialized_bytes, 0);
     }
 
     #[test]

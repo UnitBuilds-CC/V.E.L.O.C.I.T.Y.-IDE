@@ -1,4 +1,4 @@
-use super::struct_def::OrchestratorPanel;
+﻿use super::struct_def::OrchestratorPanel;
 use crate::automation::{AgentTaskKind, DecompositionStyle, InstructionRegistry};
 use crate::editor::theme::IdePalette;
 use eframe::egui;

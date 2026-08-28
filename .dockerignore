@@ -1,0 +1,40 @@
+# Git
+.git
+.gitignore
+
+# Build artifacts
+target/
+**/target/
+dist/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Documentation
+*.md
+docs/
+.qoder/
+.velocity/
+
+# Test artifacts
+*.log
+*.tmp
+coverage/
+
+# Node modules (if any)
+node_modules/
+
+# Python (legacy)
+__pycache__/
+*.pyc
+*.pyo
+archive/
+scratch/

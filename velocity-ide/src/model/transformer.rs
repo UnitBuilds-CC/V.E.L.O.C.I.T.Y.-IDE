@@ -733,6 +733,7 @@ impl Transformer {
         //   (a) Adding global_scale as a push constant to the GEMV shader, or
         //   (b) Recording a scale-multiply compute pass after each FP4 GEMV dispatch.
         // This would enable GPU-side attention for FP4 models (currently CPU-bound).
+        // See docs/FP4_FP2_OPTIMIZATION.md for detailed implementation plan.
         let has_fp_weights = !weights.layers.is_empty()
             && weights.layers.iter().any(|l| {
                 l.q_proj.version == crate::nda::NDA_VERSION_FP4
@@ -1349,7 +1350,7 @@ impl Transformer {
                 cfg.n_heads * cfg.head_dim
             ));
         }
-        if cfg.n_heads % cfg.n_kv_heads != 0 {
+        if !cfg.n_heads.is_multiple_of(cfg.n_kv_heads) {
             warnings.push(format!(
                 "n_heads ({}) not divisible by n_kv_heads ({})",
                 cfg.n_heads, cfg.n_kv_heads
@@ -2091,7 +2092,7 @@ mod tests {
 
     #[test]
     fn attention_head_float_empty_kv() {
-        let mut layer = KvLayer::new();
+        let layer = KvLayer::new();
         let q = vec![1.0, 0.0, 0.0, 0.0];
         let mut out = vec![0.0; 4];
         attention_head_float(&q, &layer, 0, 4, 1.0, &mut out);
@@ -2272,6 +2273,7 @@ mod tests {
         let mut cloned = m.clone();
         cloned.position = 99;
         assert_eq!(m.position, 10, "original should be unchanged");
+        assert_eq!(cloned.position, 99);
     }
 
     #[test]
@@ -2482,7 +2484,7 @@ mod tests {
     #[test]
     fn pack_vector_impl_mixed_signs() {
         let v = vec![2.0, -2.0, 2.0, -2.0, 0.0, 0.0, 0.0, 0.0];
-        let (sign, extra) = pack_vector_impl(&v, 2.0, 8);
+        let (sign, _extra) = pack_vector_impl(&v, 2.0, 8);
         // 2.0/2.0=1.0 → pos, not large → sign=1, extra=0
         // -2.0/2.0=-1.0 → neg, not large → sign=0, extra=0
         // 0.0 → pos, not large → sign=1, extra=0
@@ -2589,7 +2591,7 @@ mod tests {
     fn pack_impl_16_elements_two_bytes() {
         let mut v = vec![1.0; 8];
         v.extend(vec![-1.0; 8]);
-        let (sign, extra) = pack_vector_impl(&v, 1.0, 16);
+        let (sign, _extra) = pack_vector_impl(&v, 1.0, 16);
         assert_eq!(sign.len(), 2);
         assert_eq!(sign[0], 0xFF, "first 8 positive → all bits set");
         assert_eq!(sign[1], 0x00, "next 8 negative → no bits set");
@@ -2610,7 +2612,7 @@ mod tests {
     fn pack_impl_vector_shorter_than_len() {
         // v has 2 elements but len=8 → remaining bits stay 0
         let v = vec![1.0, -1.0];
-        let (sign, extra) = pack_vector_impl(&v, 1.0, 8);
+        let (sign, _extra) = pack_vector_impl(&v, 1.0, 8);
         // bit 0: pos → sign=1, bit 1: neg → sign=0, bits 2-7: 0
         assert_eq!(sign[0] & 0x03, 0x01, "only bit 0 set in low 2 bits");
         assert_eq!(sign[0] & 0xFC, 0x00, "upper bits stay zero");

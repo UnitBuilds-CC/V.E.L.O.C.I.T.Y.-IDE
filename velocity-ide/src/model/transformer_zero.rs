@@ -399,13 +399,13 @@ impl ZeroTransformer {
         if cfg.n_kv_heads == 0 {
             issues.push("n_kv_heads is 0".to_string());
         }
-        if cfg.n_heads % cfg.n_kv_heads != 0 {
+        if !cfg.n_heads.is_multiple_of(cfg.n_kv_heads) {
             issues.push(format!(
                 "n_heads ({}) not divisible by n_kv_heads ({})",
                 cfg.n_heads, cfg.n_kv_heads
             ));
         }
-        if cfg.hidden_size % cfg.n_heads != 0 {
+        if !cfg.hidden_size.is_multiple_of(cfg.n_heads) {
             issues.push(format!(
                 "hidden_size ({}) not divisible by n_heads ({})",
                 cfg.hidden_size, cfg.n_heads
@@ -1633,6 +1633,7 @@ mod tests {
         let mut cloned = m.clone();
         cloned.site_map_hits = 999;
         assert_eq!(m.site_map_hits, 10, "original unchanged");
+        assert_eq!(cloned.site_map_hits, 999);
     }
 
     #[test]
@@ -1661,6 +1662,7 @@ mod tests {
         let mut cloned = s.clone();
         cloned.tokens_generated = 999;
         assert_eq!(s.tokens_generated, 10);
+        assert_eq!(cloned.tokens_generated, 999);
     }
 
     // ── Debug format ────────────────────────────────────────────────────────

@@ -54,7 +54,7 @@ pub fn validate_gemv_config(cfg: &GemvConfig) -> Vec<String> {
     if cfg.n == 0 {
         issues.push("n (rows) is 0".into());
     }
-    if cfg.is_ternary && cfg.k % 16 != 0 {
+    if cfg.is_ternary && !cfg.k.is_multiple_of(16) {
         issues.push(format!("ternary mode requires k ({}) to be a multiple of 16", cfg.k));
     }
     if cfg.weight_bytes == 0 {
@@ -1137,6 +1137,7 @@ mod tests {
         let info = gemv_dispatch_info(&cfg);
         cfg.k = 9999;
         assert_eq!(info.config.k, 256);
+        assert_eq!(cfg.k, 9999);
     }
 
     // ── Debug format details ────────────────────────────────────────────

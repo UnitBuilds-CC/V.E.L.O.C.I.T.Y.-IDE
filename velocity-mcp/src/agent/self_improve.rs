@@ -432,4 +432,103 @@ mod tests {
         assert!(!recalled.is_empty());
         assert!(recalled[0].contains("syntax") || recalled[0].contains("compilation"));
     }
+
+    #[test]
+    fn classify_timeout_errors() {
+        assert_eq!(
+            FailureCategory::classify("operation timed out after 30s"),
+            FailureCategory::Timeout
+        );
+        assert_eq!(
+            FailureCategory::classify("rate limit exceeded"),
+            FailureCategory::Timeout
+        );
+        assert_eq!(
+            FailureCategory::classify("deadline exceeded"),
+            FailureCategory::Timeout
+        );
+    }
+
+    #[test]
+    fn classify_dependency_errors() {
+        assert_eq!(
+            FailureCategory::classify("unresolved import serde"),
+            FailureCategory::Dependency
+        );
+        assert_eq!(
+            FailureCategory::classify("dependency not satisfied: missing crate"),
+            FailureCategory::Dependency
+        );
+    }
+
+    #[test]
+    fn classify_network_errors() {
+        assert_eq!(
+            FailureCategory::classify("connection refused"),
+            FailureCategory::Network
+        );
+        assert_eq!(
+            FailureCategory::classify("dns resolution failed"),
+            FailureCategory::Network
+        );
+        assert_eq!(
+            FailureCategory::classify("host unreachable"),
+            FailureCategory::Network
+        );
+    }
+
+    #[test]
+    fn classify_rejected_errors() {
+        assert_eq!(
+            FailureCategory::classify("rejected by the user"),
+            FailureCategory::Rejected
+        );
+    }
+
+    #[test]
+    fn classify_unknown_fallback() {
+        assert_eq!(
+            FailureCategory::classify("something completely unexpected happened"),
+            FailureCategory::Unknown
+        );
+    }
+
+    #[test]
+    fn directive_returns_non_empty_for_all_categories() {
+        let categories = [
+            FailureCategory::Syntax,
+            FailureCategory::Logic,
+            FailureCategory::Permission,
+            FailureCategory::Timeout,
+            FailureCategory::Dependency,
+            FailureCategory::NotFound,
+            FailureCategory::Rejected,
+            FailureCategory::Network,
+            FailureCategory::Unknown,
+        ];
+        for cat in &categories {
+            assert!(!cat.directive().is_empty(), "directive for {:?} is empty", cat);
+        }
+    }
+
+    #[test]
+    fn error_text_is_truncated_at_500_chars() {
+        let dir = tempfile::tempdir().unwrap();
+        let mem = PersistentMemory::open(dir.path());
+        let mut engine = ImprovementEngine::new(&mem);
+
+        let long_error = "x".repeat(1000);
+        engine.record_failure("write_file", &long_error, 1);
+        assert_eq!(engine.failures[0].error_text.len(), 500);
+    }
+
+    #[test]
+    fn empty_engine_has_no_data() {
+        let dir = tempfile::tempdir().unwrap();
+        let mem = PersistentMemory::open(dir.path());
+        let engine = ImprovementEngine::new(&mem);
+        assert!(!engine.has_data());
+        assert_eq!(engine.failure_count(), 0);
+        assert!(engine.analyze().is_empty());
+    }
 }

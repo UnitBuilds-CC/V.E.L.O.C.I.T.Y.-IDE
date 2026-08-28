@@ -3,7 +3,6 @@
 use crate::site_map::{SiteMap, VcTriple};
 use crate::wiki::markdown::slugify_module;
 use crate::wiki::{build_wiki, export_markdown, WikiPageKind, WikiPage, render_page_markdown};
-use crate::wiki::generate::{WikiStats, WikiModelInfo, WikiEdge};
 
 fn temp_dir(name: &str) -> std::path::PathBuf {
     let nanos = std::time::SystemTime::now()

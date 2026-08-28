@@ -1342,6 +1342,7 @@ mod tests {
         let cloned = entry.clone();
         entry.name = "modified";
         assert_eq!(cloned.name, "original");
+        assert_eq!(entry.name, "modified");
     }
 
     #[test]

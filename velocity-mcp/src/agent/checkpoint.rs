@@ -300,4 +300,71 @@ mod tests {
 
         let _ = std::fs::remove_dir_all(&base);
     }
+
+    #[test]
+    fn diff_since_nonexistent_checkpoint_errors() {
+        let mgr = CheckpointManager::new(Path::new("."));
+        let result = mgr.diff_since(999);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("not found"));
+    }
+
+    #[test]
+    fn restore_latest_with_no_checkpoints_errors() {
+        let mut mgr = CheckpointManager::new(Path::new("."));
+        let result = mgr.restore_latest();
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("No checkpoints"));
+    }
+
+    #[test]
+    fn restore_nonexistent_checkpoint_errors() {
+        let mut mgr = CheckpointManager::new(Path::new("."));
+        let result = mgr.restore(42);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("not found"));
+    }
+
+    #[test]
+    fn cleanup_resets_state() {
+        let mut mgr = CheckpointManager::new(Path::new("."));
+        // Manually add a fake checkpoint
+        mgr.checkpoints.push(CheckpointInfo {
+            id: 1,
+            label: "test".to_string(),
+            git_ref: "HEAD".to_string(),
+            created_at: 0,
+            dirty_files: 0,
+        });
+        mgr.next_id = 5;
+        assert_eq!(mgr.count(), 1);
+
+        mgr.cleanup();
+
+        assert_eq!(mgr.count(), 0);
+        assert!(mgr.list().is_empty());
+        assert_eq!(mgr.next_id, 1);
+    }
+
+    #[test]
+    fn checkpoint_disabled_returns_none() {
+        let mut mgr = CheckpointManager::new(Path::new("/nonexistent"));
+        assert!(!mgr.enabled);
+        assert!(mgr.checkpoint("test").is_none());
+    }
+
+    #[test]
+    fn checkpoint_info_debug() {
+        let info = CheckpointInfo {
+            id: 42,
+            label: "before edit".to_string(),
+            git_ref: "abc123".to_string(),
+            created_at: 1234567890,
+            dirty_files: 5,
+        };
+        let debug = format!("{:?}", info);
+        assert!(debug.contains("42"));
+        assert!(debug.contains("before edit"));
+        assert!(debug.contains("abc123"));
+    }
 }

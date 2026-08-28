@@ -41,7 +41,7 @@ impl VelocityApp {
         egui::ScrollArea::vertical()
             .id_salt("peer_panel_scroll")
             .show(ui, |ui| {
-                // ── Server Control ──────────────────────────────────────────
+                // -- Server Control ------------------------------------------
                 ui.add_space(4.0);
                 ui.label(
                     RichText::new("PEER SERVER")
@@ -105,7 +105,7 @@ impl VelocityApp {
                     });
                 }
 
-                // ── Add Peer ────────────────────────────────────────────────
+                // -- Add Peer ------------------------------------------------
                 ui.add_space(8.0);
                 ui.label(
                     RichText::new("ADD PEER")
@@ -139,7 +139,7 @@ impl VelocityApp {
                     }
                 });
 
-                // ── Peer List ───────────────────────────────────────────────
+                // -- Peer List -----------------------------------------------
                 ui.add_space(8.0);
                 ui.label(
                     RichText::new("CONNECTED PEERS")
@@ -234,7 +234,7 @@ impl VelocityApp {
                     ui.add_space(4.0);
                 }
 
-                // ── Peer Chat ───────────────────────────────────────────────
+                // -- Peer Chat -----------------------------------------------
                 ui.add_space(8.0);
                 ui.label(
                     RichText::new("PEER CHAT")
@@ -310,7 +310,7 @@ impl VelocityApp {
                     );
                 }
 
-                // ── Active Transfers ────────────────────────────────────────
+                // -- Active Transfers ----------------------------------------
                 ui.add_space(8.0);
                 ui.label(
                     RichText::new("ACTIVE TRANSFERS")
@@ -358,7 +358,7 @@ impl VelocityApp {
                     });
                 }
 
-                // ── Delegated Tasks ─────────────────────────────────────────
+                // -- Delegated Tasks -----------------------------------------
                 ui.add_space(8.0);
                 ui.label(
                     RichText::new("DELEGATED TASKS")

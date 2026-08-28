@@ -16,6 +16,7 @@ pub mod velocity_client;
 pub mod provider_usage;
 pub mod credential_guard;
 pub mod wiki;
+pub mod logging;
 
 use serde::Serialize;
 
@@ -94,13 +95,14 @@ pub struct LibraryInfo {
 /// Return a diagnostic snapshot of the library.
 pub fn library_info() -> LibraryInfo {
     let modules = module_inventory();
-    let mut features = Vec::new();
-    features.push("serde".into());
-    features.push("clap".into());
-    features.push("ureq".into());
-    features.push("clap_complete".into());
-    features.push("env_logger".into());
-    features.push("dotenvy".into());
+    let mut features = vec![
+        "serde".into(),
+        "clap".into(),
+        "ureq".into(),
+        "clap_complete".into(),
+        "env_logger".into(),
+        "dotenvy".into(),
+    ];
     features.push("credential_boundary".into());
     features.push("json_output".into());
     features.push("shell_completions".into());

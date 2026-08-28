@@ -357,7 +357,7 @@ impl UsageTracker {
                 }
             });
 
-        self.data
+        let stats = self.data
             .accounts
             .entry(key)
             .or_insert_with(|| AccountStats {
@@ -370,7 +370,6 @@ impl UsageTracker {
                 exhausted_at: None,
                 daily_limit,
             });
-        let stats = self.data.accounts.get_mut(&n.to_string()).unwrap();
         if stats.label.is_empty() {
             stats.label = label.to_string();
         }
@@ -445,9 +444,9 @@ impl UsageTracker {
             .and_then(|v| v.parse().ok())
             .unwrap_or(50);
 
-        self.data
+        let stats = self.data
             .accounts
-            .entry(key.clone())
+            .entry(key)
             .or_insert_with(|| AccountStats {
                 label: label.to_string(),
                 tier: tier.to_string(),
@@ -458,7 +457,6 @@ impl UsageTracker {
                 exhausted_at: None,
                 daily_limit,
             });
-        let stats = self.data.accounts.get_mut(&key).unwrap();
         if stats.label.is_empty() {
             stats.label = label.to_string();
         }

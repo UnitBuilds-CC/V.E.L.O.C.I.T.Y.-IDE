@@ -1098,6 +1098,7 @@ mod tests {
         let report = build_benchmark_report(&cfg, 100.0, 200.0);
         cfg.num_tokens = 9999;
         assert_eq!(report.config.num_tokens, 256);
+        assert_eq!(cfg.num_tokens, 9999);
     }
 
     #[test]

@@ -702,3 +702,330 @@ pub fn fetch_bedrock_models() -> Result<Vec<ModelInfo>, String> {
     }
     Err("AWS Bedrock requires BEDROCK_PROXY_URL env var pointing to an OpenAI-compatible proxy. Configure in Settings > Provider Settings.".to_string())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ── infer_model_info ───────────────────────────────────────────────
+
+    #[test]
+    fn infer_model_info_filters_embeddings() {
+        let item = serde_json::json!({"task": "text-embedding"});
+        assert!(infer_model_info("my-embedding-model".into(), &item).is_none());
+    }
+
+    #[test]
+    fn infer_model_info_filters_image_models() {
+        let item = serde_json::json!({"task": "image-generation"});
+        assert!(infer_model_info("stable-diffusion-xl".into(), &item).is_none());
+    }
+
+    #[test]
+    fn infer_model_info_filters_rerank() {
+        assert!(infer_model_info("bge-reranker-v2".into(), &serde_json::json!(null)).is_none());
+    }
+
+    #[test]
+    fn infer_model_info_detects_tool_support() {
+        let item = serde_json::json!({});
+        let info = infer_model_info("gpt-4-turbo".into(), &item).unwrap();
+        assert!(info.supports_tools);
+        assert_eq!(info.api_style, ApiStyle::OpenAiTools);
+    }
+
+    #[test]
+    fn infer_model_info_detects_thinking() {
+        let item = serde_json::json!({});
+        let info = infer_model_info("deepseek-r1".into(), &item).unwrap();
+        assert!(info.supports_thinking);
+    }
+
+    #[test]
+    fn infer_model_info_plain_chat_model() {
+        let item = serde_json::json!({});
+        let info = infer_model_info("llama-2-7b".into(), &item).unwrap();
+        assert!(!info.supports_tools);
+        assert!(!info.supports_thinking);
+        assert_eq!(info.api_style, ApiStyle::OpenAiChat);
+    }
+
+    #[test]
+    fn infer_model_info_extracts_label_from_path() {
+        let item = serde_json::json!({});
+        let info = infer_model_info("org/namespace/my-model".into(), &item).unwrap();
+        assert_eq!(info.label, "my-model");
+    }
+
+    #[test]
+    fn infer_model_info_prompt_only_api_style() {
+        let item = serde_json::json!({"task": "text-generation"});
+        let info = infer_model_info("some-legacy-model".into(), &item).unwrap();
+        assert_eq!(info.api_style, ApiStyle::PromptCompletion);
+    }
+
+    // ── infer_openrouter_model_info ────────────────────────────────────
+
+    #[test]
+    fn openrouter_infers_chat_model() {
+        let item = serde_json::json!({
+            "id": "anthropic/claude-3.5-sonnet",
+            "name": "Claude 3.5 Sonnet",
+            "architecture": {"tokenizer": "claude"}
+        });
+        let info = infer_openrouter_model_info(&item).unwrap();
+        assert_eq!(info.id, "anthropic/claude-3.5-sonnet");
+        assert_eq!(info.label, "Claude 3.5 Sonnet");
+        assert!(info.supports_tools);
+    }
+
+    #[test]
+    fn openrouter_filters_embedding_models() {
+        let item = serde_json::json!({
+            "id": "openai/text-embedding-3-small",
+            "name": "Embedding",
+            "architecture": {"tokenizer": "embed"}
+        });
+        assert!(infer_openrouter_model_info(&item).is_none());
+    }
+
+    #[test]
+    fn openrouter_detects_thinking_models() {
+        let item = serde_json::json!({
+            "id": "deepseek/deepseek-r1",
+            "name": "DeepSeek R1",
+            "architecture": {"tokenizer": "llama"}
+        });
+        let info = infer_openrouter_model_info(&item).unwrap();
+        assert!(info.supports_thinking);
+    }
+
+    #[test]
+    fn openrouter_returns_none_for_missing_id() {
+        let item = serde_json::json!({"name": "No ID model"});
+        assert!(infer_openrouter_model_info(&item).is_none());
+    }
+
+    // ── default_model_info ─────────────────────────────────────────────
+
+    #[test]
+    fn default_model_info_known_model() {
+        let info = default_model_info("gpt-4-turbo");
+        assert!(info.supports_tools);
+    }
+
+    #[test]
+    fn default_model_info_unknown_model() {
+        let info = default_model_info("totally-unknown-model-xyz");
+        assert_eq!(info.id, "totally-unknown-model-xyz");
+        assert!(!info.supports_tools);
+        assert!(!info.supports_thinking);
+    }
+
+    #[test]
+    fn default_model_info_thinking_model() {
+        let info = default_model_info("kimi-k2");
+        assert!(info.supports_thinking);
+    }
+
+    // ── fallback_provider ──────────────────────────────────────────────
+
+    #[test]
+    fn fallback_chain_cloudflare_to_openrouter() {
+        assert_eq!(
+            fallback_provider(AiProvider::CloudflareWorkersAi),
+            AiProvider::OpenRouter
+        );
+    }
+
+    #[test]
+    fn fallback_chain_openrouter_to_azure() {
+        assert_eq!(
+            fallback_provider(AiProvider::OpenRouter),
+            AiProvider::AzureOpenAi
+        );
+    }
+
+    #[test]
+    fn fallback_chain_azure_to_ollama() {
+        assert_eq!(
+            fallback_provider(AiProvider::AzureOpenAi),
+            AiProvider::LocalOllama
+        );
+    }
+
+    #[test]
+    fn fallback_chain_ollama_wraps_to_cloudflare() {
+        assert_eq!(
+            fallback_provider(AiProvider::LocalOllama),
+            AiProvider::CloudflareWorkersAi
+        );
+    }
+
+    #[test]
+    fn fallback_chain_all_providers_have_fallback() {
+        // Verify every provider has a fallback (doesn't panic)
+        let providers = vec![
+            AiProvider::CloudflareWorkersAi,
+            AiProvider::OpenRouter,
+            AiProvider::AzureOpenAi,
+            AiProvider::LocalOllama,
+            AiProvider::OpenAI,
+            AiProvider::Anthropic,
+            AiProvider::GoogleVertex,
+            AiProvider::Deepseek,
+            AiProvider::AlibabaQwen,
+            AiProvider::AwsBedrock,
+            AiProvider::Groq,
+            AiProvider::Mistral,
+            AiProvider::TogetherAi,
+            AiProvider::FireworksAi,
+            AiProvider::Perplexity,
+            AiProvider::Cerebras,
+        ];
+        for p in providers {
+            let fb = fallback_provider(p);
+            assert_ne!(fb, p, "fallback for {:?} should not be itself", p);
+        }
+    }
+
+    // ── default_provider_model ─────────────────────────────────────────
+
+    #[test]
+    fn default_model_per_provider_non_empty() {
+        let providers = vec![
+            AiProvider::CloudflareWorkersAi,
+            AiProvider::OpenRouter,
+            AiProvider::OpenAI,
+            AiProvider::Anthropic,
+            AiProvider::GoogleVertex,
+            AiProvider::AzureOpenAi,
+            AiProvider::LocalOllama,
+            AiProvider::Deepseek,
+            AiProvider::AlibabaQwen,
+            AiProvider::AwsBedrock,
+            AiProvider::Groq,
+            AiProvider::Mistral,
+            AiProvider::TogetherAi,
+            AiProvider::FireworksAi,
+            AiProvider::Perplexity,
+            AiProvider::Cerebras,
+        ];
+        for p in providers {
+            let model = default_provider_model(p);
+            assert!(!model.is_empty(), "default model for {:?} should not be empty", p);
+        }
+    }
+
+    #[test]
+    fn default_openrouter_model_is_hy3_free() {
+        assert_eq!(default_provider_model(AiProvider::OpenRouter), "tencent/hy3:free");
+    }
+
+    #[test]
+    fn default_openai_model_is_gpt4o() {
+        assert_eq!(default_provider_model(AiProvider::OpenAI), "gpt-4o");
+    }
+
+    // ── fetch_local_ollama_models ──────────────────────────────────────
+
+    #[test]
+    fn ollama_models_always_returns_three() {
+        let models = fetch_local_ollama_models(&[]).unwrap();
+        assert_eq!(models.len(), 3);
+    }
+
+    #[test]
+    fn ollama_models_contain_expected_ids() {
+        let models = fetch_local_ollama_models(&[]).unwrap();
+        let ids: Vec<&str> = models.iter().map(|m| m.id.as_str()).collect();
+        assert!(ids.contains(&"llama3.2"));
+        assert!(ids.contains(&"qwen2.5-coder"));
+        assert!(ids.contains(&"deepseek-r1"));
+    }
+
+    #[test]
+    fn ollama_models_all_support_tools() {
+        let models = fetch_local_ollama_models(&[]).unwrap();
+        for m in &models {
+            assert!(m.supports_tools);
+        }
+    }
+
+    #[test]
+    fn ollama_deepseek_r1_supports_thinking() {
+        let models = fetch_local_ollama_models(&[]).unwrap();
+        let ds = models.iter().find(|m| m.id == "deepseek-r1").unwrap();
+        assert!(ds.supports_thinking);
+    }
+
+    #[test]
+    fn ollama_models_use_custom_host() {
+        let accounts = vec![crate::usage::LocalOllamaAccount {
+            host: "http://myhost:1234".to_string(),
+            default_model: String::new(),
+            label: String::new(),
+        }];
+        let models = fetch_local_ollama_models(&accounts).unwrap();
+        assert!(models[0].label.contains("myhost:1234"));
+    }
+
+    // ── fetch_azure_models ─────────────────────────────────────────────
+
+    #[test]
+    fn azure_empty_accounts_returns_defaults() {
+        let models = fetch_azure_models(&[]).unwrap();
+        assert_eq!(models.len(), 3);
+        let ids: Vec<&str> = models.iter().map(|m| m.id.as_str()).collect();
+        assert!(ids.contains(&"gpt-4o"));
+        assert!(ids.contains(&"gpt-4o-mini"));
+        assert!(ids.contains(&"o1"));
+    }
+
+    #[test]
+    fn azure_o1_supports_thinking() {
+        let models = fetch_azure_models(&[]).unwrap();
+        let o1 = models.iter().find(|m| m.id == "o1").unwrap();
+        assert!(o1.supports_thinking);
+    }
+
+    #[test]
+    fn azure_custom_deployment() {
+        let accounts = vec![crate::usage::AzureOpenAiAccount {
+            n: 0,
+            api_key: "tok".to_string(),
+            endpoint: "https://example.com".to_string(),
+            deployment: "my-custom-gpt4".to_string(),
+            api_version: "2024-01-01".to_string(),
+            tier: "standard".to_string(),
+            label: "My GPT-4".to_string(),
+        }];
+        let models = fetch_azure_models(&accounts).unwrap();
+        assert_eq!(models.len(), 1);
+        assert_eq!(models[0].id, "my-custom-gpt4");
+        assert!(models[0].label.contains("My GPT-4"));
+    }
+
+    #[test]
+    fn azure_o1_deployment_supports_thinking() {
+        let accounts = vec![crate::usage::AzureOpenAiAccount {
+            n: 0,
+            api_key: "tok".to_string(),
+            endpoint: "https://example.com".to_string(),
+            deployment: "o1-preview".to_string(),
+            api_version: "2024-01-01".to_string(),
+            tier: "standard".to_string(),
+            label: "O1".to_string(),
+        }];
+        let models = fetch_azure_models(&accounts).unwrap();
+        assert!(models[0].supports_thinking);
+    }
+
+    // ── openrouter_api_key ─────────────────────────────────────────────
+
+    #[test]
+    fn openrouter_api_key_returns_string() {
+        // Just verify it doesn't panic; value depends on env
+        let _key = openrouter_api_key();
+    }
+}

@@ -354,7 +354,7 @@ pub fn lock_health_score(m: &LockMetrics) -> f64 {
     let poison_penalty = m.poison_rate() * 0.5;
     let timeout_penalty = m.timeout_rate() * 0.2;
     let score = 1.0 - contention_penalty - poison_penalty - timeout_penalty;
-    score.max(0.0).min(1.0)
+    score.clamp(0.0, 1.0)
 }
 
 /// Comprehensive safety audit report combining metrics and lock ordering.
@@ -1764,6 +1764,7 @@ mod tests {
         m.record_hold_time(100);
         let mut snap = m.snapshot();
         snap.acquisitions = 999;
+        assert_eq!(snap.acquisitions, 999);
         let snap2 = m.snapshot();
         assert_eq!(snap2.acquisitions, 1);
     }
@@ -1774,6 +1775,7 @@ mod tests {
         detector.acquire(1);
         let mut snap = detector.snapshot();
         snap.violation_count = 999;
+        assert_eq!(snap.violation_count, 999);
         let snap2 = detector.snapshot();
         assert_eq!(snap2.violation_count, 0);
         detector.release(1);

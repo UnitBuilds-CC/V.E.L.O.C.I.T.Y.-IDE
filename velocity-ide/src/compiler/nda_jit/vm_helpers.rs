@@ -513,7 +513,6 @@ pub fn classify_add_result(lhs: &JitVal, rhs: &JitVal) -> &'static str {
         }
         (JitVal::Scalar(_, _), JitVal::Scalar(_, _)) => "scalar",
         (JitVal::Vector(_), _) | (_, JitVal::Vector(_)) => "vector",
-        _ => "vector",
     }
 }
 

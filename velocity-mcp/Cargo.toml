@@ -22,29 +22,32 @@ serde_json = "1.0"
 memmap2 = "0.9"
 sha2 = "0.10"
 once_cell = "1.18"
-eframe = "0.35.0"
-egui = "0.35.0"
-egui_dock = "0.20"
-epaint = "0.35.0"
-ropey = "1.6"
 crossbeam-channel = "0.5"
 dotenvy = "0.15"
 ureq = { version = "2.9", features = ["json"] }
 ash = "0.37.3"
 gpu-allocator = "0.25.0"
-syntect = { version = "5.2", default-features = false, features = ["default-fancy"] }
 log = "0.4"
 env_logger = "0.11"
 tree-sitter = "0.20"
 libloading = "0.8"
-image = { version = "0.24", default-features = false, features = ["png", "jpeg", "gif", "bmp", "webp"] }
+ctrlc = "3.4"
 velocity-ide = { path = "../velocity-ide" }
 velocity-browser = { path = "../velocity-browser" }
-ctrlc = "3.4"
 thiserror = "2"
 dirs = "5"
 notify = "7"
+image = { version = "0.24", default-features = false, features = ["png", "jpeg", "gif", "bmp", "webp"] }
+eframe = "0.35.0"
+egui = "0.35.0"
+egui_dock = "0.20"
+epaint = "0.35.0"
+syntect = { version = "5.2", default-features = false, features = ["default-fancy"] }
 portable-pty = "0.9"
+prometheus = "0.13"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+tracing-appender = "0.2"
 
 [target.'cfg(windows)'.dependencies]
 windows = { version = "0.58", features = [

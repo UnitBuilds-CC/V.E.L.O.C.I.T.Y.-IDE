@@ -1,4 +1,4 @@
-use crossbeam_channel::{Receiver, Sender};
+﻿use crossbeam_channel::{Receiver, Sender};
 use eframe::egui;
 use egui_dock::DockState;
 use serde::{Deserialize, Serialize};
@@ -145,7 +145,7 @@ pub struct VelocityApp {
     pub goto_symbol_filtered: Vec<usize>,
     /// One-shot: force the go-to-symbol scroll view to the selected row.
     pub goto_symbol_scroll_to_selected: bool,
-    /// Back/forward navigation history (Alt+← / Alt+→).
+    /// Back/forward navigation history (Alt+â† / Alt+â†’).
     pub nav_back: Vec<NavLocation>,
     pub nav_forward: Vec<NavLocation>,
     /// Cached workspace site map (avoids re-reading index.json every frame).
@@ -297,7 +297,7 @@ pub struct VelocityApp {
 
     pub chat_history: String,
 
-    // ─── IDE Feature Integration State ────────────────────────────────────────
+    // â”€â”€â”€ IDE Feature Integration State â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     /// Code completion popup state.
     pub completion_state: crate::editor::completion::CompletionState,
     /// LSP client manager.
@@ -418,7 +418,7 @@ pub struct VelocityApp {
     /// Transient status line shown at the top of the Governance panel.
     pub gov_status: String,
 
-    // ─── Cross-device Peer Collaboration ────────────────────────────────────
+    // â”€â”€â”€ Cross-device Peer Collaboration â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     /// Peer manager for cross-device agent collaboration.
     pub peer_manager: crate::agent::peer_link::PeerManager,
     /// Whether the peer API server is currently running.
@@ -442,7 +442,7 @@ pub struct VelocityApp {
     /// Transient status line for the peer panel.
     pub peer_status: String,
 
-    // ─── Remaining Module State ──────────────────────────────────────────────
+    // â”€â”€â”€ Remaining Module State â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     /// Multimodal attachments for chat.
     pub multimodal_attachments: Vec<crate::editor::multimodal::Attachment>,
     /// Continuation ledger for cross-model context handoff.
@@ -456,7 +456,7 @@ pub struct VelocityApp {
     /// WCAG accessibility audit findings for the Audit dock panel.
     pub audit_findings: Vec<crate::editor::sidebar_tabs::AuditFinding>,
 
-    // ─── Agent Subsystem Panels ─────────────────────────────────────────────
+    // â”€â”€â”€ Agent Subsystem Panels â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     /// Self-improvement engine tracking failures and generating refinements.
     pub improvement_engine: crate::agent::self_improve::ImprovementEngine,
     /// Shared knowledge store for multi-agent collaboration.
@@ -807,7 +807,7 @@ impl VelocityApp {
         self.bottom_panel_state.active_tab = crate::editor::bottom_panel::TAB_TERMINAL;
         self.save_workspace_preferences();
         self.status_message = format!("Switched to {} mode", profile.label());
-        // Central, self-dismissing confirmation — useful when the switch came
+        // Central, self-dismissing confirmation â€” useful when the switch came
         // from a keyboard shortcut and the eye isn't on the toolbar pills.
         self.toasts.push(crate::editor::toast::Toast::info(format!(
             "{} {} mode",

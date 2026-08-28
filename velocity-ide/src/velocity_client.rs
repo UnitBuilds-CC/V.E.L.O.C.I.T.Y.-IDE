@@ -2136,6 +2136,8 @@ after_section = "also no"
         cloned.jitter = false;
         assert_eq!(original.max_retries, 3);
         assert!(original.jitter);
+        assert_eq!(cloned.max_retries, 99);
+        assert!(!cloned.jitter);
     }
 
     #[test]

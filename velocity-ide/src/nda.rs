@@ -1103,7 +1103,6 @@ pub fn summarize_matrices(matrices: &[NdaMatrix]) -> NdaMatrixSummary {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::io::Write;
 
     fn make_quad_matrix(rows: usize, cols: usize) -> NdaMatrix {
         let bitmap_bytes = (rows * cols).div_ceil(8);
@@ -1453,7 +1452,7 @@ mod tests {
     #[test]
     fn quantize_with_report_basic() {
         let input = vec![1.0, -1.0, 0.5, -0.5, 2.0, -2.0, 0.0, 0.1];
-        let ((sign, extra, scale), report) = quantize_with_report(&input);
+        let ((sign, extra, _scale), report) = quantize_with_report(&input);
         assert_eq!(report.input_len, 8);
         assert_eq!(sign.len(), 1);
         assert_eq!(extra.len(), 1);
@@ -1667,7 +1666,7 @@ mod tests {
     #[test]
     fn sparsity_v1_all_active() {
         // v1: sign = active bitmap. All ones = all active = 0% sparse
-        let n = 64;
+        let _n = 64;
         let m = NdaMatrix {
             rows: 8, cols: 8, scale: 1.0, version: NDA_V1_TERN,
             sign: vec![0xFF; 8], // all active
@@ -1896,7 +1895,7 @@ mod tests {
     #[test]
     fn quantize_v2_large_values() {
         let x = vec![100.0, -100.0, 50.0, -50.0, 0.0, 25.0, -25.0, 75.0];
-        let (sign, extra, scale) = quantize_activations_v2_quad(&x);
+        let (sign, _extra, scale) = quantize_activations_v2_quad(&x);
         assert!(scale > 0.0);
         assert_eq!(sign.len(), 1);
     }
@@ -1914,11 +1913,11 @@ mod tests {
 
     #[test]
     fn quantize_i8_clamping() {
-        // Values beyond i8 range should be clamped
+        // Values beyond i8 range should be clamped to the symmetric range [-127, 127]
         let x = vec![1000.0, -1000.0];
-        let (q, scale) = quantize_activations_i8(&x);
-        assert!(q[0] <= 127);
-        assert!(q[1] >= -127);
+        let (q, _scale) = quantize_activations_i8(&x);
+        assert_eq!(q[0], i8::MAX);
+        assert_eq!(q[1], -i8::MAX);
     }
 
     // ── quantize_with_report edge cases ──────────────────────────────────────
@@ -2184,7 +2183,7 @@ mod tests {
     #[test]
     fn quantize_with_report_fields() {
         let x = vec![1.0, -2.0, 0.5, -0.5, 0.0, 0.0, 0.0, 0.0];
-        let ((sign, extra, scale), report) = quantize_with_report(&x);
+        let ((sign, extra, _scale), report) = quantize_with_report(&x);
         assert_eq!(sign.len(), 1);
         assert_eq!(extra.len(), 1);
         assert_eq!(report.input_len, 8);
@@ -2673,6 +2672,7 @@ mod tests {
         let mut cloned = mb.clone();
         cloned.header_bytes = 99;
         assert_eq!(mb.header_bytes, 18);
+        assert_eq!(cloned.header_bytes, 99);
     }
 
     #[test]
@@ -2681,6 +2681,7 @@ mod tests {
         let mut cloned = report.clone();
         cloned.count = 99;
         assert_eq!(report.count, 5);
+        assert_eq!(cloned.count, 99);
     }
 
     #[test]
@@ -2689,6 +2690,7 @@ mod tests {
         let mut cloned = report.clone();
         cloned.elapsed_us = 999;
         assert_eq!(report.elapsed_us, 100);
+        assert_eq!(cloned.elapsed_us, 999);
     }
 
     #[test]
@@ -2698,6 +2700,7 @@ mod tests {
         let mut cloned = info.clone();
         cloned.rows = 999;
         assert_eq!(info.rows, 4);
+        assert_eq!(cloned.rows, 999);
     }
 
     #[test]

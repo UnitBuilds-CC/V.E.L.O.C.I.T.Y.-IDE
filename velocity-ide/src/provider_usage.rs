@@ -347,6 +347,7 @@ pub fn save_credentials(creds: &[ProviderCredential]) -> Result<()> {
 }
 
 /// Restrict file permissions to owner-only (chmod 600 on Unix).
+#[cfg_attr(not(unix), allow(unused_variables))]
 fn restrict_file_permissions(path: &std::path::Path) -> Result<()> {
     #[cfg(unix)]
     {
