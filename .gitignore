@@ -34,6 +34,23 @@ venv/
 ENV/
 .env
 .env.local
+.env.*.local
+
+# Secrets & key material - never commit.
+# A Chrome extension signing key (browsing/extension/src.pem) was purged from
+# history after being committed here; these patterns keep that from recurring.
+*.pem
+*.key
+*.p12
+*.pfx
+*.cer
+*.crt
+*.crx
+*.keystore
+*.jks
+id_rsa
+id_ed25519
+credentials.json
 
 # OS
 .DS_Store
