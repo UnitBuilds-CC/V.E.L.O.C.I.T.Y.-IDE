@@ -13,7 +13,7 @@
 //! in the workspace) and *keyring-sealed* (recoverable only by the current OS
 //! user), while HKDF gives cryptographic domain separation per artifact class.
 
-use once_cell::sync::Lazy;
+use std::sync::LazyLock;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
@@ -23,8 +23,8 @@ const KEY_FILE: &str = "nda.key";
 
 /// Cache of decrypted per-workspace master keys, so we hit the OS keyring at
 /// most once per workspace per process rather than on every artifact write.
-static KEY_CACHE: Lazy<Mutex<HashMap<PathBuf, [u8; MASTER_KEY_LEN]>>> =
-    Lazy::new(|| Mutex::new(HashMap::new()));
+static KEY_CACHE: LazyLock<Mutex<HashMap<PathBuf, [u8; MASTER_KEY_LEN]>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
 
 // --- OS-backed primitives: random + keyring sealing --------------------------
 

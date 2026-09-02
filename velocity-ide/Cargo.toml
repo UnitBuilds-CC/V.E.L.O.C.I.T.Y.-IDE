@@ -33,8 +33,8 @@ env_logger = "0.11"
 rayon      = "1.8"
 rand       = "0.8"
 sha2       = "0.10"
-ash        = "0.37.3"
-gpu-allocator = "0.25.0"
+ash        = "0.37"
+gpu-allocator = "0.25"
 syn        = { version = "2.0", features = ["full", "visit"] }
 ureq       = { version = "2.9", features = ["json"] }
 dotenvy    = "0.15"

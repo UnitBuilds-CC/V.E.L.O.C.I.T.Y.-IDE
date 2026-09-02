@@ -3,7 +3,7 @@ resolver = "2"
 members = ["velocity-mcp", "velocity-ide", "velocity-ide-gui", "velocity-browser", "drone", "e2e"]
 
 # Exclude archived & legacy dirs that are not Rust packages
-exclude = ["archive", "bin", "scratch", "memory", ".velocity", "browsing", "fuzz"]
+exclude = ["archive", "bin", "scratch", "memory", ".velocity", "browsing", "fuzz", "shared", "Kimi-Code"]
 
 [profile.dev]
 debug = 1 # Generates minimal line-table debug symbols, saving massive disk space and preventing MSVC linker errors

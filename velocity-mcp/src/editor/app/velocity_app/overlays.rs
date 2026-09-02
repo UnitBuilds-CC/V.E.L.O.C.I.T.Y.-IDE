@@ -1023,7 +1023,7 @@ impl VelocityApp {
         }
     }
 
-    fn render_file_tree_node(
+    pub(crate) fn render_file_tree_node(
         ui: &mut egui::Ui,
         node: &FileNode,
         workspace_root: &Path,
@@ -1079,6 +1079,83 @@ impl VelocityApp {
                 .clicked()
             {
                 *path_string = rel;
+            }
+        }
+    }
+
+    /// Render a file tree node with a case-insensitive filter. Directories are
+    /// expanded only if they (or their descendants) contain a match.
+    pub(crate) fn render_file_tree_node_filtered(
+        ui: &mut egui::Ui,
+        node: &FileNode,
+        workspace_root: &Path,
+        path_string: &mut String,
+        palette: crate::editor::theme::IdePalette,
+        filter: &str,
+    ) {
+        let filter_lower = filter.to_lowercase();
+        Self::render_file_tree_node_filtered_inner(
+            ui,
+            node,
+            workspace_root,
+            path_string,
+            palette,
+            &filter_lower,
+        );
+    }
+
+    fn render_file_tree_node_filtered_inner(
+        ui: &mut egui::Ui,
+        node: &FileNode,
+        workspace_root: &Path,
+        path_string: &mut String,
+        palette: crate::editor::theme::IdePalette,
+        filter_lower: &str,
+    ) -> bool {
+        if node.is_dir {
+            if let Some(children) = &node.children {
+                let mut any_child_matched = false;
+                for child in children {
+                    if Self::render_file_tree_node_filtered_inner(
+                        ui,
+                        child,
+                        workspace_root,
+                        path_string,
+                        palette,
+                        filter_lower,
+                    ) {
+                        any_child_matched = true;
+                    }
+                }
+                return any_child_matched;
+            }
+            false
+        } else {
+            let rel = node
+                .path
+                .strip_prefix(workspace_root)
+                .unwrap_or(&node.path)
+                .to_string_lossy()
+                .to_string();
+            let name_lower = node.name.to_lowercase();
+            if name_lower.contains(filter_lower) || rel.to_lowercase().contains(filter_lower) {
+                let icon = crate::editor::search::icon_for_path(&node.path);
+                if ui
+                    .add(
+                        egui::Button::new(
+                            egui::RichText::new(format!("{} {}", icon, rel))
+                                .size(9.0)
+                                .color(palette.text),
+                        )
+                        .frame(false),
+                    )
+                    .clicked()
+                {
+                    *path_string = rel;
+                }
+                true
+            } else {
+                false
             }
         }
     }

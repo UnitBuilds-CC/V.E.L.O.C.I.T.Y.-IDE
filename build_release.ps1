@@ -42,6 +42,7 @@ if (-not $SkipBuild) {
         cargo build --release `
             -p velocity_mcp `
             -p velocity-ide `
+            -p velocity-ide-gui `
             -p velocity-drone `
             2>&1 | ForEach-Object { Write-Host $_ }
         if ($LASTEXITCODE -ne 0) { throw "cargo build failed" }
@@ -55,8 +56,8 @@ $ReleaseDir = Join-Path $RepoRoot "target\release"
 $Binaries = @(
     @{ Src = "velocity_mcp.exe";    Dst = "velocity_mcp.exe"    },
     @{ Src = "velocity_ide.exe";    Dst = "velocity_ide.exe"    },
-    @{ Src = "velocity-drone.exe";  Dst = "velocity-drone.exe"  },
-    @{ Src = "run_nda.exe";         Dst = "run_nda.exe"         }
+    @{ Src = "velocity_ide_gui.exe"; Dst = "velocity_ide_gui.exe" },
+    @{ Src = "velocity-drone.exe";  Dst = "velocity-drone.exe"  }
 )
 
 foreach ($bin in $Binaries) {

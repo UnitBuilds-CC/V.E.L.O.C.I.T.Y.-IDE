@@ -8,7 +8,7 @@ A premium, high-performance developer workspace and autonomous agentic environme
 
 ### Prerequisites
 
-- Rust 1.75+ (stable)
+- Rust 1.87+ (stable) — see `rust-toolchain.toml`
 - Git
 - System dependencies (see [Deployment Guide](docs/DEPLOYMENT.md))
 
@@ -23,7 +23,7 @@ cd Velocity-IDE
 cargo build --release
 
 # Run the GUI
-cargo run --release --bin velocity_ide
+cargo run --release --bin velocity_ide_gui
 
 # Or run the MCP server (headless)
 cargo run --release --bin velocity_mcp -- --mode stdio
@@ -32,7 +32,7 @@ cargo run --release --bin velocity_mcp -- --mode stdio
 ### Run Tests
 
 ```bash
-# Run all 8,883 tests
+# Run all 15,000+ tests
 cargo test --workspace
 
 # Run with coverage
@@ -60,8 +60,9 @@ cargo llvm-cov --workspace --lcov
 - **History & Token Management**: Compressed history, reasoning effort payload routing, and ring-buffer activity logs.
 - **Sub-Agent Worktree Isolation**: Git worktree sandbox (`WorktreeIsolationGuard`) for safe, isolated multi-agent execution runs.
 
-### 3. Native IDE & UI Layer (`velocity-ide` & `velocity-mcp/src/editor`)
-- **GUI Framework**: Hardware-accelerated `egui` interface with dark HSL color palette.
+### 3. Native IDE & UI Layer (`velocity-ide-gui` & `velocity-mcp/src/editor`)
+- **GUI Framework**: Hardware-accelerated `egui` 0.35 interface with 5 modern HSL color palettes (Midnight, Daylight, Operator, Mission, High Contrast).
+- **Activity Bar System**: 8-category icon strip with 40+ navigable sub-panels — file tree with filter, git changes, chat with model selector, agent roster, wiki, NDA documents, plugin registry, skills, usage dashboard, and more.
 - **Workspace File Tree & Symbol History Inspector**: Browse workspace files, declarations, and inspect chronological change histories with context rationale.
 - **Wasm Sandbox JIT & Property Fuzzing**: `WasmPluginRunner` and `PropertyFuzzer` in `velocity-ide` for sandbox code validation.
 - **Cross-Platform Desktop Automation**: Unified `DesktopAutomationAdapter` bridging Windows UI Automation, Linux AT-SPI, and macOS Accessibility.
@@ -77,12 +78,15 @@ Velocity-IDE/
 │   │   ├── src/
 │   │   │   ├── agent/           # 4-provider reasoning loops, dispatchers, & NDA state
 │   │   │   ├── registry/        # System, browser, & desktop tool definitions
-│   │   │   ├── editor/          # GUI panels (app, chat, smart_sidebar, task_timeline, graph_view)
+│   │   │   ├── editor/          # 83-module GUI system (activity bar, chat, sidebar, theme, graph, wiki)
 │   │   │   ├── automation/      # Task routing, mediator edit locks, AST watcher
 │   │   │   ├── ipc/             # Shared memory telemetry
 │   │   │   ├── orchestrator/    # Worker scheduling, worktree isolation, blueprint DAG
 │   │   │   ├── health.rs        # Health check endpoints
 │   │   │   └── wa/              # Windows UI Automation & cross-platform desktop adapter
+│   │   └── Cargo.toml
+│   ├── velocity-ide-gui/        # Standalone GUI binary (egui/eframe workspace editor)
+│   │   ├── src/main.rs
 │   │   └── Cargo.toml
 │   ├── velocity-browser/        # Pure-Rust Browser Control Plane
 │   │   ├── src/

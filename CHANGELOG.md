@@ -8,8 +8,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Activity bar system**: 8-category icon strip (Files, Search, Git, Chat, Build, Agents, Knowledge, Workspace) with 40+ navigable sub-panels, VS Code-style selection indicator, and Unicode glyphs
+- **Full sub-panel implementations**: 19 sub-panels with real data bindings — file tree with filter, bookmarks, favorites, code graph, git changes with staged/unstaged summary, branches, commits, chat with model selector and thinking toggle, multimodal attachments, build controls, agent roster, mission metrics, wiki, NDA documents, plugin registry, skills with search, usage dashboard
+- **Theme overhaul**: Modernized 5 color palettes (Midnight, Daylight, Operator, Mission, High Contrast) with HSL-based IdePalette system, green accent (#22C55E) for Midnight
 - **GUI extraction**: Created `velocity-ide-gui` crate as standalone GUI launcher, separating UI from MCP server backend
-- **Comprehensive test suite**: Expanded to 14,989+ tests across all crates
+- **Comprehensive test suite**: Expanded to 15,000+ tests across all crates
 - **Provider failover tests**: 38 contract tests for serde, routing, and persistence
 - **NDA compiler tests**: 29 new tests for tokenizer and JIT compiler
 - **Orchestrator tests**: 13 orchestrator + 8 decompose contract tests
@@ -32,6 +35,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 - **Architecture**: Editor modules remain in `velocity-mcp` (contain backend logic used by non-editor modules)
 - **Error handling**: Eliminated unsafe `unwrap()` patterns in production code paths
+- **Dependencies**: Removed `once_cell` crate — replaced with `std::sync::LazyLock` (Rust 1.80+). Loosened exact version pins for `ash`, `gpu-allocator`, `tempfile` to semver ranges
+- **Build system**: Fixed `build_release.ps1` to include `velocity-ide-gui` and remove stale `run_nda` reference. Added `rust-toolchain.toml` (MSRV 1.85). Updated Justfile with `gui` and `run` targets
 - **Clippy compliance**: Fixed all 49 warnings across workspace (zero warnings remaining)
 - **Code quality**: Removed deprecated Python code (archive/agent/, scratch/ directories)
 - **README**: Added Quick Start section, fixed directory structure

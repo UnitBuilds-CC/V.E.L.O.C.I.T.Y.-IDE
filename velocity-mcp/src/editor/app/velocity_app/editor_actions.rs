@@ -1,4 +1,4 @@
-﻿use std::path::PathBuf;
+use std::path::PathBuf;
 
 use super::super::types::*;
 use super::struct_def::VelocityApp;
@@ -48,7 +48,7 @@ impl VelocityApp {
 
         if let Some(ref id) = dominated {
             if self.active_tab.as_ref() == Some(id) {
-                // Panel is active â€” toggle it off.
+                // Panel is active -- toggle it off.
                 let id = id.clone();
                 self.tabs.retain(|t| t.id != id);
                 self.buffers.remove(&id);
@@ -58,7 +58,7 @@ impl VelocityApp {
             }
         }
 
-        // Panel is either not open or not active â€” focus/open it.
+        // Panel is either not open or not active -- focus/open it.
         self.focus_panel(kind);
     }
 
@@ -99,7 +99,7 @@ impl VelocityApp {
     }
 
     /// True for `.nda` files that live in internal state dirs (`.velocity/`,
-    /// `memory/`) â€” those are at-rest envelopes, never routed to the NDA editor.
+    /// `memory/`) -- those are at-rest envelopes, never routed to the NDA editor.
     pub(crate) fn is_internal_nda_path(path: &std::path::Path) -> bool {
         path.components()
             .any(|c| matches!(c.as_os_str().to_str(), Some(".velocity") | Some("memory")))
@@ -703,11 +703,27 @@ impl VelocityApp {
         ui.separator();
 
         if state == DebugState::Inactive {
-            ui.label(
-                egui::RichText::new("No active debug session. Press F5 to start debugging.")
-                    .size(9.0)
-                    .color(palette.text_muted),
-            );
+            ui.add_space(16.0);
+            ui.vertical_centered(|ui| {
+                ui.label(
+                    egui::RichText::new("\u{1F41E}")
+                        .size(22.0)
+                        .color(palette.text_muted.gamma_multiply(0.6)),
+                );
+                ui.add_space(4.0);
+                ui.label(
+                    egui::RichText::new("No active debug session")
+                        .size(11.0)
+                        .strong()
+                        .color(palette.text),
+                );
+                ui.add_space(2.0);
+                ui.label(
+                    egui::RichText::new("Press F5 or click Continue to start debugging")
+                        .size(9.0)
+                        .color(palette.text_muted),
+                );
+            });
             return;
         }
 
@@ -888,7 +904,7 @@ impl VelocityApp {
         // Determine the binary to debug based on workspace type
         let cargo_toml = self.workspace_root.join("Cargo.toml");
         if cargo_toml.exists() {
-            // Rust project â€” look for the target binary
+            // Rust project -- look for the target binary
             let target_dir = self.workspace_root.join("target").join("debug");
             let project_name = self
                 .workspace_root

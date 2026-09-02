@@ -21,12 +21,11 @@ serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 memmap2 = "0.9"
 sha2 = "0.10"
-once_cell = "1.18"
 crossbeam-channel = "0.5"
 dotenvy = "0.15"
 ureq = { version = "2.9", features = ["json"] }
-ash = "0.37.3"
-gpu-allocator = "0.25.0"
+ash = "0.37"
+gpu-allocator = "0.25"
 log = "0.4"
 env_logger = "0.11"
 tree-sitter = "0.20"
@@ -71,4 +70,4 @@ windows = { version = "0.58", features = [
 winres = "0.1"
 
 [dev-dependencies]
-tempfile = "3.27.0"
+tempfile = "3"

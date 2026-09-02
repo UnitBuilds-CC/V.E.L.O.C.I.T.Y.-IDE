@@ -1,0 +1,267 @@
+﻿# Create proto directory
+$protoBase = "c:\Users\visse\OneDrive\Documents\Velocity-IDE\Velocity-IDE\shared\proto"
+New-Item -ItemType Directory -Force -Path $protoBase | Out-Null
+
+# VCTP - Velocity Compact Transport Protocol
+@"
+// VCTP — Velocity Compact Transport Protocol
+// gRPC service definitions for the distributed workflow engine.
+//
+// This protocol enables:
+// - Remote step execution (workers pull tasks from the engine)
+// - Worker registration and heartbeat
+// - Cross-node replication
+// - Workflow submission and status queries
+
+syntax = "proto3";
+
+package velocity.workflow.v1;
+
+// ─── Workflow Service ────────────────────────────────────────────────
+// The main service that clients (IDE, CLI) talk to.
+
+service WorkflowService {
+    // Submit a workflow for execution.
+    rpc SubmitWorkflow(SubmitWorkflowRequest) returns (SubmitWorkflowResponse);
+
+    // Get the status of a workflow run.
+    rpc GetRunStatus(GetRunStatusRequest) returns (GetRunStatusResponse);
+
+    // Cancel a running workflow.
+    rpc CancelRun(CancelRunRequest) returns (CancelRunResponse);
+
+    // Stream run events (SSE-like over gRPC streaming).
+    rpc StreamRunEvents(StreamRunEventsRequest) returns (stream RunEvent);
+
+    // List active and recent runs.
+    rpc ListRuns(ListRunsRequest) returns (ListRunsResponse);
+}
+
+message SubmitWorkflowRequest {
+    string workflow_name = 1;
+    bytes workflow_json = 2;  // Serialized Workflow definition
+    map<string, string> variables = 3;
+    uint32 priority = 4;
+    string idempotency_key = 5;
+}
+
+message SubmitWorkflowResponse {
+    string run_id = 1;
+    string status = 2;
+    int64 submitted_at = 3;  // Unix timestamp ms
+}
+
+message GetRunStatusRequest {
+    string run_id = 1;
+}
+
+message GetRunStatusResponse {
+    string run_id = 1;
+    string workflow_id = 2;
+    string state = 3;  // pending, running, completed, failed, cancelled
+    uint32 steps_completed = 4;
+    uint32 steps_total = 5;
+    int64 created_at = 6;
+    int64 updated_at = 7;
+    optional int64 completed_at = 8;
+}
+
+message CancelRunRequest {
+    string run_id = 1;
+    string reason = 2;
+}
+
+message CancelRunResponse {
+    bool cancelled = 1;
+}
+
+message StreamRunEventsRequest {
+    string run_id = 1;
+}
+
+message RunEvent {
+    string event_type = 1;  // step_started, step_completed, step_failed, run_completed, run_failed
+    string step_id = 2;
+    bytes payload = 3;  // JSON-encoded event data
+    int64 timestamp = 4;
+}
+
+message ListRunsRequest {
+    uint32 limit = 1;
+    optional string state_filter = 2;
+}
+
+message ListRunsResponse {
+    repeated GetRunStatusResponse runs = 1;
+}
+
+// ─── Worker Service ──────────────────────────────────────────────────
+// Workers connect to this service to receive task assignments.
+
+service WorkerService {
+    // Register a new worker with the engine.
+    rpc RegisterWorker(RegisterWorkerRequest) returns (RegisterWorkerResponse);
+
+    // Send periodic heartbeats.
+    rpc Heartbeat(HeartbeatRequest) returns (HeartbeatResponse);
+
+    // Pull the next task assignment (long-poll).
+    rpc PullTask(PullTaskRequest) returns (PullTaskResponse);
+
+    // Report task completion.
+    rpc ReportTaskResult(ReportTaskResultRequest) returns (ReportTaskResultResponse);
+
+    // Report task failure.
+    rpc ReportTaskFailure(ReportTaskFailureRequest) returns (ReportTaskFailureResponse);
+}
+
+message RegisterWorkerRequest {
+    string worker_id = 1;
+    string address = 2;
+    repeated string capabilities = 3;
+    uint32 max_concurrent_tasks = 4;
+    map<string, string> metadata = 5;
+}
+
+message RegisterWorkerResponse {
+    bool accepted = 1;
+    string worker_token = 2;
+    uint32 heartbeat_interval_secs = 3;
+}
+
+message HeartbeatRequest {
+    string worker_id = 1;
+    string worker_token = 2;
+    uint32 active_tasks = 3;
+    repeated double load_metrics = 4;  // CPU, memory, etc.
+}
+
+message HeartbeatResponse {
+    bool acknowledged = 1;
+    repeated string pending_commands = 2;  // e.g., "drain", "shutdown"
+}
+
+message PullTaskRequest {
+    string worker_id = 1;
+    string worker_token = 2;
+    repeated string capabilities = 3;
+    uint32 timeout_secs = 4;  // Long-poll timeout
+}
+
+message PullTaskResponse {
+    bool has_task = 1;
+    optional TaskAssignment task = 2;
+}
+
+message TaskAssignment {
+    string task_id = 1;
+    string run_id = 2;
+    string step_id = 3;
+    string step_name = 4;
+    bytes step_json = 5;       // Serialized Step
+    bytes context_json = 6;    // Serialized ExecutionContext
+    uint32 priority = 7;
+    int64 deadline_ms = 8;     // Unix timestamp ms
+}
+
+message ReportTaskResultRequest {
+    string task_id = 1;
+    string worker_id = 2;
+    bytes outcome_json = 3;    // Serialized StepOutcome
+    repeated bytes mutations_json = 4;  // Serialized StateMutations
+    uint64 duration_ms = 5;
+}
+
+message ReportTaskResultResponse {
+    bool accepted = 1;
+}
+
+message ReportTaskFailureRequest {
+    string task_id = 1;
+    string worker_id = 2;
+    string error = 3;
+    bool retryable = 4;
+}
+
+message ReportTaskFailureResponse {
+    bool accepted = 1;
+    optional TaskAssignment retry_task = 2;  // If retryable, may get a new assignment
+}
+
+// ─── Replication Service ─────────────────────────────────────────────
+// For cross-cluster state replication.
+
+service ReplicationService {
+    // Replicate a batch of WAL entries to a replica.
+    rpc ReplicateBatch(ReplicateBatchRequest) returns (ReplicateBatchResponse);
+
+    // Request the current state snapshot from the leader.
+    rpc RequestSnapshot(RequestSnapshotRequest) returns (stream SnapshotChunk);
+
+    // Acknowledge replication progress.
+    rpc AckReplication(AckReplicationRequest) returns (AckReplicationResponse);
+}
+
+message ReplicateBatchRequest {
+    string source_node_id = 1;
+    uint64 start_sequence = 2;
+    repeated bytes wal_entries_json = 3;
+    uint64 end_sequence = 4;
+}
+
+message ReplicateBatchResponse {
+    bool accepted = 1;
+    uint64 applied_sequence = 2;
+}
+
+message RequestSnapshotRequest {
+    string requester_node_id = 1;
+    uint64 from_sequence = 2;
+}
+
+message SnapshotChunk {
+    uint64 sequence = 1;
+    bytes data = 2;
+    bool is_last = 3;
+}
+
+message AckReplicationRequest {
+    string replica_node_id = 1;
+    uint64 last_applied_sequence = 2;
+}
+
+message AckReplicationResponse {
+    uint64 leader_sequence = 1;
+    uint64 lag = 2;
+}
+"@ | Set-Content -Path "$protoBase\velocity_workflow.proto" -Encoding UTF8
+Write-Host "Created velocity_workflow.proto"
+
+# Create daemon directory
+$daemonBase = "c:\Users\visse\OneDrive\Documents\Velocity-IDE\Velocity-IDE\velocity-workflow-daemon\src"
+New-Item -ItemType Directory -Force -Path $daemonBase | Out-Null
+
+# Daemon Cargo.toml
+@"
+[package]
+name = "velocity-workflow-daemon"
+version = "0.1.0"
+edition = "2021"
+description = "Standalone workflow engine daemon — crash-isolated execution"
+license = "MIT"
+
+[[bin]]
+name = "velocity-workflowd"
+path = "src/main.rs"
+
+[dependencies]
+velocity-workflow-core = { path = "../shared/velocity-workflow-core" }
+velocity-workflow-engine = { path = "../shared/velocity-workflow-engine" }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+tokio = { version = "1.0", features = ["full"] }
+tracing = "0.1"
+tracing-subscriber = "0.3"
+clap = { version = "4.0", features = ["derive"] }
+"@ | Set-Content -Path "c:\Users\visse\OneDrive\Documents\Velocity-IDE\Velocity-IDE\velocity-workflow-daemon\Cargo.toml" -Encoding UTF8
+Write-Host "Created daemon Cargo.toml"

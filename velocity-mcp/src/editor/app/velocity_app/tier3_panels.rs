@@ -1,4 +1,4 @@
-﻿//! Tier-3 subsystem panels: real UI surfaces for the extension registry,
+//! Tier-3 subsystem panels: real UI surfaces for the extension registry,
 //! live orchestration activity feed, speculative pre-computation cache,
 //! auto test-coverage analyzer, deploy pipeline, and voice-to-task input.
 //!
@@ -11,6 +11,11 @@ use egui::RichText;
 use super::struct_def::VelocityApp;
 use crate::editor::deploy_pipeline::{PipelineStage, StageStatus};
 use crate::editor::extensions::ExtensionState;
+use crate::editor::theme::{
+    IdePalette, CARD_INNER_MARGIN, CARD_RADIUS, FONT_BODY, FONT_CAPTION, FONT_HEADING, FONT_SMALL,
+    ITEM_SPACING, SECTION_SPACING,
+};
+use crate::editor::task_timeline::render_task_timeline;
 
 /// A deferred mutation captured while rendering the extensions list (avoids
 /// borrowing `self` mutably during immutable iteration).
@@ -20,7 +25,7 @@ enum ExtAction {
 }
 
 impl VelocityApp {
-    // â”€â”€ Section header shared by the Tier-3 panels â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    // --- Section header shared by the Tier-3 panels ---
     pub(crate) fn tier3_header(
         ui: &mut egui::Ui,
         title: &str,
@@ -28,17 +33,17 @@ impl VelocityApp {
         accent: egui::Color32,
         muted: egui::Color32,
     ) {
-        ui.add_space(8.0);
+        ui.add_space(SECTION_SPACING);
         ui.horizontal(|ui| {
             ui.heading(RichText::new(title).strong().color(accent));
             ui.label(RichText::new(subtitle).small().color(muted));
         });
         ui.separator();
-        ui.add_space(4.0);
+        ui.add_space(ITEM_SPACING);
     }
 
     // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
-    // Extensions â€” registry manager
+    // Extensions -- registry manager
     // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
     pub fn render_extensions_panel(&mut self, ui: &mut egui::Ui) {
         let palette = self.palette();
@@ -57,7 +62,7 @@ impl VelocityApp {
 
         ui.horizontal(|ui| {
             if ui
-                .button(RichText::new("\u{27f3} Rescan").size(10.0))
+                .button(RichText::new("\u{27f3} Rescan").size(FONT_SMALL))
                 .clicked()
             {
                 rescan = true;
@@ -65,7 +70,7 @@ impl VelocityApp {
             ui.label(
                 RichText::new(".velocity/extensions/")
                     .monospace()
-                    .size(9.0)
+                    .size(FONT_CAPTION)
                     .color(palette.text_muted),
             );
         });
@@ -78,11 +83,24 @@ impl VelocityApp {
                     ui.add_space(16.0);
                     ui.vertical_centered(|ui| {
                         ui.label(RichText::new("\u{25c7}").size(26.0).color(palette.text_muted));
+                        ui.add_space(4.0);
                         ui.label(
-                            RichText::new("No extensions installed. Drop a manifest folder into .velocity/extensions/ and Rescan.")
-                                .size(10.0)
+                            RichText::new("No extensions installed")
+                                .size(FONT_BODY)
+                                .strong()
+                                .color(palette.text),
+                        );
+                        ui.add_space(2.0);
+                        ui.label(
+                            RichText::new("Drop a manifest folder into .velocity/extensions/")
+                                .size(FONT_CAPTION)
                                 .color(palette.text_muted),
                         );
+                        ui.add_space(ITEM_SPACING);
+                        if ui.button(RichText::new("\u{27f3}  Rescan").size(FONT_SMALL)).clicked() {
+                            let ws = self.workspace_root.clone();
+                            self.extension_registry.scan(&ws);
+                        }
                     });
                     return;
                 }
@@ -96,12 +114,12 @@ impl VelocityApp {
                     };
                     egui::Frame::new()
                         .fill(palette.bg_secondary)
-                        .corner_radius(6.0)
-                        .inner_margin(10.0)
+                        .corner_radius(CARD_RADIUS)
+                        .inner_margin(CARD_INNER_MARGIN)
                         .stroke(egui::Stroke::new(0.5, palette.border))
                         .show(ui, |ui| {
                             ui.horizontal(|ui| {
-                                ui.label(RichText::new(&ext.manifest.name).strong().size(12.0).color(palette.text));
+                                ui.label(RichText::new(&ext.manifest.name).strong().size(FONT_BODY).color(palette.text));
                                 ui.label(RichText::new(format!("v{}", ext.manifest.version)).size(9.0).color(palette.text_muted));
                                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                                     ui.label(RichText::new(badge).size(9.0).color(badge_color));
@@ -114,7 +132,7 @@ impl VelocityApp {
                             let kbs = ext.manifest.contributes.keybindings.len();
                             ui.label(
                                 RichText::new(format!("{cmds} command(s) \u{00b7} {kbs} keybinding(s)"))
-                                    .size(8.0)
+                                    .size(FONT_CAPTION)
                                     .color(palette.text_muted),
                             );
                             ui.horizontal(|ui| {
@@ -133,7 +151,7 @@ impl VelocityApp {
                                 ui.label(RichText::new(err).size(8.0).color(palette.error));
                             }
                         });
-                    ui.add_space(4.0);
+                    ui.add_space(ITEM_SPACING);
                 }
             });
 
@@ -155,7 +173,7 @@ impl VelocityApp {
     }
 
     // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
-    // Activity â€” live orchestration feed + pre-computation cache
+    // Activity -- live orchestration feed + pre-computation cache
     // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
     pub fn render_activity_panel(&mut self, ui: &mut egui::Ui) {
         let palette = self.palette();
@@ -176,22 +194,22 @@ impl VelocityApp {
         ui.horizontal(|ui| {
             ui.label(
                 RichText::new(format!("\u{2714} {}", lo.total_tasks_completed))
-                    .size(10.0)
+                    .size(FONT_SMALL)
                     .color(palette.success),
             );
             ui.label(
                 RichText::new(format!("\u{2716} {}", lo.total_tasks_failed))
-                    .size(10.0)
+                    .size(FONT_SMALL)
                     .color(palette.error),
             );
             ui.label(
                 RichText::new(format!("\u{22ef} {} active", lo.worker_progress.len()))
-                    .size(10.0)
+                    .size(FONT_SMALL)
                     .color(palette.warning),
             );
         });
-        ui.add_space(4.0);
-
+        ui.add_space(ITEM_SPACING);
+        
         // Active worker progress bars.
         if !lo.worker_progress.is_empty() {
             ui.label(
@@ -203,18 +221,18 @@ impl VelocityApp {
             for wp in &lo.worker_progress {
                 egui::Frame::new()
                     .fill(palette.bg_secondary)
-                    .corner_radius(5.0)
-                    .inner_margin(8.0)
+                    .corner_radius(CARD_RADIUS)
+                    .inner_margin(CARD_INNER_MARGIN)
                     .show(ui, |ui| {
                         ui.horizontal(|ui| {
                             ui.label(
                                 RichText::new(format!("#{}", wp.task_id))
-                                    .size(9.0)
+                                    .size(FONT_CAPTION)
                                     .color(palette.text_muted),
                             );
                             ui.label(
                                 RichText::new(&wp.title)
-                                    .size(10.0)
+                                    .size(FONT_SMALL)
                                     .strong()
                                     .color(palette.text),
                             );
@@ -223,7 +241,7 @@ impl VelocityApp {
                                 |ui| {
                                     ui.label(
                                         RichText::new(wp.elapsed_label())
-                                            .size(9.0)
+                                            .size(FONT_CAPTION)
                                             .color(palette.text_muted),
                                     );
                                 },
@@ -239,13 +257,13 @@ impl VelocityApp {
                                 "{} \u{00b7} {} file(s) changed",
                                 wp.status_text, wp.files_changed
                             ))
-                            .size(8.0)
+                            .size(FONT_CAPTION)
                             .color(palette.text_muted),
                         );
                     });
-                ui.add_space(3.0);
+                ui.add_space(ITEM_SPACING);
             }
-            ui.add_space(4.0);
+            ui.add_space(ITEM_SPACING);
         }
 
         // Pre-computation cache (id 0 = manual workspace warm).
@@ -273,18 +291,18 @@ impl VelocityApp {
                     result.total_symbols,
                     result.total_lines
                 ))
-                .size(9.0)
+                .size(FONT_CAPTION)
                 .color(palette.text_muted),
             );
         } else {
             ui.label(
                 RichText::new("Cache empty \u{2014} warm it to pre-index open files.")
-                    .size(9.0)
+                    .size(FONT_CAPTION)
                     .color(palette.text_muted),
             );
         }
-        ui.add_space(4.0);
-
+        ui.add_space(ITEM_SPACING);
+        
         // Activity feed.
         ui.label(RichText::new("FEED").small().strong().color(palette.accent));
         egui::ScrollArea::vertical()
@@ -293,7 +311,23 @@ impl VelocityApp {
             .show(ui, |ui| {
                 let feed = self.live_orchestration.filtered_feed();
                 if feed.is_empty() {
-                    ui.label(RichText::new("No activity yet. Events stream in as workers run.").size(9.0).color(palette.text_muted));
+                    ui.add_space(16.0);
+                    ui.vertical_centered(|ui| {
+                        ui.label(RichText::new("\u{25c7}").size(24.0).color(palette.text_muted));
+                        ui.add_space(4.0);
+                        ui.label(
+                            RichText::new("No activity yet")
+                                .size(FONT_BODY)
+                                .strong()
+                                .color(palette.text),
+                        );
+                        ui.add_space(2.0);
+                        ui.label(
+                            RichText::new("Events appear here when agents are running tasks.")
+                                .size(FONT_CAPTION)
+                                .color(palette.text_muted),
+                        );
+                    });
                 }
                 for ev in feed {
                     let color = match ev.kind {
@@ -304,7 +338,7 @@ impl VelocityApp {
                         _ => palette.text_muted,
                     };
                     ui.horizontal(|ui| {
-                        ui.label(RichText::new(ev.kind.icon()).size(10.0).color(color));
+                        ui.label(RichText::new(ev.kind.icon()).size(FONT_SMALL).color(color));
                         ui.label(RichText::new(ev.kind.label()).size(8.0).color(color));
                         ui.label(RichText::new(&ev.message).size(9.0).color(palette.text));
                     });
@@ -339,7 +373,7 @@ impl VelocityApp {
     }
 
     // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
-    // Coverage â€” auto test-coverage analyzer
+    // Coverage -- auto test-coverage analyzer
     // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
     pub fn render_coverage_panel(&mut self, ui: &mut egui::Ui) {
         let palette = self.palette();
@@ -355,11 +389,11 @@ impl VelocityApp {
         let mut analyze_lsp = false;
         let mut generate = false;
         ui.horizontal(|ui| {
-            if ui.button(RichText::new("Analyze workspace").size(10.0)).clicked() {
+            if ui.button(RichText::new("Analyze workspace").size(FONT_SMALL)).clicked() {
                 analyze = true;
             }
             if ui
-                .button(RichText::new("Analyze file (LSP)").size(10.0))
+                .button(RichText::new("Analyze file (LSP)").size(FONT_SMALL))
                 .on_hover_text("Discover testable functions in the active file via the language server's documentSymbol outline")
                 .clicked()
             {
@@ -367,15 +401,15 @@ impl VelocityApp {
             }
             let has_gaps = !self.test_generator.analysis.untested_functions.is_empty();
             if ui
-                .add_enabled(has_gaps, egui::Button::new(RichText::new("Generate skeletons").size(10.0)))
+                .add_enabled(has_gaps, egui::Button::new(RichText::new("Generate skeletons").size(FONT_SMALL)))
                 .clicked()
             {
                 generate = true;
             }
             ui.checkbox(&mut self.test_generator.config.public_only, "Public only");
         });
-        ui.add_space(4.0);
-
+        ui.add_space(ITEM_SPACING);
+        
         let analysis = &self.test_generator.analysis;
         ui.add(
             egui::ProgressBar::new(analysis.coverage_percent / 100.0)
@@ -405,12 +439,12 @@ impl VelocityApp {
                             ui.label(
                                 RichText::new(&func.name)
                                     .monospace()
-                                    .size(9.0)
+                                    .size(FONT_CAPTION)
                                     .color(palette.text),
                             );
                             ui.label(
                                 RichText::new(format!("{file}:{}", func.line))
-                                    .size(8.0)
+                                    .size(FONT_CAPTION)
                                     .color(palette.text_muted),
                             );
                         });
@@ -428,24 +462,24 @@ impl VelocityApp {
                     for gen in &self.test_generator.generated_tests {
                         egui::Frame::new()
                             .fill(palette.bg_secondary)
-                            .corner_radius(5.0)
-                            .inner_margin(8.0)
+                            .corner_radius(CARD_RADIUS)
+                            .inner_margin(CARD_INNER_MARGIN)
                             .show(ui, |ui| {
                                 ui.label(
                                     RichText::new(&gen.test_name)
                                         .monospace()
-                                        .size(9.0)
+                                        .size(FONT_CAPTION)
                                         .strong()
                                         .color(palette.accent),
                                 );
                                 ui.label(
                                     RichText::new(&gen.test_body)
                                         .monospace()
-                                        .size(8.0)
+                                        .size(FONT_CAPTION)
                                         .color(palette.text_muted),
                                 );
                             });
-                        ui.add_space(3.0);
+                        ui.add_space(ITEM_SPACING);
                     }
                 }
             });
@@ -502,7 +536,7 @@ impl VelocityApp {
     }
 
     // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
-    // Pipeline â€” build/test/deploy manager
+    // Pipeline -- build/test/deploy manager
     // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
     pub fn render_pipeline_panel(&mut self, ui: &mut egui::Ui) {
         let palette = self.palette();
@@ -533,13 +567,13 @@ impl VelocityApp {
         let mut rollback = false;
         ui.horizontal(|ui| {
             if ui
-                .button(RichText::new("\u{25b6} Run build+test").size(10.0))
+                .button(RichText::new("\u{25b6} Run build+test").size(FONT_SMALL))
                 .clicked()
             {
                 run = true;
             }
             if ui
-                .button(RichText::new("\u{25b2} Deploy").size(10.0))
+                .button(RichText::new("\u{25b2} Deploy").size(FONT_SMALL))
                 .clicked()
             {
                 deploy = true;
@@ -547,7 +581,7 @@ impl VelocityApp {
             if ui
                 .add_enabled(
                     deployments >= 2,
-                    egui::Button::new(RichText::new("\u{27f2} Rollback").size(10.0)),
+                    egui::Button::new(RichText::new("\u{27f2} Rollback").size(FONT_SMALL)),
                 )
                 .clicked()
             {
@@ -570,17 +604,17 @@ impl VelocityApp {
                                 StageStatus::Pending => ("\u{25cb}", palette.text_muted),
                             };
                             ui.horizontal(|ui| {
-                                ui.label(RichText::new(icon).size(11.0).color(color));
+                                ui.label(RichText::new(icon).size(FONT_SMALL).color(color));
                                 ui.label(
                                     RichText::new(stage.label())
-                                        .size(10.0)
+                                        .size(FONT_SMALL)
                                         .strong()
                                         .color(palette.text),
                                 );
                                 if let Some(ms) = sr.duration_ms {
                                     ui.label(
                                         RichText::new(format!("{ms} ms"))
-                                            .size(8.0)
+                                            .size(FONT_CAPTION)
                                             .color(palette.text_muted),
                                     );
                                 }
@@ -606,13 +640,13 @@ impl VelocityApp {
                             ui.horizontal(|ui| {
                                 ui.label(
                                     RichText::new(format!("#{}", dep.id))
-                                        .size(8.0)
+                                        .size(FONT_CAPTION)
                                         .color(palette.text_muted),
                                 );
                                 ui.label(
                                     RichText::new(&dep.version)
                                         .monospace()
-                                        .size(9.0)
+                                        .size(FONT_CAPTION)
                                         .color(palette.text),
                                 );
                                 ui.label(RichText::new(&dep.target).size(8.0).color(color));
@@ -641,7 +675,7 @@ impl VelocityApp {
     }
 
     // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
-    // Voice â€” voice-to-task input
+    // Voice -- voice-to-task input
     // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
     pub fn render_voice_panel(&mut self, ui: &mut egui::Ui) {
         let palette = self.palette();
@@ -665,7 +699,7 @@ impl VelocityApp {
                 ("\u{25cb} Start listening", palette.text_muted)
             };
             if ui
-                .button(RichText::new(label).size(10.0).color(color))
+                .button(RichText::new(label).size(FONT_SMALL).color(color))
                 .clicked()
             {
                 self.voice_input.toggle_listening();
@@ -681,7 +715,7 @@ impl VelocityApp {
                     .hint_text("Type a phrase, e.g. 'run tests'\u{2026}")
                     .desired_width(ui.available_width() - 70.0),
             );
-            if ui.button(RichText::new("Parse").size(10.0)).clicked() {
+            if ui.button(RichText::new("Parse").size(FONT_SMALL)).clicked() {
                 parse = true;
             }
         });
@@ -690,27 +724,27 @@ impl VelocityApp {
         if let Some(cmd) = &self.voice_input.last_command {
             egui::Frame::new()
                 .fill(palette.bg_secondary)
-                .corner_radius(5.0)
-                .inner_margin(8.0)
+                .corner_radius(CARD_RADIUS)
+                .inner_margin(CARD_INNER_MARGIN)
                 .show(ui, |ui| {
                     ui.horizontal(|ui| {
                         ui.label(RichText::new("Intent:").size(9.0).color(palette.text_muted));
                         ui.label(
                             RichText::new(cmd.intent.label())
-                                .size(10.0)
+                                .size(FONT_SMALL)
                                 .strong()
                                 .color(palette.accent),
                         );
                         ui.label(
                             RichText::new(format!("({:.0}%)", cmd.confidence * 100.0))
-                                .size(8.0)
+                                .size(FONT_CAPTION)
                                 .color(palette.text_muted),
                         );
                     });
                     if let Some(target) = cmd.parameters.get("target") {
                         ui.label(
                             RichText::new(format!("Target: {target}"))
-                                .size(9.0)
+                                .size(FONT_CAPTION)
                                 .color(palette.text),
                         );
                     }
@@ -728,22 +762,31 @@ impl VelocityApp {
             .id_salt("voice_history_scroll")
             .show(ui, |ui| {
                 if self.voice_input.command_history.is_empty() {
-                    ui.label(
-                        RichText::new("No commands parsed yet.")
-                            .size(9.0)
-                            .color(palette.text_muted),
-                    );
+                    ui.add_space(8.0);
+                    ui.vertical_centered(|ui| {
+                        ui.label(
+                            RichText::new("\u{1f3a4}")
+                                .size(18.0)
+                                .color(palette.text_muted.gamma_multiply(0.5)),
+                        );
+                        ui.add_space(2.0);
+                        ui.label(
+                            RichText::new("No commands parsed yet")
+                                .size(FONT_CAPTION)
+                                .color(palette.text_muted),
+                        );
+                    });
                 }
                 for cmd in self.voice_input.command_history.iter().rev() {
                     ui.horizontal(|ui| {
                         ui.label(
                             RichText::new(cmd.intent.label())
-                                .size(8.0)
+                                .size(FONT_CAPTION)
                                 .color(palette.accent),
                         );
                         ui.label(
                             RichText::new(&cmd.raw_text)
-                                .size(9.0)
+                                .size(FONT_CAPTION)
                                 .color(palette.text_muted),
                         );
                     });
@@ -767,7 +810,7 @@ impl VelocityApp {
     }
 
     // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
-    // Knowledge â€” unified RAG store (ingest + search)
+    // Knowledge -- unified RAG store (ingest + search)
     // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
     pub fn render_knowledge_panel(&mut self, ui: &mut egui::Ui) {
         let palette = self.palette();
@@ -793,11 +836,11 @@ impl VelocityApp {
                     .hint_text("path to a file or folder\u{2026}")
                     .desired_width(ui.available_width() - 190.0),
             );
-            if ui.button(RichText::new("Ingest").size(10.0)).clicked() {
+            if ui.button(RichText::new("Ingest").size(FONT_SMALL)).clicked() {
                 ingest_path = true;
             }
             if ui
-                .button(RichText::new("Index workspace").size(10.0))
+                .button(RichText::new("Index workspace").size(FONT_SMALL))
                 .clicked()
             {
                 ingest_workspace = true;
@@ -813,7 +856,7 @@ impl VelocityApp {
                     .hint_text("search knowledge\u{2026}")
                     .desired_width(ui.available_width() - 70.0),
             );
-            if ui.button(RichText::new("Search").size(10.0)).clicked()
+            if ui.button(RichText::new("Search").size(FONT_SMALL)).clicked()
                 || (resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)))
             {
                 do_search = true;
@@ -827,22 +870,23 @@ impl VelocityApp {
             .max_height(220.0)
             .show(ui, |ui| {
                 if self.knowledge_results.is_empty() {
+                    ui.add_space(ITEM_SPACING);
                     ui.label(
-                        RichText::new("No results. Ingest content and run a search.")
-                            .size(9.0)
+                        RichText::new("Search your knowledge base above, or ingest content to get started.")
+                            .size(FONT_CAPTION)
                             .color(palette.text_muted),
                     );
                 }
                 for hit in &self.knowledge_results {
                     egui::Frame::new()
                         .fill(palette.bg_secondary)
-                        .corner_radius(5.0)
-                        .inner_margin(8.0)
+                        .corner_radius(CARD_RADIUS)
+                        .inner_margin(CARD_INNER_MARGIN)
                         .show(ui, |ui| {
                             ui.horizontal(|ui| {
                                 ui.label(
                                     RichText::new(format!("{}#{}", hit.source, hit.ordinal))
-                                        .size(9.0)
+                                        .size(FONT_CAPTION)
                                         .strong()
                                         .color(palette.accent),
                                 );
@@ -851,7 +895,7 @@ impl VelocityApp {
                                     |ui| {
                                         ui.label(
                                             RichText::new(format!("{:.3}", hit.score))
-                                                .size(8.0)
+                                                .size(FONT_CAPTION)
                                                 .color(palette.text_muted),
                                         );
                                     },
@@ -859,11 +903,11 @@ impl VelocityApp {
                             });
                             ui.label(RichText::new(&hit.snippet).size(9.0).color(palette.text));
                         });
-                    ui.add_space(4.0);
+                    ui.add_space(ITEM_SPACING);
                 }
             });
 
-        ui.add_space(8.0);
+        ui.add_space(SECTION_SPACING);
         let mut clear_all = false;
         ui.horizontal(|ui| {
             ui.label(
@@ -890,7 +934,7 @@ impl VelocityApp {
                 if sources.is_empty() {
                     ui.label(
                         RichText::new("No sources ingested yet.")
-                            .size(9.0)
+                            .size(FONT_CAPTION)
                             .color(palette.text_muted),
                     );
                 }
@@ -899,7 +943,7 @@ impl VelocityApp {
                         ui.label(RichText::new(source).size(9.0).color(palette.text));
                         ui.label(
                             RichText::new(format!("({count})"))
-                                .size(8.0)
+                                .size(FONT_CAPTION)
                                 .color(palette.text_muted),
                         );
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -1013,11 +1057,11 @@ impl VelocityApp {
                     .hint_text("5m \u{00b7} 1h \u{00b7} daily@09:00")
                     .desired_width(140.0),
             );
-            if ui.button(RichText::new("Add").size(10.0)).clicked() {
+            if ui.button(RichText::new("Add").size(FONT_SMALL)).clicked() {
                 add = true;
             }
         });
-        ui.add_space(4.0);
+        ui.add_space(ITEM_SPACING);
         ui.add(
             egui::TextEdit::multiline(&mut self.trigger_prompt_input)
                 .hint_text("agent prompt to run when this schedule fires\u{2026}")
@@ -1027,16 +1071,16 @@ impl VelocityApp {
         if self.trigger_interval_input.trim().is_empty()
             || parse_schedule(self.trigger_interval_input.trim()).is_some()
         {
-            // valid or empty â€” no warning
+            // valid or empty -- no warning
         } else {
             ui.label(
                 RichText::new("unrecognized schedule spec")
-                    .size(8.0)
+                    .size(FONT_CAPTION)
                     .color(palette.error),
             );
         }
-        ui.add_space(8.0);
-
+        ui.add_space(SECTION_SPACING);
+        
         // Trigger list.
         let now = now_secs();
         let mut toggle: Option<String> = None;
@@ -1049,26 +1093,26 @@ impl VelocityApp {
                 if self.triggers.is_empty() {
                     ui.label(
                         RichText::new("No triggers yet. Add a schedule above.")
-                            .size(9.0)
+                            .size(FONT_CAPTION)
                             .color(palette.text_muted),
                     );
                 }
                 for t in &self.triggers.triggers {
                     egui::Frame::new()
                         .fill(palette.bg_secondary)
-                        .corner_radius(5.0)
-                        .inner_margin(8.0)
+                        .corner_radius(CARD_RADIUS)
+                        .inner_margin(CARD_INNER_MARGIN)
                         .show(ui, |ui| {
                             ui.horizontal(|ui| {
                                 let dot = if t.enabled { "\u{25cf}" } else { "\u{25cb}" };
-                                ui.label(RichText::new(dot).size(10.0).color(if t.enabled {
+                                ui.label(RichText::new(dot).size(FONT_SMALL).color(if t.enabled {
                                     palette.success
                                 } else {
                                     palette.text_muted
                                 }));
                                 ui.label(
                                     RichText::new(&t.name)
-                                        .size(10.0)
+                                        .size(FONT_SMALL)
                                         .strong()
                                         .color(palette.text),
                                 );
@@ -1097,12 +1141,12 @@ impl VelocityApp {
                             });
                             ui.label(
                                 RichText::new(trigger_kind_label(&t.kind))
-                                    .size(8.5)
+                                    .size(FONT_CAPTION)
                                     .color(palette.accent),
                             );
                             ui.label(
                                 RichText::new(trigger_action_label(&t.action))
-                                    .size(8.5)
+                                    .size(FONT_CAPTION)
                                     .color(palette.text_muted),
                             );
                             let due = match t.seconds_until_due(now) {
@@ -1112,7 +1156,7 @@ impl VelocityApp {
                             };
                             ui.label(RichText::new(due).size(8.0).color(palette.text_muted));
                         });
-                    ui.add_space(4.0);
+                    ui.add_space(ITEM_SPACING);
                 }
             });
 
@@ -1205,7 +1249,7 @@ impl VelocityApp {
     }
 
     // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
-    // Test Generator â€” coverage analysis and test generation
+    // Test Generator -- coverage analysis and test generation
     // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
     pub fn render_test_generator_panel(&mut self, ui: &mut egui::Ui) {
         let palette = self.palette();
@@ -1229,13 +1273,13 @@ impl VelocityApp {
         let mut generate = false;
         ui.horizontal(|ui| {
             if ui
-                .button(RichText::new("\u{1f50d} Analyze Coverage").size(10.0))
+                .button(RichText::new("\u{1f50d} Analyze Coverage").size(FONT_SMALL))
                 .clicked()
             {
                 analyze = true;
             }
             if ui
-                .button(RichText::new("\u{2728} Generate Tests").size(10.0))
+                .button(RichText::new("\u{2728} Generate Tests").size(FONT_SMALL))
                 .clicked()
             {
                 generate = true;
@@ -1245,14 +1289,14 @@ impl VelocityApp {
                     "{} test(s) generated",
                     self.test_generator.generated_tests.len()
                 ))
-                .size(9.0)
+                .size(FONT_CAPTION)
                 .color(palette.text_muted),
             );
         });
         ui.add_space(6.0);
 
         // Configuration
-        egui::CollapsingHeader::new(RichText::new("Configuration").size(10.0).strong())
+        egui::CollapsingHeader::new(RichText::new("Configuration").size(FONT_SMALL).strong())
             .default_open(false)
             .show(ui, |ui| {
                 ui.horizontal(|ui| {
@@ -1300,19 +1344,19 @@ impl VelocityApp {
                         };
                         egui::Frame::new()
                             .fill(palette.bg_secondary)
-                            .corner_radius(4.0)
-                            .inner_margin(6.0)
+                            .corner_radius(CARD_RADIUS)
+                            .inner_margin(CARD_INNER_MARGIN)
                             .show(ui, |ui| {
                                 ui.horizontal(|ui| {
                                     ui.label(
                                         RichText::new(vis_badge.0)
-                                            .size(8.0)
+                                            .size(FONT_CAPTION)
                                             .monospace()
                                             .color(vis_badge.1),
                                     );
                                     ui.label(
                                         RichText::new(&func.name)
-                                            .size(10.0)
+                                            .size(FONT_SMALL)
                                             .strong()
                                             .color(palette.text),
                                     );
@@ -1325,7 +1369,7 @@ impl VelocityApp {
                                                     func.file.display(),
                                                     func.line
                                                 ))
-                                                .size(8.0)
+                                                .size(FONT_CAPTION)
                                                 .color(palette.text_muted),
                                             );
                                         },
@@ -1333,19 +1377,19 @@ impl VelocityApp {
                                 });
                                 ui.label(
                                     RichText::new(&func.signature)
-                                        .size(8.0)
+                                        .size(FONT_CAPTION)
                                         .monospace()
                                         .color(palette.text_muted),
                                 );
                             });
-                        ui.add_space(3.0);
+                        ui.add_space(ITEM_SPACING);
                     }
                 });
         }
 
         // Generated tests preview
         if !self.test_generator.generated_tests.is_empty() {
-            ui.add_space(8.0);
+            ui.add_space(SECTION_SPACING);
             ui.label(
                 RichText::new("GENERATED TESTS")
                     .small()
@@ -1360,13 +1404,13 @@ impl VelocityApp {
                     for (idx, test) in self.test_generator.generated_tests.iter().enumerate() {
                         egui::Frame::new()
                             .fill(palette.bg_secondary)
-                            .corner_radius(4.0)
-                            .inner_margin(6.0)
+                            .corner_radius(CARD_RADIUS)
+                            .inner_margin(CARD_INNER_MARGIN)
                             .show(ui, |ui| {
                                 ui.horizontal(|ui| {
                                     ui.label(
                                         RichText::new(&test.test_name)
-                                            .size(10.0)
+                                            .size(FONT_SMALL)
                                             .strong()
                                             .color(palette.text),
                                     );
@@ -1378,7 +1422,7 @@ impl VelocityApp {
                                                     "{:.0}% confidence",
                                                     test.confidence * 100.0
                                                 ))
-                                                .size(8.0)
+                                                .size(FONT_CAPTION)
                                                 .color(palette.text_muted),
                                             );
                                         },
@@ -1386,7 +1430,7 @@ impl VelocityApp {
                                 });
                                 ui.label(
                                     RichText::new(format!("for {}", test.function_name))
-                                        .size(8.0)
+                                        .size(FONT_CAPTION)
                                         .color(palette.text_muted),
                                 );
                                 if ui
@@ -1396,7 +1440,7 @@ impl VelocityApp {
                                     copy_idx = Some(idx);
                                 }
                             });
-                        ui.add_space(3.0);
+                        ui.add_space(ITEM_SPACING);
                     }
                 });
             if let Some(idx) = copy_idx {
@@ -1432,7 +1476,7 @@ impl VelocityApp {
     }
 
     // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
-    // Agent Memory â€” persistent per-member knowledge store
+    // Agent Memory -- persistent per-member knowledge store
     // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
     pub fn render_agent_memory_panel(&mut self, ui: &mut egui::Ui) {
         let palette = self.palette();
@@ -1460,20 +1504,20 @@ impl VelocityApp {
         let mut save = false;
         ui.horizontal(|ui| {
             if ui
-                .button(RichText::new("\u{1f504} Load All").size(10.0))
+                .button(RichText::new("\u{1f504} Load All").size(FONT_SMALL))
                 .clicked()
             {
                 load = true;
             }
             if ui
-                .button(RichText::new("\u{1f4be} Save All").size(10.0))
+                .button(RichText::new("\u{1f4be} Save All").size(FONT_SMALL))
                 .clicked()
             {
                 save = true;
             }
             ui.label(
                 RichText::new("Encrypted with NDA")
-                    .size(8.0)
+                    .size(FONT_CAPTION)
                     .color(palette.text_muted),
             );
         });
@@ -1484,16 +1528,22 @@ impl VelocityApp {
             ui.add_space(16.0);
             ui.vertical_centered(|ui| {
                 ui.label(
-                    RichText::new("\u{25c7}")
-                        .size(26.0)
-                        .color(palette.text_muted),
+                    RichText::new("\u{1f9e0}")
+                        .size(22.0)
+                        .color(palette.text_muted.gamma_multiply(0.5)),
                 );
+                ui.add_space(4.0);
                 ui.label(
-                    RichText::new(
-                        "No agent memories yet. Memories are created during agent execution.",
-                    )
-                    .size(10.0)
-                    .color(palette.text_muted),
+                    RichText::new("No agent memories yet")
+                        .size(FONT_SMALL)
+                        .strong()
+                        .color(palette.text),
+                );
+                ui.add_space(2.0);
+                ui.label(
+                    RichText::new("Memories are created during agent execution")
+                        .size(9.0)
+                        .color(palette.text_muted.gamma_multiply(0.7)),
                 );
             });
         } else {
@@ -1507,7 +1557,7 @@ impl VelocityApp {
                                 store.member_id,
                                 store.memories.len()
                             ))
-                            .size(11.0)
+                            .size(FONT_SMALL)
                             .strong(),
                         )
                         .default_open(false)
@@ -1515,13 +1565,13 @@ impl VelocityApp {
                             for mem in &store.memories {
                                 egui::Frame::new()
                                     .fill(palette.bg_secondary)
-                                    .corner_radius(4.0)
-                                    .inner_margin(6.0)
+                                    .corner_radius(CARD_RADIUS)
+                                    .inner_margin(CARD_INNER_MARGIN)
                                     .show(ui, |ui| {
                                         ui.horizontal(|ui| {
                                             ui.label(
                                                 RichText::new(&mem.title)
-                                                    .size(10.0)
+                                                    .size(FONT_SMALL)
                                                     .strong()
                                                     .color(palette.text),
                                             );
@@ -1530,7 +1580,7 @@ impl VelocityApp {
                                                 |ui| {
                                                     ui.label(
                                                         RichText::new(&mem.category)
-                                                            .size(8.0)
+                                                            .size(FONT_CAPTION)
                                                             .monospace()
                                                             .color(palette.accent),
                                                     );
@@ -1539,28 +1589,28 @@ impl VelocityApp {
                                         });
                                         ui.label(
                                             RichText::new(&mem.content)
-                                                .size(9.0)
+                                                .size(FONT_CAPTION)
                                                 .color(palette.text_muted),
                                         );
                                         if !mem.keywords.is_empty() {
                                             ui.horizontal(|ui| {
                                                 ui.label(
                                                     RichText::new("Keywords:")
-                                                        .size(8.0)
+                                                        .size(FONT_CAPTION)
                                                         .color(palette.text_muted),
                                                 );
                                                 ui.label(
                                                     RichText::new(mem.keywords.join(", "))
-                                                        .size(8.0)
+                                                        .size(FONT_CAPTION)
                                                         .color(palette.text_muted),
                                                 );
                                             });
                                         }
                                     });
-                                ui.add_space(3.0);
+                                ui.add_space(ITEM_SPACING);
                             }
                         });
-                        ui.add_space(4.0);
+                        ui.add_space(ITEM_SPACING);
                     }
                 });
         }
@@ -1581,7 +1631,7 @@ impl VelocityApp {
     }
 
     // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
-    // Live Orchestration â€” real-time multi-agent activity dashboard
+    // Live Orchestration -- real-time multi-agent activity dashboard
     // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
     pub fn render_live_orchestration_panel(&mut self, ui: &mut egui::Ui) {
         let palette = self.palette();
@@ -1605,7 +1655,7 @@ impl VelocityApp {
         ui.horizontal(|ui| {
             ui.label(
                 RichText::new(format!("{} events", events))
-                    .size(9.0)
+                    .size(FONT_CAPTION)
                     .color(palette.text_muted),
             );
             ui.label(
@@ -1613,13 +1663,13 @@ impl VelocityApp {
                     "{} tokens",
                     self.live_orchestration.total_tokens_used
                 ))
-                .size(9.0)
+                .size(FONT_CAPTION)
                 .color(palette.text_muted),
             );
             let elapsed = self.live_orchestration.session_start.elapsed();
             ui.label(
                 RichText::new(format!("{}s elapsed", elapsed.as_secs()))
-                    .size(9.0)
+                    .size(FONT_CAPTION)
                     .color(palette.text_muted),
             );
         });
@@ -1640,19 +1690,19 @@ impl VelocityApp {
                     for worker in &self.live_orchestration.worker_progress {
                         egui::Frame::new()
                             .fill(palette.bg_secondary)
-                            .corner_radius(4.0)
-                            .inner_margin(6.0)
+                            .corner_radius(CARD_RADIUS)
+                            .inner_margin(CARD_INNER_MARGIN)
                             .show(ui, |ui| {
                                 ui.horizontal(|ui| {
                                     ui.label(
                                         RichText::new(format!("Task #{}", worker.task_id))
-                                            .size(10.0)
+                                            .size(FONT_SMALL)
                                             .strong()
                                             .color(palette.text),
                                     );
                                     ui.label(
                                         RichText::new(&worker.model_label)
-                                            .size(8.0)
+                                            .size(FONT_CAPTION)
                                             .monospace()
                                             .color(palette.accent),
                                     );
@@ -1664,7 +1714,7 @@ impl VelocityApp {
                                                     "{} files, {} events",
                                                     worker.files_changed, worker.events_count
                                                 ))
-                                                .size(8.0)
+                                                .size(FONT_CAPTION)
                                                 .color(palette.text_muted),
                                             );
                                         },
@@ -1672,18 +1722,18 @@ impl VelocityApp {
                                 });
                                 ui.label(
                                     RichText::new(&worker.title)
-                                        .size(9.0)
+                                        .size(FONT_CAPTION)
                                         .color(palette.text_muted),
                                 );
                                 if !worker.status_text.is_empty() {
                                     ui.label(
                                         RichText::new(&worker.status_text)
-                                            .size(8.0)
+                                            .size(FONT_CAPTION)
                                             .color(palette.text_muted),
                                     );
                                 }
                             });
-                        ui.add_space(3.0);
+                        ui.add_space(ITEM_SPACING);
                     }
                 });
             ui.add_space(6.0);
@@ -1703,7 +1753,7 @@ impl VelocityApp {
                 if self.live_orchestration.activity_feed.is_empty() {
                     ui.label(
                         RichText::new("No activity yet. Activity appears when agents are running.")
-                            .size(9.0)
+                            .size(FONT_CAPTION)
                             .color(palette.text_muted),
                     );
                 } else {
@@ -1724,18 +1774,18 @@ impl VelocityApp {
                         ui.horizontal(|ui| {
                             ui.label(
                                 RichText::new(event.kind.icon())
-                                    .size(10.0)
+                                    .size(FONT_SMALL)
                                     .color(color),
                             );
                             ui.label(
                                 RichText::new(event.kind.label())
-                                    .size(8.0)
+                                    .size(FONT_CAPTION)
                                     .monospace()
                                     .color(color),
                             );
                             ui.label(
                                 RichText::new(&event.message)
-                                    .size(9.0)
+                                    .size(FONT_CAPTION)
                                     .color(palette.text),
                             );
                         });
@@ -1745,7 +1795,7 @@ impl VelocityApp {
     }
 
     // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
-    // Semantic Search â€” TF-IDF based code search
+    // Semantic Search -- TF-IDF based code search
     // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
     pub fn render_semantic_search_panel(&mut self, ui: &mut egui::Ui) {
         let palette = self.palette();
@@ -1767,14 +1817,14 @@ impl VelocityApp {
         ui.horizontal(|ui| {
             if self.semantic_index.is_none() {
                 if ui
-                    .button(RichText::new("\u{1f528} Build Index").size(10.0))
+                    .button(RichText::new("\u{1f528} Build Index").size(FONT_SMALL))
                     .clicked()
                 {
                     build_index = true;
                 }
             } else {
                 if ui
-                    .button(RichText::new("\u{1f504} Rebuild Index").size(10.0))
+                    .button(RichText::new("\u{1f504} Rebuild Index").size(FONT_SMALL))
                     .clicked()
                 {
                     build_index = true;
@@ -1782,7 +1832,7 @@ impl VelocityApp {
             }
             ui.label(
                 RichText::new("TF-IDF semantic search")
-                    .size(8.0)
+                    .size(FONT_CAPTION)
                     .color(palette.text_muted),
             );
         });
@@ -1800,7 +1850,7 @@ impl VelocityApp {
                     RichText::new(
                         "Semantic index not built. Click 'Build Index' to enable semantic search.",
                     )
-                    .size(10.0)
+                    .size(FONT_SMALL)
                     .color(palette.text_muted),
                 );
             });
@@ -1809,7 +1859,7 @@ impl VelocityApp {
                 RichText::new(
                     "Semantic search is active. Use the Search panel with semantic mode enabled.",
                 )
-                .size(9.0)
+                .size(FONT_CAPTION)
                 .color(palette.text_muted),
             );
         }
@@ -1823,7 +1873,7 @@ impl VelocityApp {
     }
 
     // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
-    // Snippets â€” code snippet library browser
+    // Snippets -- code snippet library browser
     // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
     pub fn render_snippets_panel(&mut self, ui: &mut egui::Ui) {
         let palette = self.palette();
@@ -1860,7 +1910,7 @@ impl VelocityApp {
                     RichText::new(
                         "No snippets loaded. Snippets are loaded from .velocity/snippets.json",
                     )
-                    .size(10.0)
+                    .size(FONT_SMALL)
                     .color(palette.text_muted),
                 );
             });
@@ -1880,13 +1930,13 @@ impl VelocityApp {
                     for snippet in snippets_to_show {
                         egui::Frame::new()
                             .fill(palette.bg_secondary)
-                            .corner_radius(4.0)
-                            .inner_margin(6.0)
+                            .corner_radius(CARD_RADIUS)
+                            .inner_margin(CARD_INNER_MARGIN)
                             .show(ui, |ui| {
                                 ui.horizontal(|ui| {
                                     ui.label(
                                         RichText::new(&snippet.name)
-                                            .size(10.0)
+                                            .size(FONT_SMALL)
                                             .strong()
                                             .color(palette.text),
                                     );
@@ -1896,7 +1946,7 @@ impl VelocityApp {
                                             if let Some(scope) = &snippet.scope {
                                                 ui.label(
                                                     RichText::new(scope)
-                                                        .size(8.0)
+                                                        .size(FONT_CAPTION)
                                                         .monospace()
                                                         .color(palette.accent),
                                                 );
@@ -1906,7 +1956,7 @@ impl VelocityApp {
                                 });
                                 ui.label(
                                     RichText::new(format!("Prefix: {}", snippet.prefix))
-                                        .size(9.0)
+                                        .size(FONT_CAPTION)
                                         .monospace()
                                         .color(palette.text_muted),
                                 );
@@ -1916,14 +1966,14 @@ impl VelocityApp {
                                     );
                                 }
                             });
-                        ui.add_space(3.0);
+                        ui.add_space(ITEM_SPACING);
                     }
                 });
         }
     }
 
     // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
-    // LSP Client â€” Language Server Protocol status and diagnostics
+    // LSP Client -- Language Server Protocol status and diagnostics
     // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
     pub fn render_lsp_panel(&mut self, ui: &mut egui::Ui) {
         let palette = self.palette();
@@ -1958,20 +2008,27 @@ impl VelocityApp {
                     let snapshot = mgr.server_snapshot();
 
                     if snapshot.is_empty() {
-                        ui.add_space(12.0);
+                        ui.add_space(16.0);
                         ui.vertical_centered(|ui| {
                             ui.label(
-                                RichText::new("\u{25c7}")
-                                    .size(26.0)
-                                    .color(palette.text_muted),
+                                RichText::new("\u{1f4c6}")
+                                    .size(22.0)
+                                    .color(palette.text_muted.gamma_multiply(0.5)),
                             );
+                            ui.add_space(ITEM_SPACING);
+                            ui.label(
+                                RichText::new("No language servers detected")
+                                    .size(FONT_SMALL)
+                                    .strong()
+                                    .color(palette.text),
+                            );
+                            ui.add_space(2.0);
                             ui.label(
                                 RichText::new(
-                                    "No language servers detected for this workspace.\n\
-                                     Add Cargo.toml or package.json to auto-start servers.",
+                                    "Add Cargo.toml or package.json to auto-start servers",
                                 )
-                                .size(10.0)
-                                .color(palette.text_muted),
+                                .size(9.0)
+                                .color(palette.text_muted.gamma_multiply(0.7)),
                             );
                         });
                     } else {
@@ -1982,15 +2039,15 @@ impl VelocityApp {
                                 diag_count,
                                 if diag_count == 1 { "" } else { "s" }
                             ))
-                            .size(9.0)
+                            .size(FONT_CAPTION)
                             .color(if diag_count > 0 {
                                 palette.warning
                             } else {
                                 palette.text_muted
                             }),
                         );
-                        ui.add_space(8.0);
-
+                        ui.add_space(SECTION_SPACING);
+                        
                         // Per-server cards
                         for srv in &snapshot {
                             let alive_color = if srv.alive {
@@ -2008,11 +2065,11 @@ impl VelocityApp {
                                 ui.horizontal(|ui| {
                                     // Status dot
                                     ui.label(
-                                        RichText::new("\u{25cf}").size(10.0).color(alive_color),
+                                        RichText::new("\u{25cf}").size(FONT_SMALL).color(alive_color),
                                     );
                                     ui.label(
                                         RichText::new(&srv.language)
-                                            .size(11.0)
+                                            .size(FONT_SMALL)
                                             .strong()
                                             .color(palette.text),
                                     );
@@ -2021,7 +2078,7 @@ impl VelocityApp {
                                         |ui| {
                                             ui.label(
                                                 RichText::new(init_label)
-                                                    .size(9.0)
+                                                    .size(FONT_CAPTION)
                                                     .color(palette.text_muted),
                                             );
                                         },
@@ -2033,11 +2090,11 @@ impl VelocityApp {
                                         srv.command,
                                         srv.extensions.join(", ")
                                     ))
-                                    .size(8.0)
+                                    .size(FONT_CAPTION)
                                     .color(palette.text_muted),
                                 );
                             });
-                            ui.add_space(4.0);
+                            ui.add_space(ITEM_SPACING);
                         }
                     }
                 } else {
@@ -2052,7 +2109,7 @@ impl VelocityApp {
                             RichText::new(
                                 "LSP not initialized. LSP servers are configured per-language.",
                             )
-                            .size(10.0)
+                            .size(FONT_SMALL)
                             .color(palette.text_muted),
                         );
                     });
@@ -2061,7 +2118,7 @@ impl VelocityApp {
     }
 
     // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
-    // Debugger â€” DAP (Debug Adapter Protocol) controls
+    // Debugger -- DAP (Debug Adapter Protocol) controls
     // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
     pub fn render_debugger_panel(&mut self, ui: &mut egui::Ui) {
         let palette = self.palette();
@@ -2088,19 +2145,19 @@ impl VelocityApp {
                 );
                 ui.label(
                     RichText::new("Debugger not connected. Use 'Debug: Attach' from the toolbar.")
-                        .size(10.0)
+                        .size(FONT_SMALL)
                         .color(palette.text_muted),
                 );
             });
         } else {
             ui.label(
                 RichText::new("Debugger is connected and ready for debugging.")
-                    .size(9.0)
+                    .size(FONT_CAPTION)
                     .color(palette.text_muted),
             );
             ui.add_space(6.0);
 
-            // Debug controls â€” defer DAP calls to avoid borrowing self during render.
+            // Debug controls -- defer DAP calls to avoid borrowing self during render.
             enum DbgAction {
                 Continue,
                 Pause,
@@ -2113,40 +2170,40 @@ impl VelocityApp {
 
             ui.horizontal(|ui| {
                 if ui
-                    .button(RichText::new("\u{25b6} Continue").size(10.0))
+                    .button(RichText::new("\u{25b6} Continue").size(FONT_SMALL))
                     .clicked()
                 {
                     dbg = Some(DbgAction::Continue);
                 }
                 if ui
-                    .button(RichText::new("\u{23f9} Pause").size(10.0))
+                    .button(RichText::new("\u{23f9} Pause").size(FONT_SMALL))
                     .clicked()
                 {
                     dbg = Some(DbgAction::Pause);
                 }
                 if ui
-                    .button(RichText::new("\u{23ed} Step Over").size(10.0))
+                    .button(RichText::new("\u{23ed} Step Over").size(FONT_SMALL))
                     .clicked()
                 {
                     dbg = Some(DbgAction::StepOver);
                 }
             });
-            ui.add_space(4.0);
+            ui.add_space(ITEM_SPACING);
             ui.horizontal(|ui| {
                 if ui
-                    .button(RichText::new("\u{2935} Step Into").size(10.0))
+                    .button(RichText::new("\u{2935} Step Into").size(FONT_SMALL))
                     .clicked()
                 {
                     dbg = Some(DbgAction::StepInto);
                 }
                 if ui
-                    .button(RichText::new("\u{2934} Step Out").size(10.0))
+                    .button(RichText::new("\u{2934} Step Out").size(FONT_SMALL))
                     .clicked()
                 {
                     dbg = Some(DbgAction::StepOut);
                 }
                 if ui
-                    .button(RichText::new("\u{23f9} Stop").size(10.0))
+                    .button(RichText::new("\u{23f9} Stop").size(FONT_SMALL))
                     .clicked()
                 {
                     dbg = Some(DbgAction::Stop);
@@ -2188,7 +2245,7 @@ impl VelocityApp {
     }
 
     // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
-    // Speculative Precomputation â€” cache status and contents
+    // Speculative Precomputation -- cache status and contents
     // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
     pub fn render_precomp_cache_panel(&mut self, ui: &mut egui::Ui) {
         let palette = self.palette();
@@ -2205,7 +2262,7 @@ impl VelocityApp {
             RichText::new(
                 "Pre-indexes scoped files before agent workers spawn, providing warm context caches that accelerate agent execution.",
             )
-            .size(9.0)
+            .size(FONT_CAPTION)
             .color(palette.text_muted),
         );
         ui.add_space(6.0);
@@ -2222,46 +2279,46 @@ impl VelocityApp {
                 ui.add_space(2.0);
                 ui.label(
                     RichText::new("\u{2022} Automatic: runs before each agent task")
-                        .size(9.0)
+                        .size(FONT_CAPTION)
                         .color(palette.text),
                 );
                 ui.label(
                     RichText::new("\u{2022} Background: does not block UI")
-                        .size(9.0)
+                        .size(FONT_CAPTION)
                         .color(palette.text),
                 );
                 ui.label(
                     RichText::new("\u{2022} Per-task: keyed by task ID")
-                        .size(9.0)
+                        .size(FONT_CAPTION)
                         .color(palette.text),
                 );
                 ui.add_space(6.0);
 
                 ui.label(
                     RichText::new("Each cached entry contains:")
-                        .size(9.0)
+                        .size(FONT_CAPTION)
                         .strong()
                         .color(palette.text_muted),
                 );
                 ui.add_space(2.0);
                 ui.label(
                     RichText::new("\u{2022} File paths and line counts")
-                        .size(9.0)
+                        .size(FONT_CAPTION)
                         .color(palette.text),
                 );
                 ui.label(
                     RichText::new("\u{2022} Symbol outlines")
-                        .size(9.0)
+                        .size(FONT_CAPTION)
                         .color(palette.text),
                 );
                 ui.label(
                     RichText::new("\u{2022} Import lists")
-                        .size(9.0)
+                        .size(FONT_CAPTION)
                         .color(palette.text),
                 );
                 ui.label(
                     RichText::new("\u{2022} Top-level summaries")
-                        .size(9.0)
+                        .size(FONT_CAPTION)
                         .color(palette.text),
                 );
             });
@@ -2285,7 +2342,7 @@ impl VelocityApp {
             RichText::new(
                 "Attach images, documents, or audio files to chat turns. Images are encoded as data: URLs for vision models; documents use OCR fallback.",
             )
-            .size(9.0)
+            .size(FONT_CAPTION)
             .color(palette.text_muted),
         );
         ui.add_space(6.0);
@@ -2301,12 +2358,12 @@ impl VelocityApp {
                                 .size(24.0)
                                 .color(palette.text_muted.gamma_multiply(0.5)),
                         );
-                        ui.add_space(4.0);
+                        ui.add_space(ITEM_SPACING);
                         ui.label(
                             RichText::new(
                                 "No attachments yet.\nUse the Chat panel to attach files.",
                             )
-                            .size(10.0)
+                            .size(FONT_SMALL)
                             .color(palette.text_muted),
                         );
                     });
@@ -2319,8 +2376,8 @@ impl VelocityApp {
                         };
                         egui::Frame::new()
                             .fill(palette.bg_tertiary)
-                            .corner_radius(4.0)
-                            .inner_margin(6.0)
+                            .corner_radius(CARD_RADIUS)
+                            .inner_margin(CARD_INNER_MARGIN)
                             .show(ui, |ui| {
                                 ui.horizontal(|ui| {
                                     ui.label(RichText::new("\u{25cf}").color(kind_color));
@@ -2336,7 +2393,7 @@ impl VelocityApp {
                                 });
                                 ui.label(
                                     RichText::new(att.path.display().to_string())
-                                        .size(9.0)
+                                        .size(FONT_CAPTION)
                                         .color(palette.text),
                                 );
                                 ui.label(
@@ -2345,7 +2402,7 @@ impl VelocityApp {
                                         .color(palette.text_muted),
                                 );
                             });
-                        ui.add_space(3.0);
+                        ui.add_space(ITEM_SPACING);
                     }
                 }
             });
@@ -2369,7 +2426,7 @@ impl VelocityApp {
             RichText::new(
                 "Captures mission state, edit journals, and model provenance so a different AI model can seamlessly resume work.",
             )
-            .size(9.0)
+            .size(FONT_CAPTION)
             .color(palette.text_muted),
         );
         ui.add_space(6.0);
@@ -2386,12 +2443,12 @@ impl VelocityApp {
                                     .size(24.0)
                                     .color(palette.text_muted.gamma_multiply(0.5)),
                             );
-                            ui.add_space(4.0);
+                            ui.add_space(ITEM_SPACING);
                             ui.label(
                                 RichText::new(
                                     "No active continuation ledger.\nA ledger is created when handing off context between models.",
                                 )
-                                .size(10.0)
+                                .size(FONT_SMALL)
                                 .color(palette.text_muted),
                             );
                         });
@@ -2399,18 +2456,18 @@ impl VelocityApp {
                     Some(ledger) => {
                         egui::Frame::new()
                             .fill(palette.bg_secondary)
-                            .corner_radius(4.0)
-                            .inner_margin(8.0)
+                            .corner_radius(CARD_RADIUS)
+                            .inner_margin(CARD_INNER_MARGIN)
                             .show(ui, |ui| {
                                 ui.label(
                                     RichText::new(format!("Ledger: {}", ledger.id))
                                         .strong()
                                         .color(palette.accent),
                                 );
-                                ui.add_space(4.0);
+                                ui.add_space(ITEM_SPACING);
                                 ui.label(
                                     RichText::new(format!("Mission: {}", ledger.mission.goal))
-                                        .size(9.0)
+                                        .size(FONT_CAPTION)
                                         .color(palette.text),
                                 );
                                 ui.label(
@@ -2418,7 +2475,7 @@ impl VelocityApp {
                                         "Scoped files: {}",
                                         ledger.environment.scoped_files.len()
                                     ))
-                                    .size(9.0)
+                                    .size(FONT_CAPTION)
                                     .color(palette.text),
                                 );
                                 ui.label(
@@ -2426,7 +2483,7 @@ impl VelocityApp {
                                         "Edit journal: {} entries",
                                         ledger.journal.completed_edits.len()
                                     ))
-                                    .size(9.0)
+                                    .size(FONT_CAPTION)
                                     .color(palette.text),
                                 );
                                 ui.label(
@@ -2443,7 +2500,7 @@ impl VelocityApp {
                                             .count(),
                                         ledger.progress.steps.len()
                                     ))
-                                    .size(9.0)
+                                    .size(FONT_CAPTION)
                                     .color(palette.success),
                                 );
                                 ui.label(
@@ -2451,7 +2508,7 @@ impl VelocityApp {
                                         "Provenance: {} model attempt(s)",
                                         ledger.provenance.len()
                                     ))
-                                    .size(9.0)
+                                    .size(FONT_CAPTION)
                                     .color(palette.text_muted),
                                 );
                             });
@@ -2482,7 +2539,7 @@ impl VelocityApp {
 
         ui.label(
             RichText::new("Plugins extend the IDE with additional tools and capabilities.")
-                .size(9.0)
+                .size(FONT_CAPTION)
                 .color(palette.text_muted),
         );
         ui.add_space(6.0);
@@ -2498,12 +2555,12 @@ impl VelocityApp {
                                 .size(24.0)
                                 .color(palette.text_muted.gamma_multiply(0.5)),
                         );
-                        ui.add_space(4.0);
+                        ui.add_space(ITEM_SPACING);
                         ui.label(
                             RichText::new(
                                 "No plugins loaded.\nPlace plugin crates in the workspace to discover them.",
                             )
-                            .size(10.0)
+                            .size(FONT_SMALL)
                             .color(palette.text_muted),
                         );
                     });
@@ -2516,8 +2573,8 @@ impl VelocityApp {
                         };
                         egui::Frame::new()
                             .fill(palette.bg_tertiary)
-                            .corner_radius(4.0)
-                            .inner_margin(6.0)
+                            .corner_radius(CARD_RADIUS)
+                            .inner_margin(CARD_INNER_MARGIN)
                             .show(ui, |ui| {
                                 ui.horizontal(|ui| {
                                     ui.label(RichText::new("\u{25cf}").color(status_color));
@@ -2532,7 +2589,7 @@ impl VelocityApp {
                                 });
                                 ui.label(
                                     RichText::new(&info.description)
-                                        .size(9.0)
+                                        .size(FONT_CAPTION)
                                         .color(palette.text),
                                 );
                                 ui.label(
@@ -2545,7 +2602,7 @@ impl VelocityApp {
                                     .color(palette.text_muted),
                                 );
                             });
-                        ui.add_space(3.0);
+                        ui.add_space(ITEM_SPACING);
                     }
                 }
             });
@@ -2569,7 +2626,7 @@ impl VelocityApp {
             RichText::new(
                 "Skills are reusable capability definitions injected into agent system prompts when tasks are routed to team members.",
             )
-            .size(9.0)
+            .size(FONT_CAPTION)
             .color(palette.text_muted),
         );
         ui.add_space(6.0);
@@ -2585,12 +2642,12 @@ impl VelocityApp {
                                 .size(24.0)
                                 .color(palette.text_muted.gamma_multiply(0.5)),
                         );
-                        ui.add_space(4.0);
+                        ui.add_space(ITEM_SPACING);
                         ui.label(
                             RichText::new(
                                 "No skill files loaded.\nSkills are loaded from .velocity/skills/.",
                             )
-                            .size(10.0)
+                            .size(FONT_SMALL)
                             .color(palette.text_muted),
                         );
                     });
@@ -2598,8 +2655,8 @@ impl VelocityApp {
                     for skill in &self.skill_files {
                         egui::Frame::new()
                             .fill(palette.bg_tertiary)
-                            .corner_radius(4.0)
-                            .inner_margin(6.0)
+                            .corner_radius(CARD_RADIUS)
+                            .inner_margin(CARD_INNER_MARGIN)
                             .show(ui, |ui| {
                                 ui.horizontal(|ui| {
                                     ui.label(
@@ -2613,7 +2670,7 @@ impl VelocityApp {
                                 });
                                 ui.label(
                                     RichText::new(&skill.description)
-                                        .size(9.0)
+                                        .size(FONT_CAPTION)
                                         .color(palette.text),
                                 );
                                 // Show first 120 chars of body as preview
@@ -2627,7 +2684,7 @@ impl VelocityApp {
                                     );
                                 }
                             });
-                        ui.add_space(3.0);
+                        ui.add_space(ITEM_SPACING);
                     }
                 }
             });
@@ -2663,7 +2720,7 @@ impl VelocityApp {
             RichText::new(
                 "Ghost-text suggestions that appear inline as you type, powered by the completion engine. Press Tab to accept, Escape to dismiss.",
             )
-            .size(9.0)
+            .size(FONT_CAPTION)
             .color(palette.text_muted),
         );
         ui.add_space(6.0);
@@ -2681,7 +2738,7 @@ impl VelocityApp {
                 ui.horizontal(|ui| {
                     ui.label(
                         RichText::new("Enabled:")
-                            .size(9.0)
+                            .size(FONT_CAPTION)
                             .color(palette.text_muted),
                     );
                     if ui
@@ -2694,7 +2751,7 @@ impl VelocityApp {
                 ui.horizontal(|ui| {
                     ui.label(
                         RichText::new("Trigger delay:")
-                            .size(9.0)
+                            .size(FONT_CAPTION)
                             .color(palette.text_muted),
                     );
                     ui.label(
@@ -2702,14 +2759,14 @@ impl VelocityApp {
                             "{}ms",
                             self.inline_suggestions.config.trigger_delay_ms
                         ))
-                        .size(9.0)
+                        .size(FONT_CAPTION)
                         .color(palette.text),
                     );
                 });
                 ui.horizontal(|ui| {
                     ui.label(
                         RichText::new("Max chars:")
-                            .size(9.0)
+                            .size(FONT_CAPTION)
                             .color(palette.text_muted),
                     );
                     ui.label(
@@ -2717,14 +2774,14 @@ impl VelocityApp {
                             "{}",
                             self.inline_suggestions.config.max_suggestion_chars
                         ))
-                        .size(9.0)
+                        .size(FONT_CAPTION)
                         .color(palette.text),
                     );
                 });
                 ui.horizontal(|ui| {
                     ui.label(
                         RichText::new("Min confidence:")
-                            .size(9.0)
+                            .size(FONT_CAPTION)
                             .color(palette.text_muted),
                     );
                     ui.label(
@@ -2732,7 +2789,7 @@ impl VelocityApp {
                             "{:.0}%",
                             self.inline_suggestions.config.min_confidence * 100.0
                         ))
-                        .size(9.0)
+                        .size(FONT_CAPTION)
                         .color(palette.text),
                     );
                 });
@@ -2747,17 +2804,17 @@ impl VelocityApp {
                 );
                 ui.label(
                     RichText::new(format!("  \u{2022} Shown: {total_shown}"))
-                        .size(9.0)
+                        .size(FONT_CAPTION)
                         .color(palette.text),
                 );
                 ui.label(
                     RichText::new(format!("  \u{2022} Accepted: {total_accepted}"))
-                        .size(9.0)
+                        .size(FONT_CAPTION)
                         .color(palette.success),
                 );
                 ui.label(
                     RichText::new(format!("  \u{2022} Dismissed: {total_dismissed}"))
-                        .size(9.0)
+                        .size(FONT_CAPTION)
                         .color(palette.warning),
                 );
                 let accept_rate = if total_shown > 0 {
@@ -2767,11 +2824,11 @@ impl VelocityApp {
                 };
                 ui.label(
                     RichText::new(format!("  \u{2022} Accept rate: {accept_rate:.1}%"))
-                        .size(9.0)
+                        .size(FONT_CAPTION)
                         .color(palette.accent),
                 );
-                ui.add_space(4.0);
-
+                ui.add_space(ITEM_SPACING);
+                
                 // Cache info
                 ui.label(
                     RichText::new("CACHE")
@@ -2781,12 +2838,12 @@ impl VelocityApp {
                 );
                 ui.label(
                     RichText::new(format!("  \u{2022} Reuse cache: {cache_entries} entries"))
-                        .size(9.0)
+                        .size(FONT_CAPTION)
                         .color(palette.text),
                 );
                 ui.label(
                     RichText::new(format!("  \u{2022} Recent: {recent_count} entries"))
-                        .size(9.0)
+                        .size(FONT_CAPTION)
                         .color(palette.text),
                 );
                 let status = if has_current {
@@ -2796,7 +2853,7 @@ impl VelocityApp {
                 };
                 ui.label(
                     RichText::new(format!("  \u{2022} Status: {}", status.0))
-                        .size(9.0)
+                        .size(FONT_CAPTION)
                         .color(status.1),
                 );
             });
@@ -2824,7 +2881,7 @@ impl VelocityApp {
             RichText::new(
                 "Tracks failures during agent execution, classifies them into categories, and generates prompt refinements to avoid repeating mistakes.",
             )
-            .size(9.0)
+            .size(FONT_CAPTION)
             .color(palette.text_muted),
         );
         ui.add_space(6.0);
@@ -2840,12 +2897,12 @@ impl VelocityApp {
                                 .size(24.0)
                                 .color(palette.text_muted.gamma_multiply(0.5)),
                         );
-                        ui.add_space(4.0);
+                        ui.add_space(ITEM_SPACING);
                         ui.label(
                             RichText::new(
                                 "No failures recorded this session.\nThe engine is idle.",
                             )
-                            .size(10.0)
+                            .size(FONT_SMALL)
                             .color(palette.text_muted),
                         );
                     });
@@ -2856,12 +2913,12 @@ impl VelocityApp {
                             .strong()
                             .color(palette.accent),
                     );
-                    ui.add_space(4.0);
+                    ui.add_space(ITEM_SPACING);
                     for d in &directives {
                         egui::Frame::new()
                             .fill(palette.bg_tertiary)
-                            .corner_radius(4.0)
-                            .inner_margin(6.0)
+                            .corner_radius(CARD_RADIUS)
+                            .inner_margin(CARD_INNER_MARGIN)
                             .show(ui, |ui| {
                                 ui.label(
                                     RichText::new(format!("{:?}", d.category))
@@ -2880,7 +2937,7 @@ impl VelocityApp {
                                     .color(palette.text_muted),
                                 );
                             });
-                        ui.add_space(3.0);
+                        ui.add_space(ITEM_SPACING);
                     }
                 }
             });
@@ -2903,7 +2960,7 @@ impl VelocityApp {
             RichText::new(
                 "Shared knowledge base for multi-agent collaboration. Agents can publish and query knowledge entries across team boundaries.",
             )
-            .size(9.0)
+            .size(FONT_CAPTION)
             .color(palette.text_muted),
         );
         ui.add_space(6.0);
@@ -2919,10 +2976,10 @@ impl VelocityApp {
                                 .size(24.0)
                                 .color(palette.text_muted.gamma_multiply(0.5)),
                         );
-                        ui.add_space(4.0);
+                        ui.add_space(ITEM_SPACING);
                         ui.label(
                             RichText::new("No shared knowledge entries yet.")
-                                .size(10.0)
+                                .size(FONT_SMALL)
                                 .color(palette.text_muted),
                         );
                     });
@@ -2930,8 +2987,8 @@ impl VelocityApp {
                     for (id, entry) in self.shared_memory.entries.iter().take(20) {
                         egui::Frame::new()
                             .fill(palette.bg_tertiary)
-                            .corner_radius(4.0)
-                            .inner_margin(6.0)
+                            .corner_radius(CARD_RADIUS)
+                            .inner_margin(CARD_INNER_MARGIN)
                             .show(ui, |ui| {
                                 ui.label(RichText::new(&entry.title).strong().color(palette.text));
                                 ui.label(
@@ -2942,7 +2999,7 @@ impl VelocityApp {
                                 let preview: String = entry.content.chars().take(120).collect();
                                 ui.label(RichText::new(preview).size(9.0).color(palette.text));
                             });
-                        ui.add_space(3.0);
+                        ui.add_space(ITEM_SPACING);
                     }
                 }
             });
@@ -2963,7 +3020,7 @@ impl VelocityApp {
 
         ui.label(
             RichText::new("Background agents run autonomous tasks without blocking the UI.")
-                .size(9.0)
+                .size(FONT_CAPTION)
                 .color(palette.text_muted),
         );
         ui.add_space(6.0);
@@ -2979,10 +3036,10 @@ impl VelocityApp {
                                 .size(24.0)
                                 .color(palette.text_muted.gamma_multiply(0.5)),
                         );
-                        ui.add_space(4.0);
+                        ui.add_space(ITEM_SPACING);
                         ui.label(
                             RichText::new("No background agents registered.")
-                                .size(10.0)
+                                .size(FONT_SMALL)
                                 .color(palette.text_muted),
                         );
                     });
@@ -2995,8 +3052,8 @@ impl VelocityApp {
                         };
                         egui::Frame::new()
                             .fill(palette.bg_tertiary)
-                            .corner_radius(4.0)
-                            .inner_margin(6.0)
+                            .corner_radius(CARD_RADIUS)
+                            .inner_margin(CARD_INNER_MARGIN)
                             .show(ui, |ui| {
                                 ui.horizontal(|ui| {
                                     ui.label(RichText::new("\u{25cf}").color(status_color));
@@ -3013,12 +3070,12 @@ impl VelocityApp {
                                 });
                                 ui.label(RichText::new(&agent.name).size(9.0).color(palette.text));
                             });
-                        ui.add_space(3.0);
+                        ui.add_space(ITEM_SPACING);
                     }
                 }
 
                 if feed_len > 0 {
-                    ui.add_space(8.0);
+                    ui.add_space(SECTION_SPACING);
                     ui.label(
                         RichText::new("RECENT ACTIONS")
                             .small()
@@ -3029,7 +3086,7 @@ impl VelocityApp {
                     for action in self.background_agents.action_feed.iter().rev().take(10) {
                         ui.label(
                             RichText::new(format!("[{}] {}", action.id, action.title))
-                                .size(9.0)
+                                .size(FONT_CAPTION)
                                 .color(palette.text),
                         );
                     }
@@ -3055,7 +3112,7 @@ impl VelocityApp {
                 "Manages resource contention between concurrent agent operations. Strategy: {:?} \u{00b7} Lock timeout: {}s",
                 self.conflict_resolver.default_resolution, self.conflict_resolver.lock_timeout_secs
             ))
-            .size(9.0)
+            .size(FONT_CAPTION)
             .color(palette.text_muted),
         );
         ui.add_space(6.0);
@@ -3071,10 +3128,10 @@ impl VelocityApp {
                                 .size(24.0)
                                 .color(palette.success.gamma_multiply(0.5)),
                         );
-                        ui.add_space(4.0);
+                        ui.add_space(ITEM_SPACING);
                         ui.label(
                             RichText::new("No active locks or conflicts.\nAll resources are free.")
-                                .size(10.0)
+                                .size(FONT_SMALL)
                                 .color(palette.success),
                         );
                     });
@@ -3090,7 +3147,7 @@ impl VelocityApp {
                         for (resource, locks) in self.conflict_resolver.locks.iter() {
                             egui::Frame::new()
                                 .fill(palette.bg_tertiary)
-                                .corner_radius(4.0)
+                                .corner_radius(CARD_RADIUS)
                                 .inner_margin(4.0)
                                 .show(ui, |ui| {
                                     ui.label(
@@ -3099,13 +3156,13 @@ impl VelocityApp {
                                             resource,
                                             locks.len()
                                         ))
-                                        .size(9.0)
+                                        .size(FONT_CAPTION)
                                         .color(palette.text),
                                     );
                                 });
                             ui.add_space(2.0);
                         }
-                        ui.add_space(4.0);
+                        ui.add_space(ITEM_SPACING);
                     }
                     if conflict_count > 0 {
                         ui.label(
@@ -3118,7 +3175,7 @@ impl VelocityApp {
                         for c in self.conflict_resolver.conflicts.iter().rev().take(10) {
                             egui::Frame::new()
                                 .fill(palette.bg_tertiary)
-                                .corner_radius(4.0)
+                                .corner_radius(CARD_RADIUS)
                                 .inner_margin(4.0)
                                 .show(ui, |ui| {
                                     ui.label(
@@ -3126,7 +3183,7 @@ impl VelocityApp {
                                             "{} vs {} on {}",
                                             c.op_a.actor_id, c.op_b.actor_id, c.resource
                                         ))
-                                        .size(9.0)
+                                        .size(FONT_CAPTION)
                                         .color(palette.text),
                                     );
                                 });
@@ -3154,7 +3211,7 @@ impl VelocityApp {
             RichText::new(
                 "Manages shared editing sessions, user presence, and real-time collaboration between team members and remote agents.",
             )
-            .size(9.0)
+            .size(FONT_CAPTION)
             .color(palette.text_muted),
         );
         ui.add_space(6.0);
@@ -3170,10 +3227,10 @@ impl VelocityApp {
                                 .size(24.0)
                                 .color(palette.text_muted.gamma_multiply(0.5)),
                         );
-                        ui.add_space(4.0);
+                        ui.add_space(ITEM_SPACING);
                         ui.label(
                             RichText::new("No users registered.\nCollaboration is idle.")
-                                .size(10.0)
+                                .size(FONT_SMALL)
                                 .color(palette.text_muted),
                         );
                     });
@@ -3189,7 +3246,7 @@ impl VelocityApp {
                         let online = self.collaboration.presence.contains_key(id);
                         egui::Frame::new()
                             .fill(palette.bg_tertiary)
-                            .corner_radius(4.0)
+                            .corner_radius(CARD_RADIUS)
                             .inner_margin(4.0)
                             .show(ui, |ui| {
                                 ui.horizontal(|ui| {
@@ -3202,7 +3259,7 @@ impl VelocityApp {
                                             }),
                                     );
                                     ui.label(
-                                        RichText::new(&user.name).size(10.0).color(palette.text),
+                                        RichText::new(&user.name).size(FONT_SMALL).color(palette.text),
                                     );
                                     ui.label(
                                         RichText::new(format!("[{id}]"))
@@ -3216,7 +3273,7 @@ impl VelocityApp {
 
                     // Sessions section
                     if !self.collaboration.sessions.is_empty() {
-                        ui.add_space(8.0);
+                        ui.add_space(SECTION_SPACING);
                         ui.label(
                             RichText::new("SESSIONS")
                                 .small()
@@ -3239,8 +3296,8 @@ impl VelocityApp {
                             };
                             egui::Frame::new()
                                 .fill(palette.bg_tertiary)
-                                .corner_radius(4.0)
-                                .inner_margin(6.0)
+                                .corner_radius(CARD_RADIUS)
+                                .inner_margin(CARD_INNER_MARGIN)
                                 .show(ui, |ui| {
                                     ui.horizontal(|ui| {
                                         ui.label(RichText::new("\u{25cf}").color(status_color));
@@ -3261,11 +3318,11 @@ impl VelocityApp {
                                             session.participants.len(),
                                             session.messages.len()
                                         ))
-                                        .size(9.0)
+                                        .size(FONT_CAPTION)
                                         .color(palette.text_muted),
                                     );
                                 });
-                            ui.add_space(3.0);
+                            ui.add_space(ITEM_SPACING);
                         }
                     }
                 }
@@ -3288,7 +3345,7 @@ impl VelocityApp {
             RichText::new(
                 "Long-term memory store encrypted with NDA at rest. Agents can remember, recall, reinforce, and forget entries across sessions.",
             )
-            .size(9.0)
+            .size(FONT_CAPTION)
             .color(palette.text_muted),
         );
         ui.add_space(6.0);
@@ -3298,11 +3355,11 @@ impl VelocityApp {
             .show(ui, |ui| {
                 ui.label(
                     RichText::new(format!("Storage: {} / max entries", entry_count))
-                        .size(9.0)
+                        .size(FONT_CAPTION)
                         .color(palette.text_muted),
                 );
-                ui.add_space(4.0);
-
+                ui.add_space(ITEM_SPACING);
+                
                 if entry_count == 0 {
                     ui.add_space(16.0);
                     ui.vertical_centered(|ui| {
@@ -3311,12 +3368,12 @@ impl VelocityApp {
                                 .size(24.0)
                                 .color(palette.text_muted.gamma_multiply(0.5)),
                         );
-                        ui.add_space(4.0);
+                        ui.add_space(ITEM_SPACING);
                         ui.label(
                             RichText::new(
                                 "Memory is empty.\nAgents will populate it during execution.",
                             )
-                            .size(10.0)
+                            .size(FONT_SMALL)
                             .color(palette.text_muted),
                         );
                     });
@@ -3331,13 +3388,13 @@ impl VelocityApp {
                     for entry in self.persistent_memory.iter().take(30) {
                         egui::Frame::new()
                             .fill(palette.bg_tertiary)
-                            .corner_radius(4.0)
-                            .inner_margin(6.0)
+                            .corner_radius(CARD_RADIUS)
+                            .inner_margin(CARD_INNER_MARGIN)
                             .show(ui, |ui| {
                                 ui.horizontal(|ui| {
                                     ui.label(
                                         RichText::new("\u{1f512}")
-                                            .size(10.0)
+                                            .size(FONT_SMALL)
                                             .color(palette.text_muted),
                                     );
                                     ui.label(
@@ -3355,17 +3412,1057 @@ impl VelocityApp {
                                 let preview: String = entry.content.chars().take(100).collect();
                                 ui.label(RichText::new(preview).size(9.0).color(palette.text));
                             });
-                        ui.add_space(3.0);
+                        ui.add_space(ITEM_SPACING);
                     }
                     if entry_count > 30 {
                         ui.label(
                             RichText::new(format!("... and {} more entries", entry_count - 30))
-                                .size(9.0)
+                                .size(FONT_CAPTION)
                                 .color(palette.text_muted),
                         );
                     }
                 }
             });
+    }
+
+    // ── Activity Bar Sub-Panels (full implementations) ──
+
+    pub fn render_file_tree_subpanel(&mut self, ui: &mut egui::Ui, palette: IdePalette) {
+        // Poll the background tree builder for updates.
+        while let Ok((tree, _ts)) = self.file_tree_rx.try_recv() {
+            self.file_tree = Some(tree);
+            self.last_tree_update = std::time::Instant::now();
+        }
+
+        ui.horizontal(|ui| {
+            ui.label(RichText::new(self.workspace_root.file_name().unwrap_or_default().to_string_lossy().to_string()).strong().color(palette.text).size(FONT_SMALL));
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if ui.small_button("\u{21bb}").on_hover_text("Refresh tree").clicked() {
+                    self.file_tree = None;
+                    let root = self.workspace_root.clone();
+                    let tx = self.file_tree_tx.clone();
+                    std::thread::spawn(move || {
+                        let tree = super::super::helpers::build_file_tree(&root);
+                        let _ = tx.send((tree, Some(std::time::SystemTime::now())));
+                    });
+                }
+            });
+        });
+        ui.add_space(ITEM_SPACING);
+        
+        // File filter input
+        ui.horizontal(|ui| {
+            ui.label(RichText::new("\u{2315}").size(FONT_SMALL).color(palette.text_muted));
+            let filter_width = if self.file_tree_filter.is_empty() {
+                ui.available_width()
+            } else {
+                ui.available_width() - 20.0
+            };
+            ui.add(
+                egui::TextEdit::singleline(&mut self.file_tree_filter)
+                    .hint_text("Filter files\u{2026}")
+                    .desired_width(filter_width)
+                    .text_color(palette.text),
+            );
+            if !self.file_tree_filter.is_empty() {
+                if ui.small_button(RichText::new("\u{2715}").size(9.0).color(palette.text_muted)).clicked() {
+                    self.file_tree_filter.clear();
+                }
+            }
+        });
+        ui.add_space(ITEM_SPACING);
+        
+        if let Some(tree) = &self.file_tree {
+            let mut path_string = String::new();
+            let filter = self.file_tree_filter.clone();
+            egui::ScrollArea::vertical().show(ui, |ui| {
+                if filter.is_empty() {
+                    Self::render_file_tree_node(
+                        ui,
+                        tree,
+                        &self.workspace_root,
+                        &mut path_string,
+                        palette,
+                    );
+                } else {
+                    // Render filtered tree
+                    Self::render_file_tree_node_filtered(
+                        ui,
+                        tree,
+                        &self.workspace_root,
+                        &mut path_string,
+                        palette,
+                        &filter,
+                    );
+                }
+            });
+        } else {
+            ui.label(RichText::new("Building file tree\u{2026}").color(palette.text_muted).size(FONT_SMALL));
+            let root = self.workspace_root.clone();
+            let tx = self.file_tree_tx.clone();
+            std::thread::spawn(move || {
+                let tree = super::super::helpers::build_file_tree(&root);
+                let _ = tx.send((tree, Some(std::time::SystemTime::now())));
+            });
+            ui.ctx().request_repaint();
+        }
+    }
+
+    pub fn render_bookmarks_subpanel(&mut self, ui: &mut egui::Ui, palette: IdePalette) {
+        ui.horizontal(|ui| {
+            ui.label(RichText::new(format!("{} bookmark(s)", self.bookmarks.len())).size(FONT_SMALL).color(palette.text_muted));
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if ui.small_button("Clear").clicked() {
+                    self.bookmarks.clear();
+                }
+            });
+        });
+        ui.add_space(ITEM_SPACING);
+        
+        if self.bookmarks.is_empty() {
+            ui.add_space(16.0);
+            ui.vertical_centered(|ui| {
+                ui.label(RichText::new("\u{1F516}").size(24.0).color(palette.text_muted.gamma_multiply(0.5)));
+                ui.add_space(ITEM_SPACING);
+                ui.label(RichText::new("No bookmarks yet").color(palette.text_muted).size(FONT_SMALL));
+                ui.label(RichText::new("Add bookmarks from the Accessibility layout").color(palette.text_muted.gamma_multiply(0.7)).size(9.0));
+            });
+        } else {
+            egui::ScrollArea::vertical().show(ui, |ui| {
+                let mut to_remove: Vec<usize> = Vec::new();
+                for (i, bm) in self.bookmarks.iter().enumerate() {
+                    let rel = bm.file.strip_prefix(&self.workspace_root).unwrap_or(&bm.file);
+                    ui.horizontal(|ui| {
+                        let label = if bm.label.is_empty() {
+                            format!("{}:{}", rel.display(), bm.line)
+                        } else {
+                            bm.label.clone()
+                        };
+                        if ui.selectable_label(false, RichText::new(&label).size(FONT_SMALL).color(palette.text)).clicked() {
+                            self.pending_open_path = Some(bm.file.clone());
+                        }
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            if ui.small_button("\u{2715}").on_hover_text("Remove").clicked() {
+                                to_remove.push(i);
+                            }
+                        });
+                    });
+                    ui.label(RichText::new(format!("  {}:{}", rel.display(), bm.line)).size(9.0).color(palette.text_muted.gamma_multiply(0.7)));
+                }
+                for &i in to_remove.iter().rev() {
+                    self.bookmarks.remove(i);
+                }
+            });
+        }
+    }
+
+    pub fn render_favorites_subpanel(&mut self, ui: &mut egui::Ui, palette: IdePalette) {
+        ui.horizontal(|ui| {
+            ui.label(RichText::new(format!("{} favorite(s)", self.favorite_files.len())).size(FONT_SMALL).color(palette.text_muted));
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if ui.small_button("Clear").clicked() {
+                    self.favorite_files.clear();
+                }
+            });
+        });
+        ui.add_space(ITEM_SPACING);
+        
+        if self.favorite_files.is_empty() {
+            ui.add_space(16.0);
+            ui.vertical_centered(|ui| {
+                ui.label(RichText::new("\u{2B50}").size(24.0).color(palette.text_muted.gamma_multiply(0.5)));
+                ui.add_space(ITEM_SPACING);
+                ui.label(RichText::new("No favorites yet").color(palette.text_muted).size(FONT_SMALL));
+                ui.label(RichText::new("Star files from the editor tab context menu").color(palette.text_muted.gamma_multiply(0.7)).size(9.0));
+            });
+        } else {
+            egui::ScrollArea::vertical().show(ui, |ui| {
+                let mut to_remove: Vec<usize> = Vec::new();
+                for (i, f) in self.favorite_files.iter().enumerate() {
+                    let rel = f.strip_prefix(&self.workspace_root).unwrap_or(f);
+                    let name = rel.file_name().unwrap_or_default().to_string_lossy().to_string();
+                    let dir = rel.parent().map(|p| p.display().to_string()).unwrap_or_default();
+                    ui.horizontal(|ui| {
+                        if ui.selectable_label(false, RichText::new(&name).size(FONT_SMALL).color(palette.text)).clicked() {
+                            self.pending_open_path = Some(f.clone());
+                        }
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            if ui.small_button("\u{2715}").on_hover_text("Remove").clicked() {
+                                to_remove.push(i);
+                            }
+                        });
+                    });
+                    if !dir.is_empty() {
+                        ui.label(RichText::new(&format!("  {}", dir)).size(9.0).color(palette.text_muted.gamma_multiply(0.7)));
+                    }
+                }
+                for &i in to_remove.iter().rev() {
+                    self.favorite_files.remove(i);
+                }
+            });
+        }
+    }
+
+    pub fn render_code_graph_subpanel(&mut self, ui: &mut egui::Ui, palette: IdePalette) {
+        let _action = self.graph_view.ui(ui, &self.workspace_root, palette);
+    }
+
+    pub fn render_git_changes_subpanel(&mut self, ui: &mut egui::Ui, palette: IdePalette) {
+        let branch = if self.git_state.branch.is_empty() {
+            super::super::helpers::get_git_branch(&self.workspace_root)
+        } else {
+            Some(self.git_state.branch.clone())
+        };
+
+        ui.horizontal(|ui| {
+            if let Some(b) = &branch {
+                ui.label(RichText::new(format!("\u{e0a0} {}", b)).size(FONT_SMALL).strong().color(palette.accent));
+            }
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if ui.small_button("\u{21bb}").on_hover_text("Refresh").clicked() {
+                    self.git_state.refresh(&self.workspace_root);
+                }
+            });
+        });
+        ui.add_space(ITEM_SPACING);
+        
+        if self.git_state.entries.is_empty() {
+            ui.add_space(16.0);
+            ui.vertical_centered(|ui| {
+                ui.label(RichText::new("\u{2714}").size(24.0).color(palette.success.gamma_multiply(0.6)));
+                ui.add_space(ITEM_SPACING);
+                ui.label(RichText::new("Working tree clean").color(palette.text_muted).size(FONT_SMALL));
+            });
+        } else {
+            // Staged/unstaged summary strip
+            let staged_count = self.git_state.entries.iter().filter(|e| e.staged).count();
+            let unstaged_count = self.git_state.entries.len() - staged_count;
+            ui.horizontal(|ui| {
+                if staged_count > 0 {
+                    egui::Frame::new()
+                        .fill(palette.success.gamma_multiply(0.12))
+                        .corner_radius(egui::CornerRadius::same(3))
+                        .inner_margin(egui::Margin::symmetric(6, 2))
+                        .show(ui, |ui| {
+                            ui.label(RichText::new(format!("{} staged", staged_count)).size(9.0).color(palette.success));
+                        });
+                }
+                if unstaged_count > 0 {
+                    egui::Frame::new()
+                        .fill(palette.warning.gamma_multiply(0.12))
+                        .corner_radius(egui::CornerRadius::same(3))
+                        .inner_margin(egui::Margin::symmetric(6, 2))
+                        .show(ui, |ui| {
+                            ui.label(RichText::new(format!("{} unstaged", unstaged_count)).size(9.0).color(palette.warning));
+                        });
+                }
+            });
+            ui.add_space(ITEM_SPACING);
+            egui::ScrollArea::vertical().show(ui, |ui| {
+                for entry in &self.git_state.entries {
+                    let rel = entry.path.strip_prefix(&self.workspace_root).unwrap_or(&entry.path);
+                    let icon = entry.status.icon();
+                    let color = match entry.status {
+                        crate::editor::git_ui::GitFileStatus::Modified => palette.warning,
+                        crate::editor::git_ui::GitFileStatus::Added => palette.success,
+                        crate::editor::git_ui::GitFileStatus::Deleted => palette.error,
+                        crate::editor::git_ui::GitFileStatus::Conflicted => palette.error,
+                        _ => palette.text_muted,
+                    };
+                    ui.horizontal(|ui| {
+                        ui.label(RichText::new(icon).size(FONT_SMALL).strong().color(color));
+                        if entry.staged {
+                            ui.label(RichText::new("S").size(8.0).color(palette.accent));
+                        }
+                        ui.label(RichText::new(rel.display().to_string()).size(FONT_SMALL).color(palette.text));
+                    });
+                }
+            });
+
+            // Commit area
+            ui.add_space(SECTION_SPACING);
+            ui.separator();
+            ui.add_space(ITEM_SPACING);
+            ui.add(
+                egui::TextEdit::multiline(&mut self.git_state.commit_message)
+                    .hint_text("Commit message\u{2026}")
+                    .desired_rows(2)
+                    .desired_width(ui.available_width()),
+            );
+            ui.horizontal(|ui| {
+                if ui.button(RichText::new("Commit").size(FONT_SMALL)).clicked() {
+                    if !self.git_state.commit_message.trim().is_empty() {
+                        self.status_message = format!("Committing: {}", self.git_state.commit_message.trim());
+                        self.git_state.commit_message.clear();
+                    }
+                }
+                if ui.button(RichText::new("Stage All").size(FONT_SMALL)).clicked() {
+                    self.status_message = "All files staged".to_string();
+                }
+            });
+        }
+    }
+
+    pub fn render_branches_subpanel(&mut self, ui: &mut egui::Ui, palette: IdePalette) {
+        let branch = if self.git_state.branch.is_empty() {
+            super::super::helpers::get_git_branch(&self.workspace_root)
+        } else {
+            Some(self.git_state.branch.clone())
+        };
+
+        ui.horizontal(|ui| {
+            ui.label(RichText::new("Branches").size(FONT_SMALL).strong().color(palette.text));
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if ui.small_button("\u{21bb}").on_hover_text("Refresh").clicked() {
+                    self.git_state.refresh(&self.workspace_root);
+                }
+            });
+        });
+        ui.add_space(ITEM_SPACING);
+        
+        if let Some(b) = &branch {
+            egui::Frame::new()
+                .fill(palette.accent.gamma_multiply(0.1))
+                .corner_radius(egui::CornerRadius::same(4))
+                .inner_margin(egui::Margin::symmetric(8, 4))
+                .show(ui, |ui| {
+                    ui.horizontal(|ui| {
+                        ui.label(RichText::new("\u{e0a0}").size(FONT_BODY).color(palette.accent));
+                        ui.label(RichText::new(b).size(FONT_SMALL).strong().color(palette.accent));
+                        ui.label(RichText::new("(current)").size(9.0).color(palette.text_muted));
+                    });
+                });
+        }
+        ui.add_space(SECTION_SPACING);
+        
+        // Ahead/behind info
+        if self.git_state.ahead > 0 || self.git_state.behind > 0 {
+            ui.horizontal(|ui| {
+                if self.git_state.ahead > 0 {
+                    ui.label(RichText::new(format!("\u{2191} {} ahead", self.git_state.ahead)).size(FONT_SMALL).color(palette.success));
+                }
+                if self.git_state.behind > 0 {
+                    ui.label(RichText::new(format!("\u{2193} {} behind", self.git_state.behind)).size(FONT_SMALL).color(palette.warning));
+                }
+            });
+        }
+
+        if let Some(err) = &self.git_state.last_error {
+            ui.add_space(SECTION_SPACING);
+            ui.label(RichText::new(format!("\u{26a0} {}", err)).size(9.0).color(palette.error));
+        }
+    }
+
+    pub fn render_commits_subpanel(&mut self, ui: &mut egui::Ui, palette: IdePalette) {
+        ui.horizontal(|ui| {
+            ui.label(RichText::new(format!("{} commit(s)", self.git_state.log.len())).size(FONT_SMALL).color(palette.text_muted));
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if ui.small_button("\u{21bb}").on_hover_text("Refresh log").clicked() {
+                    self.git_state.refresh(&self.workspace_root);
+                }
+            });
+        });
+        ui.add_space(ITEM_SPACING);
+        
+        if self.git_state.log.is_empty() {
+            ui.add_space(16.0);
+            ui.vertical_centered(|ui| {
+                ui.label(RichText::new("\u{1f4dc}").size(22.0).color(palette.text_muted.gamma_multiply(0.5)));
+                ui.add_space(ITEM_SPACING);
+                ui.label(RichText::new("No commit history").color(palette.text).size(FONT_SMALL).strong());
+                ui.add_space(2.0);
+                ui.label(RichText::new("Ensure git is initialized in the workspace").color(palette.text_muted.gamma_multiply(0.7)).size(9.0));
+            });
+        } else {
+            egui::ScrollArea::vertical().show(ui, |ui| {
+                for entry in &self.git_state.log {
+                    egui::Frame::new()
+                        .fill(palette.bg_secondary)
+                        .corner_radius(egui::CornerRadius::same(3))
+                        .inner_margin(egui::Margin::symmetric(6, 4))
+                        .show(ui, |ui| {
+                            ui.horizontal(|ui| {
+                                ui.label(RichText::new(&entry.short_hash).size(9.0).monospace().strong().color(palette.accent));
+                                ui.label(RichText::new(&entry.date).size(9.0).color(palette.text_muted));
+                            });
+                            ui.label(RichText::new(&entry.message).size(FONT_SMALL).color(palette.text));
+                            ui.label(RichText::new(&entry.author).size(9.0).color(palette.text_muted.gamma_multiply(0.8)));
+                        });
+                    ui.add_space(2.0);
+                }
+            });
+        }
+    }
+
+    pub fn render_chat_subpanel(&mut self, ui: &mut egui::Ui, palette: IdePalette) {
+        // Status bar with model selector
+        ui.horizontal(|ui| {
+            let status = if self.chat.agent_active { "Agent active" } else { "Ready" };
+            let status_color = if self.chat.agent_active { palette.success } else { palette.text_muted };
+            ui.label(RichText::new(format!("\u{25cf} {}", status)).size(FONT_SMALL).color(status_color));
+
+            // Message count
+            if !self.chat.messages.is_empty() {
+                ui.label(RichText::new(format!("{} msg(s)", self.chat.messages.len())).size(9.0).color(palette.text_muted.gamma_multiply(0.7)));
+            }
+
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                // Clear conversation button
+                if !self.chat.messages.is_empty() {
+                    if ui.small_button("\u{2715}").on_hover_text("Clear conversation").clicked() {
+                        self.chat.messages.clear();
+                    }
+                }
+                // Thinking toggle
+                if self.chat.thinking_supported {
+                    let think_resp = ui.selectable_label(self.chat.thinking_enabled,
+                        RichText::new("\u{1f9e0}").size(FONT_SMALL)
+                            .color(if self.chat.thinking_enabled { palette.accent } else { palette.text_muted }),
+                    ).on_hover_text(if self.chat.thinking_enabled { "Thinking: ON" } else { "Thinking: OFF" });
+                    if think_resp.clicked() {
+                        self.chat.thinking_enabled = !self.chat.thinking_enabled;
+                    }
+                }
+            });
+        });
+
+        // Model selector
+        if !self.chat.available_models.is_empty() {
+            ui.horizontal(|ui| {
+                ui.label(RichText::new("Model:").size(9.0).color(palette.text_muted));
+                egui::ComboBox::from_id_salt("chat_model_selector")
+                    .selected_text(if self.chat.selected_model.is_empty() {
+                        "Select model".to_string()
+                    } else {
+                        let label = self.chat.available_models.iter()
+                            .find(|m| m.id == self.chat.selected_model)
+                            .map(|m| m.label.clone())
+                            .unwrap_or_else(|| {
+                                let parts: Vec<&str> = self.chat.selected_model.rsplitn(2, '/').collect();
+                                parts[0].to_string()
+                            });
+                        label
+                    })
+                    .width(140.0)
+                    .show_ui(ui, |ui| {
+                        for model in &self.chat.available_models {
+                            let is_selected = model.id == self.chat.selected_model;
+                            let resp = ui.selectable_label(is_selected, RichText::new(&model.label).size(FONT_SMALL));
+                            if resp.clicked() {
+                                self.chat.selected_model = model.id.clone();
+                            }
+                        }
+                    });
+            });
+        } else if !self.chat.selected_model.is_empty() {
+            let short_model = self.chat.selected_model.rsplitn(2, '/').next().unwrap_or(&self.chat.selected_model);
+            ui.label(RichText::new(short_model).size(9.0).color(palette.text_muted));
+        }
+        ui.add_space(ITEM_SPACING);
+        
+        // Pending approvals
+        if !self.chat.pending_approvals.is_empty() {
+            egui::Frame::new()
+                .fill(palette.warning.gamma_multiply(0.1))
+                .stroke(egui::Stroke::new(1.0, palette.warning.gamma_multiply(0.3)))
+                .corner_radius(egui::CornerRadius::same(4))
+                .inner_margin(egui::Margin::symmetric(6, 4))
+                .show(ui, |ui| {
+                    ui.label(RichText::new(format!("{} pending approval(s)", self.chat.pending_approvals.len())).size(FONT_SMALL).strong().color(palette.warning));
+                });
+            ui.add_space(ITEM_SPACING);
+        }
+
+        // Messages
+        egui::ScrollArea::vertical().show(ui, |ui| {
+            if self.chat.messages.is_empty() {
+                ui.add_space(16.0);
+                ui.vertical_centered(|ui| {
+                    ui.label(RichText::new("\u{1F4AC}").size(24.0).color(palette.text_muted.gamma_multiply(0.5)));
+                    ui.add_space(ITEM_SPACING);
+                    ui.label(RichText::new("No messages yet").color(palette.text_muted).size(FONT_SMALL));
+                    ui.label(RichText::new("Start a conversation with the AI agent").color(palette.text_muted.gamma_multiply(0.7)).size(9.0));
+                });
+            } else {
+                for msg in &self.chat.messages {
+                    let (role_label, color) = match msg.role {
+                        crate::editor::chat_panel::ChatRole::User => ("You", palette.accent),
+                        crate::editor::chat_panel::ChatRole::Agent => ("Agent", palette.success),
+                        crate::editor::chat_panel::ChatRole::Thought => ("Thought", palette.text_muted),
+                    };
+                    egui::Frame::new()
+                        .fill(palette.bg_secondary)
+                        .corner_radius(egui::CornerRadius::same(4))
+                        .inner_margin(egui::Margin::symmetric(6, 4))
+                        .show(ui, |ui| {
+                            ui.label(RichText::new(role_label).size(9.0).strong().color(color));
+                            ui.label(RichText::new(&msg.content).size(FONT_SMALL).color(palette.text));
+                        });
+                    ui.add_space(2.0);
+                }
+            }
+        });
+
+        // Input area
+        ui.add_space(ITEM_SPACING);
+        ui.separator();
+        ui.add_space(ITEM_SPACING);
+        let mut send = false;
+        ui.horizontal(|ui| {
+            let input_resp = ui.add(
+                egui::TextEdit::singleline(&mut self.chat.input)
+                    .hint_text("Message the agent\u{2026}")
+                    .desired_width(ui.available_width() - 50.0),
+            );
+            if input_resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+                send = true;
+            }
+            if ui.button(RichText::new("\u{27a4}").size(FONT_BODY)).clicked() {
+                send = true;
+            }
+        });
+        if send && !self.chat.input.trim().is_empty() {
+            self.chat.messages.push(crate::editor::chat_panel::UiChatMessage {
+                role: crate::editor::chat_panel::ChatRole::User,
+                content: self.chat.input.clone(),
+            });
+            self.chat.input.clear();
+        }
+    }
+
+    pub fn render_voice_subpanel(&mut self, ui: &mut egui::Ui, _palette: IdePalette) {
+        self.render_voice_panel(ui);
+    }
+
+    pub fn render_multimodal_subpanel(&mut self, ui: &mut egui::Ui, palette: IdePalette) {
+        ui.horizontal(|ui| {
+            ui.label(RichText::new(format!("{} attachment(s)", self.multimodal_attachments.len())).size(FONT_SMALL).color(palette.text_muted));
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if ui.small_button("Clear all").clicked() {
+                    self.multimodal_attachments.clear();
+                }
+            });
+        });
+        ui.add_space(ITEM_SPACING);
+        
+        // Attachment list
+        if self.multimodal_attachments.is_empty() {
+            ui.add_space(16.0);
+            ui.vertical_centered(|ui| {
+                ui.label(RichText::new("\u{1f4ce}").size(24.0).color(palette.text_muted.gamma_multiply(0.5)));
+                ui.add_space(ITEM_SPACING);
+                ui.label(RichText::new("No attachments").color(palette.text_muted).size(FONT_SMALL));
+                ui.label(RichText::new("Attach images, audio, or documents for the agent").color(palette.text_muted.gamma_multiply(0.7)).size(9.0));
+            });
+        } else {
+            egui::ScrollArea::vertical().show(ui, |ui| {
+                let mut to_remove: Vec<usize> = Vec::new();
+                for (i, att) in self.multimodal_attachments.iter().enumerate() {
+                    let kind_label = att.kind.label();
+                    let kind_icon = match att.kind {
+                        crate::editor::multimodal::AttachmentKind::Image => "\u{1f5bc}",
+                        crate::editor::multimodal::AttachmentKind::Audio => "\u{1f3b5}",
+                        crate::editor::multimodal::AttachmentKind::Document => "\u{1f4c4}",
+                    };
+                    let file_name = att.path.file_name().unwrap_or_default().to_string_lossy().to_string();
+                    let size_kb = att.data.len() as f64 / 1024.0;
+                    ui.horizontal(|ui| {
+                        ui.label(RichText::new(kind_icon).size(FONT_BODY));
+                        ui.label(RichText::new(&file_name).size(FONT_SMALL).color(palette.text));
+                        ui.label(RichText::new(format!("{} ({:.1} KB)", kind_label, size_kb)).size(9.0).color(palette.text_muted));
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            if ui.small_button("\u{2715}").on_hover_text("Remove").clicked() {
+                                to_remove.push(i);
+                            }
+                        });
+                    });
+                }
+                for &i in to_remove.iter().rev() {
+                    self.multimodal_attachments.remove(i);
+                }
+            });
+        }
+
+        // Add attachment by path
+        ui.add_space(SECTION_SPACING);
+        ui.separator();
+        ui.add_space(ITEM_SPACING);
+        ui.horizontal(|ui| {
+            ui.label(RichText::new("Attach file:").size(FONT_SMALL).color(palette.text_muted));
+            let mut attach_path = String::new();
+            if ui.add(egui::TextEdit::singleline(&mut attach_path).hint_text("path\u{2026}").desired_width(ui.available_width() - 60.0)).lost_focus()
+                && ui.input(|i| i.key_pressed(egui::Key::Enter))
+                && !attach_path.is_empty()
+            {
+                match crate::editor::multimodal::Attachment::load(&attach_path) {
+                    Ok(att) => {
+                        self.multimodal_attachments.push(att);
+                        self.status_message = format!("Attached: {}", attach_path);
+                    }
+                    Err(e) => {
+                        self.status_message = format!("Failed to attach: {}", e);
+                    }
+                }
+            }
+        });
+    }
+
+    pub fn render_build_subpanel(&mut self, ui: &mut egui::Ui, palette: IdePalette) {
+        // Status indicator — only show after a build has been triggered
+        let has_built = !self.status_message.is_empty();
+        if has_built {
+            let build_ok = self.build_errors_count == 0;
+            ui.horizontal(|ui| {
+                let (icon, color) = if build_ok {
+                    ("\u{2714}", palette.success)
+                } else {
+                    ("\u{2716}", palette.error)
+                };
+                ui.label(RichText::new(icon).size(FONT_BODY).color(color));
+                if build_ok {
+                    ui.label(RichText::new("Build clean").size(FONT_SMALL).color(palette.success));
+                } else {
+                    ui.label(RichText::new(format!("{} error(s)", self.build_errors_count)).size(FONT_SMALL).color(palette.error));
+                }
+            });
+            ui.add_space(ITEM_SPACING);
+        } else {
+            // Initial state — no build triggered yet
+            ui.add_space(8.0);
+            ui.vertical_centered(|ui| {
+                ui.label(RichText::new("\u{1f3d7}").size(22.0).color(palette.accent.gamma_multiply(0.5)));
+                ui.add_space(4.0);
+                ui.label(RichText::new("Ready to build").size(FONT_SMALL).strong().color(palette.text));
+                ui.add_space(2.0);
+                ui.label(RichText::new("Click Build or Run to start").size(9.0).color(palette.text_muted));
+            });
+            ui.add_space(ITEM_SPACING);
+        }
+        
+        // Build controls
+        ui.horizontal(|ui| {
+            let build_btn = egui::Button::new(RichText::new("\u{25b6} Build").size(FONT_SMALL).color(palette.text));
+            if ui.add(build_btn).clicked() {
+                self.status_message = "Building\u{2026}".to_string();
+            }
+            let run_btn = egui::Button::new(RichText::new("\u{25b6} Run").size(FONT_SMALL).color(palette.text));
+            if ui.add(run_btn).clicked() {
+                self.status_message = "Running\u{2026}".to_string();
+            }
+            let stop_btn = egui::Button::new(RichText::new("\u{25a0} Stop").size(FONT_SMALL).color(palette.error));
+            if ui.add(stop_btn).clicked() {
+                self.status_message = "Stopped".to_string();
+            }
+        });
+        ui.add_space(ITEM_SPACING);
+        
+        // Status message
+        if !self.status_message.is_empty() {
+            egui::Frame::new()
+                .fill(palette.bg_secondary)
+                .corner_radius(egui::CornerRadius::same(3))
+                .inner_margin(egui::Margin::symmetric(6, 4))
+                .show(ui, |ui| {
+                    ui.label(RichText::new(&self.status_message).size(FONT_SMALL).color(palette.text_muted));
+                });
+        }
+
+        // Build info
+        ui.add_space(SECTION_SPACING);
+        ui.separator();
+        ui.add_space(ITEM_SPACING);
+        ui.horizontal(|ui| {
+            ui.label(RichText::new("Provider:").size(9.0).color(palette.text_muted));
+            ui.label(RichText::new(self.provider.label()).size(9.0).color(palette.text));
+        });
+        if !self.selected_model.is_empty() {
+            ui.horizontal(|ui| {
+                ui.label(RichText::new("Model:").size(9.0).color(palette.text_muted));
+                ui.label(RichText::new(&self.selected_model).size(9.0).color(palette.text));
+            });
+        }
+        if !self.gpu_name.is_empty() {
+            ui.horizontal(|ui| {
+                ui.label(RichText::new("GPU:").size(9.0).color(palette.text_muted));
+                ui.label(RichText::new(&self.gpu_name).size(9.0).color(palette.text));
+            });
+        }
+    }
+
+    pub fn render_agent_roster_subpanel(&mut self, ui: &mut egui::Ui, palette: IdePalette) {
+        let snapshot = self.orchestrator.dashboard_snapshot();
+
+        // Summary strip
+        ui.horizontal(|ui| {
+            ui.label(RichText::new(format!("\u{2714} {}", snapshot.done_tasks)).size(FONT_SMALL).color(palette.success));
+            ui.label(RichText::new(format!("\u{2716} {}", snapshot.failed_tasks)).size(FONT_SMALL).color(palette.error));
+            ui.label(RichText::new(format!("\u{25b6} {}", snapshot.running_tasks)).size(FONT_SMALL).color(palette.warning));
+            ui.label(RichText::new(format!("\u{22ef} {}", snapshot.pending_tasks)).size(FONT_SMALL).color(palette.text_muted));
+        });
+        ui.add_space(ITEM_SPACING);
+        
+        // Runtime status
+        ui.horizontal(|ui| {
+            ui.label(RichText::new(format!("Runtime: {}", snapshot.runtime_status)).size(FONT_SMALL).color(palette.text));
+            if snapshot.execution_running {
+                ui.label(RichText::new("\u{25cf} running").size(9.0).color(palette.success));
+            }
+        });
+        if snapshot.has_dependency_cycle {
+            ui.label(RichText::new("\u{26a0} Dependency cycle detected").size(9.0).color(palette.error));
+        }
+        ui.add_space(ITEM_SPACING);
+        
+        // Active workers
+        if snapshot.active_workers > 0 {
+            ui.label(RichText::new(format!("{} active worker(s)", snapshot.active_workers)).size(FONT_SMALL).strong().color(palette.text));
+        }
+
+        // Task list
+        if !snapshot.tasks.is_empty() {
+            ui.add_space(ITEM_SPACING);
+            egui::ScrollArea::vertical().show(ui, |ui| {
+                for task in &snapshot.tasks {
+                    let color = if task.status_label == "done" { palette.success } else if task.status_label == "failed" { palette.error } else { palette.text };
+                    egui::Frame::new()
+                        .fill(palette.bg_secondary)
+                        .corner_radius(egui::CornerRadius::same(3))
+                        .inner_margin(egui::Margin::symmetric(6, 3))
+                        .show(ui, |ui| {
+                            ui.horizontal(|ui| {
+                                ui.label(RichText::new(format!("#{}", task.id)).size(9.0).monospace().color(palette.text_muted));
+                                ui.label(RichText::new(&task.title).size(FONT_SMALL).color(color));
+                            });
+                            if !task.description.is_empty() {
+                                ui.label(RichText::new(&task.description).size(9.0).color(palette.text_muted));
+                            }
+                        });
+                    ui.add_space(1.0);
+                }
+            });
+        }
+    }
+
+    pub fn render_timeline_subpanel(&mut self, ui: &mut egui::Ui, palette: IdePalette) {
+        let timeline_snapshot = crate::editor::task_timeline::TaskTimelineSnapshot::new(&self.task_timeline);
+        render_task_timeline(ui, &timeline_snapshot, palette);
+    }
+
+    pub fn render_mission_metrics_subpanel(&mut self, ui: &mut egui::Ui, palette: IdePalette) {
+        let snapshot = self.orchestrator.dashboard_snapshot();
+
+        // Metrics grid
+        let metrics = [
+            ("Completed", format!("{}", snapshot.done_tasks), palette.success),
+            ("Failed", format!("{}", snapshot.failed_tasks), palette.error),
+            ("Running", format!("{}", snapshot.running_tasks), palette.warning),
+            ("Pending", format!("{}", snapshot.pending_tasks), palette.text_muted),
+            ("Blocked", format!("{}", snapshot.blocked_tasks), palette.text_muted),
+            ("Workers", format!("{}", snapshot.active_workers), palette.accent),
+        ];
+
+        ui.columns(2, |cols| {
+            for (i, (label, value, color)) in metrics.iter().enumerate() {
+                let col = &mut cols[i % 2];
+                egui::Frame::new()
+                    .fill(palette.bg_secondary)
+                    .corner_radius(egui::CornerRadius::same(4))
+                    .inner_margin(egui::Margin::symmetric(8, 6))
+                    .show(col, |ui| {
+                        ui.label(RichText::new(value).size(16.0).strong().color(*color));
+                        ui.label(RichText::new(*label).size(9.0).color(palette.text_muted));
+                    });
+            }
+        });
+        ui.add_space(SECTION_SPACING);
+        
+        // Status details
+        ui.horizontal(|ui| {
+            ui.label(RichText::new("Planning:").size(9.0).color(palette.text_muted));
+            ui.label(RichText::new(&snapshot.planning_status).size(9.0).color(palette.text));
+        });
+        ui.horizontal(|ui| {
+            ui.label(RichText::new("Runtime:").size(9.0).color(palette.text_muted));
+            ui.label(RichText::new(&snapshot.runtime_status).size(9.0).color(palette.text));
+        });
+        if let Some(goal) = &snapshot.goal {
+            ui.add_space(ITEM_SPACING);
+            egui::Frame::new()
+                .fill(palette.accent.gamma_multiply(0.08))
+                .corner_radius(egui::CornerRadius::same(4))
+                .inner_margin(egui::Margin::symmetric(6, 4))
+                .show(ui, |ui| {
+                    ui.label(RichText::new("Goal").size(9.0).strong().color(palette.accent));
+                    ui.label(RichText::new(goal).size(FONT_SMALL).color(palette.text));
+                });
+        }
+    }
+
+    pub fn render_wiki_subpanel(&mut self, ui: &mut egui::Ui, palette: IdePalette) {
+        let _action = self.wiki_view.ui(ui, &self.workspace_root, &mut self.toasts, palette);
+    }
+
+    pub fn render_nda_subpanel(&mut self, ui: &mut egui::Ui, palette: IdePalette) {
+        ui.horizontal(|ui| {
+            ui.label(RichText::new(format!("{} sealed doc(s)", self.nda_docs.len())).size(FONT_SMALL).color(palette.text_muted));
+        });
+        ui.add_space(ITEM_SPACING);
+        
+        if self.nda_docs.is_empty() {
+            ui.add_space(16.0);
+            ui.vertical_centered(|ui| {
+                ui.label(RichText::new("\u{1f512}").size(24.0).color(palette.text_muted.gamma_multiply(0.5)));
+                ui.add_space(ITEM_SPACING);
+                ui.label(RichText::new("No NDA documents open").color(palette.text_muted).size(FONT_SMALL));
+                ui.label(RichText::new("Open .nda files from the workspace to view them here").color(palette.text_muted.gamma_multiply(0.7)).size(9.0));
+            });
+        } else {
+            egui::ScrollArea::vertical().show(ui, |ui| {
+                for (tab_id, doc) in &self.nda_docs {
+                    let title = doc.doc.title().unwrap_or("Untitled").to_string();
+                    let status = if doc.sealed { "\u{1f512} Sealed" } else { "\u{1f513} Open" };
+                    let dirty_mark = if doc.dirty { " *" } else { "" };
+                    egui::Frame::new()
+                        .fill(palette.bg_secondary)
+                        .corner_radius(egui::CornerRadius::same(4))
+                        .inner_margin(egui::Margin::symmetric(8, 6))
+                        .show(ui, |ui| {
+                            ui.horizontal(|ui| {
+                                ui.label(RichText::new(format!("{}{}", title, dirty_mark)).size(FONT_SMALL).strong().color(palette.text));
+                                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                    ui.label(RichText::new(status).size(9.0).color(if doc.sealed { palette.warning } else { palette.text_muted }));
+                                });
+                            });
+                            if let Some(path) = &doc.path {
+                                let rel = path.strip_prefix(&self.workspace_root).unwrap_or(path);
+                                ui.label(RichText::new(rel.display().to_string()).size(9.0).color(palette.text_muted));
+                            }
+                            ui.label(RichText::new(format!("{} triple(s)", doc.doc.triples.len())).size(9.0).color(palette.text_muted.gamma_multiply(0.8)));
+                        });
+                    ui.add_space(2.0);
+                }
+            });
+        }
+    }
+
+    pub fn render_plugin_registry_subpanel(&mut self, ui: &mut egui::Ui, palette: IdePalette) {
+        let plugins = self.plugin_registry.list();
+        let all_tools = self.plugin_registry.all_tools();
+
+        ui.horizontal(|ui| {
+            ui.label(RichText::new(format!("{} plugin(s)", plugins.len())).size(FONT_SMALL).color(palette.text_muted));
+            ui.label(RichText::new(format!("\u{00b7} {} tool(s)", all_tools.len())).size(FONT_SMALL).color(palette.text_muted));
+        });
+        ui.add_space(ITEM_SPACING);
+        
+        if plugins.is_empty() {
+            ui.add_space(16.0);
+            ui.vertical_centered(|ui| {
+                ui.label(RichText::new("\u{1f9e9}").size(24.0).color(palette.text_muted.gamma_multiply(0.5)));
+                ui.add_space(ITEM_SPACING);
+                ui.label(RichText::new("No plugins loaded").color(palette.text_muted).size(FONT_SMALL));
+                ui.label(RichText::new("Plugins are discovered from the workspace plugins/ directory").color(palette.text_muted.gamma_multiply(0.7)).size(9.0));
+            });
+        } else {
+            egui::ScrollArea::vertical().show(ui, |ui| {
+                for plugin in &plugins {
+                    let enabled_mark = if plugin.enabled { "" } else { " (disabled)" };
+                    let color = if plugin.enabled { palette.text } else { palette.text_muted };
+                    egui::Frame::new()
+                        .fill(palette.bg_secondary)
+                        .corner_radius(egui::CornerRadius::same(4))
+                        .inner_margin(egui::Margin::symmetric(8, 6))
+                        .show(ui, |ui| {
+                            ui.horizontal(|ui| {
+                                ui.label(RichText::new(format!("{}{}", plugin.name, enabled_mark)).size(FONT_SMALL).strong().color(color));
+                                ui.label(RichText::new(&plugin.version).size(9.0).color(palette.text_muted));
+                            });
+                            if !plugin.description.is_empty() {
+                                ui.label(RichText::new(&plugin.description).size(FONT_SMALL).color(palette.text_muted));
+                            }
+                            ui.horizontal(|ui| {
+                                if !plugin.author.is_empty() {
+                                    ui.label(RichText::new(format!("by {}", plugin.author)).size(9.0).color(palette.text_muted.gamma_multiply(0.8)));
+                                }
+                                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                    ui.label(RichText::new(format!("{} tool(s)", plugin.tool_count)).size(9.0).color(palette.accent));
+                                });
+                            });
+                            if !plugin.tool_names.is_empty() {
+                                ui.label(RichText::new(plugin.tool_names.join(", ")).size(9.0).color(palette.text_muted.gamma_multiply(0.7)));
+                            }
+                        });
+                    ui.add_space(2.0);
+                }
+            });
+        }
+    }
+
+    pub fn render_skills_subpanel(&mut self, ui: &mut egui::Ui, palette: IdePalette) {
+        ui.horizontal(|ui| {
+            ui.label(RichText::new(format!("{} skill(s)", self.skill_files.len())).size(FONT_SMALL).color(palette.text_muted));
+        });
+        ui.add_space(ITEM_SPACING);
+        
+        // Search filter
+        ui.horizontal(|ui| {
+            ui.label(RichText::new("\u{2315}").size(FONT_SMALL).color(palette.text_muted));
+            let filter_width = if self.skill_filter.is_empty() {
+                ui.available_width()
+            } else {
+                ui.available_width() - 20.0
+            };
+            ui.add(
+                egui::TextEdit::singleline(&mut self.skill_filter)
+                    .hint_text("Filter skills\u{2026}")
+                    .desired_width(filter_width)
+                    .text_color(palette.text),
+            );
+            if !self.skill_filter.is_empty() {
+                if ui.small_button(RichText::new("\u{2715}").size(9.0).color(palette.text_muted)).clicked() {
+                    self.skill_filter.clear();
+                }
+            }
+        });
+        ui.add_space(ITEM_SPACING);
+        
+        if self.skill_files.is_empty() {
+            ui.add_space(16.0);
+            ui.vertical_centered(|ui| {
+                ui.label(RichText::new("\u{1f3af}").size(24.0).color(palette.text_muted.gamma_multiply(0.5)));
+                ui.add_space(ITEM_SPACING);
+                ui.label(RichText::new("No skills defined").size(FONT_BODY).strong().color(palette.text));
+                ui.add_space(2.0);
+                ui.label(RichText::new("Skills are markdown files in .qoder/skills/ that teach agents new capabilities.").color(palette.text_muted).size(FONT_CAPTION));
+            });
+        } else {
+            let filter_lower = self.skill_filter.to_lowercase();
+            let matching_skills: Vec<_> = self.skill_files.iter()
+                .filter(|s| {
+                    filter_lower.is_empty()
+                        || s.name.to_lowercase().contains(&filter_lower)
+                        || s.id.to_lowercase().contains(&filter_lower)
+                        || s.description.to_lowercase().contains(&filter_lower)
+                })
+                .collect();
+
+            if matching_skills.is_empty() && !filter_lower.is_empty() {
+                ui.add_space(SECTION_SPACING);
+                ui.label(RichText::new(format!("No skills match '{}'", self.skill_filter)).size(FONT_SMALL).color(palette.text_muted));
+            } else {
+                if !filter_lower.is_empty() {
+                    ui.label(RichText::new(format!("{} match(es)", matching_skills.len())).size(9.0).color(palette.text_muted));
+                    ui.add_space(2.0);
+                }
+                egui::ScrollArea::vertical().show(ui, |ui| {
+                    for skill in matching_skills {
+                        egui::Frame::new()
+                            .fill(palette.bg_secondary)
+                            .corner_radius(egui::CornerRadius::same(4))
+                            .inner_margin(egui::Margin::symmetric(8, 6))
+                            .show(ui, |ui| {
+                                ui.horizontal(|ui| {
+                                    ui.label(RichText::new(&skill.name).size(FONT_SMALL).strong().color(palette.text));
+                                    ui.label(RichText::new(&skill.id).size(9.0).monospace().color(palette.text_muted));
+                                });
+                                if !skill.description.is_empty() {
+                                    ui.label(RichText::new(&skill.description).size(FONT_SMALL).color(palette.text_muted));
+                                }
+                                // Preview first 120 chars of body
+                                let preview: String = skill.body.chars().take(120).collect();
+                                if preview.len() >= 120 {
+                                    ui.label(RichText::new(format!("{}\u{2026}", preview)).size(9.0).color(palette.text_muted.gamma_multiply(0.7)));
+                                }
+                            });
+                        ui.add_space(2.0);
+                    }
+                });
+            }
+        }
+    }
+
+    pub fn render_usage_subpanel(&mut self, ui: &mut egui::Ui, palette: IdePalette) {
+        if self.account_usage.is_empty() {
+            ui.add_space(16.0);
+            ui.vertical_centered(|ui| {
+                ui.label(RichText::new("\u{1f4ca}").size(24.0).color(palette.text_muted.gamma_multiply(0.5)));
+                ui.add_space(ITEM_SPACING);
+                ui.label(RichText::new("No usage data available").color(palette.text_muted).size(FONT_SMALL));
+            });
+        } else {
+            // Summary header
+            let total_accounts = self.account_usage.len();
+            let exhausted_count = self.account_usage.iter().filter(|u| u.exhausted).count();
+            let total_requests: u32 = self.account_usage.iter().map(|u| u.requests).sum();
+            let total_remaining: u32 = self.account_usage.iter().map(|u| u.remaining).sum();
+
+            ui.horizontal(|ui| {
+                ui.label(RichText::new(format!("{} account(s)", total_accounts)).size(FONT_SMALL).strong().color(palette.text));
+                if exhausted_count > 0 {
+                    egui::Frame::new()
+                        .fill(palette.error.gamma_multiply(0.12))
+                        .corner_radius(egui::CornerRadius::same(3))
+                        .inner_margin(egui::Margin::symmetric(4, 1))
+                        .show(ui, |ui| {
+                            ui.label(RichText::new(format!("{} exhausted", exhausted_count)).size(9.0).color(palette.error));
+                        });
+                }
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    ui.label(RichText::new(format!("{} total remaining", format_count(total_remaining))).size(9.0).color(palette.text_muted));
+                });
+            });
+            ui.add_space(ITEM_SPACING);
+            
+            for usage in &self.account_usage {
+                egui::Frame::new()
+                    .fill(palette.bg_secondary)
+                    .corner_radius(egui::CornerRadius::same(4))
+                    .inner_margin(egui::Margin::symmetric(8, 6))
+                    .show(ui, |ui| {
+                        ui.horizontal(|ui| {
+                            ui.label(RichText::new(&usage.label).size(FONT_SMALL).strong().color(palette.text));
+                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                let tier_color = if usage.exhausted { palette.error } else { palette.accent };
+                                egui::Frame::new()
+                                    .fill(tier_color.gamma_multiply(0.15))
+                                    .corner_radius(egui::CornerRadius::same(3))
+                                    .inner_margin(egui::Margin::symmetric(4, 1))
+                                    .show(ui, |ui| {
+                                        ui.label(RichText::new(&usage.tier).size(9.0).color(tier_color));
+                                    });
+                            });
+                        });
+
+                        // Requests bar
+                        let pct = if usage.daily_limit > 0 {
+                            (usage.requests as f32 / usage.daily_limit as f32).min(1.0)
+                        } else {
+                            0.0
+                        };
+                        let bar_color = if usage.exhausted { palette.error } else if pct > 0.8 { palette.warning } else { palette.success };
+                        ui.add_space(ITEM_SPACING);
+                        let bar_resp = ui.add_sized(egui::Vec2::new(ui.available_width(), 6.0), egui::Label::new(""));
+                        let bg_rect = bar_resp.rect;
+                        ui.painter().rect_filled(bg_rect, 3.0, palette.bg_tertiary);
+                        let fill_rect = egui::Rect::from_min_size(bg_rect.min, egui::Vec2::new(bg_rect.width() * pct, 6.0));
+                        ui.painter().rect_filled(fill_rect, 3.0, bar_color);
+
+                        ui.horizontal(|ui| {
+                            ui.label(RichText::new(format!("{} / {} requests", format_count(usage.requests), format_count(usage.daily_limit))).size(9.0).color(palette.text_muted));
+                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                ui.label(RichText::new(format!("{} remaining", format_count(usage.remaining))).size(9.0).color(if usage.exhausted { palette.error } else { palette.text_muted }));
+                            });
+                        });
+
+                        // Token usage with formatted numbers
+                        ui.horizontal(|ui| {
+                            ui.label(RichText::new(format!("\u{2191} {} in", format_count(usage.tokens_in))).size(9.0).color(palette.text_muted));
+                            ui.label(RichText::new(format!("\u{2193} {} out", format_count(usage.tokens_out))).size(9.0).color(palette.text_muted));
+                        });
+                    });
+                ui.add_space(ITEM_SPACING);
+            }
+        }
     }
 }
 
@@ -3399,5 +4496,27 @@ fn human_secs(secs: u64) -> String {
         format!("{}h", secs / 3600)
     } else {
         format!("{}d", secs / 86_400)
+    }
+}
+
+/// Format a count with K/M suffixes for readability.
+fn format_count(n: impl Into<u64>) -> String {
+    let n = n.into();
+    if n < 1_000 {
+        format!("{}", n)
+    } else if n < 1_000_000 {
+        let k = n as f64 / 1_000.0;
+        if k < 10.0 {
+            format!("{:.1}K", k)
+        } else {
+            format!("{:.0}K", k)
+        }
+    } else {
+        let m = n as f64 / 1_000_000.0;
+        if m < 10.0 {
+            format!("{:.1}M", m)
+        } else {
+            format!("{:.0}M", m)
+        }
     }
 }

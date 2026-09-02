@@ -692,7 +692,7 @@ impl<'a> TabViewer for TabViewerImpl<'a> {
                     _ => {
                         // All TabKind variants are handled above. This branch
                         // is unreachable but kept as a safety net for future
-                        // enum additions â€” show a clear placeholder instead of
+                        // enum additions -- show a clear placeholder instead of
                         // a blank panel so missing implementations are obvious.
                         ui.vertical_centered(|ui| {
                             ui.add_space(32.0);

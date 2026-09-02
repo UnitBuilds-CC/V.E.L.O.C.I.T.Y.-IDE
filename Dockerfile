@@ -1,6 +1,6 @@
 # Multi-stage build for Velocity IDE
 # Stage 1: Build all Rust binaries
-FROM rust:1.75-slim-bookworm AS builder
+FROM rust:1.87-slim-bookworm AS builder
 
 # Install build dependencies
 RUN apt-get update && apt-get install -y \
@@ -39,7 +39,7 @@ COPY . .
 RUN find . -name "*.rs" -exec touch {} +
 
 # Build release binaries
-RUN cargo build --release --bin velocity_ide --bin velocity_mcp
+RUN cargo build --release --bin velocity_ide --bin velocity_mcp --bin velocity_ide_gui --bin velocity-drone
 
 # Stage 2: Runtime image
 FROM debian:bookworm-slim
@@ -61,10 +61,12 @@ WORKDIR /home/velocity
 # Copy binaries from builder
 COPY --from=builder --chown=velocity:velocity /build/target/release/velocity_ide /usr/local/bin/
 COPY --from=builder --chown=velocity:velocity /build/target/release/velocity_mcp /usr/local/bin/
+COPY --from=builder --chown=velocity:velocity /build/target/release/velocity_ide_gui /usr/local/bin/
+COPY --from=builder --chown=velocity:velocity /build/target/release/velocity-drone /usr/local/bin/
 
 # Set up workspace directory
 RUN mkdir -p /home/velocity/workspace
 VOLUME ["/home/velocity/workspace"]
 
 # Default command
-CMD ["velocity_ide", "--help"]
+CMD ["velocity_ide_gui", "--help"]

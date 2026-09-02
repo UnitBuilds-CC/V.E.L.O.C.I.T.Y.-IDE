@@ -13,8 +13,7 @@ target/
 *.msi
 
 # Local agent runtime state and logs
-.velocity/
-velocity-mcp/.velocity/
+**/.velocity/
 
 # Build/test output logs (never tracked; regenerable artifacts)
 *.log
@@ -40,13 +39,24 @@ ENV/
 .DS_Store
 Thumbs.db
 
-# Memory (local agent state)
-memory/.account_state.json
-memory/session.jsonl
-memory/summaries/
-memory/snapshots/
-
 # IDE
 .vscode/
 .idea/
 *.swp
+
+# Cloudflare Workers state
+.wrangler/
+
+# Qoder IDE state
+.qoder/
+
+# NDA compiled output
+*.nda
+
+# Memory (local agent state)
+memory/.account_state.json
+memory/.account_usage.json
+memory/.account_usage.nda
+memory/session.jsonl
+memory/summaries/
+memory/snapshots/

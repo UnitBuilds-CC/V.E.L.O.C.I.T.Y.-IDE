@@ -4714,7 +4714,6 @@ dependencies = [
  "log",
  "memmap2",
  "notify",
- "once_cell",
  "pathdiff",
  "portable-pty",
  "prometheus",

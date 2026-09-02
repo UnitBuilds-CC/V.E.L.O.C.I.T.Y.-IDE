@@ -13,7 +13,7 @@
 #define MyAppFullName   "V.E.L.O.C.I.T.Y. Cognitive IDE"
 #define MyAppPublisher  "UnitBuilds-CC"
 #define MyAppURL        "https://github.com/UnitBuilds/Velocity-IDE"
-#define MyAppExeName    "velocity_mcp.exe"
+#define MyAppExeName    "velocity_ide_gui.exe"
 
 [Setup]
 AppId={{A7B3C9D1-4E5F-6A7B-8C9D-0E1F2A3B4C5D}
@@ -33,7 +33,7 @@ SolidCompression=yes
 WizardStyle=modern
 PrivilegesRequired=admin
 ArchitecturesInstallIn64BitMode=x64compatible
-UninstallDisplayIcon={app}\velocity_mcp.exe
+UninstallDisplayIcon={app}\velocity_ide_gui.exe
 UninstallDisplayName={#MyAppFullName}
 SetupIconFile=compiler:SetupClassicIcon.ico
 
@@ -60,8 +60,8 @@ Name: "addtopath"; Description: "Add to system PATH"; GroupDescription: "Environ
 ; Main binaries
 Source: "dist\bin\velocity_mcp.exe";      DestDir: "{app}\bin"; Flags: ignoreversion
 Source: "dist\bin\velocity_ide.exe";      DestDir: "{app}\bin"; Flags: ignoreversion
+Source: "dist\bin\velocity_ide_gui.exe";  DestDir: "{app}\bin"; Flags: ignoreversion
 Source: "dist\bin\velocity-drone.exe";    DestDir: "{app}\bin"; Flags: ignoreversion
-Source: "dist\bin\run_nda.exe";           DestDir: "{app}\bin"; Flags: ignoreversion
 
 ; Documentation
 Source: "dist\LICENSE.txt";  DestDir: "{app}"; Flags: ignoreversion

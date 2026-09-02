@@ -82,6 +82,8 @@ jobs:
           path: |
             target/release/velocity_ide
             target/release/velocity_mcp
+            target/release/velocity_ide_gui
+            target/release/velocity-drone
           retention-days: 30
 
   # ─── Security Audit ─────────────────────────────────────────────────────

@@ -8,7 +8,7 @@ product
 A broad technical audience uses this product: developers, automation operators, QA and workflow testers, and small teams coordinating agent-assisted work. The primary default user is an operator supervising multiple agents and reviewing their work, but the system also supports code editing, browser automation, desktop automation, and execution oversight.
 
 ## Product Purpose
-V.E.L.O.C.I.T.Y. is a native control surface for high-trust agentic work. It helps users plan, launch, supervise, and review coding, browser, and Windows automation tasks from one place. Success means the interface feels fast, clean, and well-organized while making complex multi-agent work legible, steerable, and safe.
+V.E.L.O.C.I.T.Y. is a native control surface for high-trust agentic work. It helps users plan, launch, supervise, and review coding, browser, and Windows automation tasks from one place. The modern interface features an activity bar system with 8 categories, a task-centric sidebar, chat-centric interaction with model selection, and 5 color palettes. Success means the interface feels fast, clean, and well-organized while making complex multi-agent work legible, steerable, and safe.
 
 ## Brand Personality
 Fast, clean, well-organized. The product should feel expert, operational, and calm under load. It should communicate confidence and control rather than spectacle.

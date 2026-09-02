@@ -171,24 +171,24 @@ fn render_header(
 ) -> bool {
     let mut preferences_changed = false;
 
-    // Row 1: title + status indicator
+    // Row 1: title + status + actions
     ui.horizontal(|ui| {
         ui.label(
             egui::RichText::new("Chat")
                 .strong()
-                .size(16.0)
+                .size(15.0)
                 .color(palette.text),
         );
-        ui.add_space(8.0);
+        ui.add_space(6.0);
 
         let (label, color) = if state.agent_active {
             ("\u{25cf} Working", palette.warning)
         } else {
             ("\u{25cf} Ready", palette.success)
         };
-        ui.label(egui::RichText::new(label).size(12.0).color(color));
+        ui.label(egui::RichText::new(label).size(10.0).color(color));
 
-        // Right-aligned secondary actions (compact, less prominent)
+        // Right-aligned secondary actions
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             if ui
                 .small_button(egui::RichText::new("Clear").size(10.0))
@@ -209,16 +209,82 @@ fn render_header(
         });
     });
 
-    // Row 2: toggle options (visually separated, less cluttered)
+    // Row 2: provider + model selectors + reasoning toggle (compact controls row)
     ui.horizontal(|ui| {
-        ui.spacing_mut().item_spacing.x = 6.0;
+        ui.spacing_mut().item_spacing.x = 4.0;
+
+        let provider_label = state.provider.label();
+        let mut provider_changed = false;
+        egui::ComboBox::from_id_salt("floating_agent_provider")
+            .width(100.0)
+            .selected_text(provider_label)
+            .show_ui(ui, |ui| {
+                for provider in [
+                    crate::agent::AiProvider::CloudflareWorkersAi,
+                    crate::agent::AiProvider::OpenRouter,
+                    crate::agent::AiProvider::OpenAI,
+                    crate::agent::AiProvider::Anthropic,
+                    crate::agent::AiProvider::GoogleVertex,
+                    crate::agent::AiProvider::AzureOpenAi,
+                    crate::agent::AiProvider::LocalOllama,
+                    crate::agent::AiProvider::Deepseek,
+                    crate::agent::AiProvider::AlibabaQwen,
+                    crate::agent::AiProvider::Groq,
+                    crate::agent::AiProvider::Mistral,
+                    crate::agent::AiProvider::TogetherAi,
+                    crate::agent::AiProvider::FireworksAi,
+                    crate::agent::AiProvider::Perplexity,
+                    crate::agent::AiProvider::Cerebras,
+                    crate::agent::AiProvider::AwsBedrock,
+                ] {
+                    if ui
+                        .selectable_value(
+                            &mut state.provider,
+                            provider,
+                            provider.label(),
+                        )
+                        .clicked()
+                    {
+                        provider_changed = true;
+                    }
+                }
+            });
+        if provider_changed {
+            let _ = agent_tx.send(UiToAgentMessage::SetProvider(state.provider));
+            let _ = agent_tx.send(UiToAgentMessage::RefreshModels);
+        }
+
+        ui.add_space(2.0);
+
+        let mut model_changed = false;
+        egui::ComboBox::from_id_salt("floating_agent_model")
+            .width(140.0)
+            .selected_text(truncate_model_label(&state.selected_model, 22))
+            .show_ui(ui, |ui| {
+                for model in state.available_models.clone() {
+                    model_changed |= ui
+                        .selectable_value(
+                            &mut state.selected_model,
+                            model.id.clone(),
+                            model.label,
+                        )
+                        .changed();
+                }
+            });
+        if model_changed {
+            let _ =
+                agent_tx.send(UiToAgentMessage::SetModel(state.selected_model.clone()));
+        }
+
+        ui.add_space(4.0);
         let thoughts_label = if state.show_thoughts {
-            "Show reasoning: on"
+            "\u{25c9} Reasoning"
         } else {
-            "Show reasoning: off"
+            "\u{25cb} Reasoning"
         };
         if ui
             .add(egui::Button::new(egui::RichText::new(thoughts_label).size(9.0)).frame(false))
+            .on_hover_text("Toggle agent reasoning display")
             .clicked()
         {
             state.show_thoughts = !state.show_thoughts;
@@ -229,7 +295,7 @@ fn render_header(
     preferences_changed
 }
 
-fn render_messages(ui: &mut egui::Ui, state: &ChatPanelState, palette: IdePalette) {
+fn render_messages(ui: &mut egui::Ui, state: &mut ChatPanelState, palette: IdePalette) {
     let scroll_height = ui.available_height() - 160.0;
 
     egui::ScrollArea::vertical()
@@ -241,26 +307,58 @@ fn render_messages(ui: &mut egui::Ui, state: &ChatPanelState, palette: IdePalett
 
             if state.messages.is_empty() {
                 ui.vertical_centered(|ui| {
-                    ui.add_space(48.0);
+                    ui.add_space(28.0);
+                    // Accent diamond icon
                     ui.label(
                         egui::RichText::new("\u{25c7}")
-                            .size(30.0)
-                            .color(palette.accent.gamma_multiply(0.7)),
+                            .size(28.0)
+                            .color(palette.accent.gamma_multiply(0.6)),
                     );
-                    ui.add_space(10.0);
+                    ui.add_space(8.0);
                     ui.label(
-                        egui::RichText::new("Start a conversation with the agent")
+                        egui::RichText::new("How can I help you today?")
                             .size(14.0)
-                            .color(palette.text_muted)
-                            .italics(),
+                            .strong()
+                            .color(palette.text),
                     );
                     ui.add_space(4.0);
                     ui.label(
+                        egui::RichText::new("Ask a question or pick a suggestion below")
+                            .size(10.0)
+                            .color(palette.text_muted),
+                    );
+                    ui.add_space(14.0);
+                    // Example prompts as clickable suggestion chips
+                    let suggestions = [
+                        ("\u{1f4dd}", "Explain this codebase"),
+                        ("\u{1f41b}", "Find and fix bugs"),
+                        ("\u{2705}", "Write tests for my code"),
+                        ("\u{2699}", "Refactor a module"),
+                    ];
+                    for (icon, suggestion) in &suggestions {
+                        let resp = ui.add(
+                            egui::Button::new(
+                                egui::RichText::new(format!("{}  {}", icon, suggestion))
+                                    .size(11.0)
+                                    .color(palette.text),
+                            )
+                            .fill(palette.bg_secondary)
+                            .stroke(egui::Stroke::new(0.5, palette.border))
+                            .corner_radius(egui::CornerRadius::same(8))
+                            .min_size(egui::vec2(210.0, 28.0)),
+                        );
+                        if resp.clicked() {
+                            state.input = suggestion.to_string();
+                        }
+                        ui.add_space(3.0);
+                    }
+                    ui.add_space(12.0);
+                    ui.label(
                         egui::RichText::new(
-                            "Enter to send \u{00b7} Shift+Enter for newline \u{00b7} Ctrl+L to focus",
+                            "Enter to send  \u{00b7}  Shift+Enter for newline  \u{00b7}  Ctrl+L to focus",
                         )
-                        .small()
-                        .color(palette.text_muted.gamma_multiply(0.8)),
+                        .size(9.0)
+                        .color(palette.text_disabled),
                     );
                 });
                 return;
@@ -740,7 +838,7 @@ fn render_input(
                     let attachment_input_width = (ui.available_width() - 78.0).max(0.0);
                     ui.add(
                         egui::TextEdit::singleline(&mut state.attach_input)
-                            .hint_text("Attach file pathâ€¦")
+                            .hint_text("Attach file path\u{2026}")
                             .desired_width(attachment_input_width),
                     );
                     if ui.small_button("Attach").clicked() {
@@ -781,80 +879,18 @@ fn render_input(
                 }
 
                 ui.add_space(6.0);
-                ui.horizontal_wrapped(|ui| {
+                ui.horizontal(|ui| {
+                    ui.spacing_mut().item_spacing.x = 6.0;
                     ui.checkbox(&mut state.auto_approve, "Auto-approve")
                         .on_hover_text("Automatically approve agent tool calls for this chat");
-                    ui.add_space(4.0);
 
-                    let provider_label = state.provider.label();
-                    // Fixed-width selectors keep provider/model changes from resizing the
-                    // composer or pushing Send off-screen in a narrow split.
-                    let mut provider_changed = false;
-                    egui::ComboBox::from_id_salt("floating_agent_provider")
-                        .width(118.0)
-                        .selected_text(provider_label)
-                        .show_ui(ui, |ui| {
-                            for provider in [
-                                crate::agent::AiProvider::CloudflareWorkersAi,
-                                crate::agent::AiProvider::OpenRouter,
-                                crate::agent::AiProvider::OpenAI,
-                                crate::agent::AiProvider::Anthropic,
-                                crate::agent::AiProvider::GoogleVertex,
-                                crate::agent::AiProvider::AzureOpenAi,
-                                crate::agent::AiProvider::LocalOllama,
-                                crate::agent::AiProvider::Deepseek,
-                                crate::agent::AiProvider::AlibabaQwen,
-                                crate::agent::AiProvider::Groq,
-                                crate::agent::AiProvider::Mistral,
-                                crate::agent::AiProvider::TogetherAi,
-                                crate::agent::AiProvider::FireworksAi,
-                                crate::agent::AiProvider::Perplexity,
-                                crate::agent::AiProvider::Cerebras,
-                                crate::agent::AiProvider::AwsBedrock,
-                            ] {
-                                if ui
-                                    .selectable_value(
-                                        &mut state.provider,
-                                        provider,
-                                        provider.label(),
-                                    )
-                                    .clicked()
-                                {
-                                    provider_changed = true;
-                                }
-                            }
-                        });
-                    if provider_changed {
-                        let _ = agent_tx.send(UiToAgentMessage::SetProvider(state.provider));
-                        let _ = agent_tx.send(UiToAgentMessage::RefreshModels);
-                    }
-
-                    ui.add_space(4.0);
-
-                    let mut model_changed = false;
-                    egui::ComboBox::from_id_salt("floating_agent_model")
-                        .width(156.0)
-                        .selected_text(truncate_model_label(&state.selected_model, 22))
-                        .show_ui(ui, |ui| {
-                            for model in state.available_models.clone() {
-                                model_changed |= ui
-                                    .selectable_value(
-                                        &mut state.selected_model,
-                                        model.id.clone(),
-                                        model.label,
-                                    )
-                                    .changed();
-                            }
-                        });
-                    if model_changed {
-                        let _ =
-                            agent_tx.send(UiToAgentMessage::SetModel(state.selected_model.clone()));
-                    }
+                    // Spacer pushes Send to the right edge
+                    ui.add_space(ui.available_width() - 80.0);
 
                     let send_btn = egui::Button::new(
                         egui::RichText::new("Send")
                             .strong()
-                            .color(egui::Color32::WHITE),
+                            .color(palette.text_on_accent),
                     )
                     .corner_radius(egui::CornerRadius::same(12))
                     .fill(palette.accent)

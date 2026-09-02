@@ -1,0 +1,4 @@
+[toolchain]
+channel = "stable"
+components = ["rustfmt", "clippy"]
+# MSRV: Rust 1.87+ required (wgpu 29.x dependency)

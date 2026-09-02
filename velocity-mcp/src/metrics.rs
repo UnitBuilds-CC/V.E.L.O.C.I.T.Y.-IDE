@@ -25,7 +25,7 @@
 //! let output = metrics.encode();
 //! ```
 
-use once_cell::sync::Lazy;
+use std::sync::LazyLock;
 use prometheus::{
     Counter, CounterVec, Encoder, Gauge, GaugeVec, Histogram, HistogramOpts, HistogramVec, Opts,
     Registry, TextEncoder,
@@ -33,7 +33,7 @@ use prometheus::{
 use std::time::Duration;
 
 /// Global metrics registry.
-static METRICS: Lazy<Metrics> = Lazy::new(Metrics::new);
+static METRICS: LazyLock<Metrics> = LazyLock::new(Metrics::new);
 
 /// Metrics collection for the MCP server.
 pub struct Metrics {

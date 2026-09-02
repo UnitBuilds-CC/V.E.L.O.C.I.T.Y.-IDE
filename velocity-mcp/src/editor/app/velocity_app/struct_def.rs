@@ -1,4 +1,4 @@
-﻿use crossbeam_channel::{Receiver, Sender};
+use crossbeam_channel::{Receiver, Sender};
 use eframe::egui;
 use egui_dock::DockState;
 use serde::{Deserialize, Serialize};
@@ -175,6 +175,10 @@ pub struct VelocityApp {
     pub left_sidebar_visible: bool,
     pub left_sidebar_width: f32,
     pub left_sidebar_tab: usize,
+    /// Activity bar selection (0=Files, 1=Search, 2=Git, 3=Chat, 4=Build, 5=Agents, 6=Knowledge, 7=Workspace)
+    pub activity_bar_selection: usize,
+    /// Sub-panel selection within each activity bar category
+    pub activity_sub_panel: [usize; 8],
     pub right_sidebar_visible: bool,
     pub right_sidebar_width: f32,
 
@@ -324,6 +328,10 @@ pub struct VelocityApp {
     pub snippet_collection: crate::editor::snippets::SnippetCollection,
     /// Draft filter text in the Snippets panel search box.
     pub snippet_search_query: String,
+    /// Draft filter text in the file tree sub-panel.
+    pub file_tree_filter: String,
+    /// Draft filter text in the skills sub-panel.
+    pub skill_filter: String,
     /// Whether to show minimap in editor.
     pub show_minimap: bool,
     /// Whether to show breadcrumbs above editor.
@@ -807,7 +815,7 @@ impl VelocityApp {
         self.bottom_panel_state.active_tab = crate::editor::bottom_panel::TAB_TERMINAL;
         self.save_workspace_preferences();
         self.status_message = format!("Switched to {} mode", profile.label());
-        // Central, self-dismissing confirmation â€” useful when the switch came
+        // Central, self-dismissing confirmation -- useful when the switch came
         // from a keyboard shortcut and the eye isn't on the toolbar pills.
         self.toasts.push(crate::editor::toast::Toast::info(format!(
             "{} {} mode",
@@ -961,6 +969,8 @@ impl VelocityApp {
             left_sidebar_visible: true,
             left_sidebar_width: 240.0,
             left_sidebar_tab: 0,
+            activity_bar_selection: 0,
+            activity_sub_panel: [0; 8],
             right_sidebar_visible: false,
             right_sidebar_width: 280.0,
             mode_layouts: HashMap::new(),
@@ -1081,6 +1091,8 @@ impl VelocityApp {
             minimap_config: crate::editor::minimap::MinimapConfig::default(),
             snippet_collection: crate::editor::snippets::SnippetCollection::default(),
             snippet_search_query: String::new(),
+            file_tree_filter: String::new(),
+            skill_filter: String::new(),
             show_minimap: true,
             show_breadcrumbs: true,
             word_wrap: false,

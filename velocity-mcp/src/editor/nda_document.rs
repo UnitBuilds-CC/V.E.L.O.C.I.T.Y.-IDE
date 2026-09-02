@@ -487,7 +487,7 @@ impl NdaDocumentView {
         painter.rect_filled(
             rect,
             egui::CornerRadius::same(4),
-            egui::Color32::from_rgb(13, 17, 23),
+            palette.bg_primary,
         );
         let ctx = ui.ctx().clone();
         // Precompute wrapped text galleys (layout needs &mut Fonts via the ctx closure).

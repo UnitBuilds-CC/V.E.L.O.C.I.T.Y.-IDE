@@ -26,9 +26,13 @@ clippy:
 fmt:
     cargo fmt
 
-# Run the IDE
+# Run the GUI
+gui:
+    cargo run --release --bin velocity_ide_gui
+
+# Run the MCP server (headless)
 run:
-    cargo run -- --editor
+    cargo run --bin velocity_mcp -- --mode stdio
 
 # Build release binary
 release:

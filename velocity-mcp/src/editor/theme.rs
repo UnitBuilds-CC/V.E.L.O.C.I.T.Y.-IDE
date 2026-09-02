@@ -12,91 +12,131 @@ pub struct IdePalette {
     pub bg_tertiary: Color32,
     pub text: Color32,
     pub text_muted: Color32,
+    pub text_disabled: Color32,
     pub accent: Color32,
+    pub info: Color32,
     pub border: Color32,
     pub success: Color32,
     pub warning: Color32,
     pub error: Color32,
+    pub surface_hover: Color32,
+    pub text_on_accent: Color32,
 }
+
+/// Consistent corner radius for sub-panel cards across the IDE.
+pub const CARD_RADIUS: f32 = 6.0;
+/// Consistent inner padding for sub-panel cards.
+pub const CARD_INNER_MARGIN: f32 = 8.0;
+/// Spacing between cards and major sections.
+pub const SECTION_SPACING: f32 = 8.0;
+/// Small spacing for intra-card elements.
+pub const ITEM_SPACING: f32 = 4.0;
+
+/// Semantic font sizes for the IDE UI. Use these instead of inline `.size()`.
+pub const FONT_CAPTION: f32 = 9.0;
+pub const FONT_SMALL: f32 = 11.0;
+pub const FONT_BODY: f32 = 13.0;
+pub const FONT_HEADING: f32 = 15.0;
 
 impl IdePalette {
     pub fn dark() -> Self {
-        // Warm, softened near-black with a faint plum tint for a cozy feel.
+        // Modern AI-first IDE: deep neutral backgrounds with vivid green accent.
         Self {
-            bg_primary: Color32::from_rgb(22, 22, 28),
-            bg_secondary: Color32::from_rgb(29, 29, 36),
-            bg_tertiary: Color32::from_rgb(38, 38, 47),
-            text: Color32::from_rgb(228, 226, 234),
-            text_muted: Color32::from_rgb(142, 142, 160),
-            accent: Color32::from_rgb(183, 156, 255),
-            border: Color32::from_rgb(47, 47, 58),
-            success: Color32::from_rgb(126, 211, 155),
-            warning: Color32::from_rgb(240, 200, 120),
-            error: Color32::from_rgb(240, 140, 140),
+            bg_primary: Color32::from_rgb(15, 15, 18),
+            bg_secondary: Color32::from_rgb(22, 22, 26),
+            bg_tertiary: Color32::from_rgb(32, 32, 38),
+            text: Color32::from_rgb(235, 235, 240),
+            text_muted: Color32::from_rgb(130, 130, 148),
+            text_disabled: Color32::from_rgb(80, 80, 95),
+            accent: Color32::from_rgb(34, 197, 94),
+            info: Color32::from_rgb(59, 130, 246),
+            border: Color32::from_rgb(42, 42, 50),
+            success: Color32::from_rgb(34, 197, 94),
+            warning: Color32::from_rgb(234, 179, 8),
+            error: Color32::from_rgb(239, 68, 68),
+            surface_hover: Color32::from_rgb(34, 197, 94).gamma_multiply(0.12),
+            text_on_accent: Color32::WHITE,
         }
     }
 
     pub fn light() -> Self {
-        // Warm paper tones instead of cold grey for a softer, cozy daylight look.
+        // Clean modern light theme with blue accent and neutral warm greys.
         Self {
-            bg_primary: Color32::from_rgb(250, 248, 244),
-            bg_secondary: Color32::from_rgb(243, 240, 233),
-            bg_tertiary: Color32::from_rgb(234, 230, 221),
-            text: Color32::from_rgb(48, 44, 40),
-            text_muted: Color32::from_rgb(122, 114, 106),
-            accent: Color32::from_rgb(140, 92, 204),
-            border: Color32::from_rgb(223, 217, 207),
-            success: Color32::from_rgb(56, 150, 92),
-            warning: Color32::from_rgb(190, 132, 32),
-            error: Color32::from_rgb(202, 74, 62),
+            bg_primary: Color32::from_rgb(255, 255, 255),
+            bg_secondary: Color32::from_rgb(248, 248, 250),
+            bg_tertiary: Color32::from_rgb(237, 237, 242),
+            text: Color32::from_rgb(32, 32, 38),
+            text_muted: Color32::from_rgb(115, 115, 130),
+            text_disabled: Color32::from_rgb(180, 180, 190),
+            accent: Color32::from_rgb(59, 130, 246),
+            info: Color32::from_rgb(59, 130, 246),
+            border: Color32::from_rgb(220, 220, 228),
+            success: Color32::from_rgb(22, 163, 74),
+            warning: Color32::from_rgb(146, 100, 0),
+            error: Color32::from_rgb(210, 55, 45),
+            surface_hover: Color32::from_rgb(59, 130, 246).gamma_multiply(0.08),
+            text_on_accent: Color32::WHITE,
         }
     }
 
     pub fn operator() -> Self {
-        // Softened teal-on-slate: still focused, but easier on the eyes.
+        // Cyberpunk terminal: deep teal-black with vivid cyan accent.
         Self {
-            bg_primary: Color32::from_rgb(14, 20, 23),
-            bg_secondary: Color32::from_rgb(20, 28, 32),
-            bg_tertiary: Color32::from_rgb(28, 39, 44),
-            text: Color32::from_rgb(218, 232, 234),
-            text_muted: Color32::from_rgb(142, 168, 173),
-            accent: Color32::from_rgb(94, 214, 197),
-            border: Color32::from_rgb(40, 59, 65),
-            success: Color32::from_rgb(126, 211, 155),
-            warning: Color32::from_rgb(240, 200, 120),
-            error: Color32::from_rgb(240, 140, 140),
+            bg_primary: Color32::from_rgb(10, 16, 20),
+            bg_secondary: Color32::from_rgb(16, 24, 28),
+            bg_tertiary: Color32::from_rgb(24, 36, 42),
+            text: Color32::from_rgb(220, 236, 240),
+            text_muted: Color32::from_rgb(120, 152, 162),
+            text_disabled: Color32::from_rgb(70, 90, 100),
+            accent: Color32::from_rgb(6, 182, 212),
+            info: Color32::from_rgb(56, 189, 248),
+            border: Color32::from_rgb(35, 52, 60),
+            success: Color32::from_rgb(34, 197, 94),
+            warning: Color32::from_rgb(234, 179, 8),
+            error: Color32::from_rgb(239, 68, 68),
+            surface_hover: Color32::from_rgb(6, 182, 212).gamma_multiply(0.12),
+            text_on_accent: Color32::WHITE,
         }
     }
 
     pub fn mission() -> Self {
-        // Deep command-deck indigo with a mission-control amber accent —
-        // deliberately distinct from Coder's plum Midnight.
+        // Command-deck indigo with warm amber accent for mission control.
+        // Accent is indigo (distinct from amber warning) for clear visual separation.
         Self {
-            bg_primary: Color32::from_rgb(18, 20, 32),
-            bg_secondary: Color32::from_rgb(24, 27, 42),
-            bg_tertiary: Color32::from_rgb(33, 37, 56),
-            text: Color32::from_rgb(224, 227, 240),
-            text_muted: Color32::from_rgb(140, 148, 176),
-            accent: Color32::from_rgb(255, 179, 71),
-            border: Color32::from_rgb(44, 49, 72),
-            success: Color32::from_rgb(126, 211, 155),
-            warning: Color32::from_rgb(240, 200, 120),
-            error: Color32::from_rgb(240, 140, 140),
+            bg_primary: Color32::from_rgb(14, 16, 28),
+            bg_secondary: Color32::from_rgb(20, 23, 38),
+            bg_tertiary: Color32::from_rgb(28, 32, 50),
+            text: Color32::from_rgb(228, 230, 245),
+            text_muted: Color32::from_rgb(128, 136, 168),
+            text_disabled: Color32::from_rgb(75, 80, 105),
+            accent: Color32::from_rgb(99, 102, 241),
+            info: Color32::from_rgb(56, 189, 248),
+            border: Color32::from_rgb(40, 44, 66),
+            success: Color32::from_rgb(34, 197, 94),
+            warning: Color32::from_rgb(245, 158, 11),
+            error: Color32::from_rgb(239, 68, 68),
+            surface_hover: Color32::from_rgb(99, 102, 241).gamma_multiply(0.12),
+            text_on_accent: Color32::WHITE,
         }
     }
 
     pub fn high_contrast() -> Self {
+        // Maximum contrast: pure black background with vivid accent colors.
         Self {
             bg_primary: Color32::from_rgb(0, 0, 0),
-            bg_secondary: Color32::from_rgb(10, 10, 10),
-            bg_tertiary: Color32::from_rgb(24, 24, 24),
-            text: Color32::from_rgb(245, 245, 245),
-            text_muted: Color32::from_rgb(196, 196, 196),
-            accent: Color32::from_rgb(96, 165, 250),
-            border: Color32::from_rgb(96, 96, 96),
+            bg_secondary: Color32::from_rgb(8, 8, 8),
+            bg_tertiary: Color32::from_rgb(20, 20, 20),
+            text: Color32::from_rgb(255, 255, 255),
+            text_muted: Color32::from_rgb(180, 180, 180),
+            text_disabled: Color32::from_rgb(100, 100, 100),
+            accent: Color32::from_rgb(56, 189, 248),
+            info: Color32::from_rgb(56, 189, 248),
+            border: Color32::from_rgb(100, 100, 100),
             success: Color32::from_rgb(74, 222, 128),
             warning: Color32::from_rgb(250, 204, 21),
             error: Color32::from_rgb(248, 113, 113),
+            surface_hover: Color32::from_rgb(56, 189, 248).gamma_multiply(0.15),
+            text_on_accent: Color32::BLACK,
         }
     }
 }
