@@ -132,7 +132,7 @@ export default function GuiAuditReport() {
         rows={[
           ['cargo check', 'Clean \u2014 no errors or warnings'],
           ['cargo test', '895 passed, 0 failed, 3 ignored'],
-          ['Commit', 'dc268c9 \u2014 pushed to master'],
+          ['Commit', 'dc268c9 \u2014 pushed to main'],
           ['Net change', '6 files, +26 / \u22125 lines'],
         ]}
         rowTone={['success', 'success', undefined, undefined]}

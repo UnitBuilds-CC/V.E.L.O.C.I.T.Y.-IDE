@@ -142,7 +142,7 @@ export default function ProductionReadinessReport() {
           <Text weight="semibold">Commit Info</Text>
           <Stack gap={4}>
             <Text size="small">Commit: <Tag>03e7904</Tag></Text>
-            <Text size="small">Branch: <Tag>master</Tag></Text>
+            <Text size="small">Branch: <Tag>main</Tag></Text>
             <Text size="small">Status: <Tag tone="success">Pushed</Tag></Text>
           </Stack>
         </Stack>

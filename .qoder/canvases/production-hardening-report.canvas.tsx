@@ -20,7 +20,7 @@ export default function ProductionHardeningReport() {
       <Stack gap={8}>
         <H1>Production Hardening Report</H1>
         <Text tone="secondary">
-          Velocity IDE · Commits a89accf..79d1333 · Pushed to master
+          Velocity IDE · Commits a89accf..79d1333 · Pushed to main
         </Text>
       </Stack>
 

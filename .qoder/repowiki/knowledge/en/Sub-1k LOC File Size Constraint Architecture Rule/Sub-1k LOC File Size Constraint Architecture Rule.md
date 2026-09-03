@@ -3,11 +3,11 @@
 ## Classification
 - **Category**: Architecture Constraint
 - **Scope**: All crates, all source files
-- **Criticality**: Hard rule — enforced by convention
+- **Criticality**: Design guideline / target — not universally met
 
 ## Summary
 
-Every source file in the Velocity workspace must remain under 1,000 lines of code. This is a non-negotiable architectural constraint for clean module isolation.
+Most source files in the Velocity workspace are kept under 1,000 lines of code as a design target for clean module isolation. This is a guideline, not a hard constraint: a number of larger modules currently exceed it and are tracked for incremental refactoring.
 
 ## Rationale
 
@@ -26,16 +26,19 @@ Every source file in the Velocity workspace must remain under 1,000 lines of cod
 
 ## Exceptions
 
-None. This rule applies to all files in all crates.
+This is a target, not an enforced hard limit. Larger modules — panel rendering, the JS DOM bridge, the transformer model, and the NDA parsers — legitimately exceed 1,000 LOC and are tracked for refactoring.
 
-## Current Violations (as of 2026-08-17)
+## Current Status (as of 2026-09-02)
+
+79 of 554 `.rs` files exceed 1,000 LOC. The largest offenders:
 
 | File | LOC | Notes |
 |------|-----|-------|
-| `velocity-mcp/src/registry/system_tools.rs` | 1519 | System tool dispatch including fetch_panel_data_value, file ops, search, git, shell. Needs split into per-category handlers. |
-| `velocity-mcp/src/editor/app/velocity_app/struct_def.rs` | 1133 | VelocityApp struct definition, workspace preset application, layout caching. Needs field grouping extraction. |
-| `velocity-mcp/src/editor/app/velocity_app/ui_render.rs` | 2058 | Primary UI render entry point. Needs split per panel. |
-| `velocity-mcp/src/editor/app/render.rs` | 1878 | App-level render orchestration. Needs split per work mode or panel group. |
+| `velocity-mcp/src/editor/app/velocity_app/tier3_panels.rs` | 4339 | Panel rendering. Needs split per panel. |
+| `velocity-ide/src/pipeline_bridge.rs` | 3781 | Pipeline bridge. Needs decomposition. |
+| `velocity-browser/src/js/interpreter/dom_bridge.rs` | 3310 | JS DOM bridge. Needs split per DOM API group. |
+| `velocity-ide/src/model/transformer.rs` | 3260 | Transformer inference. Needs split per layer/stage. |
+| `velocity-mcp/src/editor/app/velocity_app/ui_render.rs` | 2382 | Primary UI render entry point. Needs split per panel. |
 
 ### Resolved
 

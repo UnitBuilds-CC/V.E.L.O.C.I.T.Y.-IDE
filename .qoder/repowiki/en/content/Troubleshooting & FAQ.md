@@ -56,8 +56,8 @@ A: The pure-Rust browser engine is an engineering artifact demonstrating that a 
 **Q: Why NDA format instead of JSON?**
 A: NDA provides compact 18-byte records with SHA-256 Merkle integrity. JSON is supported as an import/export adapter only. The binary format is ~10x more compact and includes built-in tamper detection.
 
-**Q: Why is every file under 1,000 LOC?**
-A: The sub-1k LOC rule enforces clean module isolation. It prevents god-files, makes code review manageable, and ensures each module has a single clear responsibility.
+**Q: Why keep files under 1,000 LOC?**
+A: Keeping modules small enforces clean isolation — it prevents god-files, makes code review manageable, and gives each module a single clear responsibility. It is a design target rather than a hard limit; some larger modules still exceed it and are tracked for refactoring.
 
 **Q: Can I use a different LLM provider?**
 A: The 4-provider chain (Cloudflare → OpenRouter → Azure → Ollama) supports automatic failover. Adding a new provider requires implementing the provider trait in `velocity-mcp/src/agent/provider.rs`.

@@ -4,7 +4,7 @@
   "locale": "en-US",
   "exported_at": "2026-08-17T18:00:00Z",
   "workspace": {
-    "root": "Kimi-Code/",
+    "root": "Velocity-IDE/",
     "crates": [
       {
         "name": "velocity-mcp",
@@ -25,6 +25,12 @@
         "role": "NDA compiler, JIT, model inference, site map"
       },
       {
+        "name": "velocity-ide-gui",
+        "path": "velocity-ide-gui/",
+        "file_count": 3,
+        "role": "Standalone GUI binary (egui/eframe workspace editor)"
+      },
+      {
         "name": "drone",
         "path": "drone/",
         "file_count": 5,
@@ -39,7 +45,7 @@
     ],
     "total_source_files": 527,
     "key_constraints": [
-      "Sub-1,000 LOC per file (hard rule)",
+      "Small-module target: most files under 1,000 LOC (guideline, not hard rule)",
       "NDA binary format is canonical (JSON is adapter only)",
       "SHA-256 Merkle integrity for all persisted state",
       "crossbeam channels for inter-thread communication",
@@ -72,7 +78,7 @@
       "Compiler and NDA Pipeline",
       "4-Provider Agent Reasoning Loop",
       "NDA Binary Format",
-      "Sub-1k LOC Rule",
+      "File Size Guideline",
       "egui GUI Theme",
       "Windows UI Automation FFI",
       "Cargo Workspace Build",

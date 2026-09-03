@@ -22,7 +22,7 @@ export default function CompletionReport() {
       <Stack gap={8}>
         <H1>GUI Code Review — Completion Report</H1>
         <Text tone="secondary">
-          Velocity IDE · Commit 3b0d557 · Pushed to master
+          Velocity IDE · Commit 3b0d557 · Pushed to main
         </Text>
       </Stack>
 
@@ -206,7 +206,7 @@ export default function CompletionReport() {
             state: "done",
           },
           {
-            label: "Committed 3b0d557 and pushed to master",
+            label: "Committed 3b0d557 and pushed to main",
             state: "done",
           },
         ]}

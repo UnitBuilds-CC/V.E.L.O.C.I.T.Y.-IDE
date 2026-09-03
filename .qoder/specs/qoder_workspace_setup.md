@@ -62,7 +62,7 @@ Implement the `.qoder` directory structure for the Velocity IDE workspace, match
 ## Key Decisions
 
 1. **Content pages cover all major subsystems**: Architecture, agent loop, browser engine, compiler, editor UI, tool registry, WA, model inference, dual-path engine
-2. **Knowledge cards capture critical constraints**: Sub-1k LOC rule, NDA format, provider chain, build config, LLM harness, dual-path routing
+2. **Knowledge cards capture critical constraints**: file-size guideline, NDA format, provider chain, build config, LLM harness, dual-path routing
 3. **Skills adapted for Velocity**: Rust code review with project-specific high-risk areas, behavior test writer with Velocity patterns, harness updater for model inference maintenance
 4. **Up-to-date**: All file paths, module counts, and architectural details verified against current codebase (August 2026, post harness upgrade)
 

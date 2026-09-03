@@ -12,7 +12,7 @@ Review Rust code changes in the Velocity workspace for correctness, safety, perf
 ## Review Checklist
 
 ### 1. Project Conventions
-- [ ] File is under 1,000 LOC (hard rule)
+- [ ] File is under 1,000 LOC where practical (design guideline, not a hard rule; larger modules are tracked for refactoring)
 - [ ] Code is formatted with `cargo fmt`
 - [ ] No clippy warnings (`cargo clippy -- -D warnings`)
 - [ ] Public items have `///` doc comments

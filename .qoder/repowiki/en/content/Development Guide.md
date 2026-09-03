@@ -17,7 +17,7 @@
 3. [Build System and Toolchain](#build-system-and-toolchain)
 4. [Testing Procedures](#testing-procedures)
 5. [Code Style and Conventions](#code-style-and-conventions)
-6. [Sub-1k LOC Rule](#sub-1k-loc-rule)
+6. [File Size Guideline](#file-size-guideline)
 7. [Adding New Features](#adding-new-features)
 8. [High-Risk Areas](#high-risk-areas)
 9. [CI Pipeline](#ci-pipeline)
@@ -135,9 +135,9 @@ rustup target add wasm32-unknown-unknown
 - `//!` module-level docs on every `mod.rs`
 - Include examples in doc comments for public APIs
 
-## Sub-1k LOC Rule
+## File Size Guideline
 
-**All files must remain under 1,000 lines of code.** This is a hard architectural constraint for clean isolation. If a file approaches this limit:
+**Aim to keep files under 1,000 lines of code.** This is a design target for clean isolation, not a hard constraint — a number of larger modules currently exceed it and are tracked for refactoring. When a file approaches this limit:
 1. Extract helper functions into sibling files
 2. Split into submodules (e.g., `mod.rs` + child modules)
 3. Move types into dedicated `types.rs`
@@ -147,7 +147,7 @@ rustup target add wasm32-unknown-unknown
 ### Adding a New Module
 1. Create the file under the appropriate crate's `src/` directory
 2. Register it in the parent `mod.rs`
-3. Keep under 1,000 LOC
+3. Aim to keep under 1,000 LOC
 4. Add `#[cfg(test)]` module with behavior tests
 5. Run `just validate` before committing
 

@@ -112,7 +112,7 @@ For built-in LLM inference (no external provider):
 
 ## Key Design Decisions
 
-1. **Sub-1,000 LOC rule**: All files strictly under 1,000 lines
+1. **Small-module target**: Most files are kept under 1,000 lines (a design goal; some larger modules exceed it and are tracked for refactoring)
 2. **NDA over JSON**: Binary format is canonical; JSON is adapter only
 3. **SHA-256 Merkle integrity**: NDA security is integrity-based, not encryption
 4. **4-provider failover**: Cloudflare → OpenRouter → Azure → Ollama (circular)

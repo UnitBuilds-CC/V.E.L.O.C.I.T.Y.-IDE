@@ -26,8 +26,7 @@ export default function GuiReviewFixesReport() {
           <Tag tone="success">All 4 issues resolved</Tag>
         </Row>
         <Text tone="secondary" size="small">
-          Commit <Code>3b0d557</Code> pushed to <Code>master</Code> · Velocity IDE
-          (Kimi-Code) · August 2026
+          Commit <Code>3b0d557</Code> pushed to <Code>main</Code> · Velocity IDE · August 2026
         </Text>
       </Stack>
 

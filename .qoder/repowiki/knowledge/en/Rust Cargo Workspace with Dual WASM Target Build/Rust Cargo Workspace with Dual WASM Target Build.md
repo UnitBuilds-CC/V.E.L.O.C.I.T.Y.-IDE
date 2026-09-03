@@ -2,7 +2,7 @@
 
 ## Classification
 - **Category**: Build System
-- **Files**: Cargo.toml (workspace + 5 crates)
+- **Files**: Cargo.toml (workspace + 6 crates)
 - **Criticality**: High — build infrastructure
 
 ## Summary
