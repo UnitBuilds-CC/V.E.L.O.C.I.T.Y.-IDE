@@ -3,9 +3,9 @@
 ## Acceptance Route
 
 **Check:** `cargo test` (workspace-wide, all members)
-**Target branch:** `master`
+**Target branch:** `main`
 
-All tests must pass before any commit lands on `master`.
+All tests must pass before any commit lands on `main`.
 
 ```powershell
 cargo test --workspace
@@ -15,10 +15,10 @@ A non-zero exit code blocks the commit.
 
 ## Recovery Route
 
-**Affected resource:** `master` branch working tree
+**Affected resource:** `main` branch working tree
 **Postcondition:** workspace compiles and all tests pass (`cargo test --workspace` exits 0)
 
-If a commit introduces a test failure on `master`, revert it immediately:
+If a commit introduces a test failure on `main`, revert it immediately:
 
 ```powershell
 git revert HEAD --no-edit

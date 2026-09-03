@@ -1,6 +1,6 @@
 # V.E.L.O.C.I.T.Y. Cognitive IDE
 
-A premium, high-performance developer workspace and autonomous agentic environment built in pure Rust. V.E.L.O.C.I.T.Y. combines a native GPU-accelerated interface with a pure-Rust browser control plane (`velocity-browser`), a self-correcting agentic compiler loop, and crisp sub-1k LOC component architecture.
+A premium, high-performance developer workspace and autonomous agentic environment built in pure Rust. V.E.L.O.C.I.T.Y. combines a native GPU-accelerated interface with a pure-Rust browser control plane (`velocity-browser`), a self-correcting agentic compiler loop, and a modular component architecture.
 
 ---
 
@@ -32,7 +32,7 @@ cargo run --release --bin velocity_mcp -- --mode stdio
 ### Run Tests
 
 ```bash
-# Run all 15,000+ tests
+# Run all 9,200+ tests
 cargo test --workspace
 
 # Run with coverage
@@ -44,7 +44,7 @@ cargo llvm-cov --workspace --lcov
 ## Architecture Overview
 
 ### 1. Pure-Rust Native Browser Control Plane (`velocity-browser`)
-- **Engine Core**: 52 pure-Rust modules replacing legacy CDP wrappers.
+- **Engine Core**: 170+ pure-Rust modules replacing legacy CDP wrappers.
 - **DOM & Layout**: Slab-allocated DOM, shadow slots, flexbox, grid, and parallel layout solvers.
 - **JS VM & Wasm**: Integrated JavaScript virtual machine, event loop scheduler, and SIMD-accelerated Wasm interpreter.
 - **Network & TLS**: HTTP/2 & HTTP/3 (QUIC), WebSocket, WebRTC, native TLS stream with fingerprint rotator.
@@ -78,7 +78,7 @@ Velocity-IDE/
 │   │   ├── src/
 │   │   │   ├── agent/           # 4-provider reasoning loops, dispatchers, & NDA state
 │   │   │   ├── registry/        # System, browser, & desktop tool definitions
-│   │   │   ├── editor/          # 83-module GUI system (activity bar, chat, sidebar, theme, graph, wiki)
+│   │   │   ├── editor/          # 119-module GUI system (activity bar, chat, sidebar, theme, graph, wiki)
 │   │   │   ├── automation/      # Task routing, mediator edit locks, AST watcher
 │   │   │   ├── ipc/             # Shared memory telemetry
 │   │   │   ├── orchestrator/    # Worker scheduling, worktree isolation, blueprint DAG

@@ -2,13 +2,16 @@
 
 ## Project Positioning
 
-V.E.L.O.C.I.T.Y. is a Rust workspace (`resolver = "2"`) containing three crates:
+V.E.L.O.C.I.T.Y. is a Rust workspace (`resolver = "2"`) containing six crates:
 
 | Crate | Role |
 |-------|------|
 | `velocity-mcp` | Main MCP server, native IDE editor, 4-provider agent loop |
 | `velocity-browser` | Pure-Rust browser control plane (DOM, layout, JS VM, net) |
 | `velocity-ide` | Compiler driver, AST engine, sandbox, site-map tooling |
+| `velocity-ide-gui` | Standalone GUI binary (egui/eframe workspace editor) |
+| `velocity-drone` | Drone protocol agent (local + remote dual-mode) |
+| `velocity-e2e` | End-to-end test harness |
 
 ## Directory Routes
 
@@ -30,7 +33,7 @@ velocity-workspace/
 
 ## Commands
 
-All commands run from `velocity-mcp/` (the Justfile lives there):
+The `validate` gate below lives in `velocity-mcp/Justfile` and runs from `velocity-mcp/`. General workspace tasks (`build`, `test`, `lint`, `ci`, `pre-commit`) live in the root `justfile`:
 
 | Command | Purpose |
 |---------|---------|

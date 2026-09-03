@@ -10,7 +10,7 @@ Be respectful, constructive, and inclusive. Treat all contributors with dignity 
 
 ### Prerequisites
 
-- **Rust 1.82+** (pinned via `rust-toolchain.toml`)
+- **Rust 1.87+** (pinned via `rust-toolchain.toml`)
 - **Git**
 - **System dependencies** (Linux): `libgtk-3-dev libwebkit2gtk-4.1-dev libudev-dev`
 - **just** (task runner): `cargo install just`
@@ -111,6 +111,7 @@ Open a Pull Request against `main` and fill in the PR template.
 ```
 Velocity-IDE/
 ├── velocity-ide/        # Core runtime: NDA compiler, tokenizer, model inference
+├── velocity-ide-gui/    # Standalone GUI binary (egui/eframe workspace editor)
 ├── velocity-mcp/        # MCP server: editor, agent, connectors, health, metrics
 ├── velocity-browser/    # Browser control plane: sessions, workflows, auth
 ├── drone/               # Drone protocol agent

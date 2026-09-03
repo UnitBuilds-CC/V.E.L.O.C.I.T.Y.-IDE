@@ -1,6 +1,6 @@
 # Deployment Guide
 
-This guide covers deployment Velocity IDE in various environments.
+This guide covers deploying Velocity IDE in various environments.
 
 ## Table of Contents
 
@@ -32,7 +32,7 @@ This guide covers deployment Velocity IDE in various environments.
 ### Software Dependencies
 
 **Build-time:**
-- Rust 1.75+ (stable)
+- Rust 1.87+ (stable)
 - Git
 - pkg-config
 - libgtk-3-dev (Linux)

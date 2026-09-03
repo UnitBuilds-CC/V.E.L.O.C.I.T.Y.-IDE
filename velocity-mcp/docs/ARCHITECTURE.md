@@ -18,7 +18,7 @@ For NDA-vs-JSON boundary decisions, see `docs/NDA_BOUNDARIES.md`.
   - `registry/` — System, native browser, and desktop automation tool registry.
   - `orchestrator/` — DAG work package scheduling, `WorktreeIsolationGuard` sub-agent sandbox, and live worker handles.
   - `wa/` — Windows UI Automation & `DesktopAutomationAdapter` cross-platform accessibility framework.
-- **`velocity-browser`** — Pure-Rust Native Browser Control Plane (52 Modules)
+- **`velocity-browser`** — Pure-Rust Native Browser Control Plane (170+ Modules)
   - `dom/` — Slab DOM tree, shadow slots, mutation batcher.
   - `layout/` — Flexbox, grid track solvers, parallel layout engine.
   - `js/` — JS virtual machine, event loop scheduler, Wasm SIMD interpreter.
@@ -47,7 +47,7 @@ For NDA-vs-JSON boundary decisions, see `docs/NDA_BOUNDARIES.md`.
 5. Tool execution runs with exact workspace path sandboxing.
 6. After modifications, `run_compilation_check()` validates compiler status with `cargo check`.
 
-## Sub-1,000 LOC Modular Architecture Rule
+## Modular Architecture Guideline
 
-All files across all crates in the workspace are strictly refactored into modular sub-files under **1,000 lines of code**, guaranteeing clean component isolation and maintainability.
+Components are kept small and single-purpose where practical, and most modules are well under **1,000 lines of code**. A number of larger modules (e.g. panel rendering, the JS DOM bridge, and the transformer model) still exceed that threshold and are tracked for incremental refactoring.
 
