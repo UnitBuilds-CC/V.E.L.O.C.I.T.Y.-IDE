@@ -444,3 +444,99 @@ fn install_panic_hook() {
         );
     }));
 }
+
+#[cfg(test)]
+mod tests {
+    //! Smoke tests for the GUI binary's display-independent helpers.
+    //!
+    //! Rendering itself needs a live GPU/display surface, so these cover the
+    //! pure and filesystem logic that runs before and around the event loop:
+    //! path hashing, workspace presence-file resolution, and icon decoding.
+
+    use super::{hash_str, load_icon, resolve_presence_file};
+
+    #[test]
+    fn hash_str_is_deterministic() {
+        assert_eq!(hash_str("velocity"), hash_str("velocity"));
+        assert_eq!(hash_str(""), hash_str(""));
+        assert_eq!(
+            hash_str("velocity-mcp/src/main.rs"),
+            hash_str("velocity-mcp/src/main.rs"),
+        );
+    }
+
+    #[test]
+    fn hash_str_distinguishes_inputs() {
+        assert_ne!(hash_str("a"), hash_str("b"));
+        assert_ne!(hash_str("src/main.rs"), hash_str("src/lib.rs"));
+        // Even a single trailing byte must produce a different digest.
+        assert_ne!(
+            hash_str("velocity-mcp/src/main.rs"),
+            hash_str("velocity-mcp/src/main.rs "),
+        );
+    }
+
+    #[test]
+    fn resolve_presence_file_prefers_mcp_main() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        std::fs::create_dir_all(root.join("velocity-mcp").join("src")).unwrap();
+        std::fs::write(
+            root.join("velocity-mcp").join("src").join("main.rs"),
+            b"fn main(){}",
+        )
+        .unwrap();
+        // A lower-priority candidate also exists but must not win.
+        std::fs::create_dir_all(root.join("src")).unwrap();
+        std::fs::write(root.join("src").join("main.rs"), b"fn main(){}").unwrap();
+        assert_eq!(
+            resolve_presence_file(root),
+            root.join("velocity-mcp").join("src").join("main.rs"),
+        );
+    }
+
+    #[test]
+    fn resolve_presence_file_falls_back_to_mcp_lib() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        std::fs::create_dir_all(root.join("velocity-mcp").join("src")).unwrap();
+        std::fs::write(
+            root.join("velocity-mcp").join("src").join("lib.rs"),
+            b"// lib",
+        )
+        .unwrap();
+        assert_eq!(
+            resolve_presence_file(root),
+            root.join("velocity-mcp").join("src").join("lib.rs"),
+        );
+    }
+
+    #[test]
+    fn resolve_presence_file_uses_plain_src_when_no_mcp() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        std::fs::create_dir_all(root.join("src")).unwrap();
+        std::fs::write(root.join("src").join("main.rs"), b"fn main(){}").unwrap();
+        assert_eq!(resolve_presence_file(root), root.join("src").join("main.rs"));
+    }
+
+    #[test]
+    fn resolve_presence_file_falls_back_to_root_when_empty() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        // No candidate files exist, so the workspace root itself is returned.
+        assert_eq!(resolve_presence_file(root), root.to_path_buf());
+    }
+
+    #[test]
+    fn load_icon_decodes_bundled_png() {
+        let icon = load_icon().expect("assets/logo.png should decode to RGBA");
+        assert!(icon.width > 0, "icon width must be non-zero");
+        assert!(icon.height > 0, "icon height must be non-zero");
+        assert_eq!(
+            icon.rgba.len(),
+            (icon.width as usize) * (icon.height as usize) * 4,
+            "RGBA buffer must hold width*height*4 bytes",
+        );
+    }
+}
