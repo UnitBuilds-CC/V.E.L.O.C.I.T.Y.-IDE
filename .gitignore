@@ -18,6 +18,16 @@ target/
 # Build/test output logs (never tracked; regenerable artifacts)
 *.log
 
+# Stray dev artifacts (ad-hoc captures, tool output & shell-redirect typos - never tracked)
+$null
+commit_msg.txt
+browser_screenshot.png
+test_out.txt
+test_err.txt
+test_output.txt
+test_lexer.txt
+warnings.txt
+
 # Telemetry test artifacts
 telemetry*.bin
 
@@ -61,11 +71,11 @@ Thumbs.db
 .idea/
 *.swp
 
+# Qoder IDE state is tracked, except ephemeral canvas render-state sidecars
+.qoder/canvases/*.canvas.status.json
+
 # Cloudflare Workers state
 .wrangler/
-
-# Qoder IDE state
-.qoder/
 
 # NDA compiled output
 *.nda
