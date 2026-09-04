@@ -1753,6 +1753,9 @@ mod tests {
 
     // ── Helper: build a SandboxResult quickly ────────────────────────────
 
+    // Test builder: every SandboxResult field is positional so fixtures stay
+    // concise; a params struct would add indirection without real benefit.
+    #[allow(clippy::too_many_arguments)]
     fn make_result(
         executed: usize, matrix: usize, norm: usize, dim: usize,
         panicked: bool, error: Option<String>, elapsed: u64,

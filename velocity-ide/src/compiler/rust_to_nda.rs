@@ -2231,8 +2231,7 @@ mod tests {
 
     #[test]
     fn compile_diagnostics_debug_format() {
-        let mut diag = CompileDiagnostics::default();
-        diag.expressions_visited = 42;
+        let diag = CompileDiagnostics { expressions_visited: 42, ..Default::default() };
         let debug = format!("{:?}", diag);
         assert!(debug.contains("42"));
         assert!(debug.contains("CompileDiagnostics"));

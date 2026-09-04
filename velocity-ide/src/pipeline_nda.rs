@@ -1031,9 +1031,7 @@ mod tests {
 
     #[test]
     fn gen_stats_cache_hit_rate_computation() {
-        let mut stats = NdaGenStats::default();
-        stats.site_map_hits = 7;
-        stats.site_map_misses = 3;
+        let stats = NdaGenStats { site_map_hits: 7, site_map_misses: 3, ..Default::default() };
         let rate = stats.cache_hit_rate();
         assert!((rate - 0.7).abs() < 1e-9);
     }
@@ -1446,11 +1444,13 @@ mod tests {
 
     #[test]
     fn generation_result_execution_summary() {
-        let mut stats = NdaGenStats::default();
-        stats.tokens_emitted = 100;
-        stats.site_map_hits = 80;
-        stats.site_map_misses = 20;
-        stats.elapsed_ms = 500;
+        let stats = NdaGenStats {
+            tokens_emitted: 100,
+            site_map_hits: 80,
+            site_map_misses: 20,
+            elapsed_ms: 500,
+            ..Default::default()
+        };
 
         let result = NdaGenerationResult {
             nodes: vec![],
@@ -1822,9 +1822,7 @@ mod tests {
 
     #[test]
     fn nda_gen_stats_clone() {
-        let mut stats = NdaGenStats::default();
-        stats.tokens_emitted = 42;
-        stats.site_map_hits = 10;
+        let stats = NdaGenStats { tokens_emitted: 42, site_map_hits: 10, ..Default::default() };
         let cloned = stats.clone();
         assert_eq!(cloned.tokens_emitted, 42);
         assert_eq!(cloned.site_map_hits, 10);
@@ -2711,8 +2709,7 @@ mod tests {
 
     #[test]
     fn execution_summary_elapsed_ms_is_u64_cast() {
-        let mut stats = NdaGenStats::default();
-        stats.elapsed_ms = 5000;
+        let stats = NdaGenStats { elapsed_ms: 5000, ..Default::default() };
         let result = NdaGenerationResult {
             nodes: vec![],
             root_hash: 0,
@@ -2778,9 +2775,7 @@ mod tests {
 
     #[test]
     fn nda_gen_stats_debug_format() {
-        let mut stats = NdaGenStats::default();
-        stats.tokens_emitted = 42;
-        stats.site_map_hits = 30;
+        let stats = NdaGenStats { tokens_emitted: 42, site_map_hits: 30, ..Default::default() };
         let debug = format!("{:?}", stats);
         assert!(debug.contains("tokens_emitted: 42"));
         assert!(debug.contains("site_map_hits: 30"));
@@ -2966,8 +2961,7 @@ mod tests {
 
     #[test]
     fn execution_summary_tokens_from_stats() {
-        let mut stats = NdaGenStats::default();
-        stats.tokens_emitted = 777;
+        let stats = NdaGenStats { tokens_emitted: 777, ..Default::default() };
         let result = NdaGenerationResult {
             nodes: vec![],
             root_hash: 0,
@@ -2985,9 +2979,7 @@ mod tests {
 
     #[test]
     fn execution_summary_cache_hit_rate_from_stats() {
-        let mut stats = NdaGenStats::default();
-        stats.site_map_hits = 9;
-        stats.site_map_misses = 1;
+        let stats = NdaGenStats { site_map_hits: 9, site_map_misses: 1, ..Default::default() };
         let result = NdaGenerationResult {
             nodes: vec![],
             root_hash: 0,
@@ -3083,8 +3075,10 @@ mod tests {
 
     #[test]
     fn ensure_distribution_preserves_existing_nonzero() {
-        let mut stats = NdaGenStats::default();
-        stats.opcode_distribution = vec![7; NdaOpcode::VOCAB_SIZE];
+        let mut stats = NdaGenStats {
+            opcode_distribution: vec![7; NdaOpcode::VOCAB_SIZE],
+            ..Default::default()
+        };
         stats.ensure_distribution(); // should NOT reset since non-empty
         assert_eq!(stats.opcode_distribution[0], 7);
         assert_eq!(stats.opcode_distribution[NdaOpcode::VOCAB_SIZE - 1], 7);

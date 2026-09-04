@@ -2306,8 +2306,8 @@ mod tests {
         let mut state = JitState::new(&[], &sm, 16);
         for f in &prog.fns {
             let r = f(&mut state);
-            if r.is_err() {
-                assert!(r.unwrap_err().contains("undefined"));
+            if let Err(err) = r {
+                assert!(err.contains("undefined"));
                 return;
             }
         }
@@ -2365,8 +2365,8 @@ mod tests {
         let mut state = JitState::new(&[], &sm, 16);
         for f in &prog.fns {
             let r = f(&mut state);
-            if r.is_err() {
-                assert!(r.unwrap_err().contains("Unsupported"));
+            if let Err(err) = r {
+                assert!(err.contains("Unsupported"));
                 return;
             }
         }
@@ -2388,8 +2388,8 @@ mod tests {
         let mut state = JitState::new(&[], &sm, 16);
         for f in &prog.fns {
             let r = f(&mut state);
-            if r.is_err() {
-                assert!(r.unwrap_err().contains("scalar"));
+            if let Err(err) = r {
+                assert!(err.contains("scalar"));
                 return;
             }
         }
@@ -2408,8 +2408,7 @@ mod tests {
         let mut state = JitState::new(&[], &sm, 16);
         for f in &prog.fns {
             let r = f(&mut state);
-            if r.is_err() {
-                let err = r.unwrap_err();
+            if let Err(err) = r {
                 assert!(err.contains("bounds") || err.contains("Out"));
                 return;
             }
@@ -2428,8 +2427,7 @@ mod tests {
         let mut state = JitState::new(&[], &sm, 16);
         for f in &prog.fns {
             let r = f(&mut state);
-            if r.is_err() {
-                let err = r.unwrap_err();
+            if let Err(err) = r {
                 assert!(err.contains("bounds") || err.contains("Out"));
                 return;
             }
@@ -2468,8 +2466,8 @@ mod tests {
         let mut state = JitState::new(&[], &sm, 16);
         for f in &prog.fns {
             let r = f(&mut state);
-            if r.is_err() {
-                assert!(r.unwrap_err().contains("Vector"));
+            if let Err(err) = r {
+                assert!(err.contains("Vector"));
                 return;
             }
         }
@@ -2488,8 +2486,8 @@ mod tests {
         let mut state = JitState::new(&[], &sm, 16);
         for f in &prog.fns {
             let r = f(&mut state);
-            if r.is_err() {
-                assert!(r.unwrap_err().contains("Vector"));
+            if let Err(err) = r {
+                assert!(err.contains("Vector"));
                 return;
             }
         }

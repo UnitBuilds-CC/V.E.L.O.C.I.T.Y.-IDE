@@ -624,23 +624,20 @@ mod tests {
 
     #[test]
     fn validate_zero_tokens() {
-        let mut cfg = BenchmarkConfig::default();
-        cfg.num_tokens = 0;
+        let cfg = BenchmarkConfig { num_tokens: 0, ..Default::default() };
         assert!(validate_benchmark_config(&cfg).iter().any(|i| i.contains("num_tokens")));
     }
 
     #[test]
     fn validate_zero_iterations() {
-        let mut cfg = BenchmarkConfig::default();
-        cfg.iterations = 0;
+        let cfg = BenchmarkConfig { iterations: 0, ..Default::default() };
         let issues = validate_benchmark_config(&cfg);
         assert!(issues.iter().any(|i| i.contains("iterations")));
     }
 
     #[test]
     fn validate_low_iterations() {
-        let mut cfg = BenchmarkConfig::default();
-        cfg.iterations = 5;
+        let cfg = BenchmarkConfig { iterations: 5, ..Default::default() };
         assert!(validate_benchmark_config(&cfg).iter().any(|i| i.contains(">= 10")));
     }
 
@@ -691,22 +688,19 @@ mod tests {
 
     #[test]
     fn validate_zero_head_dim() {
-        let mut cfg = BenchmarkConfig::default();
-        cfg.head_dim = 0;
+        let cfg = BenchmarkConfig { head_dim: 0, ..Default::default() };
         assert!(validate_benchmark_config(&cfg).iter().any(|i| i.contains("head_dim")));
     }
 
     #[test]
     fn validate_zero_num_heads() {
-        let mut cfg = BenchmarkConfig::default();
-        cfg.num_heads = 0;
+        let cfg = BenchmarkConfig { num_heads: 0, ..Default::default() };
         assert!(validate_benchmark_config(&cfg).iter().any(|i| i.contains("num_heads")));
     }
 
     #[test]
     fn validate_zero_iterations_triggers_both() {
-        let mut cfg = BenchmarkConfig::default();
-        cfg.iterations = 0;
+        let cfg = BenchmarkConfig { iterations: 0, ..Default::default() };
         let issues = validate_benchmark_config(&cfg);
         // 0 triggers both "must be > 0" and "should be >= 10"
         assert!(issues.iter().any(|i| i.contains("must be > 0")));
@@ -718,22 +712,19 @@ mod tests {
 
     #[test]
     fn validate_iterations_9_warns() {
-        let mut cfg = BenchmarkConfig::default();
-        cfg.iterations = 9;
+        let cfg = BenchmarkConfig { iterations: 9, ..Default::default() };
         assert!(validate_benchmark_config(&cfg).iter().any(|i| i.contains(">= 10")));
     }
 
     #[test]
     fn validate_iterations_10_valid() {
-        let mut cfg = BenchmarkConfig::default();
-        cfg.iterations = 10;
+        let cfg = BenchmarkConfig { iterations: 10, ..Default::default() };
         assert!(validate_benchmark_config(&cfg).is_empty());
     }
 
     #[test]
     fn validate_iterations_1_warns() {
-        let mut cfg = BenchmarkConfig::default();
-        cfg.iterations = 1;
+        let cfg = BenchmarkConfig { iterations: 1, ..Default::default() };
         let issues = validate_benchmark_config(&cfg);
         assert!(issues.iter().any(|i| i.contains(">= 10")));
         // 1 > 0, so no "must be > 0" issue
@@ -742,8 +733,7 @@ mod tests {
 
     #[test]
     fn validate_iterations_max_valid() {
-        let mut cfg = BenchmarkConfig::default();
-        cfg.iterations = u32::MAX;
+        let cfg = BenchmarkConfig { iterations: u32::MAX, ..Default::default() };
         assert!(validate_benchmark_config(&cfg).is_empty());
     }
 
@@ -776,22 +766,19 @@ mod tests {
 
     #[test]
     fn validate_tokens_issue_text() {
-        let mut cfg = BenchmarkConfig::default();
-        cfg.num_tokens = 0;
+        let cfg = BenchmarkConfig { num_tokens: 0, ..Default::default() };
         assert_eq!(validate_benchmark_config(&cfg)[0], "num_tokens must be > 0");
     }
 
     #[test]
     fn validate_head_dim_issue_text() {
-        let mut cfg = BenchmarkConfig::default();
-        cfg.head_dim = 0;
+        let cfg = BenchmarkConfig { head_dim: 0, ..Default::default() };
         assert_eq!(validate_benchmark_config(&cfg)[0], "head_dim must be > 0");
     }
 
     #[test]
     fn validate_num_heads_issue_text() {
-        let mut cfg = BenchmarkConfig::default();
-        cfg.num_heads = 0;
+        let cfg = BenchmarkConfig { num_heads: 0, ..Default::default() };
         assert_eq!(validate_benchmark_config(&cfg)[0], "num_heads must be > 0");
     }
 
@@ -859,8 +846,7 @@ mod tests {
 
     #[test]
     fn report_with_invalid_config() {
-        let mut cfg = BenchmarkConfig::default();
-        cfg.num_tokens = 0;
+        let cfg = BenchmarkConfig { num_tokens: 0, ..Default::default() };
         let report = build_benchmark_report(&cfg, 100.0, 200.0);
         assert!(!report.validation_issues.is_empty());
         // Report still computes even with invalid config
@@ -980,22 +966,19 @@ mod tests {
 
     #[test]
     fn validate_1_token_valid() {
-        let mut cfg = BenchmarkConfig::default();
-        cfg.num_tokens = 1;
+        let cfg = BenchmarkConfig { num_tokens: 1, ..Default::default() };
         assert!(validate_benchmark_config(&cfg).is_empty());
     }
 
     #[test]
     fn validate_1_head_dim_valid() {
-        let mut cfg = BenchmarkConfig::default();
-        cfg.head_dim = 1;
+        let cfg = BenchmarkConfig { head_dim: 1, ..Default::default() };
         assert!(validate_benchmark_config(&cfg).is_empty());
     }
 
     #[test]
     fn validate_1_num_heads_valid() {
-        let mut cfg = BenchmarkConfig::default();
-        cfg.num_heads = 1;
+        let cfg = BenchmarkConfig { num_heads: 1, ..Default::default() };
         assert!(validate_benchmark_config(&cfg).is_empty());
     }
 
@@ -1056,8 +1039,7 @@ mod tests {
     #[test]
     fn config_neq_via_json() {
         let a = BenchmarkConfig::default();
-        let mut b = BenchmarkConfig::default();
-        b.num_tokens = 999;
+        let b = BenchmarkConfig { num_tokens: 999, ..Default::default() };
         assert_ne!(serde_json::to_string(&a).unwrap(), serde_json::to_string(&b).unwrap());
     }
 
@@ -1103,8 +1085,7 @@ mod tests {
 
     #[test]
     fn report_clone_independent_issues() {
-        let mut cfg = BenchmarkConfig::default();
-        cfg.num_tokens = 0;
+        let cfg = BenchmarkConfig { num_tokens: 0, ..Default::default() };
         let report = build_benchmark_report(&cfg, 100.0, 200.0);
         let mut cloned = report.clone();
         cloned.validation_issues.push("extra".to_string());
@@ -1159,8 +1140,7 @@ mod tests {
 
     #[test]
     fn report_json_validation_issues_nonempty_for_invalid() {
-        let mut cfg = BenchmarkConfig::default();
-        cfg.num_tokens = 0;
+        let cfg = BenchmarkConfig { num_tokens: 0, ..Default::default() };
         let report = build_benchmark_report(&cfg, 100.0, 200.0);
         let json = serde_json::to_string(&report).unwrap();
         let val: serde_json::Value = serde_json::from_str(&json).unwrap();

@@ -1170,8 +1170,8 @@ ignored = true
         assert_eq!(parsed.get("base_url").unwrap(), "http://localhost:8787");
         assert_eq!(parsed.get("api_key").unwrap(), "vr_standard_abc123");
         // Section headers and their contents are skipped.
-        assert!(parsed.get("section").is_none());
-        assert!(parsed.get("ignored").is_none());
+        assert!(!parsed.contains_key("section"));
+        assert!(!parsed.contains_key("ignored"));
     }
 
     #[test]
@@ -1558,16 +1558,16 @@ after_section = "also no"
 "#;
         let parsed = parse_toml_simple(content);
         assert_eq!(parsed.get("before").unwrap(), "yes");
-        assert!(parsed.get("inside").is_none());
-        assert!(parsed.get("after_section").is_none());
+        assert!(!parsed.contains_key("inside"));
+        assert!(!parsed.contains_key("after_section"));
     }
 
     #[test]
     fn parse_toml_missing_key() {
         let content = r#"base_url = "http://localhost:8787""#;
         let parsed = parse_toml_simple(content);
-        assert!(parsed.get("nonexistent").is_none());
-        assert!(parsed.get("base_url").is_some());
+        assert!(!parsed.contains_key("nonexistent"));
+        assert!(parsed.contains_key("base_url"));
     }
 
     // ─── URL Builder ────────────────────────────────────────────────────────
