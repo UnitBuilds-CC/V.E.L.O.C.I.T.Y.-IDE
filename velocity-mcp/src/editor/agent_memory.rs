@@ -1,4 +1,4 @@
-﻿//! Agent Memory — persistent per-member knowledge store.
+//! Agent Memory — persistent per-member knowledge store.
 //!
 //! Each team member accumulates learnings, patterns, and project knowledge
 //! across sessions. Memories are stored as NDA-encrypted files per member ID.

@@ -2,7 +2,7 @@
 
 use crate::site_map::{SiteMap, VcTriple};
 use crate::wiki::markdown::slugify_module;
-use crate::wiki::{build_wiki, export_markdown, WikiPageKind, WikiPage, render_page_markdown};
+use crate::wiki::{build_wiki, export_markdown, render_page_markdown, WikiPage, WikiPageKind};
 
 fn temp_dir(name: &str) -> std::path::PathBuf {
     let nanos = std::time::SystemTime::now()
@@ -208,7 +208,10 @@ fn wiki_search_finds_pages_by_title() {
 
     // Non-matching query returns nothing.
     let results = model.search("nonexistent_xyz");
-    assert!(results.is_empty(), "non-matching query should return no results");
+    assert!(
+        results.is_empty(),
+        "non-matching query should return no results"
+    );
 
     let _ = std::fs::remove_dir_all(&dir);
 }
@@ -239,7 +242,10 @@ fn wiki_search_ranks_title_matches_higher() {
     // The symbol "merkle_verify" should rank higher than the file page
     // because its title contains the search term (title match bonus).
     assert!(results.len() >= 2, "should find both file and symbol");
-    assert_eq!(results[0].page.title, "merkle_verify", "symbol should rank first (title match)");
+    assert_eq!(
+        results[0].page.title, "merkle_verify",
+        "symbol should rank first (title match)"
+    );
 
     let _ = std::fs::remove_dir_all(&dir);
 }
@@ -383,9 +389,15 @@ fn wiki_model_clone() {
     let mut sm = SiteMap::open(&dir, 0).unwrap();
     let fh = sm.register_string("src/main.rs").unwrap();
     let sh = sm.register_string("main").unwrap();
-    sm.put_file_snapshot("src/main.rs", &[VcTriple {
-        subject_hash: fh, predicate_id: 1, object_hash: sh,
-    }]).unwrap();
+    sm.put_file_snapshot(
+        "src/main.rs",
+        &[VcTriple {
+            subject_hash: fh,
+            predicate_id: 1,
+            object_hash: sh,
+        }],
+    )
+    .unwrap();
     let model = build_wiki(&sm);
     let cloned = model.clone();
     assert_eq!(cloned.file_count(), model.file_count());
@@ -424,17 +436,32 @@ fn wiki_all_pages_ordering() {
     let mut sm = SiteMap::open(&dir, 0).unwrap();
     let fh = sm.register_string("src/lib.rs").unwrap();
     let sh = sm.register_string("my_func").unwrap();
-    sm.put_file_snapshot("src/lib.rs", &[VcTriple {
-        subject_hash: fh, predicate_id: 1, object_hash: sh,
-    }]).unwrap();
+    sm.put_file_snapshot(
+        "src/lib.rs",
+        &[VcTriple {
+            subject_hash: fh,
+            predicate_id: 1,
+            object_hash: sh,
+        }],
+    )
+    .unwrap();
     let model = build_wiki(&sm);
     let all: Vec<_> = model.all_pages().collect();
     // Overview first, then file pages, then symbol pages
     assert_eq!(all[0].kind, WikiPageKind::Overview);
     // Find file and symbol pages
-    let file_idx = all.iter().position(|p| p.kind == WikiPageKind::File).unwrap();
-    let sym_idx = all.iter().position(|p| p.kind == WikiPageKind::Symbol).unwrap();
-    assert!(file_idx < sym_idx, "file pages should come before symbol pages");
+    let file_idx = all
+        .iter()
+        .position(|p| p.kind == WikiPageKind::File)
+        .unwrap();
+    let sym_idx = all
+        .iter()
+        .position(|p| p.kind == WikiPageKind::Symbol)
+        .unwrap();
+    assert!(
+        file_idx < sym_idx,
+        "file pages should come before symbol pages"
+    );
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -456,12 +483,22 @@ fn wiki_validate_non_empty_no_warnings() {
     let mut sm = SiteMap::open(&dir, 0).unwrap();
     let fh = sm.register_string("src/test.rs").unwrap();
     let sh = sm.register_string("test_fn").unwrap();
-    sm.put_file_snapshot("src/test.rs", &[VcTriple {
-        subject_hash: fh, predicate_id: 1, object_hash: sh,
-    }]).unwrap();
+    sm.put_file_snapshot(
+        "src/test.rs",
+        &[VcTriple {
+            subject_hash: fh,
+            predicate_id: 1,
+            object_hash: sh,
+        }],
+    )
+    .unwrap();
     let model = build_wiki(&sm);
     let warnings = model.validate();
-    assert!(warnings.is_empty(), "non-empty wiki should have no warnings, got: {:?}", warnings);
+    assert!(
+        warnings.is_empty(),
+        "non-empty wiki should have no warnings, got: {:?}",
+        warnings
+    );
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -487,15 +524,24 @@ fn wiki_stats_with_content() {
     let mut sm = SiteMap::open(&dir, 0).unwrap();
     let fh = sm.register_string("src/lib.rs").unwrap();
     let sh = sm.register_string("my_fn").unwrap();
-    sm.put_file_snapshot("src/lib.rs", &[VcTriple {
-        subject_hash: fh, predicate_id: 1, object_hash: sh,
-    }]).unwrap();
+    sm.put_file_snapshot(
+        "src/lib.rs",
+        &[VcTriple {
+            subject_hash: fh,
+            predicate_id: 1,
+            object_hash: sh,
+        }],
+    )
+    .unwrap();
     let model = build_wiki(&sm);
     let stats = model.stats();
     assert_eq!(stats.total_pages, 3); // overview + 1 file + 1 symbol
     assert_eq!(stats.file_pages, 1);
     assert_eq!(stats.symbol_pages, 1);
-    assert!(stats.total_relationships > 0, "should have at least one relationship");
+    assert!(
+        stats.total_relationships > 0,
+        "should have at least one relationship"
+    );
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -535,15 +581,24 @@ fn wiki_model_info_with_content() {
     let mut sm = SiteMap::open(&dir, 0).unwrap();
     let fh = sm.register_string("src/lib.rs").unwrap();
     let sh = sm.register_string("helper").unwrap();
-    sm.put_file_snapshot("src/lib.rs", &[VcTriple {
-        subject_hash: fh, predicate_id: 1, object_hash: sh,
-    }]).unwrap();
+    sm.put_file_snapshot(
+        "src/lib.rs",
+        &[VcTriple {
+            subject_hash: fh,
+            predicate_id: 1,
+            object_hash: sh,
+        }],
+    )
+    .unwrap();
     let model = build_wiki(&sm);
     let info = model.info();
     assert_eq!(info.total_pages, 3);
     assert_eq!(info.file_pages, 1);
     assert_eq!(info.symbol_pages, 1);
-    assert!(info.validation_issues.is_empty(), "non-empty wiki should be valid");
+    assert!(
+        info.validation_issues.is_empty(),
+        "non-empty wiki should be valid"
+    );
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -569,14 +624,23 @@ fn wiki_orphan_pages_none_when_connected() {
     let mut sm = SiteMap::open(&dir, 0).unwrap();
     let fh = sm.register_string("src/lib.rs").unwrap();
     let sh = sm.register_string("func").unwrap();
-    sm.put_file_snapshot("src/lib.rs", &[VcTriple {
-        subject_hash: fh, predicate_id: 1, object_hash: sh,
-    }]).unwrap();
+    sm.put_file_snapshot(
+        "src/lib.rs",
+        &[VcTriple {
+            subject_hash: fh,
+            predicate_id: 1,
+            object_hash: sh,
+        }],
+    )
+    .unwrap();
     let model = build_wiki(&sm);
     let orphans = model.orphan_pages();
     // All pages have relationships or are overview
-    assert!(orphans.is_empty(), "connected wiki should have no orphans, got: {:?}",
-        orphans.iter().map(|p| &p.title).collect::<Vec<_>>());
+    assert!(
+        orphans.is_empty(),
+        "connected wiki should have no orphans, got: {:?}",
+        orphans.iter().map(|p| &p.title).collect::<Vec<_>>()
+    );
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -588,11 +652,27 @@ fn wiki_top_symbols_limit() {
     let s1 = sm.register_string("alpha").unwrap();
     let s2 = sm.register_string("beta").unwrap();
     let s3 = sm.register_string("gamma").unwrap();
-    sm.put_file_snapshot("src/lib.rs", &[
-        VcTriple { subject_hash: fh, predicate_id: 1, object_hash: s1 },
-        VcTriple { subject_hash: fh, predicate_id: 1, object_hash: s2 },
-        VcTriple { subject_hash: fh, predicate_id: 1, object_hash: s3 },
-    ]).unwrap();
+    sm.put_file_snapshot(
+        "src/lib.rs",
+        &[
+            VcTriple {
+                subject_hash: fh,
+                predicate_id: 1,
+                object_hash: s1,
+            },
+            VcTriple {
+                subject_hash: fh,
+                predicate_id: 1,
+                object_hash: s2,
+            },
+            VcTriple {
+                subject_hash: fh,
+                predicate_id: 1,
+                object_hash: s3,
+            },
+        ],
+    )
+    .unwrap();
     let model = build_wiki(&sm);
     let top2 = model.top_symbols(2);
     assert_eq!(top2.len(), 2, "should limit to 2");
@@ -607,9 +687,15 @@ fn wiki_top_symbols_zero_limit() {
     let mut sm = SiteMap::open(&dir, 0).unwrap();
     let fh = sm.register_string("src/lib.rs").unwrap();
     let sh = sm.register_string("func").unwrap();
-    sm.put_file_snapshot("src/lib.rs", &[VcTriple {
-        subject_hash: fh, predicate_id: 1, object_hash: sh,
-    }]).unwrap();
+    sm.put_file_snapshot(
+        "src/lib.rs",
+        &[VcTriple {
+            subject_hash: fh,
+            predicate_id: 1,
+            object_hash: sh,
+        }],
+    )
+    .unwrap();
     let model = build_wiki(&sm);
     let top0 = model.top_symbols(0);
     assert!(top0.is_empty(), "limit=0 should return empty");
@@ -636,9 +722,15 @@ fn wiki_relationship_edges_with_content() {
     let func = "my_func";
     let fh = sm.register_string(file).unwrap();
     let sh = sm.register_string(func).unwrap();
-    sm.put_file_snapshot(file, &[VcTriple {
-        subject_hash: fh, predicate_id: 1, object_hash: sh,
-    }]).unwrap();
+    sm.put_file_snapshot(
+        file,
+        &[VcTriple {
+            subject_hash: fh,
+            predicate_id: 1,
+            object_hash: sh,
+        }],
+    )
+    .unwrap();
     let model = build_wiki(&sm);
     let edges = model.relationship_edges();
     assert!(!edges.is_empty(), "should have at least one edge");
@@ -658,9 +750,15 @@ fn wiki_batch_search_deduplicates() {
     let mut sm = SiteMap::open(&dir, 0).unwrap();
     let fh = sm.register_string("lib.rs").unwrap();
     let sh = sm.register_string("merkle_verify").unwrap();
-    sm.put_file_snapshot("lib.rs", &[VcTriple {
-        subject_hash: fh, predicate_id: 1, object_hash: sh,
-    }]).unwrap();
+    sm.put_file_snapshot(
+        "lib.rs",
+        &[VcTriple {
+            subject_hash: fh,
+            predicate_id: 1,
+            object_hash: sh,
+        }],
+    )
+    .unwrap();
     let model = build_wiki(&sm);
     // Search for the same thing with two different queries
     let results = model.batch_search(&["merkle", "verify"]);
@@ -689,9 +787,15 @@ fn wiki_search_by_kind_file_only() {
     let mut sm = SiteMap::open(&dir, 0).unwrap();
     let fh = sm.register_string("src/lib.rs").unwrap();
     let sh = sm.register_string("my_func").unwrap();
-    sm.put_file_snapshot("src/lib.rs", &[VcTriple {
-        subject_hash: fh, predicate_id: 1, object_hash: sh,
-    }]).unwrap();
+    sm.put_file_snapshot(
+        "src/lib.rs",
+        &[VcTriple {
+            subject_hash: fh,
+            predicate_id: 1,
+            object_hash: sh,
+        }],
+    )
+    .unwrap();
     let model = build_wiki(&sm);
     // Search for "lib" but only in File pages
     let results = model.search_by_kind("lib", WikiPageKind::File);
@@ -706,9 +810,15 @@ fn wiki_search_by_kind_symbol_only() {
     let mut sm = SiteMap::open(&dir, 0).unwrap();
     let fh = sm.register_string("src/lib.rs").unwrap();
     let sh = sm.register_string("my_func").unwrap();
-    sm.put_file_snapshot("src/lib.rs", &[VcTriple {
-        subject_hash: fh, predicate_id: 1, object_hash: sh,
-    }]).unwrap();
+    sm.put_file_snapshot(
+        "src/lib.rs",
+        &[VcTriple {
+            subject_hash: fh,
+            predicate_id: 1,
+            object_hash: sh,
+        }],
+    )
+    .unwrap();
     let model = build_wiki(&sm);
     let results = model.search_by_kind("func", WikiPageKind::Symbol);
     assert!(!results.is_empty());
@@ -735,10 +845,22 @@ fn wiki_search_paginated_first_page() {
     let fh = sm.register_string("lib.rs").unwrap();
     let s1 = sm.register_string("alpha_fn").unwrap();
     let s2 = sm.register_string("beta_fn").unwrap();
-    sm.put_file_snapshot("lib.rs", &[
-        VcTriple { subject_hash: fh, predicate_id: 1, object_hash: s1 },
-        VcTriple { subject_hash: fh, predicate_id: 1, object_hash: s2 },
-    ]).unwrap();
+    sm.put_file_snapshot(
+        "lib.rs",
+        &[
+            VcTriple {
+                subject_hash: fh,
+                predicate_id: 1,
+                object_hash: s1,
+            },
+            VcTriple {
+                subject_hash: fh,
+                predicate_id: 1,
+                object_hash: s2,
+            },
+        ],
+    )
+    .unwrap();
     let model = build_wiki(&sm);
     let page = model.search_paginated("fn", 1, 0);
     assert_eq!(page.results.len(), 1);
@@ -756,10 +878,22 @@ fn wiki_search_paginated_last_page() {
     let fh = sm.register_string("lib.rs").unwrap();
     let s1 = sm.register_string("alpha_fn").unwrap();
     let s2 = sm.register_string("beta_fn").unwrap();
-    sm.put_file_snapshot("lib.rs", &[
-        VcTriple { subject_hash: fh, predicate_id: 1, object_hash: s1 },
-        VcTriple { subject_hash: fh, predicate_id: 1, object_hash: s2 },
-    ]).unwrap();
+    sm.put_file_snapshot(
+        "lib.rs",
+        &[
+            VcTriple {
+                subject_hash: fh,
+                predicate_id: 1,
+                object_hash: s1,
+            },
+            VcTriple {
+                subject_hash: fh,
+                predicate_id: 1,
+                object_hash: s2,
+            },
+        ],
+    )
+    .unwrap();
     let model = build_wiki(&sm);
     let page = model.search_paginated("fn", 10, 0);
     assert!(!page.has_more, "all results fit in one page");
@@ -773,9 +907,15 @@ fn wiki_search_paginated_beyond_results() {
     let mut sm = SiteMap::open(&dir, 0).unwrap();
     let fh = sm.register_string("lib.rs").unwrap();
     let sh = sm.register_string("my_func").unwrap();
-    sm.put_file_snapshot("lib.rs", &[VcTriple {
-        subject_hash: fh, predicate_id: 1, object_hash: sh,
-    }]).unwrap();
+    sm.put_file_snapshot(
+        "lib.rs",
+        &[VcTriple {
+            subject_hash: fh,
+            predicate_id: 1,
+            object_hash: sh,
+        }],
+    )
+    .unwrap();
     let model = build_wiki(&sm);
     let page = model.search_paginated("func", 10, 100);
     assert!(page.results.is_empty(), "offset beyond results");
@@ -792,15 +932,24 @@ fn wiki_autocomplete_prefix_match() {
     let mut sm = SiteMap::open(&dir, 0).unwrap();
     let fh = sm.register_string("lib.rs").unwrap();
     let sh = sm.register_string("merkle_verify").unwrap();
-    sm.put_file_snapshot("lib.rs", &[VcTriple {
-        subject_hash: fh, predicate_id: 1, object_hash: sh,
-    }]).unwrap();
+    sm.put_file_snapshot(
+        "lib.rs",
+        &[VcTriple {
+            subject_hash: fh,
+            predicate_id: 1,
+            object_hash: sh,
+        }],
+    )
+    .unwrap();
     let model = build_wiki(&sm);
     let suggestions = model.autocomplete("merkle", 10);
     assert!(!suggestions.is_empty());
     assert!(suggestions.iter().any(|s| s.title == "merkle_verify"));
     // Check match_type
-    let m = suggestions.iter().find(|s| s.title == "merkle_verify").unwrap();
+    let m = suggestions
+        .iter()
+        .find(|s| s.title == "merkle_verify")
+        .unwrap();
     assert_eq!(m.match_type, "prefix");
     let _ = std::fs::remove_dir_all(&dir);
 }
@@ -811,14 +960,23 @@ fn wiki_autocomplete_contains_match() {
     let mut sm = SiteMap::open(&dir, 0).unwrap();
     let fh = sm.register_string("lib.rs").unwrap();
     let sh = sm.register_string("merkle_verify").unwrap();
-    sm.put_file_snapshot("lib.rs", &[VcTriple {
-        subject_hash: fh, predicate_id: 1, object_hash: sh,
-    }]).unwrap();
+    sm.put_file_snapshot(
+        "lib.rs",
+        &[VcTriple {
+            subject_hash: fh,
+            predicate_id: 1,
+            object_hash: sh,
+        }],
+    )
+    .unwrap();
     let model = build_wiki(&sm);
     // "verify" is not a prefix but is contained in "merkle_verify"
     let suggestions = model.autocomplete("verify", 10);
     assert!(!suggestions.is_empty());
-    let m = suggestions.iter().find(|s| s.title == "merkle_verify").unwrap();
+    let m = suggestions
+        .iter()
+        .find(|s| s.title == "merkle_verify")
+        .unwrap();
     assert_eq!(m.match_type, "contains");
     let _ = std::fs::remove_dir_all(&dir);
 }
@@ -841,11 +999,27 @@ fn wiki_autocomplete_limit() {
     let s1 = sm.register_string("alpha_fn").unwrap();
     let s2 = sm.register_string("alpha_test").unwrap();
     let s3 = sm.register_string("alpha_main").unwrap();
-    sm.put_file_snapshot("lib.rs", &[
-        VcTriple { subject_hash: fh, predicate_id: 1, object_hash: s1 },
-        VcTriple { subject_hash: fh, predicate_id: 1, object_hash: s2 },
-        VcTriple { subject_hash: fh, predicate_id: 1, object_hash: s3 },
-    ]).unwrap();
+    sm.put_file_snapshot(
+        "lib.rs",
+        &[
+            VcTriple {
+                subject_hash: fh,
+                predicate_id: 1,
+                object_hash: s1,
+            },
+            VcTriple {
+                subject_hash: fh,
+                predicate_id: 1,
+                object_hash: s2,
+            },
+            VcTriple {
+                subject_hash: fh,
+                predicate_id: 1,
+                object_hash: s3,
+            },
+        ],
+    )
+    .unwrap();
     let model = build_wiki(&sm);
     let suggestions = model.autocomplete("alpha", 2);
     assert_eq!(suggestions.len(), 2, "should limit to 2");
@@ -860,13 +1034,22 @@ fn wiki_fuzzy_search_subsequence() {
     let mut sm = SiteMap::open(&dir, 0).unwrap();
     let fh = sm.register_string("lib.rs").unwrap();
     let sh = sm.register_string("merkle_verify").unwrap();
-    sm.put_file_snapshot("lib.rs", &[VcTriple {
-        subject_hash: fh, predicate_id: 1, object_hash: sh,
-    }]).unwrap();
+    sm.put_file_snapshot(
+        "lib.rs",
+        &[VcTriple {
+            subject_hash: fh,
+            predicate_id: 1,
+            object_hash: sh,
+        }],
+    )
+    .unwrap();
     let model = build_wiki(&sm);
     // "mkv" is a subsequence of "merkle_verify" (m...k...v...)
     let results = model.fuzzy_search("mkv");
-    assert!(!results.is_empty(), "fuzzy search should find subsequence match");
+    assert!(
+        !results.is_empty(),
+        "fuzzy search should find subsequence match"
+    );
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -886,9 +1069,15 @@ fn wiki_fuzzy_search_no_match() {
     let mut sm = SiteMap::open(&dir, 0).unwrap();
     let fh = sm.register_string("lib.rs").unwrap();
     let sh = sm.register_string("abc").unwrap();
-    sm.put_file_snapshot("lib.rs", &[VcTriple {
-        subject_hash: fh, predicate_id: 1, object_hash: sh,
-    }]).unwrap();
+    sm.put_file_snapshot(
+        "lib.rs",
+        &[VcTriple {
+            subject_hash: fh,
+            predicate_id: 1,
+            object_hash: sh,
+        }],
+    )
+    .unwrap();
     let model = build_wiki(&sm);
     // "xyz" is not a subsequence of any page title
     let results = model.fuzzy_search("xyz");
@@ -904,9 +1093,15 @@ fn wiki_search_report_structure() {
     let mut sm = SiteMap::open(&dir, 0).unwrap();
     let fh = sm.register_string("lib.rs").unwrap();
     let sh = sm.register_string("test_func").unwrap();
-    sm.put_file_snapshot("lib.rs", &[VcTriple {
-        subject_hash: fh, predicate_id: 1, object_hash: sh,
-    }]).unwrap();
+    sm.put_file_snapshot(
+        "lib.rs",
+        &[VcTriple {
+            subject_hash: fh,
+            predicate_id: 1,
+            object_hash: sh,
+        }],
+    )
+    .unwrap();
     let model = build_wiki(&sm);
     let report = model.search_report("test");
     assert_eq!(report.query, "test");
@@ -1012,9 +1207,15 @@ fn render_page_markdown_with_relationships() {
     let mut sm = SiteMap::open(&dir, 0).unwrap();
     let fh = sm.register_string("src/lib.rs").unwrap();
     let sh = sm.register_string("func_a").unwrap();
-    sm.put_file_snapshot("src/lib.rs", &[VcTriple {
-        subject_hash: fh, predicate_id: 1, object_hash: sh,
-    }]).unwrap();
+    sm.put_file_snapshot(
+        "src/lib.rs",
+        &[VcTriple {
+            subject_hash: fh,
+            predicate_id: 1,
+            object_hash: sh,
+        }],
+    )
+    .unwrap();
     let model = build_wiki(&sm);
     let page = model.find_by_title("src/lib.rs").unwrap().clone();
     let md = render_page_markdown(&page, &model);
@@ -1040,12 +1241,24 @@ fn wiki_multiple_files_and_symbols() {
     let s1h = sm.register_string(s1).unwrap();
     let s2h = sm.register_string(s2).unwrap();
 
-    sm.put_file_snapshot(f1, &[VcTriple {
-        subject_hash: f1h, predicate_id: 1, object_hash: s1h,
-    }]).unwrap();
-    sm.put_file_snapshot(f2, &[VcTriple {
-        subject_hash: f2h, predicate_id: 1, object_hash: s2h,
-    }]).unwrap();
+    sm.put_file_snapshot(
+        f1,
+        &[VcTriple {
+            subject_hash: f1h,
+            predicate_id: 1,
+            object_hash: s1h,
+        }],
+    )
+    .unwrap();
+    sm.put_file_snapshot(
+        f2,
+        &[VcTriple {
+            subject_hash: f2h,
+            predicate_id: 1,
+            object_hash: s2h,
+        }],
+    )
+    .unwrap();
 
     let model = build_wiki(&sm);
     assert_eq!(model.file_count(), 2);
@@ -1053,7 +1266,11 @@ fn wiki_multiple_files_and_symbols() {
     assert_eq!(model.total_pages(), 5); // overview + 2 files + 2 symbols
 
     let warnings = model.validate();
-    assert!(warnings.is_empty(), "multi-file wiki should be valid: {:?}", warnings);
+    assert!(
+        warnings.is_empty(),
+        "multi-file wiki should be valid: {:?}",
+        warnings
+    );
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -1063,9 +1280,15 @@ fn wiki_files_referencing_nonexistent_symbol() {
     let mut sm = SiteMap::open(&dir, 0).unwrap();
     let fh = sm.register_string("src/lib.rs").unwrap();
     let sh = sm.register_string("func").unwrap();
-    sm.put_file_snapshot("src/lib.rs", &[VcTriple {
-        subject_hash: fh, predicate_id: 1, object_hash: sh,
-    }]).unwrap();
+    sm.put_file_snapshot(
+        "src/lib.rs",
+        &[VcTriple {
+            subject_hash: fh,
+            predicate_id: 1,
+            object_hash: sh,
+        }],
+    )
+    .unwrap();
     let model = build_wiki(&sm);
     let files = model.files_referencing("nonexistent_symbol");
     assert!(files.is_empty());
@@ -1078,9 +1301,15 @@ fn wiki_symbols_defined_by_nonexistent_file() {
     let mut sm = SiteMap::open(&dir, 0).unwrap();
     let fh = sm.register_string("src/lib.rs").unwrap();
     let sh = sm.register_string("func").unwrap();
-    sm.put_file_snapshot("src/lib.rs", &[VcTriple {
-        subject_hash: fh, predicate_id: 1, object_hash: sh,
-    }]).unwrap();
+    sm.put_file_snapshot(
+        "src/lib.rs",
+        &[VcTriple {
+            subject_hash: fh,
+            predicate_id: 1,
+            object_hash: sh,
+        }],
+    )
+    .unwrap();
     let model = build_wiki(&sm);
     let syms = model.symbols_defined_by("nonexistent.rs");
     assert!(syms.is_empty());

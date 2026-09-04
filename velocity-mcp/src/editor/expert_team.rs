@@ -1,4 +1,4 @@
-﻿use crate::agent::nda::{decode_nda_text, encode_nda_text};
+use crate::agent::nda::{decode_nda_text, encode_nda_text};
 use crate::agent::AiProvider;
 use serde::{Deserialize, Serialize};
 use std::fs;

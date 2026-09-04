@@ -2,10 +2,10 @@
 //!
 //! Extracted verbatim from `tier3_panels.rs` (no logic changes).
 
+use super::struct_def::VelocityApp;
+use crate::editor::theme::FONT_CAPTION;
 use eframe::egui;
 use egui::RichText;
-use super::struct_def::VelocityApp;
-use crate::editor::theme::{FONT_CAPTION};
 
 impl VelocityApp {
     /// Pre-index the currently open editor files into the speculative cache

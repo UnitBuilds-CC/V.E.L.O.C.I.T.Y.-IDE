@@ -1,8 +1,8 @@
-﻿//! Builds a [`WikiModel`] from a [`SiteMap`].
+//! Builds a [`WikiModel`] from a [`SiteMap`].
 
+use serde::Serialize;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::time::{SystemTime, UNIX_EPOCH};
-use serde::Serialize;
 
 use crate::site_map::SiteMap;
 
@@ -103,7 +103,10 @@ impl WikiModel {
             .filter_map(|page| {
                 let score = compute_relevance(page, &query_terms);
                 if score > 0 {
-                    Some(WikiSearchResult { page: page.clone(), score })
+                    Some(WikiSearchResult {
+                        page: page.clone(),
+                        score,
+                    })
                 } else {
                     None
                 }
@@ -112,7 +115,9 @@ impl WikiModel {
 
         // Sort by score descending, then by title alphabetically.
         results.sort_by(|a, b| {
-            b.score.cmp(&a.score).then_with(|| a.page.title.cmp(&b.page.title))
+            b.score
+                .cmp(&a.score)
+                .then_with(|| a.page.title.cmp(&b.page.title))
         });
         results
     }
@@ -121,9 +126,7 @@ impl WikiModel {
     pub fn symbols_defined_by(&self, file_title: &str) -> Vec<&WikiPage> {
         self.symbol_pages
             .iter()
-            .filter(|sym| {
-                sym.called_by.iter().any(|caller| caller == file_title)
-            })
+            .filter(|sym| sym.called_by.iter().any(|caller| caller == file_title))
             .collect()
     }
 
@@ -132,9 +135,9 @@ impl WikiModel {
         self.file_pages
             .iter()
             .filter(|file| {
-                file.relationships.iter().any(|(_, targets)| {
-                    targets.iter().any(|t| t == symbol_title)
-                })
+                file.relationships
+                    .iter()
+                    .any(|(_, targets)| targets.iter().any(|t| t == symbol_title))
             })
             .collect()
     }
@@ -257,7 +260,9 @@ impl WikiModel {
         }
 
         merged.sort_by(|a, b| {
-            b.score.cmp(&a.score).then_with(|| a.page.title.cmp(&b.page.title))
+            b.score
+                .cmp(&a.score)
+                .then_with(|| a.page.title.cmp(&b.page.title))
         });
         merged
     }
@@ -281,7 +286,10 @@ impl WikiModel {
             .filter_map(|page| {
                 let score = compute_relevance(page, &query_terms);
                 if score > 0 {
-                    Some(WikiSearchResult { page: page.clone(), score })
+                    Some(WikiSearchResult {
+                        page: page.clone(),
+                        score,
+                    })
                 } else {
                     None
                 }
@@ -289,20 +297,24 @@ impl WikiModel {
             .collect();
 
         results.sort_by(|a, b| {
-            b.score.cmp(&a.score).then_with(|| a.page.title.cmp(&b.page.title))
+            b.score
+                .cmp(&a.score)
+                .then_with(|| a.page.title.cmp(&b.page.title))
         });
         results
     }
 
     /// Paginated search with limit and offset.
-    pub fn search_paginated(&self, query: &str, limit: usize, offset: usize) -> PaginatedSearchResult {
+    pub fn search_paginated(
+        &self,
+        query: &str,
+        limit: usize,
+        offset: usize,
+    ) -> PaginatedSearchResult {
         let all_results = self.search(query);
         let total = all_results.len();
-        let page_results: Vec<WikiSearchResult> = all_results
-            .into_iter()
-            .skip(offset)
-            .take(limit)
-            .collect();
+        let page_results: Vec<WikiSearchResult> =
+            all_results.into_iter().skip(offset).take(limit).collect();
 
         PaginatedSearchResult {
             results: page_results,
@@ -342,9 +354,7 @@ impl WikiModel {
         }
 
         // Sort: prefix matches first, then contains; within each group alphabetical.
-        suggestions.sort_by(|a, b| {
-            (&a.match_type, &a.title).cmp(&(&b.match_type, &b.title))
-        });
+        suggestions.sort_by(|a, b| (&a.match_type, &a.title).cmp(&(&b.match_type, &b.title)));
         suggestions.truncate(limit);
         suggestions
     }
@@ -370,7 +380,10 @@ impl WikiModel {
                     } else {
                         (query_chars.len() as u32) * 10 / (title_chars.len() as u32)
                     };
-                    Some(WikiSearchResult { page: page.clone(), score: score.max(1) })
+                    Some(WikiSearchResult {
+                        page: page.clone(),
+                        score: score.max(1),
+                    })
                 } else {
                     None
                 }
@@ -378,7 +391,9 @@ impl WikiModel {
             .collect();
 
         results.sort_by(|a, b| {
-            b.score.cmp(&a.score).then_with(|| a.page.title.cmp(&b.page.title))
+            b.score
+                .cmp(&a.score)
+                .then_with(|| a.page.title.cmp(&b.page.title))
         });
         results
     }
@@ -392,7 +407,9 @@ impl WikiModel {
         let kind_counts = {
             let mut counts = std::collections::HashMap::new();
             for r in &results {
-                *counts.entry(r.page.kind.label().to_string()).or_insert(0usize) += 1;
+                *counts
+                    .entry(r.page.kind.label().to_string())
+                    .or_insert(0usize) += 1;
             }
             let mut v: Vec<(String, usize)> = counts.into_iter().collect();
             v.sort_by(|a, b| b.1.cmp(&a.1));
@@ -413,7 +430,11 @@ impl WikiModel {
             top_score,
             average_score: (avg_score * 100.0).round() / 100.0,
             results_by_kind: kind_counts,
-            top_results: results.iter().take(5).map(|r| r.page.title.clone()).collect(),
+            top_results: results
+                .iter()
+                .take(5)
+                .map(|r| r.page.title.clone())
+                .collect(),
         }
     }
 
@@ -1366,7 +1387,10 @@ mod inline_tests {
         let model = make_test_model();
         assert!(model.find_by_title("main_fn").is_some());
         assert!(model.find_by_title("nonexistent").is_none());
-        assert_eq!(model.find_by_title("main_fn").unwrap().kind, WikiPageKind::Symbol);
+        assert_eq!(
+            model.find_by_title("main_fn").unwrap().kind,
+            WikiPageKind::Symbol
+        );
     }
 
     #[test]
@@ -1455,7 +1479,9 @@ mod inline_tests {
             symbol_pages: vec![],
         };
         let warnings = empty.validate();
-        assert!(warnings.iter().any(|w| w.contains("no file or symbol pages")));
+        assert!(warnings
+            .iter()
+            .any(|w| w.contains("no file or symbol pages")));
     }
 
     #[test]
@@ -1549,7 +1575,10 @@ mod inline_tests {
         // Both queries match "main_fn" — should appear only once
         let results = model.batch_search(&["main_fn", "main"]);
         let main_fn_count = results.iter().filter(|r| r.page.title == "main_fn").count();
-        assert_eq!(main_fn_count, 1, "main_fn should appear only once after dedup");
+        assert_eq!(
+            main_fn_count, 1,
+            "main_fn should appear only once after dedup"
+        );
     }
 
     #[test]
@@ -1576,7 +1605,10 @@ mod inline_tests {
         let model = make_test_model();
         // "fn" is contained in "main_fn", "helper_fn", "unused_fn"
         let suggestions = model.autocomplete("fn", 10);
-        let contains_matches: Vec<_> = suggestions.iter().filter(|s| s.match_type == "contains").collect();
+        let contains_matches: Vec<_> = suggestions
+            .iter()
+            .filter(|s| s.match_type == "contains")
+            .collect();
         // "fn" doesn't start with "fn" for any title, but titles contain "fn"
         assert!(!contains_matches.is_empty());
     }
@@ -1656,7 +1688,10 @@ mod inline_tests {
     fn wiki_relationship_edges_multiple() {
         let mut model = make_test_model();
         model.file_pages[0].relationships = vec![
-            ("Defines".to_string(), vec!["a".to_string(), "b".to_string()]),
+            (
+                "Defines".to_string(),
+                vec!["a".to_string(), "b".to_string()],
+            ),
             ("Calls".to_string(), vec!["c".to_string()]),
         ];
         let edges = model.relationship_edges();

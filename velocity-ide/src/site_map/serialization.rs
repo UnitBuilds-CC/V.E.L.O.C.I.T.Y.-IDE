@@ -30,20 +30,20 @@ pub struct BatchSerializationReport {
 /// Compute the depth of an NDA node tree.
 pub fn node_depth(node: &NdaNode) -> usize {
     match node {
-        NdaNode::Scope { children } => {
-            1 + children.iter().map(node_depth).max().unwrap_or(0)
-        }
-        NdaNode::Loop { body, .. } => {
-            1 + body.iter().map(node_depth).max().unwrap_or(0)
-        }
+        NdaNode::Scope { children } => 1 + children.iter().map(node_depth).max().unwrap_or(0),
+        NdaNode::Loop { body, .. } => 1 + body.iter().map(node_depth).max().unwrap_or(0),
         NdaNode::While { cond, body } => {
-            1 + node_depth(cond)
-                .max(body.iter().map(node_depth).max().unwrap_or(0))
+            1 + node_depth(cond).max(body.iter().map(node_depth).max().unwrap_or(0))
         }
-        NdaNode::If { cond, then_body, else_body } => {
+        NdaNode::If {
+            cond,
+            then_body,
+            else_body,
+        } => {
             let cond_d = node_depth(cond);
             let then_d = then_body.iter().map(node_depth).max().unwrap_or(0);
-            let else_d = else_body.as_ref()
+            let else_d = else_body
+                .as_ref()
                 .map(|eb| eb.iter().map(node_depth).max().unwrap_or(0))
                 .unwrap_or(0);
             1 + cond_d.max(then_d).max(else_d)
@@ -52,9 +52,10 @@ pub fn node_depth(node: &NdaNode) -> usize {
         | NdaNode::Add { lhs, rhs }
         | NdaNode::Dot { lhs, rhs }
         | NdaNode::Math { lhs, rhs, .. }
-        | NdaNode::Gemv { matrix: lhs, vector: rhs } => {
-            1 + node_depth(lhs).max(node_depth(rhs))
-        }
+        | NdaNode::Gemv {
+            matrix: lhs,
+            vector: rhs,
+        } => 1 + node_depth(lhs).max(node_depth(rhs)),
         NdaNode::Bitwise { lhs, rhs, .. } => {
             let rhs_d = rhs.as_ref().map(|r| node_depth(r)).unwrap_or(0);
             1 + node_depth(lhs).max(rhs_d)
@@ -65,14 +66,10 @@ pub fn node_depth(node: &NdaNode) -> usize {
         | NdaNode::Free { addr: operand }
         | NdaNode::Alloc { size: operand }
         | NdaNode::Cast { operand, .. }
-        | NdaNode::MathFunc { operand, .. } => {
-            1 + node_depth(operand)
-        }
+        | NdaNode::MathFunc { operand, .. } => 1 + node_depth(operand),
         NdaNode::Let { init, .. }
         | NdaNode::Store { value: init, .. }
-        | NdaNode::Poke { value: init, .. } => {
-            1 + node_depth(init)
-        }
+        | NdaNode::Poke { value: init, .. } => 1 + node_depth(init),
         NdaNode::Peek { .. }
         | NdaNode::Call { .. }
         | NdaNode::Int { .. }
@@ -84,32 +81,30 @@ pub fn node_depth(node: &NdaNode) -> usize {
         | NdaNode::Spawn { .. }
         | NdaNode::RegInt { .. }
         | NdaNode::Triple { .. } => 1,
-        NdaNode::Syscall { args, .. }
-        | NdaNode::GpuDispatch { args, .. } => {
+        NdaNode::Syscall { args, .. } | NdaNode::GpuDispatch { args, .. } => {
             1 + args.iter().map(node_depth).max().unwrap_or(0)
         }
-        NdaNode::Atomic { addr, val, .. } => {
-            1 + node_depth(addr).max(node_depth(val))
-        }
+        NdaNode::Atomic { addr, val, .. } => 1 + node_depth(addr).max(node_depth(val)),
     }
 }
 
 /// Count the total number of nodes in an NDA node tree.
 pub fn node_count(node: &NdaNode) -> usize {
     match node {
-        NdaNode::Scope { children } => {
-            1 + children.iter().map(node_count).sum::<usize>()
-        }
-        NdaNode::Loop { body, .. } => {
-            1 + body.iter().map(node_count).sum::<usize>()
-        }
+        NdaNode::Scope { children } => 1 + children.iter().map(node_count).sum::<usize>(),
+        NdaNode::Loop { body, .. } => 1 + body.iter().map(node_count).sum::<usize>(),
         NdaNode::While { cond, body } => {
             1 + node_count(cond) + body.iter().map(node_count).sum::<usize>()
         }
-        NdaNode::If { cond, then_body, else_body } => {
+        NdaNode::If {
+            cond,
+            then_body,
+            else_body,
+        } => {
             1 + node_count(cond)
                 + then_body.iter().map(node_count).sum::<usize>()
-                + else_body.as_ref()
+                + else_body
+                    .as_ref()
                     .map(|eb| eb.iter().map(node_count).sum::<usize>())
                     .unwrap_or(0)
         }
@@ -117,12 +112,12 @@ pub fn node_count(node: &NdaNode) -> usize {
         | NdaNode::Add { lhs, rhs }
         | NdaNode::Dot { lhs, rhs }
         | NdaNode::Math { lhs, rhs, .. }
-        | NdaNode::Gemv { matrix: lhs, vector: rhs } => {
-            1 + node_count(lhs) + node_count(rhs)
-        }
+        | NdaNode::Gemv {
+            matrix: lhs,
+            vector: rhs,
+        } => 1 + node_count(lhs) + node_count(rhs),
         NdaNode::Bitwise { lhs, rhs, .. } => {
-            1 + node_count(lhs)
-                + rhs.as_ref().map(|r| node_count(r)).unwrap_or(0)
+            1 + node_count(lhs) + rhs.as_ref().map(|r| node_count(r)).unwrap_or(0)
         }
         NdaNode::VecOp { operand, .. }
         | NdaNode::Print { source: operand }
@@ -130,22 +125,15 @@ pub fn node_count(node: &NdaNode) -> usize {
         | NdaNode::Free { addr: operand }
         | NdaNode::Alloc { size: operand }
         | NdaNode::Cast { operand, .. }
-        | NdaNode::MathFunc { operand, .. } => {
-            1 + node_count(operand)
-        }
+        | NdaNode::MathFunc { operand, .. } => 1 + node_count(operand),
         NdaNode::Let { init, .. }
         | NdaNode::Store { value: init, .. }
-        | NdaNode::Poke { value: init, .. } => {
-            1 + node_count(init)
-        }
+        | NdaNode::Poke { value: init, .. } => 1 + node_count(init),
         NdaNode::Peek { addr } => 1 + node_count(addr),
-        NdaNode::Syscall { args, .. }
-        | NdaNode::GpuDispatch { args, .. } => {
+        NdaNode::Syscall { args, .. } | NdaNode::GpuDispatch { args, .. } => {
             1 + args.iter().map(node_count).sum::<usize>()
         }
-        NdaNode::Atomic { addr, val, .. } => {
-            1 + node_count(addr) + node_count(val)
-        }
+        NdaNode::Atomic { addr, val, .. } => 1 + node_count(addr) + node_count(val),
         _ => 1,
     }
 }
@@ -1076,7 +1064,13 @@ mod tests {
         };
         let result = roundtrip(&node);
         match result {
-            NdaNode::Matrix { rows, cols, scale, sign, extra } => {
+            NdaNode::Matrix {
+                rows,
+                cols,
+                scale,
+                sign,
+                extra,
+            } => {
                 assert_eq!(rows, 4);
                 assert_eq!(cols, 8);
                 assert_eq!(scale, 2);
@@ -1148,7 +1142,11 @@ mod tests {
         };
         let result = roundtrip(&node);
         match result {
-            NdaNode::Triple { subject_hash, predicate_id, object_hash } => {
+            NdaNode::Triple {
+                subject_hash,
+                predicate_id,
+                object_hash,
+            } => {
                 assert_eq!(subject_hash, 0x1234);
                 assert_eq!(predicate_id, 5);
                 assert_eq!(object_hash, 0x5678);
@@ -1202,7 +1200,10 @@ mod tests {
         };
         let result = roundtrip(&node);
         match result {
-            NdaNode::RegInt { vector, handler_hash } => {
+            NdaNode::RegInt {
+                vector,
+                handler_hash,
+            } => {
                 assert_eq!(vector, 3);
                 assert_eq!(handler_hash, 0xBEEF);
             }
@@ -1222,11 +1223,9 @@ mod tests {
     #[test]
     fn node_depth_nested() {
         let node = NdaNode::Scope {
-            children: vec![
-                NdaNode::Scope {
-                    children: vec![NdaNode::Int { value: 1 }],
-                },
-            ],
+            children: vec![NdaNode::Scope {
+                children: vec![NdaNode::Int { value: 1 }],
+            }],
         };
         assert_eq!(node_depth(&node), 3);
     }
@@ -1259,10 +1258,7 @@ mod tests {
             node_type_name(&NdaNode::Scope { children: vec![] }),
             "Scope"
         );
-        assert_eq!(
-            node_type_name(&NdaNode::Call { target: 0 }),
-            "Call"
-        );
+        assert_eq!(node_type_name(&NdaNode::Call { target: 0 }), "Call");
     }
 
     // ─── Validation tests ─────────────────────────────────────────────────
@@ -1472,7 +1468,10 @@ mod tests {
 
     #[test]
     fn node_depth_syscall_no_args() {
-        let node = NdaNode::Syscall { num: 0, args: vec![] };
+        let node = NdaNode::Syscall {
+            num: 0,
+            args: vec![],
+        };
         assert_eq!(node_depth(&node), 1);
     }
 
@@ -1488,14 +1487,48 @@ mod tests {
 
     #[test]
     fn node_depth_all_leaf_nodes() {
-        assert_eq!(node_depth(&NdaNode::Matrix { rows: 1, cols: 1, scale: 0, sign: vec![], extra: vec![] }), 1);
-        assert_eq!(node_depth(&NdaNode::Norm { size: 1, weight: vec![], bias: vec![] }), 1);
+        assert_eq!(
+            node_depth(&NdaNode::Matrix {
+                rows: 1,
+                cols: 1,
+                scale: 0,
+                sign: vec![],
+                extra: vec![]
+            }),
+            1
+        );
+        assert_eq!(
+            node_depth(&NdaNode::Norm {
+                size: 1,
+                weight: vec![],
+                bias: vec![]
+            }),
+            1
+        );
         assert_eq!(node_depth(&NdaNode::Load { name_hash: 0 }), 1);
         assert_eq!(node_depth(&NdaNode::Spawn { scope_hash: 0 }), 1);
-        assert_eq!(node_depth(&NdaNode::RegInt { vector: 0, handler_hash: 0 }), 1);
-        assert_eq!(node_depth(&NdaNode::Triple { subject_hash: 0, predicate_id: 0, object_hash: 0 }), 1);
+        assert_eq!(
+            node_depth(&NdaNode::RegInt {
+                vector: 0,
+                handler_hash: 0
+            }),
+            1
+        );
+        assert_eq!(
+            node_depth(&NdaNode::Triple {
+                subject_hash: 0,
+                predicate_id: 0,
+                object_hash: 0
+            }),
+            1
+        );
         assert_eq!(node_depth(&NdaNode::Float { value: 0.0 }), 1);
-        assert_eq!(node_depth(&NdaNode::Peek { addr: Box::new(NdaNode::Int { value: 0 }) }), 1);
+        assert_eq!(
+            node_depth(&NdaNode::Peek {
+                addr: Box::new(NdaNode::Int { value: 0 })
+            }),
+            1
+        );
     }
 
     // ── node_count: more structures ──────────────────────────────────────
@@ -1549,43 +1582,216 @@ mod tests {
     #[test]
     fn node_type_name_all_variants() {
         let cases: Vec<(&str, NdaNode)> = vec![
-            ("Matrix", NdaNode::Matrix { rows: 0, cols: 0, scale: 0, sign: vec![], extra: vec![] }),
-            ("Norm", NdaNode::Norm { size: 0, weight: vec![], bias: vec![] }),
+            (
+                "Matrix",
+                NdaNode::Matrix {
+                    rows: 0,
+                    cols: 0,
+                    scale: 0,
+                    sign: vec![],
+                    extra: vec![],
+                },
+            ),
+            (
+                "Norm",
+                NdaNode::Norm {
+                    size: 0,
+                    weight: vec![],
+                    bias: vec![],
+                },
+            ),
             ("Call", NdaNode::Call { target: 0 }),
             ("Int", NdaNode::Int { value: 0 }),
             ("Float", NdaNode::Float { value: 0.0 }),
             ("Scope", NdaNode::Scope { children: vec![] }),
-            ("Loop", NdaNode::Loop { count: 0, body: vec![] }),
-            ("While", NdaNode::While { cond: Box::new(NdaNode::Break), body: vec![] }),
-            ("If", NdaNode::If { cond: Box::new(NdaNode::Break), then_body: vec![], else_body: None }),
-            ("Compare", NdaNode::Compare { op: CmpOp::Eq, lhs: Box::new(NdaNode::Break), rhs: Box::new(NdaNode::Break) }),
-            ("Let", NdaNode::Let { name_hash: 0, init: Box::new(NdaNode::Break) }),
+            (
+                "Loop",
+                NdaNode::Loop {
+                    count: 0,
+                    body: vec![],
+                },
+            ),
+            (
+                "While",
+                NdaNode::While {
+                    cond: Box::new(NdaNode::Break),
+                    body: vec![],
+                },
+            ),
+            (
+                "If",
+                NdaNode::If {
+                    cond: Box::new(NdaNode::Break),
+                    then_body: vec![],
+                    else_body: None,
+                },
+            ),
+            (
+                "Compare",
+                NdaNode::Compare {
+                    op: CmpOp::Eq,
+                    lhs: Box::new(NdaNode::Break),
+                    rhs: Box::new(NdaNode::Break),
+                },
+            ),
+            (
+                "Let",
+                NdaNode::Let {
+                    name_hash: 0,
+                    init: Box::new(NdaNode::Break),
+                },
+            ),
             ("Load", NdaNode::Load { name_hash: 0 }),
-            ("Store", NdaNode::Store { name_hash: 0, value: Box::new(NdaNode::Break) }),
-            ("Add", NdaNode::Add { lhs: Box::new(NdaNode::Break), rhs: Box::new(NdaNode::Break) }),
-            ("VecOp", NdaNode::VecOp { op: VecOpKind::SiLU, operand: Box::new(NdaNode::Break) }),
-            ("Print", NdaNode::Print { source: Box::new(NdaNode::Break) }),
-            ("Return", NdaNode::Return { value: Box::new(NdaNode::Break) }),
+            (
+                "Store",
+                NdaNode::Store {
+                    name_hash: 0,
+                    value: Box::new(NdaNode::Break),
+                },
+            ),
+            (
+                "Add",
+                NdaNode::Add {
+                    lhs: Box::new(NdaNode::Break),
+                    rhs: Box::new(NdaNode::Break),
+                },
+            ),
+            (
+                "VecOp",
+                NdaNode::VecOp {
+                    op: VecOpKind::SiLU,
+                    operand: Box::new(NdaNode::Break),
+                },
+            ),
+            (
+                "Print",
+                NdaNode::Print {
+                    source: Box::new(NdaNode::Break),
+                },
+            ),
+            (
+                "Return",
+                NdaNode::Return {
+                    value: Box::new(NdaNode::Break),
+                },
+            ),
             ("Break", NdaNode::Break),
-            ("Bitwise", NdaNode::Bitwise { op: BitwiseOp::And, lhs: Box::new(NdaNode::Break), rhs: None }),
-            ("Math", NdaNode::Math { op: crate::site_map::verifier::MathOp::Add, lhs: Box::new(NdaNode::Break), rhs: Box::new(NdaNode::Break) }),
-            ("MathFunc", NdaNode::MathFunc { func: crate::site_map::verifier::MathFuncKind::Sqrt, operand: Box::new(NdaNode::Break) }),
-            ("Peek", NdaNode::Peek { addr: Box::new(NdaNode::Break) }),
-            ("Poke", NdaNode::Poke { addr: Box::new(NdaNode::Break), value: Box::new(NdaNode::Break) }),
-            ("Gemv", NdaNode::Gemv { matrix: Box::new(NdaNode::Break), vector: Box::new(NdaNode::Break) }),
-            ("Dot", NdaNode::Dot { lhs: Box::new(NdaNode::Break), rhs: Box::new(NdaNode::Break) }),
-            ("Syscall", NdaNode::Syscall { num: 0, args: vec![] }),
+            (
+                "Bitwise",
+                NdaNode::Bitwise {
+                    op: BitwiseOp::And,
+                    lhs: Box::new(NdaNode::Break),
+                    rhs: None,
+                },
+            ),
+            (
+                "Math",
+                NdaNode::Math {
+                    op: crate::site_map::verifier::MathOp::Add,
+                    lhs: Box::new(NdaNode::Break),
+                    rhs: Box::new(NdaNode::Break),
+                },
+            ),
+            (
+                "MathFunc",
+                NdaNode::MathFunc {
+                    func: crate::site_map::verifier::MathFuncKind::Sqrt,
+                    operand: Box::new(NdaNode::Break),
+                },
+            ),
+            (
+                "Peek",
+                NdaNode::Peek {
+                    addr: Box::new(NdaNode::Break),
+                },
+            ),
+            (
+                "Poke",
+                NdaNode::Poke {
+                    addr: Box::new(NdaNode::Break),
+                    value: Box::new(NdaNode::Break),
+                },
+            ),
+            (
+                "Gemv",
+                NdaNode::Gemv {
+                    matrix: Box::new(NdaNode::Break),
+                    vector: Box::new(NdaNode::Break),
+                },
+            ),
+            (
+                "Dot",
+                NdaNode::Dot {
+                    lhs: Box::new(NdaNode::Break),
+                    rhs: Box::new(NdaNode::Break),
+                },
+            ),
+            (
+                "Syscall",
+                NdaNode::Syscall {
+                    num: 0,
+                    args: vec![],
+                },
+            ),
             ("Spawn", NdaNode::Spawn { scope_hash: 0 }),
-            ("Atomic", NdaNode::Atomic { op: AtomicOp::Cas, addr: Box::new(NdaNode::Break), val: Box::new(NdaNode::Break) }),
-            ("Alloc", NdaNode::Alloc { size: Box::new(NdaNode::Break) }),
-            ("Free", NdaNode::Free { addr: Box::new(NdaNode::Break) }),
-            ("RegInt", NdaNode::RegInt { vector: 0, handler_hash: 0 }),
-            ("Cast", NdaNode::Cast { from_type: TypeKind::Int, to_type: TypeKind::Float, operand: Box::new(NdaNode::Break) }),
-            ("GpuDispatch", NdaNode::GpuDispatch { shader_hash: 0, args: vec![] }),
-            ("Triple", NdaNode::Triple { subject_hash: 0, predicate_id: 0, object_hash: 0 }),
+            (
+                "Atomic",
+                NdaNode::Atomic {
+                    op: AtomicOp::Cas,
+                    addr: Box::new(NdaNode::Break),
+                    val: Box::new(NdaNode::Break),
+                },
+            ),
+            (
+                "Alloc",
+                NdaNode::Alloc {
+                    size: Box::new(NdaNode::Break),
+                },
+            ),
+            (
+                "Free",
+                NdaNode::Free {
+                    addr: Box::new(NdaNode::Break),
+                },
+            ),
+            (
+                "RegInt",
+                NdaNode::RegInt {
+                    vector: 0,
+                    handler_hash: 0,
+                },
+            ),
+            (
+                "Cast",
+                NdaNode::Cast {
+                    from_type: TypeKind::Int,
+                    to_type: TypeKind::Float,
+                    operand: Box::new(NdaNode::Break),
+                },
+            ),
+            (
+                "GpuDispatch",
+                NdaNode::GpuDispatch {
+                    shader_hash: 0,
+                    args: vec![],
+                },
+            ),
+            (
+                "Triple",
+                NdaNode::Triple {
+                    subject_hash: 0,
+                    predicate_id: 0,
+                    object_hash: 0,
+                },
+            ),
         ];
         for (expected_name, node) in cases {
-            assert_eq!(node_type_name(&node), expected_name, "wrong name for {:?}", node);
+            assert_eq!(
+                node_type_name(&node),
+                expected_name,
+                "wrong name for {:?}",
+                node
+            );
         }
     }
 
@@ -1727,7 +1933,10 @@ mod tests {
 
     #[test]
     fn roundtrip_loop_empty_body() {
-        let node = NdaNode::Loop { count: 0, body: vec![] };
+        let node = NdaNode::Loop {
+            count: 0,
+            body: vec![],
+        };
         let result = roundtrip(&node);
         match result {
             NdaNode::Loop { count, body } => {
@@ -1763,7 +1972,11 @@ mod tests {
         };
         let result = roundtrip(&node);
         match result {
-            NdaNode::If { cond, then_body, else_body } => {
+            NdaNode::If {
+                cond,
+                then_body,
+                else_body,
+            } => {
                 assert!(matches!(*cond, NdaNode::Int { value: 1 }));
                 assert_eq!(then_body.len(), 1);
                 assert!(else_body.is_none());
@@ -1781,7 +1994,11 @@ mod tests {
         };
         let result = roundtrip(&node);
         match result {
-            NdaNode::If { cond, then_body, else_body } => {
+            NdaNode::If {
+                cond,
+                then_body,
+                else_body,
+            } => {
                 assert!(matches!(*cond, NdaNode::Int { value: 1 }));
                 assert_eq!(then_body.len(), 1);
                 let eb = else_body.unwrap();
@@ -2019,7 +2236,11 @@ mod tests {
         };
         let result = roundtrip(&node);
         match result {
-            NdaNode::Cast { from_type, to_type, operand } => {
+            NdaNode::Cast {
+                from_type,
+                to_type,
+                operand,
+            } => {
                 assert_eq!(from_type, TypeKind::Int);
                 assert_eq!(to_type, TypeKind::Float);
                 assert!(matches!(*operand, NdaNode::Int { value: 42 }));
@@ -2198,7 +2419,10 @@ mod tests {
 
     #[test]
     fn serialise_regint_byte_size() {
-        let node = NdaNode::RegInt { vector: 1, handler_hash: 0xFF };
+        let node = NdaNode::RegInt {
+            vector: 1,
+            handler_hash: 0xFF,
+        };
         let bytes = serialise_node(&node);
         // R I + 4 + 8 = 14
         assert_eq!(bytes.len(), 14);
@@ -2265,9 +2489,13 @@ mod tests {
 
     #[test]
     fn node_count_alloc_free() {
-        let alloc = NdaNode::Alloc { size: Box::new(NdaNode::Int { value: 64 }) };
+        let alloc = NdaNode::Alloc {
+            size: Box::new(NdaNode::Int { value: 64 }),
+        };
         assert_eq!(node_count(&alloc), 2);
-        let free = NdaNode::Free { addr: Box::new(NdaNode::Int { value: 0 }) };
+        let free = NdaNode::Free {
+            addr: Box::new(NdaNode::Int { value: 0 }),
+        };
         assert_eq!(node_count(&free), 2);
     }
 
@@ -2323,7 +2551,7 @@ mod tests {
         let node = NdaNode::Int { value: 42 };
         let mut bytes = serialise_node(&node);
         bytes.push(0xFF); // trailing garbage
-        // Should fail: not all data consumed
+                          // Should fail: not all data consumed
         assert!(!validate_serialised_data(&bytes));
     }
 
@@ -2345,7 +2573,11 @@ mod tests {
             NdaNode::Break,
             NdaNode::Float { value: 1.0 },
             NdaNode::Call { target: 0 },
-            NdaNode::Triple { subject_hash: 0, predicate_id: 0, object_hash: 0 },
+            NdaNode::Triple {
+                subject_hash: 0,
+                predicate_id: 0,
+                object_hash: 0,
+            },
         ];
         let (results, report) = batch_serialise_nodes(&nodes);
         assert_eq!(results.len(), 5);
@@ -2359,10 +2591,7 @@ mod tests {
 
     #[test]
     fn batch_serialise_total_bytes_matches_sum() {
-        let nodes = vec![
-            NdaNode::Int { value: 1 },
-            NdaNode::Float { value: 2.0 },
-        ];
+        let nodes = vec![NdaNode::Int { value: 1 }, NdaNode::Float { value: 2.0 }];
         let (results, report) = batch_serialise_nodes(&nodes);
         let sum: usize = results.iter().map(|b| b.len()).sum();
         assert_eq!(report.total_bytes, sum);

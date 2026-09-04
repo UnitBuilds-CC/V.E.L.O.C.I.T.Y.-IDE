@@ -68,7 +68,10 @@ impl Provider {
 
     /// Whether this provider exposes a usage/billing API we can query.
     pub fn has_usage_api(&self) -> bool {
-        matches!(self, Provider::Openai | Provider::Anthropic | Provider::Google | Provider::Mistral)
+        matches!(
+            self,
+            Provider::Openai | Provider::Anthropic | Provider::Google | Provider::Mistral
+        )
     }
 
     /// Default API base URL for this provider.
@@ -122,14 +125,8 @@ impl Provider {
                 ("mistral-small-latest", 0.10, 0.30),
                 ("codestral-latest", 0.30, 0.90),
             ],
-            Provider::Cohere => vec![
-                ("command-r-plus", 2.50, 10.00),
-                ("command-r", 0.15, 0.60),
-            ],
-            Provider::Xai => vec![
-                ("grok-3", 3.00, 15.00),
-                ("grok-3-mini", 0.30, 0.50),
-            ],
+            Provider::Cohere => vec![("command-r-plus", 2.50, 10.00), ("command-r", 0.15, 0.60)],
+            Provider::Xai => vec![("grok-3", 3.00, 15.00), ("grok-3-mini", 0.30, 0.50)],
             Provider::Github => vec![], // Copilot is subscription-based.
         }
     }
@@ -166,7 +163,10 @@ impl ProviderCredential {
         }
         if let Some(ref url) = self.base_url {
             if !url.starts_with("http://") && !url.starts_with("https://") {
-                issues.push(format!("base_url '{}' must start with http:// or https://", url));
+                issues.push(format!(
+                    "base_url '{}' must start with http:// or https://",
+                    url
+                ));
             }
         }
         issues
@@ -175,7 +175,11 @@ impl ProviderCredential {
     /// Return the masked API key for display (first 8 + last 4 chars).
     pub fn masked_key(&self) -> String {
         if self.api_key.len() > 12 {
-            format!("{}...{}", &self.api_key[..8], &self.api_key[self.api_key.len() - 4..])
+            format!(
+                "{}...{}",
+                &self.api_key[..8],
+                &self.api_key[self.api_key.len() - 4..]
+            )
         } else if self.api_key.len() > 4 {
             format!("{}...", &self.api_key[..4])
         } else {
@@ -186,7 +190,8 @@ impl ProviderCredential {
 
 /// Batch-validate all credentials, returning per-credential issues.
 pub fn validate_credentials(creds: &[ProviderCredential]) -> Vec<(usize, Vec<String>)> {
-    creds.iter()
+    creds
+        .iter()
         .enumerate()
         .map(|(i, c)| (i, c.validate()))
         .filter(|(_, issues)| !issues.is_empty())
@@ -194,9 +199,15 @@ pub fn validate_credentials(creds: &[ProviderCredential]) -> Vec<(usize, Vec<Str
 }
 
 /// Find credentials by provider name (case-insensitive).
-pub fn find_by_provider<'a>(creds: &'a [ProviderCredential], provider: &str) -> Vec<&'a ProviderCredential> {
+pub fn find_by_provider<'a>(
+    creds: &'a [ProviderCredential],
+    provider: &str,
+) -> Vec<&'a ProviderCredential> {
     let lower = provider.to_lowercase();
-    creds.iter().filter(|c| c.provider.to_lowercase() == lower).collect()
+    creds
+        .iter()
+        .filter(|c| c.provider.to_lowercase() == lower)
+        .collect()
 }
 
 /// Check for duplicate provider entries (same provider name).
@@ -215,7 +226,12 @@ pub fn find_duplicate_providers(creds: &[ProviderCredential]) -> Vec<String> {
 }
 
 /// Estimate cost for a given model and token count using known pricing.
-pub fn estimate_cost(provider: &Provider, model: &str, input_tokens: u64, output_tokens: u64) -> Option<f64> {
+pub fn estimate_cost(
+    provider: &Provider,
+    model: &str,
+    input_tokens: u64,
+    output_tokens: u64,
+) -> Option<f64> {
     let pricing = provider.model_pricing();
     let entry = pricing.iter().find(|(m, _, _)| *m == model)?;
     let input_per_mtok = entry.1;
@@ -261,7 +277,11 @@ pub fn compare_provider_costs(
             });
         }
     }
-    estimates.sort_by(|a, b| a.estimated_cost_usd.partial_cmp(&b.estimated_cost_usd).unwrap_or(std::cmp::Ordering::Equal));
+    estimates.sort_by(|a, b| {
+        a.estimated_cost_usd
+            .partial_cmp(&b.estimated_cost_usd)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
     estimates
 }
 
@@ -323,8 +343,7 @@ pub fn load_credentials() -> Result<Vec<ProviderCredential>> {
 pub fn save_credentials(creds: &[ProviderCredential]) -> Result<()> {
     let path = providers_toml_path();
     if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)
-            .context("failed to create ~/.velocity directory")?;
+        std::fs::create_dir_all(parent).context("failed to create ~/.velocity directory")?;
     }
     let mut out = String::new();
     for c in creds {
@@ -339,8 +358,7 @@ pub fn save_credentials(creds: &[ProviderCredential]) -> Result<()> {
         }
         out.push('\n');
     }
-    std::fs::write(&path, out)
-        .with_context(|| format!("failed to write {}", path.display()))?;
+    std::fs::write(&path, out).with_context(|| format!("failed to write {}", path.display()))?;
     // Restrict file permissions — owner read/write only.
     restrict_file_permissions(&path)?;
     Ok(())
@@ -562,7 +580,11 @@ impl UsageSnapshot {
                 }
             })
             .collect();
-        per_provider.sort_by(|a, b| b.cost_usd.partial_cmp(&a.cost_usd).unwrap_or(std::cmp::Ordering::Equal));
+        per_provider.sort_by(|a, b| {
+            b.cost_usd
+                .partial_cmp(&a.cost_usd)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
 
         let highest = per_provider.first().map(|p| p.provider.clone());
         // Extrapolate: if the snapshot covers 30 days, monthly = current total
@@ -592,12 +614,11 @@ pub fn query_all_providers(creds: &[ProviderCredential]) -> UsageSnapshot {
 
     for cred in creds {
         let prov = Provider::from_str_loose(&cred.provider);
-        let display = prov.as_ref()
+        let display = prov
+            .as_ref()
             .map(|p| p.display_name().to_string())
             .unwrap_or_else(|| cred.provider.clone());
-        let has_api = prov.as_ref()
-            .map(|p| p.has_usage_api())
-            .unwrap_or(false);
+        let has_api = prov.as_ref().map(|p| p.has_usage_api()).unwrap_or(false);
 
         let usage = match prov.as_ref() {
             Some(Provider::Openai) => query_openai(&agent, cred),
@@ -661,7 +682,8 @@ fn query_openai(agent: &ureq::Agent, cred: &ProviderCredential) -> ProviderResul
     let start_secs = now_secs - 30 * 86400;
     let url = format!("{}?start_date={}&end_date={}", url, start_secs, now_secs);
 
-    match agent.get(&url)
+    match agent
+        .get(&url)
         .set("Authorization", &format!("Bearer {}", cred.api_key))
         .call()
     {
@@ -669,7 +691,8 @@ fn query_openai(agent: &ureq::Agent, cred: &ProviderCredential) -> ProviderResul
             match resp.into_json::<serde_json::Value>() {
                 Ok(json) => {
                     // OpenAI returns: { "total_usage": 12345 } (in cents)
-                    let total_cents = json.get("total_usage")
+                    let total_cents = json
+                        .get("total_usage")
                         .and_then(|v| v.as_f64())
                         .unwrap_or(0.0);
                     let cost_usd = total_cents / 100.0;
@@ -725,7 +748,10 @@ fn query_openai(agent: &ureq::Agent, cred: &ProviderCredential) -> ProviderResul
 /// Anthropic doesn't expose a public usage/billing API.
 /// We verify the key by checking the error response from a lightweight call.
 fn query_anthropic(agent: &ureq::Agent, cred: &ProviderCredential) -> ProviderResult {
-    let base = cred.base_url.as_deref().unwrap_or("https://api.anthropic.com");
+    let base = cred
+        .base_url
+        .as_deref()
+        .unwrap_or("https://api.anthropic.com");
     let url = format!("{}/v1/messages", base.trim_end_matches('/'));
 
     // Send a minimal request to verify the key.
@@ -736,7 +762,8 @@ fn query_anthropic(agent: &ureq::Agent, cred: &ProviderCredential) -> ProviderRe
         "messages": [{"role": "user", "content": "hi"}]
     });
 
-    match agent.post(&url)
+    match agent
+        .post(&url)
         .set("x-api-key", &cred.api_key)
         .set("anthropic-version", "2023-06-01")
         .set("Content-Type", "application/json")
@@ -756,7 +783,9 @@ fn query_anthropic(agent: &ureq::Agent, cred: &ProviderCredential) -> ProviderRe
             // A 400 means the key is valid but the request was bad.
             // A 401 means the key is invalid.
             let (valid, status) = match &e {
-                ureq::Error::Status(400, _) => (true, "key valid (no usage API available)".to_string()),
+                ureq::Error::Status(400, _) => {
+                    (true, "key valid (no usage API available)".to_string())
+                }
                 ureq::Error::Status(401, _) => (false, "invalid API key (401)".to_string()),
                 ureq::Error::Status(code, _) => (false, format!("HTTP {}", code)),
                 _ => (false, format!("request failed: {}", e)),
@@ -780,57 +809,64 @@ fn query_anthropic(agent: &ureq::Agent, cred: &ProviderCredential) -> ProviderRe
 /// Google's Generative Language API doesn't expose billing directly,
 /// but we can verify the key and list available models.
 fn query_google(agent: &ureq::Agent, cred: &ProviderCredential) -> ProviderResult {
-    let base = cred.base_url.as_deref()
+    let base = cred
+        .base_url
+        .as_deref()
         .unwrap_or("https://generativelanguage.googleapis.com");
-    let url = format!("{}/v1beta/models?key={}", base.trim_end_matches('/'), cred.api_key);
+    let url = format!(
+        "{}/v1beta/models?key={}",
+        base.trim_end_matches('/'),
+        cred.api_key
+    );
 
     match agent.get(&url).call() {
-        Ok(resp) => {
-            match resp.into_json::<serde_json::Value>() {
-                Ok(json) => {
-                    let models = json.get("models")
-                        .and_then(|v| v.as_array())
-                        .map(|arr| {
-                            arr.iter()
-                                .filter_map(|m| {
-                                    let name = m.get("name")?.as_str()?;
-                                    Some(ModelUsage {
-                                        model: name.trim_start_matches("models/").to_string(),
-                                        tokens: 0,
-                                        cost_usd: 0.0,
-                                        requests: 0,
-                                    })
+        Ok(resp) => match resp.into_json::<serde_json::Value>() {
+            Ok(json) => {
+                let models = json
+                    .get("models")
+                    .and_then(|v| v.as_array())
+                    .map(|arr| {
+                        arr.iter()
+                            .filter_map(|m| {
+                                let name = m.get("name")?.as_str()?;
+                                Some(ModelUsage {
+                                    model: name.trim_start_matches("models/").to_string(),
+                                    tokens: 0,
+                                    cost_usd: 0.0,
+                                    requests: 0,
                                 })
-                                .collect::<Vec<_>>()
-                        })
-                        .unwrap_or_default();
+                            })
+                            .collect::<Vec<_>>()
+                    })
+                    .unwrap_or_default();
 
-                    ProviderResult {
-                        key_valid: true,
-                        tokens_used: 0,
-                        cost_usd: 0.0,
-                        request_count: 0,
-                        period_start: None,
-                        period_end: None,
-                        status: format!("key valid ({} models available)", models.len()),
-                        models,
-                    }
-                }
-                Err(e) => ProviderResult {
+                ProviderResult {
                     key_valid: true,
                     tokens_used: 0,
                     cost_usd: 0.0,
                     request_count: 0,
                     period_start: None,
                     period_end: None,
-                    status: format!("key valid, parse error: {}", e),
-                    models: Vec::new(),
-                },
+                    status: format!("key valid ({} models available)", models.len()),
+                    models,
+                }
             }
-        }
+            Err(e) => ProviderResult {
+                key_valid: true,
+                tokens_used: 0,
+                cost_usd: 0.0,
+                request_count: 0,
+                period_start: None,
+                period_end: None,
+                status: format!("key valid, parse error: {}", e),
+                models: Vec::new(),
+            },
+        },
         Err(e) => {
             let status = match &e {
-                ureq::Error::Status(400, _) | ureq::Error::Status(403, _) => "invalid API key".to_string(),
+                ureq::Error::Status(400, _) | ureq::Error::Status(403, _) => {
+                    "invalid API key".to_string()
+                }
                 ureq::Error::Status(code, _) => format!("HTTP {}", code),
                 _ => format!("request failed: {}", e),
             };
@@ -855,53 +891,53 @@ fn query_mistral(agent: &ureq::Agent, cred: &ProviderCredential) -> ProviderResu
     let base = cred.base_url.as_deref().unwrap_or("https://api.mistral.ai");
     let url = format!("{}/v1/models", base.trim_end_matches('/'));
 
-    match agent.get(&url)
+    match agent
+        .get(&url)
         .set("Authorization", &format!("Bearer {}", cred.api_key))
         .call()
     {
-        Ok(resp) => {
-            match resp.into_json::<serde_json::Value>() {
-                Ok(json) => {
-                    let models = json.get("data")
-                        .and_then(|v| v.as_array())
-                        .map(|arr| {
-                            arr.iter()
-                                .filter_map(|m| {
-                                    let id = m.get("id")?.as_str()?;
-                                    Some(ModelUsage {
-                                        model: id.to_string(),
-                                        tokens: 0,
-                                        cost_usd: 0.0,
-                                        requests: 0,
-                                    })
+        Ok(resp) => match resp.into_json::<serde_json::Value>() {
+            Ok(json) => {
+                let models = json
+                    .get("data")
+                    .and_then(|v| v.as_array())
+                    .map(|arr| {
+                        arr.iter()
+                            .filter_map(|m| {
+                                let id = m.get("id")?.as_str()?;
+                                Some(ModelUsage {
+                                    model: id.to_string(),
+                                    tokens: 0,
+                                    cost_usd: 0.0,
+                                    requests: 0,
                                 })
-                                .collect::<Vec<_>>()
-                        })
-                        .unwrap_or_default();
+                            })
+                            .collect::<Vec<_>>()
+                    })
+                    .unwrap_or_default();
 
-                    ProviderResult {
-                        key_valid: true,
-                        tokens_used: 0,
-                        cost_usd: 0.0,
-                        request_count: 0,
-                        period_start: None,
-                        period_end: None,
-                        status: format!("key valid ({} models available)", models.len()),
-                        models,
-                    }
-                }
-                Err(e) => ProviderResult {
+                ProviderResult {
                     key_valid: true,
                     tokens_used: 0,
                     cost_usd: 0.0,
                     request_count: 0,
                     period_start: None,
                     period_end: None,
-                    status: format!("key valid, parse error: {}", e),
-                    models: Vec::new(),
-                },
+                    status: format!("key valid ({} models available)", models.len()),
+                    models,
+                }
             }
-        }
+            Err(e) => ProviderResult {
+                key_valid: true,
+                tokens_used: 0,
+                cost_usd: 0.0,
+                request_count: 0,
+                period_start: None,
+                period_end: None,
+                status: format!("key valid, parse error: {}", e),
+                models: Vec::new(),
+            },
+        },
         Err(e) => {
             let status = match &e {
                 ureq::Error::Status(401, _) => "invalid API key (401)".to_string(),
@@ -928,28 +964,40 @@ fn query_mistral(agent: &ureq::Agent, cred: &ProviderCredential) -> ProviderResu
 fn query_generic_key_check(agent: &ureq::Agent, cred: &ProviderCredential) -> ProviderResult {
     let (url, auth_header, auth_value) = match cred.provider.to_lowercase().as_str() {
         "google" | "gemini" => {
-            let base = cred.base_url.as_deref()
+            let base = cred
+                .base_url
+                .as_deref()
                 .unwrap_or("https://generativelanguage.googleapis.com");
-            let url = format!("{}/v1beta/models?key={}", base.trim_end_matches('/'), cred.api_key);
+            let url = format!(
+                "{}/v1beta/models?key={}",
+                base.trim_end_matches('/'),
+                cred.api_key
+            );
             (url, String::new(), String::new())
         }
         "mistral" => {
-            let base = cred.base_url.as_deref()
-                .unwrap_or("https://api.mistral.ai");
-            (format!("{}/v1/models", base.trim_end_matches('/')),
-             "Authorization".into(), format!("Bearer {}", cred.api_key))
+            let base = cred.base_url.as_deref().unwrap_or("https://api.mistral.ai");
+            (
+                format!("{}/v1/models", base.trim_end_matches('/')),
+                "Authorization".into(),
+                format!("Bearer {}", cred.api_key),
+            )
         }
         "cohere" | "command" => {
-            let base = cred.base_url.as_deref()
-                .unwrap_or("https://api.cohere.ai");
-            (format!("{}/v1/models", base.trim_end_matches('/')),
-             "Authorization".into(), format!("Bearer {}", cred.api_key))
+            let base = cred.base_url.as_deref().unwrap_or("https://api.cohere.ai");
+            (
+                format!("{}/v1/models", base.trim_end_matches('/')),
+                "Authorization".into(),
+                format!("Bearer {}", cred.api_key),
+            )
         }
         "xai" | "grok" => {
-            let base = cred.base_url.as_deref()
-                .unwrap_or("https://api.x.ai");
-            (format!("{}/v1/models", base.trim_end_matches('/')),
-             "Authorization".into(), format!("Bearer {}", cred.api_key))
+            let base = cred.base_url.as_deref().unwrap_or("https://api.x.ai");
+            (
+                format!("{}/v1/models", base.trim_end_matches('/')),
+                "Authorization".into(),
+                format!("Bearer {}", cred.api_key),
+            )
         }
         "github" | "github_copilot" | "copilot" => {
             // GitHub doesn't have a simple key-check endpoint.
@@ -1023,13 +1071,10 @@ fn query_generic_key_check(agent: &ureq::Agent, cred: &ProviderCredential) -> Pr
 pub fn write_snapshot(snapshot: &UsageSnapshot) -> Result<()> {
     let path = snapshot_path();
     if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)
-            .context("failed to create ~/.velocity directory")?;
+        std::fs::create_dir_all(parent).context("failed to create ~/.velocity directory")?;
     }
-    let json = serde_json::to_string_pretty(snapshot)
-        .context("failed to serialize snapshot")?;
-    std::fs::write(&path, json)
-        .with_context(|| format!("failed to write {}", path.display()))?;
+    let json = serde_json::to_string_pretty(snapshot).context("failed to serialize snapshot")?;
+    std::fs::write(&path, json).with_context(|| format!("failed to write {}", path.display()))?;
     restrict_file_permissions(&path)?;
     Ok(())
 }
@@ -1045,8 +1090,7 @@ pub fn read_snapshot() -> Result<UsageSnapshot> {
     }
     let content = std::fs::read_to_string(&path)
         .with_context(|| format!("failed to read {}", path.display()))?;
-    serde_json::from_str(&content)
-        .context("failed to parse usage snapshot")
+    serde_json::from_str(&content).context("failed to parse usage snapshot")
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────────
@@ -1077,7 +1121,20 @@ fn unix_to_iso(secs: u64) -> String {
 
     // Find month and day.
     let leap = is_leap(year);
-    let month_days = [31, if leap { 29 } else { 28 }, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+    let month_days = [
+        31,
+        if leap { 29 } else { 28 },
+        31,
+        30,
+        31,
+        30,
+        31,
+        31,
+        30,
+        31,
+        30,
+        31,
+    ];
     let mut month = 12usize;
     let mut day = remaining + 1;
     for (i, &md) in month_days.iter().enumerate() {
@@ -1104,7 +1161,13 @@ fn chrono_utc_now() -> String {
     let h = time_secs / 3600;
     let m = (time_secs % 3600) / 60;
     let s = time_secs % 60;
-    format!("{}T{:02}:{:02}:{:02}Z", d.trim_end_matches("T00:00:00Z"), h, m, s)
+    format!(
+        "{}T{:02}:{:02}:{:02}Z",
+        d.trim_end_matches("T00:00:00Z"),
+        h,
+        m,
+        s
+    )
 }
 
 // ─── Tests ───────────────────────────────────────────────────────────────
@@ -1125,7 +1188,10 @@ mod tests {
     fn provider_from_str_loose() {
         assert_eq!(Provider::from_str_loose("openai"), Some(Provider::Openai));
         assert_eq!(Provider::from_str_loose("OpenAI"), Some(Provider::Openai));
-        assert_eq!(Provider::from_str_loose("claude"), Some(Provider::Anthropic));
+        assert_eq!(
+            Provider::from_str_loose("claude"),
+            Some(Provider::Anthropic)
+        );
         assert_eq!(Provider::from_str_loose("gemini"), Some(Provider::Google));
         assert_eq!(Provider::from_str_loose("grok"), Some(Provider::Xai));
         assert_eq!(Provider::from_str_loose("copilot"), Some(Provider::Github));
@@ -1146,8 +1212,14 @@ mod tests {
     #[test]
     fn api_base_url_returns_urls() {
         assert_eq!(Provider::Openai.api_base_url(), "https://api.openai.com");
-        assert_eq!(Provider::Anthropic.api_base_url(), "https://api.anthropic.com");
-        assert_eq!(Provider::Google.api_base_url(), "https://generativelanguage.googleapis.com");
+        assert_eq!(
+            Provider::Anthropic.api_base_url(),
+            "https://api.anthropic.com"
+        );
+        assert_eq!(
+            Provider::Google.api_base_url(),
+            "https://generativelanguage.googleapis.com"
+        );
         assert!(Provider::Mistral.api_base_url().starts_with("https://"));
     }
 
@@ -1272,8 +1344,18 @@ mod tests {
                     period_end: Some("2026-08-23T00:00:00Z".into()),
                     status: "ok".into(),
                     models: vec![
-                        ModelUsage { model: "gpt-4o".into(), tokens: 30000, cost_usd: 1.00, requests: 30 },
-                        ModelUsage { model: "gpt-4o-mini".into(), tokens: 20000, cost_usd: 0.50, requests: 12 },
+                        ModelUsage {
+                            model: "gpt-4o".into(),
+                            tokens: 30000,
+                            cost_usd: 1.00,
+                            requests: 30,
+                        },
+                        ModelUsage {
+                            model: "gpt-4o-mini".into(),
+                            tokens: 20000,
+                            cost_usd: 0.50,
+                            requests: 12,
+                        },
                     ],
                 },
                 ProviderUsage {
@@ -1391,7 +1473,11 @@ mod tests {
     fn cost_breakdown_percentages_sum() {
         let snap = make_test_snapshot();
         let breakdown = snap.cost_breakdown();
-        let total_pct: f64 = breakdown.per_provider.iter().map(|p| p.percentage_of_total).sum();
+        let total_pct: f64 = breakdown
+            .per_provider
+            .iter()
+            .map(|p| p.percentage_of_total)
+            .sum();
         assert!((total_pct - 100.0).abs() < 0.1);
     }
 
@@ -1419,7 +1505,10 @@ mod tests {
         let breakdown = snap.cost_breakdown();
         assert_eq!(breakdown.total_cost_usd, 0.0);
         // Percentages should be 0 when total is 0
-        assert!(breakdown.per_provider.iter().all(|p| p.percentage_of_total == 0.0));
+        assert!(breakdown
+            .per_provider
+            .iter()
+            .all(|p| p.percentage_of_total == 0.0));
     }
 
     #[test]
@@ -1580,9 +1669,24 @@ mod tests {
     #[test]
     fn find_duplicate_providers_detects_dupes() {
         let creds = vec![
-            ProviderCredential { provider: "openai".into(), api_key: "sk-1".into(), base_url: None, model: None },
-            ProviderCredential { provider: "anthropic".into(), api_key: "sk-2".into(), base_url: None, model: None },
-            ProviderCredential { provider: "OpenAI".into(), api_key: "sk-3".into(), base_url: None, model: None },
+            ProviderCredential {
+                provider: "openai".into(),
+                api_key: "sk-1".into(),
+                base_url: None,
+                model: None,
+            },
+            ProviderCredential {
+                provider: "anthropic".into(),
+                api_key: "sk-2".into(),
+                base_url: None,
+                model: None,
+            },
+            ProviderCredential {
+                provider: "OpenAI".into(),
+                api_key: "sk-3".into(),
+                base_url: None,
+                model: None,
+            },
         ];
         let dupes = find_duplicate_providers(&creds);
         assert_eq!(dupes.len(), 1);
@@ -1592,8 +1696,18 @@ mod tests {
     #[test]
     fn find_duplicate_providers_no_dupes() {
         let creds = vec![
-            ProviderCredential { provider: "openai".into(), api_key: "sk-1".into(), base_url: None, model: None },
-            ProviderCredential { provider: "anthropic".into(), api_key: "sk-2".into(), base_url: None, model: None },
+            ProviderCredential {
+                provider: "openai".into(),
+                api_key: "sk-1".into(),
+                base_url: None,
+                model: None,
+            },
+            ProviderCredential {
+                provider: "anthropic".into(),
+                api_key: "sk-2".into(),
+                base_url: None,
+                model: None,
+            },
         ];
         let dupes = find_duplicate_providers(&creds);
         assert!(dupes.is_empty());
@@ -1670,7 +1784,10 @@ mod tests {
 
     #[test]
     fn from_str_loose_google_ai_alias() {
-        assert_eq!(Provider::from_str_loose("google_ai"), Some(Provider::Google));
+        assert_eq!(
+            Provider::from_str_loose("google_ai"),
+            Some(Provider::Google)
+        );
     }
 
     #[test]
@@ -1680,7 +1797,10 @@ mod tests {
 
     #[test]
     fn from_str_loose_github_copilot_alias() {
-        assert_eq!(Provider::from_str_loose("github_copilot"), Some(Provider::Github));
+        assert_eq!(
+            Provider::from_str_loose("github_copilot"),
+            Some(Provider::Github)
+        );
     }
 
     #[test]
@@ -1718,11 +1838,20 @@ mod tests {
     #[test]
     fn api_base_url_all_start_with_https() {
         let all = [
-            Provider::Openai, Provider::Anthropic, Provider::Google,
-            Provider::Mistral, Provider::Cohere, Provider::Xai, Provider::Github,
+            Provider::Openai,
+            Provider::Anthropic,
+            Provider::Google,
+            Provider::Mistral,
+            Provider::Cohere,
+            Provider::Xai,
+            Provider::Github,
         ];
         for p in &all {
-            assert!(p.api_base_url().starts_with("https://"), "{} base URL doesn't start with https://", p);
+            assert!(
+                p.api_base_url().starts_with("https://"),
+                "{} base URL doesn't start with https://",
+                p
+            );
         }
     }
 
@@ -1739,13 +1868,22 @@ mod tests {
     #[test]
     fn api_key_env_var_all_end_with_key_or_token() {
         let all = [
-            Provider::Openai, Provider::Anthropic, Provider::Google,
-            Provider::Mistral, Provider::Cohere, Provider::Xai, Provider::Github,
+            Provider::Openai,
+            Provider::Anthropic,
+            Provider::Google,
+            Provider::Mistral,
+            Provider::Cohere,
+            Provider::Xai,
+            Provider::Github,
         ];
         for p in &all {
             let v = p.api_key_env_var();
-            assert!(v.ends_with("API_KEY") || v.ends_with("TOKEN"),
-                "{} env var '{}' doesn't end with API_KEY or TOKEN", p, v);
+            assert!(
+                v.ends_with("API_KEY") || v.ends_with("TOKEN"),
+                "{} env var '{}' doesn't end with API_KEY or TOKEN",
+                p,
+                v
+            );
         }
     }
 
@@ -1783,13 +1921,23 @@ mod tests {
     fn model_pricing_input_lte_output() {
         // For all providers, input price should be <= output price
         let all = [
-            Provider::Openai, Provider::Anthropic, Provider::Google,
-            Provider::Mistral, Provider::Cohere, Provider::Xai,
+            Provider::Openai,
+            Provider::Anthropic,
+            Provider::Google,
+            Provider::Mistral,
+            Provider::Cohere,
+            Provider::Xai,
         ];
         for p in &all {
             for (model, input, output) in p.model_pricing() {
-                assert!(input <= output,
-                    "{}: {} input ({}) > output ({})", p, model, input, output);
+                assert!(
+                    input <= output,
+                    "{}: {} input ({}) > output ({})",
+                    p,
+                    model,
+                    input,
+                    output
+                );
             }
         }
     }
@@ -1799,21 +1947,29 @@ mod tests {
     #[test]
     fn estimate_cost_anthropic_sonnet() {
         // claude-sonnet: $3/M input, $15/M output
-        let cost = estimate_cost(&Provider::Anthropic, "claude-sonnet-4-20250514", 1_000_000, 1_000_000).unwrap();
+        let cost = estimate_cost(
+            &Provider::Anthropic,
+            "claude-sonnet-4-20250514",
+            1_000_000,
+            1_000_000,
+        )
+        .unwrap();
         assert!((cost - 18.0).abs() < 0.01);
     }
 
     #[test]
     fn estimate_cost_google_flash() {
         // gemini-2.0-flash: $0.075/M input, $0.30/M output
-        let cost = estimate_cost(&Provider::Google, "gemini-2.0-flash", 1_000_000, 1_000_000).unwrap();
+        let cost =
+            estimate_cost(&Provider::Google, "gemini-2.0-flash", 1_000_000, 1_000_000).unwrap();
         assert!((cost - 0.375).abs() < 0.001);
     }
 
     #[test]
     fn estimate_cost_mistral_large() {
         // mistral-large: $2/M input, $6/M output
-        let cost = estimate_cost(&Provider::Mistral, "mistral-large-latest", 500_000, 500_000).unwrap();
+        let cost =
+            estimate_cost(&Provider::Mistral, "mistral-large-latest", 500_000, 500_000).unwrap();
         assert!((cost - 4.0).abs() < 0.01);
     }
 
@@ -1949,8 +2105,8 @@ mod tests {
     #[test]
     fn credential_validate_multiple_issues() {
         let cred = ProviderCredential {
-            provider: "".into(), // empty + unrecognized
-            api_key: "abc".into(), // empty + too short
+            provider: "".into(),                // empty + unrecognized
+            api_key: "abc".into(),              // empty + too short
             base_url: Some("ftp://bad".into()), // bad scheme
             model: None,
         };
@@ -2047,9 +2203,24 @@ mod tests {
     #[test]
     fn validate_credentials_multiple_invalid() {
         let creds = vec![
-            ProviderCredential { provider: "".into(), api_key: "".into(), base_url: None, model: None },
-            ProviderCredential { provider: "openai".into(), api_key: "sk-ok-12345678".into(), base_url: None, model: None },
-            ProviderCredential { provider: "bad".into(), api_key: "sk-bad-12345678".into(), base_url: None, model: None },
+            ProviderCredential {
+                provider: "".into(),
+                api_key: "".into(),
+                base_url: None,
+                model: None,
+            },
+            ProviderCredential {
+                provider: "openai".into(),
+                api_key: "sk-ok-12345678".into(),
+                base_url: None,
+                model: None,
+            },
+            ProviderCredential {
+                provider: "bad".into(),
+                api_key: "sk-bad-12345678".into(),
+                base_url: None,
+                model: None,
+            },
         ];
         let issues = validate_credentials(&creds);
         // Index 0 and 2 have issues, index 1 is clean
@@ -2062,9 +2233,12 @@ mod tests {
 
     #[test]
     fn find_by_provider_no_matches() {
-        let creds = vec![
-            ProviderCredential { provider: "openai".into(), api_key: "sk-1".into(), base_url: None, model: None },
-        ];
+        let creds = vec![ProviderCredential {
+            provider: "openai".into(),
+            api_key: "sk-1".into(),
+            base_url: None,
+            model: None,
+        }];
         let found = find_by_provider(&creds, "anthropic");
         assert!(found.is_empty());
     }
@@ -2072,9 +2246,24 @@ mod tests {
     #[test]
     fn find_by_provider_multiple_matches() {
         let creds = vec![
-            ProviderCredential { provider: "openai".into(), api_key: "sk-1".into(), base_url: None, model: None },
-            ProviderCredential { provider: "OpenAI".into(), api_key: "sk-2".into(), base_url: None, model: None },
-            ProviderCredential { provider: "anthropic".into(), api_key: "sk-3".into(), base_url: None, model: None },
+            ProviderCredential {
+                provider: "openai".into(),
+                api_key: "sk-1".into(),
+                base_url: None,
+                model: None,
+            },
+            ProviderCredential {
+                provider: "OpenAI".into(),
+                api_key: "sk-2".into(),
+                base_url: None,
+                model: None,
+            },
+            ProviderCredential {
+                provider: "anthropic".into(),
+                api_key: "sk-3".into(),
+                base_url: None,
+                model: None,
+            },
         ];
         let found = find_by_provider(&creds, "openai");
         assert_eq!(found.len(), 2);
@@ -2099,9 +2288,24 @@ mod tests {
     #[test]
     fn find_duplicate_providers_triple_dedup() {
         let creds = vec![
-            ProviderCredential { provider: "openai".into(), api_key: "sk-1".into(), base_url: None, model: None },
-            ProviderCredential { provider: "OpenAI".into(), api_key: "sk-2".into(), base_url: None, model: None },
-            ProviderCredential { provider: "OPENAI".into(), api_key: "sk-3".into(), base_url: None, model: None },
+            ProviderCredential {
+                provider: "openai".into(),
+                api_key: "sk-1".into(),
+                base_url: None,
+                model: None,
+            },
+            ProviderCredential {
+                provider: "OpenAI".into(),
+                api_key: "sk-2".into(),
+                base_url: None,
+                model: None,
+            },
+            ProviderCredential {
+                provider: "OPENAI".into(),
+                api_key: "sk-3".into(),
+                base_url: None,
+                model: None,
+            },
         ];
         let dupes = find_duplicate_providers(&creds);
         // Should appear only once after dedup
@@ -2112,10 +2316,30 @@ mod tests {
     #[test]
     fn find_duplicate_providers_multiple_dupes() {
         let creds = vec![
-            ProviderCredential { provider: "openai".into(), api_key: "sk-1".into(), base_url: None, model: None },
-            ProviderCredential { provider: "anthropic".into(), api_key: "sk-2".into(), base_url: None, model: None },
-            ProviderCredential { provider: "openai".into(), api_key: "sk-3".into(), base_url: None, model: None },
-            ProviderCredential { provider: "anthropic".into(), api_key: "sk-4".into(), base_url: None, model: None },
+            ProviderCredential {
+                provider: "openai".into(),
+                api_key: "sk-1".into(),
+                base_url: None,
+                model: None,
+            },
+            ProviderCredential {
+                provider: "anthropic".into(),
+                api_key: "sk-2".into(),
+                base_url: None,
+                model: None,
+            },
+            ProviderCredential {
+                provider: "openai".into(),
+                api_key: "sk-3".into(),
+                base_url: None,
+                model: None,
+            },
+            ProviderCredential {
+                provider: "anthropic".into(),
+                api_key: "sk-4".into(),
+                base_url: None,
+                model: None,
+            },
         ];
         let dupes = find_duplicate_providers(&creds);
         assert_eq!(dupes.len(), 2);
@@ -2358,7 +2582,10 @@ mod tests {
         let cloned = cred.clone();
         assert_eq!(cloned.provider, "openai");
         assert_eq!(cloned.api_key, "sk-test");
-        assert_eq!(cloned.base_url.as_deref(), Some("https://proxy.example.com"));
+        assert_eq!(
+            cloned.base_url.as_deref(),
+            Some("https://proxy.example.com")
+        );
         assert_eq!(cloned.model.as_deref(), Some("gpt-4o"));
         // Debug
         let debug = format!("{:?}", cred);
@@ -2508,8 +2735,13 @@ mod tests {
     #[test]
     fn provider_serde_all_variants() {
         let all = [
-            Provider::Openai, Provider::Anthropic, Provider::Google,
-            Provider::Mistral, Provider::Cohere, Provider::Xai, Provider::Github,
+            Provider::Openai,
+            Provider::Anthropic,
+            Provider::Google,
+            Provider::Mistral,
+            Provider::Cohere,
+            Provider::Xai,
+            Provider::Github,
         ];
         for p in &all {
             let json = serde_json::to_string(p).unwrap();
@@ -2558,8 +2790,11 @@ mod tests {
         // Adjust by 0.005 — within the 0.01 tolerance
         snap.total_cost_usd = 2.005;
         let issues = snap.validate();
-        assert!(!issues.iter().any(|i| i.contains("total_cost_usd")),
-            "should be within tolerance, got: {:?}", issues);
+        assert!(
+            !issues.iter().any(|i| i.contains("total_cost_usd")),
+            "should be within tolerance, got: {:?}",
+            issues
+        );
     }
 
     #[test]
@@ -2672,7 +2907,11 @@ mod tests {
         let snap = make_test_snapshot();
         let bd = snap.cost_breakdown();
         let pct_sum: f64 = bd.per_provider.iter().map(|p| p.percentage_of_total).sum();
-        assert!((pct_sum - 100.0).abs() < 0.01, "percentages sum to {}", pct_sum);
+        assert!(
+            (pct_sum - 100.0).abs() < 0.01,
+            "percentages sum to {}",
+            pct_sum
+        );
     }
 
     #[test]
@@ -2680,8 +2919,12 @@ mod tests {
         let snap = make_test_snapshot();
         let bd = snap.cost_breakdown();
         for w in bd.per_provider.windows(2) {
-            assert!(w[0].cost_usd >= w[1].cost_usd,
-                "not sorted descending: {} < {}", w[0].cost_usd, w[1].cost_usd);
+            assert!(
+                w[0].cost_usd >= w[1].cost_usd,
+                "not sorted descending: {} < {}",
+                w[0].cost_usd,
+                w[1].cost_usd
+            );
         }
     }
 
@@ -2723,8 +2966,14 @@ mod tests {
 
     #[test]
     fn from_str_loose_claude_alias() {
-        assert_eq!(Provider::from_str_loose("claude"), Some(Provider::Anthropic));
-        assert_eq!(Provider::from_str_loose("CLAUDE"), Some(Provider::Anthropic));
+        assert_eq!(
+            Provider::from_str_loose("claude"),
+            Some(Provider::Anthropic)
+        );
+        assert_eq!(
+            Provider::from_str_loose("CLAUDE"),
+            Some(Provider::Anthropic)
+        );
     }
 
     #[test]
@@ -2745,8 +2994,12 @@ mod tests {
     #[test]
     fn model_pricing_all_positive() {
         let all = [
-            Provider::Openai, Provider::Anthropic, Provider::Google,
-            Provider::Mistral, Provider::Cohere, Provider::Xai,
+            Provider::Openai,
+            Provider::Anthropic,
+            Provider::Google,
+            Provider::Mistral,
+            Provider::Cohere,
+            Provider::Xai,
         ];
         for p in &all {
             for (model, input, output) in p.model_pricing() {
@@ -2761,9 +3014,14 @@ mod tests {
         let snap = make_test_snapshot();
         let summaries = snap.provider_summaries();
         for (i, s) in summaries.iter().enumerate() {
-            assert_eq!(s.model_count, snap.providers[i].models.len(),
+            assert_eq!(
+                s.model_count,
+                snap.providers[i].models.len(),
                 "provider {}: model_count {} != models.len() {}",
-                s.provider, s.model_count, snap.providers[i].models.len());
+                s.provider,
+                s.model_count,
+                snap.providers[i].models.len()
+            );
         }
     }
 
@@ -2838,8 +3096,10 @@ mod tests {
         let mut snap = make_test_snapshot();
         snap.total_tokens = 999999; // mismatch
         let info = snap.info();
-        assert!(!info.validation_issues.is_empty(),
-            "validation_issues should be populated for invalid snapshot");
+        assert!(
+            !info.validation_issues.is_empty(),
+            "validation_issues should be populated for invalid snapshot"
+        );
     }
 
     #[test]
@@ -2877,18 +3137,30 @@ mod tests {
             generated_at: "test".into(),
             providers: vec![
                 ProviderUsage {
-                    provider: "a".into(), display_name: "A".into(),
-                    key_valid: true, has_usage_api: false,
-                    tokens_used: 0, cost_usd: 0.0, request_count: 0,
-                    period_start: None, period_end: None,
-                    status: "ok".into(), models: vec![],
+                    provider: "a".into(),
+                    display_name: "A".into(),
+                    key_valid: true,
+                    has_usage_api: false,
+                    tokens_used: 0,
+                    cost_usd: 0.0,
+                    request_count: 0,
+                    period_start: None,
+                    period_end: None,
+                    status: "ok".into(),
+                    models: vec![],
                 },
                 ProviderUsage {
-                    provider: "b".into(), display_name: "B".into(),
-                    key_valid: true, has_usage_api: false,
-                    tokens_used: 0, cost_usd: 0.0, request_count: 0,
-                    period_start: None, period_end: None,
-                    status: "ok".into(), models: vec![],
+                    provider: "b".into(),
+                    display_name: "B".into(),
+                    key_valid: true,
+                    has_usage_api: false,
+                    tokens_used: 0,
+                    cost_usd: 0.0,
+                    request_count: 0,
+                    period_start: None,
+                    period_end: None,
+                    status: "ok".into(),
+                    models: vec![],
                 },
             ],
             total_tokens: 0,

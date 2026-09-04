@@ -1,4 +1,4 @@
-﻿//! E2E test: MCP server stdio JSON-RPC protocol.
+//! E2E test: MCP server stdio JSON-RPC protocol.
 //!
 //! Spawns the actual `velocity_mcp` binary with `--mode stdio` and
 //! exercises the JSON-RPC protocol over stdin/stdout.
@@ -228,13 +228,31 @@ fn mcp_request_ids_are_echoed_across_methods() {
 
     // Distinct ids across a result method, another result method, and an
     // error method must each be echoed back unchanged.
-    let init = send_request(&mut stdin, &mut reader, "initialize", serde_json::json!({}), 11);
+    let init = send_request(
+        &mut stdin,
+        &mut reader,
+        "initialize",
+        serde_json::json!({}),
+        11,
+    );
     assert_eq!(init["id"], 11);
 
-    let list = send_request(&mut stdin, &mut reader, "tools/list", serde_json::json!({}), 12);
+    let list = send_request(
+        &mut stdin,
+        &mut reader,
+        "tools/list",
+        serde_json::json!({}),
+        12,
+    );
     assert_eq!(list["id"], 12);
 
-    let unknown = send_request(&mut stdin, &mut reader, "no/such", serde_json::json!({}), 13);
+    let unknown = send_request(
+        &mut stdin,
+        &mut reader,
+        "no/such",
+        serde_json::json!({}),
+        13,
+    );
     assert_eq!(unknown["id"], 13);
 
     let _ = child.kill();
@@ -245,7 +263,13 @@ fn mcp_request_ids_are_echoed_across_methods() {
 fn mcp_tools_call_unknown_tool_sets_is_error_flag() {
     let (mut child, mut stdin, mut reader) = spawn_mcp_server();
 
-    let _ = send_request(&mut stdin, &mut reader, "initialize", serde_json::json!({}), 1);
+    let _ = send_request(
+        &mut stdin,
+        &mut reader,
+        "initialize",
+        serde_json::json!({}),
+        1,
+    );
 
     let resp = send_request(
         &mut stdin,
@@ -283,7 +307,13 @@ fn mcp_notification_with_null_id_gets_no_response() {
 
     // The next request must produce the next response, proving the notification
     // neither consumed a reply nor emitted one of its own.
-    let resp = send_request(&mut stdin, &mut reader, "initialize", serde_json::json!({}), 5);
+    let resp = send_request(
+        &mut stdin,
+        &mut reader,
+        "initialize",
+        serde_json::json!({}),
+        5,
+    );
     assert_eq!(resp["id"], 5);
     assert_eq!(resp["result"]["protocolVersion"], "2024-11-05");
 
@@ -295,10 +325,24 @@ fn mcp_notification_with_null_id_gets_no_response() {
 fn mcp_tools_list_names_are_unique() {
     let (mut child, mut stdin, mut reader) = spawn_mcp_server();
 
-    let _ = send_request(&mut stdin, &mut reader, "initialize", serde_json::json!({}), 1);
-    let resp = send_request(&mut stdin, &mut reader, "tools/list", serde_json::json!({}), 2);
+    let _ = send_request(
+        &mut stdin,
+        &mut reader,
+        "initialize",
+        serde_json::json!({}),
+        1,
+    );
+    let resp = send_request(
+        &mut stdin,
+        &mut reader,
+        "tools/list",
+        serde_json::json!({}),
+        2,
+    );
 
-    let tools = resp["result"]["tools"].as_array().expect("tools should be an array");
+    let tools = resp["result"]["tools"]
+        .as_array()
+        .expect("tools should be an array");
     let mut names: Vec<String> = tools
         .iter()
         .filter_map(|t| t["name"].as_str().map(|s| s.to_string()))
@@ -311,7 +355,11 @@ fn mcp_tools_list_names_are_unique() {
     let total = names.len();
     names.sort();
     names.dedup();
-    assert_eq!(names.len(), total, "tool names must be unique (no duplicates)");
+    assert_eq!(
+        names.len(),
+        total,
+        "tool names must be unique (no duplicates)"
+    );
 
     let _ = child.kill();
     let _ = child.wait();

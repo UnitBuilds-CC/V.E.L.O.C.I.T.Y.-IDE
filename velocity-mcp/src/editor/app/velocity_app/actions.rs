@@ -1,4 +1,4 @@
-﻿use std::path::PathBuf;
+use std::path::PathBuf;
 
 use super::super::helpers::*;
 use super::super::types::*;

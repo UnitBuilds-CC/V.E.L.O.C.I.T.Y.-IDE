@@ -1,4 +1,4 @@
-﻿//! AI-assisted workflow generation from natural language.
+//! AI-assisted workflow generation from natural language.
 //!
 //! Converts user descriptions into workflow canvas structures by parsing
 //! intent keywords and mapping them to step patterns. This provides a

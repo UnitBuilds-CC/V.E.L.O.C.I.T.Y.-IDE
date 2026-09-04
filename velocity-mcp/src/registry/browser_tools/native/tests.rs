@@ -1,4 +1,4 @@
-﻿//! Integration tests for the native browser tool family.
+//! Integration tests for the native browser tool family.
 //!
 //! Exercised through `handle_native_tool` end to end: every test loads the
 //! shared form fixture into its own session id and asserts on the readable

@@ -1,4 +1,4 @@
-﻿//! Unified Knowledge / RAG layer.
+//! Unified Knowledge / RAG layer.
 //!
 //! A persistent, chunked, multi-source retrieval store that any agent can query
 //! — the workspace's shared long-term memory over arbitrary content (docs,

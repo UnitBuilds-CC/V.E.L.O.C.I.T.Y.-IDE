@@ -87,11 +87,13 @@ fn tab_title_special_panels() {
     ];
 
     for (kind, expected) in cases {
-        let tab = Tab {
-            id: TabId(1),
-            kind,
-        };
-        assert_eq!(tab.title(), expected, "TabKind should produce title '{}'", expected);
+        let tab = Tab { id: TabId(1), kind };
+        assert_eq!(
+            tab.title(),
+            expected,
+            "TabKind should produce title '{}'",
+            expected
+        );
     }
 }
 
@@ -262,8 +264,8 @@ fn nav_location_tracks_positions() {
 /// Verify FileIoResult variants carry correct data.
 #[test]
 fn file_io_result_variants() {
-    use velocity_mcp::editor::app::types::{FileIoResult, TabId};
     use std::time::SystemTime;
+    use velocity_mcp::editor::app::types::{FileIoResult, TabId};
 
     let success = FileIoResult::FileLoaded {
         tab_id: TabId(1),
@@ -412,9 +414,9 @@ fn active_change_preview_tracks_diff() {
 /// Verify health and metrics modules work together.
 #[test]
 fn health_and_metrics_integration() {
+    use std::time::Duration;
     use velocity_mcp::health::{HealthChecker, HealthStatus};
     use velocity_mcp::metrics::{record_request, Metrics};
-    use std::time::Duration;
 
     // Health check should work independently
     let checker = HealthChecker::new("/tmp/test-workspace");
@@ -442,9 +444,9 @@ fn health_and_metrics_integration() {
 /// Verify telemetry config and metrics can be initialized together.
 #[test]
 fn telemetry_config_and_metrics_coexist() {
+    use std::time::Duration;
     use velocity_mcp::metrics::{record_request, Metrics};
     use velocity_mcp::telemetry::TracingConfig;
-    use std::time::Duration;
 
     // TracingConfig should be constructable
     let config = TracingConfig::default();

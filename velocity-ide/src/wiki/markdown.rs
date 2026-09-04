@@ -1,4 +1,4 @@
-﻿//! Renders a [`WikiModel`] to interlinked Markdown files.
+//! Renders a [`WikiModel`] to interlinked Markdown files.
 //!
 //! Qodo-style features:
 //! - Table of contents on the index page
@@ -56,7 +56,8 @@ pub fn render_info(model: &WikiModel) -> MarkdownRenderInfo {
 
 /// Export wiki to markdown with a detailed timing report.
 pub fn export_markdown_reported(
-    model: &WikiModel, dir: &Path,
+    model: &WikiModel,
+    dir: &Path,
 ) -> Result<(usize, MarkdownExportReport)> {
     let start = Instant::now();
     fs::create_dir_all(dir).with_context(|| format!("creating {}", dir.display()))?;
@@ -1054,7 +1055,10 @@ mod tests {
     fn render_page_multiple_relationship_types() {
         let mut page = make_page(WikiPageKind::File, "multi.rs", "multi");
         page.relationships = vec![
-            ("Defines".to_string(), vec!["alpha".to_string(), "beta".to_string()]),
+            (
+                "Defines".to_string(),
+                vec!["alpha".to_string(), "beta".to_string()],
+            ),
             ("Calls".to_string(), vec!["gamma".to_string()]),
         ];
         let model = make_model();
@@ -1423,9 +1427,10 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let (_, report) = export_markdown_reported(&model, dir.path()).unwrap();
         // total_bytes should account for index + symbols + graph + all pages
-        assert!(report.total_bytes >= report.index_bytes
-            + report.symbol_index_bytes
-            + report.graph_bytes);
+        assert!(
+            report.total_bytes
+                >= report.index_bytes + report.symbol_index_bytes + report.graph_bytes
+        );
     }
 
     #[test]

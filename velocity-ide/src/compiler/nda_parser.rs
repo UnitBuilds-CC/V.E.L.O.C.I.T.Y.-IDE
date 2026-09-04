@@ -1,4 +1,4 @@
-﻿// compiler/nda_parser.rs — Parser for the NDA programming language
+// compiler/nda_parser.rs — Parser for the NDA programming language
 //
 // Converts a stream of Located tokens into a compiled NdaNode AST.
 // Resolves function call targets dynamically via Merkle hash propagation.
@@ -187,7 +187,9 @@ pub fn compile_with_report(source: &str) -> Result<ParseReport, String> {
             let loc = parser.peek_loc().unwrap();
             return Err(format!(
                 "{}:{}: Expected 'fn' keyword at top level, found {}",
-                loc.line, loc.col, loc.token.display_name()
+                loc.line,
+                loc.col,
+                loc.token.display_name()
             ));
         }
     }
@@ -281,7 +283,10 @@ impl NdaParser {
                 let loc = self.peek_loc().unwrap();
                 Err(format!(
                     "{}:{}: Expected {}, found {}",
-                    loc.line, loc.col, expected.display_name(), loc.token.display_name()
+                    loc.line,
+                    loc.col,
+                    expected.display_name(),
+                    loc.token.display_name()
                 ))
             }
         } else {
@@ -857,7 +862,9 @@ impl NdaParser {
                 });
                 Err(format!(
                     "{}:{}: Unexpected {} in expression",
-                    loc.line, loc.col, loc.token.display_name()
+                    loc.line,
+                    loc.col,
+                    loc.token.display_name()
                 ))
             }
         }
@@ -982,9 +989,17 @@ mod tests {
         let err = result.unwrap_err();
         // Should use display_name() format (contains quotes around token)
         // and NOT contain Debug format like "Token::..."
-        assert!(!err.contains("Token::"), "error should not contain Debug format, got: {}", err);
+        assert!(
+            !err.contains("Token::"),
+            "error should not contain Debug format, got: {}",
+            err
+        );
         // Should contain a line:col prefix
-        assert!(err.contains(':'), "error should contain line:col, got: {}", err);
+        assert!(
+            err.contains(':'),
+            "error should contain line:col, got: {}",
+            err
+        );
     }
 
     // ─── Helper function tests ─────────────────────────────────────────────
@@ -1009,7 +1024,9 @@ mod tests {
     fn build_matrix_node_dimensions() {
         let node = build_matrix_node(128, 896);
         match node {
-            NdaNode::Matrix { rows, cols, scale, .. } => {
+            NdaNode::Matrix {
+                rows, cols, scale, ..
+            } => {
                 assert_eq!(rows, 128);
                 assert_eq!(cols, 896);
                 assert_eq!(scale, 0);
@@ -1176,13 +1193,23 @@ mod tests {
                     count += count_compares(rhs);
                 }
                 NdaNode::Scope { children } => {
-                    for c in children { count += count_compares(c); }
+                    for c in children {
+                        count += count_compares(c);
+                    }
                 }
-                NdaNode::If { cond, then_body, else_body } => {
+                NdaNode::If {
+                    cond,
+                    then_body,
+                    else_body,
+                } => {
                     count += count_compares(cond);
-                    for c in then_body { count += count_compares(c); }
+                    for c in then_body {
+                        count += count_compares(c);
+                    }
                     if let Some(eb) = else_body {
-                        for c in eb { count += count_compares(c); }
+                        for c in eb {
+                            count += count_compares(c);
+                        }
                     }
                 }
                 NdaNode::Let { init, .. } => count += count_compares(init),
@@ -1529,16 +1556,26 @@ mod tests {
         fn count_ifs(node: &NdaNode) -> usize {
             let mut count = 0;
             match node {
-                NdaNode::If { cond, then_body, else_body } => {
+                NdaNode::If {
+                    cond,
+                    then_body,
+                    else_body,
+                } => {
                     count += 1;
                     count += count_ifs(cond);
-                    for c in then_body { count += count_ifs(c); }
+                    for c in then_body {
+                        count += count_ifs(c);
+                    }
                     if let Some(eb) = else_body {
-                        for c in eb { count += count_ifs(c); }
+                        for c in eb {
+                            count += count_ifs(c);
+                        }
                     }
                 }
                 NdaNode::Scope { children } => {
-                    for c in children { count += count_ifs(c); }
+                    for c in children {
+                        count += count_ifs(c);
+                    }
                 }
                 NdaNode::Let { init, .. } => count += count_ifs(init),
                 _ => {}
@@ -1564,7 +1601,11 @@ mod tests {
         // All pairwise distinct
         for i in 0..hashes.len() {
             for j in (i + 1)..hashes.len() {
-                assert_ne!(hashes[i], hashes[j], "collision between {} and {}", names[i], names[j]);
+                assert_ne!(
+                    hashes[i], hashes[j],
+                    "collision between {} and {}",
+                    names[i], names[j]
+                );
             }
         }
     }
@@ -1574,7 +1615,13 @@ mod tests {
         // bitmap_bytes = rows * cols.div_ceil(8)
         let node = build_matrix_node(4, 16);
         match node {
-            NdaNode::Matrix { rows, cols, sign, extra, .. } => {
+            NdaNode::Matrix {
+                rows,
+                cols,
+                sign,
+                extra,
+                ..
+            } => {
                 assert_eq!(rows, 4);
                 assert_eq!(cols, 16);
                 let expected_bytes = 4 * (16usize).div_ceil(8); // 4 * 2 = 8
@@ -1589,7 +1636,13 @@ mod tests {
     fn build_matrix_node_1x1() {
         let node = build_matrix_node(1, 1);
         match node {
-            NdaNode::Matrix { rows, cols, sign, extra, .. } => {
+            NdaNode::Matrix {
+                rows,
+                cols,
+                sign,
+                extra,
+                ..
+            } => {
                 assert_eq!(rows, 1);
                 assert_eq!(cols, 1);
                 // 1 * div_ceil(1, 8) = 1 * 1 = 1 byte
@@ -1663,7 +1716,10 @@ mod tests {
     #[test]
     fn resolve_calls_through_loop() {
         let inner = NdaNode::Call { target: 10 };
-        let node = NdaNode::Loop { count: 5, body: vec![inner] };
+        let node = NdaNode::Loop {
+            count: 5,
+            body: vec![inner],
+        };
         let mut fn_map = HashMap::new();
         fn_map.insert("f".to_string(), 99u64);
         let mut call_names = HashMap::new();
@@ -1685,7 +1741,10 @@ mod tests {
     #[test]
     fn resolve_calls_through_while() {
         let cond = NdaNode::Call { target: 20 };
-        let node = NdaNode::While { cond: Box::new(cond), body: vec![] };
+        let node = NdaNode::While {
+            cond: Box::new(cond),
+            body: vec![],
+        };
         let mut fn_map = HashMap::new();
         fn_map.insert("g".to_string(), 77u64);
         let mut call_names = HashMap::new();
@@ -1723,7 +1782,11 @@ mod tests {
 
         let resolved = resolve_calls(&node, &fn_map, &call_names);
         match resolved {
-            NdaNode::If { cond, then_body, else_body } => {
+            NdaNode::If {
+                cond,
+                then_body,
+                else_body,
+            } => {
                 match *cond {
                     NdaNode::Call { target } => assert_eq!(target, 100),
                     _ => panic!("Expected resolved Call in If cond"),
@@ -1750,7 +1813,10 @@ mod tests {
         call_names.insert(40u64, "x".to_string());
 
         // Let
-        let let_node = NdaNode::Let { name_hash: 1, init: Box::new(call.clone()) };
+        let let_node = NdaNode::Let {
+            name_hash: 1,
+            init: Box::new(call.clone()),
+        };
         match resolve_calls(&let_node, &fn_map, &call_names) {
             NdaNode::Let { init, .. } => match *init {
                 NdaNode::Call { target } => assert_eq!(target, 555),
@@ -1760,7 +1826,10 @@ mod tests {
         }
 
         // Store
-        let store_node = NdaNode::Store { name_hash: 2, value: Box::new(call.clone()) };
+        let store_node = NdaNode::Store {
+            name_hash: 2,
+            value: Box::new(call.clone()),
+        };
         match resolve_calls(&store_node, &fn_map, &call_names) {
             NdaNode::Store { value, .. } => match *value {
                 NdaNode::Call { target } => assert_eq!(target, 555),
@@ -1770,7 +1839,10 @@ mod tests {
         }
 
         // Add
-        let add_node = NdaNode::Add { lhs: Box::new(call.clone()), rhs: Box::new(NdaNode::Int { value: 1 }) };
+        let add_node = NdaNode::Add {
+            lhs: Box::new(call.clone()),
+            rhs: Box::new(NdaNode::Int { value: 1 }),
+        };
         match resolve_calls(&add_node, &fn_map, &call_names) {
             NdaNode::Add { lhs, .. } => match *lhs {
                 NdaNode::Call { target } => assert_eq!(target, 555),
@@ -1780,7 +1852,10 @@ mod tests {
         }
 
         // VecOp
-        let vec_node = NdaNode::VecOp { op: VecOpKind::Negate, operand: Box::new(call.clone()) };
+        let vec_node = NdaNode::VecOp {
+            op: VecOpKind::Negate,
+            operand: Box::new(call.clone()),
+        };
         match resolve_calls(&vec_node, &fn_map, &call_names) {
             NdaNode::VecOp { operand, .. } => match *operand {
                 NdaNode::Call { target } => assert_eq!(target, 555),
@@ -1790,7 +1865,9 @@ mod tests {
         }
 
         // Print
-        let print_node = NdaNode::Print { source: Box::new(call.clone()) };
+        let print_node = NdaNode::Print {
+            source: Box::new(call.clone()),
+        };
         match resolve_calls(&print_node, &fn_map, &call_names) {
             NdaNode::Print { source } => match *source {
                 NdaNode::Call { target } => assert_eq!(target, 555),
@@ -1800,7 +1877,9 @@ mod tests {
         }
 
         // Return
-        let ret_node = NdaNode::Return { value: Box::new(call.clone()) };
+        let ret_node = NdaNode::Return {
+            value: Box::new(call.clone()),
+        };
         match resolve_calls(&ret_node, &fn_map, &call_names) {
             NdaNode::Return { value } => match *value {
                 NdaNode::Call { target } => assert_eq!(target, 555),
@@ -1810,7 +1889,11 @@ mod tests {
         }
 
         // Compare
-        let cmp_node = NdaNode::Compare { op: CmpOp::Eq, lhs: Box::new(call.clone()), rhs: Box::new(NdaNode::Int { value: 0 }) };
+        let cmp_node = NdaNode::Compare {
+            op: CmpOp::Eq,
+            lhs: Box::new(call.clone()),
+            rhs: Box::new(NdaNode::Int { value: 0 }),
+        };
         match resolve_calls(&cmp_node, &fn_map, &call_names) {
             NdaNode::Compare { lhs, .. } => match *lhs {
                 NdaNode::Call { target } => assert_eq!(target, 555),
@@ -2021,7 +2104,10 @@ mod tests {
                     has_while = true;
                     // Check that body contains a Store (decrement)
                     let has_store = body.iter().any(|c| matches!(c, NdaNode::Store { .. }));
-                    assert!(has_store, "Dynamic loop body should contain Store (decrement)");
+                    assert!(
+                        has_store,
+                        "Dynamic loop body should contain Store (decrement)"
+                    );
                 }
                 NdaNode::Scope { children } => {
                     for c in children {
@@ -2057,16 +2143,26 @@ mod tests {
         fn count_ifs(node: &NdaNode) -> usize {
             let mut count = 0;
             match node {
-                NdaNode::If { cond, then_body, else_body } => {
+                NdaNode::If {
+                    cond,
+                    then_body,
+                    else_body,
+                } => {
                     count += 1;
                     count += count_ifs(cond);
-                    for c in then_body { count += count_ifs(c); }
+                    for c in then_body {
+                        count += count_ifs(c);
+                    }
                     if let Some(eb) = else_body {
-                        for c in eb { count += count_ifs(c); }
+                        for c in eb {
+                            count += count_ifs(c);
+                        }
                     }
                 }
                 NdaNode::Scope { children } => {
-                    for c in children { count += count_ifs(c); }
+                    for c in children {
+                        count += count_ifs(c);
+                    }
                 }
                 NdaNode::Let { init, .. } => count += count_ifs(init),
                 _ => {}
@@ -2161,13 +2257,23 @@ mod tests {
                     ops.extend(count_compares(rhs));
                 }
                 NdaNode::Scope { children } => {
-                    for c in children { ops.extend(count_compares(c)); }
+                    for c in children {
+                        ops.extend(count_compares(c));
+                    }
                 }
-                NdaNode::If { cond, then_body, else_body } => {
+                NdaNode::If {
+                    cond,
+                    then_body,
+                    else_body,
+                } => {
                     ops.extend(count_compares(cond));
-                    for c in then_body { ops.extend(count_compares(c)); }
+                    for c in then_body {
+                        ops.extend(count_compares(c));
+                    }
                     if let Some(eb) = else_body {
-                        for c in eb { ops.extend(count_compares(c)); }
+                        for c in eb {
+                            ops.extend(count_compares(c));
+                        }
                     }
                 }
                 NdaNode::Let { init, .. } => ops.extend(count_compares(init)),
@@ -2578,8 +2684,11 @@ mod tests {
         let result = parser.parse_program();
         assert!(result.is_err());
         let err = result.unwrap_err();
-        assert!(err.contains("}") || err.contains("End of File") || err.contains("end of file"),
-            "Expected error about missing closing brace or EOF, got: {}", err);
+        assert!(
+            err.contains("}") || err.contains("End of File") || err.contains("end of file"),
+            "Expected error about missing closing brace or EOF, got: {}",
+            err
+        );
     }
 
     #[test]
@@ -2596,16 +2705,22 @@ mod tests {
     fn error_missing_function_name() {
         let src = "fn () { return 0 }";
         let result = parse_err(src);
-        assert!(result.contains("identifier") || result.contains("Expected"),
-            "Expected identifier error, got: {}", result);
+        assert!(
+            result.contains("identifier") || result.contains("Expected"),
+            "Expected identifier error, got: {}",
+            result
+        );
     }
 
     #[test]
     fn error_bad_type_keyword() {
         let src = "fn main(x: bool) { return x }";
         let result = parse_err(src);
-        assert!(result.contains("type") || result.contains("vec") || result.contains("Expected"),
-            "Expected type error, got: {}", result);
+        assert!(
+            result.contains("type") || result.contains("vec") || result.contains("Expected"),
+            "Expected type error, got: {}",
+            result
+        );
     }
 
     #[test]
@@ -2649,7 +2764,9 @@ mod tests {
                 match fn_scope {
                     NdaNode::Scope { children } => {
                         // First child should be Let for param x
-                        assert!(matches!(&children[0], NdaNode::Let { name_hash, .. } if *name_hash == hash_name("x")));
+                        assert!(
+                            matches!(&children[0], NdaNode::Let { name_hash, .. } if *name_hash == hash_name("x"))
+                        );
                     }
                     _ => panic!("Expected inner Scope"),
                 }
@@ -2693,7 +2810,9 @@ mod tests {
         let program = parse_ok(src);
         fn has_while_with_compare(node: &NdaNode) -> bool {
             match node {
-                NdaNode::While { cond, .. } => matches!(**cond, NdaNode::Compare { op: CmpOp::Gt, .. }),
+                NdaNode::While { cond, .. } => {
+                    matches!(**cond, NdaNode::Compare { op: CmpOp::Gt, .. })
+                }
                 NdaNode::Scope { children } => children.iter().any(has_while_with_compare),
                 _ => false,
             }
@@ -2717,7 +2836,9 @@ mod tests {
                 NdaNode::If { else_body, .. } => Some(else_body.is_none()),
                 NdaNode::Scope { children } => {
                     for c in children {
-                        if let Some(r) = find_if(c) { return Some(r); }
+                        if let Some(r) = find_if(c) {
+                            return Some(r);
+                        }
                     }
                     None
                 }
@@ -2815,7 +2936,9 @@ mod tests {
                 NdaNode::Let { name_hash, .. } => Some(*name_hash),
                 NdaNode::Scope { children } => {
                     for c in children {
-                        if let Some(h) = find_load_hash(c) { return Some(h); }
+                        if let Some(h) = find_load_hash(c) {
+                            return Some(h);
+                        }
                     }
                     None
                 }
@@ -2839,7 +2962,9 @@ mod tests {
                 NdaNode::Store { name_hash, .. } => Some(*name_hash),
                 NdaNode::Scope { children } => {
                     for c in children {
-                        if let Some(h) = find_store_hash(c) { return Some(h); }
+                        if let Some(h) = find_store_hash(c) {
+                            return Some(h);
+                        }
                     }
                     None
                 }
@@ -2883,7 +3008,13 @@ mod tests {
         // bitmap_bytes = rows * cols.div_ceil(8)
         let node = build_matrix_node(4, 16);
         match node {
-            NdaNode::Matrix { rows, cols, sign, extra, .. } => {
+            NdaNode::Matrix {
+                rows,
+                cols,
+                sign,
+                extra,
+                ..
+            } => {
                 assert_eq!(rows, 4);
                 assert_eq!(cols, 16);
                 let expected = 4 * 16usize.div_ceil(8); // 4 * 2 = 8
@@ -2911,7 +3042,13 @@ mod tests {
     fn build_matrix_node_1x1_single_byte() {
         let node = build_matrix_node(1, 1);
         match node {
-            NdaNode::Matrix { rows, cols, sign, extra, .. } => {
+            NdaNode::Matrix {
+                rows,
+                cols,
+                sign,
+                extra,
+                ..
+            } => {
                 assert_eq!(rows, 1);
                 assert_eq!(cols, 1);
                 assert_eq!(sign.len(), 1);
@@ -2992,7 +3129,11 @@ mod tests {
 
         let resolved = resolve_calls(&node, &fn_map, &call_names);
         match resolved {
-            NdaNode::If { cond, then_body, else_body } => {
+            NdaNode::If {
+                cond,
+                then_body,
+                else_body,
+            } => {
                 assert!(matches!(*cond, NdaNode::Call { target: 100 }));
                 assert!(matches!(&then_body[0], NdaNode::Call { target: 200 }));
                 let eb = else_body.unwrap();
@@ -3227,9 +3368,7 @@ mod tests {
         let program = parse_ok(src);
         fn count_inner_loops(node: &NdaNode) -> usize {
             match node {
-                NdaNode::Loop { body, .. } => {
-                    1 + body.iter().map(count_inner_loops).sum::<usize>()
-                }
+                NdaNode::Loop { body, .. } => 1 + body.iter().map(count_inner_loops).sum::<usize>(),
                 NdaNode::Scope { children } => children.iter().map(count_inner_loops).sum(),
                 _ => 0,
             }
@@ -3254,9 +3393,15 @@ mod tests {
         let program = parse_ok(src);
         fn count_ifs(node: &NdaNode) -> usize {
             match node {
-                NdaNode::If { else_body, then_body, .. } => {
+                NdaNode::If {
+                    else_body,
+                    then_body,
+                    ..
+                } => {
                     1 + then_body.iter().map(count_ifs).sum::<usize>()
-                        + else_body.as_ref().map_or(0, |eb| eb.iter().map(count_ifs).sum::<usize>())
+                        + else_body
+                            .as_ref()
+                            .map_or(0, |eb| eb.iter().map(count_ifs).sum::<usize>())
                 }
                 NdaNode::Scope { children } => children.iter().map(count_ifs).sum(),
                 _ => 0,
@@ -3280,7 +3425,9 @@ mod tests {
         let program = parse_ok(src);
         fn has_while_in_loop(node: &NdaNode) -> bool {
             match node {
-                NdaNode::Loop { body, .. } => body.iter().any(|c| matches!(c, NdaNode::While { .. })),
+                NdaNode::Loop { body, .. } => {
+                    body.iter().any(|c| matches!(c, NdaNode::While { .. }))
+                }
                 NdaNode::Scope { children } => children.iter().any(has_while_in_loop),
                 _ => false,
             }
@@ -3396,7 +3543,8 @@ mod tests {
         fn has_negate_int(node: &NdaNode) -> bool {
             match node {
                 NdaNode::VecOp { op, operand } => {
-                    matches!(op, VecOpKind::Negate) && matches!(**operand, NdaNode::Int { value: 42 })
+                    matches!(op, VecOpKind::Negate)
+                        && matches!(**operand, NdaNode::Int { value: 42 })
                 }
                 NdaNode::Scope { children } => children.iter().any(has_negate_int),
                 NdaNode::Let { init, .. } => has_negate_int(init),
@@ -3413,8 +3561,14 @@ mod tests {
         fn has_double_negate(node: &NdaNode) -> bool {
             match node {
                 NdaNode::VecOp { op, operand } => {
-                    matches!(op, VecOpKind::Negate) &&
-                    matches!(**operand, NdaNode::VecOp { op: VecOpKind::Negate, .. })
+                    matches!(op, VecOpKind::Negate)
+                        && matches!(
+                            **operand,
+                            NdaNode::VecOp {
+                                op: VecOpKind::Negate,
+                                ..
+                            }
+                        )
                 }
                 NdaNode::Scope { children } => children.iter().any(has_double_negate),
                 NdaNode::Let { init, .. } => has_double_negate(init),

@@ -1,4 +1,4 @@
-﻿//! Deploy Pipeline Integration: manages build → test → deploy stages with
+//! Deploy Pipeline Integration: manages build → test → deploy stages with
 //! status tracking, artifact management, and rollback capability.
 
 use std::collections::VecDeque;

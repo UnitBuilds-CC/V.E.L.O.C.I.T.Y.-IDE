@@ -8,5 +8,6 @@ use_field_init_shorthand = true
 use_try_shorthand = true
 newline_style = "Unix"
 reorder_imports = true
-group_imports = "StdExternalCrate"
-imports_granularity = "Crate"
+# NOTE: group_imports / imports_granularity are nightly-only options; omitted so
+# the pinned stable toolchain (rust-toolchain.toml + CI fmt job) formats
+# consistently instead of silently ignoring them with "unstable features" warnings.

@@ -1,4 +1,4 @@
-﻿//! Reflection Engine: detects failure patterns and generates corrective
+//! Reflection Engine: detects failure patterns and generates corrective
 //! system messages to inject before the next LLM reasoning turn.
 //!
 //! Instead of blindly retrying the same action, the reflection engine

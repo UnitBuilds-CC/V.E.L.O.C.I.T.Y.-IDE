@@ -2,11 +2,13 @@
 //!
 //! Extracted verbatim from `tier3_panels.rs` (no logic changes).
 
-use eframe::egui;
-use egui::RichText;
 use super::struct_def::VelocityApp;
 use crate::editor::extensions::ExtensionState;
-use crate::editor::theme::{CARD_INNER_MARGIN, CARD_RADIUS, FONT_BODY, FONT_CAPTION, FONT_SMALL, ITEM_SPACING};
+use crate::editor::theme::{
+    CARD_INNER_MARGIN, CARD_RADIUS, FONT_BODY, FONT_CAPTION, FONT_SMALL, ITEM_SPACING,
+};
+use eframe::egui;
+use egui::RichText;
 
 /// A deferred mutation captured while rendering the extensions list (avoids
 /// borrowing `self` mutably during immutable iteration).
@@ -56,7 +58,11 @@ impl VelocityApp {
                 if self.extension_registry.extensions.is_empty() {
                     ui.add_space(16.0);
                     ui.vertical_centered(|ui| {
-                        ui.label(RichText::new("\u{25c7}").size(26.0).color(palette.text_muted));
+                        ui.label(
+                            RichText::new("\u{25c7}")
+                                .size(26.0)
+                                .color(palette.text_muted),
+                        );
                         ui.add_space(4.0);
                         ui.label(
                             RichText::new("No extensions installed")
@@ -71,7 +77,10 @@ impl VelocityApp {
                                 .color(palette.text_muted),
                         );
                         ui.add_space(ITEM_SPACING);
-                        if ui.button(RichText::new("\u{27f3}  Rescan").size(FONT_SMALL)).clicked() {
+                        if ui
+                            .button(RichText::new("\u{27f3}  Rescan").size(FONT_SMALL))
+                            .clicked()
+                        {
                             let ws = self.workspace_root.clone();
                             self.extension_registry.scan(&ws);
                         }
@@ -93,11 +102,23 @@ impl VelocityApp {
                         .stroke(egui::Stroke::new(0.5, palette.border))
                         .show(ui, |ui| {
                             ui.horizontal(|ui| {
-                                ui.label(RichText::new(&ext.manifest.name).strong().size(FONT_BODY).color(palette.text));
-                                ui.label(RichText::new(format!("v{}", ext.manifest.version)).size(9.0).color(palette.text_muted));
-                                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                    ui.label(RichText::new(badge).size(9.0).color(badge_color));
-                                });
+                                ui.label(
+                                    RichText::new(&ext.manifest.name)
+                                        .strong()
+                                        .size(FONT_BODY)
+                                        .color(palette.text),
+                                );
+                                ui.label(
+                                    RichText::new(format!("v{}", ext.manifest.version))
+                                        .size(9.0)
+                                        .color(palette.text_muted),
+                                );
+                                ui.with_layout(
+                                    egui::Layout::right_to_left(egui::Align::Center),
+                                    |ui| {
+                                        ui.label(RichText::new(badge).size(9.0).color(badge_color));
+                                    },
+                                );
                             });
                             if let Some(desc) = &ext.manifest.description {
                                 ui.label(RichText::new(desc).size(9.0).color(palette.text_muted));
@@ -105,18 +126,24 @@ impl VelocityApp {
                             let cmds = ext.manifest.contributes.commands.len();
                             let kbs = ext.manifest.contributes.keybindings.len();
                             ui.label(
-                                RichText::new(format!("{cmds} command(s) \u{00b7} {kbs} keybinding(s)"))
-                                    .size(FONT_CAPTION)
-                                    .color(palette.text_muted),
+                                RichText::new(format!(
+                                    "{cmds} command(s) \u{00b7} {kbs} keybinding(s)"
+                                ))
+                                .size(FONT_CAPTION)
+                                .color(palette.text_muted),
                             );
                             ui.horizontal(|ui| {
                                 if ext.state != ExtensionState::Active
-                                    && ui.small_button(RichText::new("Activate").size(9.0)).clicked()
+                                    && ui
+                                        .small_button(RichText::new("Activate").size(9.0))
+                                        .clicked()
                                 {
                                     pending = Some(ExtAction::Activate(ext.manifest.id.clone()));
                                 }
                                 if ext.state == ExtensionState::Active
-                                    && ui.small_button(RichText::new("Disable").size(9.0)).clicked()
+                                    && ui
+                                        .small_button(RichText::new("Disable").size(9.0))
+                                        .clicked()
                                 {
                                     pending = Some(ExtAction::Disable(ext.manifest.id.clone()));
                                 }

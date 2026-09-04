@@ -344,8 +344,16 @@ mod tests {
         for (kind, needs_tools, needs_reasoning, prefers_long) in kinds {
             let req = TaskRequirements::for_kind(kind);
             assert_eq!(req.needs_tools, needs_tools, "{:?} needs_tools", kind);
-            assert_eq!(req.needs_reasoning, needs_reasoning, "{:?} needs_reasoning", kind);
-            assert_eq!(req.prefers_long_context, prefers_long, "{:?} prefers_long", kind);
+            assert_eq!(
+                req.needs_reasoning, needs_reasoning,
+                "{:?} needs_reasoning",
+                kind
+            );
+            assert_eq!(
+                req.prefers_long_context, prefers_long,
+                "{:?} prefers_long",
+                kind
+            );
         }
     }
 

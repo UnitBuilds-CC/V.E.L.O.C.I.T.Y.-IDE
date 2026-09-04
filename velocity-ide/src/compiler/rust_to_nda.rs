@@ -1,4 +1,4 @@
-﻿// compiler/rust_to_nda.rs — Full Rust source → NDA program tree
+// compiler/rust_to_nda.rs — Full Rust source → NDA program tree
 //
 // Philosophy: teach from complete programs, not fragments.
 //
@@ -200,10 +200,7 @@ impl RustToNda {
     }
 
     /// Compile all `.rs` files in a directory tree. Returns one SeedReport per file.
-    pub fn compile_directory(
-        dir: &Path,
-        site_map: &mut SiteMap,
-    ) -> Result<Vec<SeedReport>> {
+    pub fn compile_directory(dir: &Path, site_map: &mut SiteMap) -> Result<Vec<SeedReport>> {
         let mut reports = Vec::new();
         let mut rs_files: Vec<_> = walkdir_rs_files(dir)?;
         rs_files.sort();
@@ -234,7 +231,11 @@ impl RustToNda {
             Item::Type(_) => "Type",
             _ => "Other",
         };
-        *self.diagnostics.items_by_kind.entry(kind_name.to_string()).or_insert(0) += 1;
+        *self
+            .diagnostics
+            .items_by_kind
+            .entry(kind_name.to_string())
+            .or_insert(0) += 1;
         match item {
             Item::Fn(f) => {
                 self.compile_fn(f, None);
@@ -398,7 +399,11 @@ impl RustToNda {
             Expr::Range(_) => "Range",
             _ => "Other",
         };
-        *self.diagnostics.expr_type_coverage.entry(expr_kind.to_string()).or_insert(0) += 1;
+        *self
+            .diagnostics
+            .expr_type_coverage
+            .entry(expr_kind.to_string())
+            .or_insert(0) += 1;
 
         let result = self.compile_expr_inner(expr, callees);
         if result.is_some() {
@@ -577,7 +582,9 @@ impl RustToNda {
                 } else if arm_nodes.len() == 1 {
                     arm_nodes.into_iter().next()
                 } else {
-                    Some(NdaNode::Scope { children: arm_nodes })
+                    Some(NdaNode::Scope {
+                        children: arm_nodes,
+                    })
                 }
             }
 
@@ -586,7 +593,9 @@ impl RustToNda {
 
             // Tuple: compile each element, wrap in Scope.
             Expr::Tuple(t) => {
-                let children: Vec<NdaNode> = t.elems.iter()
+                let children: Vec<NdaNode> = t
+                    .elems
+                    .iter()
                     .filter_map(|e| self.compile_expr(e, callees))
                     .collect();
                 if children.is_empty() {
@@ -598,7 +607,9 @@ impl RustToNda {
 
             // Struct literal: compile each field expression.
             Expr::Struct(s) => {
-                let children: Vec<NdaNode> = s.fields.iter()
+                let children: Vec<NdaNode> = s
+                    .fields
+                    .iter()
                     .filter_map(|fv| self.compile_expr(&fv.expr, callees))
                     .collect();
                 if children.is_empty() {
@@ -616,7 +627,9 @@ impl RustToNda {
                 let base = self.compile_expr(&idx.expr, callees);
                 let index = self.compile_expr(&idx.index, callees);
                 match (base, index) {
-                    (Some(b), Some(i)) => Some(NdaNode::Scope { children: vec![b, i] }),
+                    (Some(b), Some(i)) => Some(NdaNode::Scope {
+                        children: vec![b, i],
+                    }),
                     (Some(b), None) => Some(b),
                     (None, Some(i)) => Some(i),
                     _ => None,
@@ -631,7 +644,9 @@ impl RustToNda {
                 let lhs = self.compile_expr(&a.left, callees);
                 let rhs = self.compile_expr(&a.right, callees);
                 match (lhs, rhs) {
-                    (Some(l), Some(r)) => Some(NdaNode::Scope { children: vec![l, r] }),
+                    (Some(l), Some(r)) => Some(NdaNode::Scope {
+                        children: vec![l, r],
+                    }),
                     (Some(l), None) => Some(l),
                     (None, Some(r)) => Some(r),
                     _ => None,
@@ -1082,8 +1097,14 @@ mod tests {
         let mut compiler = RustToNda::new();
         compiler.compile_source(source).unwrap();
         let diag = compiler.diagnostics();
-        assert!(diag.expressions_visited > 0, "should visit some expressions");
-        assert!(diag.expressions_compiled > 0, "should compile some expressions");
+        assert!(
+            diag.expressions_visited > 0,
+            "should visit some expressions"
+        );
+        assert!(
+            diag.expressions_compiled > 0,
+            "should compile some expressions"
+        );
         assert!(
             diag.expr_type_coverage.contains_key("Lit"),
             "should track Lit expressions"
@@ -1115,7 +1136,10 @@ mod tests {
                 _ => 0,
             }
         }
-        assert!(count_ints(&root) >= 2, "match arms should produce Int nodes");
+        assert!(
+            count_ints(&root) >= 2,
+            "match arms should produce Int nodes"
+        );
     }
 
     #[test]
@@ -1136,7 +1160,10 @@ mod tests {
                 _ => 0,
             }
         }
-        assert!(count_ints(&root) >= 2, "reference and tuple should produce Int nodes");
+        assert!(
+            count_ints(&root) >= 2,
+            "reference and tuple should produce Int nodes"
+        );
     }
 
     #[test]
@@ -1232,9 +1259,15 @@ mod tests {
             match node {
                 NdaNode::Int { .. } => 1,
                 NdaNode::Scope { children } => children.iter().map(count_ints).sum(),
-                NdaNode::If { then_body, else_body, .. } => {
+                NdaNode::If {
+                    then_body,
+                    else_body,
+                    ..
+                } => {
                     1 + then_body.iter().map(count_ints).sum::<usize>()
-                    + else_body.as_ref().map_or(0, |eb| eb.iter().map(count_ints).sum::<usize>())
+                        + else_body
+                            .as_ref()
+                            .map_or(0, |eb| eb.iter().map(count_ints).sum::<usize>())
                 }
                 _ => 0,
             }
@@ -1289,8 +1322,10 @@ mod tests {
         compiler.compile_source(source).unwrap();
         let diag = compiler.diagnostics();
         assert!(diag.expressions_visited > 3, "should visit binary ops");
-        assert!(diag.expr_type_coverage.contains_key("Binary"),
-            "should track Binary expressions");
+        assert!(
+            diag.expr_type_coverage.contains_key("Binary"),
+            "should track Binary expressions"
+        );
     }
 
     #[test]
@@ -1445,7 +1480,10 @@ mod tests {
         let mut compiler = RustToNda::new();
         compiler.compile_source(source).unwrap();
         let diag = compiler.diagnostics();
-        assert!(diag.expressions_visited > 2, "should visit while loop expressions");
+        assert!(
+            diag.expressions_visited > 2,
+            "should visit while loop expressions"
+        );
     }
 
     #[test]
@@ -1482,7 +1520,13 @@ mod tests {
     fn build_matrix_node_bitmap_size() {
         let node = build_matrix_node(4, 16);
         match node {
-            NdaNode::Matrix { rows, cols, sign, extra, .. } => {
+            NdaNode::Matrix {
+                rows,
+                cols,
+                sign,
+                extra,
+                ..
+            } => {
                 let expected_bytes = rows as usize * (cols as usize).div_ceil(8);
                 assert_eq!(sign.len(), expected_bytes);
                 assert_eq!(extra.len(), expected_bytes);
@@ -1977,7 +2021,10 @@ mod tests {
         assert_eq!(val["call_edges"], 10);
         assert_eq!(val["call_edges_resolved"], 8);
         assert!(val["warnings"].is_array());
-        assert_eq!(val["warnings"][0].as_str().unwrap(), "Enum 'Foo' not transpiled");
+        assert_eq!(
+            val["warnings"][0].as_str().unwrap(),
+            "Enum 'Foo' not transpiled"
+        );
     }
 
     // ─── Edge cases ─────────────────────────────────────────────────────────
@@ -2067,7 +2114,9 @@ mod tests {
                 NdaNode::Int { value } => Some(*value),
                 NdaNode::Scope { children } => {
                     for c in children {
-                        if let Some(v) = find_int(c) { return Some(v); }
+                        if let Some(v) = find_int(c) {
+                            return Some(v);
+                        }
                     }
                     None
                 }
@@ -2094,7 +2143,10 @@ mod tests {
                 _ => false,
             }
         }
-        assert!(find_matrix(&root), "array literal should produce Matrix(1,4)");
+        assert!(
+            find_matrix(&root),
+            "array literal should produce Matrix(1,4)"
+        );
     }
 
     #[test]
@@ -2231,7 +2283,10 @@ mod tests {
 
     #[test]
     fn compile_diagnostics_debug_format() {
-        let diag = CompileDiagnostics { expressions_visited: 42, ..Default::default() };
+        let diag = CompileDiagnostics {
+            expressions_visited: 42,
+            ..Default::default()
+        };
         let debug = format!("{:?}", diag);
         assert!(debug.contains("42"));
         assert!(debug.contains("CompileDiagnostics"));
@@ -2383,9 +2438,15 @@ mod tests {
             match node {
                 NdaNode::Int { .. } => 1,
                 NdaNode::Scope { children } => children.iter().map(count_ints).sum(),
-                NdaNode::If { then_body, else_body, .. } => {
+                NdaNode::If {
+                    then_body,
+                    else_body,
+                    ..
+                } => {
                     then_body.iter().map(count_ints).sum::<usize>()
-                    + else_body.as_ref().map_or(0, |eb| eb.iter().map(count_ints).sum::<usize>())
+                        + else_body
+                            .as_ref()
+                            .map_or(0, |eb| eb.iter().map(count_ints).sum::<usize>())
                 }
                 _ => 0,
             }
@@ -2696,7 +2757,13 @@ mod tests {
     fn build_matrix_node_large_dimensions() {
         let node = build_matrix_node(1024, 2048);
         match node {
-            NdaNode::Matrix { rows, cols, sign, extra, .. } => {
+            NdaNode::Matrix {
+                rows,
+                cols,
+                sign,
+                extra,
+                ..
+            } => {
                 assert_eq!(rows, 1024);
                 assert_eq!(cols, 2048);
                 let expected_bytes = 1024_usize * (2048_usize).div_ceil(8);
@@ -2711,7 +2778,13 @@ mod tests {
     fn build_matrix_node_1x1() {
         let node = build_matrix_node(1, 1);
         match node {
-            NdaNode::Matrix { rows, cols, sign, extra, .. } => {
+            NdaNode::Matrix {
+                rows,
+                cols,
+                sign,
+                extra,
+                ..
+            } => {
                 assert_eq!(rows, 1);
                 assert_eq!(cols, 1);
                 // 1 * ceil(1/8) = 1 byte
@@ -3224,8 +3297,14 @@ mod tests {
         assert_eq!(compiler.function_count(), 3);
 
         let graph = compiler.call_graph();
-        assert!(graph.get("pipeline").unwrap().contains(&"encode".to_string()));
-        assert!(graph.get("pipeline").unwrap().contains(&"decode".to_string()));
+        assert!(graph
+            .get("pipeline")
+            .unwrap()
+            .contains(&"encode".to_string()));
+        assert!(graph
+            .get("pipeline")
+            .unwrap()
+            .contains(&"decode".to_string()));
 
         let dir = tempfile::tempdir().unwrap();
         let mut sm = SiteMap::open(dir.path(), 0).unwrap();

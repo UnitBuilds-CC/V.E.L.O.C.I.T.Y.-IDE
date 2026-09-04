@@ -1,4 +1,4 @@
-﻿// sandbox/jit_sandbox.rs — Executing NDA opcode trees with nda_jit compiler
+// sandbox/jit_sandbox.rs — Executing NDA opcode trees with nda_jit compiler
 use crate::compiler::nda_jit::JitProgram;
 use crate::safety::SafeMutex;
 use crate::sandbox::SandboxResult;
@@ -352,23 +352,37 @@ pub fn ast_complexity(nodes: &[NdaNode]) -> AstComplexity {
         }
         match node {
             NdaNode::Scope { children } => {
-                for c in children { walk(c, depth + 1, total, max_d, cf); }
+                for c in children {
+                    walk(c, depth + 1, total, max_d, cf);
+                }
             }
             NdaNode::Loop { body, .. } => {
                 *cf += 1;
-                for c in body { walk(c, depth + 1, total, max_d, cf); }
+                for c in body {
+                    walk(c, depth + 1, total, max_d, cf);
+                }
             }
             NdaNode::While { cond, body } => {
                 *cf += 1;
                 walk(cond, depth + 1, total, max_d, cf);
-                for c in body { walk(c, depth + 1, total, max_d, cf); }
+                for c in body {
+                    walk(c, depth + 1, total, max_d, cf);
+                }
             }
-            NdaNode::If { cond, then_body, else_body } => {
+            NdaNode::If {
+                cond,
+                then_body,
+                else_body,
+            } => {
                 *cf += 1;
                 walk(cond, depth + 1, total, max_d, cf);
-                for c in then_body { walk(c, depth + 1, total, max_d, cf); }
+                for c in then_body {
+                    walk(c, depth + 1, total, max_d, cf);
+                }
                 if let Some(eb) = else_body {
-                    for c in eb { walk(c, depth + 1, total, max_d, cf); }
+                    for c in eb {
+                        walk(c, depth + 1, total, max_d, cf);
+                    }
                 }
             }
             _ => {}
@@ -376,7 +390,13 @@ pub fn ast_complexity(nodes: &[NdaNode]) -> AstComplexity {
     }
 
     for node in nodes {
-        walk(node, 1, &mut total_nodes, &mut max_depth, &mut control_flow_count);
+        walk(
+            node,
+            1,
+            &mut total_nodes,
+            &mut max_depth,
+            &mut control_flow_count,
+        );
     }
 
     AstComplexity {
@@ -621,8 +641,11 @@ mod tests {
     #[test]
     fn structural_hash_matrix_nodes() {
         let nodes = vec![NdaNode::Matrix {
-            rows: 4, cols: 4, scale: 1,
-            sign: vec![0xAA; 2], extra: vec![0x55; 2],
+            rows: 4,
+            cols: 4,
+            scale: 1,
+            sign: vec![0xAA; 2],
+            extra: vec![0x55; 2],
         }];
         let h = ast_structural_hash(&nodes);
         assert_ne!(h, 0);
@@ -631,7 +654,9 @@ mod tests {
     #[test]
     fn structural_hash_norm_nodes() {
         let nodes = vec![NdaNode::Norm {
-            size: 64, weight: vec![1, 2, 3], bias: vec![0],
+            size: 64,
+            weight: vec![1, 2, 3],
+            bias: vec![0],
         }];
         let h = ast_structural_hash(&nodes);
         assert_ne!(h, 0);
@@ -680,8 +705,14 @@ mod tests {
 
     #[test]
     fn structural_hash_loop_nodes() {
-        let n1 = vec![NdaNode::Loop { count: 5, body: vec![NdaNode::Int { value: 1 }] }];
-        let n2 = vec![NdaNode::Loop { count: 10, body: vec![NdaNode::Int { value: 1 }] }];
+        let n1 = vec![NdaNode::Loop {
+            count: 5,
+            body: vec![NdaNode::Int { value: 1 }],
+        }];
+        let n2 = vec![NdaNode::Loop {
+            count: 10,
+            body: vec![NdaNode::Int { value: 1 }],
+        }];
         assert_ne!(ast_structural_hash(&n1), ast_structural_hash(&n2));
     }
 
@@ -797,16 +828,21 @@ mod tests {
         let return_node = vec![NdaNode::Return {
             value: Box::new(NdaNode::Int { value: 42 }),
         }];
-        assert_ne!(ast_structural_hash(&print_node), ast_structural_hash(&return_node));
+        assert_ne!(
+            ast_structural_hash(&print_node),
+            ast_structural_hash(&return_node)
+        );
     }
 
     #[test]
     fn structural_hash_syscall() {
         let n1 = vec![NdaNode::Syscall {
-            num: 1, args: vec![NdaNode::Int { value: 42 }],
+            num: 1,
+            args: vec![NdaNode::Int { value: 42 }],
         }];
         let n2 = vec![NdaNode::Syscall {
-            num: 2, args: vec![NdaNode::Int { value: 42 }],
+            num: 2,
+            args: vec![NdaNode::Int { value: 42 }],
         }];
         assert_ne!(ast_structural_hash(&n1), ast_structural_hash(&n2));
     }
@@ -814,8 +850,12 @@ mod tests {
     #[test]
     fn structural_hash_spawn_alloc_free() {
         let spawn = vec![NdaNode::Spawn { scope_hash: 0xDEAD }];
-        let alloc = vec![NdaNode::Alloc { size: Box::new(NdaNode::Int { value: 64 }) }];
-        let free = vec![NdaNode::Free { addr: Box::new(NdaNode::Int { value: 0 }) }];
+        let alloc = vec![NdaNode::Alloc {
+            size: Box::new(NdaNode::Int { value: 64 }),
+        }];
+        let free = vec![NdaNode::Free {
+            addr: Box::new(NdaNode::Int { value: 0 }),
+        }];
         let h_spawn = ast_structural_hash(&spawn);
         let h_alloc = ast_structural_hash(&alloc);
         let h_free = ast_structural_hash(&free);
@@ -871,7 +911,10 @@ mod tests {
     fn ast_complexity_multiple_roots() {
         let nodes = vec![
             NdaNode::Int { value: 1 },
-            NdaNode::Loop { count: 3, body: vec![NdaNode::Int { value: 2 }] },
+            NdaNode::Loop {
+                count: 3,
+                body: vec![NdaNode::Int { value: 2 }],
+            },
             NdaNode::Int { value: 3 },
         ];
         let c = ast_complexity(&nodes);
@@ -882,19 +925,17 @@ mod tests {
 
     #[test]
     fn ast_complexity_mixed_control_flow() {
-        let nodes = vec![
-            NdaNode::Loop {
-                count: 5,
-                body: vec![NdaNode::If {
-                    cond: Box::new(NdaNode::Int { value: 1 }),
-                    then_body: vec![NdaNode::While {
-                        cond: Box::new(NdaNode::Int { value: 0 }),
-                        body: vec![NdaNode::Int { value: 99 }],
-                    }],
-                    else_body: None,
+        let nodes = vec![NdaNode::Loop {
+            count: 5,
+            body: vec![NdaNode::If {
+                cond: Box::new(NdaNode::Int { value: 1 }),
+                then_body: vec![NdaNode::While {
+                    cond: Box::new(NdaNode::Int { value: 0 }),
+                    body: vec![NdaNode::Int { value: 99 }],
                 }],
-            },
-        ];
+                else_body: None,
+            }],
+        }];
         let c = ast_complexity(&nodes);
         assert_eq!(c.control_flow_count, 3); // loop + if + while
     }

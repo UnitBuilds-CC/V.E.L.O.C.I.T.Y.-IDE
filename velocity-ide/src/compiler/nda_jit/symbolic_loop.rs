@@ -279,7 +279,9 @@ mod tests {
         NdaNode::Store {
             name_hash: var_hash,
             value: Box::new(NdaNode::Add {
-                lhs: Box::new(NdaNode::Load { name_hash: var_hash }),
+                lhs: Box::new(NdaNode::Load {
+                    name_hash: var_hash,
+                }),
                 rhs: Box::new(NdaNode::Int { value: step }),
             }),
         }
@@ -289,8 +291,12 @@ mod tests {
         NdaNode::Store {
             name_hash: sum_hash,
             value: Box::new(NdaNode::Add {
-                lhs: Box::new(NdaNode::Load { name_hash: sum_hash }),
-                rhs: Box::new(NdaNode::Load { name_hash: added_hash }),
+                lhs: Box::new(NdaNode::Load {
+                    name_hash: sum_hash,
+                }),
+                rhs: Box::new(NdaNode::Load {
+                    name_hash: added_hash,
+                }),
             }),
         }
     }
@@ -309,15 +315,15 @@ mod tests {
     fn analyze_loop_body_zero_count() {
         let body = vec![make_inc_store(0x01, 1)];
         let info = analyze_loop_body(0, &body);
-        assert!(info.validation_issues.iter().any(|i| i.contains("count is 0")));
+        assert!(info
+            .validation_issues
+            .iter()
+            .any(|i| i.contains("count is 0")));
     }
 
     #[test]
     fn analyze_loop_body_increment_only() {
-        let body = vec![
-            make_inc_store(0x01, 2),
-            NdaNode::Int { value: 42 },
-        ];
+        let body = vec![make_inc_store(0x01, 2), NdaNode::Int { value: 42 }];
         let info = analyze_loop_body(10, &body);
         assert!(info.has_increment_pattern);
         assert!(!info.has_accumulator_pattern);
@@ -328,10 +334,7 @@ mod tests {
     fn analyze_loop_body_full_pattern() {
         let i_hash: u64 = 0xAAAA;
         let sum_hash: u64 = 0xBBBB;
-        let body = vec![
-            make_inc_store(i_hash, 1),
-            make_acc_store(sum_hash, i_hash),
-        ];
+        let body = vec![make_inc_store(i_hash, 1), make_acc_store(sum_hash, i_hash)];
         let info = analyze_loop_body(10, &body);
         assert!(info.has_increment_pattern);
         assert!(info.has_accumulator_pattern);
@@ -468,7 +471,9 @@ mod tests {
                 name_hash: var_hash,
                 value: Box::new(NdaNode::Add {
                     lhs: Box::new(NdaNode::Int { value: 3 }),
-                    rhs: Box::new(NdaNode::Load { name_hash: var_hash }),
+                    rhs: Box::new(NdaNode::Load {
+                        name_hash: var_hash,
+                    }),
                 }),
             },
             NdaNode::Int { value: 0 },
@@ -491,7 +496,9 @@ mod tests {
                 name_hash: sum_hash,
                 value: Box::new(NdaNode::Add {
                     lhs: Box::new(NdaNode::Load { name_hash: i_hash }),
-                    rhs: Box::new(NdaNode::Load { name_hash: sum_hash }),
+                    rhs: Box::new(NdaNode::Load {
+                        name_hash: sum_hash,
+                    }),
                 }),
             },
         ];
@@ -531,10 +538,7 @@ mod tests {
 
     #[test]
     fn detect_body_wrong_shape() {
-        let body = vec![
-            NdaNode::Int { value: 1 },
-            NdaNode::Int { value: 2 },
-        ];
+        let body = vec![NdaNode::Int { value: 1 }, NdaNode::Int { value: 2 }];
         let mut emitter = X86Emitter::new();
         let registry = VarRegistry::new();
         let result = detect_and_compile_symbolic_loop(10, &body, &mut emitter, &registry).unwrap();
@@ -545,10 +549,7 @@ mod tests {
     fn detect_eligible_pattern_emits_bytes() {
         let i_hash: u64 = 0xAAAA;
         let sum_hash: u64 = 0xBBBB;
-        let body = vec![
-            make_inc_store(i_hash, 1),
-            make_acc_store(sum_hash, i_hash),
-        ];
+        let body = vec![make_inc_store(i_hash, 1), make_acc_store(sum_hash, i_hash)];
         let mut emitter = X86Emitter::new();
         let registry = VarRegistry::new();
         let result = detect_and_compile_symbolic_loop(10, &body, &mut emitter, &registry).unwrap();
@@ -559,8 +560,10 @@ mod tests {
     #[test]
     fn pattern_struct_equality() {
         let p1 = SymbolicLoopPattern {
-            increment_var_hash: 1, increment_step: 2,
-            accumulator_var_hash: 3, added_var_hash: 1,
+            increment_var_hash: 1,
+            increment_step: 2,
+            accumulator_var_hash: 3,
+            added_var_hash: 1,
             is_native_eligible: true,
         };
         let p2 = p1.clone();
@@ -570,8 +573,10 @@ mod tests {
     #[test]
     fn pattern_struct_serializes() {
         let p = SymbolicLoopPattern {
-            increment_var_hash: 0xAA, increment_step: 3,
-            accumulator_var_hash: 0xBB, added_var_hash: 0xAA,
+            increment_var_hash: 0xAA,
+            increment_step: 3,
+            accumulator_var_hash: 0xBB,
+            added_var_hash: 0xAA,
             is_native_eligible: true,
         };
         let json = serde_json::to_string(&p).unwrap();
@@ -597,10 +602,7 @@ mod tests {
     fn loop_analysis_info_with_pattern() {
         let i_hash: u64 = 0x01;
         let sum_hash: u64 = 0x02;
-        let body = vec![
-            make_inc_store(i_hash, 1),
-            make_acc_store(sum_hash, i_hash),
-        ];
+        let body = vec![make_inc_store(i_hash, 1), make_acc_store(sum_hash, i_hash)];
         let info = analyze_loop_body(5, &body);
         assert!(info.detected_pattern.is_some());
         let pat = info.detected_pattern.unwrap();
@@ -613,8 +615,10 @@ mod tests {
     #[test]
     fn symbolic_loop_pattern_json_key_count() {
         let p = SymbolicLoopPattern {
-            increment_var_hash: 1, increment_step: 2,
-            accumulator_var_hash: 3, added_var_hash: 1,
+            increment_var_hash: 1,
+            increment_step: 2,
+            accumulator_var_hash: 3,
+            added_var_hash: 1,
             is_native_eligible: true,
         };
         let json = serde_json::to_value(&p).unwrap();
@@ -624,8 +628,10 @@ mod tests {
     #[test]
     fn symbolic_loop_pattern_json_all_values() {
         let p = SymbolicLoopPattern {
-            increment_var_hash: 0xAA, increment_step: 7,
-            accumulator_var_hash: 0xBB, added_var_hash: 0xAA,
+            increment_var_hash: 0xAA,
+            increment_step: 7,
+            accumulator_var_hash: 0xBB,
+            added_var_hash: 0xAA,
             is_native_eligible: false,
         };
         let json = serde_json::to_value(&p).unwrap();
@@ -639,8 +645,10 @@ mod tests {
     #[test]
     fn symbolic_loop_pattern_clone_independence() {
         let p = SymbolicLoopPattern {
-            increment_var_hash: 1, increment_step: 2,
-            accumulator_var_hash: 3, added_var_hash: 1,
+            increment_var_hash: 1,
+            increment_step: 2,
+            accumulator_var_hash: 3,
+            added_var_hash: 1,
             is_native_eligible: true,
         };
         let mut cloned = p.clone();
@@ -655,8 +663,10 @@ mod tests {
     #[test]
     fn symbolic_loop_pattern_debug_format() {
         let p = SymbolicLoopPattern {
-            increment_var_hash: 1, increment_step: 2,
-            accumulator_var_hash: 3, added_var_hash: 1,
+            increment_var_hash: 1,
+            increment_step: 2,
+            accumulator_var_hash: 3,
+            added_var_hash: 1,
             is_native_eligible: true,
         };
         let dbg = format!("{:?}", p);
@@ -685,8 +695,10 @@ mod tests {
             has_increment_pattern: true,
             has_accumulator_pattern: true,
             detected_pattern: Some(SymbolicLoopPattern {
-                increment_var_hash: 1, increment_step: 1,
-                accumulator_var_hash: 2, added_var_hash: 1,
+                increment_var_hash: 1,
+                increment_step: 1,
+                accumulator_var_hash: 2,
+                added_var_hash: 1,
                 is_native_eligible: true,
             }),
             validation_issues: vec!["test".into()],
@@ -738,10 +750,7 @@ mod tests {
 
     #[test]
     fn analyze_non_store_nodes() {
-        let body = vec![
-            NdaNode::Int { value: 1 },
-            NdaNode::Int { value: 2 },
-        ];
+        let body = vec![NdaNode::Int { value: 1 }, NdaNode::Int { value: 2 }];
         let info = analyze_loop_body(10, &body);
         assert!(!info.has_increment_pattern);
         assert!(!info.has_accumulator_pattern);
@@ -801,10 +810,7 @@ mod tests {
     fn detect_eligible_emitted_byte_count() {
         let i_hash: u64 = 0xAAAA;
         let sum_hash: u64 = 0xBBBB;
-        let body = vec![
-            make_inc_store(i_hash, 1),
-            make_acc_store(sum_hash, i_hash),
-        ];
+        let body = vec![make_inc_store(i_hash, 1), make_acc_store(sum_hash, i_hash)];
         let mut emitter = X86Emitter::new();
         let registry = VarRegistry::new();
         let result = detect_and_compile_symbolic_loop(5, &body, &mut emitter, &registry).unwrap();
@@ -824,7 +830,8 @@ mod tests {
             ];
             let mut emitter = X86Emitter::new();
             let registry = VarRegistry::new();
-            let result = detect_and_compile_symbolic_loop(10, &body, &mut emitter, &registry).unwrap();
+            let result =
+                detect_and_compile_symbolic_loop(10, &body, &mut emitter, &registry).unwrap();
             assert!(result, "step={} should succeed", step);
         }
     }
@@ -836,8 +843,10 @@ mod tests {
             has_increment_pattern: true,
             has_accumulator_pattern: true,
             detected_pattern: Some(SymbolicLoopPattern {
-                increment_var_hash: 1, increment_step: 1,
-                accumulator_var_hash: 2, added_var_hash: 1,
+                increment_var_hash: 1,
+                increment_step: 1,
+                accumulator_var_hash: 2,
+                added_var_hash: 1,
                 is_native_eligible: true,
             }),
             validation_issues: vec![],

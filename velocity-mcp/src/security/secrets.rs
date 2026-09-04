@@ -1,4 +1,4 @@
-﻿//! Encrypted-at-rest secret store.
+//! Encrypted-at-rest secret store.
 //!
 //! Named secrets (API tokens, webhook URLs, passwords) are held in memory as a
 //! `name -> value` map and persisted to `.velocity/secrets.nda`, sealed under

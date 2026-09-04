@@ -1,4 +1,4 @@
-﻿use super::super::checkpoint::CheckpointManager;
+use super::super::checkpoint::CheckpointManager;
 use super::super::coordination::CoordinationBus;
 use super::super::memory_store::PersistentMemory;
 use super::super::models::*;

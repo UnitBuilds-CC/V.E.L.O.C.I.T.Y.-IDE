@@ -1,4 +1,4 @@
-﻿//! Browse Panel - AI-powered web research directly in the sidebar.
+//! Browse Panel - AI-powered web research directly in the sidebar.
 //!
 //! Accepts either a plain-language question ("how much does an iPhone 17 cost?")
 //! or a URL + question ("https://example.com — summarize key announcements").

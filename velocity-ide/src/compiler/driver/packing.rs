@@ -125,11 +125,18 @@ pub fn pack_weights_uvec4_report(src: &[u8], k: usize, n: usize) -> (Vec<u8>, Pa
 
 /// Pack NDA weights with validation and a diagnostic report.
 pub fn pack_weights_nda_report(
-    weights: &[u8], k: usize, n: usize,
+    weights: &[u8],
+    k: usize,
+    n: usize,
 ) -> ((Vec<u8>, Vec<u8>), PackingReport) {
     let start = Instant::now();
     let mut issues = validate_u32_alignment(weights, "pack_weights_nda input");
-    issues.extend(validate_nda_pack_dims(k, n, weights.len(), "pack_weights_nda"));
+    issues.extend(validate_nda_pack_dims(
+        k,
+        n,
+        weights.len(),
+        "pack_weights_nda",
+    ));
     let valid = issues.is_empty();
 
     let result = if valid {
@@ -170,7 +177,11 @@ pub fn pack_weights_uvec4_batch(
     }
 
     let elapsed = start.elapsed().as_micros() as u64;
-    let avg = if items.is_empty() { 0.0 } else { elapsed as f64 / items.len() as f64 };
+    let avg = if items.is_empty() {
+        0.0
+    } else {
+        elapsed as f64 / items.len() as f64
+    };
 
     let report = BatchPackingReport {
         operations: items.len(),
@@ -232,9 +243,7 @@ pub fn validate_inputs_nda(data: &[u32], ctx: &str) -> Vec<String> {
 }
 
 /// Pack NDA inputs with validation and a diagnostic report.
-pub fn pack_inputs_nda_report(
-    inputs: &[u32],
-) -> ((Vec<u32>, Vec<u32>), PackingReport) {
+pub fn pack_inputs_nda_report(inputs: &[u32]) -> ((Vec<u32>, Vec<u32>), PackingReport) {
     let start = Instant::now();
     let issues = validate_inputs_nda(inputs, "pack_inputs_nda");
     let valid = issues.is_empty();
@@ -452,7 +461,10 @@ mod tests {
         // k=16, n=4: need 4 words = 16 bytes, but only give 8
         let issues = validate_pack_dims(16, 4, 8, "test");
         assert!(!issues.is_empty());
-        assert!(issues.iter().any(|i| i.contains("not enough")) || issues.iter().any(|i| i.contains("need")));
+        assert!(
+            issues.iter().any(|i| i.contains("not enough"))
+                || issues.iter().any(|i| i.contains("need"))
+        );
     }
 
     #[test]
@@ -476,10 +488,8 @@ mod tests {
         // k=64, n=1: 4 col groups → 1 group-of-4, 1 row
         // Input: 4 u32 words = 16 bytes, Output: 4 u32 words = 16 bytes
         let input: Vec<u8> = vec![
-            0x01, 0x00, 0x00, 0x00,
-            0x02, 0x00, 0x00, 0x00,
-            0x03, 0x00, 0x00, 0x00,
-            0x04, 0x00, 0x00, 0x00,
+            0x01, 0x00, 0x00, 0x00, 0x02, 0x00, 0x00, 0x00, 0x03, 0x00, 0x00, 0x00, 0x04, 0x00,
+            0x00, 0x00,
         ];
         let result = pack_weights_uvec4(&input, 64, 1);
         assert_eq!(result.len(), 16);
@@ -582,8 +592,8 @@ mod tests {
     #[test]
     fn batch_pack_uvec4_multiple() {
         let items = vec![
-            (vec![0u8; 64], 64, 4),  // valid
-            (vec![0u8; 64], 64, 4),  // valid
+            (vec![0u8; 64], 64, 4), // valid
+            (vec![0u8; 64], 64, 4), // valid
         ];
         let (results, report) = pack_weights_uvec4_batch(&items);
         assert_eq!(results.len(), 2);
@@ -595,8 +605,8 @@ mod tests {
     #[test]
     fn batch_pack_uvec4_with_invalid() {
         let items = vec![
-            (vec![0u8; 64], 64, 4),  // valid
-            (vec![0u8; 5], 64, 4),   // invalid: bad alignment
+            (vec![0u8; 64], 64, 4), // valid
+            (vec![0u8; 5], 64, 4),  // invalid: bad alignment
         ];
         let (results, report) = pack_weights_uvec4_batch(&items);
         assert_eq!(results.len(), 2);
@@ -642,10 +652,7 @@ mod tests {
 
     #[test]
     fn packing_summary_from_valid_batch() {
-        let items = vec![
-            (vec![0u8; 64], 64, 4),
-            (vec![0u8; 64], 64, 4),
-        ];
+        let items = vec![(vec![0u8; 64], 64, 4), (vec![0u8; 64], 64, 4)];
         let (_, report) = pack_weights_uvec4_batch(&items);
         let summary = report.summary();
         assert_eq!(summary.total_ops, 2);
@@ -857,8 +864,12 @@ mod tests {
     #[test]
     fn packing_report_clone_is_independent() {
         let report = PackingReport {
-            operation: "test".into(), input_bytes: 100, output_bytes: 50,
-            elapsed_us: 10, validation_issues: vec![], valid: true,
+            operation: "test".into(),
+            input_bytes: 100,
+            output_bytes: 50,
+            elapsed_us: 10,
+            validation_issues: vec![],
+            valid: true,
         };
         let mut cloned = report.clone();
         cloned.input_bytes = 999;
@@ -868,8 +879,12 @@ mod tests {
     #[test]
     fn packing_report_debug_format() {
         let report = PackingReport {
-            operation: "test".into(), input_bytes: 100, output_bytes: 50,
-            elapsed_us: 10, validation_issues: vec![], valid: true,
+            operation: "test".into(),
+            input_bytes: 100,
+            output_bytes: 50,
+            elapsed_us: 10,
+            validation_issues: vec![],
+            valid: true,
         };
         let debug = format!("{:?}", report);
         assert!(debug.contains("operation"));
@@ -879,8 +894,12 @@ mod tests {
     #[test]
     fn packing_report_json_all_fields() {
         let report = PackingReport {
-            operation: "op".into(), input_bytes: 64, output_bytes: 32,
-            elapsed_us: 5, validation_issues: vec!["issue1".into()], valid: false,
+            operation: "op".into(),
+            input_bytes: 64,
+            output_bytes: 32,
+            elapsed_us: 5,
+            validation_issues: vec!["issue1".into()],
+            valid: false,
         };
         let json = serde_json::to_string(&report).unwrap();
         assert!(json.contains("operation"));
@@ -896,9 +915,13 @@ mod tests {
     #[test]
     fn batch_report_clone_is_independent() {
         let report = BatchPackingReport {
-            operations: 5, total_input_bytes: 500, total_output_bytes: 250,
-            total_elapsed_us: 100, per_op_avg_us: 20.0,
-            all_valid: true, issues: vec![],
+            operations: 5,
+            total_input_bytes: 500,
+            total_output_bytes: 250,
+            total_elapsed_us: 100,
+            per_op_avg_us: 20.0,
+            all_valid: true,
+            issues: vec![],
         };
         let mut cloned = report.clone();
         cloned.operations = 999;
@@ -908,9 +931,13 @@ mod tests {
     #[test]
     fn batch_report_debug_format() {
         let report = BatchPackingReport {
-            operations: 3, total_input_bytes: 300, total_output_bytes: 150,
-            total_elapsed_us: 50, per_op_avg_us: 16.7,
-            all_valid: true, issues: vec![],
+            operations: 3,
+            total_input_bytes: 300,
+            total_output_bytes: 150,
+            total_elapsed_us: 50,
+            per_op_avg_us: 16.7,
+            all_valid: true,
+            issues: vec![],
         };
         let debug = format!("{:?}", report);
         assert!(debug.contains("operations"));
@@ -920,9 +947,13 @@ mod tests {
     #[test]
     fn batch_report_json_all_fields() {
         let report = BatchPackingReport {
-            operations: 10, total_input_bytes: 1000, total_output_bytes: 500,
-            total_elapsed_us: 200, per_op_avg_us: 20.0,
-            all_valid: false, issues: vec!["err".into()],
+            operations: 10,
+            total_input_bytes: 1000,
+            total_output_bytes: 500,
+            total_elapsed_us: 200,
+            per_op_avg_us: 20.0,
+            all_valid: false,
+            issues: vec!["err".into()],
         };
         let json = serde_json::to_string(&report).unwrap();
         assert!(json.contains("operations"));
@@ -938,9 +969,13 @@ mod tests {
     #[test]
     fn summary_compression_ratio_calculation() {
         let report = BatchPackingReport {
-            operations: 1, total_input_bytes: 1000, total_output_bytes: 250,
-            total_elapsed_us: 10, per_op_avg_us: 10.0,
-            all_valid: true, issues: vec![],
+            operations: 1,
+            total_input_bytes: 1000,
+            total_output_bytes: 250,
+            total_elapsed_us: 10,
+            per_op_avg_us: 10.0,
+            all_valid: true,
+            issues: vec![],
         };
         let summary = report.summary();
         assert!((summary.compression_ratio - 0.25).abs() < 0.01);
@@ -949,9 +984,13 @@ mod tests {
     #[test]
     fn summary_with_issues_shows_invalid() {
         let report = BatchPackingReport {
-            operations: 2, total_input_bytes: 100, total_output_bytes: 50,
-            total_elapsed_us: 10, per_op_avg_us: 5.0,
-            all_valid: false, issues: vec!["err1".into(), "err2".into()],
+            operations: 2,
+            total_input_bytes: 100,
+            total_output_bytes: 50,
+            total_elapsed_us: 10,
+            per_op_avg_us: 5.0,
+            all_valid: false,
+            issues: vec!["err1".into(), "err2".into()],
         };
         let summary = report.summary();
         assert_eq!(summary.valid_ops, 0);
@@ -962,9 +1001,13 @@ mod tests {
     #[test]
     fn summary_heaviest_op_is_none_by_default() {
         let report = BatchPackingReport {
-            operations: 1, total_input_bytes: 100, total_output_bytes: 50,
-            total_elapsed_us: 10, per_op_avg_us: 10.0,
-            all_valid: true, issues: vec![],
+            operations: 1,
+            total_input_bytes: 100,
+            total_output_bytes: 50,
+            total_elapsed_us: 10,
+            per_op_avg_us: 10.0,
+            all_valid: true,
+            issues: vec![],
         };
         let summary = report.summary();
         assert!(summary.heaviest_op.is_none());
@@ -976,9 +1019,13 @@ mod tests {
     #[test]
     fn packing_summary_clone_is_independent() {
         let summary = PackingSummary {
-            total_ops: 5, valid_ops: 5, invalid_ops: 0,
-            compression_ratio: 0.5, total_issues: 0,
-            heaviest_op: Some("op".into()), heaviest_op_bytes: 100,
+            total_ops: 5,
+            valid_ops: 5,
+            invalid_ops: 0,
+            compression_ratio: 0.5,
+            total_issues: 0,
+            heaviest_op: Some("op".into()),
+            heaviest_op_bytes: 100,
         };
         let mut cloned = summary.clone();
         cloned.total_ops = 999;
@@ -988,9 +1035,13 @@ mod tests {
     #[test]
     fn packing_summary_json_all_fields() {
         let summary = PackingSummary {
-            total_ops: 10, valid_ops: 8, invalid_ops: 2,
-            compression_ratio: 0.75, total_issues: 3,
-            heaviest_op: Some("layer_0".into()), heaviest_op_bytes: 2048,
+            total_ops: 10,
+            valid_ops: 8,
+            invalid_ops: 2,
+            compression_ratio: 0.75,
+            total_issues: 3,
+            heaviest_op: Some("layer_0".into()),
+            heaviest_op_bytes: 2048,
         };
         let json = serde_json::to_string(&summary).unwrap();
         assert!(json.contains("total_ops"));
@@ -1071,8 +1122,12 @@ mod tests {
     #[test]
     fn packing_report_json_key_count() {
         let report = PackingReport {
-            operation: "op".into(), input_bytes: 10, output_bytes: 5,
-            elapsed_us: 1, validation_issues: vec![], valid: true,
+            operation: "op".into(),
+            input_bytes: 10,
+            output_bytes: 5,
+            elapsed_us: 1,
+            validation_issues: vec![],
+            valid: true,
         };
         let v: serde_json::Value = serde_json::to_value(&report).unwrap();
         assert_eq!(v.as_object().unwrap().len(), 6);
@@ -1081,9 +1136,13 @@ mod tests {
     #[test]
     fn batch_packing_report_json_key_count() {
         let report = BatchPackingReport {
-            operations: 1, total_input_bytes: 100, total_output_bytes: 50,
-            total_elapsed_us: 10, per_op_avg_us: 10.0,
-            all_valid: true, issues: vec![],
+            operations: 1,
+            total_input_bytes: 100,
+            total_output_bytes: 50,
+            total_elapsed_us: 10,
+            per_op_avg_us: 10.0,
+            all_valid: true,
+            issues: vec![],
         };
         let v: serde_json::Value = serde_json::to_value(&report).unwrap();
         assert_eq!(v.as_object().unwrap().len(), 7);
@@ -1092,9 +1151,13 @@ mod tests {
     #[test]
     fn packing_summary_json_key_count() {
         let summary = PackingSummary {
-            total_ops: 1, valid_ops: 1, invalid_ops: 0,
-            compression_ratio: 1.0, total_issues: 0,
-            heaviest_op: None, heaviest_op_bytes: 0,
+            total_ops: 1,
+            valid_ops: 1,
+            invalid_ops: 0,
+            compression_ratio: 1.0,
+            total_issues: 0,
+            heaviest_op: None,
+            heaviest_op_bytes: 0,
         };
         let v: serde_json::Value = serde_json::to_value(&summary).unwrap();
         assert_eq!(v.as_object().unwrap().len(), 7);
@@ -1105,8 +1168,12 @@ mod tests {
     #[test]
     fn packing_report_json_roundtrip_via_value() {
         let report = PackingReport {
-            operation: "pack_test".into(), input_bytes: 256, output_bytes: 128,
-            elapsed_us: 42, validation_issues: vec!["warn".into()], valid: false,
+            operation: "pack_test".into(),
+            input_bytes: 256,
+            output_bytes: 128,
+            elapsed_us: 42,
+            validation_issues: vec!["warn".into()],
+            valid: false,
         };
         let v: serde_json::Value = serde_json::to_value(&report).unwrap();
         assert_eq!(v["operation"], "pack_test");
@@ -1120,9 +1187,13 @@ mod tests {
     #[test]
     fn batch_report_json_roundtrip_via_value() {
         let report = BatchPackingReport {
-            operations: 3, total_input_bytes: 300, total_output_bytes: 150,
-            total_elapsed_us: 60, per_op_avg_us: 20.0,
-            all_valid: false, issues: vec!["e1".into(), "e2".into()],
+            operations: 3,
+            total_input_bytes: 300,
+            total_output_bytes: 150,
+            total_elapsed_us: 60,
+            per_op_avg_us: 20.0,
+            all_valid: false,
+            issues: vec!["e1".into(), "e2".into()],
         };
         let v: serde_json::Value = serde_json::to_value(&report).unwrap();
         assert_eq!(v["operations"], 3);
@@ -1135,9 +1206,13 @@ mod tests {
     #[test]
     fn packing_summary_json_roundtrip_via_value() {
         let summary = PackingSummary {
-            total_ops: 5, valid_ops: 3, invalid_ops: 2,
-            compression_ratio: 0.6, total_issues: 4,
-            heaviest_op: Some("layer_2".into()), heaviest_op_bytes: 8192,
+            total_ops: 5,
+            valid_ops: 3,
+            invalid_ops: 2,
+            compression_ratio: 0.6,
+            total_issues: 4,
+            heaviest_op: Some("layer_2".into()),
+            heaviest_op_bytes: 8192,
         };
         let v: serde_json::Value = serde_json::to_value(&summary).unwrap();
         assert_eq!(v["total_ops"], 5);
@@ -1152,9 +1227,13 @@ mod tests {
     #[test]
     fn summary_compression_ratio_formula() {
         let report = BatchPackingReport {
-            operations: 1, total_input_bytes: 2000, total_output_bytes: 500,
-            total_elapsed_us: 10, per_op_avg_us: 10.0,
-            all_valid: true, issues: vec![],
+            operations: 1,
+            total_input_bytes: 2000,
+            total_output_bytes: 500,
+            total_elapsed_us: 10,
+            per_op_avg_us: 10.0,
+            all_valid: true,
+            issues: vec![],
         };
         let summary = report.summary();
         let expected = 500.0 / 2000.0;
@@ -1164,9 +1243,13 @@ mod tests {
     #[test]
     fn summary_valid_ops_equals_operations_when_all_valid() {
         let report = BatchPackingReport {
-            operations: 7, total_input_bytes: 700, total_output_bytes: 350,
-            total_elapsed_us: 100, per_op_avg_us: 14.3,
-            all_valid: true, issues: vec![],
+            operations: 7,
+            total_input_bytes: 700,
+            total_output_bytes: 350,
+            total_elapsed_us: 100,
+            per_op_avg_us: 14.3,
+            all_valid: true,
+            issues: vec![],
         };
         let summary = report.summary();
         assert_eq!(summary.valid_ops, 7);
@@ -1176,9 +1259,13 @@ mod tests {
     #[test]
     fn summary_invalid_ops_equals_issues_len_when_not_all_valid() {
         let report = BatchPackingReport {
-            operations: 4, total_input_bytes: 400, total_output_bytes: 200,
-            total_elapsed_us: 50, per_op_avg_us: 12.5,
-            all_valid: false, issues: vec!["a".into(), "b".into(), "c".into()],
+            operations: 4,
+            total_input_bytes: 400,
+            total_output_bytes: 200,
+            total_elapsed_us: 50,
+            per_op_avg_us: 12.5,
+            all_valid: false,
+            issues: vec!["a".into(), "b".into(), "c".into()],
         };
         let summary = report.summary();
         assert_eq!(summary.valid_ops, 0);
@@ -1269,8 +1356,12 @@ mod tests {
     #[test]
     fn packing_report_clone_issues_independent() {
         let report = PackingReport {
-            operation: "t".into(), input_bytes: 0, output_bytes: 0,
-            elapsed_us: 0, validation_issues: vec!["x".into()], valid: false,
+            operation: "t".into(),
+            input_bytes: 0,
+            output_bytes: 0,
+            elapsed_us: 0,
+            validation_issues: vec!["x".into()],
+            valid: false,
         };
         let mut cloned = report.clone();
         cloned.validation_issues.push("y".into());
@@ -1280,9 +1371,13 @@ mod tests {
     #[test]
     fn batch_report_clone_issues_independent() {
         let report = BatchPackingReport {
-            operations: 1, total_input_bytes: 0, total_output_bytes: 0,
-            total_elapsed_us: 0, per_op_avg_us: 0.0,
-            all_valid: false, issues: vec!["a".into()],
+            operations: 1,
+            total_input_bytes: 0,
+            total_output_bytes: 0,
+            total_elapsed_us: 0,
+            per_op_avg_us: 0.0,
+            all_valid: false,
+            issues: vec!["a".into()],
         };
         let mut cloned = report.clone();
         cloned.issues.push("b".into());
@@ -1294,9 +1389,13 @@ mod tests {
     #[test]
     fn packing_summary_debug_format() {
         let summary = PackingSummary {
-            total_ops: 3, valid_ops: 2, invalid_ops: 1,
-            compression_ratio: 0.5, total_issues: 1,
-            heaviest_op: Some("op_x".into()), heaviest_op_bytes: 512,
+            total_ops: 3,
+            valid_ops: 2,
+            invalid_ops: 1,
+            compression_ratio: 0.5,
+            total_issues: 1,
+            heaviest_op: Some("op_x".into()),
+            heaviest_op_bytes: 512,
         };
         let debug = format!("{:?}", summary);
         assert!(debug.contains("total_ops"));
@@ -1309,8 +1408,12 @@ mod tests {
     #[test]
     fn packing_report_compact_json_no_whitespace() {
         let report = PackingReport {
-            operation: "x".into(), input_bytes: 1, output_bytes: 1,
-            elapsed_us: 0, validation_issues: vec![], valid: true,
+            operation: "x".into(),
+            input_bytes: 1,
+            output_bytes: 1,
+            elapsed_us: 0,
+            validation_issues: vec![],
+            valid: true,
         };
         let json = serde_json::to_string(&report).unwrap();
         assert!(!json.contains("  "));
@@ -1321,8 +1424,12 @@ mod tests {
     #[test]
     fn packing_report_json_types() {
         let report = PackingReport {
-            operation: "o".into(), input_bytes: 10, output_bytes: 5,
-            elapsed_us: 3, validation_issues: vec![], valid: true,
+            operation: "o".into(),
+            input_bytes: 10,
+            output_bytes: 5,
+            elapsed_us: 3,
+            validation_issues: vec![],
+            valid: true,
         };
         let v: serde_json::Value = serde_json::to_value(&report).unwrap();
         assert!(v["operation"].is_string());
@@ -1336,9 +1443,13 @@ mod tests {
     #[test]
     fn batch_report_json_types() {
         let report = BatchPackingReport {
-            operations: 2, total_input_bytes: 200, total_output_bytes: 100,
-            total_elapsed_us: 50, per_op_avg_us: 25.0,
-            all_valid: true, issues: vec![],
+            operations: 2,
+            total_input_bytes: 200,
+            total_output_bytes: 100,
+            total_elapsed_us: 50,
+            per_op_avg_us: 25.0,
+            all_valid: true,
+            issues: vec![],
         };
         let v: serde_json::Value = serde_json::to_value(&report).unwrap();
         assert!(v["operations"].is_u64());
@@ -1386,10 +1497,7 @@ mod tests {
 
     #[test]
     fn batch_pack_mixed_total_bytes_accurate() {
-        let items = vec![
-            (vec![0u8; 64], 64, 4),
-            (vec![0u8; 3], 64, 4),
-        ];
+        let items = vec![(vec![0u8; 64], 64, 4), (vec![0u8; 3], 64, 4)];
         let (_, report) = pack_weights_uvec4_batch(&items);
         assert_eq!(report.total_input_bytes, 67);
         assert!(!report.all_valid);

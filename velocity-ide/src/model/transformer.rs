@@ -862,7 +862,10 @@ impl Transformer {
 
     /// Get per-layer KV cache sizes (number of blocks per layer).
     pub fn kv_cache_sizes(&self) -> Vec<usize> {
-        self.kv_cache.iter().map(|layer| layer.blocks.len()).collect()
+        self.kv_cache
+            .iter()
+            .map(|layer| layer.blocks.len())
+            .collect()
     }
 
     /// Total KV cache blocks across all layers.
@@ -891,7 +894,11 @@ impl Transformer {
             cfg.head_dim,
             cfg.n_kv_heads,
             cfg.ffn_size,
-            if self.gpu_pipeline_active() { "Vulkan" } else { "CPU" },
+            if self.gpu_pipeline_active() {
+                "Vulkan"
+            } else {
+                "CPU"
+            },
         )
     }
 
@@ -1730,7 +1737,11 @@ mod tests {
     #[test]
     fn silu_large_negative() {
         let y = silu(-20.0);
-        assert!(y.abs() < 1e-6, "silu(-20) should be effectively zero, got {}", y);
+        assert!(
+            y.abs() < 1e-6,
+            "silu(-20) should be effectively zero, got {}",
+            y
+        );
     }
 
     #[test]
@@ -1804,8 +1815,12 @@ mod tests {
         apply_rope_head(&mut head, 10, 4, 10000.0);
         let norm_after: f32 = head.iter().map(|v| v * v).sum::<f32>().sqrt();
         // RoPE is a rotation — should preserve L2 norm
-        assert!((norm_before - norm_after).abs() < 0.01,
-            "norm before={}, after={}", norm_before, norm_after);
+        assert!(
+            (norm_before - norm_after).abs() < 0.01,
+            "norm before={}, after={}",
+            norm_before,
+            norm_after
+        );
     }
 
     // ── sample_token edge cases ──────────────────────────────────────────────
@@ -1880,7 +1895,11 @@ mod tests {
         let mut counts = std::collections::HashMap::new();
         counts.insert(99, 1); // token 99 is out of range
         apply_presence_penalty(&mut logits, &counts, 1.0);
-        assert_eq!(logits, vec![5.0, 3.0, 1.0], "out-of-range token → no change");
+        assert_eq!(
+            logits,
+            vec![5.0, 3.0, 1.0],
+            "out-of-range token → no change"
+        );
     }
 
     // ── pack_vector_impl ─────────────────────────────────────────────────────
@@ -1908,18 +1927,28 @@ mod tests {
     #[test]
     fn kv_block_hash_differs_for_different_data() {
         let b1 = NdaKvBlock {
-            prev_hash: [0u8; 32], hash: [0u8; 32],
-            k_scale: 1.0, v_scale: 1.0,
-            k_sign: vec![0xFF], k_extra: vec![0xAA],
-            v_sign: vec![0x55], v_extra: vec![0x00],
-            k_raw: vec![1.0], v_raw: vec![2.0],
+            prev_hash: [0u8; 32],
+            hash: [0u8; 32],
+            k_scale: 1.0,
+            v_scale: 1.0,
+            k_sign: vec![0xFF],
+            k_extra: vec![0xAA],
+            v_sign: vec![0x55],
+            v_extra: vec![0x00],
+            k_raw: vec![1.0],
+            v_raw: vec![2.0],
         };
         let b2 = NdaKvBlock {
-            prev_hash: [0u8; 32], hash: [0u8; 32],
-            k_scale: 2.0, v_scale: 1.0, // different scale
-            k_sign: vec![0xFF], k_extra: vec![0xAA],
-            v_sign: vec![0x55], v_extra: vec![0x00],
-            k_raw: vec![1.0], v_raw: vec![2.0],
+            prev_hash: [0u8; 32],
+            hash: [0u8; 32],
+            k_scale: 2.0,
+            v_scale: 1.0, // different scale
+            k_sign: vec![0xFF],
+            k_extra: vec![0xAA],
+            v_sign: vec![0x55],
+            v_extra: vec![0x00],
+            k_raw: vec![1.0],
+            v_raw: vec![2.0],
         };
         assert_ne!(b1.compute_hash(), b2.compute_hash());
     }
@@ -1927,18 +1956,28 @@ mod tests {
     #[test]
     fn kv_block_hash_differs_for_different_prev_hash() {
         let b1 = NdaKvBlock {
-            prev_hash: [0u8; 32], hash: [0u8; 32],
-            k_scale: 1.0, v_scale: 1.0,
-            k_sign: vec![0xFF], k_extra: vec![0xAA],
-            v_sign: vec![0x55], v_extra: vec![0x00],
-            k_raw: vec![1.0], v_raw: vec![2.0],
+            prev_hash: [0u8; 32],
+            hash: [0u8; 32],
+            k_scale: 1.0,
+            v_scale: 1.0,
+            k_sign: vec![0xFF],
+            k_extra: vec![0xAA],
+            v_sign: vec![0x55],
+            v_extra: vec![0x00],
+            k_raw: vec![1.0],
+            v_raw: vec![2.0],
         };
         let b2 = NdaKvBlock {
-            prev_hash: [1u8; 32], hash: [0u8; 32],
-            k_scale: 1.0, v_scale: 1.0,
-            k_sign: vec![0xFF], k_extra: vec![0xAA],
-            v_sign: vec![0x55], v_extra: vec![0x00],
-            k_raw: vec![1.0], v_raw: vec![2.0],
+            prev_hash: [1u8; 32],
+            hash: [0u8; 32],
+            k_scale: 1.0,
+            v_scale: 1.0,
+            k_sign: vec![0xFF],
+            k_extra: vec![0xAA],
+            v_sign: vec![0x55],
+            v_extra: vec![0x00],
+            k_raw: vec![1.0],
+            v_raw: vec![2.0],
         };
         assert_ne!(b1.compute_hash(), b2.compute_hash());
     }
@@ -1981,11 +2020,7 @@ mod tests {
     fn lm_head_identity_like() {
         // 3×3 identity weight matrix
         let hidden = vec![1.0, 2.0, 3.0];
-        let weights = vec![
-            1.0, 0.0, 0.0,
-            0.0, 1.0, 0.0,
-            0.0, 0.0, 1.0,
-        ];
+        let weights = vec![1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0];
         let mut logits = vec![0.0; 3];
         lm_head(&hidden, &weights, 3, 3, &mut logits);
         assert!((logits[0] - 1.0).abs() < 1e-5);
@@ -2020,12 +2055,18 @@ mod tests {
             token_ids: vec![10, 20, 30],
             forward_metrics: vec![
                 Fp32ForwardMetrics {
-                    position: 0, gpu_active: true, layers_executed: 2,
-                    total_kv_blocks: 2, elapsed_us: 1000,
+                    position: 0,
+                    gpu_active: true,
+                    layers_executed: 2,
+                    total_kv_blocks: 2,
+                    elapsed_us: 1000,
                 },
                 Fp32ForwardMetrics {
-                    position: 1, gpu_active: true, layers_executed: 2,
-                    total_kv_blocks: 4, elapsed_us: 800,
+                    position: 1,
+                    gpu_active: true,
+                    layers_executed: 2,
+                    total_kv_blocks: 4,
+                    elapsed_us: 800,
                 },
             ],
         };
@@ -2068,8 +2109,8 @@ mod tests {
             n_layers: 1,
             hidden_size: 64,
             ffn_size: 128,
-            n_heads: 8,      // 8 heads
-            n_kv_heads: 2,   // 2 KV heads (GQA)
+            n_heads: 8,    // 8 heads
+            n_kv_heads: 2, // 2 KV heads (GQA)
             head_dim: 8,
             vocab_size: 50,
             max_seq_len: 32,
@@ -2111,7 +2152,13 @@ mod tests {
         attention_head_float(&q, &layer, 0, 4, 1.0, &mut out);
         // Only one block → attention weight = 1.0 → out = v
         for i in 0..4 {
-            assert!((out[i] - v[i]).abs() < 1e-4, "out[{}]={} expected {}", i, out[i], v[i]);
+            assert!(
+                (out[i] - v[i]).abs() < 1e-4,
+                "out[{}]={} expected {}",
+                i,
+                out[i],
+                v[i]
+            );
         }
     }
 
@@ -2200,7 +2247,12 @@ mod tests {
         // silu(1) = 1 * sigmoid(1) = 1 / (1 + e^-1) ≈ 0.7311
         let y = silu(1.0);
         let expected = 1.0 / (1.0 + (-1.0_f32).exp());
-        assert!((y - expected).abs() < 1e-5, "got {} expected {}", y, expected);
+        assert!(
+            (y - expected).abs() < 1e-5,
+            "got {} expected {}",
+            y,
+            expected
+        );
     }
 
     #[test]
@@ -2220,8 +2272,12 @@ mod tests {
         apply_rope_head(&mut head, 3, 8, 10000.0);
         let norm_after: f32 = head.iter().map(|v| v * v).sum::<f32>().sqrt();
         // RoPE preserves norm across all pairs
-        assert!((norm_before - norm_after).abs() < 0.01,
-            "norm before={} after={}", norm_before, norm_after);
+        assert!(
+            (norm_before - norm_after).abs() < 0.01,
+            "norm before={} after={}",
+            norm_before,
+            norm_after
+        );
     }
 
     #[test]
@@ -2353,16 +2409,36 @@ mod tests {
             bos_token_id: 1,
         };
         let scratch = TransformerScratch::new(&cfg);
-        for &val in &scratch.x { assert_eq!(val, 0.0); }
-        for &val in &scratch.x_norm { assert_eq!(val, 0.0); }
-        for &val in &scratch.q { assert_eq!(val, 0.0); }
-        for &val in &scratch.k { assert_eq!(val, 0.0); }
-        for &val in &scratch.v { assert_eq!(val, 0.0); }
-        for &val in &scratch.attn_out { assert_eq!(val, 0.0); }
-        for &val in &scratch.gate_out { assert_eq!(val, 0.0); }
-        for &val in &scratch.up_out { assert_eq!(val, 0.0); }
-        for &val in &scratch.gated { assert_eq!(val, 0.0); }
-        for &val in &scratch.logits { assert_eq!(val, 0.0); }
+        for &val in &scratch.x {
+            assert_eq!(val, 0.0);
+        }
+        for &val in &scratch.x_norm {
+            assert_eq!(val, 0.0);
+        }
+        for &val in &scratch.q {
+            assert_eq!(val, 0.0);
+        }
+        for &val in &scratch.k {
+            assert_eq!(val, 0.0);
+        }
+        for &val in &scratch.v {
+            assert_eq!(val, 0.0);
+        }
+        for &val in &scratch.attn_out {
+            assert_eq!(val, 0.0);
+        }
+        for &val in &scratch.gate_out {
+            assert_eq!(val, 0.0);
+        }
+        for &val in &scratch.up_out {
+            assert_eq!(val, 0.0);
+        }
+        for &val in &scratch.gated {
+            assert_eq!(val, 0.0);
+        }
+        for &val in &scratch.logits {
+            assert_eq!(val, 0.0);
+        }
     }
 
     #[test]
@@ -2384,8 +2460,8 @@ mod tests {
         };
         let scratch = TransformerScratch::new(&cfg);
         assert_eq!(scratch.q.len(), 64); // 8 * 8
-        assert_eq!(scratch.k.len(), 8);  // 1 * 8 (MQA)
-        assert_eq!(scratch.v.len(), 8);  // 1 * 8
+        assert_eq!(scratch.k.len(), 8); // 1 * 8 (MQA)
+        assert_eq!(scratch.v.len(), 8); // 1 * 8
     }
 
     // ── KvLayer extras ───────────────────────────────────────────────────────
@@ -2394,7 +2470,10 @@ mod tests {
     fn kv_layer_genesis_block_prev_hash_zero() {
         let mut layer = KvLayer::new();
         layer.push(&[1.0; 8], &[0.5; 8]);
-        assert_eq!(layer.blocks[0].prev_hash, [0u8; 32], "first block prev_hash = genesis");
+        assert_eq!(
+            layer.blocks[0].prev_hash, [0u8; 32],
+            "first block prev_hash = genesis"
+        );
     }
 
     #[test]
@@ -2523,18 +2602,28 @@ mod tests {
     #[test]
     fn kv_block_same_data_same_hash() {
         let b1 = NdaKvBlock {
-            prev_hash: [42u8; 32], hash: [0u8; 32],
-            k_scale: 1.5, v_scale: 2.5,
-            k_sign: vec![0xAB, 0xCD], k_extra: vec![0x12, 0x34],
-            v_sign: vec![0x56, 0x78], v_extra: vec![0x9A, 0xBC],
-            k_raw: vec![1.0, 2.0], v_raw: vec![3.0, 4.0],
+            prev_hash: [42u8; 32],
+            hash: [0u8; 32],
+            k_scale: 1.5,
+            v_scale: 2.5,
+            k_sign: vec![0xAB, 0xCD],
+            k_extra: vec![0x12, 0x34],
+            v_sign: vec![0x56, 0x78],
+            v_extra: vec![0x9A, 0xBC],
+            k_raw: vec![1.0, 2.0],
+            v_raw: vec![3.0, 4.0],
         };
         let b2 = NdaKvBlock {
-            prev_hash: [42u8; 32], hash: [0u8; 32],
-            k_scale: 1.5, v_scale: 2.5,
-            k_sign: vec![0xAB, 0xCD], k_extra: vec![0x12, 0x34],
-            v_sign: vec![0x56, 0x78], v_extra: vec![0x9A, 0xBC],
-            k_raw: vec![1.0, 2.0], v_raw: vec![3.0, 4.0],
+            prev_hash: [42u8; 32],
+            hash: [0u8; 32],
+            k_scale: 1.5,
+            v_scale: 2.5,
+            k_sign: vec![0xAB, 0xCD],
+            k_extra: vec![0x12, 0x34],
+            v_sign: vec![0x56, 0x78],
+            v_extra: vec![0x9A, 0xBC],
+            k_raw: vec![1.0, 2.0],
+            v_raw: vec![3.0, 4.0],
         };
         assert_eq!(b1.compute_hash(), b2.compute_hash());
     }
@@ -2693,7 +2782,10 @@ mod tests {
         let mut out = vec![99.0; 4];
         rms_norm_to(&x, &mut out, &[1.0; 4], 1e-6);
         assert_eq!(x, vec![1.0, 2.0, 3.0, 4.0], "input must be unchanged");
-        for &v in &out { assert!(v.is_finite()); assert_ne!(v, 99.0); }
+        for &v in &out {
+            assert!(v.is_finite());
+            assert_ne!(v, 99.0);
+        }
     }
 
     #[test]
@@ -2701,7 +2793,9 @@ mod tests {
         let x = vec![1.0, 2.0, 3.0];
         let mut out = vec![0.0; 3];
         rms_norm_to(&x, &mut out, &[0.0, 0.0, 0.0], 1e-6);
-        for &v in &out { assert_eq!(v, 0.0, "zero weights → zero output"); }
+        for &v in &out {
+            assert_eq!(v, 0.0, "zero weights → zero output");
+        }
     }
 
     // ── silu additional ─────────────────────────────────────────────────────
@@ -2745,10 +2839,14 @@ mod tests {
         let mut head = vec![1.0, 0.0, 0.0, 1.0];
         apply_rope_head(&mut head, 10, 4, 10000.0);
         // Both pairs should be rotated (not identity)
-        assert!((head[0] - 1.0).abs() > 0.01 || (head[2] - 0.0).abs() > 0.01,
-            "first pair should be rotated");
-        assert!((head[1] - 0.0).abs() > 0.01 || (head[3] - 1.0).abs() > 0.01,
-            "second pair should be rotated");
+        assert!(
+            (head[0] - 1.0).abs() > 0.01 || (head[2] - 0.0).abs() > 0.01,
+            "first pair should be rotated"
+        );
+        assert!(
+            (head[1] - 0.0).abs() > 0.01 || (head[3] - 1.0).abs() > 0.01,
+            "second pair should be rotated"
+        );
     }
 
     // ── sample_token additional ─────────────────────────────────────────────
@@ -2821,7 +2919,10 @@ mod tests {
         apply_presence_penalty(&mut logits, &counts, 1.5);
         assert!((logits[0] - 3.5).abs() < 1e-5, "penalized once");
         assert!((logits[1] - 5.0).abs() < 1e-5, "not in counts → unchanged");
-        assert!((logits[2] - 3.5).abs() < 1e-5, "penalized once (count doesn't matter)");
+        assert!(
+            (logits[2] - 3.5).abs() < 1e-5,
+            "penalized once (count doesn't matter)"
+        );
         assert!((logits[3] - 5.0).abs() < 1e-5, "not in counts → unchanged");
     }
 
@@ -2830,11 +2931,16 @@ mod tests {
     #[test]
     fn kv_block_hash_sensitive_to_k_extra() {
         let b1 = NdaKvBlock {
-            prev_hash: [0u8; 32], hash: [0u8; 32],
-            k_scale: 1.0, v_scale: 1.0,
-            k_sign: vec![0xFF], k_extra: vec![0xAA],
-            v_sign: vec![0x55], v_extra: vec![0x00],
-            k_raw: vec![], v_raw: vec![],
+            prev_hash: [0u8; 32],
+            hash: [0u8; 32],
+            k_scale: 1.0,
+            v_scale: 1.0,
+            k_sign: vec![0xFF],
+            k_extra: vec![0xAA],
+            v_sign: vec![0x55],
+            v_extra: vec![0x00],
+            k_raw: vec![],
+            v_raw: vec![],
         };
         let mut b2 = b1.clone();
         b2.k_extra = vec![0xBB];
@@ -2844,11 +2950,16 @@ mod tests {
     #[test]
     fn kv_block_hash_sensitive_to_v_sign() {
         let b1 = NdaKvBlock {
-            prev_hash: [0u8; 32], hash: [0u8; 32],
-            k_scale: 1.0, v_scale: 1.0,
-            k_sign: vec![0xFF], k_extra: vec![0xAA],
-            v_sign: vec![0x55], v_extra: vec![0x00],
-            k_raw: vec![], v_raw: vec![],
+            prev_hash: [0u8; 32],
+            hash: [0u8; 32],
+            k_scale: 1.0,
+            v_scale: 1.0,
+            k_sign: vec![0xFF],
+            k_extra: vec![0xAA],
+            v_sign: vec![0x55],
+            v_extra: vec![0x00],
+            k_raw: vec![],
+            v_raw: vec![],
         };
         let mut b2 = b1.clone();
         b2.v_sign = vec![0x66];
@@ -2858,11 +2969,16 @@ mod tests {
     #[test]
     fn kv_block_hash_sensitive_to_v_extra() {
         let b1 = NdaKvBlock {
-            prev_hash: [0u8; 32], hash: [0u8; 32],
-            k_scale: 1.0, v_scale: 1.0,
-            k_sign: vec![0xFF], k_extra: vec![0xAA],
-            v_sign: vec![0x55], v_extra: vec![0x00],
-            k_raw: vec![], v_raw: vec![],
+            prev_hash: [0u8; 32],
+            hash: [0u8; 32],
+            k_scale: 1.0,
+            v_scale: 1.0,
+            k_sign: vec![0xFF],
+            k_extra: vec![0xAA],
+            v_sign: vec![0x55],
+            v_extra: vec![0x00],
+            k_raw: vec![],
+            v_raw: vec![],
         };
         let mut b2 = b1.clone();
         b2.v_extra = vec![0x11];
@@ -2872,11 +2988,16 @@ mod tests {
     #[test]
     fn kv_block_hash_sensitive_to_k_scale() {
         let b1 = NdaKvBlock {
-            prev_hash: [0u8; 32], hash: [0u8; 32],
-            k_scale: 1.0, v_scale: 1.0,
-            k_sign: vec![0xFF], k_extra: vec![0xAA],
-            v_sign: vec![0x55], v_extra: vec![0x00],
-            k_raw: vec![], v_raw: vec![],
+            prev_hash: [0u8; 32],
+            hash: [0u8; 32],
+            k_scale: 1.0,
+            v_scale: 1.0,
+            k_sign: vec![0xFF],
+            k_extra: vec![0xAA],
+            v_sign: vec![0x55],
+            v_extra: vec![0x00],
+            k_raw: vec![],
+            v_raw: vec![],
         };
         let mut b2 = b1.clone();
         b2.k_scale = 2.0;
@@ -2886,11 +3007,16 @@ mod tests {
     #[test]
     fn kv_block_hash_sensitive_to_v_scale() {
         let b1 = NdaKvBlock {
-            prev_hash: [0u8; 32], hash: [0u8; 32],
-            k_scale: 1.0, v_scale: 1.0,
-            k_sign: vec![0xFF], k_extra: vec![0xAA],
-            v_sign: vec![0x55], v_extra: vec![0x00],
-            k_raw: vec![], v_raw: vec![],
+            prev_hash: [0u8; 32],
+            hash: [0u8; 32],
+            k_scale: 1.0,
+            v_scale: 1.0,
+            k_sign: vec![0xFF],
+            k_extra: vec![0xAA],
+            v_sign: vec![0x55],
+            v_extra: vec![0x00],
+            k_raw: vec![],
+            v_raw: vec![],
         };
         let mut b2 = b1.clone();
         b2.v_scale = 3.0;
@@ -2971,7 +3097,11 @@ mod tests {
         let q = vec![1.0];
         let mut out = vec![999.0; 1]; // pre-filled with garbage
         attention_head_float(&q, &layer, 0, 1, 1.0, &mut out);
-        assert!((out[0] - 5.0).abs() < 1e-4, "should overwrite, got {}", out[0]);
+        assert!(
+            (out[0] - 5.0).abs() < 1e-4,
+            "should overwrite, got {}",
+            out[0]
+        );
     }
 
     #[test]
@@ -2984,7 +3114,12 @@ mod tests {
         attention_head_float(&q, &layer, 0, 2, 0.0, &mut out);
         // scale=0 → all dots=0 → uniform softmax → average of v values
         let expected = (10.0 + 0.0) / 2.0;
-        assert!((out[0] - expected).abs() < 0.1, "got {} expected {}", out[0], expected);
+        assert!(
+            (out[0] - expected).abs() < 0.1,
+            "got {} expected {}",
+            out[0],
+            expected
+        );
     }
 
     // ── lm_head additional ──────────────────────────────────────────────────
@@ -3008,7 +3143,11 @@ mod tests {
         let mut logits = vec![0.0; 3];
         lm_head(&hidden, &weights, 3, h, &mut logits);
         for &l in &logits {
-            assert!((l - 64.0).abs() < 1e-3, "each logit should be 64.0, got {}", l);
+            assert!(
+                (l - 64.0).abs() < 1e-3,
+                "each logit should be 64.0, got {}",
+                l
+            );
         }
     }
 
@@ -3017,22 +3156,44 @@ mod tests {
     #[test]
     fn transformer_info_json_key_count() {
         let info = TransformerInfo {
-            n_layers: 2, hidden_size: 64, n_heads: 4, n_kv_heads: 2,
-            head_dim: 16, ffn_size: 128, vocab_size: 100, max_seq_len: 512,
-            gpu_pipeline_active: false, total_kv_blocks: 0,
-            kv_memory_bytes: 0, weight_layers: 2, validation_issues: vec![],
+            n_layers: 2,
+            hidden_size: 64,
+            n_heads: 4,
+            n_kv_heads: 2,
+            head_dim: 16,
+            ffn_size: 128,
+            vocab_size: 100,
+            max_seq_len: 512,
+            gpu_pipeline_active: false,
+            total_kv_blocks: 0,
+            kv_memory_bytes: 0,
+            weight_layers: 2,
+            validation_issues: vec![],
         };
         let v: serde_json::Value = serde_json::to_value(&info).unwrap();
-        assert_eq!(v.as_object().unwrap().len(), 13, "TransformerInfo has 13 fields");
+        assert_eq!(
+            v.as_object().unwrap().len(),
+            13,
+            "TransformerInfo has 13 fields"
+        );
     }
 
     #[test]
     fn transformer_info_json_values() {
         let info = TransformerInfo {
-            n_layers: 26, hidden_size: 3200, n_heads: 32, n_kv_heads: 8,
-            head_dim: 100, ffn_size: 8640, vocab_size: 32002, max_seq_len: 4096,
-            gpu_pipeline_active: true, total_kv_blocks: 130,
-            kv_memory_bytes: 50000, weight_layers: 26, validation_issues: vec!["x".into()],
+            n_layers: 26,
+            hidden_size: 3200,
+            n_heads: 32,
+            n_kv_heads: 8,
+            head_dim: 100,
+            ffn_size: 8640,
+            vocab_size: 32002,
+            max_seq_len: 4096,
+            gpu_pipeline_active: true,
+            total_kv_blocks: 130,
+            kv_memory_bytes: 50000,
+            weight_layers: 26,
+            validation_issues: vec!["x".into()],
         };
         let v: serde_json::Value = serde_json::to_value(&info).unwrap();
         assert_eq!(v["n_layers"], 26);
@@ -3053,10 +3214,19 @@ mod tests {
     #[test]
     fn transformer_info_pretty_json() {
         let info = TransformerInfo {
-            n_layers: 1, hidden_size: 32, n_heads: 2, n_kv_heads: 1,
-            head_dim: 16, ffn_size: 64, vocab_size: 100, max_seq_len: 512,
-            gpu_pipeline_active: false, total_kv_blocks: 0,
-            kv_memory_bytes: 0, weight_layers: 1, validation_issues: vec![],
+            n_layers: 1,
+            hidden_size: 32,
+            n_heads: 2,
+            n_kv_heads: 1,
+            head_dim: 16,
+            ffn_size: 64,
+            vocab_size: 100,
+            max_seq_len: 512,
+            gpu_pipeline_active: false,
+            total_kv_blocks: 0,
+            kv_memory_bytes: 0,
+            weight_layers: 1,
+            validation_issues: vec![],
         };
         let pretty = serde_json::to_string_pretty(&info).unwrap();
         assert!(pretty.contains('\n'));
@@ -3068,8 +3238,11 @@ mod tests {
     #[test]
     fn forward_metrics_json_key_count() {
         let m = Fp32ForwardMetrics {
-            position: 0, gpu_active: false, layers_executed: 0,
-            total_kv_blocks: 0, elapsed_us: 0,
+            position: 0,
+            gpu_active: false,
+            layers_executed: 0,
+            total_kv_blocks: 0,
+            elapsed_us: 0,
         };
         let v: serde_json::Value = serde_json::to_value(&m).unwrap();
         assert_eq!(v.as_object().unwrap().len(), 5);
@@ -3080,10 +3253,18 @@ mod tests {
     #[test]
     fn generation_report_json_key_count() {
         let report = Fp32GenerationReport {
-            prompt_tokens: 1, tokens_generated: 0, stopped_at_eos: false,
-            truncated: false, final_kv_blocks: 0, kv_cache_sizes: vec![],
-            kv_memory_bytes: 0, gpu_pipeline_active: false, elapsed_us: 0,
-            tokens_per_second: 0.0, token_ids: vec![], forward_metrics: vec![],
+            prompt_tokens: 1,
+            tokens_generated: 0,
+            stopped_at_eos: false,
+            truncated: false,
+            final_kv_blocks: 0,
+            kv_cache_sizes: vec![],
+            kv_memory_bytes: 0,
+            gpu_pipeline_active: false,
+            elapsed_us: 0,
+            tokens_per_second: 0.0,
+            token_ids: vec![],
+            forward_metrics: vec![],
         };
         let v: serde_json::Value = serde_json::to_value(&report).unwrap();
         assert_eq!(v.as_object().unwrap().len(), 12);
@@ -3092,11 +3273,18 @@ mod tests {
     #[test]
     fn generation_report_tokens_per_second_calculation() {
         let report = Fp32GenerationReport {
-            prompt_tokens: 5, tokens_generated: 100, stopped_at_eos: false,
-            truncated: true, final_kv_blocks: 200, kv_cache_sizes: vec![10; 20],
-            kv_memory_bytes: 20000, gpu_pipeline_active: false, elapsed_us: 200_000,
+            prompt_tokens: 5,
+            tokens_generated: 100,
+            stopped_at_eos: false,
+            truncated: true,
+            final_kv_blocks: 200,
+            kv_cache_sizes: vec![10; 20],
+            kv_memory_bytes: 20000,
+            gpu_pipeline_active: false,
+            elapsed_us: 200_000,
             tokens_per_second: 100.0 * 1_000_000.0 / 200_000.0,
-            token_ids: vec![0; 100], forward_metrics: vec![],
+            token_ids: vec![0; 100],
+            forward_metrics: vec![],
         };
         assert!((report.tokens_per_second - 500.0).abs() < 1e-3);
     }
@@ -3106,10 +3294,19 @@ mod tests {
     #[test]
     fn scratch_minimal_config() {
         let cfg = ModelConfig {
-            n_layers: 1, hidden_size: 8, ffn_size: 16, n_heads: 2,
-            n_kv_heads: 1, head_dim: 4, vocab_size: 10, max_seq_len: 8,
-            rope_theta: 10000.0, alibi_shifts: vec![], rms_eps: 1e-6,
-            eos_token_id: 2, bos_token_id: 1,
+            n_layers: 1,
+            hidden_size: 8,
+            ffn_size: 16,
+            n_heads: 2,
+            n_kv_heads: 1,
+            head_dim: 4,
+            vocab_size: 10,
+            max_seq_len: 8,
+            rope_theta: 10000.0,
+            alibi_shifts: vec![],
+            rms_eps: 1e-6,
+            eos_token_id: 2,
+            bos_token_id: 1,
         };
         let scratch = TransformerScratch::new(&cfg);
         assert_eq!(scratch.x.len(), 8);
@@ -3121,10 +3318,19 @@ mod tests {
     #[test]
     fn scratch_large_config() {
         let cfg = ModelConfig {
-            n_layers: 32, hidden_size: 4096, ffn_size: 11008, n_heads: 32,
-            n_kv_heads: 8, head_dim: 128, vocab_size: 32000, max_seq_len: 4096,
-            rope_theta: 10000.0, alibi_shifts: vec![], rms_eps: 1e-6,
-            eos_token_id: 2, bos_token_id: 1,
+            n_layers: 32,
+            hidden_size: 4096,
+            ffn_size: 11008,
+            n_heads: 32,
+            n_kv_heads: 8,
+            head_dim: 128,
+            vocab_size: 32000,
+            max_seq_len: 4096,
+            rope_theta: 10000.0,
+            alibi_shifts: vec![],
+            rms_eps: 1e-6,
+            eos_token_id: 2,
+            bos_token_id: 1,
         };
         let scratch = TransformerScratch::new(&cfg);
         assert_eq!(scratch.x.len(), 4096);
@@ -3139,10 +3345,18 @@ mod tests {
     #[test]
     fn transformer_info_clone_independent() {
         let info = TransformerInfo {
-            n_layers: 26, hidden_size: 3200, n_heads: 32, n_kv_heads: 8,
-            head_dim: 100, ffn_size: 8640, vocab_size: 32002, max_seq_len: 4096,
-            gpu_pipeline_active: false, total_kv_blocks: 50,
-            kv_memory_bytes: 10000, weight_layers: 26,
+            n_layers: 26,
+            hidden_size: 3200,
+            n_heads: 32,
+            n_kv_heads: 8,
+            head_dim: 100,
+            ffn_size: 8640,
+            vocab_size: 32002,
+            max_seq_len: 4096,
+            gpu_pipeline_active: false,
+            total_kv_blocks: 50,
+            kv_memory_bytes: 10000,
+            weight_layers: 26,
             validation_issues: vec!["issue1".into()],
         };
         let mut cloned = info.clone();
@@ -3157,8 +3371,11 @@ mod tests {
     #[test]
     fn forward_metrics_clone_all_fields() {
         let m = Fp32ForwardMetrics {
-            position: 42, gpu_active: true, layers_executed: 26,
-            total_kv_blocks: 520, elapsed_us: 10000,
+            position: 42,
+            gpu_active: true,
+            layers_executed: 26,
+            total_kv_blocks: 520,
+            elapsed_us: 10000,
         };
         let cloned = m.clone();
         assert_eq!(cloned.position, 42);
@@ -3173,11 +3390,16 @@ mod tests {
     #[test]
     fn kv_block_hash_non_zero() {
         let block = NdaKvBlock {
-            prev_hash: [0u8; 32], hash: [0u8; 32],
-            k_scale: 1.0, v_scale: 1.0,
-            k_sign: vec![0xFF], k_extra: vec![0xFF],
-            v_sign: vec![0xFF], v_extra: vec![0xFF],
-            k_raw: vec![], v_raw: vec![],
+            prev_hash: [0u8; 32],
+            hash: [0u8; 32],
+            k_scale: 1.0,
+            v_scale: 1.0,
+            k_sign: vec![0xFF],
+            k_extra: vec![0xFF],
+            v_sign: vec![0xFF],
+            v_extra: vec![0xFF],
+            k_raw: vec![],
+            v_raw: vec![],
         };
         let h = block.compute_hash();
         assert_ne!(h, [0u8; 32], "SHA-256 should not be zero");
@@ -3186,11 +3408,16 @@ mod tests {
     #[test]
     fn kv_block_hash_empty_bitmaps() {
         let block = NdaKvBlock {
-            prev_hash: [0u8; 32], hash: [0u8; 32],
-            k_scale: 0.0, v_scale: 0.0,
-            k_sign: vec![], k_extra: vec![],
-            v_sign: vec![], v_extra: vec![],
-            k_raw: vec![], v_raw: vec![],
+            prev_hash: [0u8; 32],
+            hash: [0u8; 32],
+            k_scale: 0.0,
+            v_scale: 0.0,
+            k_sign: vec![],
+            k_extra: vec![],
+            v_sign: vec![],
+            v_extra: vec![],
+            k_raw: vec![],
+            v_raw: vec![],
         };
         let h = block.compute_hash();
         assert_ne!(h, [0u8; 32], "hash of empty data should still be non-zero");
@@ -3201,10 +3428,19 @@ mod tests {
     #[test]
     fn transformer_info_debug_format() {
         let info = TransformerInfo {
-            n_layers: 2, hidden_size: 64, n_heads: 4, n_kv_heads: 2,
-            head_dim: 16, ffn_size: 128, vocab_size: 100, max_seq_len: 512,
-            gpu_pipeline_active: false, total_kv_blocks: 0,
-            kv_memory_bytes: 0, weight_layers: 2, validation_issues: vec![],
+            n_layers: 2,
+            hidden_size: 64,
+            n_heads: 4,
+            n_kv_heads: 2,
+            head_dim: 16,
+            ffn_size: 128,
+            vocab_size: 100,
+            max_seq_len: 512,
+            gpu_pipeline_active: false,
+            total_kv_blocks: 0,
+            kv_memory_bytes: 0,
+            weight_layers: 2,
+            validation_issues: vec![],
         };
         let debug = format!("{:?}", info);
         assert!(debug.contains("TransformerInfo"));
@@ -3218,8 +3454,11 @@ mod tests {
     #[test]
     fn forward_metrics_debug_format() {
         let m = Fp32ForwardMetrics {
-            position: 5, gpu_active: true, layers_executed: 26,
-            total_kv_blocks: 130, elapsed_us: 1500,
+            position: 5,
+            gpu_active: true,
+            layers_executed: 26,
+            total_kv_blocks: 130,
+            elapsed_us: 1500,
         };
         let debug = format!("{:?}", m);
         assert!(debug.contains("Fp32ForwardMetrics"));
@@ -3232,17 +3471,27 @@ mod tests {
     #[test]
     fn generation_report_clone_independent() {
         let report = Fp32GenerationReport {
-            prompt_tokens: 5, tokens_generated: 3, stopped_at_eos: true,
-            truncated: false, final_kv_blocks: 100, kv_cache_sizes: vec![10; 10],
-            kv_memory_bytes: 5000, gpu_pipeline_active: false, elapsed_us: 10000,
-            tokens_per_second: 300.0, token_ids: vec![1, 2, 3],
+            prompt_tokens: 5,
+            tokens_generated: 3,
+            stopped_at_eos: true,
+            truncated: false,
+            final_kv_blocks: 100,
+            kv_cache_sizes: vec![10; 10],
+            kv_memory_bytes: 5000,
+            gpu_pipeline_active: false,
+            elapsed_us: 10000,
+            tokens_per_second: 300.0,
+            token_ids: vec![1, 2, 3],
             forward_metrics: vec![Fp32ForwardMetrics::default()],
         };
         let mut cloned = report.clone();
         cloned.token_ids.push(99);
         cloned.forward_metrics.push(Fp32ForwardMetrics {
-            position: 99, gpu_active: true, layers_executed: 1,
-            total_kv_blocks: 1, elapsed_us: 1,
+            position: 99,
+            gpu_active: true,
+            layers_executed: 1,
+            total_kv_blocks: 1,
+            elapsed_us: 1,
         });
         assert_eq!(report.token_ids.len(), 3, "original unchanged");
         assert_eq!(report.forward_metrics.len(), 1, "original unchanged");
@@ -3259,7 +3508,9 @@ mod tests {
         let q_extra = vec![0xAA];
         let out = attention_head(&q_sign, &q_extra, 1.0, &layer, 0, 8, 1.0);
         assert_eq!(out.len(), 8, "head_dim=8 → output length 8");
-        for &v in &out { assert_eq!(v, 0.0, "empty KV → zero output"); }
+        for &v in &out {
+            assert_eq!(v, 0.0, "empty KV → zero output");
+        }
     }
 
     #[test]
@@ -3333,35 +3584,69 @@ mod tests {
     #[test]
     fn transformer_info_head_dim_computed() {
         let info = TransformerInfo {
-            n_layers: 26, hidden_size: 3200, n_heads: 32, n_kv_heads: 8,
-            head_dim: 100, ffn_size: 8640, vocab_size: 32002, max_seq_len: 4096,
-            gpu_pipeline_active: false, total_kv_blocks: 0,
-            kv_memory_bytes: 0, weight_layers: 26, validation_issues: vec![],
+            n_layers: 26,
+            hidden_size: 3200,
+            n_heads: 32,
+            n_kv_heads: 8,
+            head_dim: 100,
+            ffn_size: 8640,
+            vocab_size: 32002,
+            max_seq_len: 4096,
+            gpu_pipeline_active: false,
+            total_kv_blocks: 0,
+            kv_memory_bytes: 0,
+            weight_layers: 26,
+            validation_issues: vec![],
         };
-        assert_eq!(info.n_heads * info.head_dim, info.hidden_size,
-            "n_heads * head_dim should equal hidden_size for standard configs");
+        assert_eq!(
+            info.n_heads * info.head_dim,
+            info.hidden_size,
+            "n_heads * head_dim should equal hidden_size for standard configs"
+        );
     }
 
     #[test]
     fn transformer_info_gqa_ratio() {
         let info = TransformerInfo {
-            n_layers: 2, hidden_size: 64, n_heads: 8, n_kv_heads: 2,
-            head_dim: 8, ffn_size: 128, vocab_size: 100, max_seq_len: 512,
-            gpu_pipeline_active: false, total_kv_blocks: 0,
-            kv_memory_bytes: 0, weight_layers: 2, validation_issues: vec![],
+            n_layers: 2,
+            hidden_size: 64,
+            n_heads: 8,
+            n_kv_heads: 2,
+            head_dim: 8,
+            ffn_size: 128,
+            vocab_size: 100,
+            max_seq_len: 512,
+            gpu_pipeline_active: false,
+            total_kv_blocks: 0,
+            kv_memory_bytes: 0,
+            weight_layers: 2,
+            validation_issues: vec![],
         };
         let ratio = info.n_heads / info.n_kv_heads;
         assert_eq!(ratio, 4, "GQA ratio = 8/2 = 4");
-        assert_eq!(info.n_heads % info.n_kv_heads, 0, "heads divisible by kv_heads");
+        assert_eq!(
+            info.n_heads % info.n_kv_heads,
+            0,
+            "heads divisible by kv_heads"
+        );
     }
 
     #[test]
     fn transformer_info_all_gpu_false() {
         let info = TransformerInfo {
-            n_layers: 2, hidden_size: 64, n_heads: 4, n_kv_heads: 2,
-            head_dim: 16, ffn_size: 128, vocab_size: 100, max_seq_len: 512,
-            gpu_pipeline_active: false, total_kv_blocks: 0,
-            kv_memory_bytes: 0, weight_layers: 2, validation_issues: vec![],
+            n_layers: 2,
+            hidden_size: 64,
+            n_heads: 4,
+            n_kv_heads: 2,
+            head_dim: 16,
+            ffn_size: 128,
+            vocab_size: 100,
+            max_seq_len: 512,
+            gpu_pipeline_active: false,
+            total_kv_blocks: 0,
+            kv_memory_bytes: 0,
+            weight_layers: 2,
+            validation_issues: vec![],
         };
         assert!(!info.gpu_pipeline_active);
         let json = serde_json::to_string(&info).unwrap();
@@ -3371,10 +3656,18 @@ mod tests {
     #[test]
     fn transformer_info_multiple_validation_issues() {
         let info = TransformerInfo {
-            n_layers: 0, hidden_size: 0, n_heads: 4, n_kv_heads: 2,
-            head_dim: 16, ffn_size: 128, vocab_size: 100, max_seq_len: 512,
-            gpu_pipeline_active: false, total_kv_blocks: 0,
-            kv_memory_bytes: 0, weight_layers: 0,
+            n_layers: 0,
+            hidden_size: 0,
+            n_heads: 4,
+            n_kv_heads: 2,
+            head_dim: 16,
+            ffn_size: 128,
+            vocab_size: 100,
+            max_seq_len: 512,
+            gpu_pipeline_active: false,
+            total_kv_blocks: 0,
+            kv_memory_bytes: 0,
+            weight_layers: 0,
             validation_issues: vec![
                 "n_layers is zero".into(),
                 "hidden_size is zero".into(),
@@ -3393,10 +3686,18 @@ mod tests {
     #[test]
     fn generation_report_zero_tokens_generated() {
         let report = Fp32GenerationReport {
-            prompt_tokens: 5, tokens_generated: 0, stopped_at_eos: true,
-            truncated: false, final_kv_blocks: 50, kv_cache_sizes: vec![5; 10],
-            kv_memory_bytes: 2000, gpu_pipeline_active: false, elapsed_us: 1000,
-            tokens_per_second: 0.0, token_ids: vec![], forward_metrics: vec![],
+            prompt_tokens: 5,
+            tokens_generated: 0,
+            stopped_at_eos: true,
+            truncated: false,
+            final_kv_blocks: 50,
+            kv_cache_sizes: vec![5; 10],
+            kv_memory_bytes: 2000,
+            gpu_pipeline_active: false,
+            elapsed_us: 1000,
+            tokens_per_second: 0.0,
+            token_ids: vec![],
+            forward_metrics: vec![],
         };
         assert_eq!(report.tokens_generated, 0);
         assert!(report.token_ids.is_empty());
@@ -3406,10 +3707,18 @@ mod tests {
     #[test]
     fn generation_report_elapsed_boundary() {
         let report = Fp32GenerationReport {
-            prompt_tokens: 1, tokens_generated: 1, stopped_at_eos: true,
-            truncated: false, final_kv_blocks: 1, kv_cache_sizes: vec![1],
-            kv_memory_bytes: 100, gpu_pipeline_active: false, elapsed_us: 1,
-            tokens_per_second: 1_000_000.0, token_ids: vec![42], forward_metrics: vec![],
+            prompt_tokens: 1,
+            tokens_generated: 1,
+            stopped_at_eos: true,
+            truncated: false,
+            final_kv_blocks: 1,
+            kv_cache_sizes: vec![1],
+            kv_memory_bytes: 100,
+            gpu_pipeline_active: false,
+            elapsed_us: 1,
+            tokens_per_second: 1_000_000.0,
+            token_ids: vec![42],
+            forward_metrics: vec![],
         };
         assert_eq!(report.elapsed_us, 1, "minimum meaningful elapsed");
         assert!((report.tokens_per_second - 1_000_000.0).abs() < 1.0);
@@ -3419,10 +3728,18 @@ mod tests {
     fn generation_report_both_stopped_and_truncated() {
         // Edge case: both flags set (shouldn't happen in practice but struct allows it)
         let report = Fp32GenerationReport {
-            prompt_tokens: 1, tokens_generated: 10, stopped_at_eos: true,
-            truncated: true, final_kv_blocks: 10, kv_cache_sizes: vec![1; 10],
-            kv_memory_bytes: 1000, gpu_pipeline_active: false, elapsed_us: 5000,
-            tokens_per_second: 2000.0, token_ids: vec![1; 10], forward_metrics: vec![],
+            prompt_tokens: 1,
+            tokens_generated: 10,
+            stopped_at_eos: true,
+            truncated: true,
+            final_kv_blocks: 10,
+            kv_cache_sizes: vec![1; 10],
+            kv_memory_bytes: 1000,
+            gpu_pipeline_active: false,
+            elapsed_us: 5000,
+            tokens_per_second: 2000.0,
+            token_ids: vec![1; 10],
+            forward_metrics: vec![],
         };
         let json = serde_json::to_string(&report).unwrap();
         assert!(json.contains("\"stopped_at_eos\":true"));
@@ -3436,23 +3753,33 @@ mod tests {
         let mut fwd_metrics = Vec::new();
         for i in 0..(n_prompt + n_gen) {
             fwd_metrics.push(Fp32ForwardMetrics {
-                position: i, gpu_active: false, layers_executed: 2,
-                total_kv_blocks: (i + 1) * 2, elapsed_us: 100,
+                position: i,
+                gpu_active: false,
+                layers_executed: 2,
+                total_kv_blocks: (i + 1) * 2,
+                elapsed_us: 100,
             });
         }
         let report = Fp32GenerationReport {
-            prompt_tokens: n_prompt, tokens_generated: n_gen,
-            stopped_at_eos: false, truncated: true,
+            prompt_tokens: n_prompt,
+            tokens_generated: n_gen,
+            stopped_at_eos: false,
+            truncated: true,
             final_kv_blocks: (n_prompt + n_gen) * 2,
             kv_cache_sizes: vec![n_prompt + n_gen; 2],
-            kv_memory_bytes: 8000, gpu_pipeline_active: false,
-            elapsed_us: 800, tokens_per_second: 6250.0,
+            kv_memory_bytes: 8000,
+            gpu_pipeline_active: false,
+            elapsed_us: 800,
+            tokens_per_second: 6250.0,
             token_ids: vec![10; n_gen],
             forward_metrics: fwd_metrics,
         };
         assert_eq!(report.forward_metrics.len(), n_prompt + n_gen);
         assert_eq!(report.forward_metrics[0].position, 0);
-        assert_eq!(report.forward_metrics.last().unwrap().position, n_prompt + n_gen - 1);
+        assert_eq!(
+            report.forward_metrics.last().unwrap().position,
+            n_prompt + n_gen - 1
+        );
     }
 
     // ── Fp32ForwardMetrics gpu_active variants ─────────────────────────────
@@ -3460,8 +3787,11 @@ mod tests {
     #[test]
     fn forward_metrics_gpu_active_true() {
         let m = Fp32ForwardMetrics {
-            position: 10, gpu_active: true, layers_executed: 26,
-            total_kv_blocks: 260, elapsed_us: 500,
+            position: 10,
+            gpu_active: true,
+            layers_executed: 26,
+            total_kv_blocks: 260,
+            elapsed_us: 500,
         };
         let json = serde_json::to_string(&m).unwrap();
         assert!(json.contains("\"gpu_active\":true"));
@@ -3471,8 +3801,11 @@ mod tests {
     #[test]
     fn forward_metrics_all_fields_boundary() {
         let m = Fp32ForwardMetrics {
-            position: usize::MAX, gpu_active: true, layers_executed: usize::MAX,
-            total_kv_blocks: usize::MAX, elapsed_us: u64::MAX,
+            position: usize::MAX,
+            gpu_active: true,
+            layers_executed: usize::MAX,
+            total_kv_blocks: usize::MAX,
+            elapsed_us: u64::MAX,
         };
         let json = serde_json::to_string(&m).unwrap();
         let v: serde_json::Value = serde_json::from_str(&json).unwrap();
@@ -3485,11 +3818,16 @@ mod tests {
     #[test]
     fn kv_block_clone_independent() {
         let block = NdaKvBlock {
-            prev_hash: [1u8; 32], hash: [2u8; 32],
-            k_scale: 1.5, v_scale: 2.5,
-            k_sign: vec![0xAB], k_extra: vec![0xCD],
-            v_sign: vec![0xEF], v_extra: vec![0x01],
-            k_raw: vec![1.0, 2.0], v_raw: vec![3.0, 4.0],
+            prev_hash: [1u8; 32],
+            hash: [2u8; 32],
+            k_scale: 1.5,
+            v_scale: 2.5,
+            k_sign: vec![0xAB],
+            k_extra: vec![0xCD],
+            v_sign: vec![0xEF],
+            v_extra: vec![0x01],
+            k_raw: vec![1.0, 2.0],
+            v_raw: vec![3.0, 4.0],
         };
         let mut cloned = block.clone();
         cloned.k_sign[0] = 0x00;
@@ -3502,8 +3840,10 @@ mod tests {
     fn kv_block_large_bitmaps() {
         let dim = 128;
         let block = NdaKvBlock {
-            prev_hash: [0u8; 32], hash: [0u8; 32],
-            k_scale: 1.0, v_scale: 1.0,
+            prev_hash: [0u8; 32],
+            hash: [0u8; 32],
+            k_scale: 1.0,
+            v_scale: 1.0,
             k_sign: vec![0xFF; dim / 8],
             k_extra: vec![0xAA; dim / 8],
             v_sign: vec![0x55; dim / 8],
@@ -3548,7 +3888,11 @@ mod tests {
         let mut rng = rand::thread_rng();
         let tok = sample_token(&logits, 0.0, 1.0, &mut rng);
         // Greedy: partial_cmp may pick either tied max
-        assert!(tok == 0 || tok == 1, "tied logits → one of the max indices, got {}", tok);
+        assert!(
+            tok == 0 || tok == 1,
+            "tied logits → one of the max indices, got {}",
+            tok
+        );
     }
 
     #[test]
@@ -3569,7 +3913,12 @@ mod tests {
         apply_rope_head(&mut head, 0, 4, 10000.0);
         // At pos=0, angle=0 for all pairs → cos(0)=1, sin(0)=0 → identity
         for (a, b) in head.iter().zip(original.iter()) {
-            assert!((a - b).abs() < 1e-5, "pos=0 should be identity: {} vs {}", a, b);
+            assert!(
+                (a - b).abs() < 1e-5,
+                "pos=0 should be identity: {} vs {}",
+                a,
+                b
+            );
         }
     }
 
@@ -3579,7 +3928,12 @@ mod tests {
     fn silu_at_half() {
         let y = silu(0.5);
         let expected = 0.5 / (1.0 + (-0.5_f32).exp());
-        assert!((y - expected).abs() < 1e-5, "silu(0.5) = {}, expected {}", y, expected);
+        assert!(
+            (y - expected).abs() < 1e-5,
+            "silu(0.5) = {}, expected {}",
+            y,
+            expected
+        );
     }
 
     // ── rms_norm large input ───────────────────────────────────────────────
@@ -3600,10 +3954,10 @@ mod tests {
         let hidden = vec![1.0, 2.0];
         // 4 vocab × 2 hidden = 8 weights
         let weights = vec![
-            1.0, 0.0,  // row 0: dot = 1
-            0.0, 1.0,  // row 1: dot = 2
-            1.0, 1.0,  // row 2: dot = 3
-            2.0, 0.0,  // row 3: dot = 2
+            1.0, 0.0, // row 0: dot = 1
+            0.0, 1.0, // row 1: dot = 2
+            1.0, 1.0, // row 2: dot = 3
+            2.0, 0.0, // row 3: dot = 2
         ];
         let mut logits = vec![0.0; 4];
         lm_head(&hidden, &weights, 4, 2, &mut logits);

@@ -284,13 +284,19 @@ mod tests {
     fn discord_connector_preset() {
         let cfg = ConnectorConfig::discord("d", "Discord", Some("bot_tok".to_string()));
         assert_eq!(cfg.base_url, "https://discord.com/api/v10");
-        assert!(cfg.headers.iter().any(|(k, v)| k == "Content-Type" && v == "application/json"));
+        assert!(cfg
+            .headers
+            .iter()
+            .any(|(k, v)| k == "Content-Type" && v == "application/json"));
     }
 
     #[test]
     fn notion_connector_has_version_header() {
         let cfg = ConnectorConfig::notion("n", "Notion", Some("notion_tok".to_string()));
-        assert!(cfg.headers.iter().any(|(k, v)| k == "Notion-Version" && v == "2022-06-28"));
+        assert!(cfg
+            .headers
+            .iter()
+            .any(|(k, v)| k == "Notion-Version" && v == "2022-06-28"));
     }
 
     #[test]

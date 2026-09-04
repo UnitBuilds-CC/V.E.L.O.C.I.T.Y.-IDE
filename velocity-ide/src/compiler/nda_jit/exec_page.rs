@@ -426,7 +426,7 @@ mod tests {
         page.write(0, &[0x55]); // push rbp
         page.write(1, &[0x48, 0x89, 0xE5]); // mov rbp, rsp
         page.write(4, &[0xC3]); // ret
-        // Verify by reading back (pointer is valid)
+                                // Verify by reading back (pointer is valid)
         assert!(!page.as_ptr().is_null());
     }
 }

@@ -1,4 +1,4 @@
-﻿use crate::editor::expert_team::{slugify, ExpertTeam};
+use crate::editor::expert_team::{slugify, ExpertTeam};
 
 /// The member a task was routed to, plus a short human-readable reason.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -332,11 +332,7 @@ pub struct MemberScore {
 
 /// Debug the routing decision for a task without actually routing it.
 /// Returns detailed information about which stage matched and the scores.
-pub fn debug_routing(
-    team: &ExpertTeam,
-    task: &str,
-    files: &[String],
-) -> RoutingDecision {
+pub fn debug_routing(team: &ExpertTeam, task: &str, files: &[String]) -> RoutingDecision {
     if team.members.is_empty() {
         return RoutingDecision {
             stage: "error".to_string(),

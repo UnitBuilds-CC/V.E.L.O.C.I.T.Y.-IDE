@@ -1,11 +1,11 @@
-use eframe::egui;
-use std::path::PathBuf;
-use crate::editor::agent_ui_render::{render_agent_metrics, RenderSnapshot};
 use super::super::helpers::*;
 use super::super::render::TabViewerImpl;
 use super::super::types::*;
 use super::struct_def::VelocityApp;
-use crate::editor::theme::{FONT_CAPTION};
+use crate::editor::agent_ui_render::{render_agent_metrics, RenderSnapshot};
+use crate::editor::theme::FONT_CAPTION;
+use eframe::egui;
+use std::path::PathBuf;
 
 impl eframe::App for VelocityApp {
     fn on_exit(&mut self) {
@@ -425,7 +425,11 @@ impl eframe::App for VelocityApp {
                         let toggle_size = egui::vec2(26.0, 22.0);
                         // Right panel toggle
                         {
-                            let icon = if self.right_sidebar_visible { "\u{25a3}" } else { "\u{25a2}" };
+                            let icon = if self.right_sidebar_visible {
+                                "\u{25a3}"
+                            } else {
+                                "\u{25a2}"
+                            };
                             let hint = if self.right_sidebar_visible {
                                 "Hide right panel  (Ctrl+Shift+E)"
                             } else {
@@ -434,23 +438,38 @@ impl eframe::App for VelocityApp {
                             let btn_rect = egui::Rect::from_min_size(ui.cursor().min, toggle_size);
                             let btn_id = ui.make_persistent_id("toggle_right");
                             let resp = ui.interact(btn_rect, btn_id, egui::Sense::click());
-                            let fill = if resp.hovered() { palette.surface_hover } else { egui::Color32::TRANSPARENT };
+                            let fill = if resp.hovered() {
+                                palette.surface_hover
+                            } else {
+                                egui::Color32::TRANSPARENT
+                            };
                             let clicked = resp.clicked();
-                            ui.painter().rect_filled(btn_rect, egui::CornerRadius::same(4), fill);
+                            ui.painter()
+                                .rect_filled(btn_rect, egui::CornerRadius::same(4), fill);
                             ui.painter().text(
                                 btn_rect.center(),
                                 egui::Align2::CENTER_CENTER,
                                 icon,
                                 egui::FontId::proportional(13.0),
-                                if self.right_sidebar_visible { palette.accent } else { palette.text_muted },
+                                if self.right_sidebar_visible {
+                                    palette.accent
+                                } else {
+                                    palette.text_muted
+                                },
                             );
                             resp.on_hover_text(hint);
-                            if clicked { self.toggle_right_sidebar(); }
+                            if clicked {
+                                self.toggle_right_sidebar();
+                            }
                             ui.advance_cursor_after_rect(btn_rect);
                         }
                         // Left panel toggle
                         {
-                            let icon = if self.left_sidebar_visible { "\u{25a3}" } else { "\u{25a2}" };
+                            let icon = if self.left_sidebar_visible {
+                                "\u{25a3}"
+                            } else {
+                                "\u{25a2}"
+                            };
                             let hint = if self.left_sidebar_visible {
                                 "Hide sidebar  (Ctrl+E)"
                             } else {
@@ -459,29 +478,46 @@ impl eframe::App for VelocityApp {
                             let btn_rect = egui::Rect::from_min_size(ui.cursor().min, toggle_size);
                             let btn_id = ui.make_persistent_id("toggle_left");
                             let resp = ui.interact(btn_rect, btn_id, egui::Sense::click());
-                            let fill = if resp.hovered() { palette.surface_hover } else { egui::Color32::TRANSPARENT };
+                            let fill = if resp.hovered() {
+                                palette.surface_hover
+                            } else {
+                                egui::Color32::TRANSPARENT
+                            };
                             let clicked = resp.clicked();
-                            ui.painter().rect_filled(btn_rect, egui::CornerRadius::same(4), fill);
+                            ui.painter()
+                                .rect_filled(btn_rect, egui::CornerRadius::same(4), fill);
                             ui.painter().text(
                                 btn_rect.center(),
                                 egui::Align2::CENTER_CENTER,
                                 icon,
                                 egui::FontId::proportional(13.0),
-                                if self.left_sidebar_visible { palette.accent } else { palette.text_muted },
+                                if self.left_sidebar_visible {
+                                    palette.accent
+                                } else {
+                                    palette.text_muted
+                                },
                             );
                             resp.on_hover_text(hint);
-                            if clicked { self.toggle_left_sidebar(); }
+                            if clicked {
+                                self.toggle_left_sidebar();
+                            }
                             ui.advance_cursor_after_rect(btn_rect);
                         }
                         ui.add_space(4.0);
                         // Workspace switcher — compact folder icon button
                         {
-                            let btn_rect = egui::Rect::from_min_size(ui.cursor().min, egui::vec2(28.0, 22.0));
+                            let btn_rect =
+                                egui::Rect::from_min_size(ui.cursor().min, egui::vec2(28.0, 22.0));
                             let btn_id = ui.make_persistent_id("ws_switcher");
                             let resp = ui.interact(btn_rect, btn_id, egui::Sense::click());
-                            let fill = if resp.hovered() { palette.surface_hover } else { egui::Color32::TRANSPARENT };
+                            let fill = if resp.hovered() {
+                                palette.surface_hover
+                            } else {
+                                egui::Color32::TRANSPARENT
+                            };
                             let clicked = resp.clicked();
-                            ui.painter().rect_filled(btn_rect, egui::CornerRadius::same(4), fill);
+                            ui.painter()
+                                .rect_filled(btn_rect, egui::CornerRadius::same(4), fill);
                             ui.painter().text(
                                 btn_rect.center(),
                                 egui::Align2::CENTER_CENTER,
@@ -532,62 +568,63 @@ impl eframe::App for VelocityApp {
                             .inner_margin(egui::Margin::symmetric(8, 0)),
                     )
                     .show(ui, |ui: &mut egui::Ui| {
-                    ui.add_space(2.0);
-                    ui.horizontal(|ui: &mut egui::Ui| {
-                        ui.spacing_mut().item_spacing.x = 4.0;
-                        let rel = path.strip_prefix(&ws_root).unwrap_or(&path);
-                        let components: Vec<String> = rel
-                            .components()
-                            .map(|c| c.as_os_str().to_string_lossy().to_string())
-                            .collect();
-                        let last = components.len().saturating_sub(1);
-                        for (i, comp) in components.iter().enumerate() {
-                            if i > 0 {
+                        ui.add_space(2.0);
+                        ui.horizontal(|ui: &mut egui::Ui| {
+                            ui.spacing_mut().item_spacing.x = 4.0;
+                            let rel = path.strip_prefix(&ws_root).unwrap_or(&path);
+                            let components: Vec<String> = rel
+                                .components()
+                                .map(|c| c.as_os_str().to_string_lossy().to_string())
+                                .collect();
+                            let last = components.len().saturating_sub(1);
+                            for (i, comp) in components.iter().enumerate() {
+                                if i > 0 {
+                                    ui.label(
+                                        egui::RichText::new("\u{203a}")
+                                            .color(palette.text_muted)
+                                            .weak(),
+                                    );
+                                }
+                                if i == last {
+                                    ui.label(
+                                        egui::RichText::new(comp).color(palette.text).strong(),
+                                    );
+                                } else {
+                                    let seg_resp = ui
+                                        .label(egui::RichText::new(comp).color(palette.text_muted));
+                                    if seg_resp.hovered() {
+                                        ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+                                    }
+                                    let seg_clicked = seg_resp.clicked();
+                                    seg_resp.on_hover_text(format!("Reveal {} in file tree", comp));
+                                    if seg_clicked {
+                                        // Set file tree filter to show this path component.
+                                        let filter_path: String = components[..=i].join("/");
+                                        self.file_tree_filter = filter_path;
+                                        // Ensure left sidebar is visible to show filtered tree.
+                                        if !self.left_sidebar_visible {
+                                            self.toggle_left_sidebar();
+                                        }
+                                    }
+                                }
+                            }
+                            if let Some(symbol) = &symbol_for_click {
                                 ui.label(
                                     egui::RichText::new("\u{203a}")
                                         .color(palette.text_muted)
                                         .weak(),
                                 );
-                            }
-                            if i == last {
-                                ui.label(egui::RichText::new(comp).color(palette.text).strong());
-                            } else {
-                                let seg_resp = ui.label(
-                                    egui::RichText::new(comp).color(palette.text_muted),
-                                );
-                                if seg_resp.hovered() {
-                                    ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
-                                }
-                                let seg_clicked = seg_resp.clicked();
-                                seg_resp.on_hover_text(format!("Reveal {} in file tree", comp));
-                                if seg_clicked {
-                                    // Set file tree filter to show this path component.
-                                    let filter_path: String = components[..=i].join("/");
-                                    self.file_tree_filter = filter_path;
-                                    // Ensure left sidebar is visible to show filtered tree.
-                                    if !self.left_sidebar_visible {
-                                        self.toggle_left_sidebar();
-                                    }
+                                if ui
+                                    .link(egui::RichText::new(symbol).color(palette.accent))
+                                    .on_hover_text("Re-center on this symbol")
+                                    .clicked()
+                                {
+                                    self.jump_to_symbol_name(symbol);
                                 }
                             }
-                        }
-                        if let Some(symbol) = &symbol_for_click {
-                            ui.label(
-                                egui::RichText::new("\u{203a}")
-                                    .color(palette.text_muted)
-                                    .weak(),
-                            );
-                            if ui
-                                .link(egui::RichText::new(symbol).color(palette.accent))
-                                .on_hover_text("Re-center on this symbol")
-                                .clicked()
-                            {
-                                self.jump_to_symbol_name(symbol);
-                            }
-                        }
+                        });
+                        ui.add_space(2.0);
                     });
-                    ui.add_space(2.0);
-                });
             } // end show_breadcrumbs
         }
 
@@ -618,17 +655,15 @@ impl eframe::App for VelocityApp {
                             ("\u{229e}", "Workspace", "Work", "Ctrl+Shift+X"),
                         ];
 
-                        for (i, (icon, label, short_label, shortcut)) in activities.iter().enumerate() {
+                        for (i, (icon, label, short_label, shortcut)) in
+                            activities.iter().enumerate()
+                        {
                             let is_selected = self.activity_bar_selection == i;
                             let icon_size = egui::vec2(48.0, 48.0);
                             let rect = egui::Rect::from_min_size(ui.cursor().min, icon_size);
                             ui.advance_cursor_after_rect(rect);
                             let id = ui.make_persistent_id(i);
-                            let interact_resp = ui.interact(
-                                rect,
-                                id,
-                                egui::Sense::click(),
-                            );
+                            let interact_resp = ui.interact(rect, id, egui::Sense::click());
                             let hovered = interact_resp.hovered();
 
                             // Background fill based on state
@@ -663,10 +698,7 @@ impl eframe::App for VelocityApp {
                             } else {
                                 palette.text_muted
                             };
-                            let icon_pos = egui::pos2(
-                                rect.center().x,
-                                rect.min.y + 14.0,
-                            );
+                            let icon_pos = egui::pos2(rect.center().x, rect.min.y + 14.0);
                             ui.painter().text(
                                 icon_pos,
                                 egui::Align2::CENTER_CENTER,
@@ -683,10 +715,7 @@ impl eframe::App for VelocityApp {
                             } else {
                                 palette.text_muted.gamma_multiply(0.7)
                             };
-                            let label_pos = egui::pos2(
-                                rect.center().x,
-                                rect.min.y + 34.0,
-                            );
+                            let label_pos = egui::pos2(rect.center().x, rect.min.y + 34.0);
                             ui.painter().text(
                                 label_pos,
                                 egui::Align2::CENTER_CENTER,
@@ -711,15 +740,27 @@ impl eframe::App for VelocityApp {
                             let gear_rect = egui::Rect::from_min_size(ui.cursor().min, gear_size);
                             let gear_id = ui.make_persistent_id("activity_gear");
                             let gear_resp = ui.interact(gear_rect, gear_id, egui::Sense::click());
-                            let gear_fill = if gear_resp.hovered() { palette.surface_hover } else { egui::Color32::TRANSPARENT };
+                            let gear_fill = if gear_resp.hovered() {
+                                palette.surface_hover
+                            } else {
+                                egui::Color32::TRANSPARENT
+                            };
                             let gear_clicked = gear_resp.clicked();
-                            ui.painter().rect_filled(gear_rect, egui::CornerRadius::same(6), gear_fill);
+                            ui.painter().rect_filled(
+                                gear_rect,
+                                egui::CornerRadius::same(6),
+                                gear_fill,
+                            );
                             ui.painter().text(
                                 gear_rect.center(),
                                 egui::Align2::CENTER_CENTER,
                                 "\u{2699}",
                                 egui::FontId::proportional(14.0),
-                                if gear_resp.hovered() { palette.text } else { palette.text_muted.gamma_multiply(0.6) },
+                                if gear_resp.hovered() {
+                                    palette.text
+                                } else {
+                                    palette.text_muted.gamma_multiply(0.6)
+                                },
                             );
                             gear_resp.on_hover_text("Settings  (Ctrl+,)");
                             if gear_clicked {
@@ -771,7 +812,9 @@ impl eframe::App for VelocityApp {
 
                     // Workspace header: name + branch at top of sidebar
                     {
-                        let ws_name = self.workspace_root.file_name()
+                        let ws_name = self
+                            .workspace_root
+                            .file_name()
                             .and_then(|n| n.to_str())
                             .unwrap_or("Workspace");
                         let branch = get_git_branch(&self.workspace_root);

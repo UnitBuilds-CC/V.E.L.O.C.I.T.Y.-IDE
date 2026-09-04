@@ -1,4 +1,4 @@
-﻿//! Wiki tab — browses a sitemap-generated wiki and exports it to Markdown.
+//! Wiki tab — browses a sitemap-generated wiki and exports it to Markdown.
 
 use eframe::egui;
 use velocity_ide::wiki::{build_wiki, export_markdown, render_page_markdown, WikiModel, WikiPage};

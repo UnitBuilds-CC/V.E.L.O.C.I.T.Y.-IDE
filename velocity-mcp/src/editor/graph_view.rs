@@ -1,4 +1,4 @@
-﻿//! Code explorer — a lightweight, drill-down alternative to a force-directed
+//! Code explorer — a lightweight, drill-down alternative to a force-directed
 //! graph. The user expands a file to reveal the symbols it defines, then expands
 //! a symbol to reveal its call relations (callers / callees), all sourced from
 //! the site map. Only the visible slice of the graph is materialized, so it

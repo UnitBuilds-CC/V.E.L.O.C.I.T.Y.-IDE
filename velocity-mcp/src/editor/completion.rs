@@ -1,4 +1,4 @@
-﻿//! Code completion engine — provides suggestions from sitemap symbols,
+//! Code completion engine — provides suggestions from sitemap symbols,
 //! keywords, and local identifiers.
 
 use crate::editor::theme::IdePalette;

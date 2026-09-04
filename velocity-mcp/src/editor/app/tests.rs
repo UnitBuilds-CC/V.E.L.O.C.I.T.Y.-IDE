@@ -1,4 +1,4 @@
-﻿use super::helpers::*;
+use super::helpers::*;
 use super::render::desktop_automation_runtime_validation_brief;
 use super::types::*;
 use super::wa::*;
@@ -406,8 +406,8 @@ fn mirror_worker_events_into_timeline_appends_only_new_events() {
         left_sidebar_visible: true,
         left_sidebar_width: 240.0,
         left_sidebar_tab: 0,
-            activity_bar_selection: 0,
-            activity_sub_panel: [0; 8],
+        activity_bar_selection: 0,
+        activity_sub_panel: [0; 8],
         right_sidebar_visible: true,
         right_sidebar_width: 280.0,
         tab_counter: 0,
@@ -697,8 +697,8 @@ fn clearing_worker_event_tracking_allows_replay_after_replan() {
         left_sidebar_visible: true,
         left_sidebar_width: 240.0,
         left_sidebar_tab: 0,
-            activity_bar_selection: 0,
-            activity_sub_panel: [0; 8],
+        activity_bar_selection: 0,
+        activity_sub_panel: [0; 8],
         right_sidebar_visible: true,
         right_sidebar_width: 280.0,
         tab_counter: 0,

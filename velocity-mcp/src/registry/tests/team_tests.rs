@@ -339,12 +339,9 @@ fn validate_team_reports_no_issues_for_well_formed_team() {
     )
     .unwrap();
 
-    let output = call_tool_in_workspace(
-        &root,
-        "validate_team",
-        &json!({ "team_id": "valid-team" }),
-    )
-    .unwrap();
+    let output =
+        call_tool_in_workspace(&root, "validate_team", &json!({ "team_id": "valid-team" }))
+            .unwrap();
 
     assert!(output.contains("passed all validation"));
 }
@@ -614,12 +611,8 @@ fn export_and_import_team_roundtrip() {
     let (_temp2, root2) = setup_root();
 
     // Import into the fresh workspace
-    let import_output = call_tool_in_workspace(
-        &root2,
-        "import_expert_team",
-        &json!({ "json": json_str }),
-    )
-    .unwrap();
+    let import_output =
+        call_tool_in_workspace(&root2, "import_expert_team", &json!({ "json": json_str })).unwrap();
 
     assert!(import_output.contains("Imported team"));
     assert!(import_output.contains("Test Team"));
@@ -661,12 +654,8 @@ fn import_expert_team_replaces_matching_slug() {
         ]
     }"#;
 
-    let output = call_tool_in_workspace(
-        &root,
-        "import_expert_team",
-        &json!({ "json": json }),
-    )
-    .unwrap();
+    let output =
+        call_tool_in_workspace(&root, "import_expert_team", &json!({ "json": json })).unwrap();
 
     assert!(output.contains("Replaced team"));
 
@@ -779,12 +768,9 @@ fn team_analytics_shows_composition_stats() {
     let (_temp, root) = setup_root();
     create_test_team(&root);
 
-    let output = call_tool_in_workspace(
-        &root,
-        "team_analytics",
-        &json!({ "team_id": "test-team" }),
-    )
-    .unwrap();
+    let output =
+        call_tool_in_workspace(&root, "team_analytics", &json!({ "team_id": "test-team" }))
+            .unwrap();
 
     assert!(output.contains("Team analytics"));
     assert!(output.contains("Test Team"));
@@ -998,12 +984,9 @@ fn team_changelog_returns_snapshot_hash() {
     let (_temp, root) = setup_root();
     create_test_team(&root);
 
-    let output = call_tool_in_workspace(
-        &root,
-        "team_changelog",
-        &json!({ "team_id": "test-team" }),
-    )
-    .unwrap();
+    let output =
+        call_tool_in_workspace(&root, "team_changelog", &json!({ "team_id": "test-team" }))
+            .unwrap();
 
     assert!(output.contains("Team snapshot"));
     assert!(output.contains("snapshot_hash"));
@@ -1015,12 +998,9 @@ fn team_changelog_hash_changes_on_modification() {
     let (_temp, root) = setup_root();
     create_test_team(&root);
 
-    let output1 = call_tool_in_workspace(
-        &root,
-        "team_changelog",
-        &json!({ "team_id": "test-team" }),
-    )
-    .unwrap();
+    let output1 =
+        call_tool_in_workspace(&root, "team_changelog", &json!({ "team_id": "test-team" }))
+            .unwrap();
 
     // Modify the team
     call_tool_in_workspace(
@@ -1033,12 +1013,9 @@ fn team_changelog_hash_changes_on_modification() {
     )
     .unwrap();
 
-    let output2 = call_tool_in_workspace(
-        &root,
-        "team_changelog",
-        &json!({ "team_id": "test-team" }),
-    )
-    .unwrap();
+    let output2 =
+        call_tool_in_workspace(&root, "team_changelog", &json!({ "team_id": "test-team" }))
+            .unwrap();
 
     // Extract hashes (they should differ)
     let hash1 = output1.find("\"snapshot_hash\"").and_then(|pos| {
@@ -1062,7 +1039,11 @@ fn team_changelog_hash_changes_on_modification() {
 
     assert!(hash1.is_some());
     assert!(hash2.is_some());
-    assert_ne!(hash1.unwrap(), hash2.unwrap(), "hash should change after modification");
+    assert_ne!(
+        hash1.unwrap(),
+        hash2.unwrap(),
+        "hash should change after modification"
+    );
 }
 
 #[test]
@@ -1099,21 +1080,33 @@ fn member_with_fallback_provider() {
 #[test]
 fn preset_templates_load_correctly() {
     use crate::editor::expert_team::default_preset_teams;
-    
+
     let presets = default_preset_teams();
-    
+
     // Should have 34 preset teams (3 original + 6 coding + 10 broader + 15 additional)
     assert_eq!(presets.len(), 34, "Expected 34 preset teams");
-    
+
     // Verify all presets are marked as preset
-    assert!(presets.iter().all(|t| t.is_preset), "All presets should have is_preset=true");
-    
+    assert!(
+        presets.iter().all(|t| t.is_preset),
+        "All presets should have is_preset=true"
+    );
+
     // Verify each team has members
     for team in &presets {
-        assert!(!team.members.is_empty(), "Team '{}' should have at least one member", team.name);
-        assert_eq!(team.members.len(), 4, "Team '{}' should have exactly 4 members", team.name);
+        assert!(
+            !team.members.is_empty(),
+            "Team '{}' should have at least one member",
+            team.name
+        );
+        assert_eq!(
+            team.members.len(),
+            4,
+            "Team '{}' should have exactly 4 members",
+            team.name
+        );
     }
-    
+
     // Verify some key templates exist
     let template_names: Vec<&str> = presets.iter().map(|t| t.name.as_str()).collect();
     assert!(template_names.contains(&"Rust Systems Programming Team"));

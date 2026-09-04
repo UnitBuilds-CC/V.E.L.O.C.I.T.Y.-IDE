@@ -1,4 +1,4 @@
-﻿//! Integration tests for the V.E.L.O.C.I.T.Y.-IDE runtime crate.
+//! Integration tests for the V.E.L.O.C.I.T.Y.-IDE runtime crate.
 //!
 //! These tests verify cross-module workflows in the compiler/inference runtime.
 
@@ -172,12 +172,14 @@ fn version_and_banner_accessible() {
 fn jit_compile_and_run_simple() {
     use velocity_ide::site_map::NdaNode;
     // Use the JIT compiler module
-    let nodes = [NdaNode::Int { value: 10 },
+    let nodes = [
+        NdaNode::Int { value: 10 },
         NdaNode::Int { value: 20 },
         NdaNode::Add {
             lhs: Box::new(NdaNode::Int { value: 0 }),
             rhs: Box::new(NdaNode::Int { value: 0 }),
-        }];
+        },
+    ];
     // Verify node hashes are deterministic
     let h1 = nodes[0].hash();
     let h2 = nodes[0].hash();
@@ -198,11 +200,16 @@ fn nda_node_variants_constructible() {
         children: vec![NdaNode::Int { value: 0 }],
     };
     let _matrix = NdaNode::Matrix {
-        rows: 4, cols: 4, scale: 0,
-        sign: vec![0xAA; 2], extra: vec![0x55; 2],
+        rows: 4,
+        cols: 4,
+        scale: 0,
+        sign: vec![0xAA; 2],
+        extra: vec![0x55; 2],
     };
     let _norm = NdaNode::Norm {
-        size: 64, weight: vec![0xFF; 8], bias: vec![0x00; 8],
+        size: 64,
+        weight: vec![0xFF; 8],
+        bias: vec![0x00; 8],
     };
     let _loop = NdaNode::Loop {
         count: 10,
@@ -231,7 +238,7 @@ fn nda_node_different_types_different_hashes() {
 /// Test SiteMap node storage and retrieval.
 #[test]
 fn site_map_put_and_get_node() {
-    use velocity_ide::site_map::{SiteMap, NdaNode};
+    use velocity_ide::site_map::{NdaNode, SiteMap};
 
     let tmp = tempfile::tempdir().expect("tempdir");
     let mut sm = SiteMap::open(tmp.path(), 0).expect("open");
@@ -248,7 +255,7 @@ fn site_map_put_and_get_node() {
 /// Test SiteMap with multiple node types.
 #[test]
 fn site_map_multiple_node_types() {
-    use velocity_ide::site_map::{SiteMap, NdaNode};
+    use velocity_ide::site_map::{NdaNode, SiteMap};
 
     let tmp = tempfile::tempdir().expect("tempdir");
     let mut sm = SiteMap::open(tmp.path(), 0).expect("open");
@@ -273,7 +280,11 @@ fn site_map_multiple_node_types() {
     // All nodes should be retrievable
     for node in &nodes {
         let h = node.hash();
-        assert!(sm.get_node(h).is_some(), "node {:?} should be retrievable", h);
+        assert!(
+            sm.get_node(h).is_some(),
+            "node {:?} should be retrievable",
+            h
+        );
     }
 }
 
@@ -282,7 +293,7 @@ fn site_map_multiple_node_types() {
 /// Test that error types are accessible and constructible.
 #[test]
 fn error_types_accessible() {
-    use velocity_ide::errors::{VelocityError, ErrorCode};
+    use velocity_ide::errors::{ErrorCode, VelocityError};
     let err = VelocityError::new(ErrorCode::ConfigNotFound, "test error");
     let msg = format!("{}", err);
     assert!(msg.contains("test error"));
@@ -291,7 +302,7 @@ fn error_types_accessible() {
 /// Test error display and debug formats.
 #[test]
 fn error_display_and_debug() {
-    use velocity_ide::errors::{VelocityError, ErrorCode};
+    use velocity_ide::errors::{ErrorCode, VelocityError};
     let err = VelocityError::new(ErrorCode::WeightLoadFailed, "something failed");
     let display = format!("{}", err);
     let debug = format!("{:?}", err);

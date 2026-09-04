@@ -1,10 +1,10 @@
 //! Browse panel rendering for `VelocityApp`.
 //!
 //! Extracted verbatim from `ui_render.rs` (no logic changes).
-use eframe::egui;
 use super::super::helpers::*;
 use super::super::types::*;
 use super::struct_def::VelocityApp;
+use eframe::egui;
 
 impl VelocityApp {
     pub fn browse_panel(&mut self, ui: &mut egui::Ui) {

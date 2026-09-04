@@ -1,4 +1,4 @@
-﻿use ash::vk::Handle;
+use ash::vk::Handle;
 use ash::{vk, Device, Entry, Instance};
 use serde::Serialize;
 use std::ffi::CString;
@@ -707,21 +707,27 @@ mod tests {
     fn validate_device_info_empty_name() {
         let mut info = sample_device_info();
         info.device_name = String::new();
-        assert!(validate_vulkan_device_info(&info).iter().any(|i| i.contains("name")));
+        assert!(validate_vulkan_device_info(&info)
+            .iter()
+            .any(|i| i.contains("name")));
     }
 
     #[test]
     fn validate_device_info_no_compute() {
         let mut info = sample_device_info();
         info.compute_queue_supported = false;
-        assert!(validate_vulkan_device_info(&info).iter().any(|i| i.contains("compute")));
+        assert!(validate_vulkan_device_info(&info)
+            .iter()
+            .any(|i| i.contains("compute")));
     }
 
     #[test]
     fn validate_device_info_zero_invocations() {
         let mut info = sample_device_info();
         info.max_compute_work_group_invocations = 0;
-        assert!(validate_vulkan_device_info(&info).iter().any(|i| i.contains("invocations")));
+        assert!(validate_vulkan_device_info(&info)
+            .iter()
+            .any(|i| i.contains("invocations")));
     }
 
     #[test]
@@ -929,9 +935,18 @@ mod tests {
         assert_eq!(cloned.driver_version, info.driver_version);
         assert_eq!(cloned.queue_family_index, info.queue_family_index);
         assert_eq!(cloned.compute_queue_supported, info.compute_queue_supported);
-        assert_eq!(cloned.max_compute_work_group_count, info.max_compute_work_group_count);
-        assert_eq!(cloned.max_compute_work_group_size, info.max_compute_work_group_size);
-        assert_eq!(cloned.max_compute_work_group_invocations, info.max_compute_work_group_invocations);
+        assert_eq!(
+            cloned.max_compute_work_group_count,
+            info.max_compute_work_group_count
+        );
+        assert_eq!(
+            cloned.max_compute_work_group_size,
+            info.max_compute_work_group_size
+        );
+        assert_eq!(
+            cloned.max_compute_work_group_invocations,
+            info.max_compute_work_group_invocations
+        );
         assert_eq!(cloned.validation_issues, info.validation_issues);
     }
 
@@ -1015,8 +1030,8 @@ mod tests {
         let json = serde_json::to_string(&info).unwrap();
         assert!(json.contains("47000")); // driver_version
         assert!(json.contains("65536")); // work_group_count
-        assert!(json.contains("1024"));  // work_group_invocations
-        assert!(json.contains("true"));  // compute_queue_supported
+        assert!(json.contains("1024")); // work_group_invocations
+        assert!(json.contains("true")); // compute_queue_supported
     }
 
     #[test]
@@ -1156,8 +1171,14 @@ mod tests {
         assert_eq!(v["driver_version"], 47000);
         assert_eq!(v["queue_family_index"], 0);
         assert_eq!(v["compute_queue_supported"], true);
-        assert_eq!(v["max_compute_work_group_count"], serde_json::json!([65536, 65536, 65536]));
-        assert_eq!(v["max_compute_work_group_size"], serde_json::json!([1024, 1024, 64]));
+        assert_eq!(
+            v["max_compute_work_group_count"],
+            serde_json::json!([65536, 65536, 65536])
+        );
+        assert_eq!(
+            v["max_compute_work_group_size"],
+            serde_json::json!([1024, 1024, 64])
+        );
         assert_eq!(v["max_compute_work_group_invocations"], 1024);
         assert!(v["validation_issues"].as_array().unwrap().is_empty());
     }
@@ -1180,8 +1201,10 @@ mod tests {
     fn device_info_eq_via_json() {
         let a = sample_device_info();
         let b = sample_device_info();
-        let ja: serde_json::Value = serde_json::from_str(&serde_json::to_string(&a).unwrap()).unwrap();
-        let jb: serde_json::Value = serde_json::from_str(&serde_json::to_string(&b).unwrap()).unwrap();
+        let ja: serde_json::Value =
+            serde_json::from_str(&serde_json::to_string(&a).unwrap()).unwrap();
+        let jb: serde_json::Value =
+            serde_json::from_str(&serde_json::to_string(&b).unwrap()).unwrap();
         assert_eq!(ja, jb);
     }
 
@@ -1190,8 +1213,10 @@ mod tests {
         let a = sample_device_info();
         let mut b = sample_device_info();
         b.driver_version = 99999;
-        let ja: serde_json::Value = serde_json::from_str(&serde_json::to_string(&a).unwrap()).unwrap();
-        let jb: serde_json::Value = serde_json::from_str(&serde_json::to_string(&b).unwrap()).unwrap();
+        let ja: serde_json::Value =
+            serde_json::from_str(&serde_json::to_string(&a).unwrap()).unwrap();
+        let jb: serde_json::Value =
+            serde_json::from_str(&serde_json::to_string(&b).unwrap()).unwrap();
         assert_ne!(ja, jb);
     }
 
@@ -1214,7 +1239,10 @@ mod tests {
         let info = sample_device_info();
         let json = serde_json::to_string(&info).unwrap();
         let v: serde_json::Value = serde_json::from_str(&json).unwrap();
-        assert_eq!(v["max_compute_work_group_count"].as_array().unwrap().len(), 3);
+        assert_eq!(
+            v["max_compute_work_group_count"].as_array().unwrap().len(),
+            3
+        );
     }
 
     #[test]
@@ -1222,7 +1250,10 @@ mod tests {
         let info = sample_device_info();
         let json = serde_json::to_string(&info).unwrap();
         let v: serde_json::Value = serde_json::from_str(&json).unwrap();
-        assert_eq!(v["max_compute_work_group_size"].as_array().unwrap().len(), 3);
+        assert_eq!(
+            v["max_compute_work_group_size"].as_array().unwrap().len(),
+            3
+        );
     }
 
     #[test]
@@ -1242,7 +1273,9 @@ mod tests {
     fn compute_queue_true_no_issue() {
         let mut info = sample_device_info();
         info.compute_queue_supported = true;
-        assert!(!validate_vulkan_device_info(&info).iter().any(|i| i.contains("compute")));
+        assert!(!validate_vulkan_device_info(&info)
+            .iter()
+            .any(|i| i.contains("compute")));
     }
 
     #[test]

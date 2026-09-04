@@ -194,14 +194,10 @@ impl<'a> LayerGpuGemvs<'a> {
     /// Count FFN projections (gate, up, down) that are available.
     #[allow(dead_code)]
     pub fn ffn_projection_count(&self) -> usize {
-        [
-            self.gate_proj_gpu,
-            self.up_proj_gpu,
-            self.down_proj_gpu,
-        ]
-        .iter()
-        .filter(|g| g.is_some())
-        .count()
+        [self.gate_proj_gpu, self.up_proj_gpu, self.down_proj_gpu]
+            .iter()
+            .filter(|g| g.is_some())
+            .count()
     }
 
     /// Build diagnostic info about this layer's GPU configuration.
@@ -214,13 +210,12 @@ impl<'a> LayerGpuGemvs<'a> {
         // If fused QKV is available but individual projections are missing, that's fine.
         // But if individual projections exist without fused, flag partial coverage.
         if self.qkv_proj_gpu.is_some() && attn_count < 3 {
-            issues.push(
-                "fused QKV present but individual Q/K/V projections incomplete".to_string()
-            );
+            issues
+                .push("fused QKV present but individual Q/K/V projections incomplete".to_string());
         }
         if self.gate_up_proj_gpu.is_some() && ffn_count < 2 {
             issues.push(
-                "fused gate-up present but individual gate/up projections incomplete".to_string()
+                "fused gate-up present but individual gate/up projections incomplete".to_string(),
             );
         }
         if attn_count > 0 && attn_count < 4 && self.qkv_proj_gpu.is_none() {
@@ -229,9 +224,7 @@ impl<'a> LayerGpuGemvs<'a> {
             ));
         }
         if ffn_count > 0 && ffn_count < 3 && self.gate_up_proj_gpu.is_none() {
-            issues.push(format!(
-                "partial FFN coverage: {ffn_count}/3 projections"
-            ));
+            issues.push(format!("partial FFN coverage: {ffn_count}/3 projections"));
         }
 
         LayerGpuGemvsInfo {
@@ -749,18 +742,16 @@ mod tests {
     #[test]
     fn result_json_has_exactly_7_keys() {
         let r = all_false_result();
-        let val: serde_json::Value = serde_json::from_str(
-            &serde_json::to_string(&r).unwrap()
-        ).unwrap();
+        let val: serde_json::Value =
+            serde_json::from_str(&serde_json::to_string(&r).unwrap()).unwrap();
         assert_eq!(val.as_object().unwrap().len(), 7);
     }
 
     #[test]
     fn info_json_has_exactly_8_keys() {
         let info = sample_info();
-        let val: serde_json::Value = serde_json::from_str(
-            &serde_json::to_string(&info).unwrap()
-        ).unwrap();
+        let val: serde_json::Value =
+            serde_json::from_str(&serde_json::to_string(&info).unwrap()).unwrap();
         assert_eq!(val.as_object().unwrap().len(), 8);
     }
 
@@ -880,8 +871,13 @@ mod tests {
                 has_full_ffn: ffn == 3,
                 validation_issues: vec![],
             };
-            assert_eq!(info.total_projections, attn + ffn,
-                "failed for attn={}, ffn={}", attn, ffn);
+            assert_eq!(
+                info.total_projections,
+                attn + ffn,
+                "failed for attn={}, ffn={}",
+                attn,
+                ffn
+            );
         }
     }
 
@@ -942,8 +938,15 @@ mod tests {
         let r = all_false_result();
         let json = serde_json::to_string(&r).unwrap();
         let val: serde_json::Value = serde_json::from_str(&json).unwrap();
-        for key in &["q_dispatched", "k_dispatched", "v_dispatched", "o_dispatched",
-                      "gate_dispatched", "up_dispatched", "down_dispatched"] {
+        for key in &[
+            "q_dispatched",
+            "k_dispatched",
+            "v_dispatched",
+            "o_dispatched",
+            "gate_dispatched",
+            "up_dispatched",
+            "down_dispatched",
+        ] {
             assert!(val[key].is_boolean(), "{} should be boolean", key);
         }
     }

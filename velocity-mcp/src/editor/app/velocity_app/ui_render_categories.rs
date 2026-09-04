@@ -1,11 +1,11 @@
 //! Activity-bar category dispatch rendering for `VelocityApp`.
 //!
 //! Extracted verbatim from `ui_render.rs` (no logic changes).
-use eframe::egui;
 use super::super::helpers::*;
 use super::super::types::*;
 use super::struct_def::VelocityApp;
-use crate::editor::theme::{IdePalette};
+use crate::editor::theme::IdePalette;
+use eframe::egui;
 
 impl VelocityApp {
     // ── Activity Bar Category Panels ──
@@ -39,12 +39,10 @@ impl VelocityApp {
                 } else {
                     palette.text_muted
                 };
-                let btn = egui::Button::new(
-                    egui::RichText::new(*tab).size(11.0).color(text_color),
-                )
-                .fill(egui::Color32::TRANSPARENT)
-                .stroke(egui::Stroke::NONE)
-                .min_size(egui::Vec2::new(0.0, 28.0));
+                let btn = egui::Button::new(egui::RichText::new(*tab).size(11.0).color(text_color))
+                    .fill(egui::Color32::TRANSPARENT)
+                    .stroke(egui::Stroke::NONE)
+                    .min_size(egui::Vec2::new(0.0, 28.0));
                 let resp = ui.add(btn);
                 // Accent underline for selected tab
                 if is_selected {
@@ -137,7 +135,14 @@ impl VelocityApp {
     }
 
     pub(super) fn render_agents_category(&mut self, ui: &mut egui::Ui, palette: IdePalette) {
-        let tabs = ["Activity", "Roster", "Orchestration", "Memory", "Timeline", "Metrics"];
+        let tabs = [
+            "Activity",
+            "Roster",
+            "Orchestration",
+            "Memory",
+            "Timeline",
+            "Metrics",
+        ];
         self.render_sub_tabs(ui, palette, 5, &tabs);
         self.render_category_header(ui, palette, tabs[self.activity_sub_panel[5]]);
 
@@ -167,7 +172,14 @@ impl VelocityApp {
     }
 
     pub(super) fn render_workspace_category(&mut self, ui: &mut egui::Ui, palette: IdePalette) {
-        let tabs = ["Extensions", "Plugins", "Skills", "Team Studio", "Usage", "Governance"];
+        let tabs = [
+            "Extensions",
+            "Plugins",
+            "Skills",
+            "Team Studio",
+            "Usage",
+            "Governance",
+        ];
         self.render_sub_tabs(ui, palette, 7, &tabs);
         self.render_category_header(ui, palette, tabs[self.activity_sub_panel[7]]);
 

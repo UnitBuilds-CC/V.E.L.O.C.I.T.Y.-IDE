@@ -1,4 +1,4 @@
-﻿//! Git integration — stage, commit, diff, blame, branch UI.
+//! Git integration — stage, commit, diff, blame, branch UI.
 //!
 //! Provides real git operations by invoking the git CLI and parsing output.
 

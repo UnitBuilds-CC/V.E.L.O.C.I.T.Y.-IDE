@@ -1,4 +1,4 @@
-﻿use std::{
+use std::{
     collections::{HashMap, VecDeque},
     fs,
     path::{Path, PathBuf},
@@ -677,10 +677,7 @@ impl SiteMap {
 
     /// Insert multiple KV pairs, recomputing the Merkle root only once at the end.
     /// Returns the list of keys that were inserted (or updated in cache).
-    pub fn put_kv_batch(
-        &mut self,
-        items: &[(u32, u32, NdaVec, NdaVec)],
-    ) -> Result<Vec<u64>> {
+    pub fn put_kv_batch(&mut self, items: &[(u32, u32, NdaVec, NdaVec)]) -> Result<Vec<u64>> {
         let mut keys = Vec::with_capacity(items.len());
         for &(token_id, layer_idx, ref k, ref v) in items {
             let key = self.token_hash(token_id, layer_idx);
@@ -1159,18 +1156,16 @@ impl SiteMap {
                         report.valid += 1;
                     } else {
                         report.corrupt += 1;
-                        report.issues.push(format!(
-                            "CORRUPT: {} (SHA mismatch)",
-                            entry.file
-                        ));
+                        report
+                            .issues
+                            .push(format!("CORRUPT: {} (SHA mismatch)", entry.file));
                     }
                 }
                 Err(e) => {
                     report.missing += 1;
-                    report.issues.push(format!(
-                        "MISSING: {} ({})",
-                        entry.file, e
-                    ));
+                    report
+                        .issues
+                        .push(format!("MISSING: {} ({})", entry.file, e));
                 }
             }
         }
@@ -1191,11 +1186,7 @@ impl SiteMap {
     }
 
     /// Compound query: find triples matching both predicate and object.
-    pub fn find_live_by_predicate_and_object(
-        &self,
-        predicate: u16,
-        object: u64,
-    ) -> Vec<VcTriple> {
+    pub fn find_live_by_predicate_and_object(&self, predicate: u16, object: u64) -> Vec<VcTriple> {
         self.collect_live_snapshot_triples()
             .into_iter()
             .filter(|t| t.predicate_id == predicate && t.object_hash == object)
@@ -1302,7 +1293,10 @@ impl SiteMap {
 
         let mut distribution: Vec<PredicateCount> = pred_counts
             .into_iter()
-            .map(|(predicate_id, count)| PredicateCount { predicate_id, count })
+            .map(|(predicate_id, count)| PredicateCount {
+                predicate_id,
+                count,
+            })
             .collect();
         distribution.sort_by(|a, b| b.count.cmp(&a.count));
 
@@ -1336,10 +1330,7 @@ impl SiteMap {
     }
 
     /// Put a node with a timing report.
-    pub fn put_node_reported(
-        &mut self,
-        node: &NdaNode,
-    ) -> Result<(u64, StoreOperationReport)> {
+    pub fn put_node_reported(&mut self, node: &NdaNode) -> Result<(u64, StoreOperationReport)> {
         let start = std::time::Instant::now();
         let key = self.put_node(node)?;
         let elapsed = start.elapsed().as_micros() as u64;
@@ -1442,8 +1433,20 @@ mod tests {
 
     #[test]
     fn compute_index_root_order_independent() {
-        let e1 = SiteMapEntry { kind: EntryKind::Kv, hash: 1, file: "a".into(), file_sha: "x".into(), size: 1 };
-        let e2 = SiteMapEntry { kind: EntryKind::Kv, hash: 2, file: "b".into(), file_sha: "y".into(), size: 2 };
+        let e1 = SiteMapEntry {
+            kind: EntryKind::Kv,
+            hash: 1,
+            file: "a".into(),
+            file_sha: "x".into(),
+            size: 1,
+        };
+        let e2 = SiteMapEntry {
+            kind: EntryKind::Kv,
+            hash: 2,
+            file: "b".into(),
+            file_sha: "y".into(),
+            size: 2,
+        };
         let root_ab = SiteMap::compute_index_root(vec![&e1, &e2]);
         let root_ba = SiteMap::compute_index_root(vec![&e2, &e1]);
         assert_eq!(root_ab, root_ba);
@@ -1451,8 +1454,20 @@ mod tests {
 
     #[test]
     fn compute_index_root_different_entries() {
-        let e1 = SiteMapEntry { kind: EntryKind::Kv, hash: 1, file: "a".into(), file_sha: "x".into(), size: 1 };
-        let e2 = SiteMapEntry { kind: EntryKind::Kv, hash: 2, file: "b".into(), file_sha: "y".into(), size: 2 };
+        let e1 = SiteMapEntry {
+            kind: EntryKind::Kv,
+            hash: 1,
+            file: "a".into(),
+            file_sha: "x".into(),
+            size: 1,
+        };
+        let e2 = SiteMapEntry {
+            kind: EntryKind::Kv,
+            hash: 2,
+            file: "b".into(),
+            file_sha: "y".into(),
+            size: 2,
+        };
         let root1 = SiteMap::compute_index_root(vec![&e1]);
         let root2 = SiteMap::compute_index_root(vec![&e2]);
         assert_ne!(root1, root2);
@@ -1462,7 +1477,11 @@ mod tests {
 
     #[test]
     fn extract_triples_from_triple_node() {
-        let node = NdaNode::Triple { subject_hash: 10, predicate_id: 2, object_hash: 20 };
+        let node = NdaNode::Triple {
+            subject_hash: 10,
+            predicate_id: 2,
+            object_hash: 20,
+        };
         let mut triples = Vec::new();
         SiteMap::extract_triples_recursive(&node, &mut triples);
         assert_eq!(triples.len(), 1);
@@ -1473,10 +1492,20 @@ mod tests {
 
     #[test]
     fn extract_triples_from_scope() {
-        let node = NdaNode::Scope { children: vec![
-            NdaNode::Triple { subject_hash: 1, predicate_id: 2, object_hash: 3 },
-            NdaNode::Triple { subject_hash: 4, predicate_id: 5, object_hash: 6 },
-        ]};
+        let node = NdaNode::Scope {
+            children: vec![
+                NdaNode::Triple {
+                    subject_hash: 1,
+                    predicate_id: 2,
+                    object_hash: 3,
+                },
+                NdaNode::Triple {
+                    subject_hash: 4,
+                    predicate_id: 5,
+                    object_hash: 6,
+                },
+            ],
+        };
         let mut triples = Vec::new();
         SiteMap::extract_triples_recursive(&node, &mut triples);
         assert_eq!(triples.len(), 2);
@@ -1484,9 +1513,14 @@ mod tests {
 
     #[test]
     fn extract_triples_from_loop_body() {
-        let node = NdaNode::Loop { count: 5, body: vec![
-            NdaNode::Triple { subject_hash: 1, predicate_id: 2, object_hash: 3 },
-        ]};
+        let node = NdaNode::Loop {
+            count: 5,
+            body: vec![NdaNode::Triple {
+                subject_hash: 1,
+                predicate_id: 2,
+                object_hash: 3,
+            }],
+        };
         let mut triples = Vec::new();
         SiteMap::extract_triples_recursive(&node, &mut triples);
         assert_eq!(triples.len(), 1);
@@ -1495,9 +1529,21 @@ mod tests {
     #[test]
     fn extract_triples_from_if_branches() {
         let node = NdaNode::If {
-            cond: Box::new(NdaNode::Triple { subject_hash: 1, predicate_id: 2, object_hash: 3 }),
-            then_body: vec![NdaNode::Triple { subject_hash: 4, predicate_id: 5, object_hash: 6 }],
-            else_body: Some(vec![NdaNode::Triple { subject_hash: 7, predicate_id: 8, object_hash: 9 }]),
+            cond: Box::new(NdaNode::Triple {
+                subject_hash: 1,
+                predicate_id: 2,
+                object_hash: 3,
+            }),
+            then_body: vec![NdaNode::Triple {
+                subject_hash: 4,
+                predicate_id: 5,
+                object_hash: 6,
+            }],
+            else_body: Some(vec![NdaNode::Triple {
+                subject_hash: 7,
+                predicate_id: 8,
+                object_hash: 9,
+            }]),
         };
         let mut triples = Vec::new();
         SiteMap::extract_triples_recursive(&node, &mut triples);
@@ -1514,15 +1560,20 @@ mod tests {
 
     #[test]
     fn extract_triples_nested() {
-        let node = NdaNode::Scope { children: vec![
-            NdaNode::Loop { count: 3, body: vec![
-                NdaNode::If {
+        let node = NdaNode::Scope {
+            children: vec![NdaNode::Loop {
+                count: 3,
+                body: vec![NdaNode::If {
                     cond: Box::new(NdaNode::Int { value: 1 }),
-                    then_body: vec![NdaNode::Triple { subject_hash: 1, predicate_id: 2, object_hash: 3 }],
+                    then_body: vec![NdaNode::Triple {
+                        subject_hash: 1,
+                        predicate_id: 2,
+                        object_hash: 3,
+                    }],
                     else_body: None,
-                },
-            ]},
-        ]};
+                }],
+            }],
+        };
         let mut triples = Vec::new();
         SiteMap::extract_triples_recursive(&node, &mut triples);
         assert_eq!(triples.len(), 1);
@@ -1534,8 +1585,16 @@ mod tests {
     fn filter_triples_no_filters() {
         let sm = SiteMap::open(&temp_dir("filter1"), 0).unwrap();
         let triples = vec![
-            VcTriple { subject_hash: 1, predicate_id: 2, object_hash: 3 },
-            VcTriple { subject_hash: 4, predicate_id: 5, object_hash: 6 },
+            VcTriple {
+                subject_hash: 1,
+                predicate_id: 2,
+                object_hash: 3,
+            },
+            VcTriple {
+                subject_hash: 4,
+                predicate_id: 5,
+                object_hash: 6,
+            },
         ];
         let result = sm.filter_triples(triples, None, None, None);
         assert_eq!(result.len(), 2);
@@ -1546,8 +1605,16 @@ mod tests {
     fn filter_triples_by_subject() {
         let sm = SiteMap::open(&temp_dir("filter2"), 0).unwrap();
         let triples = vec![
-            VcTriple { subject_hash: 1, predicate_id: 2, object_hash: 3 },
-            VcTriple { subject_hash: 4, predicate_id: 5, object_hash: 6 },
+            VcTriple {
+                subject_hash: 1,
+                predicate_id: 2,
+                object_hash: 3,
+            },
+            VcTriple {
+                subject_hash: 4,
+                predicate_id: 5,
+                object_hash: 6,
+            },
         ];
         let result = sm.filter_triples(triples, Some(1), None, None);
         assert_eq!(result.len(), 1);
@@ -1559,8 +1626,16 @@ mod tests {
     fn filter_triples_by_predicate() {
         let sm = SiteMap::open(&temp_dir("filter3"), 0).unwrap();
         let triples = vec![
-            VcTriple { subject_hash: 1, predicate_id: 2, object_hash: 3 },
-            VcTriple { subject_hash: 4, predicate_id: 5, object_hash: 6 },
+            VcTriple {
+                subject_hash: 1,
+                predicate_id: 2,
+                object_hash: 3,
+            },
+            VcTriple {
+                subject_hash: 4,
+                predicate_id: 5,
+                object_hash: 6,
+            },
         ];
         let result = sm.filter_triples(triples, None, Some(5), None);
         assert_eq!(result.len(), 1);
@@ -1572,8 +1647,16 @@ mod tests {
     fn filter_triples_by_object() {
         let sm = SiteMap::open(&temp_dir("filter4"), 0).unwrap();
         let triples = vec![
-            VcTriple { subject_hash: 1, predicate_id: 2, object_hash: 3 },
-            VcTriple { subject_hash: 4, predicate_id: 5, object_hash: 6 },
+            VcTriple {
+                subject_hash: 1,
+                predicate_id: 2,
+                object_hash: 3,
+            },
+            VcTriple {
+                subject_hash: 4,
+                predicate_id: 5,
+                object_hash: 6,
+            },
         ];
         let result = sm.filter_triples(triples, None, None, Some(6));
         assert_eq!(result.len(), 1);
@@ -1585,9 +1668,21 @@ mod tests {
     fn filter_triples_combined() {
         let sm = SiteMap::open(&temp_dir("filter5"), 0).unwrap();
         let triples = vec![
-            VcTriple { subject_hash: 1, predicate_id: 2, object_hash: 3 },
-            VcTriple { subject_hash: 1, predicate_id: 5, object_hash: 3 },
-            VcTriple { subject_hash: 4, predicate_id: 2, object_hash: 6 },
+            VcTriple {
+                subject_hash: 1,
+                predicate_id: 2,
+                object_hash: 3,
+            },
+            VcTriple {
+                subject_hash: 1,
+                predicate_id: 5,
+                object_hash: 3,
+            },
+            VcTriple {
+                subject_hash: 4,
+                predicate_id: 2,
+                object_hash: 6,
+            },
         ];
         let result = sm.filter_triples(triples, Some(1), None, Some(3));
         assert_eq!(result.len(), 2);
@@ -1718,8 +1813,10 @@ mod tests {
     fn put_kv_multiple_distinct_keys() {
         let dir = temp_dir("putkv3");
         let mut sm = SiteMap::open(&dir, 0).unwrap();
-        sm.put_kv(1, 0, test_ndavec(&[1]), test_ndavec(&[2])).unwrap();
-        sm.put_kv(2, 0, test_ndavec(&[3]), test_ndavec(&[4])).unwrap();
+        sm.put_kv(1, 0, test_ndavec(&[1]), test_ndavec(&[2]))
+            .unwrap();
+        sm.put_kv(2, 0, test_ndavec(&[3]), test_ndavec(&[4]))
+            .unwrap();
         assert_eq!(sm.len(), 2);
         cleanup(&dir);
     }
@@ -1762,7 +1859,8 @@ mod tests {
     fn stats_after_kv() {
         let dir = temp_dir("stats2");
         let mut sm = SiteMap::open(&dir, 0).unwrap();
-        sm.put_kv(1, 0, test_ndavec(&[1]), test_ndavec(&[2])).unwrap();
+        sm.put_kv(1, 0, test_ndavec(&[1]), test_ndavec(&[2]))
+            .unwrap();
         let s = sm.stats();
         assert_eq!(s.kv, 1);
         assert_eq!(s.total_entries, 1);
@@ -1785,7 +1883,8 @@ mod tests {
     fn info_has_correct_counts() {
         let dir = temp_dir("info1");
         let mut sm = SiteMap::open(&dir, 0).unwrap();
-        sm.put_kv(1, 0, test_ndavec(&[1]), test_ndavec(&[2])).unwrap();
+        sm.put_kv(1, 0, test_ndavec(&[1]), test_ndavec(&[2]))
+            .unwrap();
         let info = sm.info();
         assert_eq!(info.kv_count, 1);
         assert_eq!(info.total_entries, 1);
@@ -1797,7 +1896,8 @@ mod tests {
     fn verify_clean_after_put() {
         let dir = temp_dir("verify1");
         let mut sm = SiteMap::open(&dir, 0).unwrap();
-        sm.put_kv(1, 0, test_ndavec(&[1]), test_ndavec(&[2])).unwrap();
+        sm.put_kv(1, 0, test_ndavec(&[1]), test_ndavec(&[2]))
+            .unwrap();
         assert_eq!(sm.verify(), 0);
         cleanup(&dir);
     }
@@ -1806,7 +1906,8 @@ mod tests {
     fn verify_detailed_all_valid() {
         let dir = temp_dir("vdet1");
         let mut sm = SiteMap::open(&dir, 0).unwrap();
-        sm.put_kv(1, 0, test_ndavec(&[1]), test_ndavec(&[2])).unwrap();
+        sm.put_kv(1, 0, test_ndavec(&[1]), test_ndavec(&[2]))
+            .unwrap();
         let report = sm.verify_detailed();
         assert_eq!(report.total_entries, 1);
         assert_eq!(report.valid, 1);
@@ -1841,7 +1942,8 @@ mod tests {
     fn entries_by_kind_kv() {
         let dir = temp_dir("kind1");
         let mut sm = SiteMap::open(&dir, 0).unwrap();
-        sm.put_kv(1, 0, test_ndavec(&[1]), test_ndavec(&[2])).unwrap();
+        sm.put_kv(1, 0, test_ndavec(&[1]), test_ndavec(&[2]))
+            .unwrap();
         let kv_entries = sm.entries_by_kind(&EntryKind::Kv);
         assert_eq!(kv_entries.len(), 1);
         let node_entries = sm.entries_by_kind(&EntryKind::Node);
@@ -1853,8 +1955,15 @@ mod tests {
     fn largest_entries_sorted() {
         let dir = temp_dir("largest1");
         let mut sm = SiteMap::open(&dir, 0).unwrap();
-        sm.put_kv(1, 0, test_ndavec(&[1]), test_ndavec(&[2])).unwrap();
-        sm.put_kv(2, 0, test_ndavec(&[1, 2, 3, 4, 5]), test_ndavec(&[6, 7, 8, 9, 10])).unwrap();
+        sm.put_kv(1, 0, test_ndavec(&[1]), test_ndavec(&[2]))
+            .unwrap();
+        sm.put_kv(
+            2,
+            0,
+            test_ndavec(&[1, 2, 3, 4, 5]),
+            test_ndavec(&[6, 7, 8, 9, 10]),
+        )
+        .unwrap();
         let largest = sm.largest_entries(1);
         assert_eq!(largest.len(), 1);
         cleanup(&dir);
@@ -1895,25 +2004,49 @@ mod tests {
 
     #[test]
     fn validate_entry_clean() {
-        let entry = SiteMapEntry { kind: EntryKind::Kv, hash: 1, file: "kv/1.kv".into(), file_sha: "abc".into(), size: 100 };
+        let entry = SiteMapEntry {
+            kind: EntryKind::Kv,
+            hash: 1,
+            file: "kv/1.kv".into(),
+            file_sha: "abc".into(),
+            size: 100,
+        };
         assert!(SiteMap::validate_entry(&entry).is_empty());
     }
 
     #[test]
     fn validate_entry_empty_file() {
-        let entry = SiteMapEntry { kind: EntryKind::Kv, hash: 1, file: "".into(), file_sha: "abc".into(), size: 100 };
+        let entry = SiteMapEntry {
+            kind: EntryKind::Kv,
+            hash: 1,
+            file: "".into(),
+            file_sha: "abc".into(),
+            size: 100,
+        };
         assert!(!SiteMap::validate_entry(&entry).is_empty());
     }
 
     #[test]
     fn validate_entry_empty_sha() {
-        let entry = SiteMapEntry { kind: EntryKind::Kv, hash: 1, file: "a".into(), file_sha: "".into(), size: 100 };
+        let entry = SiteMapEntry {
+            kind: EntryKind::Kv,
+            hash: 1,
+            file: "a".into(),
+            file_sha: "".into(),
+            size: 100,
+        };
         assert!(!SiteMap::validate_entry(&entry).is_empty());
     }
 
     #[test]
     fn validate_entry_zero_size() {
-        let entry = SiteMapEntry { kind: EntryKind::Kv, hash: 1, file: "a".into(), file_sha: "abc".into(), size: 0 };
+        let entry = SiteMapEntry {
+            kind: EntryKind::Kv,
+            hash: 1,
+            file: "a".into(),
+            file_sha: "abc".into(),
+            size: 0,
+        };
         assert!(!SiteMap::validate_entry(&entry).is_empty());
     }
 
@@ -1922,9 +2055,18 @@ mod tests {
     #[test]
     fn site_map_info_serializes() {
         let info = SiteMapInfo {
-            total_entries: 1, kv_count: 1, node_count: 0, program_count: 0, snapshot_count: 0,
-            total_bytes: 100, root: 0, weight_root: 0, kv_cache_size: 0, kv_cache_max: 4096,
-            string_dict_size: 0, validation_issues: vec![],
+            total_entries: 1,
+            kv_count: 1,
+            node_count: 0,
+            program_count: 0,
+            snapshot_count: 0,
+            total_bytes: 100,
+            root: 0,
+            weight_root: 0,
+            kv_cache_size: 0,
+            kv_cache_max: 4096,
+            string_dict_size: 0,
+            validation_issues: vec![],
         };
         let json = serde_json::to_string(&info).unwrap();
         assert!(json.contains("\"total_entries\":1"));
@@ -1933,8 +2075,11 @@ mod tests {
     #[test]
     fn site_map_summary_serializes() {
         let summary = SiteMapSummary {
-            stats: "test".into(), root: "0000".into(), weight_root: "abcd".into(),
-            cache_utilization: "0.0%".into(), validation_clean: true,
+            stats: "test".into(),
+            root: "0000".into(),
+            weight_root: "abcd".into(),
+            cache_utilization: "0.0%".into(),
+            validation_clean: true,
         };
         let json = serde_json::to_string(&summary).unwrap();
         assert!(json.contains("\"validation_clean\":true"));
@@ -1943,7 +2088,10 @@ mod tests {
     #[test]
     fn store_operation_report_serializes() {
         let report = StoreOperationReport {
-            operation: "put_kv".into(), elapsed_us: 100, entries_affected: 1, total_entries_after: 5,
+            operation: "put_kv".into(),
+            elapsed_us: 100,
+            entries_affected: 1,
+            total_entries_after: 5,
         };
         let json = serde_json::to_string(&report).unwrap();
         assert!(json.contains("\"operation\":\"put_kv\""));
@@ -1952,9 +2100,14 @@ mod tests {
     #[test]
     fn triple_analysis_serializes() {
         let analysis = TripleAnalysis {
-            total_triples: 10, unique_predicates: 2,
-            predicate_distribution: vec![PredicateCount { predicate_id: 1, count: 7 }],
-            unique_subjects: 5, unique_objects: 3,
+            total_triples: 10,
+            unique_predicates: 2,
+            predicate_distribution: vec![PredicateCount {
+                predicate_id: 1,
+                count: 7,
+            }],
+            unique_subjects: 5,
+            unique_objects: 3,
         };
         let json = serde_json::to_string(&analysis).unwrap();
         assert!(json.contains("\"total_triples\":10"));
@@ -1980,8 +2133,7 @@ mod tests {
     fn put_nodes_batch_inserts() {
         let dir = temp_dir("batch2");
         let mut sm = SiteMap::open(&dir, 0).unwrap();
-        let nodes = [NdaNode::Int { value: 1 },
-            NdaNode::Int { value: 2 }];
+        let nodes = [NdaNode::Int { value: 1 }, NdaNode::Int { value: 2 }];
         let node_refs: Vec<&NdaNode> = nodes.iter().collect();
         let keys = sm.put_nodes_batch(&node_refs).unwrap();
         assert_eq!(keys.len(), 2);
@@ -2047,7 +2199,9 @@ mod tests {
     fn put_kv_reported_works() {
         let dir = temp_dir("reported1");
         let mut sm = SiteMap::open(&dir, 0).unwrap();
-        let (key, report) = sm.put_kv_reported(1, 0, test_ndavec(&[1]), test_ndavec(&[2])).unwrap();
+        let (key, report) = sm
+            .put_kv_reported(1, 0, test_ndavec(&[1]), test_ndavec(&[2]))
+            .unwrap();
         assert_ne!(key, 0);
         assert_eq!(report.operation, "put_kv");
         assert_eq!(report.entries_affected, 1);
@@ -2084,7 +2238,8 @@ mod tests {
         let dir = temp_dir("persist1");
         {
             let mut sm = SiteMap::open(&dir, 0xABCD).unwrap();
-            sm.put_kv(1, 0, test_ndavec(&[1]), test_ndavec(&[2])).unwrap();
+            sm.put_kv(1, 0, test_ndavec(&[1]), test_ndavec(&[2]))
+                .unwrap();
             sm.flush().unwrap();
         }
         let sm2 = SiteMap::open(&dir, 0xABCD).unwrap();
@@ -2099,7 +2254,11 @@ mod tests {
     fn put_and_remove_file_snapshot() {
         let dir = temp_dir("snapshot1");
         let mut sm = SiteMap::open(&dir, 0).unwrap();
-        let triples = vec![VcTriple { subject_hash: 1, predicate_id: 2, object_hash: 3 }];
+        let triples = vec![VcTriple {
+            subject_hash: 1,
+            predicate_id: 2,
+            object_hash: 3,
+        }];
         let key = sm.put_file_snapshot("test.rs", &triples).unwrap();
         assert_ne!(key, 0);
         assert_eq!(sm.len(), 1);
@@ -2135,9 +2294,18 @@ mod tests {
     #[test]
     fn site_map_info_json_key_count() {
         let info = SiteMapInfo {
-            total_entries: 0, kv_count: 0, node_count: 0, program_count: 0, snapshot_count: 0,
-            total_bytes: 0, root: 0, weight_root: 0, kv_cache_size: 0, kv_cache_max: 4096,
-            string_dict_size: 0, validation_issues: vec![],
+            total_entries: 0,
+            kv_count: 0,
+            node_count: 0,
+            program_count: 0,
+            snapshot_count: 0,
+            total_bytes: 0,
+            root: 0,
+            weight_root: 0,
+            kv_cache_size: 0,
+            kv_cache_max: 4096,
+            string_dict_size: 0,
+            validation_issues: vec![],
         };
         let json = serde_json::to_string(&info).unwrap();
         let val: serde_json::Value = serde_json::from_str(&json).unwrap();
@@ -2147,7 +2315,12 @@ mod tests {
     #[test]
     fn site_map_verify_report_json_key_count() {
         let report = SiteMapVerifyReport {
-            total_entries: 0, checked: 0, corrupt: 0, missing: 0, valid: 0, issues: vec![],
+            total_entries: 0,
+            checked: 0,
+            corrupt: 0,
+            missing: 0,
+            valid: 0,
+            issues: vec![],
         };
         let json = serde_json::to_string(&report).unwrap();
         let val: serde_json::Value = serde_json::from_str(&json).unwrap();
@@ -2157,8 +2330,11 @@ mod tests {
     #[test]
     fn site_map_summary_json_key_count() {
         let summary = SiteMapSummary {
-            stats: "s".into(), root: "r".into(), weight_root: "w".into(),
-            cache_utilization: "c".into(), validation_clean: true,
+            stats: "s".into(),
+            root: "r".into(),
+            weight_root: "w".into(),
+            cache_utilization: "c".into(),
+            validation_clean: true,
         };
         let json = serde_json::to_string(&summary).unwrap();
         let val: serde_json::Value = serde_json::from_str(&json).unwrap();
@@ -2168,7 +2344,10 @@ mod tests {
     #[test]
     fn store_operation_report_json_key_count() {
         let report = StoreOperationReport {
-            operation: "op".into(), elapsed_us: 1, entries_affected: 0, total_entries_after: 0,
+            operation: "op".into(),
+            elapsed_us: 1,
+            entries_affected: 0,
+            total_entries_after: 0,
         };
         let json = serde_json::to_string(&report).unwrap();
         let val: serde_json::Value = serde_json::from_str(&json).unwrap();
@@ -2178,8 +2357,11 @@ mod tests {
     #[test]
     fn triple_analysis_json_key_count() {
         let analysis = TripleAnalysis {
-            total_triples: 0, unique_predicates: 0, predicate_distribution: vec![],
-            unique_subjects: 0, unique_objects: 0,
+            total_triples: 0,
+            unique_predicates: 0,
+            predicate_distribution: vec![],
+            unique_subjects: 0,
+            unique_objects: 0,
         };
         let json = serde_json::to_string(&analysis).unwrap();
         let val: serde_json::Value = serde_json::from_str(&json).unwrap();
@@ -2188,7 +2370,10 @@ mod tests {
 
     #[test]
     fn predicate_count_json_key_count() {
-        let pc = PredicateCount { predicate_id: 1, count: 5 };
+        let pc = PredicateCount {
+            predicate_id: 1,
+            count: 5,
+        };
         let json = serde_json::to_string(&pc).unwrap();
         let val: serde_json::Value = serde_json::from_str(&json).unwrap();
         assert_eq!(val.as_object().unwrap().len(), 2);
@@ -2199,9 +2384,18 @@ mod tests {
     #[test]
     fn site_map_info_clone_independent() {
         let info = SiteMapInfo {
-            total_entries: 5, kv_count: 3, node_count: 1, program_count: 0, snapshot_count: 1,
-            total_bytes: 1000, root: 42, weight_root: 99, kv_cache_size: 10, kv_cache_max: 4096,
-            string_dict_size: 2, validation_issues: vec!["warn".into()],
+            total_entries: 5,
+            kv_count: 3,
+            node_count: 1,
+            program_count: 0,
+            snapshot_count: 1,
+            total_bytes: 1000,
+            root: 42,
+            weight_root: 99,
+            kv_cache_size: 10,
+            kv_cache_max: 4096,
+            string_dict_size: 2,
+            validation_issues: vec!["warn".into()],
         };
         let mut cloned = info.clone();
         cloned.validation_issues.push("extra".into());
@@ -2211,7 +2405,11 @@ mod tests {
     #[test]
     fn site_map_verify_report_clone_independent() {
         let report = SiteMapVerifyReport {
-            total_entries: 10, checked: 10, corrupt: 0, missing: 0, valid: 10,
+            total_entries: 10,
+            checked: 10,
+            corrupt: 0,
+            missing: 0,
+            valid: 10,
             issues: vec![],
         };
         let mut cloned = report.clone();
@@ -2222,13 +2420,24 @@ mod tests {
     #[test]
     fn triple_analysis_clone_independent() {
         let analysis = TripleAnalysis {
-            total_triples: 5, unique_predicates: 2,
-            predicate_distribution: vec![PredicateCount { predicate_id: 1, count: 3 }],
-            unique_subjects: 3, unique_objects: 2,
+            total_triples: 5,
+            unique_predicates: 2,
+            predicate_distribution: vec![PredicateCount {
+                predicate_id: 1,
+                count: 3,
+            }],
+            unique_subjects: 3,
+            unique_objects: 2,
         };
         let mut cloned = analysis.clone();
-        cloned.predicate_distribution.push(PredicateCount { predicate_id: 2, count: 2 });
-        assert_ne!(analysis.predicate_distribution.len(), cloned.predicate_distribution.len());
+        cloned.predicate_distribution.push(PredicateCount {
+            predicate_id: 2,
+            count: 2,
+        });
+        assert_ne!(
+            analysis.predicate_distribution.len(),
+            cloned.predicate_distribution.len()
+        );
     }
 
     // ── JSON value verification ──────────────────────────────────────────
@@ -2236,9 +2445,18 @@ mod tests {
     #[test]
     fn site_map_info_json_values() {
         let info = SiteMapInfo {
-            total_entries: 10, kv_count: 5, node_count: 3, program_count: 1, snapshot_count: 1,
-            total_bytes: 2048, root: 0xDEAD, weight_root: 0xBEEF, kv_cache_size: 8, kv_cache_max: 4096,
-            string_dict_size: 4, validation_issues: vec!["issue1".into()],
+            total_entries: 10,
+            kv_count: 5,
+            node_count: 3,
+            program_count: 1,
+            snapshot_count: 1,
+            total_bytes: 2048,
+            root: 0xDEAD,
+            weight_root: 0xBEEF,
+            kv_cache_size: 8,
+            kv_cache_max: 4096,
+            string_dict_size: 4,
+            validation_issues: vec!["issue1".into()],
         };
         let json = serde_json::to_string(&info).unwrap();
         let val: serde_json::Value = serde_json::from_str(&json).unwrap();
@@ -2255,7 +2473,11 @@ mod tests {
     #[test]
     fn site_map_verify_report_json_values() {
         let report = SiteMapVerifyReport {
-            total_entries: 20, checked: 18, corrupt: 1, missing: 1, valid: 16,
+            total_entries: 20,
+            checked: 18,
+            corrupt: 1,
+            missing: 1,
+            valid: 16,
             issues: vec!["CORRUPT: x".into(), "MISSING: y".into()],
         };
         let json = serde_json::to_string(&report).unwrap();
@@ -2273,8 +2495,16 @@ mod tests {
     #[test]
     fn extract_triples_from_while() {
         let node = NdaNode::While {
-            cond: Box::new(NdaNode::Triple { subject_hash: 1, predicate_id: 2, object_hash: 3 }),
-            body: vec![NdaNode::Triple { subject_hash: 4, predicate_id: 5, object_hash: 6 }],
+            cond: Box::new(NdaNode::Triple {
+                subject_hash: 1,
+                predicate_id: 2,
+                object_hash: 3,
+            }),
+            body: vec![NdaNode::Triple {
+                subject_hash: 4,
+                predicate_id: 5,
+                object_hash: 6,
+            }],
         };
         let mut triples = Vec::new();
         SiteMap::extract_triples_recursive(&node, &mut triples);
@@ -2285,7 +2515,11 @@ mod tests {
     fn extract_triples_from_compare() {
         let node = NdaNode::Compare {
             op: crate::site_map::verifier::CmpOp::Eq,
-            lhs: Box::new(NdaNode::Triple { subject_hash: 1, predicate_id: 2, object_hash: 3 }),
+            lhs: Box::new(NdaNode::Triple {
+                subject_hash: 1,
+                predicate_id: 2,
+                object_hash: 3,
+            }),
             rhs: Box::new(NdaNode::Int { value: 0 }),
         };
         let mut triples = Vec::new();
@@ -2296,8 +2530,16 @@ mod tests {
     #[test]
     fn extract_triples_from_add() {
         let node = NdaNode::Add {
-            lhs: Box::new(NdaNode::Triple { subject_hash: 1, predicate_id: 2, object_hash: 3 }),
-            rhs: Box::new(NdaNode::Triple { subject_hash: 4, predicate_id: 5, object_hash: 6 }),
+            lhs: Box::new(NdaNode::Triple {
+                subject_hash: 1,
+                predicate_id: 2,
+                object_hash: 3,
+            }),
+            rhs: Box::new(NdaNode::Triple {
+                subject_hash: 4,
+                predicate_id: 5,
+                object_hash: 6,
+            }),
         };
         let mut triples = Vec::new();
         SiteMap::extract_triples_recursive(&node, &mut triples);
@@ -2307,7 +2549,11 @@ mod tests {
     #[test]
     fn extract_triples_from_print() {
         let node = NdaNode::Print {
-            source: Box::new(NdaNode::Triple { subject_hash: 1, predicate_id: 2, object_hash: 3 }),
+            source: Box::new(NdaNode::Triple {
+                subject_hash: 1,
+                predicate_id: 2,
+                object_hash: 3,
+            }),
         };
         let mut triples = Vec::new();
         SiteMap::extract_triples_recursive(&node, &mut triples);
@@ -2317,7 +2563,11 @@ mod tests {
     #[test]
     fn extract_triples_from_return_node() {
         let node = NdaNode::Return {
-            value: Box::new(NdaNode::Triple { subject_hash: 1, predicate_id: 2, object_hash: 3 }),
+            value: Box::new(NdaNode::Triple {
+                subject_hash: 1,
+                predicate_id: 2,
+                object_hash: 3,
+            }),
         };
         let mut triples = Vec::new();
         SiteMap::extract_triples_recursive(&node, &mut triples);
@@ -2327,8 +2577,16 @@ mod tests {
     #[test]
     fn extract_triples_from_dot() {
         let node = NdaNode::Dot {
-            lhs: Box::new(NdaNode::Triple { subject_hash: 1, predicate_id: 2, object_hash: 3 }),
-            rhs: Box::new(NdaNode::Triple { subject_hash: 4, predicate_id: 5, object_hash: 6 }),
+            lhs: Box::new(NdaNode::Triple {
+                subject_hash: 1,
+                predicate_id: 2,
+                object_hash: 3,
+            }),
+            rhs: Box::new(NdaNode::Triple {
+                subject_hash: 4,
+                predicate_id: 5,
+                object_hash: 6,
+            }),
         };
         let mut triples = Vec::new();
         SiteMap::extract_triples_recursive(&node, &mut triples);
@@ -2339,7 +2597,11 @@ mod tests {
     fn extract_triples_from_syscall() {
         let node = NdaNode::Syscall {
             num: 1,
-            args: vec![NdaNode::Triple { subject_hash: 1, predicate_id: 2, object_hash: 3 }],
+            args: vec![NdaNode::Triple {
+                subject_hash: 1,
+                predicate_id: 2,
+                object_hash: 3,
+            }],
         };
         let mut triples = Vec::new();
         SiteMap::extract_triples_recursive(&node, &mut triples);
@@ -2350,7 +2612,11 @@ mod tests {
     fn extract_triples_from_atomic() {
         let node = NdaNode::Atomic {
             op: crate::site_map::verifier::AtomicOp::Cas,
-            addr: Box::new(NdaNode::Triple { subject_hash: 1, predicate_id: 2, object_hash: 3 }),
+            addr: Box::new(NdaNode::Triple {
+                subject_hash: 1,
+                predicate_id: 2,
+                object_hash: 3,
+            }),
             val: Box::new(NdaNode::Int { value: 5 }),
         };
         let mut triples = Vec::new();
@@ -2363,7 +2629,11 @@ mod tests {
     #[test]
     fn validate_entry_all_issues() {
         let entry = SiteMapEntry {
-            kind: EntryKind::Kv, hash: 0xABCD, file: "".into(), file_sha: "".into(), size: 0,
+            kind: EntryKind::Kv,
+            hash: 0xABCD,
+            file: "".into(),
+            file_sha: "".into(),
+            size: 0,
         };
         let issues = SiteMap::validate_entry(&entry);
         assert_eq!(issues.len(), 3);
@@ -2399,7 +2669,8 @@ mod tests {
     fn cache_utilization_after_kv() {
         let dir = temp_dir("cache_after");
         let mut sm = SiteMap::open(&dir, 0).unwrap();
-        sm.put_kv(1, 0, test_ndavec(&[1]), test_ndavec(&[2])).unwrap();
+        sm.put_kv(1, 0, test_ndavec(&[1]), test_ndavec(&[2]))
+            .unwrap();
         assert!(sm.cache_utilization() > 0.0);
         assert!(sm.cache_utilization() <= 1.0);
         cleanup(&dir);
@@ -2423,7 +2694,8 @@ mod tests {
     fn stats_after_mixed() {
         let dir = temp_dir("stats_mixed");
         let mut sm = SiteMap::open(&dir, 0).unwrap();
-        sm.put_kv(1, 0, test_ndavec(&[1]), test_ndavec(&[2])).unwrap();
+        sm.put_kv(1, 0, test_ndavec(&[1]), test_ndavec(&[2]))
+            .unwrap();
         sm.put_node(&NdaNode::Int { value: 42 }).unwrap();
         let s = sm.stats();
         assert_eq!(s.kv, 1);
@@ -2438,7 +2710,8 @@ mod tests {
     fn validate_clean_after_kv() {
         let dir = temp_dir("val_clean_kv");
         let mut sm = SiteMap::open(&dir, 0).unwrap();
-        sm.put_kv(1, 0, test_ndavec(&[1]), test_ndavec(&[2])).unwrap();
+        sm.put_kv(1, 0, test_ndavec(&[1]), test_ndavec(&[2]))
+            .unwrap();
         let w = sm.validate();
         // Should not have "empty" warning since we have entries
         assert!(!w.iter().any(|s| s.contains("index is empty")));
@@ -2462,7 +2735,11 @@ mod tests {
     fn info_after_snapshot() {
         let dir = temp_dir("info_snap");
         let mut sm = SiteMap::open(&dir, 0).unwrap();
-        let triples = vec![VcTriple { subject_hash: 1, predicate_id: 2, object_hash: 3 }];
+        let triples = vec![VcTriple {
+            subject_hash: 1,
+            predicate_id: 2,
+            object_hash: 3,
+        }];
         sm.put_file_snapshot("test.rs", &triples).unwrap();
         let info = sm.info();
         assert_eq!(info.snapshot_count, 1);
@@ -2475,7 +2752,8 @@ mod tests {
     fn entries_by_kind_multiple() {
         let dir = temp_dir("kind_multi");
         let mut sm = SiteMap::open(&dir, 0).unwrap();
-        sm.put_kv(1, 0, test_ndavec(&[1]), test_ndavec(&[2])).unwrap();
+        sm.put_kv(1, 0, test_ndavec(&[1]), test_ndavec(&[2]))
+            .unwrap();
         sm.put_node(&NdaNode::Int { value: 42 }).unwrap();
         assert_eq!(sm.entries_by_kind(&EntryKind::Kv).len(), 1);
         assert_eq!(sm.entries_by_kind(&EntryKind::Node).len(), 1);
@@ -2489,7 +2767,8 @@ mod tests {
     fn largest_entries_zero() {
         let dir = temp_dir("largest_zero");
         let mut sm = SiteMap::open(&dir, 0).unwrap();
-        sm.put_kv(1, 0, test_ndavec(&[1]), test_ndavec(&[2])).unwrap();
+        sm.put_kv(1, 0, test_ndavec(&[1]), test_ndavec(&[2]))
+            .unwrap();
         let largest = sm.largest_entries(0);
         assert!(largest.is_empty());
         cleanup(&dir);
@@ -2499,7 +2778,8 @@ mod tests {
     fn largest_entries_more_than_available() {
         let dir = temp_dir("largest_more");
         let mut sm = SiteMap::open(&dir, 0).unwrap();
-        sm.put_kv(1, 0, test_ndavec(&[1]), test_ndavec(&[2])).unwrap();
+        sm.put_kv(1, 0, test_ndavec(&[1]), test_ndavec(&[2]))
+            .unwrap();
         let largest = sm.largest_entries(100);
         assert_eq!(largest.len(), 1);
         cleanup(&dir);
@@ -2561,12 +2841,19 @@ mod tests {
     fn put_file_snapshots_batch_works() {
         let dir = temp_dir("batch_snap");
         let mut sm = SiteMap::open(&dir, 0).unwrap();
-        let t1 = vec![VcTriple { subject_hash: 1, predicate_id: 2, object_hash: 3 }];
-        let t2 = vec![VcTriple { subject_hash: 4, predicate_id: 5, object_hash: 6 }];
-        let keys = sm.put_file_snapshots_batch(&[
-            ("file1.rs", &t1),
-            ("file2.rs", &t2),
-        ]).unwrap();
+        let t1 = vec![VcTriple {
+            subject_hash: 1,
+            predicate_id: 2,
+            object_hash: 3,
+        }];
+        let t2 = vec![VcTriple {
+            subject_hash: 4,
+            predicate_id: 5,
+            object_hash: 6,
+        }];
+        let keys = sm
+            .put_file_snapshots_batch(&[("file1.rs", &t1), ("file2.rs", &t2)])
+            .unwrap();
         assert_eq!(keys.len(), 2);
         assert_eq!(sm.len(), 2);
         cleanup(&dir);
@@ -2604,8 +2891,16 @@ mod tests {
         let dir = temp_dir("live_triples1");
         let mut sm = SiteMap::open(&dir, 0).unwrap();
         let triples = vec![
-            VcTriple { subject_hash: 1, predicate_id: 2, object_hash: 3 },
-            VcTriple { subject_hash: 4, predicate_id: 5, object_hash: 6 },
+            VcTriple {
+                subject_hash: 1,
+                predicate_id: 2,
+                object_hash: 3,
+            },
+            VcTriple {
+                subject_hash: 4,
+                predicate_id: 5,
+                object_hash: 6,
+            },
         ];
         sm.put_file_snapshot("test.rs", &triples).unwrap();
         let found = sm.find_live_triples(None, None, None);
@@ -2618,8 +2913,16 @@ mod tests {
         let dir = temp_dir("live_triples2");
         let mut sm = SiteMap::open(&dir, 0).unwrap();
         let triples = vec![
-            VcTriple { subject_hash: 1, predicate_id: 2, object_hash: 3 },
-            VcTriple { subject_hash: 4, predicate_id: 5, object_hash: 6 },
+            VcTriple {
+                subject_hash: 1,
+                predicate_id: 2,
+                object_hash: 3,
+            },
+            VcTriple {
+                subject_hash: 4,
+                predicate_id: 5,
+                object_hash: 6,
+            },
         ];
         sm.put_file_snapshot("test.rs", &triples).unwrap();
         let found = sm.find_live_triples(Some(1), None, None);
@@ -2651,9 +2954,11 @@ mod tests {
         let dir = temp_dir("callers2");
         let mut sm = SiteMap::open(&dir, 0).unwrap();
         // predicate_id=2 means "calls"
-        let triples = vec![
-            VcTriple { subject_hash: 100, predicate_id: 2, object_hash: 200 },
-        ];
+        let triples = vec![VcTriple {
+            subject_hash: 100,
+            predicate_id: 2,
+            object_hash: 200,
+        }];
         sm.put_file_snapshot("test.rs", &triples).unwrap();
         let callers = sm.get_callers(200);
         assert_eq!(callers.len(), 1);
@@ -2665,9 +2970,11 @@ mod tests {
     fn get_dependencies_after_snapshot() {
         let dir = temp_dir("deps2");
         let mut sm = SiteMap::open(&dir, 0).unwrap();
-        let triples = vec![
-            VcTriple { subject_hash: 100, predicate_id: 3, object_hash: 200 },
-        ];
+        let triples = vec![VcTriple {
+            subject_hash: 100,
+            predicate_id: 3,
+            object_hash: 200,
+        }];
         sm.put_file_snapshot("test.rs", &triples).unwrap();
         let deps = sm.get_dependencies(100);
         assert_eq!(deps.len(), 1);
@@ -2682,8 +2989,16 @@ mod tests {
         let dir = temp_dir("bsubj");
         let mut sm = SiteMap::open(&dir, 0).unwrap();
         let triples = vec![
-            VcTriple { subject_hash: 1, predicate_id: 2, object_hash: 3 },
-            VcTriple { subject_hash: 4, predicate_id: 5, object_hash: 6 },
+            VcTriple {
+                subject_hash: 1,
+                predicate_id: 2,
+                object_hash: 3,
+            },
+            VcTriple {
+                subject_hash: 4,
+                predicate_id: 5,
+                object_hash: 6,
+            },
         ];
         sm.put_file_snapshot("test.rs", &triples).unwrap();
         let found = sm.find_live_by_subjects(&[1, 4]);
@@ -2698,8 +3013,16 @@ mod tests {
         let dir = temp_dir("bobj");
         let mut sm = SiteMap::open(&dir, 0).unwrap();
         let triples = vec![
-            VcTriple { subject_hash: 1, predicate_id: 2, object_hash: 3 },
-            VcTriple { subject_hash: 4, predicate_id: 5, object_hash: 6 },
+            VcTriple {
+                subject_hash: 1,
+                predicate_id: 2,
+                object_hash: 3,
+            },
+            VcTriple {
+                subject_hash: 4,
+                predicate_id: 5,
+                object_hash: 6,
+            },
         ];
         sm.put_file_snapshot("test.rs", &triples).unwrap();
         let found = sm.find_live_by_objects(&[3]);
@@ -2715,9 +3038,21 @@ mod tests {
         let dir = temp_dir("bpred");
         let mut sm = SiteMap::open(&dir, 0).unwrap();
         let triples = vec![
-            VcTriple { subject_hash: 1, predicate_id: 2, object_hash: 3 },
-            VcTriple { subject_hash: 4, predicate_id: 5, object_hash: 6 },
-            VcTriple { subject_hash: 7, predicate_id: 2, object_hash: 9 },
+            VcTriple {
+                subject_hash: 1,
+                predicate_id: 2,
+                object_hash: 3,
+            },
+            VcTriple {
+                subject_hash: 4,
+                predicate_id: 5,
+                object_hash: 6,
+            },
+            VcTriple {
+                subject_hash: 7,
+                predicate_id: 2,
+                object_hash: 9,
+            },
         ];
         sm.put_file_snapshot("test.rs", &triples).unwrap();
         let found = sm.find_live_by_predicate(2);
@@ -2736,8 +3071,16 @@ mod tests {
         let dir = temp_dir("compound1");
         let mut sm = SiteMap::open(&dir, 0).unwrap();
         let triples = vec![
-            VcTriple { subject_hash: 1, predicate_id: 2, object_hash: 3 },
-            VcTriple { subject_hash: 1, predicate_id: 5, object_hash: 6 },
+            VcTriple {
+                subject_hash: 1,
+                predicate_id: 2,
+                object_hash: 3,
+            },
+            VcTriple {
+                subject_hash: 1,
+                predicate_id: 5,
+                object_hash: 6,
+            },
         ];
         sm.put_file_snapshot("test.rs", &triples).unwrap();
         let found = sm.find_live_by_subject_and_predicate(1, 2);
@@ -2750,8 +3093,16 @@ mod tests {
         let dir = temp_dir("compound2");
         let mut sm = SiteMap::open(&dir, 0).unwrap();
         let triples = vec![
-            VcTriple { subject_hash: 1, predicate_id: 2, object_hash: 3 },
-            VcTriple { subject_hash: 4, predicate_id: 2, object_hash: 6 },
+            VcTriple {
+                subject_hash: 1,
+                predicate_id: 2,
+                object_hash: 3,
+            },
+            VcTriple {
+                subject_hash: 4,
+                predicate_id: 2,
+                object_hash: 6,
+            },
         ];
         sm.put_file_snapshot("test.rs", &triples).unwrap();
         let found = sm.find_live_by_predicate_and_object(2, 3);
@@ -2765,9 +3116,18 @@ mod tests {
     #[test]
     fn site_map_info_debug() {
         let info = SiteMapInfo {
-            total_entries: 5, kv_count: 3, node_count: 1, program_count: 0, snapshot_count: 1,
-            total_bytes: 1000, root: 42, weight_root: 99, kv_cache_size: 10, kv_cache_max: 4096,
-            string_dict_size: 2, validation_issues: vec![],
+            total_entries: 5,
+            kv_count: 3,
+            node_count: 1,
+            program_count: 0,
+            snapshot_count: 1,
+            total_bytes: 1000,
+            root: 42,
+            weight_root: 99,
+            kv_cache_size: 10,
+            kv_cache_max: 4096,
+            string_dict_size: 2,
+            validation_issues: vec![],
         };
         let debug = format!("{:?}", info);
         assert!(debug.contains("SiteMapInfo"));
@@ -2777,7 +3137,12 @@ mod tests {
     #[test]
     fn site_map_verify_report_debug() {
         let report = SiteMapVerifyReport {
-            total_entries: 10, checked: 8, corrupt: 1, missing: 1, valid: 6, issues: vec![],
+            total_entries: 10,
+            checked: 8,
+            corrupt: 1,
+            missing: 1,
+            valid: 6,
+            issues: vec![],
         };
         let debug = format!("{:?}", report);
         assert!(debug.contains("SiteMapVerifyReport"));
@@ -2789,9 +3154,18 @@ mod tests {
     #[test]
     fn site_map_info_pretty_json() {
         let info = SiteMapInfo {
-            total_entries: 0, kv_count: 0, node_count: 0, program_count: 0, snapshot_count: 0,
-            total_bytes: 0, root: 0, weight_root: 0, kv_cache_size: 0, kv_cache_max: 4096,
-            string_dict_size: 0, validation_issues: vec![],
+            total_entries: 0,
+            kv_count: 0,
+            node_count: 0,
+            program_count: 0,
+            snapshot_count: 0,
+            total_bytes: 0,
+            root: 0,
+            weight_root: 0,
+            kv_cache_size: 0,
+            kv_cache_max: 4096,
+            string_dict_size: 0,
+            validation_issues: vec![],
         };
         let pretty = serde_json::to_string_pretty(&info).unwrap();
         assert!(pretty.contains('\n'));
@@ -2817,9 +3191,21 @@ mod tests {
         let dir = temp_dir("analysis_data");
         let mut sm = SiteMap::open(&dir, 0).unwrap();
         let triples = vec![
-            VcTriple { subject_hash: 1, predicate_id: 2, object_hash: 3 },
-            VcTriple { subject_hash: 4, predicate_id: 2, object_hash: 6 },
-            VcTriple { subject_hash: 7, predicate_id: 5, object_hash: 9 },
+            VcTriple {
+                subject_hash: 1,
+                predicate_id: 2,
+                object_hash: 3,
+            },
+            VcTriple {
+                subject_hash: 4,
+                predicate_id: 2,
+                object_hash: 6,
+            },
+            VcTriple {
+                subject_hash: 7,
+                predicate_id: 5,
+                object_hash: 9,
+            },
         ];
         sm.put_file_snapshot("test.rs", &triples).unwrap();
         let analysis = sm.triple_analysis();
@@ -2836,7 +3222,8 @@ mod tests {
         let dir = temp_dir("root_change");
         let mut sm = SiteMap::open(&dir, 0).unwrap();
         let root_before = sm.root();
-        sm.put_kv(1, 0, test_ndavec(&[1]), test_ndavec(&[2])).unwrap();
+        sm.put_kv(1, 0, test_ndavec(&[1]), test_ndavec(&[2]))
+            .unwrap();
         let root_after = sm.root();
         assert_ne!(root_before, root_after);
         cleanup(&dir);

@@ -2,10 +2,12 @@
 //!
 //! Extracted verbatim from `tier3_panels.rs` (no logic changes).
 
+use super::struct_def::VelocityApp;
+use crate::editor::theme::{
+    CARD_INNER_MARGIN, CARD_RADIUS, FONT_CAPTION, FONT_SMALL, ITEM_SPACING, SECTION_SPACING,
+};
 use eframe::egui;
 use egui::RichText;
-use super::struct_def::VelocityApp;
-use crate::editor::theme::{CARD_INNER_MARGIN, CARD_RADIUS, FONT_CAPTION, FONT_SMALL, ITEM_SPACING, SECTION_SPACING};
 
 impl VelocityApp {
     // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
@@ -535,7 +537,9 @@ impl VelocityApp {
                                             }),
                                     );
                                     ui.label(
-                                        RichText::new(&user.name).size(FONT_SMALL).color(palette.text),
+                                        RichText::new(&user.name)
+                                            .size(FONT_SMALL)
+                                            .color(palette.text),
                                     );
                                     ui.label(
                                         RichText::new(format!("[{id}]"))

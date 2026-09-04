@@ -1,4 +1,4 @@
-﻿// sandbox/scope_validator.rs — Semantic alignment check via cosine similarity
+// sandbox/scope_validator.rs — Semantic alignment check via cosine similarity
 use serde::Serialize;
 
 #[derive(Clone, Debug, Serialize)]
@@ -72,10 +72,7 @@ impl ScopeValidator {
     }
 
     /// Validate multiple output/conditioning pairs and return a summary.
-    pub fn validate_batch(
-        pairs: &[(&[f32], &[f32])],
-        threshold: f32,
-    ) -> ScopeValidationBatch {
+    pub fn validate_batch(pairs: &[(&[f32], &[f32])], threshold: f32) -> ScopeValidationBatch {
         let results: Vec<ScopeValidation> = pairs
             .iter()
             .map(|(o, c)| Self::validate(o, c, threshold))
@@ -87,17 +84,35 @@ impl ScopeValidator {
         } else {
             0.0
         };
-        let min_similarity = results.iter().map(|r| r.similarity).fold(f32::INFINITY, f32::min);
-        let max_similarity = results.iter().map(|r| r.similarity).fold(f32::NEG_INFINITY, f32::max);
+        let min_similarity = results
+            .iter()
+            .map(|r| r.similarity)
+            .fold(f32::INFINITY, f32::min);
+        let max_similarity = results
+            .iter()
+            .map(|r| r.similarity)
+            .fold(f32::NEG_INFINITY, f32::max);
 
         ScopeValidationBatch {
             total,
             passed,
             failed: total - passed,
-            pass_rate: if total > 0 { passed as f64 / total as f64 } else { 0.0 },
+            pass_rate: if total > 0 {
+                passed as f64 / total as f64
+            } else {
+                0.0
+            },
             avg_similarity,
-            min_similarity: if min_similarity.is_infinite() { 0.0 } else { min_similarity },
-            max_similarity: if max_similarity.is_infinite() { 0.0 } else { max_similarity },
+            min_similarity: if min_similarity.is_infinite() {
+                0.0
+            } else {
+                min_similarity
+            },
+            max_similarity: if max_similarity.is_infinite() {
+                0.0
+            } else {
+                max_similarity
+            },
             threshold,
             results,
         }
@@ -199,10 +214,7 @@ mod tests {
         let a = vec![1.0, 2.0, 3.0];
         let b = vec![1.0, 2.0, 3.0]; // identical
         let c = vec![-1.0, -2.0, -3.0]; // opposite
-        let pairs = vec![
-            (a.as_slice(), b.as_slice()),
-            (a.as_slice(), c.as_slice()),
-        ];
+        let pairs = vec![(a.as_slice(), b.as_slice()), (a.as_slice(), c.as_slice())];
         let batch = ScopeValidator::validate_batch(&pairs, 0.9);
         assert_eq!(batch.total, 2);
         assert_eq!(batch.passed, 1); // only identical passes
@@ -438,10 +450,7 @@ mod tests {
     fn batch_all_fail() {
         let a = vec![1.0, 0.0];
         let b = vec![0.0, 1.0]; // orthogonal → sim ≈ 0
-        let pairs = vec![
-            (a.as_slice(), b.as_slice()),
-            (a.as_slice(), b.as_slice()),
-        ];
+        let pairs = vec![(a.as_slice(), b.as_slice()), (a.as_slice(), b.as_slice())];
         let batch = ScopeValidator::validate_batch(&pairs, 0.5);
         assert_eq!(batch.total, 2);
         assert_eq!(batch.passed, 0);
@@ -504,10 +513,7 @@ mod tests {
     #[test]
     fn batch_results_vector_length() {
         let v = vec![1.0, 2.0];
-        let pairs = vec![
-            (v.as_slice(), v.as_slice()),
-            (v.as_slice(), v.as_slice()),
-        ];
+        let pairs = vec![(v.as_slice(), v.as_slice()), (v.as_slice(), v.as_slice())];
         let batch = ScopeValidator::validate_batch(&pairs, 0.5);
         assert_eq!(batch.results.len(), 2);
     }

@@ -8,8 +8,8 @@ use crate::editor::expert_team::{
     save_expert_teams, slugify, validate_team_composition, ExpertMember, ExpertTeam, MemberUpdate,
     ValidationSeverity,
 };
-use crate::editor::team_router::debug_routing;
 use crate::editor::skill_file::{list_skill_files, save_skill_file, SkillFile};
+use crate::editor::team_router::debug_routing;
 
 /// Collect a JSON string array into owned `String`s, ignoring non-string entries.
 fn string_array(value: &Value) -> Vec<String> {
@@ -290,9 +290,16 @@ fn update_expert_team(root: &Path, arguments: &Value) -> Result<String, Box<dyn 
 
     let mut changes = Vec::new();
 
-    if let Some(new_name) = arguments["name"].as_str().map(str::trim).filter(|s| !s.is_empty()) {
+    if let Some(new_name) = arguments["name"]
+        .as_str()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    {
         if let Some((old_slug, new_slug)) = team.update_name(new_name) {
-            changes.push(format!("name → \"{}\" (slug: {} → {})", new_name, old_slug, new_slug));
+            changes.push(format!(
+                "name → \"{}\" (slug: {} → {})",
+                new_name, old_slug, new_slug
+            ));
         }
     }
 
@@ -305,12 +312,12 @@ fn update_expert_team(root: &Path, arguments: &Value) -> Result<String, Box<dyn 
     if changes.is_empty() {
         return Ok(format!("No changes applied to team '{}'", team.name));
     }
-    
+
     let team_name = team.name.clone();
     if !save_expert_teams(root, &teams) {
         return Err("failed to persist expert_teams.nda".into());
     }
-    
+
     Ok(format!(
         "Updated team \"{}\": {}",
         team_name,
@@ -338,11 +345,15 @@ fn update_team_member(root: &Path, arguments: &Value) -> Result<String, Box<dyn 
         role: arguments["role"].as_str().map(|s| s.trim().to_string()),
         provider: arguments["provider"].as_str().map(|s| s.trim().to_string()),
         model_id: arguments["model_id"].as_str().map(|s| s.trim().to_string()),
-        skills: arguments["skills"].as_array().map(|_| string_array(&arguments["skills"])),
+        skills: arguments["skills"]
+            .as_array()
+            .map(|_| string_array(&arguments["skills"])),
         scope_patterns: arguments["scope_patterns"]
             .as_array()
             .map(|_| string_array(&arguments["scope_patterns"])),
-        tools: arguments["tools"].as_array().map(|_| string_array(&arguments["tools"])),
+        tools: arguments["tools"]
+            .as_array()
+            .map(|_| string_array(&arguments["tools"])),
         workflow_instructions: arguments["workflow_instructions"]
             .as_str()
             .map(|s| s.to_string()),
@@ -360,12 +371,12 @@ fn update_team_member(root: &Path, arguments: &Value) -> Result<String, Box<dyn 
     if changed.is_empty() {
         return Ok(format!("No changes applied to member '{}'", member_id));
     }
-    
+
     let team_name = team.name.clone();
     if !save_expert_teams(root, &teams) {
         return Err("failed to persist expert_teams.nda".into());
     }
-    
+
     Ok(format!(
         "Updated member '{}' in team \"{}\": {}",
         member_id,
@@ -408,10 +419,7 @@ fn add_team_member(root: &Path, arguments: &Value) -> Result<String, Box<dyn Err
 
     Ok(format!(
         "Added member \"{}\" (id: {}) to team \"{}\". Team now has {} member(s).",
-        member.name,
-        member.id,
-        team_name,
-        member_count
+        member.name, member.id, team_name, member_count
     ))
 }
 
@@ -450,10 +458,7 @@ fn remove_team_member(root: &Path, arguments: &Value) -> Result<String, Box<dyn 
 
     Ok(format!(
         "Removed member \"{}\" (id: {}) from team \"{}\". Team now has {} member(s).",
-        removed.name,
-        removed.id,
-        team_name,
-        member_count
+        removed.name, removed.id, team_name, member_count
     ))
 }
 
@@ -475,7 +480,9 @@ fn validate_team(root: &Path, arguments: &Value) -> Result<String, Box<dyn Error
     let slug = slugify(team_ref);
     let team = teams
         .iter()
-        .find(|t| t.id.to_lowercase() == lower || t.slug() == slug || t.name.to_lowercase() == lower)
+        .find(|t| {
+            t.id.to_lowercase() == lower || t.slug() == slug || t.name.to_lowercase() == lower
+        })
         .ok_or_else(|| format!("team '{}' not found", team_ref))?;
 
     let issues = validate_team_composition(team);
@@ -538,7 +545,9 @@ fn check_scope_overlaps(root: &Path, arguments: &Value) -> Result<String, Box<dy
     let slug = slugify(team_ref);
     let team = teams
         .iter()
-        .find(|t| t.id.to_lowercase() == lower || t.slug() == slug || t.name.to_lowercase() == lower)
+        .find(|t| {
+            t.id.to_lowercase() == lower || t.slug() == slug || t.name.to_lowercase() == lower
+        })
         .ok_or_else(|| format!("team '{}' not found", team_ref))?;
 
     let overlaps = detect_scope_overlaps(team);
@@ -604,7 +613,9 @@ fn clone_expert_team(root: &Path, arguments: &Value) -> Result<String, Box<dyn E
     let slug = slugify(team_ref);
     let source = teams
         .iter()
-        .find(|t| t.id.to_lowercase() == lower || t.slug() == slug || t.name.to_lowercase() == lower)
+        .find(|t| {
+            t.id.to_lowercase() == lower || t.slug() == slug || t.name.to_lowercase() == lower
+        })
         .ok_or_else(|| format!("team '{}' not found", team_ref))?;
 
     let source_name = source.name.clone();
@@ -648,7 +659,9 @@ fn export_expert_team(root: &Path, arguments: &Value) -> Result<String, Box<dyn 
     let slug = slugify(team_ref);
     let team = teams
         .iter()
-        .find(|t| t.id.to_lowercase() == lower || t.slug() == slug || t.name.to_lowercase() == lower)
+        .find(|t| {
+            t.id.to_lowercase() == lower || t.slug() == slug || t.name.to_lowercase() == lower
+        })
         .ok_or_else(|| format!("team '{}' not found", team_ref))?;
 
     let json = export_team_to_json(team)?;
@@ -725,7 +738,9 @@ fn debug_routing_tool(root: &Path, arguments: &Value) -> Result<String, Box<dyn 
     let slug = slugify(team_ref);
     let team = teams
         .iter()
-        .find(|t| t.id.to_lowercase() == lower || t.slug() == slug || t.name.to_lowercase() == lower)
+        .find(|t| {
+            t.id.to_lowercase() == lower || t.slug() == slug || t.name.to_lowercase() == lower
+        })
         .ok_or_else(|| format!("team '{}' not found", team_ref))?;
 
     let decision = debug_routing(team, task, &files);
@@ -778,7 +793,9 @@ fn team_analytics(root: &Path, arguments: &Value) -> Result<String, Box<dyn Erro
     let slug = slugify(team_ref);
     let team = teams
         .iter()
-        .find(|t| t.id.to_lowercase() == lower || t.slug() == slug || t.name.to_lowercase() == lower)
+        .find(|t| {
+            t.id.to_lowercase() == lower || t.slug() == slug || t.name.to_lowercase() == lower
+        })
         .ok_or_else(|| format!("team '{}' not found", team_ref))?;
 
     // Compute basic analytics
@@ -790,11 +807,17 @@ fn team_analytics(root: &Path, arguments: &Value) -> Result<String, Box<dyn Erro
     // Provider distribution
     let mut provider_counts = std::collections::HashMap::new();
     for member in &team.members {
-        *provider_counts.entry(member.provider.slug().to_string()).or_insert(0) += 1;
+        *provider_counts
+            .entry(member.provider.slug().to_string())
+            .or_insert(0) += 1;
     }
 
     // Scope coverage analysis
-    let members_with_scopes = team.members.iter().filter(|m| !m.scope_patterns.is_empty()).count();
+    let members_with_scopes = team
+        .members
+        .iter()
+        .filter(|m| !m.scope_patterns.is_empty())
+        .count();
     let members_without_scopes = member_count - members_with_scopes;
 
     let analytics = json!({
@@ -856,7 +879,9 @@ fn team_health_check(root: &Path, arguments: &Value) -> Result<String, Box<dyn E
     let slug = slugify(team_ref);
     let team = teams
         .iter()
-        .find(|t| t.id.to_lowercase() == lower || t.slug() == slug || t.name.to_lowercase() == lower)
+        .find(|t| {
+            t.id.to_lowercase() == lower || t.slug() == slug || t.name.to_lowercase() == lower
+        })
         .ok_or_else(|| format!("team '{}' not found", team_ref))?;
 
     // Run all checks
@@ -1033,7 +1058,10 @@ fn create_team_quick(root: &Path, arguments: &Value) -> Result<String, Box<dyn E
 
     // Merge with existing teams
     let mut teams = load_expert_teams(root);
-    let replaced = if let Some(existing) = teams.iter_mut().find(|t| t.id == team_id || t.slug() == slug) {
+    let replaced = if let Some(existing) = teams
+        .iter_mut()
+        .find(|t| t.id == team_id || t.slug() == slug)
+    {
         *existing = new_team;
         true
     } else {
@@ -1121,12 +1149,14 @@ fn team_changelog(root: &Path, arguments: &Value) -> Result<String, Box<dyn Erro
     let slug = slugify(team_ref);
     let team = teams
         .iter()
-        .find(|t| t.id.to_lowercase() == lower || t.slug() == slug || t.name.to_lowercase() == lower)
+        .find(|t| {
+            t.id.to_lowercase() == lower || t.slug() == slug || t.name.to_lowercase() == lower
+        })
         .ok_or_else(|| format!("team '{}' not found", team_ref))?;
 
     // Generate a deterministic snapshot hash
-    let snapshot = serde_json::to_string(team)
-        .map_err(|e| format!("failed to serialize team: {}", e))?;
+    let snapshot =
+        serde_json::to_string(team).map_err(|e| format!("failed to serialize team: {}", e))?;
     let hash = format!("{:x}", md5_hash(snapshot.as_bytes()));
 
     let changelog = json!({

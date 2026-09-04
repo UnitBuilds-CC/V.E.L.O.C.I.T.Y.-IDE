@@ -1,4 +1,4 @@
-﻿use crate::agent_api::{diff, AgentActionResult, NdaDelta};
+use crate::agent_api::{diff, AgentActionResult, NdaDelta};
 use crate::agentic::{
     ActionPredictorEngine, AgenticAomTree, NdaEncoder, PredictedActionTarget, VelocityOcrEngine,
 };

@@ -1,4 +1,4 @@
-﻿use super::models::*;
+use super::models::*;
 use std::sync::{LazyLock, Mutex};
 use std::time::{Duration, Instant};
 
@@ -913,13 +913,20 @@ mod tests {
         ];
         for p in providers {
             let model = default_provider_model(p);
-            assert!(!model.is_empty(), "default model for {:?} should not be empty", p);
+            assert!(
+                !model.is_empty(),
+                "default model for {:?} should not be empty",
+                p
+            );
         }
     }
 
     #[test]
     fn default_openrouter_model_is_hy3_free() {
-        assert_eq!(default_provider_model(AiProvider::OpenRouter), "tencent/hy3:free");
+        assert_eq!(
+            default_provider_model(AiProvider::OpenRouter),
+            "tencent/hy3:free"
+        );
     }
 
     #[test]

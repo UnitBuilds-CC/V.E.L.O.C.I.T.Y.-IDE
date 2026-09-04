@@ -1,4 +1,4 @@
-﻿use std::collections::HashMap;
+use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
@@ -411,7 +411,10 @@ pub fn validate_jit_state(state: &JitState<'_>) -> Vec<String> {
     // but flag addresses in the top page (reserved on most platforms)
     for &addr in state.mmio.keys() {
         if addr >= 0xFFFF_F000 {
-            issues.push(format!("MMIO address 0x{:08x} is in reserved high page", addr));
+            issues.push(format!(
+                "MMIO address 0x{:08x} is in reserved high page",
+                addr
+            ));
         }
     }
 
@@ -577,17 +580,26 @@ mod tests {
 
         // Vector on top
         let state = JitState::new(&[1.0], &sm, 0);
-        assert_eq!(jit_state_info(&state).top_of_stack_type.as_deref(), Some("Vector"));
+        assert_eq!(
+            jit_state_info(&state).top_of_stack_type.as_deref(),
+            Some("Vector")
+        );
 
         // Scalar on top
         let mut state2 = JitState::new(&[1.0], &sm, 0);
         state2.stack.push(JitVal::Scalar(5, 1));
-        assert_eq!(jit_state_info(&state2).top_of_stack_type.as_deref(), Some("Scalar"));
+        assert_eq!(
+            jit_state_info(&state2).top_of_stack_type.as_deref(),
+            Some("Scalar")
+        );
 
         // Float on top
         let mut state3 = JitState::new(&[1.0], &sm, 0);
         state3.stack.push(JitVal::Float(2.71));
-        assert_eq!(jit_state_info(&state3).top_of_stack_type.as_deref(), Some("Float"));
+        assert_eq!(
+            jit_state_info(&state3).top_of_stack_type.as_deref(),
+            Some("Float")
+        );
     }
 
     #[test]
@@ -723,7 +735,10 @@ mod tests {
         assert_eq!(info.nodes_compiled, 0);
         assert!(!info.has_asm_kernel);
         assert_eq!(info.variable_slots, 0);
-        assert!(info.validation_issues.iter().any(|i| i.contains("no compiled functions")));
+        assert!(info
+            .validation_issues
+            .iter()
+            .any(|i| i.contains("no compiled functions")));
     }
 
     #[test]
@@ -759,7 +774,10 @@ mod tests {
             registry: reg,
         };
         let info = jit_program_info(&prog);
-        assert!(info.validation_issues.iter().any(|i| i.contains("nodes_compiled is 0")));
+        assert!(info
+            .validation_issues
+            .iter()
+            .any(|i| i.contains("nodes_compiled is 0")));
     }
 
     // ── JitControlFlow tests ──────────────────────────────────────────────────
@@ -881,9 +899,9 @@ mod tests {
     fn run_sequence_error_propagates() {
         let (sm, _dir) = make_test_sitemap();
         let mut state = JitState::new(&[1.0], &sm, 0);
-        let fns: Vec<JitFn> = vec![
-            Arc::new(|_: &mut JitState<'_>| Err("test error".to_string())),
-        ];
+        let fns: Vec<JitFn> = vec![Arc::new(|_: &mut JitState<'_>| {
+            Err("test error".to_string())
+        })];
         let result = run_sequence(&fns, &mut state);
         assert!(result.is_err());
         assert_eq!(result.unwrap_err(), "test error");
@@ -1115,12 +1133,14 @@ mod tests {
     fn run_sequence_multiple_continues() {
         let (sm, _dir) = make_test_sitemap();
         let mut state = JitState::new(&[1.0], &sm, 0);
-        let fns: Vec<JitFn> = (0..5).map(|_| {
-            Arc::new(|s: &mut JitState<'_>| {
-                s.executed_nodes += 1;
-                Ok(JitControlFlow::Continue)
-            }) as JitFn
-        }).collect();
+        let fns: Vec<JitFn> = (0..5)
+            .map(|_| {
+                Arc::new(|s: &mut JitState<'_>| {
+                    s.executed_nodes += 1;
+                    Ok(JitControlFlow::Continue)
+                }) as JitFn
+            })
+            .collect();
         let result = run_sequence(&fns, &mut state);
         assert!(result.is_ok());
         assert_eq!(state.executed_nodes, 5);
@@ -1149,8 +1169,11 @@ mod tests {
     #[test]
     fn jit_result_info_json_has_7_keys() {
         let result = JitResult {
-            output_vec: vec![], output_dim: 0, elapsed_us: 0,
-            nodes_compiled: 0, error: None,
+            output_vec: vec![],
+            output_dim: 0,
+            elapsed_us: 0,
+            nodes_compiled: 0,
+            error: None,
         };
         let info = JitResultInfo::from_result(&result);
         let json = serde_json::to_string(&info).unwrap();
@@ -1161,7 +1184,12 @@ mod tests {
     #[test]
     fn jit_program_info_json_has_5_keys() {
         let reg = VarRegistry::new();
-        let prog = JitProgram { fns: vec![], nodes_compiled: 0, has_asm_kernel: false, registry: reg };
+        let prog = JitProgram {
+            fns: vec![],
+            nodes_compiled: 0,
+            has_asm_kernel: false,
+            registry: reg,
+        };
         let info = jit_program_info(&prog);
         let json = serde_json::to_string(&info).unwrap();
         let v: serde_json::Value = serde_json::from_str(&json).unwrap();
@@ -1200,8 +1228,11 @@ mod tests {
     #[test]
     fn jit_result_info_json_values() {
         let result = JitResult {
-            output_vec: vec![1.0, 2.0], output_dim: 2, elapsed_us: 50,
-            nodes_compiled: 10, error: None,
+            output_vec: vec![1.0, 2.0],
+            output_dim: 2,
+            elapsed_us: 50,
+            nodes_compiled: 10,
+            error: None,
         };
         let info = JitResultInfo::from_result(&result);
         let json = serde_json::to_string(&info).unwrap();
@@ -1217,8 +1248,11 @@ mod tests {
     #[test]
     fn jit_result_info_json_error_values() {
         let result = JitResult {
-            output_vec: vec![], output_dim: 0, elapsed_us: 5,
-            nodes_compiled: 3, error: Some("fail".into()),
+            output_vec: vec![],
+            output_dim: 0,
+            elapsed_us: 5,
+            nodes_compiled: 3,
+            error: Some("fail".into()),
         };
         let info = JitResultInfo::from_result(&result);
         let json = serde_json::to_string(&info).unwrap();
@@ -1243,8 +1277,11 @@ mod tests {
     #[test]
     fn jit_result_info_clone_independent() {
         let result = JitResult {
-            output_vec: vec![1.0], output_dim: 1, elapsed_us: 10,
-            nodes_compiled: 5, error: Some("err".into()),
+            output_vec: vec![1.0],
+            output_dim: 1,
+            elapsed_us: 10,
+            nodes_compiled: 5,
+            error: Some("err".into()),
         };
         let info = JitResultInfo::from_result(&result);
         let mut cloned = info.clone();
@@ -1255,7 +1292,12 @@ mod tests {
     #[test]
     fn jit_program_info_clone_independent() {
         let reg = VarRegistry::new();
-        let prog = JitProgram { fns: vec![], nodes_compiled: 0, has_asm_kernel: false, registry: reg };
+        let prog = JitProgram {
+            fns: vec![],
+            nodes_compiled: 0,
+            has_asm_kernel: false,
+            registry: reg,
+        };
         let info = jit_program_info(&prog);
         let mut cloned = info.clone();
         cloned.validation_issues.push("test".into());
@@ -1274,8 +1316,11 @@ mod tests {
     #[test]
     fn jit_result_debug() {
         let result = JitResult {
-            output_vec: vec![1.0], output_dim: 1, elapsed_us: 42,
-            nodes_compiled: 5, error: None,
+            output_vec: vec![1.0],
+            output_dim: 1,
+            elapsed_us: 42,
+            nodes_compiled: 5,
+            error: None,
         };
         let debug = format!("{:?}", result);
         assert!(debug.contains("output_dim: 1"));
@@ -1366,7 +1411,10 @@ mod tests {
         let reg = VarRegistry::new();
         let dummy_fn: JitFn = Arc::new(|_: &mut JitState<'_>| Ok(JitControlFlow::Continue));
         let prog = JitProgram {
-            fns: vec![dummy_fn], nodes_compiled: 10, has_asm_kernel: true, registry: reg,
+            fns: vec![dummy_fn],
+            nodes_compiled: 10,
+            has_asm_kernel: true,
+            registry: reg,
         };
         let info = jit_program_info(&prog);
         assert!(info.has_asm_kernel);
@@ -1378,7 +1426,12 @@ mod tests {
     #[test]
     fn jit_program_info_json_values() {
         let reg = VarRegistry::new();
-        let prog = JitProgram { fns: vec![], nodes_compiled: 0, has_asm_kernel: false, registry: reg };
+        let prog = JitProgram {
+            fns: vec![],
+            nodes_compiled: 0,
+            has_asm_kernel: false,
+            registry: reg,
+        };
         let info = jit_program_info(&prog);
         let json = serde_json::to_string(&info).unwrap();
         let v: serde_json::Value = serde_json::from_str(&json).unwrap();
@@ -1394,12 +1447,10 @@ mod tests {
     fn run_sequence_single_fn() {
         let (sm, _dir) = make_test_sitemap();
         let mut state = JitState::new(&[1.0], &sm, 0);
-        let fns: Vec<JitFn> = vec![
-            Arc::new(|s: &mut JitState<'_>| {
-                s.executed_nodes += 1;
-                Ok(JitControlFlow::Continue)
-            }),
-        ];
+        let fns: Vec<JitFn> = vec![Arc::new(|s: &mut JitState<'_>| {
+            s.executed_nodes += 1;
+            Ok(JitControlFlow::Continue)
+        })];
         let result = run_sequence(&fns, &mut state);
         assert!(result.is_ok());
         assert_eq!(state.executed_nodes, 1);
@@ -1409,12 +1460,14 @@ mod tests {
     fn run_sequence_ten_fns() {
         let (sm, _dir) = make_test_sitemap();
         let mut state = JitState::new(&[1.0], &sm, 0);
-        let fns: Vec<JitFn> = (0..10).map(|_| {
-            Arc::new(|s: &mut JitState<'_>| {
-                s.executed_nodes += 1;
-                Ok(JitControlFlow::Continue)
-            }) as JitFn
-        }).collect();
+        let fns: Vec<JitFn> = (0..10)
+            .map(|_| {
+                Arc::new(|s: &mut JitState<'_>| {
+                    s.executed_nodes += 1;
+                    Ok(JitControlFlow::Continue)
+                }) as JitFn
+            })
+            .collect();
         let result = run_sequence(&fns, &mut state);
         assert!(result.is_ok());
         assert_eq!(state.executed_nodes, 10);
@@ -1467,8 +1520,11 @@ mod tests {
     #[test]
     fn jit_result_info_pretty_json() {
         let result = JitResult {
-            output_vec: vec![], output_dim: 0, elapsed_us: 0,
-            nodes_compiled: 0, error: None,
+            output_vec: vec![],
+            output_dim: 0,
+            elapsed_us: 0,
+            nodes_compiled: 0,
+            error: None,
         };
         let info = JitResultInfo::from_result(&result);
         let pretty = serde_json::to_string_pretty(&info).unwrap();

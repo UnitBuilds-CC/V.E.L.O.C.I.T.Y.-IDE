@@ -1,4 +1,4 @@
-﻿//! LSP (Language Server Protocol) client implementation.
+//! LSP (Language Server Protocol) client implementation.
 //!
 //! Manages language server processes and provides go-to-definition, hover,
 //! references, rename, and diagnostics via JSON-RPC over stdin/stdout.

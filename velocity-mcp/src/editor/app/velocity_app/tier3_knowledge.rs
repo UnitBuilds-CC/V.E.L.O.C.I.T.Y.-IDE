@@ -2,10 +2,12 @@
 //!
 //! Extracted verbatim from `tier3_panels.rs` (no logic changes).
 
+use super::struct_def::VelocityApp;
+use crate::editor::theme::{
+    CARD_INNER_MARGIN, CARD_RADIUS, FONT_CAPTION, FONT_SMALL, ITEM_SPACING, SECTION_SPACING,
+};
 use eframe::egui;
 use egui::RichText;
-use super::struct_def::VelocityApp;
-use crate::editor::theme::{CARD_INNER_MARGIN, CARD_RADIUS, FONT_CAPTION, FONT_SMALL, ITEM_SPACING, SECTION_SPACING};
 
 impl VelocityApp {
     // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
@@ -35,7 +37,10 @@ impl VelocityApp {
                     .hint_text("path to a file or folder\u{2026}")
                     .desired_width(ui.available_width() - 190.0),
             );
-            if ui.button(RichText::new("Ingest").size(FONT_SMALL)).clicked() {
+            if ui
+                .button(RichText::new("Ingest").size(FONT_SMALL))
+                .clicked()
+            {
                 ingest_path = true;
             }
             if ui
@@ -55,7 +60,9 @@ impl VelocityApp {
                     .hint_text("search knowledge\u{2026}")
                     .desired_width(ui.available_width() - 70.0),
             );
-            if ui.button(RichText::new("Search").size(FONT_SMALL)).clicked()
+            if ui
+                .button(RichText::new("Search").size(FONT_SMALL))
+                .clicked()
                 || (resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)))
             {
                 do_search = true;
@@ -71,9 +78,11 @@ impl VelocityApp {
                 if self.knowledge_results.is_empty() {
                     ui.add_space(ITEM_SPACING);
                     ui.label(
-                        RichText::new("Search your knowledge base above, or ingest content to get started.")
-                            .size(FONT_CAPTION)
-                            .color(palette.text_muted),
+                        RichText::new(
+                            "Search your knowledge base above, or ingest content to get started.",
+                        )
+                        .size(FONT_CAPTION)
+                        .color(palette.text_muted),
                     );
                 }
                 for hit in &self.knowledge_results {

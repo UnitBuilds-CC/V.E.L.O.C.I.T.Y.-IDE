@@ -1,22 +1,22 @@
-﻿// V.E.L.O.C.I.T.Y.-IDE — library facade
+// V.E.L.O.C.I.T.Y.-IDE — library facade
 // Re-exports modules so that binaries in src/bin/ can use `velocity_ide::*`.
 
 pub mod compiler;
+pub mod credential_guard;
 pub mod errors;
+pub mod logging;
 pub mod model;
 pub mod nda;
 pub mod nda_int;
 pub mod pipeline_bridge;
 pub mod pipeline_nda;
+pub mod provider_usage;
 pub mod safety;
 pub mod sandbox;
 pub mod site_map;
 pub mod tokenizer;
 pub mod velocity_client;
-pub mod provider_usage;
-pub mod credential_guard;
 pub mod wiki;
-pub mod logging;
 
 use serde::Serialize;
 
@@ -60,21 +60,81 @@ pub struct ModuleInfo {
 /// Return the full inventory of library modules.
 pub fn module_inventory() -> Vec<ModuleInfo> {
     vec![
-        ModuleInfo { name: "compiler", description: "Rust-to-NDA compiler, JIT, shaders, Vulkan driver", is_public: true },
-        ModuleInfo { name: "errors", description: "Unified error types for all modules", is_public: true },
-        ModuleInfo { name: "model", description: "Transformer model configs, weights, FP32/Zero inference", is_public: true },
-        ModuleInfo { name: "nda", description: "NDA-GEMV benchmark and core NDA operations", is_public: true },
-        ModuleInfo { name: "nda_int", description: "Integer NDA arithmetic, quantized GEMV", is_public: true },
-        ModuleInfo { name: "pipeline_bridge", description: "Dual-path NDA pipeline bridge", is_public: true },
-        ModuleInfo { name: "pipeline_nda", description: "Pure NDA-native pipeline execution", is_public: true },
-        ModuleInfo { name: "safety", description: "Deadlock detection, poisoning recovery, scope validation", is_public: true },
-        ModuleInfo { name: "sandbox", description: "Sandboxed NDA tree execution engine", is_public: true },
-        ModuleInfo { name: "site_map", description: "Triple store, Merkle verifier, serialization", is_public: true },
-        ModuleInfo { name: "tokenizer", description: "BPE tokenizer with batch encoding", is_public: true },
-        ModuleInfo { name: "velocity_client", description: "Velocity Router HTTP client and diagnostics", is_public: true },
-        ModuleInfo { name: "provider_usage", description: "Multi-provider API key management and usage queries", is_public: true },
-        ModuleInfo { name: "credential_guard", description: "Credential boundary: env var scrubbing, audit logging", is_public: true },
-        ModuleInfo { name: "wiki", description: "Wiki generation, search, markdown rendering", is_public: true },
+        ModuleInfo {
+            name: "compiler",
+            description: "Rust-to-NDA compiler, JIT, shaders, Vulkan driver",
+            is_public: true,
+        },
+        ModuleInfo {
+            name: "errors",
+            description: "Unified error types for all modules",
+            is_public: true,
+        },
+        ModuleInfo {
+            name: "model",
+            description: "Transformer model configs, weights, FP32/Zero inference",
+            is_public: true,
+        },
+        ModuleInfo {
+            name: "nda",
+            description: "NDA-GEMV benchmark and core NDA operations",
+            is_public: true,
+        },
+        ModuleInfo {
+            name: "nda_int",
+            description: "Integer NDA arithmetic, quantized GEMV",
+            is_public: true,
+        },
+        ModuleInfo {
+            name: "pipeline_bridge",
+            description: "Dual-path NDA pipeline bridge",
+            is_public: true,
+        },
+        ModuleInfo {
+            name: "pipeline_nda",
+            description: "Pure NDA-native pipeline execution",
+            is_public: true,
+        },
+        ModuleInfo {
+            name: "safety",
+            description: "Deadlock detection, poisoning recovery, scope validation",
+            is_public: true,
+        },
+        ModuleInfo {
+            name: "sandbox",
+            description: "Sandboxed NDA tree execution engine",
+            is_public: true,
+        },
+        ModuleInfo {
+            name: "site_map",
+            description: "Triple store, Merkle verifier, serialization",
+            is_public: true,
+        },
+        ModuleInfo {
+            name: "tokenizer",
+            description: "BPE tokenizer with batch encoding",
+            is_public: true,
+        },
+        ModuleInfo {
+            name: "velocity_client",
+            description: "Velocity Router HTTP client and diagnostics",
+            is_public: true,
+        },
+        ModuleInfo {
+            name: "provider_usage",
+            description: "Multi-provider API key management and usage queries",
+            is_public: true,
+        },
+        ModuleInfo {
+            name: "credential_guard",
+            description: "Credential boundary: env var scrubbing, audit logging",
+            is_public: true,
+        },
+        ModuleInfo {
+            name: "wiki",
+            description: "Wiki generation, search, markdown rendering",
+            is_public: true,
+        },
     ]
 }
 
@@ -188,7 +248,11 @@ mod tests {
 
     #[test]
     fn module_info_json_key_count() {
-        let m = ModuleInfo { name: "test", description: "desc", is_public: true };
+        let m = ModuleInfo {
+            name: "test",
+            description: "desc",
+            is_public: true,
+        };
         let json = serde_json::to_string(&m).unwrap();
         let v: serde_json::Value = serde_json::from_str(&json).unwrap();
         assert_eq!(v.as_object().unwrap().len(), 3);
@@ -196,7 +260,11 @@ mod tests {
 
     #[test]
     fn module_info_clone_independence() {
-        let m = ModuleInfo { name: "original", description: "desc", is_public: true };
+        let m = ModuleInfo {
+            name: "original",
+            description: "desc",
+            is_public: true,
+        };
         let cloned = m.clone();
         assert_eq!(cloned.name, "original");
         assert_eq!(cloned.description, "desc");
@@ -205,7 +273,11 @@ mod tests {
 
     #[test]
     fn module_info_debug_format() {
-        let m = ModuleInfo { name: "test_mod", description: "A test module", is_public: true };
+        let m = ModuleInfo {
+            name: "test_mod",
+            description: "A test module",
+            is_public: true,
+        };
         let dbg = format!("{:?}", m);
         assert!(dbg.contains("ModuleInfo"));
         assert!(dbg.contains("test_mod"));
@@ -213,7 +285,11 @@ mod tests {
 
     #[test]
     fn module_info_serialization_roundtrip() {
-        let m = ModuleInfo { name: "compiler", description: "JIT compiler", is_public: true };
+        let m = ModuleInfo {
+            name: "compiler",
+            description: "JIT compiler",
+            is_public: true,
+        };
         let json = serde_json::to_string(&m).unwrap();
         assert!(json.contains("\"name\":\"compiler\""));
         assert!(json.contains("\"is_public\":true"));
@@ -286,7 +362,11 @@ mod tests {
         let mut unique = info.features.clone();
         unique.sort();
         unique.dedup();
-        assert_eq!(unique.len(), info.features.len(), "features should have no duplicates");
+        assert_eq!(
+            unique.len(),
+            info.features.len(),
+            "features should have no duplicates"
+        );
     }
 
     #[test]
@@ -302,7 +382,11 @@ mod tests {
     #[test]
     fn module_inventory_all_descriptions_nonempty() {
         for m in module_inventory() {
-            assert!(!m.description.is_empty(), "module {} has empty description", m.name);
+            assert!(
+                !m.description.is_empty(),
+                "module {} has empty description",
+                m.name
+            );
         }
     }
 
@@ -318,10 +402,21 @@ mod tests {
         let inv = module_inventory();
         let names: Vec<&str> = inv.iter().map(|m| m.name).collect();
         let expected = [
-            "compiler", "errors", "model", "nda", "nda_int",
-            "pipeline_bridge", "pipeline_nda", "safety", "sandbox",
-            "site_map", "tokenizer", "velocity_client", "provider_usage",
-            "credential_guard", "wiki",
+            "compiler",
+            "errors",
+            "model",
+            "nda",
+            "nda_int",
+            "pipeline_bridge",
+            "pipeline_nda",
+            "safety",
+            "sandbox",
+            "site_map",
+            "tokenizer",
+            "velocity_client",
+            "provider_usage",
+            "credential_guard",
+            "wiki",
         ];
         for e in &expected {
             assert!(names.contains(e), "missing module: {}", e);
@@ -360,7 +455,10 @@ mod tests {
     fn banner_format() {
         let b = banner();
         assert!(b.starts_with("V.E.L.O.C.I.T.Y.-IDE v"));
-        assert!(b.contains(&format!("({}-)", TARGET_OS)) || b.contains(&format!("{}-{}", TARGET_OS, TARGET_ARCH)));
+        assert!(
+            b.contains(&format!("({}-)", TARGET_OS))
+                || b.contains(&format!("{}-{}", TARGET_OS, TARGET_ARCH))
+        );
     }
 
     #[test]

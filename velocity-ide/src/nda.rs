@@ -235,7 +235,10 @@ impl NdaMatrix {
         let n_elems = self.rows * self.cols;
 
         if self.rows == 0 || self.cols == 0 {
-            errors.push(format!("zero dimension: rows={}, cols={}", self.rows, self.cols));
+            errors.push(format!(
+                "zero dimension: rows={}, cols={}",
+                self.rows, self.cols
+            ));
         }
 
         if self.version == NDA_V1_TERN || self.version == NDA_V2_QUAD {
@@ -780,10 +783,7 @@ impl NdaMatrix {
 
 /// Batch GEMV: compute `y_i = W · x_i` for multiple input vectors.
 /// Returns outputs and a timing report.
-pub fn nda_gemv_batch(
-    matrix: &NdaMatrix,
-    xs: &[Vec<f32>],
-) -> (Vec<Vec<f32>>, BatchGemvReport) {
+pub fn nda_gemv_batch(matrix: &NdaMatrix, xs: &[Vec<f32>]) -> (Vec<Vec<f32>>, BatchGemvReport) {
     use std::time::Instant;
     let start = Instant::now();
     let outputs: Vec<Vec<f32>> = xs.iter().map(|x| nda_gemv(matrix, x)).collect();
@@ -820,19 +820,13 @@ pub fn nda_gemv_with_report(matrix: &NdaMatrix, x: &[f32]) -> (Vec<f32>, GemvRep
 
 /// Batch quantize multiple activation vectors to v2 quad format.
 /// Returns (sign_bitmaps, extra_bitmaps, scales) for each input.
-pub fn quantize_activations_v2_quad_batch(
-    xs: &[Vec<f32>],
-) -> Vec<(Vec<u8>, Vec<u8>, f32)> {
-    xs.iter()
-        .map(|x| quantize_activations_v2_quad(x))
-        .collect()
+pub fn quantize_activations_v2_quad_batch(xs: &[Vec<f32>]) -> Vec<(Vec<u8>, Vec<u8>, f32)> {
+    xs.iter().map(|x| quantize_activations_v2_quad(x)).collect()
 }
 
 /// Batch quantize multiple activation vectors to INT8 format.
 pub fn quantize_activations_i8_batch(xs: &[Vec<f32>]) -> Vec<(Vec<i8>, f32)> {
-    xs.iter()
-        .map(|x| quantize_activations_i8(x))
-        .collect()
+    xs.iter().map(|x| quantize_activations_i8(x)).collect()
 }
 
 // ─── INT8 activation variant (for GPU prep / future INT4 SIMD) ────────────────
@@ -1000,7 +994,11 @@ pub fn quantize_with_report(x: &[f32]) -> ((Vec<u8>, Vec<u8>, f32), NdaQuantizat
         max_abs_error = max_abs_error.max(err);
         sum_abs_error += err;
     }
-    let mean_abs_error = if x.is_empty() { 0.0 } else { sum_abs_error / x.len() as f64 };
+    let mean_abs_error = if x.is_empty() {
+        0.0
+    } else {
+        sum_abs_error / x.len() as f64
+    };
 
     let input_bytes = x.len() * 4;
     let output_bytes = sign.len() + extra.len();
@@ -1067,7 +1065,10 @@ pub struct NdaMatrixSummary {
 pub fn summarize_matrices(matrices: &[NdaMatrix]) -> NdaMatrixSummary {
     let total_rows: usize = matrices.iter().map(|m| m.rows).sum();
     let total_cols: usize = matrices.iter().map(|m| m.cols).sum();
-    let total_memory: usize = matrices.iter().map(|m| m.memory_breakdown().total_bytes).sum();
+    let total_memory: usize = matrices
+        .iter()
+        .map(|m| m.memory_breakdown().total_bytes)
+        .sum();
     let versions: Vec<u16> = matrices.iter().map(|m| m.version).collect();
 
     let mut largest: Option<(usize, String)> = None;
@@ -1130,7 +1131,9 @@ mod tests {
         m.sign.push(0); // corrupt: extra byte
         let errors = m.validate();
         assert!(!errors.is_empty());
-        assert!(errors.iter().any(|e| e.contains("sign bitmap size mismatch")));
+        assert!(errors
+            .iter()
+            .any(|e| e.contains("sign bitmap size mismatch")));
     }
 
     #[test]
@@ -1224,7 +1227,7 @@ mod tests {
         let block_size = 64usize;
         let n_blocks_per_row = cols / block_size; // 1
         let total_q_scales = rows * n_blocks_per_row; // 4
-        // The file format's n_blocks field = total q_scale entries
+                                                      // The file format's n_blocks field = total q_scale entries
         let original = NdaMatrix {
             rows,
             cols,
@@ -1395,10 +1398,7 @@ mod tests {
 
     #[test]
     fn test_quantize_batch_v2() {
-        let xs = vec![
-            vec![0.0, 1.0, -1.0, 2.0],
-            vec![0.5, -0.5, 1.5, -1.5],
-        ];
+        let xs = vec![vec![0.0, 1.0, -1.0, 2.0], vec![0.5, -0.5, 1.5, -1.5]];
         let results = quantize_activations_v2_quad_batch(&xs);
         assert_eq!(results.len(), 2);
         for (sign, extra, scale) in &results {
@@ -1410,10 +1410,7 @@ mod tests {
 
     #[test]
     fn test_quantize_batch_i8() {
-        let xs = vec![
-            vec![0.0, 0.5, -0.5, 1.0],
-            vec![1.0, -1.0, 0.0, 0.5],
-        ];
+        let xs = vec![vec![0.0, 0.5, -0.5, 1.0], vec![1.0, -1.0, 0.0, 0.5]];
         let results = quantize_activations_i8_batch(&xs);
         assert_eq!(results.len(), 2);
         for (q, scale) in &results {
@@ -1545,30 +1542,58 @@ mod tests {
         assert_eq!(m1.version_name(), "v2 quad {-2,-1,+1,+2}");
 
         let m_tern = NdaMatrix {
-            rows: 8, cols: 8, scale: 1.0, version: NDA_V1_TERN,
-            sign: vec![0; 8], extra: vec![0; 8],
-            block_size: 0, n_blocks: 0, q_scales: vec![], packed_codes: vec![],
+            rows: 8,
+            cols: 8,
+            scale: 1.0,
+            version: NDA_V1_TERN,
+            sign: vec![0; 8],
+            extra: vec![0; 8],
+            block_size: 0,
+            n_blocks: 0,
+            q_scales: vec![],
+            packed_codes: vec![],
         };
         assert_eq!(m_tern.version_name(), "v1 ternary {-1,0,+1}");
 
         let m_fp4 = NdaMatrix {
-            rows: 4, cols: 64, scale: 1.0, version: NDA_VERSION_FP4,
-            sign: vec![], extra: vec![],
-            block_size: 64, n_blocks: 4, q_scales: vec![128; 4], packed_codes: vec![0; 128],
+            rows: 4,
+            cols: 64,
+            scale: 1.0,
+            version: NDA_VERSION_FP4,
+            sign: vec![],
+            extra: vec![],
+            block_size: 64,
+            n_blocks: 4,
+            q_scales: vec![128; 4],
+            packed_codes: vec![0; 128],
         };
         assert_eq!(m_fp4.version_name(), "v3 FP4 E2M1");
 
         let m_fp2 = NdaMatrix {
-            rows: 4, cols: 64, scale: 1.0, version: NDA_VERSION_FP2,
-            sign: vec![], extra: vec![],
-            block_size: 64, n_blocks: 4, q_scales: vec![128; 4], packed_codes: vec![0; 64],
+            rows: 4,
+            cols: 64,
+            scale: 1.0,
+            version: NDA_VERSION_FP2,
+            sign: vec![],
+            extra: vec![],
+            block_size: 64,
+            n_blocks: 4,
+            q_scales: vec![128; 4],
+            packed_codes: vec![0; 64],
         };
         assert_eq!(m_fp2.version_name(), "v4 FP2 E1M0");
 
         let m_unknown = NdaMatrix {
-            rows: 8, cols: 8, scale: 1.0, version: 99,
-            sign: vec![0; 8], extra: vec![0; 8],
-            block_size: 0, n_blocks: 0, q_scales: vec![], packed_codes: vec![],
+            rows: 8,
+            cols: 8,
+            scale: 1.0,
+            version: 99,
+            sign: vec![0; 8],
+            extra: vec![0; 8],
+            block_size: 0,
+            n_blocks: 0,
+            q_scales: vec![],
+            packed_codes: vec![],
         };
         assert_eq!(m_unknown.version_name(), "unknown");
     }
@@ -1580,8 +1605,13 @@ mod tests {
         let mut m = make_quad_matrix(8, 8);
         m.extra.push(0); // corrupt extra
         let errors = m.validate();
-        assert!(errors.iter().any(|e| e.contains("extra bitmap size mismatch")),
-            "expected extra bitmap error, got: {:?}", errors);
+        assert!(
+            errors
+                .iter()
+                .any(|e| e.contains("extra bitmap size mismatch")),
+            "expected extra bitmap error, got: {:?}",
+            errors
+        );
     }
 
     #[test]
@@ -1595,50 +1625,82 @@ mod tests {
     #[test]
     fn validate_fp4_zero_block_size() {
         let m = NdaMatrix {
-            rows: 4, cols: 64, scale: 1.0, version: NDA_VERSION_FP4,
-            sign: vec![], extra: vec![],
-            block_size: 0, n_blocks: 0,
-            q_scales: vec![], packed_codes: vec![0; 4 * 64 / 2],
+            rows: 4,
+            cols: 64,
+            scale: 1.0,
+            version: NDA_VERSION_FP4,
+            sign: vec![],
+            extra: vec![],
+            block_size: 0,
+            n_blocks: 0,
+            q_scales: vec![],
+            packed_codes: vec![0; 4 * 64 / 2],
         };
         let errors = m.validate();
-        assert!(errors.iter().any(|e| e.contains("block_size is zero")),
-            "expected block_size error, got: {:?}", errors);
+        assert!(
+            errors.iter().any(|e| e.contains("block_size is zero")),
+            "expected block_size error, got: {:?}",
+            errors
+        );
     }
 
     #[test]
     fn validate_fp4_packed_codes_mismatch() {
         let m = NdaMatrix {
-            rows: 4, cols: 64, scale: 1.0, version: NDA_VERSION_FP4,
-            sign: vec![], extra: vec![],
-            block_size: 64, n_blocks: 4,
+            rows: 4,
+            cols: 64,
+            scale: 1.0,
+            version: NDA_VERSION_FP4,
+            sign: vec![],
+            extra: vec![],
+            block_size: 64,
+            n_blocks: 4,
             q_scales: vec![128; 4],
             packed_codes: vec![0; 10], // wrong: should be 4*64/2=128
         };
         let errors = m.validate();
-        assert!(errors.iter().any(|e| e.contains("packed_codes size mismatch")),
-            "expected packed_codes error, got: {:?}", errors);
+        assert!(
+            errors
+                .iter()
+                .any(|e| e.contains("packed_codes size mismatch")),
+            "expected packed_codes error, got: {:?}",
+            errors
+        );
     }
 
     #[test]
     fn validate_fp4_q_scales_mismatch() {
         let m = NdaMatrix {
-            rows: 4, cols: 64, scale: 1.0, version: NDA_VERSION_FP4,
-            sign: vec![], extra: vec![],
-            block_size: 64, n_blocks: 4,
+            rows: 4,
+            cols: 64,
+            scale: 1.0,
+            version: NDA_VERSION_FP4,
+            sign: vec![],
+            extra: vec![],
+            block_size: 64,
+            n_blocks: 4,
             q_scales: vec![128; 2], // wrong: should be 4 * (64/64) = 4
             packed_codes: vec![0; 128],
         };
         let errors = m.validate();
-        assert!(errors.iter().any(|e| e.contains("q_scales size mismatch")),
-            "expected q_scales error, got: {:?}", errors);
+        assert!(
+            errors.iter().any(|e| e.contains("q_scales size mismatch")),
+            "expected q_scales error, got: {:?}",
+            errors
+        );
     }
 
     #[test]
     fn validate_fp2_valid() {
         let m = NdaMatrix {
-            rows: 4, cols: 64, scale: 1.0, version: NDA_VERSION_FP2,
-            sign: vec![], extra: vec![],
-            block_size: 64, n_blocks: 4,
+            rows: 4,
+            cols: 64,
+            scale: 1.0,
+            version: NDA_VERSION_FP2,
+            sign: vec![],
+            extra: vec![],
+            block_size: 64,
+            n_blocks: 4,
             q_scales: vec![128; 4],
             packed_codes: vec![0; 4 * 64 / 4], // FP2: 4 bits per elem
         };
@@ -1651,8 +1713,11 @@ mod tests {
         let mut m = make_quad_matrix(8, 8);
         m.version = 99;
         let errors = m.validate();
-        assert!(errors.iter().any(|e| e.contains("unknown version")),
-            "expected unknown version error, got: {:?}", errors);
+        assert!(
+            errors.iter().any(|e| e.contains("unknown version")),
+            "expected unknown version error, got: {:?}",
+            errors
+        );
     }
 
     // ── sparsity ─────────────────────────────────────────────────────────────
@@ -1668,10 +1733,16 @@ mod tests {
         // v1: sign = active bitmap. All ones = all active = 0% sparse
         let _n = 64;
         let m = NdaMatrix {
-            rows: 8, cols: 8, scale: 1.0, version: NDA_V1_TERN,
+            rows: 8,
+            cols: 8,
+            scale: 1.0,
+            version: NDA_V1_TERN,
             sign: vec![0xFF; 8], // all active
             extra: vec![0; 8],
-            block_size: 0, n_blocks: 0, q_scales: vec![], packed_codes: vec![],
+            block_size: 0,
+            n_blocks: 0,
+            q_scales: vec![],
+            packed_codes: vec![],
         };
         assert_eq!(m.sparsity(), 0.0, "all-active should be 0% sparse");
     }
@@ -1679,10 +1750,16 @@ mod tests {
     #[test]
     fn sparsity_v1_none_active() {
         let m = NdaMatrix {
-            rows: 8, cols: 8, scale: 1.0, version: NDA_V1_TERN,
+            rows: 8,
+            cols: 8,
+            scale: 1.0,
+            version: NDA_V1_TERN,
             sign: vec![0x00; 8], // none active
             extra: vec![0; 8],
-            block_size: 0, n_blocks: 0, q_scales: vec![], packed_codes: vec![],
+            block_size: 0,
+            n_blocks: 0,
+            q_scales: vec![],
+            packed_codes: vec![],
         };
         assert_eq!(m.sparsity(), 1.0, "none-active should be 100% sparse");
     }
@@ -1692,10 +1769,16 @@ mod tests {
     #[test]
     fn byte_size_fp4() {
         let m = NdaMatrix {
-            rows: 4, cols: 64, scale: 1.0, version: NDA_VERSION_FP4,
-            sign: vec![], extra: vec![],
-            block_size: 64, n_blocks: 4,
-            q_scales: vec![128; 4], packed_codes: vec![0; 128],
+            rows: 4,
+            cols: 64,
+            scale: 1.0,
+            version: NDA_VERSION_FP4,
+            sign: vec![],
+            extra: vec![],
+            block_size: 64,
+            n_blocks: 4,
+            q_scales: vec![128; 4],
+            packed_codes: vec![0; 128],
         };
         // 24 + q_scales.len() + packed_codes.len() = 24 + 4 + 128 = 156
         assert_eq!(m.byte_size(), 156);
@@ -1704,9 +1787,16 @@ mod tests {
     #[test]
     fn byte_size_v1_tern() {
         let m = NdaMatrix {
-            rows: 8, cols: 8, scale: 1.0, version: NDA_V1_TERN,
-            sign: vec![0xFF; 8], extra: vec![0xAA; 8],
-            block_size: 0, n_blocks: 0, q_scales: vec![], packed_codes: vec![],
+            rows: 8,
+            cols: 8,
+            scale: 1.0,
+            version: NDA_V1_TERN,
+            sign: vec![0xFF; 8],
+            extra: vec![0xAA; 8],
+            block_size: 0,
+            n_blocks: 0,
+            q_scales: vec![],
+            packed_codes: vec![],
         };
         assert_eq!(m.byte_size(), 18 + 8 + 8);
     }
@@ -1727,10 +1817,16 @@ mod tests {
     #[test]
     fn memory_breakdown_fp4() {
         let m = NdaMatrix {
-            rows: 4, cols: 64, scale: 1.0, version: NDA_VERSION_FP4,
-            sign: vec![], extra: vec![],
-            block_size: 64, n_blocks: 4,
-            q_scales: vec![128; 4], packed_codes: vec![0; 128],
+            rows: 4,
+            cols: 64,
+            scale: 1.0,
+            version: NDA_VERSION_FP4,
+            sign: vec![],
+            extra: vec![],
+            block_size: 64,
+            n_blocks: 4,
+            q_scales: vec![128; 4],
+            packed_codes: vec![0; 128],
         };
         let bd = m.memory_breakdown();
         assert_eq!(bd.header_bytes, 24);
@@ -1752,9 +1848,16 @@ mod tests {
     fn quad_distribution_all_minus_two() {
         // s=0, e=0 → -2 for all bits
         let m = NdaMatrix {
-            rows: 1, cols: 8, scale: 1.0, version: NDA_V2_QUAD,
-            sign: vec![0x00], extra: vec![0x00],
-            block_size: 0, n_blocks: 0, q_scales: vec![], packed_codes: vec![],
+            rows: 1,
+            cols: 8,
+            scale: 1.0,
+            version: NDA_V2_QUAD,
+            sign: vec![0x00],
+            extra: vec![0x00],
+            block_size: 0,
+            n_blocks: 0,
+            q_scales: vec![],
+            packed_codes: vec![],
         };
         let dist = m.quad_distribution();
         assert_eq!(dist, [8, 0, 0, 0]); // all -2
@@ -1764,9 +1867,16 @@ mod tests {
     fn quad_distribution_all_plus_two() {
         // s=1, e=1 → +2 for all bits
         let m = NdaMatrix {
-            rows: 1, cols: 8, scale: 1.0, version: NDA_V2_QUAD,
-            sign: vec![0xFF], extra: vec![0xFF],
-            block_size: 0, n_blocks: 0, q_scales: vec![], packed_codes: vec![],
+            rows: 1,
+            cols: 8,
+            scale: 1.0,
+            version: NDA_V2_QUAD,
+            sign: vec![0xFF],
+            extra: vec![0xFF],
+            block_size: 0,
+            n_blocks: 0,
+            q_scales: vec![],
+            packed_codes: vec![],
         };
         let dist = m.quad_distribution();
         assert_eq!(dist, [0, 0, 0, 8]); // all +2
@@ -1780,9 +1890,16 @@ mod tests {
         // bit0: s=1,e=0 → +1
         // bits1-7: s=0,e=0 → -2
         let m = NdaMatrix {
-            rows: 1, cols: 8, scale: 1.0, version: NDA_V2_QUAD,
-            sign: vec![0x01], extra: vec![0x00],
-            block_size: 0, n_blocks: 0, q_scales: vec![], packed_codes: vec![],
+            rows: 1,
+            cols: 8,
+            scale: 1.0,
+            version: NDA_V2_QUAD,
+            sign: vec![0x01],
+            extra: vec![0x00],
+            block_size: 0,
+            n_blocks: 0,
+            q_scales: vec![],
+            packed_codes: vec![],
         };
         let dist = m.quad_distribution();
         assert_eq!(dist[0], 7); // -2
@@ -2015,10 +2132,16 @@ mod tests {
     #[test]
     fn info_fp4_matrix() {
         let m = NdaMatrix {
-            rows: 4, cols: 64, scale: 0.5, version: NDA_VERSION_FP4,
-            sign: vec![], extra: vec![],
-            block_size: 64, n_blocks: 4,
-            q_scales: vec![128; 4], packed_codes: vec![0; 128],
+            rows: 4,
+            cols: 64,
+            scale: 0.5,
+            version: NDA_VERSION_FP4,
+            sign: vec![],
+            extra: vec![],
+            block_size: 64,
+            n_blocks: 4,
+            q_scales: vec![128; 4],
+            packed_codes: vec![0; 128],
         };
         let info = m.info();
         assert_eq!(info.version, 3);
@@ -2210,8 +2333,11 @@ mod tests {
         let (_, report) = quantize_with_report(&x);
         // Output: 8 bytes sign + 8 bytes extra = 16 bytes
         // Ratio: 256 / 16 = 16.0
-        assert!((report.compression_ratio - 16.0).abs() < 0.01,
-            "ratio={}", report.compression_ratio);
+        assert!(
+            (report.compression_ratio - 16.0).abs() < 0.01,
+            "ratio={}",
+            report.compression_ratio
+        );
     }
 
     // ── NdaQuantizationReport serialization ──────────────────────────────────
@@ -2283,10 +2409,16 @@ mod tests {
     #[test]
     fn info_fp2_matrix() {
         let m = NdaMatrix {
-            rows: 4, cols: 32, scale: 1.0, version: NDA_VERSION_FP2,
-            sign: vec![], extra: vec![],
-            block_size: 32, n_blocks: 4,
-            q_scales: vec![64; 4], packed_codes: vec![0; 64],
+            rows: 4,
+            cols: 32,
+            scale: 1.0,
+            version: NDA_VERSION_FP2,
+            sign: vec![],
+            extra: vec![],
+            block_size: 32,
+            n_blocks: 4,
+            q_scales: vec![64; 4],
+            packed_codes: vec![0; 64],
         };
         let info = m.info();
         assert_eq!(info.version_name, "v4 FP2 E1M0");
@@ -2321,44 +2453,68 @@ mod tests {
     fn nda_matrix_info_json_key_count() {
         let m = NdaMatrix::new_quad(4, 32, 1.0, vec![0; 16], vec![0; 16]);
         let info = m.info();
-        let v: serde_json::Value = serde_json::from_str(
-            &serde_json::to_string(&info).unwrap(),
-        ).unwrap();
+        let v: serde_json::Value =
+            serde_json::from_str(&serde_json::to_string(&info).unwrap()).unwrap();
         let obj = v.as_object().unwrap();
-        assert_eq!(obj.len(), 8, "NdaMatrixInfo should have exactly 8 JSON keys");
-        for key in &["rows", "cols", "version", "version_name", "scale", "memory", "validation_issues", "is_quad"] {
+        assert_eq!(
+            obj.len(),
+            8,
+            "NdaMatrixInfo should have exactly 8 JSON keys"
+        );
+        for key in &[
+            "rows",
+            "cols",
+            "version",
+            "version_name",
+            "scale",
+            "memory",
+            "validation_issues",
+            "is_quad",
+        ] {
             assert!(obj.contains_key(*key), "missing key: {}", key);
         }
     }
 
     #[test]
     fn gemv_report_json_key_count() {
-        let report = GemvReport { rows: 8, cols: 64, version: 2, elapsed_us: 100, output_len: 8 };
-        let v: serde_json::Value = serde_json::from_str(
-            &serde_json::to_string(&report).unwrap(),
-        ).unwrap();
+        let report = GemvReport {
+            rows: 8,
+            cols: 64,
+            version: 2,
+            elapsed_us: 100,
+            output_len: 8,
+        };
+        let v: serde_json::Value =
+            serde_json::from_str(&serde_json::to_string(&report).unwrap()).unwrap();
         assert_eq!(v.as_object().unwrap().len(), 5);
     }
 
     #[test]
     fn batch_gemv_report_json_key_count() {
-        let report = BatchGemvReport { count: 3, total_elapsed_us: 300, per_op_avg_us: 100.0, total_rows: 24 };
-        let v: serde_json::Value = serde_json::from_str(
-            &serde_json::to_string(&report).unwrap(),
-        ).unwrap();
+        let report = BatchGemvReport {
+            count: 3,
+            total_elapsed_us: 300,
+            per_op_avg_us: 100.0,
+            total_rows: 24,
+        };
+        let v: serde_json::Value =
+            serde_json::from_str(&serde_json::to_string(&report).unwrap()).unwrap();
         assert_eq!(v.as_object().unwrap().len(), 4);
     }
 
     #[test]
     fn nda_quantization_report_json_key_count() {
         let report = NdaQuantizationReport {
-            input_len: 8, output_scale: 1.0, input_amax: 2.0,
-            max_abs_error: 0.5, mean_abs_error: 0.25, compression_ratio: 16.0,
+            input_len: 8,
+            output_scale: 1.0,
+            input_amax: 2.0,
+            max_abs_error: 0.5,
+            mean_abs_error: 0.25,
+            compression_ratio: 16.0,
             validation_issues: vec![],
         };
-        let v: serde_json::Value = serde_json::from_str(
-            &serde_json::to_string(&report).unwrap(),
-        ).unwrap();
+        let v: serde_json::Value =
+            serde_json::from_str(&serde_json::to_string(&report).unwrap()).unwrap();
         assert_eq!(v.as_object().unwrap().len(), 7);
     }
 
@@ -2366,9 +2522,8 @@ mod tests {
     fn memory_breakdown_json_key_count() {
         let m = NdaMatrix::new_quad(4, 32, 1.0, vec![0; 16], vec![0; 16]);
         let mb = m.memory_breakdown();
-        let v: serde_json::Value = serde_json::from_str(
-            &serde_json::to_string(&mb).unwrap(),
-        ).unwrap();
+        let v: serde_json::Value =
+            serde_json::from_str(&serde_json::to_string(&mb).unwrap()).unwrap();
         assert_eq!(v.as_object().unwrap().len(), 4);
     }
 
@@ -2376,9 +2531,8 @@ mod tests {
     fn nda_matrix_summary_json_key_count() {
         let matrices = vec![NdaMatrix::new_quad(4, 32, 1.0, vec![0; 16], vec![0; 16])];
         let summary = summarize_matrices(&matrices);
-        let v: serde_json::Value = serde_json::from_str(
-            &serde_json::to_string(&summary).unwrap(),
-        ).unwrap();
+        let v: serde_json::Value =
+            serde_json::from_str(&serde_json::to_string(&summary).unwrap()).unwrap();
         assert_eq!(v.as_object().unwrap().len(), 8);
     }
 
@@ -2396,22 +2550,77 @@ mod tests {
         let v2 = NdaMatrix::new_quad(4, 8, 1.0, vec![0; 4], vec![0; 4]);
         assert_eq!(v2.version_name(), "v2 quad {-2,-1,+1,+2}");
 
-        let v1 = NdaMatrix { rows: 4, cols: 8, scale: 1.0, version: NDA_V1_TERN, sign: vec![0; 4], extra: vec![0; 4], block_size: 64, n_blocks: 0, q_scales: vec![], packed_codes: vec![] };
+        let v1 = NdaMatrix {
+            rows: 4,
+            cols: 8,
+            scale: 1.0,
+            version: NDA_V1_TERN,
+            sign: vec![0; 4],
+            extra: vec![0; 4],
+            block_size: 64,
+            n_blocks: 0,
+            q_scales: vec![],
+            packed_codes: vec![],
+        };
         assert_eq!(v1.version_name(), "v1 ternary {-1,0,+1}");
 
-        let fp4 = NdaMatrix { rows: 4, cols: 8, scale: 1.0, version: NDA_VERSION_FP4, sign: vec![], extra: vec![], block_size: 64, n_blocks: 4, q_scales: vec![128; 4], packed_codes: vec![0; 16] };
+        let fp4 = NdaMatrix {
+            rows: 4,
+            cols: 8,
+            scale: 1.0,
+            version: NDA_VERSION_FP4,
+            sign: vec![],
+            extra: vec![],
+            block_size: 64,
+            n_blocks: 4,
+            q_scales: vec![128; 4],
+            packed_codes: vec![0; 16],
+        };
         assert_eq!(fp4.version_name(), "v3 FP4 E2M1");
 
-        let fp2 = NdaMatrix { rows: 4, cols: 8, scale: 1.0, version: NDA_VERSION_FP2, sign: vec![], extra: vec![], block_size: 32, n_blocks: 4, q_scales: vec![64; 4], packed_codes: vec![0; 8] };
+        let fp2 = NdaMatrix {
+            rows: 4,
+            cols: 8,
+            scale: 1.0,
+            version: NDA_VERSION_FP2,
+            sign: vec![],
+            extra: vec![],
+            block_size: 32,
+            n_blocks: 4,
+            q_scales: vec![64; 4],
+            packed_codes: vec![0; 8],
+        };
         assert_eq!(fp2.version_name(), "v4 FP2 E1M0");
 
-        let unknown = NdaMatrix { rows: 4, cols: 8, scale: 1.0, version: 99, sign: vec![0; 4], extra: vec![0; 4], block_size: 64, n_blocks: 0, q_scales: vec![], packed_codes: vec![] };
+        let unknown = NdaMatrix {
+            rows: 4,
+            cols: 8,
+            scale: 1.0,
+            version: 99,
+            sign: vec![0; 4],
+            extra: vec![0; 4],
+            block_size: 64,
+            n_blocks: 0,
+            q_scales: vec![],
+            packed_codes: vec![],
+        };
         assert_eq!(unknown.version_name(), "unknown");
     }
 
     #[test]
     fn is_quad_v1_returns_false() {
-        let m = NdaMatrix { rows: 4, cols: 8, scale: 1.0, version: NDA_V1_TERN, sign: vec![0; 4], extra: vec![0; 4], block_size: 64, n_blocks: 0, q_scales: vec![], packed_codes: vec![] };
+        let m = NdaMatrix {
+            rows: 4,
+            cols: 8,
+            scale: 1.0,
+            version: NDA_V1_TERN,
+            sign: vec![0; 4],
+            extra: vec![0; 4],
+            block_size: 64,
+            n_blocks: 0,
+            q_scales: vec![],
+            packed_codes: vec![],
+        };
         assert!(!m.is_quad());
     }
 
@@ -2445,12 +2654,25 @@ mod tests {
     fn validate_wrong_bitmap_size() {
         let m = NdaMatrix::new_quad(4, 32, 1.0, vec![0; 8], vec![0; 16]); // sign too small
         let issues = m.validate();
-        assert!(issues.iter().any(|i| i.contains("sign bitmap size mismatch")));
+        assert!(issues
+            .iter()
+            .any(|i| i.contains("sign bitmap size mismatch")));
     }
 
     #[test]
     fn validate_unknown_version_164() {
-        let m = NdaMatrix { rows: 4, cols: 8, scale: 1.0, version: 99, sign: vec![0; 4], extra: vec![0; 4], block_size: 64, n_blocks: 0, q_scales: vec![], packed_codes: vec![] };
+        let m = NdaMatrix {
+            rows: 4,
+            cols: 8,
+            scale: 1.0,
+            version: 99,
+            sign: vec![0; 4],
+            extra: vec![0; 4],
+            block_size: 64,
+            n_blocks: 0,
+            q_scales: vec![],
+            packed_codes: vec![],
+        };
         let issues = m.validate();
         assert!(issues.iter().any(|i| i.contains("unknown version")));
     }
@@ -2476,7 +2698,7 @@ mod tests {
         assert_eq!(mb.header_bytes, 18);
         assert_eq!(mb.data_bytes, 32); // 16 + 16
         assert_eq!(mb.total_bytes, 50); // 18 + 32
-        // bits_per_weight = 32*8 / (4*32) = 256/128 = 2.0
+                                        // bits_per_weight = 32*8 / (4*32) = 256/128 = 2.0
         assert!((mb.bits_per_weight - 2.0).abs() < f64::EPSILON);
     }
 
@@ -2504,7 +2726,18 @@ mod tests {
 
     #[test]
     fn quad_distribution_non_quad_returns_zeros() {
-        let m = NdaMatrix { rows: 4, cols: 8, scale: 1.0, version: NDA_V1_TERN, sign: vec![0; 4], extra: vec![0; 4], block_size: 64, n_blocks: 0, q_scales: vec![], packed_codes: vec![] };
+        let m = NdaMatrix {
+            rows: 4,
+            cols: 8,
+            scale: 1.0,
+            version: NDA_V1_TERN,
+            sign: vec![0; 4],
+            extra: vec![0; 4],
+            block_size: 64,
+            n_blocks: 0,
+            q_scales: vec![],
+            packed_codes: vec![],
+        };
         assert_eq!(m.quad_distribution(), [0; 4]);
     }
 
@@ -2544,7 +2777,18 @@ mod tests {
     #[test]
     fn validate_matrix_compatibility_version_only() {
         let a = NdaMatrix::new_quad(4, 8, 1.0, vec![0; 4], vec![0; 4]);
-        let b = NdaMatrix { rows: 8, cols: 16, scale: 1.0, version: NDA_VERSION_FP4, sign: vec![], extra: vec![], block_size: 64, n_blocks: 4, q_scales: vec![128; 8], packed_codes: vec![0; 64] };
+        let b = NdaMatrix {
+            rows: 8,
+            cols: 16,
+            scale: 1.0,
+            version: NDA_VERSION_FP4,
+            sign: vec![],
+            extra: vec![],
+            block_size: 64,
+            n_blocks: 4,
+            q_scales: vec![128; 8],
+            packed_codes: vec![0; 64],
+        };
         let issues = validate_matrix_compatibility(&a, &b);
         // a.cols=8 == b.rows=8, so no dim mismatch. But version 2 != 4.
         assert_eq!(issues.len(), 1);
@@ -2567,9 +2811,9 @@ mod tests {
     #[test]
     fn summarize_matrices_multiple_sizes() {
         let matrices = vec![
-            NdaMatrix::new_quad(4, 8, 1.0, vec![0; 4], vec![0; 4]),    // 32 elems
+            NdaMatrix::new_quad(4, 8, 1.0, vec![0; 4], vec![0; 4]), // 32 elems
             NdaMatrix::new_quad(16, 64, 2.0, vec![0; 128], vec![0; 128]), // 1024 elems
-            NdaMatrix::new_quad(2, 2, 0.5, vec![0; 1], vec![0; 1]),    // 4 elems
+            NdaMatrix::new_quad(2, 2, 0.5, vec![0; 1], vec![0; 1]), // 4 elems
         ];
         let summary = summarize_matrices(&matrices);
         assert_eq!(summary.matrix_count, 3);
@@ -2579,9 +2823,17 @@ mod tests {
         assert!(summary.largest_matrix.is_some());
         assert!(summary.smallest_matrix.is_some());
         // largest should be matrix[1] (1024 elems)
-        assert!(summary.largest_matrix.as_ref().unwrap().contains("matrix[1]"));
+        assert!(summary
+            .largest_matrix
+            .as_ref()
+            .unwrap()
+            .contains("matrix[1]"));
         // smallest should be matrix[2] (4 elems)
-        assert!(summary.smallest_matrix.as_ref().unwrap().contains("matrix[2]"));
+        assert!(summary
+            .smallest_matrix
+            .as_ref()
+            .unwrap()
+            .contains("matrix[2]"));
     }
 
     #[test]
@@ -2601,7 +2853,10 @@ mod tests {
     #[test]
     fn nda_memory_breakdown_json_key_count() {
         let mb = NdaMemoryBreakdown {
-            header_bytes: 18, data_bytes: 1024, total_bytes: 1042, bits_per_weight: 2.0,
+            header_bytes: 18,
+            data_bytes: 1024,
+            total_bytes: 1042,
+            bits_per_weight: 2.0,
         };
         let v: serde_json::Value = serde_json::to_value(&mb).unwrap();
         assert_eq!(v.as_object().unwrap().len(), 4);
@@ -2610,8 +2865,12 @@ mod tests {
     #[test]
     fn nda_batch_load_report_json_key_count() {
         let report = NdaBatchLoadReport {
-            count: 5, total_bytes: 1000, total_elements: 5000,
-            version_counts: [1, 3, 1, 0], validation_errors: vec![], elapsed_us: 500,
+            count: 5,
+            total_bytes: 1000,
+            total_elements: 5000,
+            version_counts: [1, 3, 1, 0],
+            validation_errors: vec![],
+            elapsed_us: 500,
         };
         let v: serde_json::Value = serde_json::to_value(&report).unwrap();
         assert_eq!(v.as_object().unwrap().len(), 6);
@@ -2620,23 +2879,45 @@ mod tests {
     #[test]
     fn nda_matrix_summary_json_keys_191() {
         let summary = NdaMatrixSummary {
-            matrix_count: 3, total_rows: 100, total_cols: 200, total_memory_bytes: 5000,
-            versions: vec![2, 3], largest_matrix: Some("a".into()),
-            smallest_matrix: Some("b".into()), validation_issues: vec![],
+            matrix_count: 3,
+            total_rows: 100,
+            total_cols: 200,
+            total_memory_bytes: 5000,
+            versions: vec![2, 3],
+            largest_matrix: Some("a".into()),
+            smallest_matrix: Some("b".into()),
+            validation_issues: vec![],
         };
         let v: serde_json::Value = serde_json::to_value(&summary).unwrap();
         assert_eq!(v.as_object().unwrap().len(), 8);
         // Verify all expected keys exist
-        for key in &["matrix_count", "total_rows", "total_cols", "total_memory_bytes", "versions", "largest_matrix", "smallest_matrix", "validation_issues"] {
-            assert!(v.as_object().unwrap().contains_key(*key), "missing key: {}", key);
+        for key in &[
+            "matrix_count",
+            "total_rows",
+            "total_cols",
+            "total_memory_bytes",
+            "versions",
+            "largest_matrix",
+            "smallest_matrix",
+            "validation_issues",
+        ] {
+            assert!(
+                v.as_object().unwrap().contains_key(*key),
+                "missing key: {}",
+                key
+            );
         }
     }
 
     #[test]
     fn nda_quantization_report_json_types() {
         let report = NdaQuantizationReport {
-            input_len: 64, output_scale: 2.0, input_amax: 5.0,
-            max_abs_error: 1.5, mean_abs_error: 0.75, compression_ratio: 16.0,
+            input_len: 64,
+            output_scale: 2.0,
+            input_amax: 5.0,
+            max_abs_error: 1.5,
+            mean_abs_error: 0.75,
+            compression_ratio: 16.0,
             validation_issues: vec![],
         };
         let v: serde_json::Value = serde_json::to_value(&report).unwrap();
@@ -2667,7 +2948,10 @@ mod tests {
     #[test]
     fn memory_breakdown_clone_independence() {
         let mb = NdaMemoryBreakdown {
-            header_bytes: 18, data_bytes: 1024, total_bytes: 1042, bits_per_weight: 2.0,
+            header_bytes: 18,
+            data_bytes: 1024,
+            total_bytes: 1042,
+            bits_per_weight: 2.0,
         };
         let mut cloned = mb.clone();
         cloned.header_bytes = 99;
@@ -2677,7 +2961,12 @@ mod tests {
 
     #[test]
     fn batch_gemv_report_clone_independence() {
-        let report = BatchGemvReport { count: 5, total_elapsed_us: 500, per_op_avg_us: 100.0, total_rows: 40 };
+        let report = BatchGemvReport {
+            count: 5,
+            total_elapsed_us: 500,
+            per_op_avg_us: 100.0,
+            total_rows: 40,
+        };
         let mut cloned = report.clone();
         cloned.count = 99;
         assert_eq!(report.count, 5);
@@ -2686,7 +2975,13 @@ mod tests {
 
     #[test]
     fn gemv_report_clone_independence() {
-        let report = GemvReport { rows: 8, cols: 64, version: 2, elapsed_us: 100, output_len: 8 };
+        let report = GemvReport {
+            rows: 8,
+            cols: 64,
+            version: 2,
+            elapsed_us: 100,
+            output_len: 8,
+        };
         let mut cloned = report.clone();
         cloned.elapsed_us = 999;
         assert_eq!(report.elapsed_us, 100);
@@ -2716,7 +3011,11 @@ mod tests {
         // scale = amax / 2.0
         let x = vec![4.0, -2.0, 1.0];
         let (_, _, scale) = quantize_activations_v2_quad(&x);
-        assert!((scale - 2.0).abs() < f32::EPSILON, "scale should be amax/2 = 4.0/2 = 2.0, got {}", scale);
+        assert!(
+            (scale - 2.0).abs() < f32::EPSILON,
+            "scale should be amax/2 = 4.0/2 = 2.0, got {}",
+            scale
+        );
     }
 
     #[test]
@@ -2724,7 +3023,11 @@ mod tests {
         // scale = amax / 127.0
         let x = vec![5.0, -3.0, 1.0];
         let (_, scale) = quantize_activations_i8(&x);
-        assert!((scale - 5.0 / 127.0).abs() < 1e-6, "scale should be amax/127, got {}", scale);
+        assert!(
+            (scale - 5.0 / 127.0).abs() < 1e-6,
+            "scale should be amax/127, got {}",
+            scale
+        );
     }
 
     #[test]
@@ -2733,8 +3036,11 @@ mod tests {
         let (_, report) = quantize_with_report(&x);
         // Output: 16 bytes sign + 16 bytes extra = 32 bytes
         // Ratio: 512 / 32 = 16.0
-        assert!((report.compression_ratio - 16.0).abs() < 0.01,
-            "compression_ratio should be 16.0, got {}", report.compression_ratio);
+        assert!(
+            (report.compression_ratio - 16.0).abs() < 0.01,
+            "compression_ratio should be 16.0, got {}",
+            report.compression_ratio
+        );
     }
 
     #[test]
@@ -2750,10 +3056,16 @@ mod tests {
     #[test]
     fn byte_size_fp2_formula() {
         let m = NdaMatrix {
-            rows: 4, cols: 64, scale: 1.0, version: NDA_VERSION_FP2,
-            sign: vec![], extra: vec![],
-            block_size: 64, n_blocks: 4,
-            q_scales: vec![128; 4], packed_codes: vec![0; 64], // 4*64/4 = 64
+            rows: 4,
+            cols: 64,
+            scale: 1.0,
+            version: NDA_VERSION_FP2,
+            sign: vec![],
+            extra: vec![],
+            block_size: 64,
+            n_blocks: 4,
+            q_scales: vec![128; 4],
+            packed_codes: vec![0; 64], // 4*64/4 = 64
         };
         // 24 + q_scales.len() + packed_codes.len() = 24 + 4 + 64 = 92
         assert_eq!(m.byte_size(), 92);
@@ -2762,14 +3074,21 @@ mod tests {
     #[test]
     fn validate_fp2_packed_codes_wrong_size() {
         let m = NdaMatrix {
-            rows: 4, cols: 64, scale: 1.0, version: NDA_VERSION_FP2,
-            sign: vec![], extra: vec![],
-            block_size: 64, n_blocks: 4,
+            rows: 4,
+            cols: 64,
+            scale: 1.0,
+            version: NDA_VERSION_FP2,
+            sign: vec![],
+            extra: vec![],
+            block_size: 64,
+            n_blocks: 4,
             q_scales: vec![128; 4],
             packed_codes: vec![0; 100], // wrong: should be 4*64/4 = 64
         };
         let errors = m.validate();
-        assert!(errors.iter().any(|e| e.contains("packed_codes size mismatch")));
+        assert!(errors
+            .iter()
+            .any(|e| e.contains("packed_codes size mismatch")));
     }
 
     #[test]
@@ -2799,12 +3118,20 @@ mod tests {
         let mut m3 = NdaMatrix::new_quad(2, 2, 1.0, vec![0; 1], vec![0; 1]);
         m3.version = NDA_VERSION_FP2;
         let summary = summarize_matrices(&[m1, m2, m3]);
-        assert_eq!(summary.versions, vec![NDA_VERSION_FP4, NDA_V2_QUAD, NDA_VERSION_FP2]);
+        assert_eq!(
+            summary.versions,
+            vec![NDA_VERSION_FP4, NDA_V2_QUAD, NDA_VERSION_FP2]
+        );
     }
 
     #[test]
     fn nda_memory_breakdown_debug_format() {
-        let mb = NdaMemoryBreakdown { header_bytes: 18, data_bytes: 1024, total_bytes: 1042, bits_per_weight: 2.0 };
+        let mb = NdaMemoryBreakdown {
+            header_bytes: 18,
+            data_bytes: 1024,
+            total_bytes: 1042,
+            bits_per_weight: 2.0,
+        };
         let debug = format!("{:?}", mb);
         assert!(debug.contains("NdaMemoryBreakdown"));
         assert!(debug.contains("1042"));
@@ -2812,7 +3139,12 @@ mod tests {
 
     #[test]
     fn batch_gemv_report_debug_format() {
-        let report = BatchGemvReport { count: 5, total_elapsed_us: 500, per_op_avg_us: 100.0, total_rows: 40 };
+        let report = BatchGemvReport {
+            count: 5,
+            total_elapsed_us: 500,
+            per_op_avg_us: 100.0,
+            total_rows: 40,
+        };
         let debug = format!("{:?}", report);
         assert!(debug.contains("BatchGemvReport"));
     }
@@ -2820,8 +3152,12 @@ mod tests {
     #[test]
     fn nda_quantization_report_debug_format() {
         let report = NdaQuantizationReport {
-            input_len: 64, output_scale: 2.0, input_amax: 5.0,
-            max_abs_error: 1.5, mean_abs_error: 0.75, compression_ratio: 16.0,
+            input_len: 64,
+            output_scale: 2.0,
+            input_amax: 5.0,
+            max_abs_error: 1.5,
+            mean_abs_error: 0.75,
+            compression_ratio: 16.0,
             validation_issues: vec![],
         };
         let debug = format!("{:?}", report);
@@ -2843,10 +3179,16 @@ mod tests {
         // v1 ternary: sign=active, extra=pos
         // 2 rows × 8 cols → stride = 1 byte per row → need 2 bytes total
         let m = NdaMatrix {
-            rows: 2, cols: 8, scale: 1.0, version: NDA_V1_TERN,
-            sign: vec![0xFF, 0xFF], // all active for both rows
+            rows: 2,
+            cols: 8,
+            scale: 1.0,
+            version: NDA_V1_TERN,
+            sign: vec![0xFF, 0xFF],  // all active for both rows
             extra: vec![0xAA, 0x55], // row0: alternating pos/neg; row1: opposite
-            block_size: 0, n_blocks: 0, q_scales: vec![], packed_codes: vec![],
+            block_size: 0,
+            n_blocks: 0,
+            q_scales: vec![],
+            packed_codes: vec![],
         };
         let x = vec![1.0; 8];
         let y = nda_gemv(&m, &x);

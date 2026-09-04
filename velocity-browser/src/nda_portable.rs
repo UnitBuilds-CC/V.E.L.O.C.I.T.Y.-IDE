@@ -1,4 +1,4 @@
-﻿//! Portable NDA1 document format — the browser-viewable, self-contained
+//! Portable NDA1 document format — the browser-viewable, self-contained
 //! neural-document schema.
 //!
 //! This is the exact binary layout the reference V.E.L.O.C.I.T.Y. NDA PWA

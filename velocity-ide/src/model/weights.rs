@@ -1,4 +1,4 @@
-﻿// model/weights.rs — V.E.L.O.C.I.T.Y.-IDE
+// model/weights.rs — V.E.L.O.C.I.T.Y.-IDE
 //
 // Loads converted NDA weight files (.nda) and FP32 tensors (.bin)
 // produced by tools/convert_to_nda.py into in-memory structures.
@@ -620,11 +620,18 @@ impl ModelWeights {
         self.layers
             .iter()
             .map(|l| {
-                [&l.q_proj_gpu, &l.k_proj_gpu, &l.v_proj_gpu, &l.o_proj_gpu,
-                 &l.gate_proj_gpu, &l.up_proj_gpu, &l.down_proj_gpu]
-                    .iter()
-                    .filter(|g| g.is_some())
-                    .count()
+                [
+                    &l.q_proj_gpu,
+                    &l.k_proj_gpu,
+                    &l.v_proj_gpu,
+                    &l.o_proj_gpu,
+                    &l.gate_proj_gpu,
+                    &l.up_proj_gpu,
+                    &l.down_proj_gpu,
+                ]
+                .iter()
+                .filter(|g| g.is_some())
+                .count()
             })
             .sum()
     }
@@ -676,20 +683,30 @@ impl ModelWeights {
             .enumerate()
             .map(|(idx, l)| {
                 let projections = [
-                    &l.q_proj, &l.k_proj, &l.v_proj, &l.o_proj,
-                    &l.gate_proj, &l.up_proj, &l.down_proj,
+                    &l.q_proj,
+                    &l.k_proj,
+                    &l.v_proj,
+                    &l.o_proj,
+                    &l.gate_proj,
+                    &l.up_proj,
+                    &l.down_proj,
                 ];
                 LayerStats {
                     layer_idx: idx,
                     projection_shapes: projections.iter().map(|m| (m.rows, m.cols)).collect(),
                     versions: projections.iter().map(|m| m.version).collect(),
                     gpu_count: [
-                        &l.q_proj_gpu, &l.k_proj_gpu, &l.v_proj_gpu, &l.o_proj_gpu,
-                        &l.gate_proj_gpu, &l.up_proj_gpu, &l.down_proj_gpu,
+                        &l.q_proj_gpu,
+                        &l.k_proj_gpu,
+                        &l.v_proj_gpu,
+                        &l.o_proj_gpu,
+                        &l.gate_proj_gpu,
+                        &l.up_proj_gpu,
+                        &l.down_proj_gpu,
                     ]
-                        .iter()
-                        .filter(|g| g.is_some())
-                        .count(),
+                    .iter()
+                    .filter(|g| g.is_some())
+                    .count(),
                     nda_bytes: projections.iter().map(|m| m.byte_size()).sum(),
                     has_biases: l.q_proj_bias.is_some()
                         || l.k_proj_bias.is_some()
@@ -811,8 +828,12 @@ impl ModelWeights {
         let mut zero_count = 0usize;
         let mut issues = Vec::new();
 
-        let check_slice = |name: &str, data: &[f32], issues: &mut Vec<String>,
-                           nan: &mut usize, inf: &mut usize, zero: &mut usize| {
+        let check_slice = |name: &str,
+                           data: &[f32],
+                           issues: &mut Vec<String>,
+                           nan: &mut usize,
+                           inf: &mut usize,
+                           zero: &mut usize| {
             let mut local_nan = 0;
             let mut local_inf = 0;
             let mut local_zero = 0;
@@ -837,28 +858,58 @@ impl ModelWeights {
         };
 
         // Global tensors
-        check_slice("embed_tokens", &self.embed_tokens, &mut issues,
-                    &mut nan_count, &mut inf_count, &mut zero_count);
+        check_slice(
+            "embed_tokens",
+            &self.embed_tokens,
+            &mut issues,
+            &mut nan_count,
+            &mut inf_count,
+            &mut zero_count,
+        );
         tensors_checked += 1;
 
-        check_slice("lm_head", &self.lm_head, &mut issues,
-                    &mut nan_count, &mut inf_count, &mut zero_count);
+        check_slice(
+            "lm_head",
+            &self.lm_head,
+            &mut issues,
+            &mut nan_count,
+            &mut inf_count,
+            &mut zero_count,
+        );
         tensors_checked += 1;
 
-        check_slice("final_norm", &self.final_norm, &mut issues,
-                    &mut nan_count, &mut inf_count, &mut zero_count);
+        check_slice(
+            "final_norm",
+            &self.final_norm,
+            &mut issues,
+            &mut nan_count,
+            &mut inf_count,
+            &mut zero_count,
+        );
         tensors_checked += 1;
 
         // Per-layer norms
         for (i, layer) in self.layers.iter().enumerate() {
             let name_attn = format!("layer_{i}_attn_norm");
-            check_slice(&name_attn, &layer.attn_norm, &mut issues,
-                        &mut nan_count, &mut inf_count, &mut zero_count);
+            check_slice(
+                &name_attn,
+                &layer.attn_norm,
+                &mut issues,
+                &mut nan_count,
+                &mut inf_count,
+                &mut zero_count,
+            );
             tensors_checked += 1;
 
             let name_ffn = format!("layer_{i}_ffn_norm");
-            check_slice(&name_ffn, &layer.ffn_norm, &mut issues,
-                        &mut nan_count, &mut inf_count, &mut zero_count);
+            check_slice(
+                &name_ffn,
+                &layer.ffn_norm,
+                &mut issues,
+                &mut nan_count,
+                &mut inf_count,
+                &mut zero_count,
+            );
             tensors_checked += 1;
         }
 
@@ -874,7 +925,8 @@ impl ModelWeights {
 
     /// Check NDA version consistency across all layers.
     pub fn weight_version_consistency(&self) -> VersionConsistency {
-        let mut version_counts: std::collections::HashMap<u16, usize> = std::collections::HashMap::new();
+        let mut version_counts: std::collections::HashMap<u16, usize> =
+            std::collections::HashMap::new();
         let mut outlier_layers = Vec::new();
 
         // Collect all versions from all projections
@@ -944,12 +996,17 @@ impl ModelWeights {
 
         for layer in &self.layers {
             let projections = [
-                &layer.q_proj, &layer.k_proj, &layer.v_proj, &layer.o_proj,
-                &layer.gate_proj, &layer.up_proj, &layer.down_proj,
+                &layer.q_proj,
+                &layer.k_proj,
+                &layer.v_proj,
+                &layer.o_proj,
+                &layer.gate_proj,
+                &layer.up_proj,
+                &layer.down_proj,
             ];
             per_layer_nda += projections.iter().map(|m| m.byte_size()).sum::<usize>();
-            per_layer_norm += (layer.attn_norm.len() + layer.ffn_norm.len())
-                * std::mem::size_of::<f32>();
+            per_layer_norm +=
+                (layer.attn_norm.len() + layer.ffn_norm.len()) * std::mem::size_of::<f32>();
 
             if let Some(ref b) = layer.q_proj_bias {
                 per_layer_bias += b.len() * std::mem::size_of::<f32>();
@@ -970,8 +1027,11 @@ impl ModelWeights {
             per_layer_norm_bytes: per_layer_norm,
             per_layer_bias_bytes: per_layer_bias,
             total_nda_bytes: per_layer_nda,
-            total_fp32_bytes: embed_bytes + lm_head_bytes + final_norm_bytes
-                + per_layer_norm + per_layer_bias,
+            total_fp32_bytes: embed_bytes
+                + lm_head_bytes
+                + final_norm_bytes
+                + per_layer_norm
+                + per_layer_bias,
         }
     }
 
@@ -1646,8 +1706,11 @@ mod tests {
         let w = make_test_weights(2, 64, 128, 10);
         let cfg = make_test_config(5, 64, 128, 10); // expects 5 layers
         let errors = w.validate(&cfg);
-        assert!(errors.iter().any(|e| e.contains("layer count mismatch")),
-            "expected layer count error, got: {:?}", errors);
+        assert!(
+            errors.iter().any(|e| e.contains("layer count mismatch")),
+            "expected layer count error, got: {:?}",
+            errors
+        );
     }
 
     #[test]
@@ -1656,8 +1719,11 @@ mod tests {
         let mut cfg = make_test_config(1, 64, 128, 20); // vocab=20 but embed has 10*64
         cfg.vocab_size = 20;
         let errors = w.validate(&cfg);
-        assert!(errors.iter().any(|e| e.contains("embed_tokens")),
-            "expected embed error, got: {:?}", errors);
+        assert!(
+            errors.iter().any(|e| e.contains("embed_tokens")),
+            "expected embed error, got: {:?}",
+            errors
+        );
     }
 
     #[test]
@@ -1666,15 +1732,22 @@ mod tests {
         w.final_norm = vec![1.0; 32]; // wrong size (should be 64)
         let cfg = make_test_config(1, 64, 128, 10);
         let errors = w.validate(&cfg);
-        assert!(errors.iter().any(|e| e.contains("final_norm")),
-            "expected final_norm error, got: {:?}", errors);
+        assert!(
+            errors.iter().any(|e| e.contains("final_norm")),
+            "expected final_norm error, got: {:?}",
+            errors
+        );
     }
 
     #[test]
     fn model_weights_check_tensor_health_clean() {
         let w = make_test_weights(2, 64, 128, 10);
         let health = w.check_tensor_health();
-        assert!(health.healthy, "should be healthy, issues: {:?}", health.issues);
+        assert!(
+            health.healthy,
+            "should be healthy, issues: {:?}",
+            health.issues
+        );
         assert_eq!(health.nan_count, 0);
         assert_eq!(health.inf_count, 0);
         // tensors_checked = 3 global + 2 layers * 2 norms = 7
@@ -1735,9 +1808,14 @@ mod tests {
         assert!(mb.per_layer_norm_bytes > 0);
         assert_eq!(mb.per_layer_bias_bytes, 0); // no biases in test
         assert_eq!(mb.total_nda_bytes, mb.per_layer_nda_bytes);
-        assert_eq!(mb.total_fp32_bytes,
-            mb.embed_tokens_bytes + mb.lm_head_bytes + mb.final_norm_bytes
-            + mb.per_layer_norm_bytes + mb.per_layer_bias_bytes);
+        assert_eq!(
+            mb.total_fp32_bytes,
+            mb.embed_tokens_bytes
+                + mb.lm_head_bytes
+                + mb.final_norm_bytes
+                + mb.per_layer_norm_bytes
+                + mb.per_layer_bias_bytes
+        );
     }
 
     #[test]
@@ -1814,9 +1892,17 @@ mod tests {
         let w = make_test_weights(2, 64, 128, 10);
         let cfg = make_test_config(2, 64, 128, 10);
         let errors = w.validate_layer(0, &cfg);
-        assert!(errors.is_empty(), "layer 0 should be valid, got: {:?}", errors);
+        assert!(
+            errors.is_empty(),
+            "layer 0 should be valid, got: {:?}",
+            errors
+        );
         let errors = w.validate_layer(1, &cfg);
-        assert!(errors.is_empty(), "layer 1 should be valid, got: {:?}", errors);
+        assert!(
+            errors.is_empty(),
+            "layer 1 should be valid, got: {:?}",
+            errors
+        );
     }
 
     #[test]
@@ -1835,8 +1921,11 @@ mod tests {
         w.layers[0].q_proj.rows = 999;
         let cfg = make_test_config(1, 64, 128, 10);
         let errors = w.validate_layer(0, &cfg);
-        assert!(errors.iter().any(|e| e.contains("q_proj")),
-            "expected q_proj error, got: {:?}", errors);
+        assert!(
+            errors.iter().any(|e| e.contains("q_proj")),
+            "expected q_proj error, got: {:?}",
+            errors
+        );
     }
 
     #[test]
@@ -2002,8 +2091,11 @@ mod tests {
         w.layers[0].k_proj.rows = 999;
         let cfg = make_test_config(1, 64, 128, 10);
         let errors = w.validate_layer(0, &cfg);
-        assert!(errors.iter().any(|e| e.contains("k_proj")),
-            "expected k_proj error, got: {:?}", errors);
+        assert!(
+            errors.iter().any(|e| e.contains("k_proj")),
+            "expected k_proj error, got: {:?}",
+            errors
+        );
     }
 
     #[test]
@@ -2012,8 +2104,11 @@ mod tests {
         w.layers[0].v_proj.rows = 999;
         let cfg = make_test_config(1, 64, 128, 10);
         let errors = w.validate_layer(0, &cfg);
-        assert!(errors.iter().any(|e| e.contains("v_proj")),
-            "expected v_proj error, got: {:?}", errors);
+        assert!(
+            errors.iter().any(|e| e.contains("v_proj")),
+            "expected v_proj error, got: {:?}",
+            errors
+        );
     }
 
     #[test]
@@ -2022,8 +2117,11 @@ mod tests {
         w.layers[0].o_proj.rows = 999;
         let cfg = make_test_config(1, 64, 128, 10);
         let errors = w.validate_layer(0, &cfg);
-        assert!(errors.iter().any(|e| e.contains("o_proj")),
-            "expected o_proj error, got: {:?}", errors);
+        assert!(
+            errors.iter().any(|e| e.contains("o_proj")),
+            "expected o_proj error, got: {:?}",
+            errors
+        );
     }
 
     #[test]
@@ -2032,8 +2130,11 @@ mod tests {
         w.layers[0].gate_proj.rows = 999;
         let cfg = make_test_config(1, 64, 128, 10);
         let errors = w.validate_layer(0, &cfg);
-        assert!(errors.iter().any(|e| e.contains("gate_proj")),
-            "expected gate_proj error, got: {:?}", errors);
+        assert!(
+            errors.iter().any(|e| e.contains("gate_proj")),
+            "expected gate_proj error, got: {:?}",
+            errors
+        );
     }
 
     #[test]
@@ -2042,8 +2143,11 @@ mod tests {
         w.layers[0].attn_norm = vec![1.0; 32]; // should be 64
         let cfg = make_test_config(1, 64, 128, 10);
         let errors = w.validate_layer(0, &cfg);
-        assert!(errors.iter().any(|e| e.contains("attn_norm")),
-            "expected attn_norm error, got: {:?}", errors);
+        assert!(
+            errors.iter().any(|e| e.contains("attn_norm")),
+            "expected attn_norm error, got: {:?}",
+            errors
+        );
     }
 
     // ── Info with validation issues ──────────────────────────────────────────
@@ -2184,30 +2288,42 @@ mod tests {
     #[test]
     fn batch_load_report_json_has_exactly_5_keys() {
         let report = BatchLoadReport {
-            files_attempted: 3, files_loaded: 2, files_failed: 1,
-            total_elapsed_us: 100, per_file_avg_us: 33.3,
+            files_attempted: 3,
+            files_loaded: 2,
+            files_failed: 1,
+            total_elapsed_us: 100,
+            per_file_avg_us: 33.3,
         };
-        let v: serde_json::Value = serde_json::from_str(&serde_json::to_string(&report).unwrap()).unwrap();
+        let v: serde_json::Value =
+            serde_json::from_str(&serde_json::to_string(&report).unwrap()).unwrap();
         assert_eq!(v.as_object().unwrap().len(), 5);
     }
 
     #[test]
     fn tensor_health_json_has_exactly_6_keys() {
         let health = TensorHealth {
-            tensors_checked: 3, nan_count: 0, inf_count: 0,
-            zero_count: 0, healthy: true, issues: vec![],
+            tensors_checked: 3,
+            nan_count: 0,
+            inf_count: 0,
+            zero_count: 0,
+            healthy: true,
+            issues: vec![],
         };
-        let v: serde_json::Value = serde_json::from_str(&serde_json::to_string(&health).unwrap()).unwrap();
+        let v: serde_json::Value =
+            serde_json::from_str(&serde_json::to_string(&health).unwrap()).unwrap();
         assert_eq!(v.as_object().unwrap().len(), 6);
     }
 
     #[test]
     fn version_consistency_json_has_exactly_4_keys() {
         let vc = VersionConsistency {
-            unique_versions: vec![2], consistent: true,
-            majority_version: Some(2), outlier_layers: vec![],
+            unique_versions: vec![2],
+            consistent: true,
+            majority_version: Some(2),
+            outlier_layers: vec![],
         };
-        let v: serde_json::Value = serde_json::from_str(&serde_json::to_string(&vc).unwrap()).unwrap();
+        let v: serde_json::Value =
+            serde_json::from_str(&serde_json::to_string(&vc).unwrap()).unwrap();
         assert_eq!(v.as_object().unwrap().len(), 4);
     }
 
@@ -2215,18 +2331,23 @@ mod tests {
     fn memory_breakdown_json_has_exactly_8_keys() {
         let w = make_test_weights(1, 64, 128, 10);
         let mb = w.memory_breakdown();
-        let v: serde_json::Value = serde_json::from_str(&serde_json::to_string(&mb).unwrap()).unwrap();
+        let v: serde_json::Value =
+            serde_json::from_str(&serde_json::to_string(&mb).unwrap()).unwrap();
         assert_eq!(v.as_object().unwrap().len(), 8);
     }
 
     #[test]
     fn weights_load_report_json_has_exactly_6_keys() {
         let report = WeightsLoadReport {
-            total_elapsed_us: 100, global_tensors_us: 20,
-            per_layer_us: 60, gpu_upload_us: 20,
-            layers_loaded: 4, per_layer_avg_us: 15.0,
+            total_elapsed_us: 100,
+            global_tensors_us: 20,
+            per_layer_us: 60,
+            gpu_upload_us: 20,
+            layers_loaded: 4,
+            per_layer_avg_us: 15.0,
         };
-        let v: serde_json::Value = serde_json::from_str(&serde_json::to_string(&report).unwrap()).unwrap();
+        let v: serde_json::Value =
+            serde_json::from_str(&serde_json::to_string(&report).unwrap()).unwrap();
         assert_eq!(v.as_object().unwrap().len(), 6);
     }
 
@@ -2235,10 +2356,14 @@ mod tests {
     #[test]
     fn batch_load_report_json_roundtrip() {
         let report = BatchLoadReport {
-            files_attempted: 5, files_loaded: 3, files_failed: 2,
-            total_elapsed_us: 500, per_file_avg_us: 100.0,
+            files_attempted: 5,
+            files_loaded: 3,
+            files_failed: 2,
+            total_elapsed_us: 500,
+            per_file_avg_us: 100.0,
         };
-        let v: serde_json::Value = serde_json::from_str(&serde_json::to_string(&report).unwrap()).unwrap();
+        let v: serde_json::Value =
+            serde_json::from_str(&serde_json::to_string(&report).unwrap()).unwrap();
         assert_eq!(v["files_attempted"], 5);
         assert_eq!(v["files_loaded"], 3);
         assert_eq!(v["files_failed"], 2);
@@ -2247,10 +2372,15 @@ mod tests {
     #[test]
     fn tensor_health_json_roundtrip() {
         let health = TensorHealth {
-            tensors_checked: 10, nan_count: 2, inf_count: 1,
-            zero_count: 3, healthy: false, issues: vec!["nan detected".into()],
+            tensors_checked: 10,
+            nan_count: 2,
+            inf_count: 1,
+            zero_count: 3,
+            healthy: false,
+            issues: vec!["nan detected".into()],
         };
-        let v: serde_json::Value = serde_json::from_str(&serde_json::to_string(&health).unwrap()).unwrap();
+        let v: serde_json::Value =
+            serde_json::from_str(&serde_json::to_string(&health).unwrap()).unwrap();
         assert_eq!(v["tensors_checked"], 10);
         assert_eq!(v["nan_count"], 2);
         assert_eq!(v["healthy"], false);
@@ -2262,8 +2392,11 @@ mod tests {
     #[test]
     fn batch_load_report_clone() {
         let report = BatchLoadReport {
-            files_attempted: 3, files_loaded: 2, files_failed: 1,
-            total_elapsed_us: 100, per_file_avg_us: 33.3,
+            files_attempted: 3,
+            files_loaded: 2,
+            files_failed: 1,
+            total_elapsed_us: 100,
+            per_file_avg_us: 33.3,
         };
         let cloned = report.clone();
         assert_eq!(cloned.files_attempted, report.files_attempted);
@@ -2273,8 +2406,12 @@ mod tests {
     #[test]
     fn tensor_health_clone() {
         let health = TensorHealth {
-            tensors_checked: 5, nan_count: 0, inf_count: 0,
-            zero_count: 0, healthy: true, issues: vec![],
+            tensors_checked: 5,
+            nan_count: 0,
+            inf_count: 0,
+            zero_count: 0,
+            healthy: true,
+            issues: vec![],
         };
         let cloned = health.clone();
         assert_eq!(cloned.tensors_checked, health.tensors_checked);
@@ -2284,8 +2421,10 @@ mod tests {
     #[test]
     fn version_consistency_clone() {
         let vc = VersionConsistency {
-            unique_versions: vec![1, 2], consistent: false,
-            majority_version: Some(2), outlier_layers: vec![0],
+            unique_versions: vec![1, 2],
+            consistent: false,
+            majority_version: Some(2),
+            outlier_layers: vec![0],
         };
         let cloned = vc.clone();
         assert_eq!(cloned.unique_versions, vc.unique_versions);
@@ -2316,8 +2455,11 @@ mod tests {
     #[test]
     fn batch_load_report_debug() {
         let report = BatchLoadReport {
-            files_attempted: 3, files_loaded: 2, files_failed: 1,
-            total_elapsed_us: 100, per_file_avg_us: 33.3,
+            files_attempted: 3,
+            files_loaded: 2,
+            files_failed: 1,
+            total_elapsed_us: 100,
+            per_file_avg_us: 33.3,
         };
         let debug = format!("{:?}", report);
         assert!(debug.contains("BatchLoadReport"));
@@ -2327,8 +2469,12 @@ mod tests {
     #[test]
     fn tensor_health_debug() {
         let health = TensorHealth {
-            tensors_checked: 3, nan_count: 0, inf_count: 0,
-            zero_count: 0, healthy: true, issues: vec![],
+            tensors_checked: 3,
+            nan_count: 0,
+            inf_count: 0,
+            zero_count: 0,
+            healthy: true,
+            issues: vec![],
         };
         let debug = format!("{:?}", health);
         assert!(debug.contains("TensorHealth"));
@@ -2349,25 +2495,36 @@ mod tests {
     #[test]
     fn batch_load_report_eq_via_json() {
         let r1 = BatchLoadReport {
-            files_attempted: 3, files_loaded: 2, files_failed: 1,
-            total_elapsed_us: 100, per_file_avg_us: 33.3,
+            files_attempted: 3,
+            files_loaded: 2,
+            files_failed: 1,
+            total_elapsed_us: 100,
+            per_file_avg_us: 33.3,
         };
         let r2 = r1.clone();
-        let j1: serde_json::Value = serde_json::from_str(&serde_json::to_string(&r1).unwrap()).unwrap();
-        let j2: serde_json::Value = serde_json::from_str(&serde_json::to_string(&r2).unwrap()).unwrap();
+        let j1: serde_json::Value =
+            serde_json::from_str(&serde_json::to_string(&r1).unwrap()).unwrap();
+        let j2: serde_json::Value =
+            serde_json::from_str(&serde_json::to_string(&r2).unwrap()).unwrap();
         assert_eq!(j1, j2);
     }
 
     #[test]
     fn tensor_health_neq_when_modified() {
         let h1 = TensorHealth {
-            tensors_checked: 3, nan_count: 0, inf_count: 0,
-            zero_count: 0, healthy: true, issues: vec![],
+            tensors_checked: 3,
+            nan_count: 0,
+            inf_count: 0,
+            zero_count: 0,
+            healthy: true,
+            issues: vec![],
         };
         let mut h2 = h1.clone();
         h2.nan_count = 5;
-        let j1: serde_json::Value = serde_json::from_str(&serde_json::to_string(&h1).unwrap()).unwrap();
-        let j2: serde_json::Value = serde_json::from_str(&serde_json::to_string(&h2).unwrap()).unwrap();
+        let j1: serde_json::Value =
+            serde_json::from_str(&serde_json::to_string(&h1).unwrap()).unwrap();
+        let j2: serde_json::Value =
+            serde_json::from_str(&serde_json::to_string(&h2).unwrap()).unwrap();
         assert_ne!(j1, j2);
     }
 
@@ -2376,8 +2533,12 @@ mod tests {
     #[test]
     fn tensor_health_all_finite_is_healthy() {
         let health = TensorHealth {
-            tensors_checked: 10, nan_count: 0, inf_count: 0,
-            zero_count: 5, healthy: true, issues: vec![],
+            tensors_checked: 10,
+            nan_count: 0,
+            inf_count: 0,
+            zero_count: 5,
+            healthy: true,
+            issues: vec![],
         };
         assert!(health.healthy);
     }
@@ -2385,8 +2546,10 @@ mod tests {
     #[test]
     fn version_consistency_empty_is_consistent() {
         let vc = VersionConsistency {
-            unique_versions: vec![], consistent: true,
-            majority_version: None, outlier_layers: vec![],
+            unique_versions: vec![],
+            consistent: true,
+            majority_version: None,
+            outlier_layers: vec![],
         };
         assert!(vc.consistent);
         assert!(vc.majority_version.is_none());

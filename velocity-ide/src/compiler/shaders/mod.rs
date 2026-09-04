@@ -349,7 +349,11 @@ mod tests {
     #[test]
     fn registry_all_valid() {
         let reg = shader_registry();
-        assert!(reg.validation_issues.is_empty(), "issues: {:?}", reg.validation_issues);
+        assert!(
+            reg.validation_issues.is_empty(),
+            "issues: {:?}",
+            reg.validation_issues
+        );
     }
 
     #[test]
@@ -734,7 +738,9 @@ mod tests {
         let issues = validate_spirv(&[], "my_shader");
         // Empty triggers both "empty" and "too short" (len < 5)
         assert!(issues.len() >= 2);
-        assert!(issues.iter().any(|i| i.contains("my_shader") && i.contains("empty")));
+        assert!(issues
+            .iter()
+            .any(|i| i.contains("my_shader") && i.contains("empty")));
         assert!(issues.iter().any(|i| i.contains("too short")));
     }
 
@@ -870,7 +876,10 @@ mod tests {
         let dist = shader_category_distribution(&reg);
         assert_eq!(dist.other_count, 1);
         // "other" should appear in categories
-        assert!(dist.categories.iter().any(|(name, count)| name == "other" && *count == 1));
+        assert!(dist
+            .categories
+            .iter()
+            .any(|(name, count)| name == "other" && *count == 1));
     }
 
     #[test]
@@ -939,7 +948,7 @@ mod tests {
             shader_count: 2,
             total_spv_bytes: 32,
             shaders: vec![
-                shader_entry("small", &[SPIRV_MAGIC, 0]),           // 2 words = 8 bytes
+                shader_entry("small", &[SPIRV_MAGIC, 0]), // 2 words = 8 bytes
                 shader_entry("large", &[SPIRV_MAGIC, 0, 0, 0, 0, 0]), // 6 words = 24 bytes
             ],
             validation_issues: vec![],
@@ -1083,7 +1092,11 @@ mod tests {
             validation_issues: vec![],
         };
         let issues = empty.validate();
-        assert!(issues.is_empty(), "empty registry should have no issues: {:?}", issues);
+        assert!(
+            issues.is_empty(),
+            "empty registry should have no issues: {:?}",
+            issues
+        );
     }
 
     #[test]
@@ -1126,7 +1139,10 @@ mod tests {
         assert!(!dist.categories.is_empty());
         // All entries should have non-zero counts
         for (_, count) in &dist.categories {
-            assert!(*count > 0, "category with zero count should not appear in vec");
+            assert!(
+                *count > 0,
+                "category with zero count should not appear in vec"
+            );
         }
     }
 
@@ -1152,10 +1168,8 @@ mod tests {
     #[test]
     fn shader_entry_json_key_count() {
         let entry = shader_entry("test", &[SPIRV_MAGIC, 0, 0, 0, 0]);
-        let v: serde_json::Value = serde_json::from_str(
-            &serde_json::to_string(&entry).unwrap(),
-        )
-        .unwrap();
+        let v: serde_json::Value =
+            serde_json::from_str(&serde_json::to_string(&entry).unwrap()).unwrap();
         let obj = v.as_object().unwrap();
         assert_eq!(obj.len(), 4, "ShaderEntry should have exactly 4 JSON keys");
         assert!(obj.contains_key("name"));
@@ -1167,10 +1181,8 @@ mod tests {
     #[test]
     fn shader_entry_json_values() {
         let entry = shader_entry("my_shader", &[SPIRV_MAGIC, 0, 0, 0, 0]);
-        let v: serde_json::Value = serde_json::from_str(
-            &serde_json::to_string(&entry).unwrap(),
-        )
-        .unwrap();
+        let v: serde_json::Value =
+            serde_json::from_str(&serde_json::to_string(&entry).unwrap()).unwrap();
         assert_eq!(v["name"], "my_shader");
         assert_eq!(v["spv_words"], 5);
         assert_eq!(v["spv_bytes"], 20);
@@ -1180,10 +1192,8 @@ mod tests {
     #[test]
     fn shader_entry_json_empty_bytecode() {
         let entry = shader_entry("empty", &[]);
-        let v: serde_json::Value = serde_json::from_str(
-            &serde_json::to_string(&entry).unwrap(),
-        )
-        .unwrap();
+        let v: serde_json::Value =
+            serde_json::from_str(&serde_json::to_string(&entry).unwrap()).unwrap();
         assert_eq!(v["spv_words"], 0);
         assert_eq!(v["spv_bytes"], 0);
         assert_eq!(v["valid_header"], false);
@@ -1192,12 +1202,14 @@ mod tests {
     #[test]
     fn shader_registry_json_key_count() {
         let reg = shader_registry();
-        let v: serde_json::Value = serde_json::from_str(
-            &serde_json::to_string(&reg).unwrap(),
-        )
-        .unwrap();
+        let v: serde_json::Value =
+            serde_json::from_str(&serde_json::to_string(&reg).unwrap()).unwrap();
         let obj = v.as_object().unwrap();
-        assert_eq!(obj.len(), 4, "ShaderRegistry should have exactly 4 JSON keys");
+        assert_eq!(
+            obj.len(),
+            4,
+            "ShaderRegistry should have exactly 4 JSON keys"
+        );
         assert!(obj.contains_key("shader_count"));
         assert!(obj.contains_key("total_spv_bytes"));
         assert!(obj.contains_key("shaders"));
@@ -1207,10 +1219,8 @@ mod tests {
     #[test]
     fn shader_registry_json_values() {
         let reg = shader_registry();
-        let v: serde_json::Value = serde_json::from_str(
-            &serde_json::to_string(&reg).unwrap(),
-        )
-        .unwrap();
+        let v: serde_json::Value =
+            serde_json::from_str(&serde_json::to_string(&reg).unwrap()).unwrap();
         assert_eq!(v["shader_count"], 17);
         assert_eq!(v["shaders"].as_array().unwrap().len(), 17);
         assert_eq!(v["validation_issues"].as_array().unwrap().len(), 0);
@@ -1222,16 +1232,24 @@ mod tests {
     fn shader_category_distribution_json_key_count() {
         let reg = shader_registry();
         let dist = shader_category_distribution(&reg);
-        let v: serde_json::Value = serde_json::from_str(
-            &serde_json::to_string(&dist).unwrap(),
-        )
-        .unwrap();
+        let v: serde_json::Value =
+            serde_json::from_str(&serde_json::to_string(&dist).unwrap()).unwrap();
         let obj = v.as_object().unwrap();
-        assert_eq!(obj.len(), 9, "ShaderCategoryDistribution should have exactly 9 JSON keys");
+        assert_eq!(
+            obj.len(),
+            9,
+            "ShaderCategoryDistribution should have exactly 9 JSON keys"
+        );
         for key in &[
-            "activation_count", "attention_count", "arithmetic_count",
-            "quantization_count", "kv_cache_count", "core_count",
-            "normalization_count", "other_count", "categories",
+            "activation_count",
+            "attention_count",
+            "arithmetic_count",
+            "quantization_count",
+            "kv_cache_count",
+            "core_count",
+            "normalization_count",
+            "other_count",
+            "categories",
         ] {
             assert!(obj.contains_key(*key), "missing key: {}", key);
         }
@@ -1241,13 +1259,22 @@ mod tests {
     fn shader_size_stats_json_key_count() {
         let reg = shader_registry();
         let stats = shader_size_stats(&reg).unwrap();
-        let v: serde_json::Value = serde_json::from_str(
-            &serde_json::to_string(&stats).unwrap(),
-        )
-        .unwrap();
+        let v: serde_json::Value =
+            serde_json::from_str(&serde_json::to_string(&stats).unwrap()).unwrap();
         let obj = v.as_object().unwrap();
-        assert_eq!(obj.len(), 6, "ShaderSizeStats should have exactly 6 JSON keys");
-        for key in &["min_bytes", "max_bytes", "avg_bytes", "total_bytes", "min_shader", "max_shader"] {
+        assert_eq!(
+            obj.len(),
+            6,
+            "ShaderSizeStats should have exactly 6 JSON keys"
+        );
+        for key in &[
+            "min_bytes",
+            "max_bytes",
+            "avg_bytes",
+            "total_bytes",
+            "min_shader",
+            "max_shader",
+        ] {
             assert!(obj.contains_key(*key), "missing key: {}", key);
         }
     }
@@ -1276,14 +1303,20 @@ mod tests {
         for s in &reg.shaders {
             let bc = shader_bytecode(s.name).unwrap();
             assert_eq!(
-                bc.len(), s.spv_words,
+                bc.len(),
+                s.spv_words,
                 "shader {}: bytecode len {} != entry spv_words {}",
-                s.name, bc.len(), s.spv_words
+                s.name,
+                bc.len(),
+                s.spv_words
             );
             assert_eq!(
-                bc.len() * 4, s.spv_bytes,
+                bc.len() * 4,
+                s.spv_bytes,
                 "shader {}: bytecode bytes {} != entry spv_bytes {}",
-                s.name, bc.len() * 4, s.spv_bytes
+                s.name,
+                bc.len() * 4,
+                s.spv_bytes
             );
         }
     }
@@ -1303,9 +1336,23 @@ mod tests {
     fn find_shader_all_17_shaders() {
         let reg = shader_registry();
         let names = vec![
-            "act_bitnet", "act_nda", "act_qwen", "attn_contig", "attn_ndakv",
-            "attn_softmax", "bias_add", "fp2", "fp4", "int4", "kv_write",
-            "nda", "residual_add", "rms_norm", "rope", "swiglu", "ternary",
+            "act_bitnet",
+            "act_nda",
+            "act_qwen",
+            "attn_contig",
+            "attn_ndakv",
+            "attn_softmax",
+            "bias_add",
+            "fp2",
+            "fp4",
+            "int4",
+            "kv_write",
+            "nda",
+            "residual_add",
+            "rms_norm",
+            "rope",
+            "swiglu",
+            "ternary",
         ];
         for name in &names {
             let entry = reg.find_shader(name);
@@ -1352,8 +1399,8 @@ mod tests {
             total_spv_bytes: 60,
             shaders: vec![
                 shader_entry("act_bitnet", &[SPIRV_MAGIC, 0, 0, 0, 0]), // activation
-                shader_entry("nda", &[SPIRV_MAGIC, 0, 0, 0, 0]),       // core
-                shader_entry("unknown", &[SPIRV_MAGIC, 0, 0, 0, 0]),   // other
+                shader_entry("nda", &[SPIRV_MAGIC, 0, 0, 0, 0]),        // core
+                shader_entry("unknown", &[SPIRV_MAGIC, 0, 0, 0, 0]),    // other
             ],
             validation_issues: vec![],
         };
@@ -1397,8 +1444,8 @@ mod tests {
             shader_count: 2,
             total_spv_bytes: 32, // 8 + 24 = 32
             shaders: vec![
-                shader_entry("tiny", &[SPIRV_MAGIC, 0]),               // 2 words = 8 bytes
-                shader_entry("big", &[SPIRV_MAGIC, 0, 0, 0, 0, 0]),   // 6 words = 24 bytes
+                shader_entry("tiny", &[SPIRV_MAGIC, 0]), // 2 words = 8 bytes
+                shader_entry("big", &[SPIRV_MAGIC, 0, 0, 0, 0, 0]), // 6 words = 24 bytes
             ],
             validation_issues: vec![],
         };
@@ -1420,10 +1467,8 @@ mod tests {
             validation_issues: vec![],
         };
         let stats = shader_size_stats(&reg).unwrap();
-        let v: serde_json::Value = serde_json::from_str(
-            &serde_json::to_string(&stats).unwrap(),
-        )
-        .unwrap();
+        let v: serde_json::Value =
+            serde_json::from_str(&serde_json::to_string(&stats).unwrap()).unwrap();
         assert_eq!(v["min_bytes"], 20);
         assert_eq!(v["max_bytes"], 20);
         assert_eq!(v["total_bytes"], 20);
@@ -1481,9 +1526,23 @@ mod tests {
     #[test]
     fn shader_bytecode_all_return_some_for_exact_names() {
         let exact_names = vec![
-            "act_bitnet", "act_nda", "act_qwen", "attn_contig", "attn_ndakv",
-            "attn_softmax", "bias_add", "fp2", "fp4", "int4", "kv_write",
-            "nda", "residual_add", "rms_norm", "rope", "swiglu", "ternary",
+            "act_bitnet",
+            "act_nda",
+            "act_qwen",
+            "attn_contig",
+            "attn_ndakv",
+            "attn_softmax",
+            "bias_add",
+            "fp2",
+            "fp4",
+            "int4",
+            "kv_write",
+            "nda",
+            "residual_add",
+            "rms_norm",
+            "rope",
+            "swiglu",
+            "ternary",
         ];
         for name in &exact_names {
             assert!(
@@ -1496,7 +1555,15 @@ mod tests {
 
     #[test]
     fn shader_bytecode_none_for_various_unknowns() {
-        let unknowns = vec!["", "NDA", "nda ", "act_BITNET", "nonexistent", "fp8", "int8"];
+        let unknowns = vec![
+            "",
+            "NDA",
+            "nda ",
+            "act_BITNET",
+            "nonexistent",
+            "fp8",
+            "int8",
+        ];
         for name in &unknowns {
             assert!(
                 shader_bytecode(name).is_none(),

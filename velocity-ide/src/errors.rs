@@ -5,8 +5,8 @@
 //! Each variant carries an [`ErrorCode`] for machine-readable diagnostics
 //! and optional suggestions for self-service recovery.
 
-use std::path::PathBuf;
 use serde::Serialize;
+use std::path::PathBuf;
 
 // ─── Error Codes ───────────────────────────────────────────────────────────
 
@@ -125,21 +125,45 @@ impl ErrorCode {
     /// Enumerate all known error codes (for documentation generation).
     pub fn all_codes() -> Vec<Self> {
         vec![
-            Self::ConfigNotFound, Self::ConfigInvalid, Self::ConfigMissingKey,
+            Self::ConfigNotFound,
+            Self::ConfigInvalid,
+            Self::ConfigMissingKey,
             Self::HomeDirectoryUnavailable,
-            Self::RouterUnreachable, Self::RouterTimeout, Self::RouterAuthFailed,
-            Self::RouterRateLimited, Self::RouterServerError, Self::RouterResponseInvalid,
-            Self::ModelDirNotFound, Self::TokenizerNotFound, Self::WeightLoadFailed,
-            Self::WeightShapeMismatch, Self::ConfigInvalidArch,
-            Self::TokenizerFileInvalid, Self::TokenizerMergeFailed, Self::TokenizerUnknownToken,
-            Self::ProviderKeyInvalid, Self::ProviderRateLimited, Self::ProviderUnavailable,
+            Self::RouterUnreachable,
+            Self::RouterTimeout,
+            Self::RouterAuthFailed,
+            Self::RouterRateLimited,
+            Self::RouterServerError,
+            Self::RouterResponseInvalid,
+            Self::ModelDirNotFound,
+            Self::TokenizerNotFound,
+            Self::WeightLoadFailed,
+            Self::WeightShapeMismatch,
+            Self::ConfigInvalidArch,
+            Self::TokenizerFileInvalid,
+            Self::TokenizerMergeFailed,
+            Self::TokenizerUnknownToken,
+            Self::ProviderKeyInvalid,
+            Self::ProviderRateLimited,
+            Self::ProviderUnavailable,
             Self::ProviderUsageApiUnsupported,
-            Self::CompileFailed, Self::PipelineExecutionFailed, Self::SandBoxViolation,
-            Self::SiteMapCorrupt, Self::SiteMapVersionMismatch, Self::SiteMapIoError,
-            Self::AssignmentFailed, Self::AssignmentCostExceeded, Self::AssignmentTimeout,
-            Self::JitCompilationFailed, Self::JitOptimizationFailed, Self::JitSandboxEscape,
-            Self::WikiIndexCorrupt, Self::WikiSearchFailed,
-            Self::IoError, Self::InvalidInput, Self::InternalError,
+            Self::CompileFailed,
+            Self::PipelineExecutionFailed,
+            Self::SandBoxViolation,
+            Self::SiteMapCorrupt,
+            Self::SiteMapVersionMismatch,
+            Self::SiteMapIoError,
+            Self::AssignmentFailed,
+            Self::AssignmentCostExceeded,
+            Self::AssignmentTimeout,
+            Self::JitCompilationFailed,
+            Self::JitOptimizationFailed,
+            Self::JitSandboxEscape,
+            Self::WikiIndexCorrupt,
+            Self::WikiSearchFailed,
+            Self::IoError,
+            Self::InvalidInput,
+            Self::InternalError,
         ]
     }
 
@@ -206,28 +230,46 @@ impl ErrorCode {
     /// Human-readable category name for grouping.
     pub fn category(&self) -> &'static str {
         match self {
-            Self::ConfigNotFound | Self::ConfigInvalid | Self::ConfigMissingKey
+            Self::ConfigNotFound
+            | Self::ConfigInvalid
+            | Self::ConfigMissingKey
             | Self::HomeDirectoryUnavailable => "config",
 
-            Self::RouterUnreachable | Self::RouterTimeout | Self::RouterAuthFailed
-            | Self::RouterRateLimited | Self::RouterServerError | Self::RouterResponseInvalid => "router",
+            Self::RouterUnreachable
+            | Self::RouterTimeout
+            | Self::RouterAuthFailed
+            | Self::RouterRateLimited
+            | Self::RouterServerError
+            | Self::RouterResponseInvalid => "router",
 
-            Self::ModelDirNotFound | Self::TokenizerNotFound | Self::WeightLoadFailed
-            | Self::WeightShapeMismatch | Self::ConfigInvalidArch => "model",
+            Self::ModelDirNotFound
+            | Self::TokenizerNotFound
+            | Self::WeightLoadFailed
+            | Self::WeightShapeMismatch
+            | Self::ConfigInvalidArch => "model",
 
-            Self::TokenizerFileInvalid | Self::TokenizerMergeFailed
+            Self::TokenizerFileInvalid
+            | Self::TokenizerMergeFailed
             | Self::TokenizerUnknownToken => "tokenizer",
 
-            Self::ProviderKeyInvalid | Self::ProviderRateLimited | Self::ProviderUnavailable
+            Self::ProviderKeyInvalid
+            | Self::ProviderRateLimited
+            | Self::ProviderUnavailable
             | Self::ProviderUsageApiUnsupported => "provider",
 
-            Self::CompileFailed | Self::PipelineExecutionFailed | Self::SandBoxViolation => "pipeline",
+            Self::CompileFailed | Self::PipelineExecutionFailed | Self::SandBoxViolation => {
+                "pipeline"
+            }
 
             Self::SiteMapCorrupt | Self::SiteMapVersionMismatch | Self::SiteMapIoError => "sitemap",
 
-            Self::AssignmentFailed | Self::AssignmentCostExceeded | Self::AssignmentTimeout => "assignment",
+            Self::AssignmentFailed | Self::AssignmentCostExceeded | Self::AssignmentTimeout => {
+                "assignment"
+            }
 
-            Self::JitCompilationFailed | Self::JitOptimizationFailed | Self::JitSandboxEscape => "jit",
+            Self::JitCompilationFailed | Self::JitOptimizationFailed | Self::JitSandboxEscape => {
+                "jit"
+            }
 
             Self::WikiIndexCorrupt | Self::WikiSearchFailed => "wiki",
 
@@ -329,7 +371,10 @@ impl VelocityError {
     pub fn is_io(&self) -> bool {
         self.code == ErrorCode::IoError
             || self.code == ErrorCode::SiteMapIoError
-            || self.source.as_ref().is_some_and(|s| s.downcast_ref::<std::io::Error>().is_some())
+            || self
+                .source
+                .as_ref()
+                .is_some_and(|s| s.downcast_ref::<std::io::Error>().is_some())
     }
 
     /// Map to a process exit code for CLI usage.
@@ -346,7 +391,11 @@ impl VelocityError {
             "jit" => 10,
             "wiki" => 11,
             _ => {
-                if self.is_security() { 13 } else { 1 }
+                if self.is_security() {
+                    13
+                } else {
+                    1
+                }
             }
         }
     }
@@ -431,20 +480,38 @@ pub enum RouterError {
 impl RouterError {
     pub fn to_velocity_error(&self) -> VelocityError {
         match self {
-            Self::Unreachable { url } => VelocityError::new(ErrorCode::RouterUnreachable, self.to_string())
-                .with_suggestion("Check that the router is running and VELOCITY_BASE_URL is correct.")
-                .with_context("url", url.clone()),
-            Self::Timeout { secs: _ } => VelocityError::new(ErrorCode::RouterTimeout, self.to_string())
-                .with_suggestion("The router may be overloaded. Try again in a few seconds."),
+            Self::Unreachable { url } => {
+                VelocityError::new(ErrorCode::RouterUnreachable, self.to_string())
+                    .with_suggestion(
+                        "Check that the router is running and VELOCITY_BASE_URL is correct.",
+                    )
+                    .with_context("url", url.clone())
+            }
+            Self::Timeout { secs: _ } => {
+                VelocityError::new(ErrorCode::RouterTimeout, self.to_string())
+                    .with_suggestion("The router may be overloaded. Try again in a few seconds.")
+            }
             Self::AuthFailed => VelocityError::new(ErrorCode::RouterAuthFailed, self.to_string())
                 .with_suggestion("Run `velocity-ide login` to reconfigure your API key."),
-            Self::RateLimited { retry_after_secs } => VelocityError::new(ErrorCode::RouterRateLimited, self.to_string())
-                .with_suggestion(format!("Wait {}s before retrying, or upgrade your tier.", retry_after_secs)),
-            Self::ServerError { status: _ } => VelocityError::new(ErrorCode::RouterServerError, self.to_string()),
-            Self::ResponseInvalid { detail } => VelocityError::new(ErrorCode::RouterResponseInvalid, self.to_string())
-                .with_context("detail", detail.clone()),
-            Self::MaxRetriesExceeded { attempts } => VelocityError::new(ErrorCode::RouterServerError, self.to_string())
-                .with_context("attempts", attempts.to_string()),
+            Self::RateLimited { retry_after_secs } => {
+                VelocityError::new(ErrorCode::RouterRateLimited, self.to_string()).with_suggestion(
+                    format!(
+                        "Wait {}s before retrying, or upgrade your tier.",
+                        retry_after_secs
+                    ),
+                )
+            }
+            Self::ServerError { status: _ } => {
+                VelocityError::new(ErrorCode::RouterServerError, self.to_string())
+            }
+            Self::ResponseInvalid { detail } => {
+                VelocityError::new(ErrorCode::RouterResponseInvalid, self.to_string())
+                    .with_context("detail", detail.clone())
+            }
+            Self::MaxRetriesExceeded { attempts } => {
+                VelocityError::new(ErrorCode::RouterServerError, self.to_string())
+                    .with_context("attempts", attempts.to_string())
+            }
         }
     }
 }
@@ -471,19 +538,31 @@ pub enum ModelError {
 impl ModelError {
     pub fn to_velocity_error(&self) -> VelocityError {
         match self {
-            Self::DirNotFound { path } => VelocityError::new(ErrorCode::ModelDirNotFound, self.to_string())
-                .with_suggestion("Use --model <dir> to specify the model directory.")
-                .with_context("path", format!("{:?}", path)),
-            Self::TokenizerNotFound { searched } => VelocityError::new(ErrorCode::TokenizerNotFound, self.to_string())
-                .with_suggestion("Use --tokenizer <file> or place tokenizer.json next to the model.")
-                .with_context("searched", format!("{:?}", searched)),
-            Self::WeightLoadFailed { detail } => VelocityError::new(ErrorCode::WeightLoadFailed, self.to_string())
-                .with_context("detail", detail.clone()),
-            Self::WeightShapeMismatch { expected, actual } => VelocityError::new(ErrorCode::WeightShapeMismatch, self.to_string())
-                .with_context("expected", expected.clone())
-                .with_context("actual", actual.clone()),
-            Self::InvalidArch { arch: _ } => VelocityError::new(ErrorCode::ConfigInvalidArch, self.to_string())
-                .with_suggestion("Supported architectures: qwen05, bitnet3b"),
+            Self::DirNotFound { path } => {
+                VelocityError::new(ErrorCode::ModelDirNotFound, self.to_string())
+                    .with_suggestion("Use --model <dir> to specify the model directory.")
+                    .with_context("path", format!("{:?}", path))
+            }
+            Self::TokenizerNotFound { searched } => {
+                VelocityError::new(ErrorCode::TokenizerNotFound, self.to_string())
+                    .with_suggestion(
+                        "Use --tokenizer <file> or place tokenizer.json next to the model.",
+                    )
+                    .with_context("searched", format!("{:?}", searched))
+            }
+            Self::WeightLoadFailed { detail } => {
+                VelocityError::new(ErrorCode::WeightLoadFailed, self.to_string())
+                    .with_context("detail", detail.clone())
+            }
+            Self::WeightShapeMismatch { expected, actual } => {
+                VelocityError::new(ErrorCode::WeightShapeMismatch, self.to_string())
+                    .with_context("expected", expected.clone())
+                    .with_context("actual", actual.clone())
+            }
+            Self::InvalidArch { arch: _ } => {
+                VelocityError::new(ErrorCode::ConfigInvalidArch, self.to_string())
+                    .with_suggestion("Supported architectures: qwen05, bitnet3b")
+            }
         }
     }
 }
@@ -507,15 +586,32 @@ pub enum ProviderError {
 impl ProviderError {
     pub fn to_velocity_error(&self) -> VelocityError {
         match self {
-            Self::KeyInvalid { provider } => VelocityError::new(ErrorCode::ProviderKeyInvalid, self.to_string())
-                .with_suggestion(format!("Run `velocity-ide providers remove --provider {}` and re-add the key.", provider)),
-            Self::RateLimited { provider: _ } => VelocityError::new(ErrorCode::ProviderRateLimited, self.to_string())
-                .with_suggestion("Wait before retrying, or consider routing through the Velocity router."),
-            Self::Unavailable { provider, detail } => VelocityError::new(ErrorCode::ProviderUnavailable, self.to_string())
-                .with_context("provider", provider.clone())
-                .with_context("detail", detail.clone()),
-            Self::UsageApiUnsupported { provider } => VelocityError::new(ErrorCode::ProviderUsageApiUnsupported, self.to_string())
-                .with_suggestion(format!("{} does not expose a usage API. Check the provider's dashboard directly.", provider)),
+            Self::KeyInvalid { provider } => {
+                VelocityError::new(ErrorCode::ProviderKeyInvalid, self.to_string()).with_suggestion(
+                    format!(
+                        "Run `velocity-ide providers remove --provider {}` and re-add the key.",
+                        provider
+                    ),
+                )
+            }
+            Self::RateLimited { provider: _ } => {
+                VelocityError::new(ErrorCode::ProviderRateLimited, self.to_string())
+                    .with_suggestion(
+                        "Wait before retrying, or consider routing through the Velocity router.",
+                    )
+            }
+            Self::Unavailable { provider, detail } => {
+                VelocityError::new(ErrorCode::ProviderUnavailable, self.to_string())
+                    .with_context("provider", provider.clone())
+                    .with_context("detail", detail.clone())
+            }
+            Self::UsageApiUnsupported { provider } => {
+                VelocityError::new(ErrorCode::ProviderUsageApiUnsupported, self.to_string())
+                    .with_suggestion(format!(
+                        "{} does not expose a usage API. Check the provider's dashboard directly.",
+                        provider
+                    ))
+            }
         }
     }
 }
@@ -536,12 +632,19 @@ pub enum PipelineError {
 impl PipelineError {
     pub fn to_velocity_error(&self) -> VelocityError {
         match self {
-            Self::CompileFailed { detail } => VelocityError::new(ErrorCode::CompileFailed, self.to_string())
-                .with_context("detail", detail.clone()),
-            Self::ExecutionFailed { detail } => VelocityError::new(ErrorCode::PipelineExecutionFailed, self.to_string())
-                .with_context("detail", detail.clone()),
-            Self::SandBoxViolation { detail: _ } => VelocityError::new(ErrorCode::SandBoxViolation, self.to_string())
-                .with_suggestion("The program attempted an operation not allowed in the sandbox."),
+            Self::CompileFailed { detail } => {
+                VelocityError::new(ErrorCode::CompileFailed, self.to_string())
+                    .with_context("detail", detail.clone())
+            }
+            Self::ExecutionFailed { detail } => {
+                VelocityError::new(ErrorCode::PipelineExecutionFailed, self.to_string())
+                    .with_context("detail", detail.clone())
+            }
+            Self::SandBoxViolation { detail: _ } => {
+                VelocityError::new(ErrorCode::SandBoxViolation, self.to_string()).with_suggestion(
+                    "The program attempted an operation not allowed in the sandbox.",
+                )
+            }
         }
     }
 }
@@ -562,14 +665,20 @@ pub enum SiteMapError {
 impl SiteMapError {
     pub fn to_velocity_error(&self) -> VelocityError {
         match self {
-            Self::Corrupt { detail } => VelocityError::new(ErrorCode::SiteMapCorrupt, self.to_string())
-                .with_context("detail", detail.clone())
-                .with_suggestion("Rebuild the site map with `velocity-ide index`."),
-            Self::VersionMismatch { expected, actual } => VelocityError::new(ErrorCode::SiteMapVersionMismatch, self.to_string())
-                .with_context("expected", expected.clone())
-                .with_context("actual", actual.clone()),
-            Self::IoError { detail } => VelocityError::new(ErrorCode::SiteMapIoError, self.to_string())
-                .with_context("detail", detail.clone()),
+            Self::Corrupt { detail } => {
+                VelocityError::new(ErrorCode::SiteMapCorrupt, self.to_string())
+                    .with_context("detail", detail.clone())
+                    .with_suggestion("Rebuild the site map with `velocity-ide index`.")
+            }
+            Self::VersionMismatch { expected, actual } => {
+                VelocityError::new(ErrorCode::SiteMapVersionMismatch, self.to_string())
+                    .with_context("expected", expected.clone())
+                    .with_context("actual", actual.clone())
+            }
+            Self::IoError { detail } => {
+                VelocityError::new(ErrorCode::SiteMapIoError, self.to_string())
+                    .with_context("detail", detail.clone())
+            }
         }
     }
 }
@@ -590,12 +699,18 @@ pub enum TokenizerError {
 impl TokenizerError {
     pub fn to_velocity_error(&self) -> VelocityError {
         match self {
-            Self::FileInvalid { detail } => VelocityError::new(ErrorCode::TokenizerFileInvalid, self.to_string())
-                .with_context("detail", detail.clone()),
-            Self::MergeFailed { detail } => VelocityError::new(ErrorCode::TokenizerMergeFailed, self.to_string())
-                .with_context("detail", detail.clone()),
-            Self::UnknownToken { token } => VelocityError::new(ErrorCode::TokenizerUnknownToken, self.to_string())
-                .with_context("token", token.clone()),
+            Self::FileInvalid { detail } => {
+                VelocityError::new(ErrorCode::TokenizerFileInvalid, self.to_string())
+                    .with_context("detail", detail.clone())
+            }
+            Self::MergeFailed { detail } => {
+                VelocityError::new(ErrorCode::TokenizerMergeFailed, self.to_string())
+                    .with_context("detail", detail.clone())
+            }
+            Self::UnknownToken { token } => {
+                VelocityError::new(ErrorCode::TokenizerUnknownToken, self.to_string())
+                    .with_context("token", token.clone())
+            }
         }
     }
 }
@@ -616,13 +731,22 @@ pub enum SandboxError {
 impl SandboxError {
     pub fn to_velocity_error(&self) -> VelocityError {
         match self {
-            Self::Violation { detail } => VelocityError::new(ErrorCode::SandBoxViolation, self.to_string())
-                .with_context("detail", detail.clone()),
-            Self::Timeout { secs } => VelocityError::new(ErrorCode::PipelineExecutionFailed, self.to_string())
-                .with_context("timeout_secs", secs.to_string())
-                .with_suggestion("The sandbox operation took too long. Consider breaking it into smaller steps."),
-            Self::ResourceLimit { resource } => VelocityError::new(ErrorCode::SandBoxViolation, self.to_string())
-                .with_context("resource", resource.clone()),
+            Self::Violation { detail } => {
+                VelocityError::new(ErrorCode::SandBoxViolation, self.to_string())
+                    .with_context("detail", detail.clone())
+            }
+            Self::Timeout { secs } => VelocityError::new(
+                ErrorCode::PipelineExecutionFailed,
+                self.to_string(),
+            )
+            .with_context("timeout_secs", secs.to_string())
+            .with_suggestion(
+                "The sandbox operation took too long. Consider breaking it into smaller steps.",
+            ),
+            Self::ResourceLimit { resource } => {
+                VelocityError::new(ErrorCode::SandBoxViolation, self.to_string())
+                    .with_context("resource", resource.clone())
+            }
         }
     }
 }
@@ -643,15 +767,25 @@ pub enum CredentialError {
 impl CredentialError {
     pub fn to_velocity_error(&self) -> VelocityError {
         match self {
-            Self::NotFound { key } => VelocityError::new(ErrorCode::ConfigMissingKey, self.to_string())
-                .with_context("key", key.clone())
-                .with_suggestion("Run `velocity-ide login` to configure credentials."),
-            Self::BoundaryViolation { detail } => VelocityError::new(ErrorCode::SandBoxViolation, self.to_string())
-                .with_context("detail", detail.clone())
-                .with_suggestion("A process attempted to access credentials outside the security boundary."),
-            Self::Expired { key } => VelocityError::new(ErrorCode::RouterAuthFailed, self.to_string())
-                .with_context("key", key.clone())
-                .with_suggestion("Your credentials have expired. Run `velocity-ide login` to refresh."),
+            Self::NotFound { key } => {
+                VelocityError::new(ErrorCode::ConfigMissingKey, self.to_string())
+                    .with_context("key", key.clone())
+                    .with_suggestion("Run `velocity-ide login` to configure credentials.")
+            }
+            Self::BoundaryViolation { detail } => {
+                VelocityError::new(ErrorCode::SandBoxViolation, self.to_string())
+                    .with_context("detail", detail.clone())
+                    .with_suggestion(
+                        "A process attempted to access credentials outside the security boundary.",
+                    )
+            }
+            Self::Expired { key } => {
+                VelocityError::new(ErrorCode::RouterAuthFailed, self.to_string())
+                    .with_context("key", key.clone())
+                    .with_suggestion(
+                        "Your credentials have expired. Run `velocity-ide login` to refresh.",
+                    )
+            }
         }
     }
 }
@@ -728,8 +862,12 @@ pub fn summarize_errors(errors: &[VelocityError]) -> ErrorSummary {
     for e in errors {
         *cat_counts.entry(e.category().to_string()).or_insert(0) += 1;
         unique.insert(e.code.as_str().to_string());
-        if e.is_retryable() { retryable += 1; }
-        if e.is_security() { security += 1; }
+        if e.is_retryable() {
+            retryable += 1;
+        }
+        if e.is_security() {
+            security += 1;
+        }
     }
     let mut by_category: Vec<(String, usize)> = cat_counts.into_iter().collect();
     by_category.sort_by(|a, b| b.1.cmp(&a.1));
@@ -808,9 +946,12 @@ mod tests {
 
     #[test]
     fn velocity_error_format_detailed() {
-        let err = VelocityError::new(ErrorCode::ModelDirNotFound, "model directory not found: /bad/path")
-            .with_suggestion("Use --model <dir> to specify the model directory.")
-            .with_context("path", "/bad/path");
+        let err = VelocityError::new(
+            ErrorCode::ModelDirNotFound,
+            "model directory not found: /bad/path",
+        )
+        .with_suggestion("Use --model <dir> to specify the model directory.")
+        .with_context("path", "/bad/path");
 
         let formatted = err.format_detailed();
         assert!(formatted.contains("E300"));
@@ -823,8 +964,7 @@ mod tests {
     #[test]
     fn velocity_error_with_source() {
         let io_err = std::io::Error::new(std::io::ErrorKind::NotFound, "file not found");
-        let err = VelocityError::new(ErrorCode::IoError, "I/O error")
-            .with_source(io_err);
+        let err = VelocityError::new(ErrorCode::IoError, "I/O error").with_source(io_err);
         assert!(err.source.is_some());
         let formatted = err.format_detailed();
         assert!(formatted.contains("Caused by:"));
@@ -832,7 +972,9 @@ mod tests {
 
     #[test]
     fn router_error_converts() {
-        let re = RouterError::Unreachable { url: "http://localhost:8787".into() };
+        let re = RouterError::Unreachable {
+            url: "http://localhost:8787".into(),
+        };
         let ve: VelocityError = re.into();
         assert_eq!(ve.code, ErrorCode::RouterUnreachable);
         assert!(ve.suggestion.is_some());
@@ -840,7 +982,9 @@ mod tests {
 
     #[test]
     fn model_error_converts() {
-        let me = ModelError::InvalidArch { arch: "llama3".into() };
+        let me = ModelError::InvalidArch {
+            arch: "llama3".into(),
+        };
         let ve: VelocityError = me.into();
         assert_eq!(ve.code, ErrorCode::ConfigInvalidArch);
         assert!(ve.suggestion.is_some());
@@ -848,7 +992,9 @@ mod tests {
 
     #[test]
     fn provider_error_converts() {
-        let pe = ProviderError::UsageApiUnsupported { provider: "mistral".into() };
+        let pe = ProviderError::UsageApiUnsupported {
+            provider: "mistral".into(),
+        };
         let ve: VelocityError = pe.into();
         assert_eq!(ve.code, ErrorCode::ProviderUsageApiUnsupported);
     }
@@ -929,7 +1075,9 @@ mod tests {
 
     #[test]
     fn sitemap_error_converts() {
-        let se = SiteMapError::Corrupt { detail: "checksum mismatch".into() };
+        let se = SiteMapError::Corrupt {
+            detail: "checksum mismatch".into(),
+        };
         let ve: VelocityError = se.into();
         assert_eq!(ve.code, ErrorCode::SiteMapCorrupt);
         assert!(ve.suggestion.is_some());
@@ -937,7 +1085,9 @@ mod tests {
 
     #[test]
     fn tokenizer_error_converts() {
-        let te = TokenizerError::UnknownToken { token: "<unk>".into() };
+        let te = TokenizerError::UnknownToken {
+            token: "<unk>".into(),
+        };
         let ve: VelocityError = te.into();
         assert_eq!(ve.code, ErrorCode::TokenizerUnknownToken);
     }
@@ -952,7 +1102,9 @@ mod tests {
 
     #[test]
     fn credential_error_converts() {
-        let ce = CredentialError::BoundaryViolation { detail: "env var leak".into() };
+        let ce = CredentialError::BoundaryViolation {
+            detail: "env var leak".into(),
+        };
         let ve: VelocityError = ce.into();
         assert_eq!(ve.code, ErrorCode::SandBoxViolation);
         assert!(ve.is_security());
@@ -960,7 +1112,9 @@ mod tests {
 
     #[test]
     fn credential_error_expired() {
-        let ce = CredentialError::Expired { key: "api_key".into() };
+        let ce = CredentialError::Expired {
+            key: "api_key".into(),
+        };
         let ve: VelocityError = ce.into();
         assert_eq!(ve.code, ErrorCode::RouterAuthFailed);
         assert!(ve.suggestion.is_some());
@@ -1030,8 +1184,7 @@ mod tests {
     #[test]
     fn velocity_error_chain_sources() {
         let io_err = std::io::Error::new(std::io::ErrorKind::NotFound, "file missing");
-        let err = VelocityError::new(ErrorCode::IoError, "read failed")
-            .with_source(io_err);
+        let err = VelocityError::new(ErrorCode::IoError, "read failed").with_source(io_err);
         let chain = err.chain_sources();
         assert_eq!(chain.len(), 1);
         assert!(chain[0].contains("file missing"));
@@ -1070,8 +1223,25 @@ mod tests {
     fn error_code_all_categories_covered() {
         for code in ErrorCode::all_codes() {
             let cat = code.category();
-            assert!(["config","router","model","tokenizer","provider","pipeline","sitemap","assignment","jit","wiki","general"].contains(&cat),
-                "unknown category '{}' for {:?}", cat, code);
+            assert!(
+                [
+                    "config",
+                    "router",
+                    "model",
+                    "tokenizer",
+                    "provider",
+                    "pipeline",
+                    "sitemap",
+                    "assignment",
+                    "jit",
+                    "wiki",
+                    "general"
+                ]
+                .contains(&cat),
+                "unknown category '{}' for {:?}",
+                cat,
+                code
+            );
         }
     }
 
@@ -1126,17 +1296,23 @@ mod tests {
 
     #[test]
     fn router_error_display_all_variants() {
-        let e = RouterError::Unreachable { url: "http://x".into() };
+        let e = RouterError::Unreachable {
+            url: "http://x".into(),
+        };
         assert!(e.to_string().contains("http://x"));
         let e = RouterError::Timeout { secs: 30 };
         assert!(e.to_string().contains("30s"));
         let e = RouterError::AuthFailed;
         assert!(e.to_string().contains("authentication failed"));
-        let e = RouterError::RateLimited { retry_after_secs: 60 };
+        let e = RouterError::RateLimited {
+            retry_after_secs: 60,
+        };
         assert!(e.to_string().contains("60s"));
         let e = RouterError::ServerError { status: 503 };
         assert!(e.to_string().contains("503"));
-        let e = RouterError::ResponseInvalid { detail: "bad json".into() };
+        let e = RouterError::ResponseInvalid {
+            detail: "bad json".into(),
+        };
         assert!(e.to_string().contains("bad json"));
         let e = RouterError::MaxRetriesExceeded { attempts: 5 };
         assert!(e.to_string().contains("5 attempts"));
@@ -1148,7 +1324,9 @@ mod tests {
             RouterError::Unreachable { url: "u".into() },
             RouterError::Timeout { secs: 1 },
             RouterError::AuthFailed,
-            RouterError::RateLimited { retry_after_secs: 1 },
+            RouterError::RateLimited {
+                retry_after_secs: 1,
+            },
             RouterError::ServerError { status: 500 },
             RouterError::ResponseInvalid { detail: "d".into() },
             RouterError::MaxRetriesExceeded { attempts: 3 },
@@ -1161,13 +1339,22 @@ mod tests {
 
     #[test]
     fn model_error_display_all_variants() {
-        let e = ModelError::DirNotFound { path: "/bad".into() };
+        let e = ModelError::DirNotFound {
+            path: "/bad".into(),
+        };
         assert!(e.to_string().contains("/bad"));
-        let e = ModelError::TokenizerNotFound { searched: vec!["/a".into()] };
+        let e = ModelError::TokenizerNotFound {
+            searched: vec!["/a".into()],
+        };
         assert!(e.to_string().contains("searched"));
-        let e = ModelError::WeightLoadFailed { detail: "corrupt".into() };
+        let e = ModelError::WeightLoadFailed {
+            detail: "corrupt".into(),
+        };
         assert!(e.to_string().contains("corrupt"));
-        let e = ModelError::WeightShapeMismatch { expected: "4x4".into(), actual: "2x8".into() };
+        let e = ModelError::WeightShapeMismatch {
+            expected: "4x4".into(),
+            actual: "2x8".into(),
+        };
         assert!(e.to_string().contains("4x4"));
         assert!(e.to_string().contains("2x8"));
     }
@@ -1175,10 +1362,19 @@ mod tests {
     #[test]
     fn provider_error_all_variants_convert() {
         let variants: Vec<ProviderError> = vec![
-            ProviderError::KeyInvalid { provider: "openai".into() },
-            ProviderError::RateLimited { provider: "anthropic".into() },
-            ProviderError::Unavailable { provider: "google".into(), detail: "down".into() },
-            ProviderError::UsageApiUnsupported { provider: "mistral".into() },
+            ProviderError::KeyInvalid {
+                provider: "openai".into(),
+            },
+            ProviderError::RateLimited {
+                provider: "anthropic".into(),
+            },
+            ProviderError::Unavailable {
+                provider: "google".into(),
+                detail: "down".into(),
+            },
+            ProviderError::UsageApiUnsupported {
+                provider: "mistral".into(),
+            },
         ];
         for v in variants {
             let ve: VelocityError = v.into();
@@ -1189,9 +1385,15 @@ mod tests {
     #[test]
     fn pipeline_error_all_variants_convert() {
         let variants: Vec<PipelineError> = vec![
-            PipelineError::CompileFailed { detail: "syntax".into() },
-            PipelineError::ExecutionFailed { detail: "oom".into() },
-            PipelineError::SandBoxViolation { detail: "fs access".into() },
+            PipelineError::CompileFailed {
+                detail: "syntax".into(),
+            },
+            PipelineError::ExecutionFailed {
+                detail: "oom".into(),
+            },
+            PipelineError::SandBoxViolation {
+                detail: "fs access".into(),
+            },
         ];
         for v in variants {
             let ve = v.to_velocity_error();
@@ -1205,13 +1407,18 @@ mod tests {
 
     #[test]
     fn sitemap_error_all_variants() {
-        let e = SiteMapError::VersionMismatch { expected: "2".into(), actual: "1".into() };
+        let e = SiteMapError::VersionMismatch {
+            expected: "2".into(),
+            actual: "1".into(),
+        };
         let ve = e.to_velocity_error();
         assert_eq!(ve.code, ErrorCode::SiteMapVersionMismatch);
-        assert!(ve.context.iter().any(|(k,_)| k == "expected"));
-        assert!(ve.context.iter().any(|(k,_)| k == "actual"));
+        assert!(ve.context.iter().any(|(k, _)| k == "expected"));
+        assert!(ve.context.iter().any(|(k, _)| k == "actual"));
 
-        let e = SiteMapError::IoError { detail: "disk full".into() };
+        let e = SiteMapError::IoError {
+            detail: "disk full".into(),
+        };
         let ve = e.to_velocity_error();
         assert_eq!(ve.code, ErrorCode::SiteMapIoError);
         assert!(ve.is_io());
@@ -1220,9 +1427,15 @@ mod tests {
     #[test]
     fn tokenizer_error_all_variants() {
         let variants: Vec<TokenizerError> = vec![
-            TokenizerError::FileInvalid { detail: "bad header".into() },
-            TokenizerError::MergeFailed { detail: "incompatible".into() },
-            TokenizerError::UnknownToken { token: "<unk>".into() },
+            TokenizerError::FileInvalid {
+                detail: "bad header".into(),
+            },
+            TokenizerError::MergeFailed {
+                detail: "incompatible".into(),
+            },
+            TokenizerError::UnknownToken {
+                token: "<unk>".into(),
+            },
         ];
         for v in variants {
             let ve: VelocityError = v.into();
@@ -1232,12 +1445,16 @@ mod tests {
 
     #[test]
     fn sandbox_error_all_variants() {
-        let e = SandboxError::Violation { detail: "fs write".into() };
+        let e = SandboxError::Violation {
+            detail: "fs write".into(),
+        };
         let ve = e.to_velocity_error();
         assert_eq!(ve.code, ErrorCode::SandBoxViolation);
         assert!(ve.is_security());
 
-        let e = SandboxError::ResourceLimit { resource: "memory".into() };
+        let e = SandboxError::ResourceLimit {
+            resource: "memory".into(),
+        };
         let ve = e.to_velocity_error();
         assert_eq!(ve.code, ErrorCode::SandBoxViolation);
 
@@ -1249,12 +1466,16 @@ mod tests {
 
     #[test]
     fn credential_error_all_variants() {
-        let e = CredentialError::NotFound { key: "api_key".into() };
+        let e = CredentialError::NotFound {
+            key: "api_key".into(),
+        };
         let ve = e.to_velocity_error();
         assert_eq!(ve.code, ErrorCode::ConfigMissingKey);
         assert!(ve.suggestion.is_some());
 
-        let e = CredentialError::BoundaryViolation { detail: "leak".into() };
+        let e = CredentialError::BoundaryViolation {
+            detail: "leak".into(),
+        };
         let ve = e.to_velocity_error();
         assert_eq!(ve.code, ErrorCode::SandBoxViolation);
         assert!(ve.is_security());
@@ -1375,9 +1596,7 @@ mod tests {
 
     #[test]
     fn summarize_errors_serializes() {
-        let errors = vec![
-            VelocityError::new(ErrorCode::RouterTimeout, "t"),
-        ];
+        let errors = vec![VelocityError::new(ErrorCode::RouterTimeout, "t")];
         let summary = summarize_errors(&errors);
         let json = serde_json::to_string(&summary).unwrap();
         assert!(json.contains("\"total\":1"));
@@ -1505,7 +1724,12 @@ mod tests {
     #[test]
     fn error_code_all_codes_count() {
         let codes = ErrorCode::all_codes();
-        assert_eq!(codes.len(), 39, "expected 39 error codes, got {}", codes.len());
+        assert_eq!(
+            codes.len(),
+            39,
+            "expected 39 error codes, got {}",
+            codes.len()
+        );
     }
 
     #[test]
@@ -1578,10 +1802,15 @@ mod tests {
 
     #[test]
     fn router_error_unreachable_context() {
-        let e = RouterError::Unreachable { url: "http://localhost:9999".into() };
+        let e = RouterError::Unreachable {
+            url: "http://localhost:9999".into(),
+        };
         let ve = e.to_velocity_error();
         assert_eq!(ve.code, ErrorCode::RouterUnreachable);
-        assert!(ve.context.iter().any(|(k, v)| k == "url" && v == "http://localhost:9999"));
+        assert!(ve
+            .context
+            .iter()
+            .any(|(k, v)| k == "url" && v == "http://localhost:9999"));
         assert!(ve.suggestion.is_some());
     }
 
@@ -1596,7 +1825,9 @@ mod tests {
 
     #[test]
     fn router_error_rate_limited_suggestion() {
-        let e = RouterError::RateLimited { retry_after_secs: 120 };
+        let e = RouterError::RateLimited {
+            retry_after_secs: 120,
+        };
         let ve = e.to_velocity_error();
         assert_eq!(ve.code, ErrorCode::RouterRateLimited);
         assert!(ve.suggestion.is_some());
@@ -1605,10 +1836,15 @@ mod tests {
 
     #[test]
     fn router_error_response_invalid_context() {
-        let e = RouterError::ResponseInvalid { detail: "missing field 'usage'".into() };
+        let e = RouterError::ResponseInvalid {
+            detail: "missing field 'usage'".into(),
+        };
         let ve = e.to_velocity_error();
         assert_eq!(ve.code, ErrorCode::RouterResponseInvalid);
-        assert!(ve.context.iter().any(|(k, v)| k == "detail" && v.contains("missing field")));
+        assert!(ve
+            .context
+            .iter()
+            .any(|(k, v)| k == "detail" && v.contains("missing field")));
     }
 
     #[test]
@@ -1621,7 +1857,9 @@ mod tests {
 
     #[test]
     fn model_error_dir_not_found_context() {
-        let e = ModelError::DirNotFound { path: "/bad/model".into() };
+        let e = ModelError::DirNotFound {
+            path: "/bad/model".into(),
+        };
         let ve = e.to_velocity_error();
         assert_eq!(ve.code, ErrorCode::ModelDirNotFound);
         assert!(ve.suggestion.is_some());
@@ -1636,7 +1874,10 @@ mod tests {
         };
         let ve = e.to_velocity_error();
         assert_eq!(ve.code, ErrorCode::WeightShapeMismatch);
-        assert!(ve.context.iter().any(|(k, v)| k == "expected" && v == "4x4"));
+        assert!(ve
+            .context
+            .iter()
+            .any(|(k, v)| k == "expected" && v == "4x4"));
         assert!(ve.context.iter().any(|(k, v)| k == "actual" && v == "2x8"));
     }
 
@@ -1648,24 +1889,40 @@ mod tests {
         };
         let ve: VelocityError = e.into();
         assert_eq!(ve.code, ErrorCode::ProviderUnavailable);
-        assert!(ve.context.iter().any(|(k, v)| k == "provider" && v == "openai"));
-        assert!(ve.context.iter().any(|(k, v)| k == "detail" && v == "service down"));
+        assert!(ve
+            .context
+            .iter()
+            .any(|(k, v)| k == "provider" && v == "openai"));
+        assert!(ve
+            .context
+            .iter()
+            .any(|(k, v)| k == "detail" && v == "service down"));
     }
 
     #[test]
     fn pipeline_error_compile_failed_context() {
-        let e = PipelineError::CompileFailed { detail: "syntax error at line 5".into() };
+        let e = PipelineError::CompileFailed {
+            detail: "syntax error at line 5".into(),
+        };
         let ve = e.to_velocity_error();
         assert_eq!(ve.code, ErrorCode::CompileFailed);
-        assert!(ve.context.iter().any(|(k, v)| k == "detail" && v.contains("syntax error")));
+        assert!(ve
+            .context
+            .iter()
+            .any(|(k, v)| k == "detail" && v.contains("syntax error")));
     }
 
     #[test]
     fn pipeline_error_execution_failed_context() {
-        let e = PipelineError::ExecutionFailed { detail: "out of memory".into() };
+        let e = PipelineError::ExecutionFailed {
+            detail: "out of memory".into(),
+        };
         let ve = e.to_velocity_error();
         assert_eq!(ve.code, ErrorCode::PipelineExecutionFailed);
-        assert!(ve.context.iter().any(|(k, v)| k == "detail" && v.contains("out of memory")));
+        assert!(ve
+            .context
+            .iter()
+            .any(|(k, v)| k == "detail" && v.contains("out of memory")));
     }
 
     #[test]
@@ -1674,15 +1931,23 @@ mod tests {
         let ve = e.to_velocity_error();
         assert!(ve.suggestion.is_some());
         assert!(ve.suggestion.as_ref().unwrap().contains("smaller steps"));
-        assert!(ve.context.iter().any(|(k, v)| k == "timeout_secs" && v == "60"));
+        assert!(ve
+            .context
+            .iter()
+            .any(|(k, v)| k == "timeout_secs" && v == "60"));
     }
 
     #[test]
     fn sandbox_error_resource_limit_context() {
-        let e = SandboxError::ResourceLimit { resource: "memory".into() };
+        let e = SandboxError::ResourceLimit {
+            resource: "memory".into(),
+        };
         let ve = e.to_velocity_error();
         assert_eq!(ve.code, ErrorCode::SandBoxViolation);
-        assert!(ve.context.iter().any(|(k, v)| k == "resource" && v == "memory"));
+        assert!(ve
+            .context
+            .iter()
+            .any(|(k, v)| k == "resource" && v == "memory"));
     }
 
     #[test]
@@ -1741,9 +2006,7 @@ mod tests {
 
     #[test]
     fn error_summary_clone() {
-        let summary = summarize_errors(&[
-            VelocityError::new(ErrorCode::RouterTimeout, "t"),
-        ]);
+        let summary = summarize_errors(&[VelocityError::new(ErrorCode::RouterTimeout, "t")]);
         let s2 = summary.clone();
         assert_eq!(s2.total, 1);
         assert_eq!(s2.retryable_count, 1);
@@ -1761,15 +2024,16 @@ mod tests {
     #[test]
     fn velocity_error_is_io_via_source_downcast() {
         let io_err = std::io::Error::other("inner io error");
-        let err = VelocityError::new(ErrorCode::InternalError, "wrapped")
-            .with_source(io_err);
+        let err = VelocityError::new(ErrorCode::InternalError, "wrapped").with_source(io_err);
         // InternalError is not normally io, but has an io::Error source
         assert!(err.is_io());
     }
 
     #[test]
     fn credential_error_not_found_suggestion() {
-        let e = CredentialError::NotFound { key: "api_key".into() };
+        let e = CredentialError::NotFound {
+            key: "api_key".into(),
+        };
         let ve = e.to_velocity_error();
         assert!(ve.suggestion.is_some());
         assert!(ve.suggestion.as_ref().unwrap().contains("login"));
@@ -1778,7 +2042,9 @@ mod tests {
 
     #[test]
     fn credential_error_boundary_violation_suggestion() {
-        let e = CredentialError::BoundaryViolation { detail: "env var leak".into() };
+        let e = CredentialError::BoundaryViolation {
+            detail: "env var leak".into(),
+        };
         let ve = e.to_velocity_error();
         assert!(ve.suggestion.is_some());
         assert!(ve.suggestion.as_ref().unwrap().contains("boundary"));
@@ -1848,9 +2114,7 @@ mod tests {
 
     #[test]
     fn error_summary_json_types() {
-        let summary = summarize_errors(&[
-            VelocityError::new(ErrorCode::RouterTimeout, "t"),
-        ]);
+        let summary = summarize_errors(&[VelocityError::new(ErrorCode::RouterTimeout, "t")]);
         let json = serde_json::to_string(&summary).unwrap();
         let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
         assert!(parsed["total"].is_number());
@@ -1913,7 +2177,9 @@ mod tests {
 
     #[test]
     fn model_error_invalid_arch_suggestion_text() {
-        let e = ModelError::InvalidArch { arch: "llama3".into() };
+        let e = ModelError::InvalidArch {
+            arch: "llama3".into(),
+        };
         let ve = e.to_velocity_error();
         assert!(ve.suggestion.is_some());
         let sug = ve.suggestion.as_ref().unwrap();
@@ -1923,7 +2189,9 @@ mod tests {
 
     #[test]
     fn provider_error_key_invalid_suggestion_has_provider() {
-        let e = ProviderError::KeyInvalid { provider: "openai".into() };
+        let e = ProviderError::KeyInvalid {
+            provider: "openai".into(),
+        };
         let ve = e.to_velocity_error();
         assert!(ve.suggestion.is_some());
         assert!(ve.suggestion.as_ref().unwrap().contains("openai"));
@@ -1931,7 +2199,9 @@ mod tests {
 
     #[test]
     fn provider_error_rate_limited_suggestion() {
-        let e = ProviderError::RateLimited { provider: "anthropic".into() };
+        let e = ProviderError::RateLimited {
+            provider: "anthropic".into(),
+        };
         let ve = e.to_velocity_error();
         assert_eq!(ve.code, ErrorCode::ProviderRateLimited);
         assert!(ve.is_retryable());
@@ -2023,7 +2293,9 @@ mod tests {
 
     #[test]
     fn sitemap_error_corrupt_suggestion_text() {
-        let e = SiteMapError::Corrupt { detail: "bad checksum".into() };
+        let e = SiteMapError::Corrupt {
+            detail: "bad checksum".into(),
+        };
         let ve = e.to_velocity_error();
         assert!(ve.suggestion.is_some());
         assert!(ve.suggestion.as_ref().unwrap().contains("index"));
@@ -2031,7 +2303,9 @@ mod tests {
 
     #[test]
     fn model_error_tokenizer_not_found_context() {
-        let e = ModelError::TokenizerNotFound { searched: vec!["/a/tok.json".into(), "/b/tok.json".into()] };
+        let e = ModelError::TokenizerNotFound {
+            searched: vec!["/a/tok.json".into(), "/b/tok.json".into()],
+        };
         let ve = e.to_velocity_error();
         assert_eq!(ve.code, ErrorCode::TokenizerNotFound);
         assert!(ve.context.iter().any(|(k, _)| k == "searched"));
@@ -2053,9 +2327,7 @@ mod tests {
 
     #[test]
     fn error_summary_debug_format() {
-        let summary = summarize_errors(&[
-            VelocityError::new(ErrorCode::RouterTimeout, "t"),
-        ]);
+        let summary = summarize_errors(&[VelocityError::new(ErrorCode::RouterTimeout, "t")]);
         let debug = format!("{:?}", summary);
         assert!(debug.contains("ErrorSummary"));
         assert!(debug.contains("total"));
@@ -2072,10 +2344,15 @@ mod tests {
 
     #[test]
     fn credential_error_expired_context() {
-        let e = CredentialError::Expired { key: "cf_token".into() };
+        let e = CredentialError::Expired {
+            key: "cf_token".into(),
+        };
         let ve = e.to_velocity_error();
         assert_eq!(ve.code, ErrorCode::RouterAuthFailed);
-        assert!(ve.context.iter().any(|(k, v)| k == "key" && v == "cf_token"));
+        assert!(ve
+            .context
+            .iter()
+            .any(|(k, v)| k == "key" && v == "cf_token"));
         assert!(ve.is_security());
     }
 
@@ -2137,16 +2414,15 @@ mod tests {
     #[test]
     fn velocity_error_is_io_non_io_source() {
         // A non-io source should not make is_io return true
-        let err = VelocityError::new(ErrorCode::InternalError, "wrapped")
-            .with_source(std::fmt::Error);
+        let err =
+            VelocityError::new(ErrorCode::InternalError, "wrapped").with_source(std::fmt::Error);
         assert!(!err.is_io());
     }
 
     #[test]
     fn velocity_error_format_detailed_source_without_suggestion() {
         let io_err = std::io::Error::new(std::io::ErrorKind::NotFound, "file missing");
-        let err = VelocityError::new(ErrorCode::IoError, "read failed")
-            .with_source(io_err);
+        let err = VelocityError::new(ErrorCode::IoError, "read failed").with_source(io_err);
         let formatted = err.format_detailed();
         assert!(formatted.contains("Caused by: file missing"));
         assert!(!formatted.contains("Suggestion:"));

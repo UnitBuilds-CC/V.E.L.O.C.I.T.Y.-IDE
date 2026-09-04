@@ -34,13 +34,13 @@ fn all_advertised_tools_are_dispatchable() {
     // Tools that are known to block or require external resources.
     // These tools are wired but can't be tested with empty args in a unit test.
     let skip_tools = [
-        "execute_nda",           // Compiles and runs NDA code — blocks
-        "wa_create_session",     // May block on Windows automation init
-        "wa_wait_for_process",   // Blocks waiting for process
-        "wa_wait_for_window",    // Blocks waiting for window
-        "wa_record_session",     // Blocks recording input
-        "wa_replay_script",      // Blocks replaying script
-        "wa_idle_wait",          // Intentionally blocks
+        "execute_nda",         // Compiles and runs NDA code — blocks
+        "wa_create_session",   // May block on Windows automation init
+        "wa_wait_for_process", // Blocks waiting for process
+        "wa_wait_for_window",  // Blocks waiting for window
+        "wa_record_session",   // Blocks recording input
+        "wa_replay_script",    // Blocks replaying script
+        "wa_idle_wait",        // Intentionally blocks
     ];
 
     let mut unknown_tools = Vec::new();
@@ -98,10 +98,7 @@ fn tool_count_matches_expectations() {
 fn all_tools_have_name_and_description() {
     let tools = get_tools();
     for tool in &tools {
-        assert!(
-            !tool.name.is_empty(),
-            "Tool has empty name"
-        );
+        assert!(!tool.name.is_empty(), "Tool has empty name");
         assert!(
             !tool.description.is_empty(),
             "Tool '{}' has empty description",
@@ -156,21 +153,48 @@ fn tool_categories_are_represented() {
     let names: Vec<&str> = tools.iter().map(|t| t.name.as_str()).collect();
 
     // System tools
-    assert!(names.contains(&"read_file"), "missing system tool: read_file");
-    assert!(names.contains(&"write_file"), "missing system tool: write_file");
-    assert!(names.contains(&"run_command"), "missing system tool: run_command");
+    assert!(
+        names.contains(&"read_file"),
+        "missing system tool: read_file"
+    );
+    assert!(
+        names.contains(&"write_file"),
+        "missing system tool: write_file"
+    );
+    assert!(
+        names.contains(&"run_command"),
+        "missing system tool: run_command"
+    );
 
     // Browser tools
-    assert!(names.contains(&"web_navigate"), "missing browser tool: web_navigate");
-    assert!(names.contains(&"browser_create_session"), "missing browser tool: browser_create_session");
+    assert!(
+        names.contains(&"web_navigate"),
+        "missing browser tool: web_navigate"
+    );
+    assert!(
+        names.contains(&"browser_create_session"),
+        "missing browser tool: browser_create_session"
+    );
 
     // Team tools
-    assert!(names.contains(&"create_expert_team"), "missing team tool: create_expert_team");
-    assert!(names.contains(&"list_expert_teams"), "missing team tool: list_expert_teams");
+    assert!(
+        names.contains(&"create_expert_team"),
+        "missing team tool: create_expert_team"
+    );
+    assert!(
+        names.contains(&"list_expert_teams"),
+        "missing team tool: list_expert_teams"
+    );
 
     // WA tools
-    assert!(names.contains(&"wa_create_session"), "missing WA tool: wa_create_session");
-    assert!(names.contains(&"wa_save_snapshot"), "missing WA tool: wa_save_snapshot");
+    assert!(
+        names.contains(&"wa_create_session"),
+        "missing WA tool: wa_create_session"
+    );
+    assert!(
+        names.contains(&"wa_save_snapshot"),
+        "missing WA tool: wa_save_snapshot"
+    );
 }
 
 /// Unknown tools should return an error from dispatch.

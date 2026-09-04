@@ -975,14 +975,18 @@ mod tests {
     fn validate_model_config_zero_layers() {
         let mut cfg = default_model_config();
         cfg.n_layers = 0;
-        assert!(validate_model_pipeline_config(&cfg).iter().any(|i| i.contains("n_layers")));
+        assert!(validate_model_pipeline_config(&cfg)
+            .iter()
+            .any(|i| i.contains("n_layers")));
     }
 
     #[test]
     fn validate_model_config_bad_hidden() {
         let mut cfg = default_model_config();
         cfg.hidden_size = 255; // not multiple of 4
-        assert!(validate_model_pipeline_config(&cfg).iter().any(|i| i.contains("multiple of 4")));
+        assert!(validate_model_pipeline_config(&cfg)
+            .iter()
+            .any(|i| i.contains("multiple of 4")));
     }
 
     #[test]
@@ -990,14 +994,18 @@ mod tests {
         let mut cfg = default_model_config();
         cfg.n_heads = 7;
         cfg.n_kv_heads = 2;
-        assert!(validate_model_pipeline_config(&cfg).iter().any(|i| i.contains("divisible")));
+        assert!(validate_model_pipeline_config(&cfg)
+            .iter()
+            .any(|i| i.contains("divisible")));
     }
 
     #[test]
     fn validate_model_config_zero_vocab() {
         let mut cfg = default_model_config();
         cfg.vocab_size = 0;
-        assert!(validate_model_pipeline_config(&cfg).iter().any(|i| i.contains("vocab_size")));
+        assert!(validate_model_pipeline_config(&cfg)
+            .iter()
+            .any(|i| i.contains("vocab_size")));
     }
 
     #[test]
@@ -1051,35 +1059,45 @@ mod tests {
     fn validate_zero_ffn_size() {
         let mut cfg = default_model_config();
         cfg.ffn_size = 0;
-        assert!(validate_model_pipeline_config(&cfg).iter().any(|i| i.contains("ffn_size")));
+        assert!(validate_model_pipeline_config(&cfg)
+            .iter()
+            .any(|i| i.contains("ffn_size")));
     }
 
     #[test]
     fn validate_zero_n_heads() {
         let mut cfg = default_model_config();
         cfg.n_heads = 0;
-        assert!(validate_model_pipeline_config(&cfg).iter().any(|i| i.contains("n_heads")));
+        assert!(validate_model_pipeline_config(&cfg)
+            .iter()
+            .any(|i| i.contains("n_heads")));
     }
 
     #[test]
     fn validate_zero_n_kv_heads() {
         let mut cfg = default_model_config();
         cfg.n_kv_heads = 0;
-        assert!(validate_model_pipeline_config(&cfg).iter().any(|i| i.contains("n_kv_heads")));
+        assert!(validate_model_pipeline_config(&cfg)
+            .iter()
+            .any(|i| i.contains("n_kv_heads")));
     }
 
     #[test]
     fn validate_zero_head_dim() {
         let mut cfg = default_model_config();
         cfg.head_dim = 0;
-        assert!(validate_model_pipeline_config(&cfg).iter().any(|i| i.contains("head_dim")));
+        assert!(validate_model_pipeline_config(&cfg)
+            .iter()
+            .any(|i| i.contains("head_dim")));
     }
 
     #[test]
     fn validate_zero_max_seq_len() {
         let mut cfg = default_model_config();
         cfg.max_seq_len = 0;
-        assert!(validate_model_pipeline_config(&cfg).iter().any(|i| i.contains("max_seq_len")));
+        assert!(validate_model_pipeline_config(&cfg)
+            .iter()
+            .any(|i| i.contains("max_seq_len")));
     }
 
     // ── Validation: hidden_size multiple of 4 ────────────────────────────
@@ -1110,7 +1128,9 @@ mod tests {
     fn validate_hidden_3_invalid() {
         let mut cfg = default_model_config();
         cfg.hidden_size = 3;
-        assert!(validate_model_pipeline_config(&cfg).iter().any(|i| i.contains("multiple of 4")));
+        assert!(validate_model_pipeline_config(&cfg)
+            .iter()
+            .any(|i| i.contains("multiple of 4")));
     }
 
     #[test]
@@ -1199,15 +1219,23 @@ mod tests {
     fn validate_n_layers_issue_text() {
         let mut cfg = default_model_config();
         cfg.n_layers = 0;
-        assert_eq!(validate_model_pipeline_config(&cfg)[0], "n_layers must be > 0");
+        assert_eq!(
+            validate_model_pipeline_config(&cfg)[0],
+            "n_layers must be > 0"
+        );
     }
 
     #[test]
     fn validate_issues_order_deterministic() {
         let cfg = ModelPipelineConfig {
-            n_layers: 0, hidden_size: 0, ffn_size: 0,
-            n_heads: 0, n_kv_heads: 0, head_dim: 0,
-            max_seq_len: 0, vocab_size: 0,
+            n_layers: 0,
+            hidden_size: 0,
+            ffn_size: 0,
+            n_heads: 0,
+            n_kv_heads: 0,
+            head_dim: 0,
+            max_seq_len: 0,
+            vocab_size: 0,
         };
         let i1 = validate_model_pipeline_config(&cfg);
         let i2 = validate_model_pipeline_config(&cfg);
@@ -1223,7 +1251,10 @@ mod tests {
 
     #[test]
     fn info_pipeline_count_is_7() {
-        assert_eq!(model_pipeline_info(&default_model_config()).pipeline_count, 7);
+        assert_eq!(
+            model_pipeline_info(&default_model_config()).pipeline_count,
+            7
+        );
     }
 
     #[test]
@@ -1233,7 +1264,10 @@ mod tests {
 
     #[test]
     fn info_per_layer_desc_is_10() {
-        assert_eq!(model_pipeline_info(&default_model_config()).per_layer_descriptor_sets, 10);
+        assert_eq!(
+            model_pipeline_info(&default_model_config()).per_layer_descriptor_sets,
+            10
+        );
     }
 
     #[test]
@@ -1302,7 +1336,10 @@ mod tests {
         let cloned = info.clone();
         assert_eq!(cloned.shader_count, info.shader_count);
         assert_eq!(cloned.buffer_count, info.buffer_count);
-        assert_eq!(cloned.total_descriptor_sets_estimate, info.total_descriptor_sets_estimate);
+        assert_eq!(
+            cloned.total_descriptor_sets_estimate,
+            info.total_descriptor_sets_estimate
+        );
     }
 
     #[test]
@@ -1575,7 +1612,10 @@ mod tests {
         cfg.n_heads = 7;
         cfg.n_kv_heads = 3;
         let issues = validate_model_pipeline_config(&cfg);
-        let div_issue = issues.into_iter().find(|i| i.contains("divisible")).unwrap();
+        let div_issue = issues
+            .into_iter()
+            .find(|i| i.contains("divisible"))
+            .unwrap();
         assert!(div_issue.contains("7"));
         assert!(div_issue.contains("3"));
     }
@@ -1640,7 +1680,10 @@ mod tests {
         assert_eq!(info1.shader_count, info2.shader_count);
         assert_eq!(info1.pipeline_count, info2.pipeline_count);
         assert_eq!(info1.buffer_count, info2.buffer_count);
-        assert_eq!(info1.per_layer_descriptor_sets, info2.per_layer_descriptor_sets);
+        assert_eq!(
+            info1.per_layer_descriptor_sets,
+            info2.per_layer_descriptor_sets
+        );
     }
 
     // ── Large model configurations ───────────────────────────────────────
@@ -1729,7 +1772,7 @@ mod tests {
         let info = model_pipeline_info(&default_model_config());
         let debug = format!("{:?}", info);
         assert!(debug.contains("41")); // total_descriptor_sets_estimate
-        assert!(debug.contains("7"));  // shader_count
+        assert!(debug.contains("7")); // shader_count
     }
 
     // ── Validation: ffn_size edge cases ──────────────────────────────────
@@ -1819,9 +1862,14 @@ mod tests {
     #[test]
     fn info_all_zeros_issues_count() {
         let cfg = ModelPipelineConfig {
-            n_layers: 0, hidden_size: 0, ffn_size: 0,
-            n_heads: 0, n_kv_heads: 0, head_dim: 0,
-            max_seq_len: 0, vocab_size: 0,
+            n_layers: 0,
+            hidden_size: 0,
+            ffn_size: 0,
+            n_heads: 0,
+            n_kv_heads: 0,
+            head_dim: 0,
+            max_seq_len: 0,
+            vocab_size: 0,
         };
         let info = model_pipeline_info(&cfg);
         assert_eq!(info.validation_issues.len(), 8);

@@ -1,4 +1,4 @@
-﻿/// A single shaped glyph with metrics for layout and rendering.
+/// A single shaped glyph with metrics for layout and rendering.
 #[derive(Debug, Clone)]
 pub struct GlyphMetric {
     pub glyph_id: u32,

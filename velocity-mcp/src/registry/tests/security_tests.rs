@@ -36,7 +36,10 @@ fn write_file_rejects_parent_traversal() {
     );
 
     assert!(result.is_err(), "should reject path traversal");
-    assert!(!temp.path().join("outside.txt").exists(), "file should not be written outside workspace");
+    assert!(
+        !temp.path().join("outside.txt").exists(),
+        "file should not be written outside workspace"
+    );
 }
 
 /// write_file must reject deeply nested traversal attempts.
@@ -87,7 +90,10 @@ fn delete_file_rejects_parent_traversal() {
     );
 
     assert!(result.is_err(), "should reject deleting outside workspace");
-    assert!(outside.exists(), "file outside workspace should not be deleted");
+    assert!(
+        outside.exists(),
+        "file outside workspace should not be deleted"
+    );
 }
 
 /// list_dir must reject paths that escape the workspace root.
@@ -95,11 +101,7 @@ fn delete_file_rejects_parent_traversal() {
 fn list_dir_rejects_parent_traversal() {
     let (_temp, root) = setup_root();
 
-    let result = call_tool_in_workspace(
-        &root,
-        "list_dir",
-        &json!({"relativeDirPath": ".."}),
-    );
+    let result = call_tool_in_workspace(&root, "list_dir", &json!({"relativeDirPath": ".."}));
 
     assert!(result.is_err(), "should reject listing parent directory");
 }
@@ -166,11 +168,13 @@ fn run_command_executes_in_correct_workspace() {
     fs::write(root1.join("marker.txt"), "here").unwrap();
 
     // Run `ls` in workspace 1 — should see marker.txt
-    let output1 = call_tool_in_workspace(&root1, "run_command", &json!({"command": "dir /b"})).unwrap();
+    let output1 =
+        call_tool_in_workspace(&root1, "run_command", &json!({"command": "dir /b"})).unwrap();
     assert!(output1.contains("marker.txt"));
 
     // Run `ls` in workspace 2 — should NOT see marker.txt
-    let output2 = call_tool_in_workspace(&root2, "run_command", &json!({"command": "dir /b"})).unwrap();
+    let output2 =
+        call_tool_in_workspace(&root2, "run_command", &json!({"command": "dir /b"})).unwrap();
     assert!(!output2.contains("marker.txt"));
 }
 
@@ -217,11 +221,7 @@ fn grep_search_handles_empty_query() {
     let (_temp, root) = setup_root();
     fs::write(root.join("test.txt"), "some content").unwrap();
 
-    let result = call_tool_in_workspace(
-        &root,
-        "grep_search",
-        &json!({"query": ""}),
-    );
+    let result = call_tool_in_workspace(&root, "grep_search", &json!({"query": ""}));
 
     // Should either return empty results or an error — not panic
     let _ = result;
@@ -232,11 +232,7 @@ fn grep_search_handles_empty_query() {
 fn run_command_handles_empty_command() {
     let (_temp, root) = setup_root();
 
-    let result = call_tool_in_workspace(
-        &root,
-        "run_command",
-        &json!({"command": ""}),
-    );
+    let result = call_tool_in_workspace(&root, "run_command", &json!({"command": ""}));
 
     // Should either reject or execute empty command — must not panic
     let _ = result;
@@ -321,11 +317,7 @@ fn governance_allows_all_by_default() {
     let (_temp, root) = setup_root();
 
     // With no governance policy, all tools should be allowed
-    let result = call_tool_in_workspace(
-        &root,
-        "list_dir",
-        &json!({"relativeDirPath": "."}),
-    );
+    let result = call_tool_in_workspace(&root, "list_dir", &json!({"relativeDirPath": "."}));
 
     assert!(result.is_ok(), "default governance should allow tool calls");
 }

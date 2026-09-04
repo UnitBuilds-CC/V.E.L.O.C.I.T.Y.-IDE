@@ -1,4 +1,4 @@
-﻿// GPU infrastructure — retained for future BitNet NDA model support.
+// GPU infrastructure — retained for future BitNet NDA model support.
 #![allow(dead_code)]
 //! Vulkan NDA BitNet (1-bit quantized) transformer layer implementation.
 //!
@@ -1108,7 +1108,9 @@ mod tests {
     fn validate_nda_bitnet_zero_hidden() {
         let mut cfg = default_nda_bitnet_config();
         cfg.hidden_size = 0;
-        assert!(validate_nda_bitnet_config(&cfg).iter().any(|i| i.contains("hidden_size")));
+        assert!(validate_nda_bitnet_config(&cfg)
+            .iter()
+            .any(|i| i.contains("hidden_size")));
     }
 
     #[test]
@@ -1117,14 +1119,18 @@ mod tests {
         cfg.hidden_size = 256; // 256 % 128 == 0, valid
         assert!(validate_nda_bitnet_config(&cfg).is_empty());
         cfg.hidden_size = 300; // not multiple of 128
-        assert!(validate_nda_bitnet_config(&cfg).iter().any(|i| i.contains("multiple of 128")));
+        assert!(validate_nda_bitnet_config(&cfg)
+            .iter()
+            .any(|i| i.contains("multiple of 128")));
     }
 
     #[test]
     fn validate_nda_bitnet_zero_ffn() {
         let mut cfg = default_nda_bitnet_config();
         cfg.ffn_size = 0;
-        assert!(validate_nda_bitnet_config(&cfg).iter().any(|i| i.contains("ffn_size")));
+        assert!(validate_nda_bitnet_config(&cfg)
+            .iter()
+            .any(|i| i.contains("ffn_size")));
     }
 
     #[test]
@@ -1167,14 +1173,18 @@ mod tests {
     fn validate_zero_n_heads() {
         let mut cfg = default_nda_bitnet_config();
         cfg.n_heads = 0;
-        assert!(validate_nda_bitnet_config(&cfg).iter().any(|i| i.contains("n_heads")));
+        assert!(validate_nda_bitnet_config(&cfg)
+            .iter()
+            .any(|i| i.contains("n_heads")));
     }
 
     #[test]
     fn validate_zero_head_dim() {
         let mut cfg = default_nda_bitnet_config();
         cfg.head_dim = 0;
-        assert!(validate_nda_bitnet_config(&cfg).iter().any(|i| i.contains("head_dim")));
+        assert!(validate_nda_bitnet_config(&cfg)
+            .iter()
+            .any(|i| i.contains("head_dim")));
     }
 
     #[test]
@@ -1272,7 +1282,10 @@ mod tests {
     fn validate_hidden_zero_issue_text() {
         let mut cfg = default_nda_bitnet_config();
         cfg.hidden_size = 0;
-        assert_eq!(validate_nda_bitnet_config(&cfg)[0], "hidden_size must be > 0");
+        assert_eq!(
+            validate_nda_bitnet_config(&cfg)[0],
+            "hidden_size must be > 0"
+        );
     }
 
     #[test]
@@ -1416,7 +1429,10 @@ mod tests {
         assert_eq!(cloned.nda_shader_count, info.nda_shader_count);
         assert_eq!(cloned.pipeline_count, info.pipeline_count);
         assert_eq!(cloned.weight_buffers, info.weight_buffers);
-        assert_eq!(cloned.total_weight_bytes_estimate, info.total_weight_bytes_estimate);
+        assert_eq!(
+            cloned.total_weight_bytes_estimate,
+            info.total_weight_bytes_estimate
+        );
     }
 
     #[test]
@@ -1536,7 +1552,10 @@ mod tests {
     #[test]
     fn info_weight_bytes_minimal() {
         let cfg = NdaBitNetLayerConfig {
-            hidden_size: 128, ffn_size: 1, n_heads: 1, head_dim: 1,
+            hidden_size: 128,
+            ffn_size: 1,
+            n_heads: 1,
+            head_dim: 1,
         };
         let info = nda_bitnet_layer_info(&cfg);
         // attn: 128*128*16 = 262144
@@ -1549,7 +1568,10 @@ mod tests {
     #[test]
     fn info_weight_bytes_hidden_256_ffn_64() {
         let cfg = NdaBitNetLayerConfig {
-            hidden_size: 256, ffn_size: 64, n_heads: 4, head_dim: 64,
+            hidden_size: 256,
+            ffn_size: 64,
+            n_heads: 4,
+            head_dim: 64,
         };
         let info = nda_bitnet_layer_info(&cfg);
         // attn: 256*256*16 = 1048576
@@ -1615,7 +1637,10 @@ mod tests {
     #[test]
     fn info_issues_count_all_zeros() {
         let cfg = NdaBitNetLayerConfig {
-            hidden_size: 0, ffn_size: 0, n_heads: 0, head_dim: 0,
+            hidden_size: 0,
+            ffn_size: 0,
+            n_heads: 0,
+            head_dim: 0,
         };
         let info = nda_bitnet_layer_info(&cfg);
         assert_eq!(info.validation_issues.len(), 4);
@@ -1749,18 +1774,41 @@ mod tests {
 
     #[test]
     fn info_weight_scales_quadratically_with_hidden() {
-        let cfg1 = NdaBitNetLayerConfig { hidden_size: 128, ffn_size: 0, n_heads: 1, head_dim: 1 };
-        let cfg2 = NdaBitNetLayerConfig { hidden_size: 256, ffn_size: 0, n_heads: 1, head_dim: 1 };
+        let cfg1 = NdaBitNetLayerConfig {
+            hidden_size: 128,
+            ffn_size: 0,
+            n_heads: 1,
+            head_dim: 1,
+        };
+        let cfg2 = NdaBitNetLayerConfig {
+            hidden_size: 256,
+            ffn_size: 0,
+            n_heads: 1,
+            head_dim: 1,
+        };
         let info1 = nda_bitnet_layer_info(&cfg1);
         let info2 = nda_bitnet_layer_info(&cfg2);
         // With ffn=0, weight = hidden*hidden*16, so doubling hidden → 4x weight
-        assert_eq!(info2.total_weight_bytes_estimate, info1.total_weight_bytes_estimate * 4);
+        assert_eq!(
+            info2.total_weight_bytes_estimate,
+            info1.total_weight_bytes_estimate * 4
+        );
     }
 
     #[test]
     fn info_weight_scales_linearly_with_ffn() {
-        let cfg1 = NdaBitNetLayerConfig { hidden_size: 128, ffn_size: 100, n_heads: 1, head_dim: 1 };
-        let cfg2 = NdaBitNetLayerConfig { hidden_size: 128, ffn_size: 200, n_heads: 1, head_dim: 1 };
+        let cfg1 = NdaBitNetLayerConfig {
+            hidden_size: 128,
+            ffn_size: 100,
+            n_heads: 1,
+            head_dim: 1,
+        };
+        let cfg2 = NdaBitNetLayerConfig {
+            hidden_size: 128,
+            ffn_size: 200,
+            n_heads: 1,
+            head_dim: 1,
+        };
         let info1 = nda_bitnet_layer_info(&cfg1);
         let info2 = nda_bitnet_layer_info(&cfg2);
         // FFN part: hidden*ffn*8 + ffn*hidden*4 = hidden*ffn*12
@@ -1780,7 +1828,10 @@ mod tests {
     #[test]
     fn config_json_roundtrip_via_value() {
         let cfg = NdaBitNetLayerConfig {
-            hidden_size: 256, ffn_size: 512, n_heads: 8, head_dim: 32,
+            hidden_size: 256,
+            ffn_size: 512,
+            n_heads: 8,
+            head_dim: 32,
         };
         let json = serde_json::to_string(&cfg).unwrap();
         let val: serde_json::Value = serde_json::from_str(&json).unwrap();
@@ -1793,7 +1844,10 @@ mod tests {
     #[test]
     fn info_json_roundtrip_via_value() {
         let cfg = NdaBitNetLayerConfig {
-            hidden_size: 256, ffn_size: 512, n_heads: 8, head_dim: 32,
+            hidden_size: 256,
+            ffn_size: 512,
+            n_heads: 8,
+            head_dim: 32,
         };
         let info = nda_bitnet_layer_info(&cfg);
         let json = serde_json::to_string(&info).unwrap();
@@ -1846,7 +1900,10 @@ mod tests {
     #[test]
     fn validate_all_zeros_issue_order() {
         let cfg = NdaBitNetLayerConfig {
-            hidden_size: 0, ffn_size: 0, n_heads: 0, head_dim: 0,
+            hidden_size: 0,
+            ffn_size: 0,
+            n_heads: 0,
+            head_dim: 0,
         };
         let issues = validate_nda_bitnet_config(&cfg);
         // hidden_size=0 → "must be > 0" (not "multiple of 128" since 0 % 128 == 0)
@@ -1860,7 +1917,10 @@ mod tests {
     fn validate_hidden_zero_also_fails_mod128() {
         // hidden_size=0 passes mod 128 check (0 % 128 == 0) but fails > 0
         let cfg = NdaBitNetLayerConfig {
-            hidden_size: 0, ffn_size: 128, n_heads: 1, head_dim: 1,
+            hidden_size: 0,
+            ffn_size: 128,
+            n_heads: 1,
+            head_dim: 1,
         };
         let issues = validate_nda_bitnet_config(&cfg);
         assert_eq!(issues.len(), 1);
@@ -1884,7 +1944,10 @@ mod tests {
     fn info_shader_count_always_2() {
         for &h in &[128, 256, 512, 1024, 3200] {
             let cfg = NdaBitNetLayerConfig {
-                hidden_size: h, ffn_size: 128, n_heads: 1, head_dim: 1,
+                hidden_size: h,
+                ffn_size: 128,
+                n_heads: 1,
+                head_dim: 1,
             };
             let info = nda_bitnet_layer_info(&cfg);
             assert_eq!(info.nda_shader_count, 2, "hidden_size={h}");
@@ -1905,9 +1968,24 @@ mod tests {
     fn info_weight_buffers_always_7() {
         // weight_buffers is a constant regardless of config
         let configs = [
-            NdaBitNetLayerConfig { hidden_size: 128, ffn_size: 1, n_heads: 1, head_dim: 1 },
-            NdaBitNetLayerConfig { hidden_size: 3200, ffn_size: 8640, n_heads: 50, head_dim: 64 },
-            NdaBitNetLayerConfig { hidden_size: 128, ffn_size: 0, n_heads: 0, head_dim: 0 },
+            NdaBitNetLayerConfig {
+                hidden_size: 128,
+                ffn_size: 1,
+                n_heads: 1,
+                head_dim: 1,
+            },
+            NdaBitNetLayerConfig {
+                hidden_size: 3200,
+                ffn_size: 8640,
+                n_heads: 50,
+                head_dim: 64,
+            },
+            NdaBitNetLayerConfig {
+                hidden_size: 128,
+                ffn_size: 0,
+                n_heads: 0,
+                head_dim: 0,
+            },
         ];
         for cfg in &configs {
             let info = nda_bitnet_layer_info(cfg);
@@ -1920,7 +1998,10 @@ mod tests {
     #[test]
     fn weight_bytes_attn_component() {
         let cfg = NdaBitNetLayerConfig {
-            hidden_size: 128, ffn_size: 0, n_heads: 1, head_dim: 1,
+            hidden_size: 128,
+            ffn_size: 0,
+            n_heads: 1,
+            head_dim: 1,
         };
         let info = nda_bitnet_layer_info(&cfg);
         // With ffn=0: only attn = hidden*hidden*16
@@ -1930,7 +2011,10 @@ mod tests {
     #[test]
     fn weight_bytes_ffn_gate_up_component() {
         let cfg = NdaBitNetLayerConfig {
-            hidden_size: 128, ffn_size: 256, n_heads: 1, head_dim: 1,
+            hidden_size: 128,
+            ffn_size: 256,
+            n_heads: 1,
+            head_dim: 1,
         };
         let info = nda_bitnet_layer_info(&cfg);
         let attn = 128 * 128 * 16;
@@ -1942,7 +2026,10 @@ mod tests {
     #[test]
     fn weight_bytes_ffn_down_component() {
         let cfg = NdaBitNetLayerConfig {
-            hidden_size: 256, ffn_size: 512, n_heads: 1, head_dim: 1,
+            hidden_size: 256,
+            ffn_size: 512,
+            n_heads: 1,
+            head_dim: 1,
         };
         let info = nda_bitnet_layer_info(&cfg);
         let down = cfg.ffn_size * cfg.hidden_size * 4;
@@ -1957,8 +2044,18 @@ mod tests {
 
     #[test]
     fn weight_bytes_independent_of_n_heads() {
-        let cfg1 = NdaBitNetLayerConfig { hidden_size: 128, ffn_size: 256, n_heads: 1, head_dim: 1 };
-        let cfg2 = NdaBitNetLayerConfig { hidden_size: 128, ffn_size: 256, n_heads: 64, head_dim: 1 };
+        let cfg1 = NdaBitNetLayerConfig {
+            hidden_size: 128,
+            ffn_size: 256,
+            n_heads: 1,
+            head_dim: 1,
+        };
+        let cfg2 = NdaBitNetLayerConfig {
+            hidden_size: 128,
+            ffn_size: 256,
+            n_heads: 64,
+            head_dim: 1,
+        };
         assert_eq!(
             nda_bitnet_layer_info(&cfg1).total_weight_bytes_estimate,
             nda_bitnet_layer_info(&cfg2).total_weight_bytes_estimate
@@ -1967,8 +2064,18 @@ mod tests {
 
     #[test]
     fn weight_bytes_independent_of_head_dim() {
-        let cfg1 = NdaBitNetLayerConfig { hidden_size: 128, ffn_size: 256, n_heads: 4, head_dim: 32 };
-        let cfg2 = NdaBitNetLayerConfig { hidden_size: 128, ffn_size: 256, n_heads: 4, head_dim: 128 };
+        let cfg1 = NdaBitNetLayerConfig {
+            hidden_size: 128,
+            ffn_size: 256,
+            n_heads: 4,
+            head_dim: 32,
+        };
+        let cfg2 = NdaBitNetLayerConfig {
+            hidden_size: 128,
+            ffn_size: 256,
+            n_heads: 4,
+            head_dim: 128,
+        };
         assert_eq!(
             nda_bitnet_layer_info(&cfg1).total_weight_bytes_estimate,
             nda_bitnet_layer_info(&cfg2).total_weight_bytes_estimate
@@ -1995,7 +2102,10 @@ mod tests {
     fn validate_hidden_0_fails_both_checks() {
         // hidden_size=0: fails > 0 check; 0 % 128 == 0 so passes mod check
         let cfg = NdaBitNetLayerConfig {
-            hidden_size: 0, ffn_size: 128, n_heads: 1, head_dim: 1,
+            hidden_size: 0,
+            ffn_size: 128,
+            n_heads: 1,
+            head_dim: 1,
         };
         let issues = validate_nda_bitnet_config(&cfg);
         assert_eq!(issues.len(), 1, "0 % 128 == 0, so only > 0 fails");
@@ -2065,12 +2175,13 @@ mod tests {
     fn weight_bytes_7b_model_config() {
         // Typical 7B model dimensions
         let cfg = NdaBitNetLayerConfig {
-            hidden_size: 4096, ffn_size: 11008, n_heads: 32, head_dim: 128,
+            hidden_size: 4096,
+            ffn_size: 11008,
+            n_heads: 32,
+            head_dim: 128,
         };
         let info = nda_bitnet_layer_info(&cfg);
-        let expected = 4096usize * 4096 * 16
-            + 4096 * 11008 * 8
-            + 11008 * 4096 * 4;
+        let expected = 4096usize * 4096 * 16 + 4096 * 11008 * 8 + 11008 * 4096 * 4;
         assert_eq!(info.total_weight_bytes_estimate, expected);
         assert!(info.total_weight_bytes_estimate > 500_000_000); // > 500MB
     }
@@ -2079,12 +2190,13 @@ mod tests {
     fn weight_bytes_13b_model_config() {
         // Typical 13B model dimensions
         let cfg = NdaBitNetLayerConfig {
-            hidden_size: 5120, ffn_size: 13824, n_heads: 40, head_dim: 128,
+            hidden_size: 5120,
+            ffn_size: 13824,
+            n_heads: 40,
+            head_dim: 128,
         };
         let info = nda_bitnet_layer_info(&cfg);
-        let expected = 5120usize * 5120 * 16
-            + 5120 * 13824 * 8
-            + 13824 * 5120 * 4;
+        let expected = 5120usize * 5120 * 16 + 5120 * 13824 * 8 + 13824 * 5120 * 4;
         assert_eq!(info.total_weight_bytes_estimate, expected);
     }
 }

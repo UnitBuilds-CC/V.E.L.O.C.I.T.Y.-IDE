@@ -1,4 +1,4 @@
-﻿// GPU infrastructure — retained for future Qwen model support.
+// GPU infrastructure — retained for future Qwen model support.
 #![allow(dead_code)]
 //! Vulkan Qwen (RoPE-based) transformer layer dispatch.
 //!
@@ -729,7 +729,9 @@ mod tests {
     fn validate_qwen_config_zero_hidden() {
         let mut cfg = default_qwen_config();
         cfg.hidden_size = 0;
-        assert!(validate_qwen_config(&cfg).iter().any(|i| i.contains("hidden_size")));
+        assert!(validate_qwen_config(&cfg)
+            .iter()
+            .any(|i| i.contains("hidden_size")));
     }
 
     #[test]
@@ -737,14 +739,18 @@ mod tests {
         let mut cfg = default_qwen_config();
         cfg.n_heads = 7;
         cfg.n_kv_heads = 2;
-        assert!(validate_qwen_config(&cfg).iter().any(|i| i.contains("divisible")));
+        assert!(validate_qwen_config(&cfg)
+            .iter()
+            .any(|i| i.contains("divisible")));
     }
 
     #[test]
     fn validate_qwen_config_zero_ffn() {
         let mut cfg = default_qwen_config();
         cfg.ffn_size = 0;
-        assert!(validate_qwen_config(&cfg).iter().any(|i| i.contains("ffn_size")));
+        assert!(validate_qwen_config(&cfg)
+            .iter()
+            .any(|i| i.contains("ffn_size")));
     }
 
     #[test]
@@ -1163,10 +1169,16 @@ mod tests {
         let cfg = default_qwen_config();
         let json = serde_json::to_string(&cfg).unwrap();
         let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
-        assert_eq!(parsed["hidden_size"].as_u64().unwrap(), cfg.hidden_size as u64);
+        assert_eq!(
+            parsed["hidden_size"].as_u64().unwrap(),
+            cfg.hidden_size as u64
+        );
         assert_eq!(parsed["ffn_size"].as_u64().unwrap(), cfg.ffn_size as u64);
         assert_eq!(parsed["n_heads"].as_u64().unwrap(), cfg.n_heads as u64);
-        assert_eq!(parsed["n_kv_heads"].as_u64().unwrap(), cfg.n_kv_heads as u64);
+        assert_eq!(
+            parsed["n_kv_heads"].as_u64().unwrap(),
+            cfg.n_kv_heads as u64
+        );
         assert_eq!(parsed["head_dim"].as_u64().unwrap(), cfg.head_dim as u64);
     }
 
@@ -1175,10 +1187,22 @@ mod tests {
         let plan = qwen_dispatch_plan();
         let json = serde_json::to_string(&plan).unwrap();
         let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
-        assert_eq!(parsed["int4_dispatches"].as_u64().unwrap(), plan.int4_dispatches as u64);
-        assert_eq!(parsed["activation_dispatches"].as_u64().unwrap(), plan.activation_dispatches as u64);
-        assert_eq!(parsed["total_dispatches"].as_u64().unwrap(), plan.total_dispatches as u64);
-        assert_eq!(parsed["descriptor_sets"].as_u64().unwrap(), plan.descriptor_sets as u64);
+        assert_eq!(
+            parsed["int4_dispatches"].as_u64().unwrap(),
+            plan.int4_dispatches as u64
+        );
+        assert_eq!(
+            parsed["activation_dispatches"].as_u64().unwrap(),
+            plan.activation_dispatches as u64
+        );
+        assert_eq!(
+            parsed["total_dispatches"].as_u64().unwrap(),
+            plan.total_dispatches as u64
+        );
+        assert_eq!(
+            parsed["descriptor_sets"].as_u64().unwrap(),
+            plan.descriptor_sets as u64
+        );
     }
 
     #[test]
@@ -1187,9 +1211,18 @@ mod tests {
         let info = qwen_layer_info(&cfg);
         let json = serde_json::to_string(&info).unwrap();
         let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
-        assert_eq!(parsed["config"]["hidden_size"].as_u64().unwrap(), info.config.hidden_size as u64);
-        assert_eq!(parsed["weight_buffers"].as_u64().unwrap(), info.weight_buffers as u64);
-        assert_eq!(parsed["total_weight_bytes_estimate"].as_u64().unwrap(), info.total_weight_bytes_estimate as u64);
+        assert_eq!(
+            parsed["config"]["hidden_size"].as_u64().unwrap(),
+            info.config.hidden_size as u64
+        );
+        assert_eq!(
+            parsed["weight_buffers"].as_u64().unwrap(),
+            info.weight_buffers as u64
+        );
+        assert_eq!(
+            parsed["total_weight_bytes_estimate"].as_u64().unwrap(),
+            info.total_weight_bytes_estimate as u64
+        );
         assert!(parsed["validation_issues"].is_array());
     }
 
@@ -1220,7 +1253,11 @@ mod tests {
         };
         let issues = validate_qwen_config(&cfg);
         for issue in &issues {
-            assert!(issue.contains("must be"), "issue should contain 'must be': {}", issue);
+            assert!(
+                issue.contains("must be"),
+                "issue should contain 'must be': {}",
+                issue
+            );
         }
     }
 
@@ -1287,8 +1324,10 @@ mod tests {
         let info2 = qwen_layer_info(&cfg2);
         // ffn terms: hidden*ffn*4*2 + ffn*hidden*4 = hidden*ffn*(8+4) = hidden*ffn*12
         // Doubling ffn should increase ffn-related terms by 2x
-        let ffn_term_1 = cfg1.hidden_size * cfg1.ffn_size * 4 * 2 + cfg1.ffn_size * cfg1.hidden_size * 4;
-        let ffn_term_2 = cfg2.hidden_size * cfg2.ffn_size * 4 * 2 + cfg2.ffn_size * cfg2.hidden_size * 4;
+        let ffn_term_1 =
+            cfg1.hidden_size * cfg1.ffn_size * 4 * 2 + cfg1.ffn_size * cfg1.hidden_size * 4;
+        let ffn_term_2 =
+            cfg2.hidden_size * cfg2.ffn_size * 4 * 2 + cfg2.ffn_size * cfg2.hidden_size * 4;
         assert_eq!(ffn_term_2, ffn_term_1 * 2);
         assert!(info2.total_weight_bytes_estimate > info1.total_weight_bytes_estimate);
     }
@@ -1333,10 +1372,22 @@ mod tests {
         let cfg = default_qwen_config();
         let info = qwen_layer_info(&cfg);
         let standalone = qwen_dispatch_plan();
-        assert_eq!(info.dispatch_plan.int4_dispatches, standalone.int4_dispatches);
-        assert_eq!(info.dispatch_plan.activation_dispatches, standalone.activation_dispatches);
-        assert_eq!(info.dispatch_plan.total_dispatches, standalone.total_dispatches);
-        assert_eq!(info.dispatch_plan.descriptor_sets, standalone.descriptor_sets);
+        assert_eq!(
+            info.dispatch_plan.int4_dispatches,
+            standalone.int4_dispatches
+        );
+        assert_eq!(
+            info.dispatch_plan.activation_dispatches,
+            standalone.activation_dispatches
+        );
+        assert_eq!(
+            info.dispatch_plan.total_dispatches,
+            standalone.total_dispatches
+        );
+        assert_eq!(
+            info.dispatch_plan.descriptor_sets,
+            standalone.descriptor_sets
+        );
     }
 
     #[test]

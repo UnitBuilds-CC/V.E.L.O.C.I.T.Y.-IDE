@@ -1,4 +1,4 @@
-﻿use super::types::*;
+use super::types::*;
 
 pub fn default_templates() -> Vec<InstructionTemplate> {
     vec![

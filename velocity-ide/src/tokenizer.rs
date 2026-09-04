@@ -385,7 +385,10 @@ impl Tokenizer {
 
     /// Encode multiple texts in sequence.
     pub fn encode_batch(&self, texts: &[&str], add_bos: bool) -> Vec<Vec<u32>> {
-        texts.iter().map(|text| self.encode(text, add_bos)).collect()
+        texts
+            .iter()
+            .map(|text| self.encode(text, add_bos))
+            .collect()
     }
 
     /// Count the number of tokens in `text`.
@@ -417,7 +420,8 @@ impl Tokenizer {
 
     /// List all special tokens (starting with '<' or containing '|>').
     pub fn special_tokens(&self) -> Vec<(u32, &str)> {
-        self.vocab.iter()
+        self.vocab
+            .iter()
             .filter(|(k, _)| k.starts_with('<') || k.contains("|>"))
             .map(|(k, &v)| (v, k.as_str()))
             .collect()
@@ -447,7 +451,9 @@ impl Tokenizer {
             }
             let search_start = split_idx.saturating_sub(50);
             let search_end = (split_idx + 50).min(remaining.len());
-            if let Some(ws_pos) = remaining[search_start..search_end].rfind(|c: char| c.is_whitespace()) {
+            if let Some(ws_pos) =
+                remaining[search_start..search_end].rfind(|c: char| c.is_whitespace())
+            {
                 split_idx = search_start + ws_pos + 1;
             }
             if split_idx == 0 {
@@ -517,7 +523,10 @@ impl Tokenizer {
         // Check that every vocab entry has a corresponding id_to_token
         for (token_str, &id) in &self.vocab {
             if (id as usize) >= self.id_to_token.len() {
-                errors.push(format!("vocab token {:?} has id {} beyond id_to_token length", token_str, id));
+                errors.push(format!(
+                    "vocab token {:?} has id {} beyond id_to_token length",
+                    token_str, id
+                ));
             }
         }
 
@@ -598,7 +607,11 @@ impl Tokenizer {
             unique_token_count: unique_count,
             input_bytes: text.len(),
             output_bytes: decoded.len(),
-            bytes_per_token: if ids.is_empty() { 0.0 } else { text.len() as f64 / ids.len() as f64 },
+            bytes_per_token: if ids.is_empty() {
+                0.0
+            } else {
+                text.len() as f64 / ids.len() as f64
+            },
             elapsed_us: elapsed.as_micros() as u64,
             roundtrip_ok,
             has_bos: add_bos && ids.first().is_some_and(|&id| id == self.bos_id),
@@ -660,8 +673,15 @@ impl Tokenizer {
         let total = ids.len();
         let unique: std::collections::HashSet<u32> = ids.into_iter().collect();
         let unique_count = unique.len();
-        let in_vocab = unique.iter().filter(|&&id| (id as usize) < self.id_to_token.len()).count();
-        let coverage = if unique_count == 0 { 1.0 } else { in_vocab as f64 / unique_count as f64 };
+        let in_vocab = unique
+            .iter()
+            .filter(|&&id| (id as usize) < self.id_to_token.len())
+            .count();
+        let coverage = if unique_count == 0 {
+            1.0
+        } else {
+            in_vocab as f64 / unique_count as f64
+        };
 
         VocabularyUtilization {
             total_tokens: total,
@@ -1321,7 +1341,12 @@ mod tests {
         let mut seen = std::collections::HashSet::new();
         for b in 0u8..=255 {
             let c = byte_to_unicode(b);
-            assert!(seen.insert(c), "byte {} produced duplicate char {}", b, c as u32);
+            assert!(
+                seen.insert(c),
+                "byte {} produced duplicate char {}",
+                b,
+                c as u32
+            );
         }
         assert_eq!(seen.len(), 256);
     }
@@ -1428,7 +1453,11 @@ mod tests {
         // With max_tokens=3, we need multiple chunks.
         let text = "abc def ghi jkl";
         let chunks = tok.chunk_text(text, 3);
-        assert!(chunks.len() >= 2, "expected multiple chunks, got {}", chunks.len());
+        assert!(
+            chunks.len() >= 2,
+            "expected multiple chunks, got {}",
+            chunks.len()
+        );
     }
 
     #[test]
@@ -1457,10 +1486,17 @@ mod tests {
         let max = 4;
         let chunks = tok.chunk_text(text, max);
         // Should produce multiple chunks for long text
-        assert!(chunks.len() >= 2, "expected multiple chunks, got {}", chunks.len());
+        assert!(
+            chunks.len() >= 2,
+            "expected multiple chunks, got {}",
+            chunks.len()
+        );
         // Each chunk should be strictly shorter than the original
         for chunk in &chunks {
-            assert!(chunk.len() < text.len(), "chunk should be shorter than original");
+            assert!(
+                chunk.len() < text.len(),
+                "chunk should be shorter than original"
+            );
             assert!(!chunk.is_empty(), "no empty chunks");
         }
     }
@@ -1520,7 +1556,9 @@ mod tests {
         };
         let errors = tok.validate();
         assert!(
-            errors.iter().any(|e| e.contains("beyond id_to_token") || e.contains("99")),
+            errors
+                .iter()
+                .any(|e| e.contains("beyond id_to_token") || e.contains("99")),
             "expected error about id beyond id_to_token, got: {:?}",
             errors
         );
@@ -1737,37 +1775,47 @@ mod tests {
     #[test]
     fn encode_report_json_has_exactly_8_keys() {
         let report = EncodeReport {
-            token_count: 5, unique_token_count: 3, input_bytes: 10,
-            output_bytes: 8, bytes_per_token: 2.0, elapsed_us: 50,
-            roundtrip_ok: true, has_bos: false,
+            token_count: 5,
+            unique_token_count: 3,
+            input_bytes: 10,
+            output_bytes: 8,
+            bytes_per_token: 2.0,
+            elapsed_us: 50,
+            roundtrip_ok: true,
+            has_bos: false,
         };
-        let val: serde_json::Value = serde_json::from_str(
-            &serde_json::to_string(&report).unwrap()
-        ).unwrap();
+        let val: serde_json::Value =
+            serde_json::from_str(&serde_json::to_string(&report).unwrap()).unwrap();
         assert_eq!(val.as_object().unwrap().len(), 8);
     }
 
     #[test]
     fn vocab_util_json_has_exactly_5_keys() {
         let util = VocabularyUtilization {
-            total_tokens: 10, unique_tokens: 5, in_vocabulary: 5,
-            coverage: 1.0, vocab_size: 100,
+            total_tokens: 10,
+            unique_tokens: 5,
+            in_vocabulary: 5,
+            coverage: 1.0,
+            vocab_size: 100,
         };
-        let val: serde_json::Value = serde_json::from_str(
-            &serde_json::to_string(&util).unwrap()
-        ).unwrap();
+        let val: serde_json::Value =
+            serde_json::from_str(&serde_json::to_string(&util).unwrap()).unwrap();
         assert_eq!(val.as_object().unwrap().len(), 5);
     }
 
     #[test]
     fn tokenizer_info_json_has_exactly_7_keys() {
         let info = TokenizerInfo {
-            vocab_size: 100, merge_count: 50, bos_id: 1, eos_id: 2,
-            is_tiktoken: true, special_token_count: 3, has_file_bytes: false,
+            vocab_size: 100,
+            merge_count: 50,
+            bos_id: 1,
+            eos_id: 2,
+            is_tiktoken: true,
+            special_token_count: 3,
+            has_file_bytes: false,
         };
-        let val: serde_json::Value = serde_json::from_str(
-            &serde_json::to_string(&info).unwrap()
-        ).unwrap();
+        let val: serde_json::Value =
+            serde_json::from_str(&serde_json::to_string(&info).unwrap()).unwrap();
         assert_eq!(val.as_object().unwrap().len(), 7);
     }
 
@@ -1776,9 +1824,14 @@ mod tests {
     #[test]
     fn encode_report_json_roundtrip_via_value() {
         let report = EncodeReport {
-            token_count: 42, unique_token_count: 20, input_bytes: 100,
-            output_bytes: 80, bytes_per_token: 2.38, elapsed_us: 500,
-            roundtrip_ok: false, has_bos: true,
+            token_count: 42,
+            unique_token_count: 20,
+            input_bytes: 100,
+            output_bytes: 80,
+            bytes_per_token: 2.38,
+            elapsed_us: 500,
+            roundtrip_ok: false,
+            has_bos: true,
         };
         let json = serde_json::to_string(&report).unwrap();
         let val: serde_json::Value = serde_json::from_str(&json).unwrap();
@@ -1792,8 +1845,11 @@ mod tests {
     #[test]
     fn vocab_util_json_roundtrip_via_value() {
         let util = VocabularyUtilization {
-            total_tokens: 200, unique_tokens: 150, in_vocabulary: 148,
-            coverage: 0.987, vocab_size: 50000,
+            total_tokens: 200,
+            unique_tokens: 150,
+            in_vocabulary: 148,
+            coverage: 0.987,
+            vocab_size: 50000,
         };
         let json = serde_json::to_string(&util).unwrap();
         let val: serde_json::Value = serde_json::from_str(&json).unwrap();
@@ -1807,9 +1863,14 @@ mod tests {
     #[test]
     fn encode_report_clone_independent() {
         let mut report = EncodeReport {
-            token_count: 10, unique_token_count: 5, input_bytes: 20,
-            output_bytes: 18, bytes_per_token: 2.0, elapsed_us: 100,
-            roundtrip_ok: true, has_bos: false,
+            token_count: 10,
+            unique_token_count: 5,
+            input_bytes: 20,
+            output_bytes: 18,
+            bytes_per_token: 2.0,
+            elapsed_us: 100,
+            roundtrip_ok: true,
+            has_bos: false,
         };
         let cloned = report.clone();
         report.token_count = 999;
@@ -1820,8 +1881,11 @@ mod tests {
     #[test]
     fn vocab_util_clone_independent() {
         let mut util = VocabularyUtilization {
-            total_tokens: 50, unique_tokens: 30, in_vocabulary: 28,
-            coverage: 0.93, vocab_size: 1000,
+            total_tokens: 50,
+            unique_tokens: 30,
+            in_vocabulary: 28,
+            coverage: 0.93,
+            vocab_size: 1000,
         };
         let cloned = util.clone();
         util.coverage = 0.0;
@@ -1832,8 +1896,13 @@ mod tests {
     #[test]
     fn tokenizer_info_clone_independent() {
         let mut info = TokenizerInfo {
-            vocab_size: 100, merge_count: 50, bos_id: 1, eos_id: 2,
-            is_tiktoken: true, special_token_count: 3, has_file_bytes: false,
+            vocab_size: 100,
+            merge_count: 50,
+            bos_id: 1,
+            eos_id: 2,
+            is_tiktoken: true,
+            special_token_count: 3,
+            has_file_bytes: false,
         };
         let cloned = info.clone();
         info.vocab_size = 0;
@@ -1846,9 +1915,14 @@ mod tests {
     #[test]
     fn encode_report_debug_has_all_fields() {
         let report = EncodeReport {
-            token_count: 5, unique_token_count: 3, input_bytes: 10,
-            output_bytes: 8, bytes_per_token: 2.0, elapsed_us: 50,
-            roundtrip_ok: true, has_bos: false,
+            token_count: 5,
+            unique_token_count: 3,
+            input_bytes: 10,
+            output_bytes: 8,
+            bytes_per_token: 2.0,
+            elapsed_us: 50,
+            roundtrip_ok: true,
+            has_bos: false,
         };
         let debug = format!("{:?}", report);
         assert!(debug.contains("token_count"));
@@ -1861,8 +1935,11 @@ mod tests {
     #[test]
     fn vocab_util_debug_has_all_fields() {
         let util = VocabularyUtilization {
-            total_tokens: 10, unique_tokens: 5, in_vocabulary: 5,
-            coverage: 1.0, vocab_size: 100,
+            total_tokens: 10,
+            unique_tokens: 5,
+            in_vocabulary: 5,
+            coverage: 1.0,
+            vocab_size: 100,
         };
         let debug = format!("{:?}", util);
         assert!(debug.contains("total_tokens"));
@@ -1996,7 +2073,12 @@ mod tests {
     fn byte_to_unicode_161_to_172_identity() {
         // Bytes 161..=172 map to themselves (Latin-1 supplement range)
         for b in 161u8..=172 {
-            assert_eq!(byte_to_unicode(b) as u32, b as u32, "byte {} should be identity", b);
+            assert_eq!(
+                byte_to_unicode(b) as u32,
+                b as u32,
+                "byte {} should be identity",
+                b
+            );
         }
     }
 
@@ -2011,7 +2093,12 @@ mod tests {
     fn byte_to_unicode_174_to_255_identity() {
         // Bytes 174..=255 map to themselves
         for b in 174u8..=255 {
-            assert_eq!(byte_to_unicode(b) as u32, b as u32, "byte {} should be identity", b);
+            assert_eq!(
+                byte_to_unicode(b) as u32,
+                b as u32,
+                "byte {} should be identity",
+                b
+            );
         }
     }
 
@@ -2051,7 +2138,12 @@ mod tests {
         };
         let errors = tok.validate();
         // Should have: empty vocab, bad bos_id, bad eos_id
-        assert!(errors.len() >= 3, "expected >= 3 errors, got {}: {:?}", errors.len(), errors);
+        assert!(
+            errors.len() >= 3,
+            "expected >= 3 errors, got {}: {:?}",
+            errors.len(),
+            errors
+        );
         assert!(errors.iter().any(|e| e.contains("vocabulary is empty")));
         assert!(errors.iter().any(|e| e.contains("bos_id")));
         assert!(errors.iter().any(|e| e.contains("eos_id")));
@@ -2112,9 +2204,14 @@ mod tests {
     #[test]
     fn encode_report_compact_json() {
         let report = EncodeReport {
-            token_count: 1, unique_token_count: 1, input_bytes: 1,
-            output_bytes: 1, bytes_per_token: 1.0, elapsed_us: 0,
-            roundtrip_ok: true, has_bos: false,
+            token_count: 1,
+            unique_token_count: 1,
+            input_bytes: 1,
+            output_bytes: 1,
+            bytes_per_token: 1.0,
+            elapsed_us: 0,
+            roundtrip_ok: true,
+            has_bos: false,
         };
         let json = serde_json::to_string(&report).unwrap();
         // Compact JSON should not contain unnecessary whitespace
@@ -2124,8 +2221,11 @@ mod tests {
     #[test]
     fn vocab_util_compact_json() {
         let util = VocabularyUtilization {
-            total_tokens: 1, unique_tokens: 1, in_vocabulary: 1,
-            coverage: 1.0, vocab_size: 1,
+            total_tokens: 1,
+            unique_tokens: 1,
+            in_vocabulary: 1,
+            coverage: 1.0,
+            vocab_size: 1,
         };
         let json = serde_json::to_string(&util).unwrap();
         assert!(!json.contains("\n"));

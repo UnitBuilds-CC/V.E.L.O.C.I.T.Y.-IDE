@@ -2,10 +2,12 @@
 //!
 //! Extracted verbatim from `tier3_panels.rs` (no logic changes).
 
+use super::struct_def::VelocityApp;
+use crate::editor::theme::{
+    CARD_INNER_MARGIN, CARD_RADIUS, FONT_BODY, FONT_CAPTION, FONT_SMALL, ITEM_SPACING,
+};
 use eframe::egui;
 use egui::RichText;
-use super::struct_def::VelocityApp;
-use crate::editor::theme::{CARD_INNER_MARGIN, CARD_RADIUS, FONT_BODY, FONT_CAPTION, FONT_SMALL, ITEM_SPACING};
 
 impl VelocityApp {
     // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
@@ -45,7 +47,7 @@ impl VelocityApp {
             );
         });
         ui.add_space(ITEM_SPACING);
-        
+
         // Active worker progress bars.
         if !lo.worker_progress.is_empty() {
             ui.label(
@@ -138,7 +140,7 @@ impl VelocityApp {
             );
         }
         ui.add_space(ITEM_SPACING);
-        
+
         // Activity feed.
         ui.label(RichText::new("FEED").small().strong().color(palette.accent));
         egui::ScrollArea::vertical()

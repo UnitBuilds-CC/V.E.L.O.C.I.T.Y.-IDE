@@ -1,4 +1,4 @@
-﻿//! A small, dependency-free regular-expression engine used by the editor's
+//! A small, dependency-free regular-expression engine used by the editor's
 //! Find & Replace. It compiles a practical subset of regex syntax to a
 //! bytecode program and runs it with a backtracking VM that memoizes failed
 //! `(pc, pos)` states, guaranteeing termination in `O(program_len * input_len)`

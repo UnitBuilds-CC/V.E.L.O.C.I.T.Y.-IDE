@@ -1,4 +1,4 @@
-﻿//! Snippet system — user-defined and built-in code templates with tab stops.
+//! Snippet system — user-defined and built-in code templates with tab stops.
 
 use std::collections::HashMap;
 use std::path::Path;

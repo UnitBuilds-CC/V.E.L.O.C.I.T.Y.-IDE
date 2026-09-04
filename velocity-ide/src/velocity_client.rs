@@ -737,8 +737,7 @@ impl VelocityClient {
         let resp = self
             .get_with_retry(&self.url("/health"), false)
             .context("failed to reach velocity router")?;
-        resp.into_json()
-            .context("failed to parse health response")
+        resp.into_json().context("failed to parse health response")
     }
 
     /// GET /v1/usage — current usage summary.
@@ -746,8 +745,7 @@ impl VelocityClient {
         let resp = self
             .get_with_retry(&self.url("/v1/usage"), true)
             .context("failed to fetch usage")?;
-        resp.into_json()
-            .context("failed to parse usage response")
+        resp.into_json().context("failed to parse usage response")
     }
 
     /// GET /v1/usage/summary — enhanced usage with projections and sparkline.
@@ -817,8 +815,7 @@ impl VelocityClient {
         let resp = self
             .get_with_retry(&self.url("/v1/analytics/latency"), true)
             .context("failed to fetch latency analytics")?;
-        resp.into_json()
-            .context("failed to parse latency response")
+        resp.into_json().context("failed to parse latency response")
     }
 
     /// GET /admin/keys/:hash — key detail (admin only).
@@ -905,8 +902,7 @@ impl VelocityClient {
         let resp = self
             .get_with_retry(&self.url("/v1/models"), false)
             .context("failed to fetch models catalog")?;
-        resp.into_json()
-            .context("failed to parse models response")
+        resp.into_json().context("failed to parse models response")
     }
 
     /// GET /v1/echo — connectivity test (returns status + masked auth).
@@ -914,8 +910,7 @@ impl VelocityClient {
         let resp = self
             .get_with_retry(&self.url("/v1/echo"), true)
             .context("failed to reach echo endpoint")?;
-        resp.into_json()
-            .context("failed to parse echo response")
+        resp.into_json().context("failed to parse echo response")
     }
 
     /// POST /v1/assignments/estimate — estimate cost and routing without executing.
@@ -944,8 +939,7 @@ impl VelocityClient {
             .set("Content-Type", "application/json")
             .send_json(body)
             .context("failed to submit batch assignment")?;
-        resp.into_json()
-            .context("failed to parse batch response")
+        resp.into_json().context("failed to parse batch response")
     }
 
     /// GET /v1/usage/billing — billing period summary.
@@ -953,8 +947,7 @@ impl VelocityClient {
         let resp = self
             .get_with_retry(&self.url("/v1/usage/billing"), true)
             .context("failed to fetch billing data")?;
-        resp.into_json()
-            .context("failed to parse billing response")
+        resp.into_json().context("failed to parse billing response")
     }
 
     /// GET /v1/analytics — usage analytics summary.
@@ -1071,8 +1064,8 @@ impl RetryConfig {
     /// Return a diagnostic snapshot of the retry configuration.
     pub fn info(&self) -> RetryConfigInfo {
         // Max delay: initial * 2^max_retries, capped at max_backoff.
-        let max_delay = (self.initial_backoff_ms * (1u64 << self.max_retries.min(20)))
-            .min(self.max_backoff_ms);
+        let max_delay =
+            (self.initial_backoff_ms * (1u64 << self.max_retries.min(20))).min(self.max_backoff_ms);
         let mut issues = Vec::new();
         if self.max_retries == 0 {
             issues.push("max_retries is 0: no retries will be attempted".to_string());
@@ -1329,7 +1322,10 @@ ignored = true
             api_key: "vr_standard_abcdef1234567890".into(),
         };
         let info = cfg.connection_info();
-        assert!(info.validation_issues.iter().any(|i| i.contains("base_url is empty")));
+        assert!(info
+            .validation_issues
+            .iter()
+            .any(|i| i.contains("base_url is empty")));
         assert!(!info.is_https);
     }
 
@@ -1340,7 +1336,10 @@ ignored = true
             api_key: "abc".into(),
         };
         let info = cfg.connection_info();
-        assert!(info.validation_issues.iter().any(|i| i.contains("too short")));
+        assert!(info
+            .validation_issues
+            .iter()
+            .any(|i| i.contains("too short")));
         assert_eq!(info.api_key_prefix, "***");
     }
 
@@ -1351,8 +1350,14 @@ ignored = true
             api_key: "".into(),
         };
         let info = cfg.connection_info();
-        assert!(info.validation_issues.iter().any(|i| i.contains("api_key is empty")));
-        assert!(info.validation_issues.iter().any(|i| i.contains("too short")));
+        assert!(info
+            .validation_issues
+            .iter()
+            .any(|i| i.contains("api_key is empty")));
+        assert!(info
+            .validation_issues
+            .iter()
+            .any(|i| i.contains("too short")));
     }
 
     #[test]
@@ -1409,7 +1414,10 @@ ignored = true
             ..RetryConfig::default()
         };
         let info = cfg.info();
-        assert!(info.validation_issues.iter().any(|i| i.contains("max_retries is 0")));
+        assert!(info
+            .validation_issues
+            .iter()
+            .any(|i| i.contains("max_retries is 0")));
     }
 
     #[test]
@@ -1419,7 +1427,10 @@ ignored = true
             ..RetryConfig::default()
         };
         let info = cfg.info();
-        assert!(info.validation_issues.iter().any(|i| i.contains("initial_backoff_ms is 0")));
+        assert!(info
+            .validation_issues
+            .iter()
+            .any(|i| i.contains("initial_backoff_ms is 0")));
     }
 
     #[test]
@@ -1430,7 +1441,10 @@ ignored = true
             ..RetryConfig::default()
         };
         let info = cfg.info();
-        assert!(info.validation_issues.iter().any(|i| i.contains("max_backoff_ms")));
+        assert!(info
+            .validation_issues
+            .iter()
+            .any(|i| i.contains("max_backoff_ms")));
     }
 
     #[test]
@@ -1622,7 +1636,10 @@ after_section = "also no"
         assert_eq!(info.api_key_prefix, "12345678...");
         assert_eq!(info.api_key_length, 8);
         // 8 chars >= 8, so prefix is shown, but < 10 triggers short warning.
-        assert!(info.validation_issues.iter().any(|i| i.contains("too short")));
+        assert!(info
+            .validation_issues
+            .iter()
+            .any(|i| i.contains("too short")));
     }
 
     #[test]
@@ -1935,7 +1952,10 @@ after_section = "also no"
         let diag = client.diagnostics();
         let json = serde_json::to_string(&diag).unwrap();
         let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
-        assert_eq!(parsed["connection"]["base_url"], "https://router.velocity.io");
+        assert_eq!(
+            parsed["connection"]["base_url"],
+            "https://router.velocity.io"
+        );
         assert_eq!(parsed["connection"]["is_https"], true);
         assert_eq!(parsed["retry"]["max_retries"], 3);
     }
@@ -2022,7 +2042,10 @@ after_section = "also no"
             "routing_rationale": "Best for GUI tasks"
         }"#;
         let decision: RoutingDecision = serde_json::from_str(json).unwrap();
-        assert_eq!(decision.routing_rationale.as_deref(), Some("Best for GUI tasks"));
+        assert_eq!(
+            decision.routing_rationale.as_deref(),
+            Some("Best for GUI tasks")
+        );
     }
 
     // ─── dirs_next ──────────────────────────────────────────────────────────
@@ -2212,7 +2235,8 @@ extra_key = "extra_value"
 
     #[test]
     fn model_usage_deserializes() {
-        let json = r#"{"model_id": "gpt-4o", "assignments": 60, "tokens": 300000, "cost_usd": 1.50}"#;
+        let json =
+            r#"{"model_id": "gpt-4o", "assignments": 60, "tokens": 300000, "cost_usd": 1.50}"#;
         let usage: ModelUsage = serde_json::from_str(json).unwrap();
         assert_eq!(usage.model_id, "gpt-4o");
         assert_eq!(usage.assignments, 60);
@@ -2221,7 +2245,8 @@ extra_key = "extra_value"
 
     #[test]
     fn domain_usage_deserializes() {
-        let json = r#"{"domain": "gui_design", "assignments": 70, "tokens": 350000, "cost_usd": 1.75}"#;
+        let json =
+            r#"{"domain": "gui_design", "assignments": 70, "tokens": 350000, "cost_usd": 1.75}"#;
         let usage: DomainUsage = serde_json::from_str(json).unwrap();
         assert_eq!(usage.domain, "gui_design");
         assert_eq!(usage.assignments, 70);

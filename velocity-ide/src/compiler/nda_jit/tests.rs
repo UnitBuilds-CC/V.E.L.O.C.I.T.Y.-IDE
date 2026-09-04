@@ -1,4 +1,4 @@
-﻿#[cfg(test)]
+#[cfg(test)]
 use super::compiler::compile;
 #[cfg(test)]
 use super::compiler::jit_tier_info;
@@ -745,21 +745,19 @@ fn test_jit_nested_loop_break_inner() {
         },
         NdaNode::Loop {
             count: 3,
-            body: vec![
-                NdaNode::Loop {
-                    count: 5,
-                    body: vec![
-                        NdaNode::Store {
-                            name_hash: h,
-                            value: Box::new(NdaNode::Add {
-                                lhs: Box::new(NdaNode::Load { name_hash: h }),
-                                rhs: Box::new(NdaNode::Int { value: 1 }),
-                            }),
-                        },
-                        NdaNode::Break,
-                    ],
-                },
-            ],
+            body: vec![NdaNode::Loop {
+                count: 5,
+                body: vec![
+                    NdaNode::Store {
+                        name_hash: h,
+                        value: Box::new(NdaNode::Add {
+                            lhs: Box::new(NdaNode::Load { name_hash: h }),
+                            rhs: Box::new(NdaNode::Int { value: 1 }),
+                        }),
+                    },
+                    NdaNode::Break,
+                ],
+            }],
         },
         NdaNode::Load { name_hash: h },
     ];

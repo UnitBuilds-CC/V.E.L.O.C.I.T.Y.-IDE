@@ -1,4 +1,4 @@
-﻿//! Cross-device peer collaboration panel.
+//! Cross-device peer collaboration panel.
 //!
 //! Shows connected peers, allows adding new peers, chat messaging,
 //! file transfer initiation, task delegation, and peer server control.

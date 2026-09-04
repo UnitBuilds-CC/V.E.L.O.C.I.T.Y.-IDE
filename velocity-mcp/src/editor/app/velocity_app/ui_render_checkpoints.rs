@@ -1,10 +1,10 @@
 //! Checkpoints view rendering for `VelocityApp`.
 //!
 //! Extracted verbatim from `ui_render.rs` (no logic changes).
-use eframe::egui;
 use super::super::helpers::*;
 use super::super::types::*;
 use super::struct_def::VelocityApp;
+use eframe::egui;
 
 impl VelocityApp {
     /// Render checkpoint list in the bottom panel Checkpoints tab.
@@ -28,9 +28,11 @@ impl VelocityApp {
                 );
                 ui.add_space(2.0);
                 ui.label(
-                    egui::RichText::new("Initialize a git repository to enable automatic checkpoints")
-                        .size(9.0)
-                        .color(palette.text_muted),
+                    egui::RichText::new(
+                        "Initialize a git repository to enable automatic checkpoints",
+                    )
+                    .size(9.0)
+                    .color(palette.text_muted),
                 );
             });
             return;
@@ -53,9 +55,11 @@ impl VelocityApp {
                 );
                 ui.add_space(2.0);
                 ui.label(
-                    egui::RichText::new("Checkpoints are created automatically before agent operations")
-                        .size(9.0)
-                        .color(palette.text_muted),
+                    egui::RichText::new(
+                        "Checkpoints are created automatically before agent operations",
+                    )
+                    .size(9.0)
+                    .color(palette.text_muted),
                 );
             });
             return;

@@ -213,7 +213,11 @@ pub fn from_f32_slice_report(x: &[f32]) -> (NdaVec, NdaVecConversionReport) {
         max_abs_error = max_abs_error.max(err);
         sum_abs_error += err;
     }
-    let mean_abs_error = if x.is_empty() { 0.0 } else { sum_abs_error / x.len() as f64 };
+    let mean_abs_error = if x.is_empty() {
+        0.0
+    } else {
+        sum_abs_error / x.len() as f64
+    };
     let input_bytes = x.len() * 4;
     let compression_ratio = if nv.memory_bytes() > 0 {
         input_bytes as f64 / nv.memory_bytes() as f64
@@ -530,8 +534,18 @@ mod tests {
 
     #[test]
     fn validate_dot_product_params_zero_length() {
-        let a = NdaVec { len: 0, log2_scale: 0, sign: vec![].into(), extra: vec![].into() };
-        let b = NdaVec { len: 0, log2_scale: 0, sign: vec![].into(), extra: vec![].into() };
+        let a = NdaVec {
+            len: 0,
+            log2_scale: 0,
+            sign: vec![].into(),
+            extra: vec![].into(),
+        };
+        let b = NdaVec {
+            len: 0,
+            log2_scale: 0,
+            sign: vec![].into(),
+            extra: vec![].into(),
+        };
         let issues = validate_dot_product_params(&a, &b);
         assert!(issues.iter().any(|i| i.contains("0")));
     }
@@ -564,9 +578,9 @@ mod tests {
     fn nda_vec_from_i32_clamping() {
         // Values > 4 should be clamped to 4 → encodes as +2
         let v = NdaVec::from_i32_slice(&[100, -100, 5, -5], 0);
-        assert_eq!(v.get_raw(0), 2);  // 100 → clamped to 4 → +2
+        assert_eq!(v.get_raw(0), 2); // 100 → clamped to 4 → +2
         assert_eq!(v.get_raw(1), -2); // -100 → clamped to -4 → -2
-        assert_eq!(v.get_raw(2), 2);  // 5 → clamped to 4 → +2
+        assert_eq!(v.get_raw(2), 2); // 5 → clamped to 4 → +2
         assert_eq!(v.get_raw(3), -2); // -5 → clamped to -4 → -2
     }
 
@@ -705,11 +719,7 @@ mod tests {
 
     #[test]
     fn batch_from_f32_mixed_sizes() {
-        let vecs = vec![
-            vec![1.0, -1.0],
-            vec![0.5; 16],
-            vec![-2.0, 2.0, 0.0],
-        ];
+        let vecs = vec![vec![1.0, -1.0], vec![0.5; 16], vec![-2.0, 2.0, 0.0]];
         let (nvs, report) = batch_from_f32(&vecs);
         assert_eq!(nvs.len(), 3);
         assert_eq!(nvs[0].len, 2);

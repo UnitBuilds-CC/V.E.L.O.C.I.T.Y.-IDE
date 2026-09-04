@@ -1,4 +1,4 @@
-﻿//! NDA Document editor tab — author, convert, view, and inspect portable NDA1
+//! NDA Document editor tab — author, convert, view, and inspect portable NDA1
 //! documents with self-contained provenance/history.
 //!
 //! A document is stored on disk either *portable* (the 48-byte-header NDA1
@@ -484,11 +484,7 @@ impl NdaDocumentView {
         let size = egui::vec2(ui.available_width().max(320.0), 420.0);
         let (rect, _resp) = ui.allocate_exact_size(size, egui::Sense::hover());
         let painter = ui.painter_at(rect);
-        painter.rect_filled(
-            rect,
-            egui::CornerRadius::same(4),
-            palette.bg_primary,
-        );
+        painter.rect_filled(rect, egui::CornerRadius::same(4), palette.bg_primary);
         let ctx = ui.ctx().clone();
         // Precompute wrapped text galleys (layout needs &mut Fonts via the ctx closure).
         let galleys: std::collections::HashMap<usize, std::sync::Arc<egui::Galley>> =

@@ -1,4 +1,4 @@
-﻿//! Zero-dependency browser viewer generator for portable NDA1 documents.
+//! Zero-dependency browser viewer generator for portable NDA1 documents.
 //!
 //! Produces standalone HTML that parses the exact 48-byte-header NDA1 layout
 //! (see [`velocity_browser::nda_portable`]) in vanilla JavaScript and renders

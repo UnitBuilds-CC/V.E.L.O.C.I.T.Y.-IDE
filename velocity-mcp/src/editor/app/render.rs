@@ -1,4 +1,4 @@
-﻿use super::types::*;
+use super::types::*;
 use super::VelocityApp;
 use crate::automation::AgentTaskKind;
 use crate::editor::chat_panel::render_chat_panel;

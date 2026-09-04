@@ -1,4 +1,4 @@
-﻿//! Vulkan pipeline execution for transformer model forward pass.
+//! Vulkan pipeline execution for transformer model forward pass.
 //!
 //! # Safety Invariants
 //!
@@ -120,22 +120,44 @@ pub fn compute_layer_dispatch_plan(
     let buffer_copies = 3;
     let rms_norm_dispatches = 2;
     let mut gemv_dispatches = 0;
-    if has_q_proj { gemv_dispatches += 1; }
-    if has_k_proj { gemv_dispatches += 1; }
-    if has_v_proj { gemv_dispatches += 1; }
-    if has_o_proj { gemv_dispatches += 1; }
-    if has_gate_proj { gemv_dispatches += 1; }
-    if has_up_proj { gemv_dispatches += 1; }
-    if has_down_proj { gemv_dispatches += 1; }
-    let bias_add_dispatches = [has_bias_q, has_bias_k, has_bias_v].iter().filter(|&&b| b).count();
+    if has_q_proj {
+        gemv_dispatches += 1;
+    }
+    if has_k_proj {
+        gemv_dispatches += 1;
+    }
+    if has_v_proj {
+        gemv_dispatches += 1;
+    }
+    if has_o_proj {
+        gemv_dispatches += 1;
+    }
+    if has_gate_proj {
+        gemv_dispatches += 1;
+    }
+    if has_up_proj {
+        gemv_dispatches += 1;
+    }
+    if has_down_proj {
+        gemv_dispatches += 1;
+    }
+    let bias_add_dispatches = [has_bias_q, has_bias_k, has_bias_v]
+        .iter()
+        .filter(|&&b| b)
+        .count();
     let rope_dispatches = 1;
     let kv_write_dispatches = 1;
     let attn_softmax_dispatches = 1;
     let residual_add_dispatches = 2;
     let swiglu_dispatches = 1;
-    let total_dispatches = rms_norm_dispatches + gemv_dispatches + bias_add_dispatches
-        + rope_dispatches + kv_write_dispatches + attn_softmax_dispatches
-        + residual_add_dispatches + swiglu_dispatches;
+    let total_dispatches = rms_norm_dispatches
+        + gemv_dispatches
+        + bias_add_dispatches
+        + rope_dispatches
+        + kv_write_dispatches
+        + attn_softmax_dispatches
+        + residual_add_dispatches
+        + swiglu_dispatches;
     LayerDispatchPlan {
         layer_index,
         buffer_copies,
@@ -163,8 +185,16 @@ pub fn build_execution_plan(
     let mut total_buffer_copies = 0;
     let mut total_dispatches = 0;
     for i in 0..cfg.n_layers {
-        let (bq, bk, bv) = if i < layers_has_bias.len() { layers_has_bias[i] } else { (false, false, false) };
-        let (qp, kp, vp, op, gp, up, dp) = if i < layers_has_projs.len() { layers_has_projs[i] } else { (true, true, true, true, true, true, true) };
+        let (bq, bk, bv) = if i < layers_has_bias.len() {
+            layers_has_bias[i]
+        } else {
+            (false, false, false)
+        };
+        let (qp, kp, vp, op, gp, up, dp) = if i < layers_has_projs.len() {
+            layers_has_projs[i]
+        } else {
+            (true, true, true, true, true, true, true)
+        };
         let plan = compute_layer_dispatch_plan(i, bq, bk, bv, qp, kp, vp, op, gp, up, dp);
         total_buffer_copies += plan.buffer_copies;
         total_dispatches += plan.total_dispatches;
@@ -713,14 +743,18 @@ mod tests {
     fn validate_config_zero_layers() {
         let mut cfg = default_config();
         cfg.n_layers = 0;
-        assert!(validate_pipeline_config(&cfg).iter().any(|i| i.contains("n_layers")));
+        assert!(validate_pipeline_config(&cfg)
+            .iter()
+            .any(|i| i.contains("n_layers")));
     }
 
     #[test]
     fn validate_config_zero_hidden() {
         let mut cfg = default_config();
         cfg.hidden_size = 0;
-        assert!(validate_pipeline_config(&cfg).iter().any(|i| i.contains("hidden_size")));
+        assert!(validate_pipeline_config(&cfg)
+            .iter()
+            .any(|i| i.contains("hidden_size")));
     }
 
     #[test]
@@ -729,33 +763,43 @@ mod tests {
         cfg.n_heads = 5;
         cfg.n_kv_heads = 2;
         cfg.hidden_size = 5 * 16;
-        assert!(validate_pipeline_config(&cfg).iter().any(|i| i.contains("divisible")));
+        assert!(validate_pipeline_config(&cfg)
+            .iter()
+            .any(|i| i.contains("divisible")));
     }
 
     #[test]
     fn validate_config_hidden_mismatch() {
         let mut cfg = default_config();
         cfg.hidden_size = 128;
-        assert!(validate_pipeline_config(&cfg).iter().any(|i| i.contains("hidden_size")));
+        assert!(validate_pipeline_config(&cfg)
+            .iter()
+            .any(|i| i.contains("hidden_size")));
     }
 
     #[test]
     fn validate_config_bad_rope_theta() {
         let mut cfg = default_config();
         cfg.rope_theta = 0.0;
-        assert!(validate_pipeline_config(&cfg).iter().any(|i| i.contains("rope_theta")));
+        assert!(validate_pipeline_config(&cfg)
+            .iter()
+            .any(|i| i.contains("rope_theta")));
     }
 
     #[test]
     fn validate_config_bad_scale() {
         let mut cfg = default_config();
         cfg.scale = -1.0;
-        assert!(validate_pipeline_config(&cfg).iter().any(|i| i.contains("scale")));
+        assert!(validate_pipeline_config(&cfg)
+            .iter()
+            .any(|i| i.contains("scale")));
     }
 
     #[test]
     fn layer_dispatch_plan_all_projs() {
-        let plan = compute_layer_dispatch_plan(0, true, true, true, true, true, true, true, true, true, true);
+        let plan = compute_layer_dispatch_plan(
+            0, true, true, true, true, true, true, true, true, true, true,
+        );
         assert_eq!(plan.gemv_dispatches, 7);
         assert_eq!(plan.bias_add_dispatches, 3);
         assert_eq!(plan.total_dispatches, 18);
@@ -763,14 +807,18 @@ mod tests {
 
     #[test]
     fn layer_dispatch_plan_no_bias() {
-        let plan = compute_layer_dispatch_plan(0, false, false, false, true, true, true, true, true, true, true);
+        let plan = compute_layer_dispatch_plan(
+            0, false, false, false, true, true, true, true, true, true, true,
+        );
         assert_eq!(plan.bias_add_dispatches, 0);
         assert_eq!(plan.total_dispatches, 15);
     }
 
     #[test]
     fn layer_dispatch_plan_minimal() {
-        let plan = compute_layer_dispatch_plan(0, false, false, false, false, false, false, false, false, false, false);
+        let plan = compute_layer_dispatch_plan(
+            0, false, false, false, false, false, false, false, false, false, false,
+        );
         assert_eq!(plan.gemv_dispatches, 0);
         assert_eq!(plan.total_dispatches, 8);
     }
@@ -800,7 +848,11 @@ mod tests {
     #[test]
     fn execution_plan_serializes() {
         let cfg = default_config();
-        let plan = build_execution_plan(&cfg, &[(false, false, false); 2], &[(true, true, true, true, true, true, true); 2]);
+        let plan = build_execution_plan(
+            &cfg,
+            &[(false, false, false); 2],
+            &[(true, true, true, true, true, true, true); 2],
+        );
         let json = serde_json::to_string(&plan).unwrap();
         assert!(json.contains("kv_dim"));
         assert!(json.contains("per_layer"));
@@ -819,42 +871,54 @@ mod tests {
     fn validate_config_zero_n_heads() {
         let mut cfg = default_config();
         cfg.n_heads = 0;
-        assert!(validate_pipeline_config(&cfg).iter().any(|i| i.contains("n_heads")));
+        assert!(validate_pipeline_config(&cfg)
+            .iter()
+            .any(|i| i.contains("n_heads")));
     }
 
     #[test]
     fn validate_config_zero_n_kv_heads() {
         let mut cfg = default_config();
         cfg.n_kv_heads = 0;
-        assert!(validate_pipeline_config(&cfg).iter().any(|i| i.contains("n_kv_heads")));
+        assert!(validate_pipeline_config(&cfg)
+            .iter()
+            .any(|i| i.contains("n_kv_heads")));
     }
 
     #[test]
     fn validate_config_zero_head_dim() {
         let mut cfg = default_config();
         cfg.head_dim = 0;
-        assert!(validate_pipeline_config(&cfg).iter().any(|i| i.contains("head_dim")));
+        assert!(validate_pipeline_config(&cfg)
+            .iter()
+            .any(|i| i.contains("head_dim")));
     }
 
     #[test]
     fn validate_config_zero_max_seq_len() {
         let mut cfg = default_config();
         cfg.max_seq_len = 0;
-        assert!(validate_pipeline_config(&cfg).iter().any(|i| i.contains("max_seq_len")));
+        assert!(validate_pipeline_config(&cfg)
+            .iter()
+            .any(|i| i.contains("max_seq_len")));
     }
 
     #[test]
     fn validate_config_negative_rope_theta() {
         let mut cfg = default_config();
         cfg.rope_theta = -100.0;
-        assert!(validate_pipeline_config(&cfg).iter().any(|i| i.contains("rope_theta")));
+        assert!(validate_pipeline_config(&cfg)
+            .iter()
+            .any(|i| i.contains("rope_theta")));
     }
 
     #[test]
     fn validate_config_zero_scale() {
         let mut cfg = default_config();
         cfg.scale = 0.0;
-        assert!(validate_pipeline_config(&cfg).iter().any(|i| i.contains("scale")));
+        assert!(validate_pipeline_config(&cfg)
+            .iter()
+            .any(|i| i.contains("scale")));
     }
 
     #[test]
@@ -871,7 +935,9 @@ mod tests {
     #[test]
     fn layer_dispatch_plan_partial_projections() {
         // Only Q and O projections (no K, V, gate, up, down)
-        let plan = compute_layer_dispatch_plan(5, false, false, false, true, false, false, true, false, false, false);
+        let plan = compute_layer_dispatch_plan(
+            5, false, false, false, true, false, false, true, false, false, false,
+        );
         assert_eq!(plan.layer_index, 5);
         assert_eq!(plan.gemv_dispatches, 2);
         assert_eq!(plan.bias_add_dispatches, 0);
@@ -883,23 +949,34 @@ mod tests {
     #[test]
     fn layer_dispatch_plan_mixed_bias() {
         // Only bias_q and bias_v, no bias_k
-        let plan = compute_layer_dispatch_plan(0, true, false, true, true, true, true, true, true, true, true);
+        let plan = compute_layer_dispatch_plan(
+            0, true, false, true, true, true, true, true, true, true, true,
+        );
         assert_eq!(plan.bias_add_dispatches, 2);
         assert_eq!(plan.gemv_dispatches, 7);
     }
 
     #[test]
     fn layer_dispatch_plan_total_accounting() {
-        let plan = compute_layer_dispatch_plan(0, true, true, false, true, true, true, true, true, true, true);
-        let expected = plan.rms_norm_dispatches + plan.gemv_dispatches + plan.bias_add_dispatches
-            + plan.rope_dispatches + plan.kv_write_dispatches + plan.attn_softmax_dispatches
-            + plan.residual_add_dispatches + plan.swiglu_dispatches;
+        let plan = compute_layer_dispatch_plan(
+            0, true, true, false, true, true, true, true, true, true, true,
+        );
+        let expected = plan.rms_norm_dispatches
+            + plan.gemv_dispatches
+            + plan.bias_add_dispatches
+            + plan.rope_dispatches
+            + plan.kv_write_dispatches
+            + plan.attn_softmax_dispatches
+            + plan.residual_add_dispatches
+            + plan.swiglu_dispatches;
         assert_eq!(plan.total_dispatches, expected);
     }
 
     #[test]
     fn layer_dispatch_plan_serializes() {
-        let plan = compute_layer_dispatch_plan(3, true, false, true, true, true, true, true, true, true, true);
+        let plan = compute_layer_dispatch_plan(
+            3, true, false, true, true, true, true, true, true, true, true,
+        );
         let json = serde_json::to_string(&plan).unwrap();
         assert!(json.contains("layer_index"));
         assert!(json.contains("gemv_dispatches"));
@@ -918,7 +995,7 @@ mod tests {
     #[test]
     fn build_execution_plan_fewer_entries_than_layers() {
         let cfg = default_config(); // 2 layers
-        // Only provide bias/proj for 1 layer, second should use defaults
+                                    // Only provide bias/proj for 1 layer, second should use defaults
         let bias = vec![(true, true, true)];
         let projs = vec![(true, true, true, true, true, true, true)];
         let plan = build_execution_plan(&cfg, &bias, &projs);
@@ -946,7 +1023,11 @@ mod tests {
         let bias = vec![(false, false, false); 2];
         let projs = vec![(true, true, true, true, true, true, true); 2];
         let plan = build_execution_plan(&cfg, &bias, &projs);
-        let layer_sum: usize = plan.per_layer.iter().map(|l| l.total_dispatches).sum::<usize>();
+        let layer_sum: usize = plan
+            .per_layer
+            .iter()
+            .map(|l| l.total_dispatches)
+            .sum::<usize>();
         // total = sum of layer dispatches + 1 (final norm)
         assert_eq!(plan.total_dispatches, layer_sum + 1);
     }
@@ -957,7 +1038,10 @@ mod tests {
         cfg.n_layers = 0;
         let plan = build_execution_plan(&cfg, &[], &[]);
         assert!(plan.per_layer.is_empty());
-        assert!(plan.validation_issues.iter().any(|i| i.contains("n_layers")));
+        assert!(plan
+            .validation_issues
+            .iter()
+            .any(|i| i.contains("n_layers")));
         // Still has final norm dispatch
         assert_eq!(plan.total_dispatches, 1);
     }
@@ -975,7 +1059,11 @@ mod tests {
     #[test]
     fn execution_plan_find_layer() {
         let cfg = default_config();
-        let plan = build_execution_plan(&cfg, &[(false, false, false); 2], &[(true, true, true, true, true, true, true); 2]);
+        let plan = build_execution_plan(
+            &cfg,
+            &[(false, false, false); 2],
+            &[(true, true, true, true, true, true, true); 2],
+        );
         assert_eq!(plan.per_layer[0].layer_index, 0);
         assert_eq!(plan.per_layer[1].layer_index, 1);
     }
@@ -983,7 +1071,11 @@ mod tests {
     #[test]
     fn execution_plan_buffer_copies_accounting() {
         let cfg = default_config();
-        let plan = build_execution_plan(&cfg, &[(false, false, false); 2], &[(true, true, true, true, true, true, true); 2]);
+        let plan = build_execution_plan(
+            &cfg,
+            &[(false, false, false); 2],
+            &[(true, true, true, true, true, true, true); 2],
+        );
         let expected_copies: usize = plan.per_layer.iter().map(|l| l.buffer_copies).sum();
         assert_eq!(plan.total_buffer_copies, expected_copies);
     }
@@ -993,14 +1085,25 @@ mod tests {
     #[test]
     fn validate_config_all_zeros() {
         let cfg = PipelineConfig {
-            n_layers: 0, hidden_size: 0, ffn_size: 0, n_heads: 0,
-            n_kv_heads: 0, head_dim: 0, max_seq_len: 0,
-            rope_theta: 0.0, scale: 0.0,
+            n_layers: 0,
+            hidden_size: 0,
+            ffn_size: 0,
+            n_heads: 0,
+            n_kv_heads: 0,
+            head_dim: 0,
+            max_seq_len: 0,
+            rope_theta: 0.0,
+            scale: 0.0,
         };
         let issues = validate_pipeline_config(&cfg);
         // n_layers, hidden_size, n_heads, n_kv_heads, head_dim, max_seq_len, rope_theta, scale = 8
         // divisibility and hidden_mismatch guards prevent those when heads/head_dim are 0
-        assert!(issues.len() >= 8, "expected >=8 issues, got {}: {:?}", issues.len(), issues);
+        assert!(
+            issues.len() >= 8,
+            "expected >=8 issues, got {}: {:?}",
+            issues.len(),
+            issues
+        );
     }
 
     #[test]
@@ -1011,8 +1114,16 @@ mod tests {
         cfg.hidden_size = 7 * 16;
         let issues = validate_pipeline_config(&cfg);
         let div_issue = issues.iter().find(|i| i.contains("divisible")).unwrap();
-        assert!(div_issue.contains("7"), "issue should contain n_heads value: {}", div_issue);
-        assert!(div_issue.contains("3"), "issue should contain n_kv_heads value: {}", div_issue);
+        assert!(
+            div_issue.contains("7"),
+            "issue should contain n_heads value: {}",
+            div_issue
+        );
+        assert!(
+            div_issue.contains("3"),
+            "issue should contain n_kv_heads value: {}",
+            div_issue
+        );
     }
 
     #[test]
@@ -1021,8 +1132,16 @@ mod tests {
         cfg.hidden_size = 100; // 4 * 16 = 64 != 100
         let issues = validate_pipeline_config(&cfg);
         let mismatch = issues.iter().find(|i| i.contains("!=")).unwrap();
-        assert!(mismatch.contains("100"), "should contain actual hidden_size: {}", mismatch);
-        assert!(mismatch.contains("64"), "should contain computed n_heads*head_dim: {}", mismatch);
+        assert!(
+            mismatch.contains("100"),
+            "should contain actual hidden_size: {}",
+            mismatch
+        );
+        assert!(
+            mismatch.contains("64"),
+            "should contain computed n_heads*head_dim: {}",
+            mismatch
+        );
     }
 
     #[test]
@@ -1036,9 +1155,15 @@ mod tests {
     #[test]
     fn validate_config_positive_boundary_values() {
         let cfg = PipelineConfig {
-            n_layers: 1, hidden_size: 16, ffn_size: 64, n_heads: 1,
-            n_kv_heads: 1, head_dim: 16, max_seq_len: 1,
-            rope_theta: 0.001, scale: 0.001,
+            n_layers: 1,
+            hidden_size: 16,
+            ffn_size: 64,
+            n_heads: 1,
+            n_kv_heads: 1,
+            head_dim: 16,
+            max_seq_len: 1,
+            rope_theta: 0.001,
+            scale: 0.001,
         };
         assert!(validate_pipeline_config(&cfg).is_empty());
     }
@@ -1046,9 +1171,15 @@ mod tests {
     #[test]
     fn validate_config_large_values() {
         let cfg = PipelineConfig {
-            n_layers: 1000, hidden_size: 8192, ffn_size: 32768, n_heads: 64,
-            n_kv_heads: 8, head_dim: 128, max_seq_len: 131072,
-            rope_theta: 100000.0, scale: 1.0,
+            n_layers: 1000,
+            hidden_size: 8192,
+            ffn_size: 32768,
+            n_heads: 64,
+            n_kv_heads: 8,
+            head_dim: 128,
+            max_seq_len: 131072,
+            rope_theta: 100000.0,
+            scale: 1.0,
         };
         assert!(validate_pipeline_config(&cfg).is_empty());
     }
@@ -1075,63 +1206,86 @@ mod tests {
 
     #[test]
     fn dispatch_plan_only_q_proj() {
-        let plan = compute_layer_dispatch_plan(0, false, false, false, true, false, false, false, false, false, false);
+        let plan = compute_layer_dispatch_plan(
+            0, false, false, false, true, false, false, false, false, false, false,
+        );
         assert_eq!(plan.gemv_dispatches, 1);
         assert_eq!(plan.total_dispatches, 9); // 8 base + 1 gemv
     }
 
     #[test]
     fn dispatch_plan_only_k_proj() {
-        let plan = compute_layer_dispatch_plan(0, false, false, false, false, true, false, false, false, false, false);
+        let plan = compute_layer_dispatch_plan(
+            0, false, false, false, false, true, false, false, false, false, false,
+        );
         assert_eq!(plan.gemv_dispatches, 1);
     }
 
     #[test]
     fn dispatch_plan_only_v_proj() {
-        let plan = compute_layer_dispatch_plan(0, false, false, false, false, false, true, false, false, false, false);
+        let plan = compute_layer_dispatch_plan(
+            0, false, false, false, false, false, true, false, false, false, false,
+        );
         assert_eq!(plan.gemv_dispatches, 1);
     }
 
     #[test]
     fn dispatch_plan_only_o_proj() {
-        let plan = compute_layer_dispatch_plan(0, false, false, false, false, false, false, true, false, false, false);
+        let plan = compute_layer_dispatch_plan(
+            0, false, false, false, false, false, false, true, false, false, false,
+        );
         assert_eq!(plan.gemv_dispatches, 1);
     }
 
     #[test]
     fn dispatch_plan_only_gate_proj() {
-        let plan = compute_layer_dispatch_plan(0, false, false, false, false, false, false, false, true, false, false);
+        let plan = compute_layer_dispatch_plan(
+            0, false, false, false, false, false, false, false, true, false, false,
+        );
         assert_eq!(plan.gemv_dispatches, 1);
     }
 
     #[test]
     fn dispatch_plan_only_up_proj() {
-        let plan = compute_layer_dispatch_plan(0, false, false, false, false, false, false, false, false, true, false);
+        let plan = compute_layer_dispatch_plan(
+            0, false, false, false, false, false, false, false, false, true, false,
+        );
         assert_eq!(plan.gemv_dispatches, 1);
     }
 
     #[test]
     fn dispatch_plan_only_down_proj() {
-        let plan = compute_layer_dispatch_plan(0, false, false, false, false, false, false, false, false, false, true);
+        let plan = compute_layer_dispatch_plan(
+            0, false, false, false, false, false, false, false, false, false, true,
+        );
         assert_eq!(plan.gemv_dispatches, 1);
     }
 
     #[test]
     fn dispatch_plan_attention_only() {
         // Q, K, V, O projections, no FFN
-        let plan = compute_layer_dispatch_plan(0, false, false, false, true, true, true, true, false, false, false);
+        let plan = compute_layer_dispatch_plan(
+            0, false, false, false, true, true, true, true, false, false, false,
+        );
         assert_eq!(plan.gemv_dispatches, 4);
         assert_eq!(plan.swiglu_dispatches, 1); // still present even without FFN projs
-        let expected = plan.rms_norm_dispatches + plan.gemv_dispatches + plan.bias_add_dispatches
-            + plan.rope_dispatches + plan.kv_write_dispatches + plan.attn_softmax_dispatches
-            + plan.residual_add_dispatches + plan.swiglu_dispatches;
+        let expected = plan.rms_norm_dispatches
+            + plan.gemv_dispatches
+            + plan.bias_add_dispatches
+            + plan.rope_dispatches
+            + plan.kv_write_dispatches
+            + plan.attn_softmax_dispatches
+            + plan.residual_add_dispatches
+            + plan.swiglu_dispatches;
         assert_eq!(plan.total_dispatches, expected);
     }
 
     #[test]
     fn dispatch_plan_ffn_only() {
         // gate, up, down projections, no attention
-        let plan = compute_layer_dispatch_plan(0, false, false, false, false, false, false, false, true, true, true);
+        let plan = compute_layer_dispatch_plan(
+            0, false, false, false, false, false, false, false, true, true, true,
+        );
         assert_eq!(plan.gemv_dispatches, 3);
         assert_eq!(plan.rope_dispatches, 1); // always 1
         assert_eq!(plan.kv_write_dispatches, 1); // always 1
@@ -1139,20 +1293,26 @@ mod tests {
 
     #[test]
     fn dispatch_plan_only_bias_q() {
-        let plan = compute_layer_dispatch_plan(0, true, false, false, false, false, false, false, false, false, false);
+        let plan = compute_layer_dispatch_plan(
+            0, true, false, false, false, false, false, false, false, false, false,
+        );
         assert_eq!(plan.bias_add_dispatches, 1);
         assert_eq!(plan.gemv_dispatches, 0);
     }
 
     #[test]
     fn dispatch_plan_only_bias_k() {
-        let plan = compute_layer_dispatch_plan(0, false, true, false, false, false, false, false, false, false, false);
+        let plan = compute_layer_dispatch_plan(
+            0, false, true, false, false, false, false, false, false, false, false,
+        );
         assert_eq!(plan.bias_add_dispatches, 1);
     }
 
     #[test]
     fn dispatch_plan_only_bias_v() {
-        let plan = compute_layer_dispatch_plan(0, false, false, true, false, false, false, false, false, false, false);
+        let plan = compute_layer_dispatch_plan(
+            0, false, false, true, false, false, false, false, false, false, false,
+        );
         assert_eq!(plan.bias_add_dispatches, 1);
     }
 
@@ -1163,7 +1323,9 @@ mod tests {
             let bq = bias_combo & 1 != 0;
             let bk = bias_combo & 2 != 0;
             let bv = bias_combo & 4 != 0;
-            let plan = compute_layer_dispatch_plan(0, bq, bk, bv, false, false, false, false, false, false, false);
+            let plan = compute_layer_dispatch_plan(
+                0, bq, bk, bv, false, false, false, false, false, false, false,
+            );
             assert_eq!(plan.buffer_copies, 3, "buffer_copies is always 3");
             assert_eq!(plan.rms_norm_dispatches, 2, "rms_norm is always 2");
             assert_eq!(plan.rope_dispatches, 1, "rope is always 1");
@@ -1177,7 +1339,9 @@ mod tests {
     #[test]
     fn dispatch_plan_layer_index_various() {
         for idx in [0, 1, 7, 42, 999, usize::MAX] {
-            let plan = compute_layer_dispatch_plan(idx, false, false, false, false, false, false, false, false, false, false);
+            let plan = compute_layer_dispatch_plan(
+                idx, false, false, false, false, false, false, false, false, false, false,
+            );
             assert_eq!(plan.layer_index, idx);
         }
     }
@@ -1189,24 +1353,39 @@ mod tests {
             let bq = bias_combo & 1 != 0;
             let bk = bias_combo & 2 != 0;
             let bv = bias_combo & 4 != 0;
-            let plan = compute_layer_dispatch_plan(0, bq, bk, bv, true, true, true, true, true, true, true);
-            let parts = plan.rms_norm_dispatches + plan.gemv_dispatches + plan.bias_add_dispatches
-                + plan.rope_dispatches + plan.kv_write_dispatches + plan.attn_softmax_dispatches
-                + plan.residual_add_dispatches + plan.swiglu_dispatches;
-            assert_eq!(plan.total_dispatches, parts, "failed for bias combo {}", bias_combo);
+            let plan = compute_layer_dispatch_plan(
+                0, bq, bk, bv, true, true, true, true, true, true, true,
+            );
+            let parts = plan.rms_norm_dispatches
+                + plan.gemv_dispatches
+                + plan.bias_add_dispatches
+                + plan.rope_dispatches
+                + plan.kv_write_dispatches
+                + plan.attn_softmax_dispatches
+                + plan.residual_add_dispatches
+                + plan.swiglu_dispatches;
+            assert_eq!(
+                plan.total_dispatches, parts,
+                "failed for bias combo {}",
+                bias_combo
+            );
         }
     }
 
     #[test]
     fn dispatch_plan_max_total() {
-        let plan = compute_layer_dispatch_plan(0, true, true, true, true, true, true, true, true, true, true);
+        let plan = compute_layer_dispatch_plan(
+            0, true, true, true, true, true, true, true, true, true, true,
+        );
         // 2 rms + 7 gemv + 3 bias + 1 rope + 1 kv + 1 softmax + 2 residual + 1 swiglu = 18
         assert_eq!(plan.total_dispatches, 18);
     }
 
     #[test]
     fn dispatch_plan_min_total() {
-        let plan = compute_layer_dispatch_plan(0, false, false, false, false, false, false, false, false, false, false);
+        let plan = compute_layer_dispatch_plan(
+            0, false, false, false, false, false, false, false, false, false, false,
+        );
         // 2 rms + 0 + 0 + 1 rope + 1 kv + 1 softmax + 2 residual + 1 swiglu = 8
         assert_eq!(plan.total_dispatches, 8);
     }
@@ -1220,7 +1399,11 @@ mod tests {
         let plan = build_execution_plan(&cfg, &[], &[]);
         // Each layer should have 7 gemv_dispatches (all projections default to true)
         for layer in &plan.per_layer {
-            assert_eq!(layer.gemv_dispatches, 7, "layer {} should default to all projs", layer.layer_index);
+            assert_eq!(
+                layer.gemv_dispatches, 7,
+                "layer {} should default to all projs",
+                layer.layer_index
+            );
         }
     }
 
@@ -1230,7 +1413,11 @@ mod tests {
         let cfg = default_config();
         let plan = build_execution_plan(&cfg, &[], &[]);
         for layer in &plan.per_layer {
-            assert_eq!(layer.bias_add_dispatches, 0, "layer {} should default to no bias", layer.layer_index);
+            assert_eq!(
+                layer.bias_add_dispatches, 0,
+                "layer {} should default to no bias",
+                layer.layer_index
+            );
         }
     }
 
@@ -1285,7 +1472,10 @@ mod tests {
         cfg.rope_theta = -1.0;
         let plan = build_execution_plan(&cfg, &[], &[]);
         assert!(plan.validation_issues.iter().any(|i| i.contains("n_heads")));
-        assert!(plan.validation_issues.iter().any(|i| i.contains("rope_theta")));
+        assert!(plan
+            .validation_issues
+            .iter()
+            .any(|i| i.contains("rope_theta")));
     }
 
     #[test]
@@ -1298,7 +1488,7 @@ mod tests {
         let plan = build_execution_plan(&cfg, &bias, &projs);
         assert_eq!(plan.per_layer.len(), 10);
         assert_eq!(plan.total_buffer_copies, 30); // 3 per layer * 10
-        // Each layer: 2+7+1+1+1+1+2+1 = 16
+                                                  // Each layer: 2+7+1+1+1+1+2+1 = 16
         let layer_sum: usize = plan.per_layer.iter().map(|l| l.total_dispatches).sum();
         assert_eq!(plan.total_dispatches, layer_sum + 1);
     }
@@ -1308,7 +1498,7 @@ mod tests {
         let cfg = default_config(); // 2 layers
         let bias = vec![(true, true, true), (false, false, false)];
         let projs = vec![
-            (true, true, true, true, true, true, true),  // layer 0: all projs
+            (true, true, true, true, true, true, true), // layer 0: all projs
             (false, false, false, false, false, false, false), // layer 1: no projs
         ];
         let plan = build_execution_plan(&cfg, &bias, &projs);
@@ -1323,7 +1513,10 @@ mod tests {
         let mut cfg = default_config();
         cfg.n_layers = 0;
         let plan = build_execution_plan(&cfg, &[], &[]);
-        assert!(plan.final_norm_dispatch, "final_norm_dispatch is always true");
+        assert!(
+            plan.final_norm_dispatch,
+            "final_norm_dispatch is always true"
+        );
     }
 
     // ── Struct derives ──────────────────────────────────────────────────
@@ -1339,7 +1532,9 @@ mod tests {
 
     #[test]
     fn layer_dispatch_plan_debug() {
-        let plan = compute_layer_dispatch_plan(0, false, false, false, false, false, false, false, false, false, false);
+        let plan = compute_layer_dispatch_plan(
+            0, false, false, false, false, false, false, false, false, false, false,
+        );
         let dbg = format!("{:?}", plan);
         assert!(dbg.contains("LayerDispatchPlan"));
         assert!(dbg.contains("layer_index"));
@@ -1358,7 +1553,9 @@ mod tests {
 
     #[test]
     fn layer_dispatch_plan_clone_independence() {
-        let plan = compute_layer_dispatch_plan(7, true, true, true, true, true, true, true, true, true, true);
+        let plan = compute_layer_dispatch_plan(
+            7, true, true, true, true, true, true, true, true, true, true,
+        );
         let mut cloned = plan.clone();
         cloned.layer_index = 999;
         cloned.total_dispatches = 0;
@@ -1371,7 +1568,11 @@ mod tests {
     #[test]
     fn execution_plan_clone_independence() {
         let cfg = default_config();
-        let plan = build_execution_plan(&cfg, &[(true, true, true); 2], &[(true, true, true, true, true, true, true); 2]);
+        let plan = build_execution_plan(
+            &cfg,
+            &[(true, true, true); 2],
+            &[(true, true, true, true, true, true, true); 2],
+        );
         let mut cloned = plan.clone();
         cloned.kv_dim = 9999;
         cloned.per_layer.clear();
@@ -1399,7 +1600,9 @@ mod tests {
 
     #[test]
     fn layer_dispatch_plan_json_all_fields() {
-        let plan = compute_layer_dispatch_plan(3, true, false, true, true, true, true, true, true, true, true);
+        let plan = compute_layer_dispatch_plan(
+            3, true, false, true, true, true, true, true, true, true, true,
+        );
         let json = serde_json::to_string(&plan).unwrap();
         let val: serde_json::Value = serde_json::from_str(&json).unwrap();
         assert_eq!(val["layer_index"], 3);
@@ -1418,7 +1621,11 @@ mod tests {
     #[test]
     fn execution_plan_json_parseable_as_value() {
         let cfg = default_config();
-        let plan = build_execution_plan(&cfg, &[(false, false, false); 2], &[(true, true, true, true, true, true, true); 2]);
+        let plan = build_execution_plan(
+            &cfg,
+            &[(false, false, false); 2],
+            &[(true, true, true, true, true, true, true); 2],
+        );
         let json = serde_json::to_string(&plan).unwrap();
         let val: serde_json::Value = serde_json::from_str(&json).unwrap();
         assert!(val["config"].is_object());
@@ -1432,11 +1639,18 @@ mod tests {
     #[test]
     fn execution_plan_json_roundtrip_values() {
         let cfg = default_config();
-        let plan = build_execution_plan(&cfg, &[(true, false, true); 2], &[(true, true, false, true, true, true, true); 2]);
+        let plan = build_execution_plan(
+            &cfg,
+            &[(true, false, true); 2],
+            &[(true, true, false, true, true, true, true); 2],
+        );
         let json = serde_json::to_string(&plan).unwrap();
         let val: serde_json::Value = serde_json::from_str(&json).unwrap();
         // Layer 0: bias_q=true, bias_k=false, bias_v=true => 2 bias dispatches
-        assert_eq!(val["per_layer"][0]["bias_add_dispatches"].as_u64().unwrap(), 2);
+        assert_eq!(
+            val["per_layer"][0]["bias_add_dispatches"].as_u64().unwrap(),
+            2
+        );
         // Layer 0: q=true, k=true, v=false, o=true, gate=true, up=true, down=true => 6 gemv
         assert_eq!(val["per_layer"][0]["gemv_dispatches"].as_u64().unwrap(), 6);
     }

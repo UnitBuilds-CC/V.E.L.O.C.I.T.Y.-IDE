@@ -726,9 +726,13 @@ fn optimize_node(node: NdaNode, var_constants: &mut HashMap<u64, i32>) -> NdaNod
                 (VecOpKind::Abs, NdaNode::Int { value }) => NdaNode::Int { value: value.abs() },
                 (VecOpKind::ReduceSum, NdaNode::Int { value }) => NdaNode::Int { value: *value },
                 // Double negation: negate(negate(x)) → x
-                (VecOpKind::Negate, NdaNode::VecOp { op: VecOpKind::Negate, operand: inner }) => {
-                    *inner.clone()
-                }
+                (
+                    VecOpKind::Negate,
+                    NdaNode::VecOp {
+                        op: VecOpKind::Negate,
+                        operand: inner,
+                    },
+                ) => *inner.clone(),
                 _ => NdaNode::VecOp {
                     op,
                     operand: Box::new(opt_operand),
@@ -885,7 +889,10 @@ fn count_nodes_node(node: &NdaNode) -> usize {
             else_body,
         } => {
             1 + count_nodes_node(cond)
-                + then_body.iter().map(|c| 1 + count_nodes_node(c)).sum::<usize>()
+                + then_body
+                    .iter()
+                    .map(|c| 1 + count_nodes_node(c))
+                    .sum::<usize>()
                 + else_body
                     .as_ref()
                     .map(|eb| eb.iter().map(|c| 1 + count_nodes_node(c)).sum::<usize>())
@@ -1361,7 +1368,9 @@ mod tests {
         let nodes = vec![
             NdaNode::Int { value: 42 },
             NdaNode::Load { name_hash: 1 },
-            NdaNode::Return { value: Box::new(NdaNode::Int { value: 0 }) },
+            NdaNode::Return {
+                value: Box::new(NdaNode::Int { value: 0 }),
+            },
         ];
         let dist = ast_complexity_info(&nodes);
         assert_eq!(dist.int_count, 2);
@@ -1372,18 +1381,16 @@ mod tests {
 
     #[test]
     fn ast_complexity_nested() {
-        let nodes = vec![
-            NdaNode::Loop {
-                count: 5,
-                body: vec![
-                    NdaNode::If {
-                        cond: Box::new(NdaNode::Int { value: 1 }),
-                        then_body: vec![NdaNode::Print { source: Box::new(NdaNode::Int { value: 1 }) }],
-                        else_body: None,
-                    },
-                ],
-            },
-        ];
+        let nodes = vec![NdaNode::Loop {
+            count: 5,
+            body: vec![NdaNode::If {
+                cond: Box::new(NdaNode::Int { value: 1 }),
+                then_body: vec![NdaNode::Print {
+                    source: Box::new(NdaNode::Int { value: 1 }),
+                }],
+                else_body: None,
+            }],
+        }];
         let dist = ast_complexity_info(&nodes);
         assert_eq!(dist.loop_count, 1);
         assert_eq!(dist.if_count, 1);
@@ -1408,8 +1415,18 @@ mod tests {
                 op: VecOpKind::Negate,
                 operand: Box::new(NdaNode::Load { name_hash: 2 }),
             },
-            NdaNode::Matrix { rows: 4, cols: 4, scale: 0, sign: vec![], extra: vec![] },
-            NdaNode::Norm { size: 4, weight: vec![], bias: vec![] },
+            NdaNode::Matrix {
+                rows: 4,
+                cols: 4,
+                scale: 0,
+                sign: vec![],
+                extra: vec![],
+            },
+            NdaNode::Norm {
+                size: 4,
+                weight: vec![],
+                bias: vec![],
+            },
             NdaNode::Call { target: 0xABCD },
         ];
         let dist = ast_complexity_info(&nodes);
@@ -1508,7 +1525,10 @@ mod tests {
 
     #[test]
     fn side_effects_syscall_is_true() {
-        assert!(has_side_effects(&NdaNode::Syscall { num: 0, args: vec![] }));
+        assert!(has_side_effects(&NdaNode::Syscall {
+            num: 0,
+            args: vec![]
+        }));
     }
 
     #[test]
@@ -1521,7 +1541,9 @@ mod tests {
         // let x = print(1) → has side effects
         assert!(has_side_effects(&NdaNode::Let {
             name_hash: 0,
-            init: Box::new(NdaNode::Print { source: Box::new(NdaNode::Int { value: 1 }) }),
+            init: Box::new(NdaNode::Print {
+                source: Box::new(NdaNode::Int { value: 1 })
+            }),
         }));
     }
 
@@ -1555,7 +1577,9 @@ mod tests {
         }));
         assert!(has_side_effects(&NdaNode::Loop {
             count: 5,
-            body: vec![NdaNode::Print { source: Box::new(NdaNode::Int { value: 0 }) }],
+            body: vec![NdaNode::Print {
+                source: Box::new(NdaNode::Int { value: 0 })
+            }],
         }));
     }
 
@@ -1572,10 +1596,13 @@ mod tests {
     #[test]
     fn gather_loads_from_add() {
         let mut set = std::collections::HashSet::new();
-        gather_loaded_vars(&NdaNode::Add {
-            lhs: Box::new(NdaNode::Load { name_hash: 1 }),
-            rhs: Box::new(NdaNode::Load { name_hash: 2 }),
-        }, &mut set);
+        gather_loaded_vars(
+            &NdaNode::Add {
+                lhs: Box::new(NdaNode::Load { name_hash: 1 }),
+                rhs: Box::new(NdaNode::Load { name_hash: 2 }),
+            },
+            &mut set,
+        );
         assert!(set.contains(&1));
         assert!(set.contains(&2));
         assert_eq!(set.len(), 2);
@@ -1584,10 +1611,13 @@ mod tests {
     #[test]
     fn gather_loads_from_let_init() {
         let mut set = std::collections::HashSet::new();
-        gather_loaded_vars(&NdaNode::Let {
-            name_hash: 10,
-            init: Box::new(NdaNode::Load { name_hash: 99 }),
-        }, &mut set);
+        gather_loaded_vars(
+            &NdaNode::Let {
+                name_hash: 10,
+                init: Box::new(NdaNode::Load { name_hash: 99 }),
+            },
+            &mut set,
+        );
         assert!(set.contains(&99));
         // name_hash 10 is a store target, not a load
         assert!(!set.contains(&10));
@@ -1603,15 +1633,18 @@ mod tests {
     #[test]
     fn gather_loads_nested_scope() {
         let mut set = std::collections::HashSet::new();
-        gather_loaded_vars(&NdaNode::Scope {
-            children: vec![
-                NdaNode::Load { name_hash: 1 },
-                NdaNode::Loop {
-                    count: 5,
-                    body: vec![NdaNode::Load { name_hash: 2 }],
-                },
-            ],
-        }, &mut set);
+        gather_loaded_vars(
+            &NdaNode::Scope {
+                children: vec![
+                    NdaNode::Load { name_hash: 1 },
+                    NdaNode::Loop {
+                        count: 5,
+                        body: vec![NdaNode::Load { name_hash: 2 }],
+                    },
+                ],
+            },
+            &mut set,
+        );
         assert!(set.contains(&1));
         assert!(set.contains(&2));
     }
@@ -1619,11 +1652,14 @@ mod tests {
     #[test]
     fn gather_loads_if_branches() {
         let mut set = std::collections::HashSet::new();
-        gather_loaded_vars(&NdaNode::If {
-            cond: Box::new(NdaNode::Load { name_hash: 10 }),
-            then_body: vec![NdaNode::Load { name_hash: 20 }],
-            else_body: Some(vec![NdaNode::Load { name_hash: 30 }]),
-        }, &mut set);
+        gather_loaded_vars(
+            &NdaNode::If {
+                cond: Box::new(NdaNode::Load { name_hash: 10 }),
+                then_body: vec![NdaNode::Load { name_hash: 20 }],
+                else_body: Some(vec![NdaNode::Load { name_hash: 30 }]),
+            },
+            &mut set,
+        );
         assert!(set.contains(&10));
         assert!(set.contains(&20));
         assert!(set.contains(&30));
@@ -1673,14 +1709,12 @@ mod tests {
 
     #[test]
     fn ast_complexity_while_and_scope() {
-        let nodes = vec![
-            NdaNode::While {
-                cond: Box::new(NdaNode::Int { value: 1 }),
-                body: vec![NdaNode::Scope {
-                    children: vec![NdaNode::Int { value: 0 }],
-                }],
-            },
-        ];
+        let nodes = vec![NdaNode::While {
+            cond: Box::new(NdaNode::Int { value: 1 }),
+            body: vec![NdaNode::Scope {
+                children: vec![NdaNode::Int { value: 0 }],
+            }],
+        }];
         let dist = ast_complexity_info(&nodes);
         assert_eq!(dist.while_count, 1);
         assert_eq!(dist.scope_count, 1);
@@ -1776,7 +1810,9 @@ mod tests {
         }));
         assert!(has_side_effects(&NdaNode::While {
             cond: Box::new(NdaNode::Int { value: 1 }),
-            body: vec![NdaNode::Print { source: Box::new(NdaNode::Int { value: 0 }) }],
+            body: vec![NdaNode::Print {
+                source: Box::new(NdaNode::Int { value: 0 })
+            }],
         }));
     }
 
@@ -1795,7 +1831,9 @@ mod tests {
         assert!(has_side_effects(&NdaNode::If {
             cond: Box::new(NdaNode::Int { value: 1 }),
             then_body: vec![],
-            else_body: Some(vec![NdaNode::Print { source: Box::new(NdaNode::Int { value: 0 }) }]),
+            else_body: Some(vec![NdaNode::Print {
+                source: Box::new(NdaNode::Int { value: 0 })
+            }]),
         }));
     }
 
@@ -1839,7 +1877,13 @@ mod tests {
     #[test]
     fn side_effects_gemv_delegates() {
         assert!(!has_side_effects(&NdaNode::Gemv {
-            matrix: Box::new(NdaNode::Matrix { rows: 2, cols: 2, scale: 0, sign: vec![], extra: vec![] }),
+            matrix: Box::new(NdaNode::Matrix {
+                rows: 2,
+                cols: 2,
+                scale: 0,
+                sign: vec![],
+                extra: vec![]
+            }),
             vector: Box::new(NdaNode::Int { value: 0 }),
         }));
     }
@@ -1865,10 +1909,13 @@ mod tests {
     #[test]
     fn gather_loads_while_body() {
         let mut set = std::collections::HashSet::new();
-        gather_loaded_vars(&NdaNode::While {
-            cond: Box::new(NdaNode::Load { name_hash: 5 }),
-            body: vec![NdaNode::Load { name_hash: 6 }],
-        }, &mut set);
+        gather_loaded_vars(
+            &NdaNode::While {
+                cond: Box::new(NdaNode::Load { name_hash: 5 }),
+                body: vec![NdaNode::Load { name_hash: 6 }],
+            },
+            &mut set,
+        );
         assert!(set.contains(&5));
         assert!(set.contains(&6));
     }
@@ -1876,10 +1923,13 @@ mod tests {
     #[test]
     fn gather_loads_store_value() {
         let mut set = std::collections::HashSet::new();
-        gather_loaded_vars(&NdaNode::Store {
-            name_hash: 10,
-            value: Box::new(NdaNode::Load { name_hash: 20 }),
-        }, &mut set);
+        gather_loaded_vars(
+            &NdaNode::Store {
+                name_hash: 10,
+                value: Box::new(NdaNode::Load { name_hash: 20 }),
+            },
+            &mut set,
+        );
         assert!(set.contains(&20));
     }
 
@@ -1964,16 +2014,33 @@ mod tests {
             NdaNode::Int { value: 1 },
             NdaNode::Load { name_hash: 0 },
             NdaNode::Call { target: 0 },
-            NdaNode::Matrix { rows: 1, cols: 1, scale: 0, sign: vec![], extra: vec![] },
+            NdaNode::Matrix {
+                rows: 1,
+                cols: 1,
+                scale: 0,
+                sign: vec![],
+                extra: vec![],
+            },
             NdaNode::Break,
         ];
         let dist = ast_complexity_info(&nodes);
-        let kind_sum = dist.int_count + dist.load_count + dist.store_count
-            + dist.let_count + dist.add_count + dist.compare_count
-            + dist.loop_count + dist.while_count + dist.if_count
-            + dist.scope_count + dist.return_count + dist.print_count
-            + dist.matrix_count + dist.norm_count + dist.call_count
-            + dist.vec_op_count + dist.other_count;
+        let kind_sum = dist.int_count
+            + dist.load_count
+            + dist.store_count
+            + dist.let_count
+            + dist.add_count
+            + dist.compare_count
+            + dist.loop_count
+            + dist.while_count
+            + dist.if_count
+            + dist.scope_count
+            + dist.return_count
+            + dist.print_count
+            + dist.matrix_count
+            + dist.norm_count
+            + dist.call_count
+            + dist.vec_op_count
+            + dist.other_count;
         assert_eq!(dist.total_nodes, kind_sum);
     }
 
@@ -1991,17 +2058,11 @@ mod tests {
 
     #[test]
     fn ast_complexity_max_depth_tracks_nesting() {
-        let nodes = vec![
-            NdaNode::Scope {
-                children: vec![
-                    NdaNode::Scope {
-                        children: vec![
-                            NdaNode::Int { value: 1 },
-                        ],
-                    },
-                ],
-            },
-        ];
+        let nodes = vec![NdaNode::Scope {
+            children: vec![NdaNode::Scope {
+                children: vec![NdaNode::Int { value: 1 }],
+            }],
+        }];
         let dist = ast_complexity_info(&nodes);
         assert!(dist.max_depth >= 2);
     }
@@ -2113,10 +2174,7 @@ mod tests {
     #[test]
     fn count_nodes_nested_scope() {
         let nodes = vec![NdaNode::Scope {
-            children: vec![
-                NdaNode::Int { value: 1 },
-                NdaNode::Int { value: 2 },
-            ],
+            children: vec![NdaNode::Int { value: 1 }, NdaNode::Int { value: 2 }],
         }];
         assert!(count_nodes(&nodes) >= 3); // scope + 2 ints
     }
@@ -2650,39 +2708,51 @@ mod tests {
     #[test]
     fn gather_loads_vecop() {
         let mut set = std::collections::HashSet::new();
-        gather_loaded_vars(&NdaNode::VecOp {
-            op: VecOpKind::Negate,
-            operand: Box::new(NdaNode::Load { name_hash: 50 }),
-        }, &mut set);
+        gather_loaded_vars(
+            &NdaNode::VecOp {
+                op: VecOpKind::Negate,
+                operand: Box::new(NdaNode::Load { name_hash: 50 }),
+            },
+            &mut set,
+        );
         assert!(set.contains(&50));
     }
 
     #[test]
     fn gather_loads_print() {
         let mut set = std::collections::HashSet::new();
-        gather_loaded_vars(&NdaNode::Print {
-            source: Box::new(NdaNode::Load { name_hash: 60 }),
-        }, &mut set);
+        gather_loaded_vars(
+            &NdaNode::Print {
+                source: Box::new(NdaNode::Load { name_hash: 60 }),
+            },
+            &mut set,
+        );
         assert!(set.contains(&60));
     }
 
     #[test]
     fn gather_loads_return_value() {
         let mut set = std::collections::HashSet::new();
-        gather_loaded_vars(&NdaNode::Return {
-            value: Box::new(NdaNode::Load { name_hash: 70 }),
-        }, &mut set);
+        gather_loaded_vars(
+            &NdaNode::Return {
+                value: Box::new(NdaNode::Load { name_hash: 70 }),
+            },
+            &mut set,
+        );
         assert!(set.contains(&70));
     }
 
     #[test]
     fn gather_loads_bitwise_both() {
         let mut set = std::collections::HashSet::new();
-        gather_loaded_vars(&NdaNode::Bitwise {
-            op: crate::site_map::verifier::BitwiseOp::And,
-            lhs: Box::new(NdaNode::Load { name_hash: 1 }),
-            rhs: Some(Box::new(NdaNode::Load { name_hash: 2 })),
-        }, &mut set);
+        gather_loaded_vars(
+            &NdaNode::Bitwise {
+                op: crate::site_map::verifier::BitwiseOp::And,
+                lhs: Box::new(NdaNode::Load { name_hash: 1 }),
+                rhs: Some(Box::new(NdaNode::Load { name_hash: 2 })),
+            },
+            &mut set,
+        );
         assert!(set.contains(&1));
         assert!(set.contains(&2));
     }
@@ -2690,11 +2760,14 @@ mod tests {
     #[test]
     fn gather_loads_bitwise_no_rhs() {
         let mut set = std::collections::HashSet::new();
-        gather_loaded_vars(&NdaNode::Bitwise {
-            op: crate::site_map::verifier::BitwiseOp::And,
-            lhs: Box::new(NdaNode::Load { name_hash: 1 }),
-            rhs: None,
-        }, &mut set);
+        gather_loaded_vars(
+            &NdaNode::Bitwise {
+                op: crate::site_map::verifier::BitwiseOp::And,
+                lhs: Box::new(NdaNode::Load { name_hash: 1 }),
+                rhs: None,
+            },
+            &mut set,
+        );
         assert!(set.contains(&1));
         assert_eq!(set.len(), 1);
     }
@@ -2702,11 +2775,14 @@ mod tests {
     #[test]
     fn gather_loads_math() {
         let mut set = std::collections::HashSet::new();
-        gather_loaded_vars(&NdaNode::Math {
-            op: crate::site_map::verifier::MathOp::Add,
-            lhs: Box::new(NdaNode::Load { name_hash: 10 }),
-            rhs: Box::new(NdaNode::Load { name_hash: 20 }),
-        }, &mut set);
+        gather_loaded_vars(
+            &NdaNode::Math {
+                op: crate::site_map::verifier::MathOp::Add,
+                lhs: Box::new(NdaNode::Load { name_hash: 10 }),
+                rhs: Box::new(NdaNode::Load { name_hash: 20 }),
+            },
+            &mut set,
+        );
         assert!(set.contains(&10));
         assert!(set.contains(&20));
     }
@@ -2714,10 +2790,13 @@ mod tests {
     #[test]
     fn gather_loads_gemv() {
         let mut set = std::collections::HashSet::new();
-        gather_loaded_vars(&NdaNode::Gemv {
-            matrix: Box::new(NdaNode::Load { name_hash: 100 }),
-            vector: Box::new(NdaNode::Load { name_hash: 200 }),
-        }, &mut set);
+        gather_loaded_vars(
+            &NdaNode::Gemv {
+                matrix: Box::new(NdaNode::Load { name_hash: 100 }),
+                vector: Box::new(NdaNode::Load { name_hash: 200 }),
+            },
+            &mut set,
+        );
         assert!(set.contains(&100));
         assert!(set.contains(&200));
     }
@@ -2725,10 +2804,13 @@ mod tests {
     #[test]
     fn gather_loads_dot() {
         let mut set = std::collections::HashSet::new();
-        gather_loaded_vars(&NdaNode::Dot {
-            lhs: Box::new(NdaNode::Load { name_hash: 11 }),
-            rhs: Box::new(NdaNode::Load { name_hash: 22 }),
-        }, &mut set);
+        gather_loaded_vars(
+            &NdaNode::Dot {
+                lhs: Box::new(NdaNode::Load { name_hash: 11 }),
+                rhs: Box::new(NdaNode::Load { name_hash: 22 }),
+            },
+            &mut set,
+        );
         assert!(set.contains(&11));
         assert!(set.contains(&22));
     }
@@ -2736,13 +2818,16 @@ mod tests {
     #[test]
     fn gather_loads_syscall_args() {
         let mut set = std::collections::HashSet::new();
-        gather_loaded_vars(&NdaNode::Syscall {
-            num: 1,
-            args: vec![
-                NdaNode::Load { name_hash: 1 },
-                NdaNode::Load { name_hash: 2 },
-            ],
-        }, &mut set);
+        gather_loaded_vars(
+            &NdaNode::Syscall {
+                num: 1,
+                args: vec![
+                    NdaNode::Load { name_hash: 1 },
+                    NdaNode::Load { name_hash: 2 },
+                ],
+            },
+            &mut set,
+        );
         assert!(set.contains(&1));
         assert!(set.contains(&2));
     }
@@ -2750,11 +2835,14 @@ mod tests {
     #[test]
     fn gather_loads_atomic() {
         let mut set = std::collections::HashSet::new();
-        gather_loaded_vars(&NdaNode::Atomic {
-            op: crate::site_map::verifier::AtomicOp::Cas,
-            addr: Box::new(NdaNode::Load { name_hash: 30 }),
-            val: Box::new(NdaNode::Load { name_hash: 40 }),
-        }, &mut set);
+        gather_loaded_vars(
+            &NdaNode::Atomic {
+                op: crate::site_map::verifier::AtomicOp::Cas,
+                addr: Box::new(NdaNode::Load { name_hash: 30 }),
+                val: Box::new(NdaNode::Load { name_hash: 40 }),
+            },
+            &mut set,
+        );
         assert!(set.contains(&30));
         assert!(set.contains(&40));
     }
@@ -2762,49 +2850,67 @@ mod tests {
     #[test]
     fn gather_loads_alloc_free_cast() {
         let mut set = std::collections::HashSet::new();
-        gather_loaded_vars(&NdaNode::Alloc {
-            size: Box::new(NdaNode::Load { name_hash: 50 }),
-        }, &mut set);
+        gather_loaded_vars(
+            &NdaNode::Alloc {
+                size: Box::new(NdaNode::Load { name_hash: 50 }),
+            },
+            &mut set,
+        );
         assert!(set.contains(&50));
 
         let mut set2 = std::collections::HashSet::new();
-        gather_loaded_vars(&NdaNode::Free {
-            addr: Box::new(NdaNode::Load { name_hash: 60 }),
-        }, &mut set2);
+        gather_loaded_vars(
+            &NdaNode::Free {
+                addr: Box::new(NdaNode::Load { name_hash: 60 }),
+            },
+            &mut set2,
+        );
         assert!(set2.contains(&60));
 
         let mut set3 = std::collections::HashSet::new();
-        gather_loaded_vars(&NdaNode::Cast {
-            from_type: crate::site_map::verifier::TypeKind::Int,
-            to_type: crate::site_map::verifier::TypeKind::Float,
-            operand: Box::new(NdaNode::Load { name_hash: 70 }),
-        }, &mut set3);
+        gather_loaded_vars(
+            &NdaNode::Cast {
+                from_type: crate::site_map::verifier::TypeKind::Int,
+                to_type: crate::site_map::verifier::TypeKind::Float,
+                operand: Box::new(NdaNode::Load { name_hash: 70 }),
+            },
+            &mut set3,
+        );
         assert!(set3.contains(&70));
     }
 
     #[test]
     fn gather_loads_gpu_dispatch() {
         let mut set = std::collections::HashSet::new();
-        gather_loaded_vars(&NdaNode::GpuDispatch {
-            shader_hash: 0,
-            args: vec![NdaNode::Load { name_hash: 80 }],
-        }, &mut set);
+        gather_loaded_vars(
+            &NdaNode::GpuDispatch {
+                shader_hash: 0,
+                args: vec![NdaNode::Load { name_hash: 80 }],
+            },
+            &mut set,
+        );
         assert!(set.contains(&80));
     }
 
     #[test]
     fn gather_loads_peek_poke() {
         let mut set = std::collections::HashSet::new();
-        gather_loaded_vars(&NdaNode::Peek {
-            addr: Box::new(NdaNode::Load { name_hash: 90 }),
-        }, &mut set);
+        gather_loaded_vars(
+            &NdaNode::Peek {
+                addr: Box::new(NdaNode::Load { name_hash: 90 }),
+            },
+            &mut set,
+        );
         assert!(set.contains(&90));
 
         let mut set2 = std::collections::HashSet::new();
-        gather_loaded_vars(&NdaNode::Poke {
-            addr: Box::new(NdaNode::Load { name_hash: 91 }),
-            value: Box::new(NdaNode::Load { name_hash: 92 }),
-        }, &mut set2);
+        gather_loaded_vars(
+            &NdaNode::Poke {
+                addr: Box::new(NdaNode::Load { name_hash: 91 }),
+                value: Box::new(NdaNode::Load { name_hash: 92 }),
+            },
+            &mut set2,
+        );
         assert!(set2.contains(&91));
         assert!(set2.contains(&92));
     }
@@ -2812,10 +2918,13 @@ mod tests {
     #[test]
     fn gather_loads_mathfunc() {
         let mut set = std::collections::HashSet::new();
-        gather_loaded_vars(&NdaNode::MathFunc {
-            func: crate::site_map::verifier::MathFuncKind::Sin,
-            operand: Box::new(NdaNode::Load { name_hash: 55 }),
-        }, &mut set);
+        gather_loaded_vars(
+            &NdaNode::MathFunc {
+                func: crate::site_map::verifier::MathFuncKind::Sin,
+                operand: Box::new(NdaNode::Load { name_hash: 55 }),
+            },
+            &mut set,
+        );
         assert!(set.contains(&55));
     }
 
@@ -2824,69 +2933,85 @@ mod tests {
     #[test]
     fn gather_written_let_and_store() {
         let mut set = std::collections::HashSet::new();
-        gather_written_vars(&NdaNode::Let {
-            name_hash: 1,
-            init: Box::new(NdaNode::Int { value: 42 }),
-        }, &mut set);
+        gather_written_vars(
+            &NdaNode::Let {
+                name_hash: 1,
+                init: Box::new(NdaNode::Int { value: 42 }),
+            },
+            &mut set,
+        );
         assert!(set.contains(&1));
 
-        gather_written_vars(&NdaNode::Store {
-            name_hash: 2,
-            value: Box::new(NdaNode::Int { value: 99 }),
-        }, &mut set);
+        gather_written_vars(
+            &NdaNode::Store {
+                name_hash: 2,
+                value: Box::new(NdaNode::Int { value: 99 }),
+            },
+            &mut set,
+        );
         assert!(set.contains(&2));
     }
 
     #[test]
     fn gather_written_scope() {
         let mut set = std::collections::HashSet::new();
-        gather_written_vars(&NdaNode::Scope {
-            children: vec![
-                NdaNode::Let {
+        gather_written_vars(
+            &NdaNode::Scope {
+                children: vec![NdaNode::Let {
                     name_hash: 10,
                     init: Box::new(NdaNode::Int { value: 0 }),
-                },
-            ],
-        }, &mut set);
+                }],
+            },
+            &mut set,
+        );
         assert!(set.contains(&10));
     }
 
     #[test]
     fn gather_written_loop_and_while() {
         let mut set = std::collections::HashSet::new();
-        gather_written_vars(&NdaNode::Loop {
-            count: 5,
-            body: vec![NdaNode::Store {
-                name_hash: 20,
-                value: Box::new(NdaNode::Int { value: 0 }),
-            }],
-        }, &mut set);
+        gather_written_vars(
+            &NdaNode::Loop {
+                count: 5,
+                body: vec![NdaNode::Store {
+                    name_hash: 20,
+                    value: Box::new(NdaNode::Int { value: 0 }),
+                }],
+            },
+            &mut set,
+        );
         assert!(set.contains(&20));
 
-        gather_written_vars(&NdaNode::While {
-            cond: Box::new(NdaNode::Int { value: 1 }),
-            body: vec![NdaNode::Store {
-                name_hash: 30,
-                value: Box::new(NdaNode::Int { value: 0 }),
-            }],
-        }, &mut set);
+        gather_written_vars(
+            &NdaNode::While {
+                cond: Box::new(NdaNode::Int { value: 1 }),
+                body: vec![NdaNode::Store {
+                    name_hash: 30,
+                    value: Box::new(NdaNode::Int { value: 0 }),
+                }],
+            },
+            &mut set,
+        );
         assert!(set.contains(&30));
     }
 
     #[test]
     fn gather_written_if_branches() {
         let mut set = std::collections::HashSet::new();
-        gather_written_vars(&NdaNode::If {
-            cond: Box::new(NdaNode::Int { value: 1 }),
-            then_body: vec![NdaNode::Let {
-                name_hash: 40,
-                init: Box::new(NdaNode::Int { value: 0 }),
-            }],
-            else_body: Some(vec![NdaNode::Let {
-                name_hash: 50,
-                init: Box::new(NdaNode::Int { value: 0 }),
-            }]),
-        }, &mut set);
+        gather_written_vars(
+            &NdaNode::If {
+                cond: Box::new(NdaNode::Int { value: 1 }),
+                then_body: vec![NdaNode::Let {
+                    name_hash: 40,
+                    init: Box::new(NdaNode::Int { value: 0 }),
+                }],
+                else_body: Some(vec![NdaNode::Let {
+                    name_hash: 50,
+                    init: Box::new(NdaNode::Int { value: 0 }),
+                }]),
+            },
+            &mut set,
+        );
         assert!(set.contains(&40));
         assert!(set.contains(&50));
     }
@@ -2987,7 +3112,10 @@ mod tests {
             },
         ];
         let result = optimize_ast(&nodes);
-        let let_count = result.iter().filter(|n| matches!(n, NdaNode::Let { .. })).count();
+        let let_count = result
+            .iter()
+            .filter(|n| matches!(n, NdaNode::Let { .. }))
+            .count();
         assert_eq!(let_count, 0, "All dead lets should be removed");
     }
 
@@ -3052,8 +3180,18 @@ mod tests {
     #[test]
     fn ast_complexity_norm_and_matrix() {
         let nodes = vec![
-            NdaNode::Norm { size: 4, weight: vec![], bias: vec![] },
-            NdaNode::Matrix { rows: 2, cols: 2, scale: 0, sign: vec![], extra: vec![] },
+            NdaNode::Norm {
+                size: 4,
+                weight: vec![],
+                bias: vec![],
+            },
+            NdaNode::Matrix {
+                rows: 2,
+                cols: 2,
+                scale: 0,
+                sign: vec![],
+                extra: vec![],
+            },
         ];
         let dist = ast_complexity_info(&nodes);
         assert_eq!(dist.norm_count, 1);

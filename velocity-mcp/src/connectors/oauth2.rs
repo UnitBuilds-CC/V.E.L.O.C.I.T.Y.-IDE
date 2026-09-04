@@ -669,7 +669,9 @@ mod tests {
             issued_at: now_secs(),
             scope: None,
         };
-        assert!(mgr.complete_authorization("unknown_state", "code", token).is_err());
+        assert!(mgr
+            .complete_authorization("unknown_state", "code", token)
+            .is_err());
     }
 
     #[test]

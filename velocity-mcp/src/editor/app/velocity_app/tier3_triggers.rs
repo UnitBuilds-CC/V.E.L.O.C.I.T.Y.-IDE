@@ -2,11 +2,13 @@
 //!
 //! Extracted verbatim from `tier3_panels.rs` (no logic changes).
 
+use super::struct_def::VelocityApp;
+use super::tier3_common::human_secs;
+use crate::editor::theme::{
+    CARD_INNER_MARGIN, CARD_RADIUS, FONT_CAPTION, FONT_SMALL, ITEM_SPACING, SECTION_SPACING,
+};
 use eframe::egui;
 use egui::RichText;
-use super::struct_def::VelocityApp;
-use super::tier3_common::{human_secs};
-use crate::editor::theme::{CARD_INNER_MARGIN, CARD_RADIUS, FONT_CAPTION, FONT_SMALL, ITEM_SPACING, SECTION_SPACING};
 
 impl VelocityApp {
     pub fn render_triggers_panel(&mut self, ui: &mut egui::Ui) {
@@ -61,7 +63,7 @@ impl VelocityApp {
             );
         }
         ui.add_space(SECTION_SPACING);
-        
+
         // Trigger list.
         let now = now_secs();
         let mut toggle: Option<String> = None;

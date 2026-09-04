@@ -1,4 +1,4 @@
-﻿use serde::Serialize;
+use serde::Serialize;
 use std::sync::Arc;
 
 use crate::nda::NdaMatrix;
@@ -893,9 +893,17 @@ pub struct CompileDiagnostic {
 /// Analyze nodes for JIT compilation characteristics without compiling.
 pub fn compile_diagnostic(nodes: &[NdaNode]) -> CompileDiagnostic {
     let node_count = nodes.iter().map(count_nodes).sum::<usize>();
-    let native_eligible = nodes.iter().filter(|n| is_pure_scalar(n)).map(count_nodes).sum::<usize>();
+    let native_eligible = nodes
+        .iter()
+        .filter(|n| is_pure_scalar(n))
+        .map(count_nodes)
+        .sum::<usize>();
     let interpreter_only = node_count.saturating_sub(native_eligible);
-    let native_ratio = if node_count > 0 { native_eligible as f64 / node_count as f64 } else { 0.0 };
+    let native_ratio = if node_count > 0 {
+        native_eligible as f64 / node_count as f64
+    } else {
+        0.0
+    };
 
     let mut has_loops = false;
     let mut has_while_loops = false;
@@ -905,7 +913,15 @@ pub fn compile_diagnostic(nodes: &[NdaNode]) -> CompileDiagnostic {
     let mut has_norms = false;
 
     for node in nodes {
-        scan_node_features(node, &mut has_loops, &mut has_while_loops, &mut has_conditionals, &mut has_returns, &mut has_matrices, &mut has_norms);
+        scan_node_features(
+            node,
+            &mut has_loops,
+            &mut has_while_loops,
+            &mut has_conditionals,
+            &mut has_returns,
+            &mut has_matrices,
+            &mut has_norms,
+        );
     }
 
     let estimated_complexity = if node_count == 0 {
@@ -957,34 +973,137 @@ fn scan_node_features(
     match node {
         NdaNode::Loop { body, .. } => {
             *has_loops = true;
-            for child in body { scan_node_features(child, has_loops, has_while_loops, has_conditionals, has_returns, has_matrices, has_norms); }
+            for child in body {
+                scan_node_features(
+                    child,
+                    has_loops,
+                    has_while_loops,
+                    has_conditionals,
+                    has_returns,
+                    has_matrices,
+                    has_norms,
+                );
+            }
         }
         NdaNode::While { cond, body } => {
             *has_while_loops = true;
             *has_loops = true;
-            scan_node_features(cond, has_loops, has_while_loops, has_conditionals, has_returns, has_matrices, has_norms);
-            for child in body { scan_node_features(child, has_loops, has_while_loops, has_conditionals, has_returns, has_matrices, has_norms); }
-        }
-        NdaNode::If { cond, then_body, else_body } => {
-            *has_conditionals = true;
-            scan_node_features(cond, has_loops, has_while_loops, has_conditionals, has_returns, has_matrices, has_norms);
-            for child in then_body { scan_node_features(child, has_loops, has_while_loops, has_conditionals, has_returns, has_matrices, has_norms); }
-            if let Some(eb) = else_body {
-                for child in eb { scan_node_features(child, has_loops, has_while_loops, has_conditionals, has_returns, has_matrices, has_norms); }
+            scan_node_features(
+                cond,
+                has_loops,
+                has_while_loops,
+                has_conditionals,
+                has_returns,
+                has_matrices,
+                has_norms,
+            );
+            for child in body {
+                scan_node_features(
+                    child,
+                    has_loops,
+                    has_while_loops,
+                    has_conditionals,
+                    has_returns,
+                    has_matrices,
+                    has_norms,
+                );
             }
         }
-        NdaNode::Return { .. } => { *has_returns = true; }
-        NdaNode::Matrix { .. } => { *has_matrices = true; }
-        NdaNode::Norm { .. } => { *has_norms = true; }
-        NdaNode::Scope { children } => {
-            for child in children { scan_node_features(child, has_loops, has_while_loops, has_conditionals, has_returns, has_matrices, has_norms); }
+        NdaNode::If {
+            cond,
+            then_body,
+            else_body,
+        } => {
+            *has_conditionals = true;
+            scan_node_features(
+                cond,
+                has_loops,
+                has_while_loops,
+                has_conditionals,
+                has_returns,
+                has_matrices,
+                has_norms,
+            );
+            for child in then_body {
+                scan_node_features(
+                    child,
+                    has_loops,
+                    has_while_loops,
+                    has_conditionals,
+                    has_returns,
+                    has_matrices,
+                    has_norms,
+                );
+            }
+            if let Some(eb) = else_body {
+                for child in eb {
+                    scan_node_features(
+                        child,
+                        has_loops,
+                        has_while_loops,
+                        has_conditionals,
+                        has_returns,
+                        has_matrices,
+                        has_norms,
+                    );
+                }
+            }
         }
-        NdaNode::Let { init, .. } | NdaNode::Store { value: init, .. } | NdaNode::Print { source: init } | NdaNode::VecOp { operand: init, .. } => {
-            scan_node_features(init, has_loops, has_while_loops, has_conditionals, has_returns, has_matrices, has_norms);
+        NdaNode::Return { .. } => {
+            *has_returns = true;
+        }
+        NdaNode::Matrix { .. } => {
+            *has_matrices = true;
+        }
+        NdaNode::Norm { .. } => {
+            *has_norms = true;
+        }
+        NdaNode::Scope { children } => {
+            for child in children {
+                scan_node_features(
+                    child,
+                    has_loops,
+                    has_while_loops,
+                    has_conditionals,
+                    has_returns,
+                    has_matrices,
+                    has_norms,
+                );
+            }
+        }
+        NdaNode::Let { init, .. }
+        | NdaNode::Store { value: init, .. }
+        | NdaNode::Print { source: init }
+        | NdaNode::VecOp { operand: init, .. } => {
+            scan_node_features(
+                init,
+                has_loops,
+                has_while_loops,
+                has_conditionals,
+                has_returns,
+                has_matrices,
+                has_norms,
+            );
         }
         NdaNode::Add { lhs, rhs } | NdaNode::Compare { lhs, rhs, .. } => {
-            scan_node_features(lhs, has_loops, has_while_loops, has_conditionals, has_returns, has_matrices, has_norms);
-            scan_node_features(rhs, has_loops, has_while_loops, has_conditionals, has_returns, has_matrices, has_norms);
+            scan_node_features(
+                lhs,
+                has_loops,
+                has_while_loops,
+                has_conditionals,
+                has_returns,
+                has_matrices,
+                has_norms,
+            );
+            scan_node_features(
+                rhs,
+                has_loops,
+                has_while_loops,
+                has_conditionals,
+                has_returns,
+                has_matrices,
+                has_norms,
+            );
         }
         _ => {}
     }
@@ -1073,7 +1192,10 @@ mod tests {
         let diag = compile_diagnostic(&nodes);
         assert!(diag.has_while_loops);
         assert!(diag.has_loops);
-        assert!(diag.validation_issues.iter().any(|i| i.contains("safety limit")));
+        assert!(diag
+            .validation_issues
+            .iter()
+            .any(|i| i.contains("safety limit")));
     }
 
     #[test]
@@ -1117,14 +1239,20 @@ mod tests {
 
     #[test]
     fn validate_compile_sequence_zero_loop() {
-        let nodes = vec![NdaNode::Loop { count: 0, body: vec![NdaNode::Int { value: 0 }] }];
+        let nodes = vec![NdaNode::Loop {
+            count: 0,
+            body: vec![NdaNode::Int { value: 0 }],
+        }];
         let issues = validate_compile_sequence(&nodes);
         assert!(issues.iter().any(|i| i.contains("zero iteration")));
     }
 
     #[test]
     fn validate_compile_sequence_empty_loop_body() {
-        let nodes = vec![NdaNode::Loop { count: 5, body: vec![] }];
+        let nodes = vec![NdaNode::Loop {
+            count: 5,
+            body: vec![],
+        }];
         let issues = validate_compile_sequence(&nodes);
         assert!(issues.iter().any(|i| i.contains("empty body")));
     }
@@ -1161,7 +1289,10 @@ mod tests {
     fn validate_compile_sequence_valid() {
         let nodes = vec![
             NdaNode::Int { value: 1 },
-            NdaNode::Loop { count: 5, body: vec![NdaNode::Int { value: 0 }] },
+            NdaNode::Loop {
+                count: 5,
+                body: vec![NdaNode::Int { value: 0 }],
+            },
         ];
         let issues = validate_compile_sequence(&nodes);
         assert!(issues.is_empty());
@@ -1280,15 +1411,20 @@ mod tests {
     #[test]
     fn is_pure_scalar_matrix_is_not() {
         assert!(!is_pure_scalar(&NdaNode::Matrix {
-            rows: 4, cols: 4, scale: 0,
-            sign: vec![0; 2], extra: vec![0; 2],
+            rows: 4,
+            cols: 4,
+            scale: 0,
+            sign: vec![0; 2],
+            extra: vec![0; 2],
         }));
     }
 
     #[test]
     fn is_pure_scalar_norm_is_not() {
         assert!(!is_pure_scalar(&NdaNode::Norm {
-            size: 64, weight: vec![0; 8], bias: vec![0; 8],
+            size: 64,
+            weight: vec![0; 8],
+            bias: vec![0; 8],
         }));
     }
 
@@ -1306,8 +1442,11 @@ mod tests {
         let node = NdaNode::Let {
             name_hash: 0,
             init: Box::new(NdaNode::Matrix {
-                rows: 4, cols: 4, scale: 0,
-                sign: vec![0; 2], extra: vec![0; 2],
+                rows: 4,
+                cols: 4,
+                scale: 0,
+                sign: vec![0; 2],
+                extra: vec![0; 2],
             }),
         };
         assert!(!is_pure_scalar(&node));
@@ -1327,8 +1466,11 @@ mod tests {
         let node = NdaNode::Add {
             lhs: Box::new(NdaNode::Int { value: 1 }),
             rhs: Box::new(NdaNode::Matrix {
-                rows: 2, cols: 2, scale: 0,
-                sign: vec![0; 1], extra: vec![0; 1],
+                rows: 2,
+                cols: 2,
+                scale: 0,
+                sign: vec![0; 1],
+                extra: vec![0; 1],
             }),
         };
         assert!(!is_pure_scalar(&node));
@@ -1346,10 +1488,7 @@ mod tests {
     #[test]
     fn is_pure_scalar_scope_all_scalar() {
         let node = NdaNode::Scope {
-            children: vec![
-                NdaNode::Int { value: 1 },
-                NdaNode::Load { name_hash: 0 },
-            ],
+            children: vec![NdaNode::Int { value: 1 }, NdaNode::Load { name_hash: 0 }],
         };
         assert!(is_pure_scalar(&node));
     }
@@ -1384,33 +1523,47 @@ mod tests {
     #[test]
     fn node_to_str_matrix() {
         let s = node_to_str(&NdaNode::Matrix {
-            rows: 8, cols: 4, scale: 0,
-            sign: vec![0; 4], extra: vec![0; 4],
+            rows: 8,
+            cols: 4,
+            scale: 0,
+            sign: vec![0; 4],
+            extra: vec![0; 4],
         });
         assert_eq!(s, "Matrix(8x4)");
     }
 
     #[test]
     fn node_to_str_norm() {
-        let s = node_to_str(&NdaNode::Norm { size: 128, weight: vec![], bias: vec![] });
+        let s = node_to_str(&NdaNode::Norm {
+            size: 128,
+            weight: vec![],
+            bias: vec![],
+        });
         assert_eq!(s, "Norm(128)");
     }
 
     #[test]
     fn node_to_str_loop() {
-        let s = node_to_str(&NdaNode::Loop { count: 10, body: vec![] });
+        let s = node_to_str(&NdaNode::Loop {
+            count: 10,
+            body: vec![],
+        });
         assert_eq!(s, "Loop(count=10)");
     }
 
     #[test]
     fn node_to_str_scope() {
-        let s = node_to_str(&NdaNode::Scope { children: vec![NdaNode::Int { value: 1 }] });
+        let s = node_to_str(&NdaNode::Scope {
+            children: vec![NdaNode::Int { value: 1 }],
+        });
         assert_eq!(s, "Scope(len=1)");
     }
 
     #[test]
     fn node_to_str_print() {
-        let s = node_to_str(&NdaNode::Print { source: Box::new(NdaNode::Int { value: 0 }) });
+        let s = node_to_str(&NdaNode::Print {
+            source: Box::new(NdaNode::Int { value: 0 }),
+        });
         assert_eq!(s, "Print");
     }
 
@@ -1452,8 +1605,11 @@ mod tests {
             NdaNode::Int { value: 1 },
             NdaNode::Float { value: 2.0 },
             NdaNode::Matrix {
-                rows: 4, cols: 4, scale: 0,
-                sign: vec![0; 2], extra: vec![0; 2],
+                rows: 4,
+                cols: 4,
+                scale: 0,
+                sign: vec![0; 2],
+                extra: vec![0; 2],
             },
         ];
         let diag = compile_diagnostic(&nodes);
@@ -1538,11 +1694,18 @@ mod tests {
     #[test]
     fn validate_compile_sequence_multiple_issues() {
         let nodes = vec![
-            NdaNode::Loop { count: 0, body: vec![] },  // zero iteration + empty body
-            NdaNode::Scope { children: vec![] },         // no children
+            NdaNode::Loop {
+                count: 0,
+                body: vec![],
+            }, // zero iteration + empty body
+            NdaNode::Scope { children: vec![] }, // no children
         ];
         let issues = validate_compile_sequence(&nodes);
-        assert!(issues.len() >= 3, "expected >=3 issues, got {}", issues.len());
+        assert!(
+            issues.len() >= 3,
+            "expected >=3 issues, got {}",
+            issues.len()
+        );
     }
 
     // ── JSON key count tests ────────────────────────────────────────────────
@@ -1564,8 +1727,11 @@ mod tests {
         let nodes = vec![
             NdaNode::Int { value: 1 },
             NdaNode::Matrix {
-                rows: 4, cols: 4, scale: 0,
-                sign: vec![0; 2], extra: vec![0; 2],
+                rows: 4,
+                cols: 4,
+                scale: 0,
+                sign: vec![0; 2],
+                extra: vec![0; 2],
             },
         ];
         let diag = compile_diagnostic(&nodes);
@@ -1726,7 +1892,10 @@ mod tests {
 
     #[test]
     fn node_to_str_syscall() {
-        let s = node_to_str(&NdaNode::Syscall { num: 42, args: vec![] });
+        let s = node_to_str(&NdaNode::Syscall {
+            num: 42,
+            args: vec![],
+        });
         assert!(s.contains("Syscall"));
         assert!(s.contains("42"));
     }
@@ -1767,7 +1936,10 @@ mod tests {
 
     #[test]
     fn node_to_str_reg_int() {
-        let s = node_to_str(&NdaNode::RegInt { vector: 7, handler_hash: 0 });
+        let s = node_to_str(&NdaNode::RegInt {
+            vector: 7,
+            handler_hash: 0,
+        });
         assert!(s.contains("RegInt"));
         assert!(s.contains("7"));
     }
@@ -1869,7 +2041,11 @@ mod tests {
     fn bitwise_binary_vec_vec() {
         let a = NdaVec::from_i32_slice(&[0xFF, 0x0F], 0);
         let b = NdaVec::from_i32_slice(&[0xF0, 0xFF], 0);
-        let result = bitwise_binary(BitwiseOp::And, JitVal::Vector(Arc::new(a)), JitVal::Vector(Arc::new(b)));
+        let result = bitwise_binary(
+            BitwiseOp::And,
+            JitVal::Vector(Arc::new(a)),
+            JitVal::Vector(Arc::new(b)),
+        );
         match result {
             JitVal::Vector(v) => {
                 assert_eq!(v.len, 2);
@@ -1883,7 +2059,11 @@ mod tests {
     #[test]
     fn bitwise_binary_vec_scalar() {
         let a = NdaVec::from_i32_slice(&[0xFF, 0xAA], 0);
-        let result = bitwise_binary(BitwiseOp::And, JitVal::Vector(Arc::new(a)), JitVal::Scalar(0x0F, 0));
+        let result = bitwise_binary(
+            BitwiseOp::And,
+            JitVal::Vector(Arc::new(a)),
+            JitVal::Scalar(0x0F, 0),
+        );
         match result {
             JitVal::Vector(v) => {
                 assert_eq!(v.len, 2);
@@ -1896,7 +2076,11 @@ mod tests {
     #[test]
     fn bitwise_binary_scalar_vec() {
         let b = NdaVec::from_i32_slice(&[0xFF, 0x55], 0);
-        let result = bitwise_binary(BitwiseOp::Or, JitVal::Scalar(0x0F, 0), JitVal::Vector(Arc::new(b)));
+        let result = bitwise_binary(
+            BitwiseOp::Or,
+            JitVal::Scalar(0x0F, 0),
+            JitVal::Vector(Arc::new(b)),
+        );
         match result {
             JitVal::Vector(v) => {
                 assert_eq!(v.len, 2);
@@ -1908,7 +2092,11 @@ mod tests {
     #[test]
     fn bitwise_binary_float_vec() {
         let a = NdaVec::from_i32_slice(&[0xFF], 0);
-        let result = bitwise_binary(BitwiseOp::Xor, JitVal::Float(1.0), JitVal::Vector(Arc::new(a)));
+        let result = bitwise_binary(
+            BitwiseOp::Xor,
+            JitVal::Float(1.0),
+            JitVal::Vector(Arc::new(a)),
+        );
         match result {
             JitVal::Vector(_) => {}
             _ => panic!("expected Vector"),
@@ -1918,7 +2106,11 @@ mod tests {
     #[test]
     fn bitwise_binary_vec_float() {
         let a = NdaVec::from_i32_slice(&[0xFF], 0);
-        let result = bitwise_binary(BitwiseOp::Xor, JitVal::Vector(Arc::new(a)), JitVal::Float(2.0));
+        let result = bitwise_binary(
+            BitwiseOp::Xor,
+            JitVal::Vector(Arc::new(a)),
+            JitVal::Float(2.0),
+        );
         match result {
             JitVal::Vector(_) => {}
             _ => panic!("expected Vector"),
@@ -1978,8 +2170,11 @@ mod tests {
         let node = NdaNode::Store {
             name_hash: 1,
             value: Box::new(NdaNode::Matrix {
-                rows: 2, cols: 2, scale: 0,
-                sign: vec![0; 1], extra: vec![0; 1],
+                rows: 2,
+                cols: 2,
+                scale: 0,
+                sign: vec![0; 1],
+                extra: vec![0; 1],
             }),
         };
         assert!(!is_pure_scalar(&node));
@@ -2011,8 +2206,11 @@ mod tests {
         let node = NdaNode::If {
             cond: Box::new(NdaNode::Int { value: 1 }),
             then_body: vec![NdaNode::Matrix {
-                rows: 2, cols: 2, scale: 0,
-                sign: vec![0; 1], extra: vec![0; 1],
+                rows: 2,
+                cols: 2,
+                scale: 0,
+                sign: vec![0; 1],
+                extra: vec![0; 1],
             }],
             else_body: None,
         };
@@ -2050,8 +2248,11 @@ mod tests {
         let nodes = vec![
             NdaNode::Float { value: 1.0 },
             NdaNode::Matrix {
-                rows: 4, cols: 4, scale: 0,
-                sign: vec![0; 2], extra: vec![0; 2],
+                rows: 4,
+                cols: 4,
+                scale: 0,
+                sign: vec![0; 2],
+                extra: vec![0; 2],
             },
         ];
         let diag = compile_diagnostic(&nodes);
@@ -2063,10 +2264,16 @@ mod tests {
     fn compile_diagnostic_json_roundtrip() {
         let nodes = vec![
             NdaNode::Int { value: 1 },
-            NdaNode::Loop { count: 5, body: vec![NdaNode::Int { value: 0 }] },
+            NdaNode::Loop {
+                count: 5,
+                body: vec![NdaNode::Int { value: 0 }],
+            },
             NdaNode::Matrix {
-                rows: 4, cols: 4, scale: 0,
-                sign: vec![0; 2], extra: vec![0; 2],
+                rows: 4,
+                cols: 4,
+                scale: 0,
+                sign: vec![0; 2],
+                extra: vec![0; 2],
             },
         ];
         let diag = compile_diagnostic(&nodes);
@@ -2153,10 +2360,7 @@ mod tests {
     fn jit_execute_scope_runs_children() {
         use crate::site_map::SiteMap;
         let nodes = vec![NdaNode::Scope {
-            children: vec![
-                NdaNode::Int { value: 1 },
-                NdaNode::Int { value: 2 },
-            ],
+            children: vec![NdaNode::Int { value: 1 }, NdaNode::Int { value: 2 }],
         }];
         let prog = compile(&nodes);
         let sm = SiteMap::open(&std::env::temp_dir().join("jit_compiler_scope_test"), 0).unwrap();
@@ -2264,8 +2468,11 @@ mod tests {
     fn jit_matrix_stack_underflow() {
         use crate::site_map::SiteMap;
         let nodes = vec![NdaNode::Matrix {
-            rows: 4, cols: 4, scale: 0,
-            sign: vec![0xAA; 2], extra: vec![0x55; 2],
+            rows: 4,
+            cols: 4,
+            scale: 0,
+            sign: vec![0xAA; 2],
+            extra: vec![0x55; 2],
         }];
         let prog = compile(&nodes);
         let sm = SiteMap::open(&std::env::temp_dir().join("jit_matrix_underflow_test"), 0).unwrap();
@@ -2278,7 +2485,9 @@ mod tests {
     fn jit_norm_stack_underflow() {
         use crate::site_map::SiteMap;
         let nodes = vec![NdaNode::Norm {
-            size: 64, weight: vec![0xFF; 8], bias: vec![0x00; 8],
+            size: 64,
+            weight: vec![0xFF; 8],
+            bias: vec![0x00; 8],
         }];
         let prog = compile(&nodes);
         let sm = SiteMap::open(&std::env::temp_dir().join("jit_norm_underflow_test"), 0).unwrap();
@@ -2319,13 +2528,18 @@ mod tests {
     fn jit_matrix_dimension_mismatch() {
         use crate::site_map::SiteMap;
         // Push a vector of wrong length, then try Matrix
-        let nodes = vec![
-            NdaNode::Scope { children: vec![
-                NdaNode::Loop { count: 3, body: vec![NdaNode::Int { value: 1 }] },
-                NdaNode::VecOp { op: crate::site_map::verifier::VecOpKind::SiLU,
-                    operand: Box::new(NdaNode::Int { value: 0 }) },
-            ]},
-        ];
+        let nodes = vec![NdaNode::Scope {
+            children: vec![
+                NdaNode::Loop {
+                    count: 3,
+                    body: vec![NdaNode::Int { value: 1 }],
+                },
+                NdaNode::VecOp {
+                    op: crate::site_map::verifier::VecOpKind::SiLU,
+                    operand: Box::new(NdaNode::Int { value: 0 }),
+                },
+            ],
+        }];
         let prog = compile(&nodes);
         let sm = SiteMap::open(&std::env::temp_dir().join("jit_matrix_dim_test"), 0).unwrap();
         let mut state = JitState::new(&[], &sm, 16);
@@ -2340,7 +2554,9 @@ mod tests {
     fn jit_norm_dimension_mismatch() {
         use crate::site_map::SiteMap;
         let nodes = vec![NdaNode::Norm {
-            size: 4, weight: vec![0xFF; 2], bias: vec![0x00; 2],
+            size: 4,
+            weight: vec![0xFF; 2],
+            bias: vec![0x00; 2],
         }];
         let prog = compile(&nodes);
         let sm = SiteMap::open(&std::env::temp_dir().join("jit_norm_dim_test"), 0).unwrap();
@@ -2439,7 +2655,9 @@ mod tests {
         use crate::site_map::SiteMap;
         // Poke to address >= 0xF0000000 should go to MMIO
         let nodes = vec![NdaNode::Poke {
-            addr: Box::new(NdaNode::Int { value: 0xF0000000u32 as i32 }),
+            addr: Box::new(NdaNode::Int {
+                value: 0xF0000000u32 as i32,
+            }),
             value: Box::new(NdaNode::Int { value: 99 }),
         }];
         let prog = compile(&nodes);
@@ -2688,7 +2906,7 @@ mod tests {
         }
         // Unknown syscall pushes Scalar(0, 0)
         match state.stack.last() {
-            Some(JitVal::Scalar(0, 0)) => {},
+            Some(JitVal::Scalar(0, 0)) => {}
             other => panic!("expected Scalar(0,0), got {:?}", other),
         }
     }
@@ -2710,11 +2928,16 @@ mod tests {
                 }),
                 body: vec![
                     NdaNode::Matrix {
-                        rows: 4, cols: 4, scale: 0,
-                        sign: vec![0; 2], extra: vec![0; 2],
+                        rows: 4,
+                        cols: 4,
+                        scale: 0,
+                        sign: vec![0; 2],
+                        extra: vec![0; 2],
                     },
                     NdaNode::Norm {
-                        size: 8, weight: vec![0; 1], bias: vec![0; 1],
+                        size: 8,
+                        weight: vec![0; 1],
+                        bias: vec![0; 1],
                     },
                 ],
             }],
@@ -2735,8 +2958,11 @@ mod tests {
             NdaNode::Let {
                 name_hash: 1,
                 init: Box::new(NdaNode::Matrix {
-                    rows: 2, cols: 2, scale: 0,
-                    sign: vec![0; 1], extra: vec![0; 1],
+                    rows: 2,
+                    cols: 2,
+                    scale: 0,
+                    sign: vec![0; 1],
+                    extra: vec![0; 1],
                 }),
             },
             NdaNode::Print {
@@ -2791,7 +3017,13 @@ mod tests {
         }
         // Body should not execute; loop_count stays 0 since condition was false
         // (executed_nodes is 1 for the While node itself)
-        assert!(state.stack.is_empty() || !state.stack.iter().any(|v| matches!(v, JitVal::Scalar(99, _))));
+        assert!(
+            state.stack.is_empty()
+                || !state
+                    .stack
+                    .iter()
+                    .any(|v| matches!(v, JitVal::Scalar(99, _)))
+        );
     }
 
     #[test]
@@ -2809,6 +3041,9 @@ mod tests {
             f(&mut state).unwrap();
         }
         // Else branch should have pushed 20
-        assert!(state.stack.iter().any(|v| matches!(v, JitVal::Scalar(20, _))));
+        assert!(state
+            .stack
+            .iter()
+            .any(|v| matches!(v, JitVal::Scalar(20, _))));
     }
 }

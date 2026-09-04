@@ -220,7 +220,10 @@ mod tests {
         let tok = Tokenizer::new();
         // 0..128 are valid ASCII chars; 128..255 all map to U+FFFD (replacement char)
         // so unique entries from 0..=255 are ~129, plus common words and code keywords
-        assert!(tok.vocab_size() >= 130, "should have at least ASCII + replacement char entries");
+        assert!(
+            tok.vocab_size() >= 130,
+            "should have at least ASCII + replacement char entries"
+        );
     }
 
     #[test]
@@ -287,7 +290,11 @@ mod tests {
             let ch = (b as char).to_string();
             let encoded = tok.encode(&ch);
             assert_eq!(encoded.len(), 1, "ASCII byte {} should be single token", b);
-            assert_eq!(encoded[0], b as u32, "ASCII byte {} should map to ID {}", b, b);
+            assert_eq!(
+                encoded[0], b as u32,
+                "ASCII byte {} should map to ID {}",
+                b, b
+            );
         }
     }
 
@@ -295,7 +302,10 @@ mod tests {
     fn tokenizer_unknown_id_decodes_to_placeholder() {
         let tok = Tokenizer::new();
         let decoded = tok.decode(&[999999]);
-        assert!(decoded.contains("<unk:"), "unknown ID should produce <unk:N> placeholder");
+        assert!(
+            decoded.contains("<unk:"),
+            "unknown ID should produce <unk:N> placeholder"
+        );
     }
 
     #[test]
@@ -343,7 +353,11 @@ mod tests {
         let table = NdaEmbeddingTable::new(300, 128);
         // packed_len = 128 / 32 = 4
         let (active, pos) = table.lookup(0);
-        assert_eq!(active.len(), 4, "active bitmap should have packed_len words");
+        assert_eq!(
+            active.len(),
+            4,
+            "active bitmap should have packed_len words"
+        );
         assert_eq!(pos.len(), 4, "positive bitmap should have packed_len words");
     }
 
@@ -354,8 +368,16 @@ mod tests {
         for token_id in 0..10 {
             let (a1, p1) = t1.lookup(token_id);
             let (a2, p2) = t2.lookup(token_id);
-            assert_eq!(a1, a2, "active bitmap for token {} should be deterministic", token_id);
-            assert_eq!(p1, p2, "positive bitmap for token {} should be deterministic", token_id);
+            assert_eq!(
+                a1, a2,
+                "active bitmap for token {} should be deterministic",
+                token_id
+            );
+            assert_eq!(
+                p1, p2,
+                "positive bitmap for token {} should be deterministic",
+                token_id
+            );
         }
     }
 
@@ -365,7 +387,10 @@ mod tests {
         let (a0, _) = table.lookup(0);
         let (a1, _) = table.lookup(1);
         // Very unlikely that two different tokens have identical embeddings
-        assert!(a0 != a1, "different tokens should have different active bitmaps");
+        assert!(
+            a0 != a1,
+            "different tokens should have different active bitmaps"
+        );
     }
 
     #[test]
@@ -387,8 +412,11 @@ mod tests {
         let active_bits: usize = active.iter().map(|w| w.count_ones() as usize).sum();
         let ratio = active_bits as f64 / total_bits as f64;
         // Allow wide margin: 10% to 50%
-        assert!(ratio > 0.10 && ratio < 0.50,
-            "sparsity ratio {} should be around 30%", ratio);
+        assert!(
+            ratio > 0.10 && ratio < 0.50,
+            "sparsity ratio {} should be around 30%",
+            ratio
+        );
     }
 
     #[test]
@@ -398,7 +426,12 @@ mod tests {
         for token_id in 0..50 {
             let (active, pos) = table.lookup(token_id);
             for (a, p) in active.iter().zip(pos.iter()) {
-                assert_eq!(a & p, *p, "positive bits must be subset of active bits for token {}", token_id);
+                assert_eq!(
+                    a & p,
+                    *p,
+                    "positive bits must be subset of active bits for token {}",
+                    token_id
+                );
             }
         }
     }
@@ -410,7 +443,11 @@ mod tests {
         let et = NdaEmbeddedTokenizer::new(128);
         let (token_ids, embeds) = et.encode_and_embed("hello");
         assert!(!token_ids.is_empty(), "should produce token IDs");
-        assert_eq!(token_ids.len(), embeds.len(), "each token should have an embedding");
+        assert_eq!(
+            token_ids.len(),
+            embeds.len(),
+            "each token should have an embedding"
+        );
     }
 
     #[test]

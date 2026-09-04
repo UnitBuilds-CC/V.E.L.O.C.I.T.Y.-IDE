@@ -1,4 +1,4 @@
-﻿//! Shared memory and knowledge base for team collaboration.
+//! Shared memory and knowledge base for team collaboration.
 //!
 //! Provides a shared knowledge store that team members can read from and
 //! write to, enabling collective intelligence across agent sessions.
@@ -599,7 +599,14 @@ mod tests {
     #[test]
     fn annotation_with_range_end_line() {
         let mut store = SharedMemoryStore::new();
-        let id = store.add_annotation("file.rs", 10, Some(50), "range note", "u1", AnnotationKind::Note);
+        let id = store.add_annotation(
+            "file.rs",
+            10,
+            Some(50),
+            "range note",
+            "u1",
+            AnnotationKind::Note,
+        );
         let ann = store.annotations.get(&id).unwrap();
         assert_eq!(ann.line, 10);
         assert_eq!(ann.end_line, Some(50));

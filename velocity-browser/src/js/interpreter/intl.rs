@@ -1,4 +1,4 @@
-﻿use super::coercion::*;
+use super::coercion::*;
 use super::core_methods::is_leap_year;
 use super::signal::*;
 use crate::js::vm::JsValue;

@@ -1,4 +1,4 @@
-﻿// model/config.rs — V.E.L.O.C.I.T.Y.-IDE
+// model/config.rs — V.E.L.O.C.I.T.Y.-IDE
 //
 // Static configuration for BitNet b1.58-3B and Qwen2.5-Coder-0.5B (NDA-Zero).
 
@@ -484,7 +484,9 @@ mod tests {
         let mut cfg = ModelConfig::bitnet_3b();
         cfg.n_kv_heads = 3; // 32 % 3 != 0
         let issues = cfg.validate();
-        assert!(issues.iter().any(|i| i.contains("n_heads") && i.contains("n_kv_heads")));
+        assert!(issues
+            .iter()
+            .any(|i| i.contains("n_heads") && i.contains("n_kv_heads")));
     }
 
     #[test]
@@ -805,16 +807,15 @@ mod tests {
         let expected = cfg.ternary_param_count()
             + cfg.vocab_size * cfg.hidden_size  // embed_tokens
             + cfg.hidden_size                     // final_norm
-            + cfg.vocab_size * cfg.hidden_size;  // lm_head
+            + cfg.vocab_size * cfg.hidden_size; // lm_head
         assert_eq!(cfg.total_param_count(), expected);
     }
 
     #[test]
     fn qwen_total_param_count_formula() {
         let cfg = ModelConfig::qwen_coder_05b();
-        let expected = cfg.ternary_param_count()
-            + cfg.vocab_size * cfg.hidden_size * 2
-            + cfg.hidden_size;
+        let expected =
+            cfg.ternary_param_count() + cfg.vocab_size * cfg.hidden_size * 2 + cfg.hidden_size;
         assert_eq!(cfg.total_param_count(), expected);
     }
 
@@ -864,7 +865,11 @@ mod tests {
     fn nda_memory_qwen_less_than_fp32() {
         let cfg = ModelConfig::qwen_coder_05b();
         let ratio = cfg.nda_memory_bytes() as f64 / cfg.fp32_memory_bytes() as f64;
-        assert!(ratio < 0.5, "NDA/FP32 ratio for qwen should be < 0.5, got {}", ratio);
+        assert!(
+            ratio < 0.5,
+            "NDA/FP32 ratio for qwen should be < 0.5, got {}",
+            ratio
+        );
     }
 
     #[test]
@@ -929,8 +934,7 @@ mod tests {
     fn ternary_param_count_qwen_formula() {
         let cfg = ModelConfig::qwen_coder_05b();
         let kv_dim = cfg.n_kv_heads * cfg.head_dim; // 2*64=128
-        let attn = cfg.hidden_size * cfg.hidden_size * 2
-            + cfg.hidden_size * kv_dim * 2;
+        let attn = cfg.hidden_size * cfg.hidden_size * 2 + cfg.hidden_size * kv_dim * 2;
         let ffn = 2 * cfg.ffn_size * cfg.hidden_size + cfg.hidden_size * cfg.ffn_size;
         let expected = cfg.n_layers * (attn + ffn);
         assert_eq!(cfg.ternary_param_count(), expected);

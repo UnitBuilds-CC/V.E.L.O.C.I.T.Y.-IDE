@@ -2,10 +2,12 @@
 //!
 //! Extracted verbatim from `tier3_panels.rs` (no logic changes).
 
+use super::struct_def::VelocityApp;
+use crate::editor::theme::{
+    CARD_INNER_MARGIN, CARD_RADIUS, FONT_CAPTION, FONT_SMALL, ITEM_SPACING,
+};
 use eframe::egui;
 use egui::RichText;
-use super::struct_def::VelocityApp;
-use crate::editor::theme::{CARD_INNER_MARGIN, CARD_RADIUS, FONT_CAPTION, FONT_SMALL, ITEM_SPACING};
 
 impl VelocityApp {
     // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
@@ -255,7 +257,7 @@ impl VelocityApp {
                         .color(palette.text_muted),
                 );
                 ui.add_space(ITEM_SPACING);
-                
+
                 if entry_count == 0 {
                     ui.add_space(16.0);
                     ui.vertical_centered(|ui| {

@@ -401,7 +401,13 @@ mod tests {
         for p in &providers {
             let slug = p.slug();
             let parsed = AiProvider::from_slug(slug);
-            assert_eq!(parsed, Some(*p), "from_slug('{}') should return {:?}", slug, p);
+            assert_eq!(
+                parsed,
+                Some(*p),
+                "from_slug('{}') should return {:?}",
+                slug,
+                p
+            );
         }
     }
 
@@ -431,22 +437,43 @@ mod tests {
     #[test]
     fn all_provider_aliases_resolve() {
         // Cloudflare aliases
-        assert_eq!(AiProvider::from_slug("cf"), Some(AiProvider::CloudflareWorkersAi));
-        assert_eq!(AiProvider::from_slug("workers-ai"), Some(AiProvider::CloudflareWorkersAi));
+        assert_eq!(
+            AiProvider::from_slug("cf"),
+            Some(AiProvider::CloudflareWorkersAi)
+        );
+        assert_eq!(
+            AiProvider::from_slug("workers-ai"),
+            Some(AiProvider::CloudflareWorkersAi)
+        );
         // OpenRouter aliases
         assert_eq!(AiProvider::from_slug("or"), Some(AiProvider::OpenRouter));
         // Azure aliases
-        assert_eq!(AiProvider::from_slug("azure_openai"), Some(AiProvider::AzureOpenAi));
+        assert_eq!(
+            AiProvider::from_slug("azure_openai"),
+            Some(AiProvider::AzureOpenAi)
+        );
         // Ollama aliases
-        assert_eq!(AiProvider::from_slug("local"), Some(AiProvider::LocalOllama));
+        assert_eq!(
+            AiProvider::from_slug("local"),
+            Some(AiProvider::LocalOllama)
+        );
         // Anthropic aliases
         assert_eq!(AiProvider::from_slug("claude"), Some(AiProvider::Anthropic));
         // Vertex aliases
-        assert_eq!(AiProvider::from_slug("google"), Some(AiProvider::GoogleVertex));
-        assert_eq!(AiProvider::from_slug("google_vertex"), Some(AiProvider::GoogleVertex));
+        assert_eq!(
+            AiProvider::from_slug("google"),
+            Some(AiProvider::GoogleVertex)
+        );
+        assert_eq!(
+            AiProvider::from_slug("google_vertex"),
+            Some(AiProvider::GoogleVertex)
+        );
         // Alibaba aliases
         assert_eq!(AiProvider::from_slug("qwen"), Some(AiProvider::AlibabaQwen));
-        assert_eq!(AiProvider::from_slug("dashscope"), Some(AiProvider::AlibabaQwen));
+        assert_eq!(
+            AiProvider::from_slug("dashscope"),
+            Some(AiProvider::AlibabaQwen)
+        );
         // Bedrock aliases
         assert_eq!(AiProvider::from_slug("aws"), Some(AiProvider::AwsBedrock));
         // Perplexity alias

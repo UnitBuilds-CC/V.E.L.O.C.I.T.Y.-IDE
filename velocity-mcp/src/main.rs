@@ -1,4 +1,4 @@
-﻿// Structural patterns that are intentional in this codebase
+// Structural patterns that are intentional in this codebase
 #![allow(clippy::too_many_arguments)] // Tool dispatch / WA functions take many params
 #![allow(clippy::type_complexity)] // Channel/callback types are inherently complex
 #![allow(clippy::result_large_err)] // Error types carry diagnostic context
@@ -41,7 +41,6 @@ mod security;
 mod shutdown;
 mod usage;
 mod wa;
-
 
 /// Install a global panic hook that writes structured crash dumps and logs
 /// diagnostic context before the process exits. This ensures that any unhandled

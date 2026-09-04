@@ -1,4 +1,4 @@
-﻿//! Bracket matching — highlights the matching bracket for the character under
+//! Bracket matching — highlights the matching bracket for the character under
 //! or adjacent to the cursor.
 
 /// Bracket pair types.

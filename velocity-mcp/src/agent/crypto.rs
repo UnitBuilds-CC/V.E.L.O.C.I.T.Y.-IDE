@@ -1,4 +1,4 @@
-﻿//! At-rest encryption for `.velocity/*.nda` artifacts.
+//! At-rest encryption for `.velocity/*.nda` artifacts.
 //!
 //! Model: one 32-byte master key per workspace, generated once and sealed at
 //! rest by the OS key store (Windows DPAPI via FFI, bound to the current user
@@ -13,9 +13,9 @@
 //! in the workspace) and *keyring-sealed* (recoverable only by the current OS
 //! user), while HKDF gives cryptographic domain separation per artifact class.
 
-use std::sync::LazyLock;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::sync::LazyLock;
 use std::sync::Mutex;
 
 const MASTER_KEY_LEN: usize = 32;

@@ -1,4 +1,4 @@
-﻿//! Agent empowerment layer — zero-alloc primitives that turn the DOM engine
+//! Agent empowerment layer — zero-alloc primitives that turn the DOM engine
 //! into an LLM superpower.
 //!
 //! All functions operate on a [`DomElementSnapshot`] (taken once, no lock held)

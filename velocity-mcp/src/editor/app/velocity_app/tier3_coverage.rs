@@ -50,7 +50,7 @@ impl VelocityApp {
             ui.checkbox(&mut self.test_generator.config.public_only, "Public only");
         });
         ui.add_space(ITEM_SPACING);
-        
+
         let analysis = &self.test_generator.analysis;
         ui.add(
             egui::ProgressBar::new(analysis.coverage_percent / 100.0)

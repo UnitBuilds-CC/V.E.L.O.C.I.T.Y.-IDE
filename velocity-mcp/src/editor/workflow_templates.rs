@@ -1,4 +1,4 @@
-﻿//! Pre-built workflow templates for common automation patterns.
+//! Pre-built workflow templates for common automation patterns.
 //!
 //! Templates provide one-click creation of frequently-used workflows,
 //! lowering the barrier to entry and demonstrating best practices.

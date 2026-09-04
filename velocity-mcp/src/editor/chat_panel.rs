@@ -1,4 +1,4 @@
-﻿use crate::agent::{ModelInfo, UiToAgentMessage};
+use crate::agent::{ModelInfo, UiToAgentMessage};
 use crate::editor::theme::IdePalette;
 use crossbeam_channel::Sender;
 use eframe::egui;
@@ -238,11 +238,7 @@ fn render_header(
                     crate::agent::AiProvider::AwsBedrock,
                 ] {
                     if ui
-                        .selectable_value(
-                            &mut state.provider,
-                            provider,
-                            provider.label(),
-                        )
+                        .selectable_value(&mut state.provider, provider, provider.label())
                         .clicked()
                     {
                         provider_changed = true;
@@ -263,17 +259,12 @@ fn render_header(
             .show_ui(ui, |ui| {
                 for model in state.available_models.clone() {
                     model_changed |= ui
-                        .selectable_value(
-                            &mut state.selected_model,
-                            model.id.clone(),
-                            model.label,
-                        )
+                        .selectable_value(&mut state.selected_model, model.id.clone(), model.label)
                         .changed();
                 }
             });
         if model_changed {
-            let _ =
-                agent_tx.send(UiToAgentMessage::SetModel(state.selected_model.clone()));
+            let _ = agent_tx.send(UiToAgentMessage::SetModel(state.selected_model.clone()));
         }
 
         ui.add_space(4.0);

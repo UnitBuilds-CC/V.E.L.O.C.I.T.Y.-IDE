@@ -1031,7 +1031,11 @@ mod tests {
 
     #[test]
     fn gen_stats_cache_hit_rate_computation() {
-        let stats = NdaGenStats { site_map_hits: 7, site_map_misses: 3, ..Default::default() };
+        let stats = NdaGenStats {
+            site_map_hits: 7,
+            site_map_misses: 3,
+            ..Default::default()
+        };
         let rate = stats.cache_hit_rate();
         assert!((rate - 0.7).abs() < 1e-9);
     }
@@ -1822,7 +1826,11 @@ mod tests {
 
     #[test]
     fn nda_gen_stats_clone() {
-        let stats = NdaGenStats { tokens_emitted: 42, site_map_hits: 10, ..Default::default() };
+        let stats = NdaGenStats {
+            tokens_emitted: 42,
+            site_map_hits: 10,
+            ..Default::default()
+        };
         let cloned = stats.clone();
         assert_eq!(cloned.tokens_emitted, 42);
         assert_eq!(cloned.site_map_hits, 10);
@@ -1856,7 +1864,9 @@ mod tests {
             node_count: 5,
         };
         let warnings = result.validate();
-        assert!(warnings.iter().any(|w| w.contains("Sandbox execution panicked")));
+        assert!(warnings
+            .iter()
+            .any(|w| w.contains("Sandbox execution panicked")));
     }
 
     #[test]
@@ -1885,7 +1895,9 @@ mod tests {
             node_count: 5,
         };
         let warnings = result.validate();
-        assert!(warnings.iter().any(|w| w.contains("Sandbox execution error")));
+        assert!(warnings
+            .iter()
+            .any(|w| w.contains("Sandbox execution error")));
         assert!(warnings.iter().any(|w| w.contains("out of memory")));
     }
 
@@ -1910,7 +1922,9 @@ mod tests {
             node_count: 5,
         };
         let warnings = result.validate();
-        assert!(warnings.iter().any(|w| w.contains("Scope validation failed")));
+        assert!(warnings
+            .iter()
+            .any(|w| w.contains("Scope validation failed")));
         assert!(warnings.iter().any(|w| w.contains("0.05")));
     }
 
@@ -1948,7 +1962,12 @@ mod tests {
         };
         let warnings = result.validate();
         // Should have: invalid, force-terminated, sandbox panicked, sandbox error, scope failed
-        assert!(warnings.len() >= 5, "expected >=5 warnings, got {}: {:?}", warnings.len(), warnings);
+        assert!(
+            warnings.len() >= 5,
+            "expected >=5 warnings, got {}: {:?}",
+            warnings.len(),
+            warnings
+        );
     }
 
     // ── Block 143: execution_summary with sandbox/scope ────────────────────
@@ -2139,7 +2158,12 @@ mod tests {
         // Values with larger scale should generally have larger magnitudes
         let avg1: f32 = v1.iter().map(|x| x.abs()).sum::<f32>() / 100.0;
         let avg2: f32 = v2.iter().map(|x| x.abs()).sum::<f32>() / 100.0;
-        assert!(avg2 > avg1, "larger scale should produce larger values: avg1={}, avg2={}", avg1, avg2);
+        assert!(
+            avg2 > avg1,
+            "larger scale should produce larger values: avg1={}, avg2={}",
+            avg1,
+            avg2
+        );
     }
 
     // ── Block 143: argmax_f32 edge cases ───────────────────────────────────
@@ -2349,7 +2373,11 @@ mod tests {
             node_count: 10,
         };
         let warnings = result.validate();
-        assert!(warnings.is_empty(), "expected no warnings, got: {:?}", warnings);
+        assert!(
+            warnings.is_empty(),
+            "expected no warnings, got: {:?}",
+            warnings
+        );
     }
 
     // ── Block 143: NdaHead constants ───────────────────────────────────────
@@ -2382,11 +2410,20 @@ mod tests {
     #[test]
     fn pipeline_mode_detect_substring_trigger() {
         // "implement" is a substring of "implementation"
-        assert_eq!(PipelineMode::detect("the implementation details"), PipelineMode::Nda);
+        assert_eq!(
+            PipelineMode::detect("the implementation details"),
+            PipelineMode::Nda
+        );
         // "write" is a substring of "rewrite"
-        assert_eq!(PipelineMode::detect("rewrite this function"), PipelineMode::Nda);
+        assert_eq!(
+            PipelineMode::detect("rewrite this function"),
+            PipelineMode::Nda
+        );
         // "def " (with space) triggers NDA
-        assert_eq!(PipelineMode::detect("def my_function():"), PipelineMode::Nda);
+        assert_eq!(
+            PipelineMode::detect("def my_function():"),
+            PipelineMode::Nda
+        );
         // "class " (with space) triggers NDA
         assert_eq!(PipelineMode::detect("class MyClass:"), PipelineMode::Nda);
     }
@@ -2394,7 +2431,10 @@ mod tests {
     #[test]
     fn pipeline_mode_detect_no_trigger() {
         assert_eq!(PipelineMode::detect("hello world"), PipelineMode::Text);
-        assert_eq!(PipelineMode::detect("the quick brown fox"), PipelineMode::Text);
+        assert_eq!(
+            PipelineMode::detect("the quick brown fox"),
+            PipelineMode::Text
+        );
         assert_eq!(PipelineMode::detect("12345"), PipelineMode::Text);
     }
 
@@ -2658,8 +2698,14 @@ mod tests {
         let out1 = head.forward(&h1);
         let out2 = head.forward(&h2);
         // Different inputs should produce different outputs (with overwhelming probability)
-        let any_different = out1.iter().zip(out2.iter()).any(|(&a, &b)| (a - b).abs() > 1e-6);
-        assert!(any_different, "different inputs should give different outputs");
+        let any_different = out1
+            .iter()
+            .zip(out2.iter())
+            .any(|(&a, &b)| (a - b).abs() > 1e-6);
+        assert!(
+            any_different,
+            "different inputs should give different outputs"
+        );
     }
 
     #[test]
@@ -2709,7 +2755,10 @@ mod tests {
 
     #[test]
     fn execution_summary_elapsed_ms_is_u64_cast() {
-        let stats = NdaGenStats { elapsed_ms: 5000, ..Default::default() };
+        let stats = NdaGenStats {
+            elapsed_ms: 5000,
+            ..Default::default()
+        };
         let result = NdaGenerationResult {
             nodes: vec![],
             root_hash: 0,
@@ -2754,7 +2803,10 @@ mod tests {
 
     #[test]
     fn pipeline_mode_detect_fn_trigger() {
-        assert_eq!(PipelineMode::detect("fn helper() -> bool {"), PipelineMode::Nda);
+        assert_eq!(
+            PipelineMode::detect("fn helper() -> bool {"),
+            PipelineMode::Nda
+        );
     }
 
     // ── Block 194: NdaHead load too-short file ─────────────────────────────
@@ -2775,7 +2827,11 @@ mod tests {
 
     #[test]
     fn nda_gen_stats_debug_format() {
-        let stats = NdaGenStats { tokens_emitted: 42, site_map_hits: 30, ..Default::default() };
+        let stats = NdaGenStats {
+            tokens_emitted: 42,
+            site_map_hits: 30,
+            ..Default::default()
+        };
         let debug = format!("{:?}", stats);
         assert!(debug.contains("tokens_emitted: 42"));
         assert!(debug.contains("site_map_hits: 30"));
@@ -2879,7 +2935,12 @@ mod tests {
         let prompts = ["", "implement", "what is", "hello", "def foo", "123"];
         for p in &prompts {
             let mode = PipelineMode::detect(p);
-            assert_ne!(mode, PipelineMode::Auto, "detect should never return Auto for: {}", p);
+            assert_ne!(
+                mode,
+                PipelineMode::Auto,
+                "detect should never return Auto for: {}",
+                p
+            );
         }
     }
 
@@ -2961,7 +3022,10 @@ mod tests {
 
     #[test]
     fn execution_summary_tokens_from_stats() {
-        let stats = NdaGenStats { tokens_emitted: 777, ..Default::default() };
+        let stats = NdaGenStats {
+            tokens_emitted: 777,
+            ..Default::default()
+        };
         let result = NdaGenerationResult {
             nodes: vec![],
             root_hash: 0,
@@ -2979,7 +3043,11 @@ mod tests {
 
     #[test]
     fn execution_summary_cache_hit_rate_from_stats() {
-        let stats = NdaGenStats { site_map_hits: 9, site_map_misses: 1, ..Default::default() };
+        let stats = NdaGenStats {
+            site_map_hits: 9,
+            site_map_misses: 1,
+            ..Default::default()
+        };
         let result = NdaGenerationResult {
             nodes: vec![],
             root_hash: 0,
@@ -3003,14 +3071,26 @@ mod tests {
             prompt_count: 2,
             results: vec![
                 BatchItemResult {
-                    index: 0, valid: true, force_terminated: false,
-                    tokens_emitted: 10, node_count: 2, elapsed_ms: 5,
-                    root_hash: 1, site_map_key: None, cache_hit_rate: 0.5,
+                    index: 0,
+                    valid: true,
+                    force_terminated: false,
+                    tokens_emitted: 10,
+                    node_count: 2,
+                    elapsed_ms: 5,
+                    root_hash: 1,
+                    site_map_key: None,
+                    cache_hit_rate: 0.5,
                 },
                 BatchItemResult {
-                    index: 1, valid: false, force_terminated: true,
-                    tokens_emitted: 20, node_count: 0, elapsed_ms: 15,
-                    root_hash: 0, site_map_key: None, cache_hit_rate: 0.0,
+                    index: 1,
+                    valid: false,
+                    force_terminated: true,
+                    tokens_emitted: 20,
+                    node_count: 0,
+                    elapsed_ms: 15,
+                    root_hash: 0,
+                    site_map_key: None,
+                    cache_hit_rate: 0.0,
                 },
             ],
             total_elapsed_ms: 20,

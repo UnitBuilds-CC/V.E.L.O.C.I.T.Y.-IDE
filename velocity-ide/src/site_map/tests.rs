@@ -262,7 +262,14 @@ fn batch_kv_insert_and_root_recomputed_once() {
     let dir = TempDir::new().unwrap();
     let mut sm = SiteMap::open(dir.path(), 0).unwrap();
     let items: Vec<_> = (0..5)
-        .map(|i| (i as u32, 0u32, make_ndavec(8, i as u8), make_ndavec(8, (i + 10) as u8)))
+        .map(|i| {
+            (
+                i as u32,
+                0u32,
+                make_ndavec(8, i as u8),
+                make_ndavec(8, (i + 10) as u8),
+            )
+        })
         .collect();
     let keys = sm.put_kv_batch(&items).unwrap();
     assert_eq!(keys.len(), 5);
@@ -456,11 +463,24 @@ fn find_live_by_predicate() {
     sm.put_file_snapshot(
         "src/a.rs",
         &[
-            VcTriple { subject_hash: 1, predicate_id: 2, object_hash: 10 },
-            VcTriple { subject_hash: 2, predicate_id: 3, object_hash: 20 },
-            VcTriple { subject_hash: 3, predicate_id: 2, object_hash: 30 },
+            VcTriple {
+                subject_hash: 1,
+                predicate_id: 2,
+                object_hash: 10,
+            },
+            VcTriple {
+                subject_hash: 2,
+                predicate_id: 3,
+                object_hash: 20,
+            },
+            VcTriple {
+                subject_hash: 3,
+                predicate_id: 2,
+                object_hash: 30,
+            },
         ],
-    ).unwrap();
+    )
+    .unwrap();
     let pred2 = sm.find_live_by_predicate(2);
     assert_eq!(pred2.len(), 2);
     assert!(pred2.iter().all(|t| t.predicate_id == 2));
@@ -477,14 +497,29 @@ fn find_live_by_subjects_batch() {
     sm.put_file_snapshot(
         "src/a.rs",
         &[
-            VcTriple { subject_hash: 1, predicate_id: 2, object_hash: 10 },
-            VcTriple { subject_hash: 2, predicate_id: 2, object_hash: 20 },
-            VcTriple { subject_hash: 3, predicate_id: 2, object_hash: 30 },
+            VcTriple {
+                subject_hash: 1,
+                predicate_id: 2,
+                object_hash: 10,
+            },
+            VcTriple {
+                subject_hash: 2,
+                predicate_id: 2,
+                object_hash: 20,
+            },
+            VcTriple {
+                subject_hash: 3,
+                predicate_id: 2,
+                object_hash: 30,
+            },
         ],
-    ).unwrap();
+    )
+    .unwrap();
     let results = sm.find_live_by_subjects(&[1, 3]);
     assert_eq!(results.len(), 2);
-    assert!(results.iter().all(|t| t.subject_hash == 1 || t.subject_hash == 3));
+    assert!(results
+        .iter()
+        .all(|t| t.subject_hash == 1 || t.subject_hash == 3));
 }
 
 #[test]
@@ -494,11 +529,24 @@ fn find_live_by_objects_batch() {
     sm.put_file_snapshot(
         "src/a.rs",
         &[
-            VcTriple { subject_hash: 1, predicate_id: 2, object_hash: 10 },
-            VcTriple { subject_hash: 2, predicate_id: 2, object_hash: 20 },
-            VcTriple { subject_hash: 3, predicate_id: 2, object_hash: 10 },
+            VcTriple {
+                subject_hash: 1,
+                predicate_id: 2,
+                object_hash: 10,
+            },
+            VcTriple {
+                subject_hash: 2,
+                predicate_id: 2,
+                object_hash: 20,
+            },
+            VcTriple {
+                subject_hash: 3,
+                predicate_id: 2,
+                object_hash: 10,
+            },
         ],
-    ).unwrap();
+    )
+    .unwrap();
     let results = sm.find_live_by_objects(&[10]);
     assert_eq!(results.len(), 2);
     assert!(results.iter().all(|t| t.object_hash == 10));
@@ -511,11 +559,24 @@ fn find_live_by_subject_and_predicate() {
     sm.put_file_snapshot(
         "src/a.rs",
         &[
-            VcTriple { subject_hash: 1, predicate_id: 2, object_hash: 10 },
-            VcTriple { subject_hash: 1, predicate_id: 3, object_hash: 20 },
-            VcTriple { subject_hash: 2, predicate_id: 2, object_hash: 30 },
+            VcTriple {
+                subject_hash: 1,
+                predicate_id: 2,
+                object_hash: 10,
+            },
+            VcTriple {
+                subject_hash: 1,
+                predicate_id: 3,
+                object_hash: 20,
+            },
+            VcTriple {
+                subject_hash: 2,
+                predicate_id: 2,
+                object_hash: 30,
+            },
         ],
-    ).unwrap();
+    )
+    .unwrap();
     let results = sm.find_live_by_subject_and_predicate(1, 2);
     assert_eq!(results.len(), 1);
     assert_eq!(results[0].object_hash, 10);
@@ -528,14 +589,29 @@ fn find_live_by_predicate_and_object() {
     sm.put_file_snapshot(
         "src/a.rs",
         &[
-            VcTriple { subject_hash: 1, predicate_id: 2, object_hash: 10 },
-            VcTriple { subject_hash: 2, predicate_id: 2, object_hash: 10 },
-            VcTriple { subject_hash: 3, predicate_id: 3, object_hash: 10 },
+            VcTriple {
+                subject_hash: 1,
+                predicate_id: 2,
+                object_hash: 10,
+            },
+            VcTriple {
+                subject_hash: 2,
+                predicate_id: 2,
+                object_hash: 10,
+            },
+            VcTriple {
+                subject_hash: 3,
+                predicate_id: 3,
+                object_hash: 10,
+            },
         ],
-    ).unwrap();
+    )
+    .unwrap();
     let results = sm.find_live_by_predicate_and_object(2, 10);
     assert_eq!(results.len(), 2);
-    assert!(results.iter().all(|t| t.predicate_id == 2 && t.object_hash == 10));
+    assert!(results
+        .iter()
+        .all(|t| t.predicate_id == 2 && t.object_hash == 10));
 }
 
 #[test]
@@ -544,8 +620,13 @@ fn invalidate_predicate_index_works() {
     let mut sm = SiteMap::open(dir.path(), 0).unwrap();
     sm.put_file_snapshot(
         "src/a.rs",
-        &[VcTriple { subject_hash: 1, predicate_id: 2, object_hash: 10 }],
-    ).unwrap();
+        &[VcTriple {
+            subject_hash: 1,
+            predicate_id: 2,
+            object_hash: 10,
+        }],
+    )
+    .unwrap();
     // Build the index
     let r1 = sm.find_live_by_predicate(2);
     assert_eq!(r1.len(), 1);
@@ -558,9 +639,18 @@ fn invalidate_predicate_index_works() {
 #[test]
 fn entry_kind_name_works() {
     assert_eq!(SiteMap::entry_kind_name(&super::types::EntryKind::Kv), "KV");
-    assert_eq!(SiteMap::entry_kind_name(&super::types::EntryKind::Node), "Node");
-    assert_eq!(SiteMap::entry_kind_name(&super::types::EntryKind::Program), "Program");
-    assert_eq!(SiteMap::entry_kind_name(&super::types::EntryKind::Snapshot), "Snapshot");
+    assert_eq!(
+        SiteMap::entry_kind_name(&super::types::EntryKind::Node),
+        "Node"
+    );
+    assert_eq!(
+        SiteMap::entry_kind_name(&super::types::EntryKind::Program),
+        "Program"
+    );
+    assert_eq!(
+        SiteMap::entry_kind_name(&super::types::EntryKind::Snapshot),
+        "Snapshot"
+    );
 }
 
 #[test]
@@ -596,11 +686,24 @@ fn triple_analysis_with_snapshots() {
     sm.put_file_snapshot(
         "src/a.rs",
         &[
-            VcTriple { subject_hash: 1, predicate_id: 2, object_hash: 10 },
-            VcTriple { subject_hash: 2, predicate_id: 2, object_hash: 20 },
-            VcTriple { subject_hash: 1, predicate_id: 3, object_hash: 30 },
+            VcTriple {
+                subject_hash: 1,
+                predicate_id: 2,
+                object_hash: 10,
+            },
+            VcTriple {
+                subject_hash: 2,
+                predicate_id: 2,
+                object_hash: 20,
+            },
+            VcTriple {
+                subject_hash: 1,
+                predicate_id: 3,
+                object_hash: 30,
+            },
         ],
-    ).unwrap();
+    )
+    .unwrap();
     let analysis = sm.triple_analysis();
     assert_eq!(analysis.total_triples, 3);
     assert_eq!(analysis.unique_predicates, 2);
@@ -649,7 +752,8 @@ fn put_node_reported_works() {
 fn flush_reported_works() {
     let dir = TempDir::new().unwrap();
     let mut sm = SiteMap::open(dir.path(), 0).unwrap();
-    sm.put_kv(1, 0, make_ndavec(8, 0), make_ndavec(8, 0)).unwrap();
+    sm.put_kv(1, 0, make_ndavec(8, 0), make_ndavec(8, 0))
+        .unwrap();
     let report = sm.flush_report().unwrap();
     assert_eq!(report.operation, "flush");
     assert_eq!(report.entries_affected, 1);
@@ -674,8 +778,14 @@ fn triple_analysis_serializes() {
         total_triples: 10,
         unique_predicates: 2,
         predicate_distribution: vec![
-            super::store::PredicateCount { predicate_id: 2, count: 7 },
-            super::store::PredicateCount { predicate_id: 3, count: 3 },
+            super::store::PredicateCount {
+                predicate_id: 2,
+                count: 7,
+            },
+            super::store::PredicateCount {
+                predicate_id: 3,
+                count: 3,
+            },
         ],
         unique_subjects: 5,
         unique_objects: 8,

@@ -2,10 +2,10 @@
 //!
 //! Extracted verbatim from `tier3_panels.rs` (no logic changes).
 
-use eframe::egui;
-use egui::RichText;
 use super::struct_def::VelocityApp;
 use crate::editor::theme::{FONT_CAPTION, FONT_SMALL, ITEM_SPACING, SECTION_SPACING};
+use eframe::egui;
+use egui::RichText;
 
 impl VelocityApp {
     // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
@@ -83,7 +83,7 @@ impl VelocityApp {
                             }),
                         );
                         ui.add_space(SECTION_SPACING);
-                        
+
                         // Per-server cards
                         for srv in &snapshot {
                             let alive_color = if srv.alive {
@@ -101,7 +101,9 @@ impl VelocityApp {
                                 ui.horizontal(|ui| {
                                     // Status dot
                                     ui.label(
-                                        RichText::new("\u{25cf}").size(FONT_SMALL).color(alive_color),
+                                        RichText::new("\u{25cf}")
+                                            .size(FONT_SMALL)
+                                            .color(alive_color),
                                     );
                                     ui.label(
                                         RichText::new(&srv.language)
@@ -418,7 +420,7 @@ impl VelocityApp {
                         .color(palette.accent),
                 );
                 ui.add_space(ITEM_SPACING);
-                
+
                 // Cache info
                 ui.label(
                     RichText::new("CACHE")

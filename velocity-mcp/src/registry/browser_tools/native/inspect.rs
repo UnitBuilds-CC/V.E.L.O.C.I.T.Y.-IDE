@@ -1,4 +1,4 @@
-﻿//! Read-only inspection tools of the native browser family: page reads,
+//! Read-only inspection tools of the native browser family: page reads,
 //! structure digests, search, navigation history, checkpoints, memory
 //! recall and form validation.
 

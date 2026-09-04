@@ -1,4 +1,4 @@
-﻿// compiler/nda_lexer.rs — Tokenizer for the NDA programming language
+// compiler/nda_lexer.rs — Tokenizer for the NDA programming language
 //
 // Converts raw .nda source text into a stream of tokens.
 // Supports: keywords, identifiers, numbers, operators, delimiters, comments.
@@ -34,20 +34,20 @@ pub enum Token {
     FloatLit(f64),
     StringLit(String),
     // Operators
-    Eq,     // ==
-    Ne,     // !=
-    Lt,     // <
-    Gt,     // >
-    Le,     // <=
-    Ge,     // >=
-    Assign, // =
-    Plus,   // +
-    Minus,  // -
-    Star,   // *
-    Slash,  // /
-    Percent,// %
-    Arrow,  // ->
-    Dot,    // .
+    Eq,      // ==
+    Ne,      // !=
+    Lt,      // <
+    Gt,      // >
+    Le,      // <=
+    Ge,      // >=
+    Assign,  // =
+    Plus,    // +
+    Minus,   // -
+    Star,    // *
+    Slash,   // /
+    Percent, // %
+    Arrow,   // ->
+    Dot,     // .
     // Delimiters
     LParen,   // (
     RParen,   // )
@@ -479,9 +479,7 @@ impl NdaLexer {
         let mut is_float = false;
 
         // Check for hex literal: 0x or 0X
-        if self.peek() == Some('0')
-            && self.peek_next().is_some_and(|c| c == 'x' || c == 'X')
-        {
+        if self.peek() == Some('0') && self.peek_next().is_some_and(|c| c == 'x' || c == 'X') {
             s.push('0');
             self.advance();
             s.push('x');
@@ -505,12 +503,7 @@ impl NdaLexer {
                         col,
                     })
                 }
-                Err(_) => {
-                    return Err(format!(
-                        "{}:{}: Invalid hex literal '{}'",
-                        line, col, s
-                    ))
-                }
+                Err(_) => return Err(format!("{}:{}: Invalid hex literal '{}'", line, col, s)),
             }
         }
 
@@ -567,20 +560,12 @@ impl NdaLexer {
                             ))
                         }
                         None => {
-                            return Err(format!(
-                                "{}:{}: Unterminated string literal",
-                                line, col
-                            ))
+                            return Err(format!("{}:{}: Unterminated string literal", line, col))
                         }
                     }
                 }
                 Some(c) => s.push(c),
-                None => {
-                    return Err(format!(
-                        "{}:{}: Unterminated string literal",
-                        line, col
-                    ))
-                }
+                None => return Err(format!("{}:{}: Unterminated string literal", line, col)),
             }
         }
         Ok(Located {
@@ -707,10 +692,7 @@ mod tests {
         let src = r#""hello world""#;
         let mut lexer = NdaLexer::new(src);
         let tokens = lexer.tokenize().unwrap();
-        assert_eq!(
-            tokens[0].token,
-            Token::StringLit("hello world".to_string())
-        );
+        assert_eq!(tokens[0].token, Token::StringLit("hello world".to_string()));
     }
 
     #[test]
@@ -718,10 +700,7 @@ mod tests {
         let src = r#""line\n\ttab""#;
         let mut lexer = NdaLexer::new(src);
         let tokens = lexer.tokenize().unwrap();
-        assert_eq!(
-            tokens[0].token,
-            Token::StringLit("line\n\ttab".to_string())
-        );
+        assert_eq!(tokens[0].token, Token::StringLit("line\n\ttab".to_string()));
     }
 
     #[test]
@@ -1069,7 +1048,11 @@ mod tests {
         let src = "let x = @#%";
         let mut lexer = NdaLexer::new(src);
         let (tokens, errors) = lexer.tokenize_with_errors();
-        assert!(errors.len() >= 2, "expected multiple errors, got: {:?}", errors);
+        assert!(
+            errors.len() >= 2,
+            "expected multiple errors, got: {:?}",
+            errors
+        );
         // Should still produce tokens for the valid parts
         assert!(tokens.len() > 3);
     }
@@ -1079,18 +1062,54 @@ mod tests {
     #[test]
     fn all_token_display_names_nonempty() {
         let tokens = vec![
-            Token::Fn, Token::Let, Token::Loop, Token::While, Token::If,
-            Token::Else, Token::Return, Token::Break, Token::Print,
-            Token::Vec, Token::Matrix, Token::Norm, Token::Int,
-            Token::Add, Token::Silu, Token::Negate, Token::Abs, Token::ReduceSum,
-            Token::Ident("x".into()), Token::IntLit(0), Token::FloatLit(0.0),
+            Token::Fn,
+            Token::Let,
+            Token::Loop,
+            Token::While,
+            Token::If,
+            Token::Else,
+            Token::Return,
+            Token::Break,
+            Token::Print,
+            Token::Vec,
+            Token::Matrix,
+            Token::Norm,
+            Token::Int,
+            Token::Add,
+            Token::Silu,
+            Token::Negate,
+            Token::Abs,
+            Token::ReduceSum,
+            Token::Ident("x".into()),
+            Token::IntLit(0),
+            Token::FloatLit(0.0),
             Token::StringLit("".into()),
-            Token::Eq, Token::Ne, Token::Lt, Token::Gt, Token::Le, Token::Ge,
-            Token::Assign, Token::Plus, Token::Minus, Token::Star, Token::Slash,
-            Token::Percent, Token::Arrow, Token::Dot,
-            Token::LParen, Token::RParen, Token::LBrace, Token::RBrace,
-            Token::LBracket, Token::RBracket, Token::Comma, Token::Semi,
-            Token::Colon, Token::Pipe, Token::Amp, Token::Eof,
+            Token::Eq,
+            Token::Ne,
+            Token::Lt,
+            Token::Gt,
+            Token::Le,
+            Token::Ge,
+            Token::Assign,
+            Token::Plus,
+            Token::Minus,
+            Token::Star,
+            Token::Slash,
+            Token::Percent,
+            Token::Arrow,
+            Token::Dot,
+            Token::LParen,
+            Token::RParen,
+            Token::LBrace,
+            Token::RBrace,
+            Token::LBracket,
+            Token::RBracket,
+            Token::Comma,
+            Token::Semi,
+            Token::Colon,
+            Token::Pipe,
+            Token::Amp,
+            Token::Eof,
         ];
         for tok in &tokens {
             let name = tok.display_name();
@@ -1175,7 +1194,11 @@ mod tests {
 
     #[test]
     fn located_clone() {
-        let loc = Located { token: Token::Fn, line: 1, col: 1 };
+        let loc = Located {
+            token: Token::Fn,
+            line: 1,
+            col: 1,
+        };
         let cloned = loc.clone();
         assert_eq!(cloned.line, 1);
         assert_eq!(cloned.col, 1);
@@ -1184,7 +1207,11 @@ mod tests {
 
     #[test]
     fn located_debug_format() {
-        let loc = Located { token: Token::IntLit(42), line: 3, col: 5 };
+        let loc = Located {
+            token: Token::IntLit(42),
+            line: 3,
+            col: 5,
+        };
         let debug = format!("{:?}", loc);
         assert!(debug.contains("line: 3"));
         assert!(debug.contains("col: 5"));
@@ -1296,7 +1323,10 @@ mod tests {
         let src = r#""hello   world""#;
         let mut lexer = NdaLexer::new(src);
         let tokens = lexer.tokenize().unwrap();
-        assert_eq!(tokens[0].token, Token::StringLit("hello   world".to_string()));
+        assert_eq!(
+            tokens[0].token,
+            Token::StringLit("hello   world".to_string())
+        );
     }
 
     #[test]
@@ -1331,7 +1361,10 @@ mod tests {
         let src = "abcdefghijklmnopqrstuvwxyz";
         let mut lexer = NdaLexer::new(src);
         let tokens = lexer.tokenize().unwrap();
-        assert_eq!(tokens[0].token, Token::Ident("abcdefghijklmnopqrstuvwxyz".to_string()));
+        assert_eq!(
+            tokens[0].token,
+            Token::Ident("abcdefghijklmnopqrstuvwxyz".to_string())
+        );
     }
 
     // ── Keyword boundaries ───────────────────────────────────────────────
@@ -1482,7 +1515,10 @@ mod tests {
         let src = r#""line1\nline2""#;
         let mut lexer = NdaLexer::new(src);
         let tokens = lexer.tokenize().unwrap();
-        assert_eq!(tokens[0].token, Token::StringLit("line1\nline2".to_string()));
+        assert_eq!(
+            tokens[0].token,
+            Token::StringLit("line1\nline2".to_string())
+        );
     }
 
     #[test]
@@ -1664,7 +1700,10 @@ mod tests {
         let (tokens, errors) = lexer.tokenize_with_errors();
         assert_eq!(errors.len(), 1);
         // Should have tokens: a, b, Eof
-        let idents: Vec<_> = tokens.iter().filter(|t| matches!(t.token, Token::Ident(_))).collect();
+        let idents: Vec<_> = tokens
+            .iter()
+            .filter(|t| matches!(t.token, Token::Ident(_)))
+            .collect();
         assert_eq!(idents.len(), 2);
     }
 
@@ -1710,7 +1749,11 @@ mod tests {
         let result = lexer.tokenize();
         assert!(result.is_err());
         let err = result.unwrap_err();
-        assert!(err.contains("1:1"), "error should contain location: {}", err);
+        assert!(
+            err.contains("1:1"),
+            "error should contain location: {}",
+            err
+        );
     }
 
     // ── Token clone ──────────────────────────────────────────────────────

@@ -124,7 +124,10 @@ impl HealthChecker {
         let resources = self.check_resources();
         let recent_errors = self.count_recent_errors();
 
-        let overall_status = if providers.iter().any(|p| p.status == HealthStatus::Unhealthy) {
+        let overall_status = if providers
+            .iter()
+            .any(|p| p.status == HealthStatus::Unhealthy)
+        {
             HealthStatus::Degraded
         } else if resources.memory_percent > 90.0 || resources.disk_percent > 90.0 {
             HealthStatus::Degraded

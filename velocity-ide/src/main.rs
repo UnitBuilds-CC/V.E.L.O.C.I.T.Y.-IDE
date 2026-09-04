@@ -5,18 +5,18 @@
 #![allow(dead_code)]
 
 mod compiler;
+mod credential_guard;
 mod model;
 mod nda;
 mod nda_int;
 mod pipeline_bridge;
 mod pipeline_nda;
+mod provider_usage;
 mod safety;
 mod sandbox;
 mod site_map;
 mod tokenizer;
 mod velocity_client;
-mod provider_usage;
-mod credential_guard;
 
 use std::{
     io::{BufRead, BufReader, Write},
@@ -264,8 +264,8 @@ pub fn inspect_environment() -> CliEnvironment {
         .unwrap_or(0);
     let velocity_configured = url_set && key_set || config_file_exists;
     // credential_guard scrubs env vars on account load; check if scrub happened.
-    let credential_boundary_active = std::env::var("VELOCITY_API_KEY").is_err()
-        && config_file_exists;
+    let credential_boundary_active =
+        std::env::var("VELOCITY_API_KEY").is_err() && config_file_exists;
     let mut issues = Vec::new();
     if !velocity_configured {
         issues.push("Velocity Router not configured (no env vars or config file)".into());
@@ -307,11 +307,17 @@ fn validate_generate_args(args: &GenerateArgs) -> Vec<String> {
     }
     match args.arch.as_str() {
         "bitnet3b" | "bitnet" | "qwen05" | "qwen" => {}
-        other => issues.push(format!("Unknown --arch '{}'. Use 'bitnet3b' or 'qwen05'.", other)),
+        other => issues.push(format!(
+            "Unknown --arch '{}'. Use 'bitnet3b' or 'qwen05'.",
+            other
+        )),
     }
     match args.mode.as_str() {
         "text" | "nda" | "auto" => {}
-        other => issues.push(format!("Unknown --mode '{}'. Use 'text', 'nda', or 'auto'.", other)),
+        other => issues.push(format!(
+            "Unknown --mode '{}'. Use 'text', 'nda', or 'auto'.",
+            other
+        )),
     }
     if args.prompt.is_none() && args.prompt_file.is_none() {
         issues.push("Either --prompt or --prompt-file must be provided".into());
@@ -333,7 +339,10 @@ fn validate_chat_args(args: &ChatArgs) -> Vec<String> {
     }
     match args.arch.as_str() {
         "bitnet3b" | "bitnet" | "qwen05" | "qwen" => {}
-        other => issues.push(format!("Unknown --arch '{}'. Use 'bitnet3b' or 'qwen05'.", other)),
+        other => issues.push(format!(
+            "Unknown --arch '{}'. Use 'bitnet3b' or 'qwen05'.",
+            other
+        )),
     }
     issues
 }
@@ -372,8 +381,16 @@ pub fn cli_diagnostics() -> CliDiagnostics {
         environment: env,
         velocity_config,
         available_subcommands: vec![
-            "generate", "benchmark", "seed", "chat", "usage",
-            "login", "providers", "status", "transparency", "completions",
+            "generate",
+            "benchmark",
+            "seed",
+            "chat",
+            "usage",
+            "login",
+            "providers",
+            "status",
+            "transparency",
+            "completions",
         ],
     }
 }
@@ -557,8 +574,10 @@ impl GenerationReport {
             } else {
                 0.0
             };
-            println!("  SiteMap:    {} hits / {} misses ({:.1}% hit rate)",
-                self.site_map_hits, self.site_map_misses, hit_rate);
+            println!(
+                "  SiteMap:    {} hits / {} misses ({:.1}% hit rate)",
+                self.site_map_hits, self.site_map_misses, hit_rate
+            );
         }
         if let Some(valid) = self.merkle_valid {
             println!("  Merkle:     {}", if valid { "VALID" } else { "INVALID" });
@@ -569,7 +588,10 @@ impl GenerationReport {
             }
         }
         if let Some(executed) = self.sandbox_executed {
-            println!("  Sandbox:    {}", if executed { "executed" } else { "skipped" });
+            println!(
+                "  Sandbox:    {}",
+                if executed { "executed" } else { "skipped" }
+            );
         }
         if let Some(panicked) = self.sandbox_panicked {
             if panicked {
@@ -609,7 +631,10 @@ fn load_accounts() -> Vec<CloudflareAccount> {
     if !accounts.is_empty() {
         let scrubbed = credential_guard::scrub_sensitive_env_vars();
         if !scrubbed.is_empty() {
-            log::debug!("Scrubbed {} sensitive env vars from process", scrubbed.len());
+            log::debug!(
+                "Scrubbed {} sensitive env vars from process",
+                scrubbed.len()
+            );
         }
     }
     accounts
@@ -1018,23 +1043,27 @@ fn run_chat(_args: ChatArgs) -> Result<()> {
                 // Post-assignment summary: try Velocity router for real stats,
                 // fall back to local estimate.
                 match velocity_client::VelocityClient::from_env() {
-                    Ok(client) => {
-                        match client.get_usage() {
-                            Ok(u) => {
-                                println!("-> Completed in {:.1}s | {} tokens est. | tier: {} | total: {} / {}",
+                    Ok(client) => match client.get_usage() {
+                        Ok(u) => {
+                            println!("-> Completed in {:.1}s | {} tokens est. | tier: {} | total: {} / {}",
                                     elapsed,
                                     token_estimate,
                                     u.tier,
                                     velocity_client::fmt_number(u.tokens_used),
                                     velocity_client::fmt_number(u.tokens_limit));
-                            }
-                            Err(_) => {
-                                println!("-> Completed in {:.1}s | {} tokens est.", elapsed, token_estimate);
-                            }
                         }
-                    }
+                        Err(_) => {
+                            println!(
+                                "-> Completed in {:.1}s | {} tokens est.",
+                                elapsed, token_estimate
+                            );
+                        }
+                    },
                     Err(_) => {
-                        println!("-> Completed in {:.1}s | {} tokens est.", elapsed, token_estimate);
+                        println!(
+                            "-> Completed in {:.1}s | {} tokens est.",
+                            elapsed, token_estimate
+                        );
                     }
                 }
                 println!();
@@ -1051,7 +1080,7 @@ fn run_chat(_args: ChatArgs) -> Result<()> {
 // ─── Usage ────────────────────────────────────────────────────────────────
 
 fn run_usage(args: UsageArgs, json: bool) -> Result<()> {
-    use velocity_client::{VelocityClient, fmt_number, fmt_currency, fmt_percent};
+    use velocity_client::{fmt_currency, fmt_number, fmt_percent, VelocityClient};
 
     let client = VelocityClient::from_env()?;
 
@@ -1066,24 +1095,37 @@ fn run_usage(args: UsageArgs, json: bool) -> Result<()> {
         println!();
         println!("  Key:              {}", rl.key_label);
         println!("  Tier:             {}", rl.tier);
-        println!("  Rate Limit:       {} req/min (resets in {}s)",
-            rl.rate_limit.max_requests_per_minute, rl.rate_limit.resets_in_secs);
+        println!(
+            "  Rate Limit:       {} req/min (resets in {}s)",
+            rl.rate_limit.max_requests_per_minute, rl.rate_limit.resets_in_secs
+        );
         println!();
-        println!("  Tokens Used:      {} / {}  ({})",
+        println!(
+            "  Tokens Used:      {} / {}  ({})",
             fmt_number(rl.tokens.used),
             fmt_number(rl.tokens.limit),
-            fmt_percent(rl.tokens.quota_pct));
-        println!("  Projected:        {} by end of period",
-            fmt_number(rl.tokens.projected_monthly));
+            fmt_percent(rl.tokens.quota_pct)
+        );
+        println!(
+            "  Projected:        {} by end of period",
+            fmt_number(rl.tokens.projected_monthly)
+        );
         println!();
-        println!("  Cost:             {} / {}  ({})",
+        println!(
+            "  Cost:             {} / {}  ({})",
             fmt_currency(rl.cost.used_usd),
             fmt_currency(rl.cost.limit_usd),
-            fmt_percent(rl.cost.quota_pct));
-        println!("  Projected:        {} by end of period",
-            fmt_currency(rl.cost.projected_monthly_usd));
+            fmt_percent(rl.cost.quota_pct)
+        );
+        println!(
+            "  Projected:        {} by end of period",
+            fmt_currency(rl.cost.projected_monthly_usd)
+        );
         println!();
-        println!("  Billing Reset:    in {} days", rl.billing_period.resets_in_days);
+        println!(
+            "  Billing Reset:    in {} days",
+            rl.billing_period.resets_in_days
+        );
         println!();
         return Ok(());
     }
@@ -1100,23 +1142,42 @@ fn run_usage(args: UsageArgs, json: bool) -> Result<()> {
         println!("  Key:              {}", detail.label);
         println!("  Tier:             {}", detail.tier);
         println!("  Total Tokens:     {}", fmt_number(detail.total_tokens));
-        println!("  Total Cost:       {}", fmt_currency(detail.total_cost_usd));
+        println!(
+            "  Total Cost:       {}",
+            fmt_currency(detail.total_cost_usd)
+        );
         println!("  Assignments:      {}", detail.total_assignments);
         println!();
         println!("  By Model:");
-        println!("  {:<24} {:>10} {:>12} {:>10}", "Model", "Assigns", "Tokens", "Cost");
+        println!(
+            "  {:<24} {:>10} {:>12} {:>10}",
+            "Model", "Assigns", "Tokens", "Cost"
+        );
         println!("  {}", "-".repeat(60));
         for m in &detail.by_model {
-            println!("  {:<24} {:>10} {:>12} {:>10}",
-                m.model_id, m.assignments, fmt_number(m.tokens), fmt_currency(m.cost_usd));
+            println!(
+                "  {:<24} {:>10} {:>12} {:>10}",
+                m.model_id,
+                m.assignments,
+                fmt_number(m.tokens),
+                fmt_currency(m.cost_usd)
+            );
         }
         println!();
         println!("  By Domain:");
-        println!("  {:<24} {:>10} {:>12} {:>10}", "Domain", "Assigns", "Tokens", "Cost");
+        println!(
+            "  {:<24} {:>10} {:>12} {:>10}",
+            "Domain", "Assigns", "Tokens", "Cost"
+        );
         println!("  {}", "-".repeat(60));
         for d in &detail.by_domain {
-            println!("  {:<24} {:>10} {:>12} {:>10}",
-                d.domain, d.assignments, fmt_number(d.tokens), fmt_currency(d.cost_usd));
+            println!(
+                "  {:<24} {:>10} {:>12} {:>10}",
+                d.domain,
+                d.assignments,
+                fmt_number(d.tokens),
+                fmt_currency(d.cost_usd)
+            );
         }
         println!();
         return Ok(());
@@ -1132,15 +1193,29 @@ fn run_usage(args: UsageArgs, json: bool) -> Result<()> {
         println!("=== Velocity Usage Summary (Enhanced) ===");
         println!();
         println!("  Tier:             {}", s.tier);
-        println!("  Tokens:           {} / {}  ({})",
-            fmt_number(s.tokens_used), fmt_number(s.tokens_limit), fmt_percent(s.token_quota_pct));
-        println!("  Cost:             {} / {}  ({})",
-            fmt_currency(s.cost_usd), fmt_currency(s.cost_limit_usd), fmt_percent(s.cost_quota_pct));
+        println!(
+            "  Tokens:           {} / {}  ({})",
+            fmt_number(s.tokens_used),
+            fmt_number(s.tokens_limit),
+            fmt_percent(s.token_quota_pct)
+        );
+        println!(
+            "  Cost:             {} / {}  ({})",
+            fmt_currency(s.cost_usd),
+            fmt_currency(s.cost_limit_usd),
+            fmt_percent(s.cost_quota_pct)
+        );
         println!("  Assignments:      {}", s.assignments_count);
         println!();
         println!("  Projections:");
-        println!("    Tokens:         {} by end of period", fmt_number(s.projected_tokens));
-        println!("    Cost:           {} by end of period", fmt_currency(s.projected_cost_usd));
+        println!(
+            "    Tokens:         {} by end of period",
+            fmt_number(s.projected_tokens)
+        );
+        println!(
+            "    Cost:           {} by end of period",
+            fmt_currency(s.projected_cost_usd)
+        );
         println!();
         println!("  Billing Period:");
         println!("    Start:          {}", s.billing_period.start);
@@ -1150,7 +1225,13 @@ fn run_usage(args: UsageArgs, json: bool) -> Result<()> {
         // Sparkline (last 24h hourly).
         if !s.sparkline.is_empty() {
             println!("  Hourly Sparkline (last 24h):");
-            let max_tok = s.sparkline.iter().map(|b| b.tokens).max().unwrap_or(1).max(1);
+            let max_tok = s
+                .sparkline
+                .iter()
+                .map(|b| b.tokens)
+                .max()
+                .unwrap_or(1)
+                .max(1);
             for b in &s.sparkline {
                 let bar_len = (b.tokens as f64 / max_tok as f64 * 30.0) as usize;
                 let bar = "#".repeat(bar_len);
@@ -1163,21 +1244,39 @@ fn run_usage(args: UsageArgs, json: bool) -> Result<()> {
 
     if let Some(ref range) = args.timeseries {
         // Determine granularity from range.
-        let granularity = if range.ends_with('d') { "daily" } else { "hourly" };
+        let granularity = if range.ends_with('d') {
+            "daily"
+        } else {
+            "hourly"
+        };
         let ts = client.get_timeseries(granularity, range)?;
         if json {
             println!("{}", serde_json::to_string_pretty(&ts)?);
             return Ok(());
         }
         println!();
-        println!("=== Velocity Timeseries ({}, {}) ===", ts.granularity, ts.range);
+        println!(
+            "=== Velocity Timeseries ({}, {}) ===",
+            ts.granularity, ts.range
+        );
         println!();
-        let max_tok = ts.buckets.iter().map(|b| b.tokens).max().unwrap_or(1).max(1);
+        let max_tok = ts
+            .buckets
+            .iter()
+            .map(|b| b.tokens)
+            .max()
+            .unwrap_or(1)
+            .max(1);
         for b in &ts.buckets {
             let bar_len = (b.tokens as f64 / max_tok as f64 * 30.0) as usize;
             let bar = "#".repeat(bar_len);
-            println!("  {:>6}  {:>10}  {:>10}  {}",
-                b.label, fmt_number(b.tokens), fmt_currency(b.cost_usd), bar);
+            println!(
+                "  {:>6}  {:>10}  {:>10}  {}",
+                b.label,
+                fmt_number(b.tokens),
+                fmt_currency(b.cost_usd),
+                bar
+            );
         }
         println!();
         return Ok(());
@@ -1204,16 +1303,23 @@ fn run_usage(args: UsageArgs, json: bool) -> Result<()> {
     println!("=== Velocity Usage Summary ===");
     println!();
     println!("  Tier:           {}", usage.tier);
-    println!("  Tokens Used:    {} / {}  ({})",
+    println!(
+        "  Tokens Used:    {} / {}  ({})",
         fmt_number(usage.tokens_used),
         fmt_number(usage.tokens_limit),
-        fmt_percent(token_pct));
-    println!("  Cost:           {} / {}  ({})",
+        fmt_percent(token_pct)
+    );
+    println!(
+        "  Cost:           {} / {}  ({})",
         fmt_currency(usage.cost_usd),
         fmt_currency(usage.cost_limit_usd),
-        fmt_percent(cost_pct));
+        fmt_percent(cost_pct)
+    );
     println!("  Assignments:    {}", usage.assignments_count);
-    println!("  Period:         {} to {}", usage.period.start, usage.period.end);
+    println!(
+        "  Period:         {} to {}",
+        usage.period.start, usage.period.end
+    );
     println!();
 
     Ok(())
@@ -1242,7 +1348,11 @@ fn run_login(args: LoginArgs) -> Result<()> {
     println!();
     println!("Velocity Router configured:");
     println!("  URL:  {}", config.base_url);
-    println!("  Key:  {}...{}", &config.api_key[..8], &config.api_key[config.api_key.len().saturating_sub(4)..]);
+    println!(
+        "  Key:  {}...{}",
+        &config.api_key[..8],
+        &config.api_key[config.api_key.len().saturating_sub(4)..]
+    );
     println!();
     println!("Saved to ~/.velocity/config.toml");
     println!();
@@ -1251,8 +1361,10 @@ fn run_login(args: LoginArgs) -> Result<()> {
     let client = velocity_client::VelocityClient::new(config);
     match client.health() {
         Ok(h) => {
-            println!("Router health: {} (v{}, {} models)",
-                h.status, h.version, h.models_available);
+            println!(
+                "Router health: {} (v{}, {} models)",
+                h.status, h.version, h.models_available
+            );
         }
         Err(e) => {
             println!("Warning: could not reach router: {}", e);
@@ -1267,32 +1379,41 @@ fn run_login(args: LoginArgs) -> Result<()> {
 // ─── Providers ────────────────────────────────────────────────────────────
 
 fn run_providers(args: ProvidersArgs, json: bool) -> Result<()> {
-    use provider_usage::{ProviderCredential, load_credentials, save_credentials};
+    use provider_usage::{load_credentials, save_credentials, ProviderCredential};
 
     match args.action.as_str() {
         "list" => {
             let creds = load_credentials()?;
             if json {
                 // Mask API keys in JSON output.
-                let masked: Vec<serde_json::Value> = creds.iter().map(|c| {
-                    let masked_key = if c.api_key.len() > 12 {
-                        format!("{}...{}", &c.api_key[..8], &c.api_key[c.api_key.len()-4..])
-                    } else {
-                        "****".to_string()
-                    };
-                    serde_json::json!({
-                        "provider": c.provider,
-                        "api_key": masked_key,
-                        "base_url": c.base_url,
+                let masked: Vec<serde_json::Value> = creds
+                    .iter()
+                    .map(|c| {
+                        let masked_key = if c.api_key.len() > 12 {
+                            format!(
+                                "{}...{}",
+                                &c.api_key[..8],
+                                &c.api_key[c.api_key.len() - 4..]
+                            )
+                        } else {
+                            "****".to_string()
+                        };
+                        serde_json::json!({
+                            "provider": c.provider,
+                            "api_key": masked_key,
+                            "base_url": c.base_url,
+                        })
                     })
-                }).collect();
+                    .collect();
                 println!("{}", serde_json::to_string_pretty(&masked)?);
                 return Ok(());
             }
             if creds.is_empty() {
                 println!();
                 println!("No provider API keys configured.");
-                println!("Add one with: velocity-ide providers add --provider openai --api-key sk-...");
+                println!(
+                    "Add one with: velocity-ide providers add --provider openai --api-key sk-..."
+                );
                 println!();
                 return Ok(());
             }
@@ -1303,7 +1424,11 @@ fn run_providers(args: ProvidersArgs, json: bool) -> Result<()> {
             println!("  {}", "-".repeat(60));
             for c in &creds {
                 let masked = if c.api_key.len() > 12 {
-                    format!("{}...{}", &c.api_key[..8], &c.api_key[c.api_key.len()-4..])
+                    format!(
+                        "{}...{}",
+                        &c.api_key[..8],
+                        &c.api_key[c.api_key.len() - 4..]
+                    )
                 } else {
                     "****".to_string()
                 };
@@ -1314,14 +1439,20 @@ fn run_providers(args: ProvidersArgs, json: bool) -> Result<()> {
         }
 
         "add" => {
-            let provider = args.provider.as_deref()
-                .ok_or_else(|| anyhow::anyhow!("--provider is required (e.g. --provider openai)"))?;
-            let api_key = args.api_key.as_deref()
+            let provider = args.provider.as_deref().ok_or_else(|| {
+                anyhow::anyhow!("--provider is required (e.g. --provider openai)")
+            })?;
+            let api_key = args
+                .api_key
+                .as_deref()
                 .ok_or_else(|| anyhow::anyhow!("--api-key is required"))?;
 
             // Validate provider name.
             if provider_usage::Provider::from_str_loose(provider).is_none() {
-                println!("Warning: '{}' is not a recognized provider. Adding anyway.", provider);
+                println!(
+                    "Warning: '{}' is not a recognized provider. Adding anyway.",
+                    provider
+                );
             }
 
             let mut creds = load_credentials()?;
@@ -1340,7 +1471,11 @@ fn run_providers(args: ProvidersArgs, json: bool) -> Result<()> {
             println!();
             println!("Provider API key saved:");
             println!("  Provider:  {}", provider);
-            println!("  Key:       {}...{}", &api_key[..4], &api_key[api_key.len().saturating_sub(4)..]);
+            println!(
+                "  Key:       {}...{}",
+                &api_key[..4],
+                &api_key[api_key.len().saturating_sub(4)..]
+            );
             if let Some(ref url) = args.base_url {
                 println!("  Base URL:  {}", url);
             }
@@ -1351,7 +1486,9 @@ fn run_providers(args: ProvidersArgs, json: bool) -> Result<()> {
         }
 
         "remove" => {
-            let provider = args.provider.as_deref()
+            let provider = args
+                .provider
+                .as_deref()
                 .ok_or_else(|| anyhow::anyhow!("--provider is required"))?;
 
             let mut creds = load_credentials()?;
@@ -1376,7 +1513,9 @@ fn run_providers(args: ProvidersArgs, json: bool) -> Result<()> {
                 }
                 println!();
                 println!("No provider API keys configured.");
-                println!("Add one with: velocity-ide providers add --provider openai --api-key sk-...");
+                println!(
+                    "Add one with: velocity-ide providers add --provider openai --api-key sk-..."
+                );
                 println!();
                 return Ok(());
             }
@@ -1393,21 +1532,29 @@ fn run_providers(args: ProvidersArgs, json: bool) -> Result<()> {
             println!();
 
             // Print results.
-            println!("  {:<16} {:<8} {:>12} {:>10}  Status", "Provider", "Valid", "Tokens", "Cost");
+            println!(
+                "  {:<16} {:<8} {:>12} {:>10}  Status",
+                "Provider", "Valid", "Tokens", "Cost"
+            );
             println!("  {}", "-".repeat(75));
             for p in &snapshot.providers {
                 let valid = if p.key_valid { "yes" } else { "NO" };
-                println!("  {:<16} {:<8} {:>12} {:>10}  {}",
-                    p.display_name, valid,
+                println!(
+                    "  {:<16} {:<8} {:>12} {:>10}  {}",
+                    p.display_name,
+                    valid,
                     velocity_client::fmt_number(p.tokens_used),
                     velocity_client::fmt_currency(p.cost_usd),
-                    p.status);
+                    p.status
+                );
             }
             println!();
-            println!("  Total: {} tokens, {} across {} requests",
+            println!(
+                "  Total: {} tokens, {} across {} requests",
                 velocity_client::fmt_number(snapshot.total_tokens),
                 velocity_client::fmt_currency(snapshot.total_cost_usd),
-                snapshot.total_requests);
+                snapshot.total_requests
+            );
             println!();
 
             // Write snapshot for the dashboard.
@@ -1443,10 +1590,22 @@ fn run_status(json: bool, verbose: bool) -> Result<()> {
         println!();
         println!("=== CLI Environment ===");
         println!();
-        println!("  Velocity configured:  {}", diag.environment.velocity_configured);
-        println!("  Config file exists:   {}", diag.environment.config_file_exists);
-        println!("  Provider keys:        {}", diag.environment.provider_count);
-        println!("  Credential boundary:  {}", diag.environment.credential_boundary_active);
+        println!(
+            "  Velocity configured:  {}",
+            diag.environment.velocity_configured
+        );
+        println!(
+            "  Config file exists:   {}",
+            diag.environment.config_file_exists
+        );
+        println!(
+            "  Provider keys:        {}",
+            diag.environment.provider_count
+        );
+        println!(
+            "  Credential boundary:  {}",
+            diag.environment.credential_boundary_active
+        );
         if let Some(ref conn) = diag.velocity_config {
             println!("  Router URL:           {}", conn.base_url);
             println!("  HTTPS:                {}", conn.is_https);
@@ -1520,14 +1679,18 @@ fn run_status(json: bool, verbose: bool) -> Result<()> {
             };
             println!();
             println!("  Tier:      {}", u.tier);
-            println!("  Tokens:    {} / {}  ({:.1}%)",
+            println!(
+                "  Tokens:    {} / {}  ({:.1}%)",
                 velocity_client::fmt_number(u.tokens_used),
                 velocity_client::fmt_number(u.tokens_limit),
-                token_pct);
-            println!("  Cost:      {} / {}  ({:.1}%)",
+                token_pct
+            );
+            println!(
+                "  Cost:      {} / {}  ({:.1}%)",
                 velocity_client::fmt_currency(u.cost_usd),
                 velocity_client::fmt_currency(u.cost_limit_usd),
-                cost_pct);
+                cost_pct
+            );
             println!("  Assigns:   {}", u.assignments_count);
         }
         Err(_) => {
@@ -1538,9 +1701,14 @@ fn run_status(json: bool, verbose: bool) -> Result<()> {
     // Rate limit info.
     if let Ok(rl) = client.get_rate_limit() {
         println!();
-        println!("  Rate:      {} req/min (resets in {}s)",
-            rl.rate_limit.max_requests_per_minute, rl.rate_limit.resets_in_secs);
-        println!("  Billing:   resets in {} days", rl.billing_period.resets_in_days);
+        println!(
+            "  Rate:      {} req/min (resets in {}s)",
+            rl.rate_limit.max_requests_per_minute, rl.rate_limit.resets_in_secs
+        );
+        println!(
+            "  Billing:   resets in {} days",
+            rl.billing_period.resets_in_days
+        );
     }
 
     println!();
@@ -1550,7 +1718,7 @@ fn run_status(json: bool, verbose: bool) -> Result<()> {
 // ─── Transparency ────────────────────────────────────────────────────────
 
 fn run_transparency(json: bool) -> Result<()> {
-    use velocity_client::{VelocityClient, fmt_number, fmt_currency};
+    use velocity_client::{fmt_currency, fmt_number, VelocityClient};
 
     let client = VelocityClient::from_env()?;
     let t = client.get_transparency()?;
@@ -1571,25 +1739,56 @@ fn run_transparency(json: bool) -> Result<()> {
     println!();
     println!("  Cost Flow:");
     let total_tok = t.cost_flow.input_tokens + t.cost_flow.output_tokens;
-    println!("    Input tokens:  {} ({:.1}%)",
+    println!(
+        "    Input tokens:  {} ({:.1}%)",
         fmt_number(t.cost_flow.input_tokens),
-        if total_tok > 0 { t.cost_flow.input_tokens as f64 / total_tok as f64 * 100.0 } else { 0.0 });
-    println!("    Output tokens: {} ({:.1}%)",
+        if total_tok > 0 {
+            t.cost_flow.input_tokens as f64 / total_tok as f64 * 100.0
+        } else {
+            0.0
+        }
+    );
+    println!(
+        "    Output tokens: {} ({:.1}%)",
         fmt_number(t.cost_flow.output_tokens),
-        if total_tok > 0 { t.cost_flow.output_tokens as f64 / total_tok as f64 * 100.0 } else { 0.0 });
+        if total_tok > 0 {
+            t.cost_flow.output_tokens as f64 / total_tok as f64 * 100.0
+        } else {
+            0.0
+        }
+    );
     println!("    In/Out ratio:  {:.2}", t.cost_flow.input_output_ratio);
-    println!("    Total cost:    {}", fmt_currency(t.cost_flow.total_cost_usd));
+    println!(
+        "    Total cost:    {}",
+        fmt_currency(t.cost_flow.total_cost_usd)
+    );
     println!();
 
     // Recent routing decisions.
     if !t.recent_routing_decisions.is_empty() {
-        println!("  Recent Routing Decisions (last {}):", t.recent_routing_decisions.len());
-        println!("  {:<24} {:<20} {:<14} Rationale", "Domain", "Model", "Tokens");
+        println!(
+            "  Recent Routing Decisions (last {}):",
+            t.recent_routing_decisions.len()
+        );
+        println!(
+            "  {:<24} {:<20} {:<14} Rationale",
+            "Domain", "Model", "Tokens"
+        );
         println!("  {}", "-".repeat(90));
         for d in t.recent_routing_decisions.iter().take(20) {
             let rationale = d.routing_rationale.as_deref().unwrap_or("-");
-            let short = if rationale.len() > 40 { format!("{}...", &rationale[..37]) } else { rationale.to_string() };
-            println!("  {:<24} {:<20} {:<14} {}", d.domain, d.model_id, fmt_number(d.total_tokens), short);
+            let short = if rationale.len() > 40 {
+                format!("{}...", &rationale[..37])
+            } else {
+                rationale.to_string()
+            };
+            println!(
+                "  {:<24} {:<20} {:<14} {}",
+                d.domain,
+                d.model_id,
+                fmt_number(d.total_tokens),
+                short
+            );
         }
         println!();
     }
@@ -1597,12 +1796,20 @@ fn run_transparency(json: bool) -> Result<()> {
     // Model selection stats.
     if !t.model_selection_stats.is_empty() {
         println!("  Model Selection Stats:");
-        println!("  {:<24} {:>8} {:>12} {:>10} {:>10}", "Model", "Reqs", "Tokens", "Cost", "Avg ms");
+        println!(
+            "  {:<24} {:>8} {:>12} {:>10} {:>10}",
+            "Model", "Reqs", "Tokens", "Cost", "Avg ms"
+        );
         println!("  {}", "-".repeat(70));
         for m in &t.model_selection_stats {
-            println!("  {:<24} {:>8} {:>12} {:>10} {:>10}",
-                m.model_id, m.total_requests, fmt_number(m.total_tokens),
-                fmt_currency(m.total_cost_usd), m.avg_duration_ms);
+            println!(
+                "  {:<24} {:>8} {:>12} {:>10} {:>10}",
+                m.model_id,
+                m.total_requests,
+                fmt_number(m.total_tokens),
+                fmt_currency(m.total_cost_usd),
+                m.avg_duration_ms
+            );
         }
         println!();
     }
@@ -1610,11 +1817,19 @@ fn run_transparency(json: bool) -> Result<()> {
     // Domain distribution.
     if !t.domain_distribution.is_empty() {
         println!("  Domain Distribution:");
-        println!("  {:<24} {:>8} {:>12} {:>10}", "Domain", "Reqs", "Tokens", "Cost");
+        println!(
+            "  {:<24} {:>8} {:>12} {:>10}",
+            "Domain", "Reqs", "Tokens", "Cost"
+        );
         println!("  {}", "-".repeat(60));
         for d in &t.domain_distribution {
-            println!("  {:<24} {:>8} {:>12} {:>10}",
-                d.domain, d.requests, fmt_number(d.tokens), fmt_currency(d.cost_usd));
+            println!(
+                "  {:<24} {:>8} {:>12} {:>10}",
+                d.domain,
+                d.requests,
+                fmt_number(d.tokens),
+                fmt_currency(d.cost_usd)
+            );
         }
         println!();
     }
@@ -1622,11 +1837,16 @@ fn run_transparency(json: bool) -> Result<()> {
     // Available models.
     if !t.available_models.is_empty() {
         println!("  Available Models & Pricing:");
-        println!("  {:<24} {:<14} {:<10} {:>12} {:>12}", "Model", "Provider", "Tier", "In $/Mtok", "Out $/Mtok");
+        println!(
+            "  {:<24} {:<14} {:<10} {:>12} {:>12}",
+            "Model", "Provider", "Tier", "In $/Mtok", "Out $/Mtok"
+        );
         println!("  {}", "-".repeat(76));
         for m in &t.available_models {
-            println!("  {:<24} {:<14} {:<10} {:>12.2} {:>12.2}",
-                m.id, m.provider, m.tier, m.cost_input_per_mtok, m.cost_output_per_mtok);
+            println!(
+                "  {:<24} {:<14} {:<10} {:>12.2} {:>12.2}",
+                m.id, m.provider, m.tier, m.cost_input_per_mtok, m.cost_output_per_mtok
+            );
         }
         println!();
     }
@@ -1638,12 +1858,12 @@ fn run_transparency(json: bool) -> Result<()> {
 
 fn run_completions(args: CompletionsArgs) -> Result<()> {
     use clap::CommandFactory;
-    use clap_complete::{Shell, generate};
+    use clap_complete::{generate, Shell};
 
     let shell = match args.shell.to_lowercase().as_str() {
-        "bash"       => Shell::Bash,
-        "zsh"        => Shell::Zsh,
-        "fish"       => Shell::Fish,
+        "bash" => Shell::Bash,
+        "zsh" => Shell::Zsh,
+        "fish" => Shell::Fish,
         "powershell" | "pwsh" => Shell::PowerShell,
         other => anyhow::bail!(
             "Unknown shell: '{}'. Supported: bash, zsh, fish, powershell",
@@ -1705,7 +1925,11 @@ mod tests {
     fn generate_valid_defaults() {
         let args = default_generate_args();
         let issues = validate_generate_args(&args);
-        assert!(issues.is_empty(), "default args should be valid, got: {:?}", issues);
+        assert!(
+            issues.is_empty(),
+            "default args should be valid, got: {:?}",
+            issues
+        );
     }
 
     #[test]
@@ -1756,9 +1980,15 @@ mod tests {
     fn generate_temperature_boundary_values() {
         let mut args = default_generate_args();
         args.temperature = 0.0;
-        assert!(validate_generate_args(&args).is_empty(), "temp=0 should be valid");
+        assert!(
+            validate_generate_args(&args).is_empty(),
+            "temp=0 should be valid"
+        );
         args.temperature = 5.0;
-        assert!(validate_generate_args(&args).is_empty(), "temp=5 should be valid");
+        assert!(
+            validate_generate_args(&args).is_empty(),
+            "temp=5 should be valid"
+        );
     }
 
     #[test]
@@ -2083,9 +2313,7 @@ mod tests {
             config_file_exists: false,
             provider_count: 0,
             credential_boundary_active: false,
-            validation_issues: vec![
-                "Velocity Router not configured".into(),
-            ],
+            validation_issues: vec!["Velocity Router not configured".into()],
         };
         let json = serde_json::to_string(&env).unwrap();
         let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
@@ -2119,7 +2347,10 @@ mod tests {
         let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
         assert!(parsed["environment"].is_object());
         assert!(parsed["available_subcommands"].is_array());
-        assert_eq!(parsed["available_subcommands"].as_array().unwrap().len(), 10);
+        assert_eq!(
+            parsed["available_subcommands"].as_array().unwrap().len(),
+            10
+        );
     }
 
     // ── GenerationReport ─────────────────────────────────────────────────
@@ -2312,8 +2543,14 @@ mod tests {
         let json = serde_json::to_string(&report).unwrap();
         let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
         // All Option<bool> fields should serialize as null
-        for key in &["merkle_valid", "force_terminated", "sandbox_executed",
-                      "sandbox_panicked", "scope_passed", "stored_in_site_map"] {
+        for key in &[
+            "merkle_valid",
+            "force_terminated",
+            "sandbox_executed",
+            "sandbox_panicked",
+            "scope_passed",
+            "stored_in_site_map",
+        ] {
             assert!(parsed[key].is_null(), "{} should be null", key);
         }
     }
@@ -2359,7 +2596,10 @@ mod tests {
         args.prompt = Some("hello".into());
         args.prompt_file = Some(PathBuf::from("prompt.txt"));
         let issues = validate_generate_args(&args);
-        assert!(issues.is_empty(), "both prompt and prompt_file should be valid");
+        assert!(
+            issues.is_empty(),
+            "both prompt and prompt_file should be valid"
+        );
     }
 
     #[test]
@@ -2369,8 +2609,14 @@ mod tests {
         let mut args = default_generate_args();
         args.temperature = f32::NAN;
         let issues = validate_generate_args(&args);
-        let temp_issues: Vec<_> = issues.iter().filter(|i| i.contains("temperature")).collect();
-        assert!(temp_issues.is_empty(), "NaN temperature should slip past validation");
+        let temp_issues: Vec<_> = issues
+            .iter()
+            .filter(|i| i.contains("temperature"))
+            .collect();
+        assert!(
+            temp_issues.is_empty(),
+            "NaN temperature should slip past validation"
+        );
     }
 
     #[test]
@@ -2395,7 +2641,10 @@ mod tests {
         args.top_p = f32::NAN;
         let issues = validate_generate_args(&args);
         let top_p_issues: Vec<_> = issues.iter().filter(|i| i.contains("top-p")).collect();
-        assert!(top_p_issues.is_empty(), "NaN top_p should slip past validation");
+        assert!(
+            top_p_issues.is_empty(),
+            "NaN top_p should slip past validation"
+        );
     }
 
     #[test]
@@ -2436,8 +2685,14 @@ mod tests {
         let mut args = default_chat_args();
         args.temperature = 100.0;
         let issues = validate_chat_args(&args);
-        let temp_issues: Vec<_> = issues.iter().filter(|i| i.contains("temperature")).collect();
-        assert!(temp_issues.is_empty(), "chat should have no upper temperature bound");
+        let temp_issues: Vec<_> = issues
+            .iter()
+            .filter(|i| i.contains("temperature"))
+            .collect();
+        assert!(
+            temp_issues.is_empty(),
+            "chat should have no upper temperature bound"
+        );
     }
 
     #[test]
@@ -2445,7 +2700,10 @@ mod tests {
         let mut args = default_chat_args();
         args.temperature = f32::INFINITY;
         let issues = validate_chat_args(&args);
-        let temp_issues: Vec<_> = issues.iter().filter(|i| i.contains("temperature")).collect();
+        let temp_issues: Vec<_> = issues
+            .iter()
+            .filter(|i| i.contains("temperature"))
+            .collect();
         assert!(temp_issues.is_empty());
     }
 
@@ -2470,7 +2728,10 @@ mod tests {
         let mut args = default_chat_args();
         args.temperature = f32::NAN;
         let issues = validate_chat_args(&args);
-        let temp_issues: Vec<_> = issues.iter().filter(|i| i.contains("temperature")).collect();
+        let temp_issues: Vec<_> = issues
+            .iter()
+            .filter(|i| i.contains("temperature"))
+            .collect();
         assert!(temp_issues.is_empty());
     }
 
@@ -2497,7 +2758,10 @@ mod tests {
         let mut args = default_seed_args();
         args.weight_root = "0x".into();
         let issues = validate_seed_args(&args);
-        assert!(issues.is_empty(), "0x alone should be valid (empty after trim)");
+        assert!(
+            issues.is_empty(),
+            "0x alone should be valid (empty after trim)"
+        );
     }
 
     #[test]
@@ -2528,7 +2792,9 @@ mod tests {
     #[test]
     fn seed_many_source_files() {
         let mut args = default_seed_args();
-        args.source = (0..100).map(|i| PathBuf::from(format!("seeds/file_{}.rs", i))).collect();
+        args.source = (0..100)
+            .map(|i| PathBuf::from(format!("seeds/file_{}.rs", i)))
+            .collect();
         let issues = validate_seed_args(&args);
         assert!(issues.is_empty());
     }
@@ -2649,9 +2915,7 @@ mod tests {
             config_file_exists: false,
             provider_count: 0,
             credential_boundary_active: false,
-            validation_issues: vec![
-                "VELOCITY_BASE_URL set but VELOCITY_API_KEY is missing".into(),
-            ],
+            validation_issues: vec!["VELOCITY_BASE_URL set but VELOCITY_API_KEY is missing".into()],
         };
         assert_eq!(env.validation_issues.len(), 1);
         assert!(env.validation_issues[0].contains("URL"));
@@ -2667,9 +2931,7 @@ mod tests {
             config_file_exists: false,
             provider_count: 0,
             credential_boundary_active: false,
-            validation_issues: vec![
-                "VELOCITY_API_KEY set but VELOCITY_BASE_URL is missing".into(),
-            ],
+            validation_issues: vec!["VELOCITY_API_KEY set but VELOCITY_BASE_URL is missing".into()],
         };
         assert_eq!(env.validation_issues.len(), 1);
         assert!(env.validation_issues[0].contains("KEY"));
@@ -2697,7 +2959,10 @@ mod tests {
     fn cli_diagnostics_clone() {
         let diag = cli_diagnostics();
         let cloned = diag.clone();
-        assert_eq!(cloned.available_subcommands.len(), diag.available_subcommands.len());
+        assert_eq!(
+            cloned.available_subcommands.len(),
+            diag.available_subcommands.len()
+        );
     }
 
     #[test]
@@ -2725,14 +2990,20 @@ mod tests {
     fn message_deserialize_missing_role_fails() {
         let json = r#"{"content":"hello"}"#;
         let result: Result<Message, _> = serde_json::from_str(json);
-        assert!(result.is_err(), "missing 'role' field should fail deserialization");
+        assert!(
+            result.is_err(),
+            "missing 'role' field should fail deserialization"
+        );
     }
 
     #[test]
     fn message_deserialize_missing_content_fails() {
         let json = r#"{"role":"user"}"#;
         let result: Result<Message, _> = serde_json::from_str(json);
-        assert!(result.is_err(), "missing 'content' field should fail deserialization");
+        assert!(
+            result.is_err(),
+            "missing 'content' field should fail deserialization"
+        );
     }
 
     #[test]
@@ -2958,7 +3229,9 @@ mod tests {
         for arch in &["bitnet3b", "bitnet", "qwen05", "qwen"] {
             let mut g = default_generate_args();
             g.arch = arch.to_string();
-            assert!(validate_generate_args(&g).iter().all(|i| !i.contains("arch")));
+            assert!(validate_generate_args(&g)
+                .iter()
+                .all(|i| !i.contains("arch")));
 
             let mut c = default_chat_args();
             c.arch = arch.to_string();
@@ -3116,7 +3389,12 @@ mod tests {
         args.prompt_file = None;
         let issues = validate_generate_args(&args);
         // Should have: max_tokens, temperature, top_p, arch, mode, prompt
-        assert!(issues.len() >= 6, "expected >=6 issues, got {}: {:?}", issues.len(), issues);
+        assert!(
+            issues.len() >= 6,
+            "expected >=6 issues, got {}: {:?}",
+            issues.len(),
+            issues
+        );
     }
 
     #[test]
@@ -3139,9 +3417,13 @@ mod tests {
     fn generate_top_p_boundary_values_196() {
         let mut args = default_generate_args();
         args.top_p = 0.0;
-        assert!(validate_generate_args(&args).iter().all(|i| !i.contains("top-p")));
+        assert!(validate_generate_args(&args)
+            .iter()
+            .all(|i| !i.contains("top-p")));
         args.top_p = 1.0;
-        assert!(validate_generate_args(&args).iter().all(|i| !i.contains("top-p")));
+        assert!(validate_generate_args(&args)
+            .iter()
+            .all(|i| !i.contains("top-p")));
     }
 
     #[test]
@@ -3168,9 +3450,13 @@ mod tests {
     fn chat_top_p_boundaries() {
         let mut args = default_chat_args();
         args.top_p = 0.0;
-        assert!(validate_chat_args(&args).iter().all(|i| !i.contains("top-p")));
+        assert!(validate_chat_args(&args)
+            .iter()
+            .all(|i| !i.contains("top-p")));
         args.top_p = 1.0;
-        assert!(validate_chat_args(&args).iter().all(|i| !i.contains("top-p")));
+        assert!(validate_chat_args(&args)
+            .iter()
+            .all(|i| !i.contains("top-p")));
     }
 
     #[test]
@@ -3181,7 +3467,12 @@ mod tests {
         args.top_p = 5.0;
         args.arch = "invalid".into();
         let issues = validate_chat_args(&args);
-        assert!(issues.len() >= 4, "expected >=4 issues, got {}: {:?}", issues.len(), issues);
+        assert!(
+            issues.len() >= 4,
+            "expected >=4 issues, got {}: {:?}",
+            issues.len(),
+            issues
+        );
     }
 
     // ── Block 196: validate_seed_args ───────────────────────────────────────
@@ -3223,7 +3514,11 @@ mod tests {
     fn seed_default_args_valid() {
         let args = default_seed_args();
         let issues = validate_seed_args(&args);
-        assert!(issues.is_empty(), "default seed args should be valid, got: {:?}", issues);
+        assert!(
+            issues.is_empty(),
+            "default seed args should be valid, got: {:?}",
+            issues
+        );
     }
 
     // ── Block 196: Message edge cases ───────────────────────────────────────
@@ -3512,7 +3807,10 @@ mod tests {
         let json = serde_json::to_string(&diag).unwrap();
         let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
         assert!(parsed["velocity_config"].is_object());
-        assert_eq!(parsed["velocity_config"]["base_url"], "https://router.example.com");
+        assert_eq!(
+            parsed["velocity_config"]["base_url"],
+            "https://router.example.com"
+        );
         assert_eq!(parsed["velocity_config"]["is_https"], true);
     }
 
@@ -3601,7 +3899,11 @@ mod tests {
         };
         let total = report.site_map_hits + report.site_map_misses;
         let hit_rate = report.site_map_hits as f64 / total as f64 * 100.0;
-        assert!(hit_rate > 99.99, "hit rate should be >99.99%, got {}", hit_rate);
+        assert!(
+            hit_rate > 99.99,
+            "hit rate should be >99.99%, got {}",
+            hit_rate
+        );
         report.display();
     }
 

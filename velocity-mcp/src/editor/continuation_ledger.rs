@@ -1,4 +1,4 @@
-﻿#![allow(dead_code, unused_imports, unused_variables)]
+#![allow(dead_code, unused_imports, unused_variables)]
 //! Continuation Ledger: cross-model context handoff system.
 //!
 //! When a model fails mid-edit or gets swapped, the continuation ledger

@@ -117,6 +117,9 @@ mod tests {
     #[test]
     fn jit_output_is_nonempty() {
         let result = JitCompiler::compile_inlined_weights(&[0]).unwrap();
-        assert!(result.len() > 10, "SPIR-V binary should have substantial content");
+        assert!(
+            result.len() > 10,
+            "SPIR-V binary should have substantial content"
+        );
     }
 }

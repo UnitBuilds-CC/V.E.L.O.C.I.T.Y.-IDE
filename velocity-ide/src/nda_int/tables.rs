@@ -249,18 +249,28 @@ pub fn dot_4_lut_info() -> LutInfo {
     let mut max_val = i8::MIN;
     for row in &DOT_4_LUT {
         for &val in row {
-            if val < min_val { min_val = val; }
-            if val > max_val { max_val = val; }
+            if val < min_val {
+                min_val = val;
+            }
+            if val > max_val {
+                max_val = val;
+            }
         }
     }
     let mut issues = Vec::new();
     // DOT_4_LUT should be 256x256
     if DOT_4_LUT.len() != 256 {
-        issues.push(format!("DOT_4_LUT has {} rows, expected 256", DOT_4_LUT.len()));
+        issues.push(format!(
+            "DOT_4_LUT has {} rows, expected 256",
+            DOT_4_LUT.len()
+        ));
     }
     // Values should be in [-16, 16] for 4-bit dot products
     if min_val < -16 || max_val > 16 {
-        issues.push(format!("DOT_4_LUT values [{}, {}] outside expected [-16, 16]", min_val, max_val));
+        issues.push(format!(
+            "DOT_4_LUT values [{}, {}] outside expected [-16, 16]",
+            min_val, max_val
+        ));
     }
     LutInfo {
         name: "DOT_4_LUT".to_string(),
@@ -276,7 +286,10 @@ pub fn dot_4_lut_info() -> LutInfo {
 pub fn add_lut_q16_info() -> LutInfo {
     let mut issues = Vec::new();
     if ADD_LUT_Q16.len() != 65536 {
-        issues.push(format!("ADD_LUT_Q16 has {} entries, expected 65536", ADD_LUT_Q16.len()));
+        issues.push(format!(
+            "ADD_LUT_Q16 has {} entries, expected 65536",
+            ADD_LUT_Q16.len()
+        ));
     }
     // Each byte encodes sign+extra nibbles, so max value is 0xFF
     LutInfo {
@@ -293,7 +306,10 @@ pub fn add_lut_q16_info() -> LutInfo {
 pub fn swiglu_lut_q16_info() -> LutInfo {
     let mut issues = Vec::new();
     if SWIGLU_LUT_Q16.len() != 65536 {
-        issues.push(format!("SWIGLU_LUT_Q16 has {} entries, expected 65536", SWIGLU_LUT_Q16.len()));
+        issues.push(format!(
+            "SWIGLU_LUT_Q16 has {} entries, expected 65536",
+            SWIGLU_LUT_Q16.len()
+        ));
     }
     LutInfo {
         name: "SWIGLU_LUT_Q16".to_string(),
@@ -311,13 +327,20 @@ pub fn fp4_product_lut_info() -> LutInfo {
     let mut max_val = i32::MIN;
     for row in &FP4_PRODUCT_LUT {
         for &val in row {
-            if val < min_val { min_val = val; }
-            if val > max_val { max_val = val; }
+            if val < min_val {
+                min_val = val;
+            }
+            if val > max_val {
+                max_val = val;
+            }
         }
     }
     let mut issues = Vec::new();
     if FP4_PRODUCT_LUT.len() != 4 {
-        issues.push(format!("FP4_PRODUCT_LUT has {} rows, expected 4", FP4_PRODUCT_LUT.len()));
+        issues.push(format!(
+            "FP4_PRODUCT_LUT has {} rows, expected 4",
+            FP4_PRODUCT_LUT.len()
+        ));
     }
     LutInfo {
         name: "FP4_PRODUCT_LUT".to_string(),
@@ -335,13 +358,20 @@ pub fn fp2_product_lut_info() -> LutInfo {
     let mut max_val = i32::MIN;
     for row in &FP2_PRODUCT_LUT {
         for &val in row {
-            if val < min_val { min_val = val; }
-            if val > max_val { max_val = val; }
+            if val < min_val {
+                min_val = val;
+            }
+            if val > max_val {
+                max_val = val;
+            }
         }
     }
     let mut issues = Vec::new();
     if FP2_PRODUCT_LUT.len() != 4 {
-        issues.push(format!("FP2_PRODUCT_LUT has {} rows, expected 4", FP2_PRODUCT_LUT.len()));
+        issues.push(format!(
+            "FP2_PRODUCT_LUT has {} rows, expected 4",
+            FP2_PRODUCT_LUT.len()
+        ));
     }
     LutInfo {
         name: "FP2_PRODUCT_LUT".to_string(),
@@ -389,7 +419,11 @@ pub fn validate_dot4_entry(q: u8, k: u8) -> i8 {
         let qs_bit = (qs >> bit) & 1;
         let qe_bit = (qe >> bit) & 1;
         let qv: i8 = if qs_bit == 1 {
-            if qe_bit == 1 { 2 } else { 1 }
+            if qe_bit == 1 {
+                2
+            } else {
+                1
+            }
         } else if qe_bit == 1 {
             -1
         } else {
@@ -399,7 +433,11 @@ pub fn validate_dot4_entry(q: u8, k: u8) -> i8 {
         let ks_bit = (ks >> bit) & 1;
         let ke_bit = (ke >> bit) & 1;
         let kv: i8 = if ks_bit == 1 {
-            if ke_bit == 1 { 2 } else { 1 }
+            if ke_bit == 1 {
+                2
+            } else {
+                1
+            }
         } else if ke_bit == 1 {
             -1
         } else {
@@ -444,9 +482,9 @@ mod tests {
         for q in [0u8, 10, 100, 200] {
             for k in [0u8, 10, 100, 200] {
                 assert_eq!(
-                    DOT_4_LUT[q as usize][k as usize],
-                    DOT_4_LUT[k as usize][q as usize],
-                    "DOT_4_LUT not symmetric at ({}, {})", q, k
+                    DOT_4_LUT[q as usize][k as usize], DOT_4_LUT[k as usize][q as usize],
+                    "DOT_4_LUT not symmetric at ({}, {})",
+                    q, k
                 );
             }
         }
@@ -479,9 +517,9 @@ mod tests {
     #[test]
     fn fp4_product_lut_values() {
         // x_vals = [-2, -1, 1, 2], w_vals = [0, 1, 4, 6, 8, 12, 16, 24, 0, -1, -4, -6, -8, -12, -16, -24]
-        assert_eq!(FP4_PRODUCT_LUT[0][0], 0);   // -2 * 0
-        assert_eq!(FP4_PRODUCT_LUT[0][1], -2);  // -2 * 1
-        assert_eq!(FP4_PRODUCT_LUT[2][3], 6);   // 1 * 6
+        assert_eq!(FP4_PRODUCT_LUT[0][0], 0); // -2 * 0
+        assert_eq!(FP4_PRODUCT_LUT[0][1], -2); // -2 * 1
+        assert_eq!(FP4_PRODUCT_LUT[2][3], 6); // 1 * 6
         assert_eq!(FP4_PRODUCT_LUT[3][15], -48); // 2 * -24
     }
 
@@ -496,10 +534,10 @@ mod tests {
     #[test]
     fn fp2_product_lut_values() {
         // x_vals = [-2, -1, 1, 2], w_vals = [0, 1, 0, -1]
-        assert_eq!(FP2_PRODUCT_LUT[0][0], 0);   // -2 * 0
-        assert_eq!(FP2_PRODUCT_LUT[0][1], -2);  // -2 * 1
-        assert_eq!(FP2_PRODUCT_LUT[1][3], 1);   // -1 * -1
-        assert_eq!(FP2_PRODUCT_LUT[3][3], -2);  // 2 * -1
+        assert_eq!(FP2_PRODUCT_LUT[0][0], 0); // -2 * 0
+        assert_eq!(FP2_PRODUCT_LUT[0][1], -2); // -2 * 1
+        assert_eq!(FP2_PRODUCT_LUT[1][3], 1); // -1 * -1
+        assert_eq!(FP2_PRODUCT_LUT[3][3], -2); // 2 * -1
     }
 
     #[test]
@@ -534,7 +572,12 @@ mod tests {
         // Self dot product of any encoding should be positive (sum of squares)
         for q in [0x00u8, 0x55, 0xAA, 0xFF] {
             let val = DOT_4_LUT[q as usize][q as usize];
-            assert!(val > 0, "self-dot at 0x{:02X} should be positive, got {}", q, val);
+            assert!(
+                val > 0,
+                "self-dot at 0x{:02X} should be positive, got {}",
+                q,
+                val
+            );
         }
     }
 
@@ -545,8 +588,13 @@ mod tests {
         for q in [0u8, 0x11, 0x22, 0x33, 0x44, 0x88, 0xCC, 0xFF] {
             for k in [0u8, 0x11, 0x22, 0x33, 0x44, 0x88, 0xCC, 0xFF] {
                 let val = DOT_4_LUT[q as usize][k as usize];
-                assert!((-16..=16).contains(&val),
-                    "DOT_4_LUT[0x{:02X}][0x{:02X}] = {} out of range", q, k, val);
+                assert!(
+                    (-16..=16).contains(&val),
+                    "DOT_4_LUT[0x{:02X}][0x{:02X}] = {} out of range",
+                    q,
+                    k,
+                    val
+                );
             }
         }
     }
@@ -588,7 +636,7 @@ mod tests {
         // (+2,+2,+2,+2) + (-2,-2,-2,-2) = (0,0,0,0) → encodes as +1
         // +2: sign=1, extra=1 → xs=0xF, xe=0xF
         // -2: sign=0, extra=0 → ds=0x0, de=0x0
-        let key = 0x0F | (0x0F << 4) ;
+        let key = 0x0F | (0x0F << 4);
         let result = ADD_LUT_Q16[key as usize];
         let res_sign = result & 0x0F;
         let res_extra = (result >> 4) & 0x0F;
@@ -654,8 +702,13 @@ mod tests {
         let w_vals = [0i32, 1, 0, -1];
         for (xi, &x) in x_vals.iter().enumerate() {
             for (wi, &w) in w_vals.iter().enumerate() {
-                assert_eq!(FP2_PRODUCT_LUT[xi][wi], x * w,
-                    "FP2_PRODUCT_LUT[{}][{}] mismatch", xi, wi);
+                assert_eq!(
+                    FP2_PRODUCT_LUT[xi][wi],
+                    x * w,
+                    "FP2_PRODUCT_LUT[{}][{}] mismatch",
+                    xi,
+                    wi
+                );
             }
         }
     }
@@ -708,9 +761,9 @@ mod tests {
         for q in (0..256u16).step_by(17) {
             for k in (0..256u16).step_by(17) {
                 assert_eq!(
-                    DOT_4_LUT[q as usize][k as usize],
-                    DOT_4_LUT[k as usize][q as usize],
-                    "asymmetry at ({}, {})", q, k
+                    DOT_4_LUT[q as usize][k as usize], DOT_4_LUT[k as usize][q as usize],
+                    "asymmetry at ({}, {})",
+                    q, k
                 );
             }
         }
@@ -747,7 +800,9 @@ mod tests {
         let mut min_val = i8::MAX;
         for row in &DOT_4_LUT {
             for &val in row {
-                if val < min_val { min_val = val; }
+                if val < min_val {
+                    min_val = val;
+                }
             }
         }
         // Min should be -16 (opposite signs: (-2)*2 * 4 = -16)
@@ -759,7 +814,9 @@ mod tests {
         let mut max_val = i8::MIN;
         for row in &DOT_4_LUT {
             for &val in row {
-                if val > max_val { max_val = val; }
+                if val > max_val {
+                    max_val = val;
+                }
             }
         }
         // Max should be 16 (same signs: 2*2 * 4 = 16 or (-2)*(-2) * 4 = 16)
@@ -805,9 +862,9 @@ mod tests {
             let de = (key_sample >> 12) & 0x0F;
             let swapped_key = ds | (de << 4) | (xs << 8) | (xe << 12);
             assert_eq!(
-                ADD_LUT_Q16[key_sample as usize],
-                ADD_LUT_Q16[swapped_key as usize],
-                "ADD_LUT not commutative at key=0x{:04X}", key_sample
+                ADD_LUT_Q16[key_sample as usize], ADD_LUT_Q16[swapped_key as usize],
+                "ADD_LUT not commutative at key=0x{:04X}",
+                key_sample
             );
         }
     }
@@ -850,8 +907,15 @@ mod tests {
         let w_vals = [0, 1, 4, 6, 8, 12, 16, 24, 0, -1, -4, -6, -8, -12, -16, -24];
         for (xi, &x) in x_vals.iter().enumerate() {
             for (wi, &w) in w_vals.iter().enumerate() {
-                assert_eq!(FP4_PRODUCT_LUT[xi][wi], x * w,
-                    "FP4_PRODUCT_LUT[{}][{}] = {} but expected {}", xi, wi, FP4_PRODUCT_LUT[xi][wi], x * w);
+                assert_eq!(
+                    FP4_PRODUCT_LUT[xi][wi],
+                    x * w,
+                    "FP4_PRODUCT_LUT[{}][{}] = {} but expected {}",
+                    xi,
+                    wi,
+                    FP4_PRODUCT_LUT[xi][wi],
+                    x * w
+                );
             }
         }
     }
@@ -862,8 +926,12 @@ mod tests {
         let mut max_val = i32::MIN;
         for row in &FP4_PRODUCT_LUT {
             for &val in row {
-                if val < min_val { min_val = val; }
-                if val > max_val { max_val = val; }
+                if val < min_val {
+                    min_val = val;
+                }
+                if val > max_val {
+                    max_val = val;
+                }
             }
         }
         // x=[-2,-1,1,2], w=[0,1,4,6,8,12,16,24,0,-1,-4,-6,-8,-12,-16,-24]
@@ -897,8 +965,12 @@ mod tests {
         let mut max_val = i32::MIN;
         for row in &FP2_PRODUCT_LUT {
             for &val in row {
-                if val < min_val { min_val = val; }
-                if val > max_val { max_val = val; }
+                if val < min_val {
+                    min_val = val;
+                }
+                if val > max_val {
+                    max_val = val;
+                }
             }
         }
         // x=[-2,-1,1,2], w=[0,1,0,-1]
@@ -987,17 +1059,33 @@ mod tests {
     fn tables_summary_table_names() {
         let summary = tables_summary();
         let names: Vec<&str> = summary.tables.iter().map(|t| t.name.as_str()).collect();
-        assert_eq!(names, vec!["DOT_4_LUT", "ADD_LUT_Q16", "SWIGLU_LUT_Q16", "FP4_PRODUCT_LUT", "FP2_PRODUCT_LUT"]);
+        assert_eq!(
+            names,
+            vec![
+                "DOT_4_LUT",
+                "ADD_LUT_Q16",
+                "SWIGLU_LUT_Q16",
+                "FP4_PRODUCT_LUT",
+                "FP2_PRODUCT_LUT"
+            ]
+        );
     }
 
     #[test]
     fn tables_summary_no_validation_issues() {
         let summary = tables_summary();
-        assert!(summary.validation_issues.is_empty(),
-            "Expected no validation issues, got: {:?}", summary.validation_issues);
+        assert!(
+            summary.validation_issues.is_empty(),
+            "Expected no validation issues, got: {:?}",
+            summary.validation_issues
+        );
         for table in &summary.tables {
-            assert!(table.validation_issues.is_empty(),
-                "Table {} has issues: {:?}", table.name, table.validation_issues);
+            assert!(
+                table.validation_issues.is_empty(),
+                "Table {} has issues: {:?}",
+                table.name,
+                table.validation_issues
+            );
         }
     }
 
@@ -1046,18 +1134,18 @@ mod tests {
     #[test]
     fn fp2_product_lut_row_zero() {
         // x_vals[0] = -2, w_vals = [0, 1, 0, -1]
-        assert_eq!(FP2_PRODUCT_LUT[0][0], 0);   // -2 * 0
-        assert_eq!(FP2_PRODUCT_LUT[0][1], -2);  // -2 * 1
-        assert_eq!(FP2_PRODUCT_LUT[0][2], 0);   // -2 * 0
-        assert_eq!(FP2_PRODUCT_LUT[0][3], 2);   // -2 * -1
+        assert_eq!(FP2_PRODUCT_LUT[0][0], 0); // -2 * 0
+        assert_eq!(FP2_PRODUCT_LUT[0][1], -2); // -2 * 1
+        assert_eq!(FP2_PRODUCT_LUT[0][2], 0); // -2 * 0
+        assert_eq!(FP2_PRODUCT_LUT[0][3], 2); // -2 * -1
     }
 
     #[test]
     fn fp2_product_lut_row_three() {
         // x_vals[3] = 2, w_vals = [0, 1, 0, -1]
-        assert_eq!(FP2_PRODUCT_LUT[3][0], 0);   // 2 * 0
-        assert_eq!(FP2_PRODUCT_LUT[3][1], 2);   // 2 * 1
-        assert_eq!(FP2_PRODUCT_LUT[3][2], 0);   // 2 * 0
-        assert_eq!(FP2_PRODUCT_LUT[3][3], -2);  // 2 * -1
+        assert_eq!(FP2_PRODUCT_LUT[3][0], 0); // 2 * 0
+        assert_eq!(FP2_PRODUCT_LUT[3][1], 2); // 2 * 1
+        assert_eq!(FP2_PRODUCT_LUT[3][2], 0); // 2 * 0
+        assert_eq!(FP2_PRODUCT_LUT[3][3], -2); // 2 * -1
     }
 }

@@ -1,4 +1,4 @@
-﻿//! Report shapes and render helpers shared by the native browser tools.
+//! Report shapes and render helpers shared by the native browser tools.
 //!
 //! Every tool output is either one of these serde reports (compact mode) or
 //! a readable rendering produced here, so acting and observing stay formatted

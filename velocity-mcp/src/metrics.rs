@@ -25,11 +25,11 @@
 //! let output = metrics.encode();
 //! ```
 
-use std::sync::LazyLock;
 use prometheus::{
     Counter, CounterVec, Encoder, Gauge, GaugeVec, Histogram, HistogramOpts, HistogramVec, Opts,
     Registry, TextEncoder,
 };
+use std::sync::LazyLock;
 use std::time::Duration;
 
 /// Global metrics registry.
@@ -72,7 +72,10 @@ impl Metrics {
 
         // Request metrics
         let requests_total = CounterVec::new(
-            Opts::new("velocity_mcp_requests_total", "Total number of MCP requests"),
+            Opts::new(
+                "velocity_mcp_requests_total",
+                "Total number of MCP requests",
+            ),
             &["method", "status"],
         )
         .expect("metric can be created");
@@ -398,8 +401,14 @@ mod tests {
     fn test_metrics_creation() {
         let metrics = Metrics::new();
         // Record at least one observation so the metric appears in output
-        metrics.requests_total.with_label_values(&["init", "ok"]).inc();
-        metrics.tool_executions_total.with_label_values(&["init", "ok"]).inc();
+        metrics
+            .requests_total
+            .with_label_values(&["init", "ok"])
+            .inc();
+        metrics
+            .tool_executions_total
+            .with_label_values(&["init", "ok"])
+            .inc();
         let output = metrics.encode();
         assert!(output.contains("velocity_mcp_requests_total"));
         assert!(output.contains("velocity_mcp_tool_executions_total"));

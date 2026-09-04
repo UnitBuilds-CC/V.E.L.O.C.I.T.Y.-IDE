@@ -1,4 +1,4 @@
-﻿use crate::editor::theme::IdePalette;
+use crate::editor::theme::IdePalette;
 use crate::usage::AccountUsageView;
 use eframe::egui;
 

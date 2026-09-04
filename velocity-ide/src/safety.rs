@@ -1,4 +1,4 @@
-﻿//! Production-safe synchronization primitives with graceful error handling.
+//! Production-safe synchronization primitives with graceful error handling.
 //!
 //! Standard `.lock().unwrap()` causes the entire application to crash if any thread
 //! panics while holding a lock (mutex poisoning). This module provides alternatives
@@ -14,10 +14,10 @@
 //!   locks with a hierarchy level and the detector will flag ordering violations
 //!   before they deadlock.
 
-use std::sync::{Arc, Mutex, MutexGuard, RwLock, RwLockReadGuard, RwLockWriteGuard};
-use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
-use std::time::{Duration, Instant};
 use serde::Serialize;
+use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
+use std::sync::{Arc, Mutex, MutexGuard, RwLock, RwLockReadGuard, RwLockWriteGuard};
+use std::time::{Duration, Instant};
 
 /// Extension trait for `Mutex<T>` providing poisoning-tolerant locking.
 pub trait SafeMutex<T> {
@@ -183,7 +183,8 @@ impl LockMetrics {
 
     /// Record a successful lock acquisition.
     pub fn record_acquire(&self) {
-        self.total_acquisitions.fetch_add(1, AtomicOrdering::Relaxed);
+        self.total_acquisitions
+            .fetch_add(1, AtomicOrdering::Relaxed);
     }
 
     /// Record a contention event (try_lock returned WouldBlock).
@@ -203,7 +204,8 @@ impl LockMetrics {
 
     /// Record a lock hold duration in microseconds.
     pub fn record_hold_time(&self, duration_us: u64) {
-        self.total_hold_time_us.fetch_add(duration_us, AtomicOrdering::Relaxed);
+        self.total_hold_time_us
+            .fetch_add(duration_us, AtomicOrdering::Relaxed);
         // Update max with a CAS loop.
         let mut current_max = self.max_hold_time_us.load(AtomicOrdering::Relaxed);
         loop {
@@ -255,7 +257,11 @@ impl LockMetrics {
     /// Average hold time in microseconds (0 if no acquisitions).
     pub fn avg_hold_time_us(&self) -> u64 {
         let acq = self.acquisitions();
-        if acq == 0 { 0 } else { self.total_hold_time_us() / acq }
+        if acq == 0 {
+            0
+        } else {
+            self.total_hold_time_us() / acq
+        }
     }
 
     /// Reset all counters to zero.
@@ -297,19 +303,31 @@ impl LockMetrics {
     /// Contention rate as a fraction (0.0 - 1.0).
     pub fn contention_rate(&self) -> f64 {
         let acq = self.acquisitions();
-        if acq == 0 { 0.0 } else { self.contention_events() as f64 / acq as f64 }
+        if acq == 0 {
+            0.0
+        } else {
+            self.contention_events() as f64 / acq as f64
+        }
     }
 
     /// Poison recovery rate as a fraction (0.0 - 1.0).
     pub fn poison_rate(&self) -> f64 {
         let acq = self.acquisitions();
-        if acq == 0 { 0.0 } else { self.poison_recoveries() as f64 / acq as f64 }
+        if acq == 0 {
+            0.0
+        } else {
+            self.poison_recoveries() as f64 / acq as f64
+        }
     }
 
     /// Timeout rate as a fraction (0.0 - 1.0).
     pub fn timeout_rate(&self) -> f64 {
         let acq = self.acquisitions();
-        if acq == 0 { 0.0 } else { self.timeout_events() as f64 / acq as f64 }
+        if acq == 0 {
+            0.0
+        } else {
+            self.timeout_events() as f64 / acq as f64
+        }
     }
 }
 
@@ -473,7 +491,8 @@ impl LockOrder {
         };
 
         // Check if this thread already holds a lock at a higher or equal level.
-        let max_held = held.iter()
+        let max_held = held
+            .iter()
             .filter(|(t, _)| *t == tid)
             .map(|(_, l)| *l)
             .max();
@@ -533,7 +552,11 @@ impl LockOrder {
         LockOrderSnapshot {
             held_lock_count: held.len(),
             violation_count: self.violation_count(),
-            unique_threads: held.iter().map(|(t, _)| *t).collect::<std::collections::HashSet<_>>().len(),
+            unique_threads: held
+                .iter()
+                .map(|(t, _)| *t)
+                .collect::<std::collections::HashSet<_>>()
+                .len(),
         }
     }
 
@@ -547,7 +570,8 @@ impl LockOrder {
         };
 
         // Group by thread.
-        let mut by_thread: std::collections::HashMap<std::thread::ThreadId, Vec<u32>> = std::collections::HashMap::new();
+        let mut by_thread: std::collections::HashMap<std::thread::ThreadId, Vec<u32>> =
+            std::collections::HashMap::new();
         for (tid, level) in held.iter() {
             by_thread.entry(*tid).or_default().push(*level);
         }
@@ -560,7 +584,9 @@ impl LockOrder {
                 if window[0] == window[1] {
                     warnings.push(format!(
                         "Thread {:?} holds {} locks at level {} (potential self-deadlock)",
-                        tid, window.len(), window[0]
+                        tid,
+                        window.len(),
+                        window[0]
                     ));
                 }
             }
@@ -647,7 +673,10 @@ impl<T> InstrumentedMutex<T> {
             Ok(g) => g,
             Err(p) => {
                 GLOBAL_LOCK_METRICS.record_poison_recovery();
-                eprintln!("[WARN] InstrumentedMutex '{}' poisoning recovered.", self.name);
+                eprintln!(
+                    "[WARN] InstrumentedMutex '{}' poisoning recovered.",
+                    self.name
+                );
                 p.into_inner()
             }
         };
@@ -1470,8 +1499,8 @@ mod tests {
         // Acquire same level twice — validate should detect duplicate
         detector.acquire(5);
         detector.acquire(7); // ok, higher
-        // Now manually push another level 5 via a second acquire
-        // Actually, acquire(5) after acquire(7) is a violation, but it still pushes
+                             // Now manually push another level 5 via a second acquire
+                             // Actually, acquire(5) after acquire(7) is a violation, but it still pushes
         detector.acquire(5); // violation: 5 <= 7
         let warnings = detector.validate();
         // Should have the violation warning
@@ -1608,7 +1637,10 @@ mod tests {
         let cloned = report.clone();
         assert_eq!(cloned.health_score, report.health_score);
         assert_eq!(cloned.timestamp_us, report.timestamp_us);
-        assert_eq!(cloned.validation_warnings.len(), report.validation_warnings.len());
+        assert_eq!(
+            cloned.validation_warnings.len(),
+            report.validation_warnings.len()
+        );
     }
 
     #[test]
@@ -1786,7 +1818,10 @@ mod tests {
         let report = safety_report();
         let mut cloned = report.clone();
         cloned.validation_warnings.push("test".into());
-        assert_ne!(cloned.validation_warnings.len(), report.validation_warnings.len());
+        assert_ne!(
+            cloned.validation_warnings.len(),
+            report.validation_warnings.len()
+        );
     }
 
     #[test]
@@ -1846,7 +1881,7 @@ mod tests {
         m.record_acquire();
         m.record_acquire();
         m.record_contention(); // contention_rate = 0.5
-        // score = 1.0 - (0.5 * 0.3) = 1.0 - 0.15 = 0.85
+                               // score = 1.0 - (0.5 * 0.3) = 1.0 - 0.15 = 0.85
         let score = lock_health_score(&m);
         assert!((score - 0.85).abs() < 0.001);
     }
@@ -1871,7 +1906,10 @@ mod tests {
         // Should contain violation warning
         assert!(warnings.iter().any(|w| w.contains("violation")));
         // Count should match
-        let violation_warnings: Vec<_> = warnings.iter().filter(|w| w.contains("violation")).collect();
+        let violation_warnings: Vec<_> = warnings
+            .iter()
+            .filter(|w| w.contains("violation"))
+            .collect();
         assert_eq!(violation_warnings.len(), 1);
         detector.release(3);
         detector.release(5);
@@ -2009,7 +2047,9 @@ mod tests {
     fn lock_health_score_mixed_penalties() {
         let m = LockMetrics::new();
         // 10 acquisitions, 2 contention, 1 poison, 1 timeout
-        for _ in 0..10 { m.record_acquire(); }
+        for _ in 0..10 {
+            m.record_acquire();
+        }
         m.record_contention();
         m.record_contention();
         m.record_poison_recovery();

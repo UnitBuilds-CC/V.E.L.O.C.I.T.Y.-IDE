@@ -1,4 +1,4 @@
-﻿use super::super::models::*;
+use super::super::models::*;
 use super::utils::send_usage_update;
 use crate::usage::{
     AzureOpenAiAccount, CloudflareAccount, LocalOllamaAccount, OpenRouterAccount, UsageTracker,

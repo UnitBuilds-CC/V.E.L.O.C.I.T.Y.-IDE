@@ -413,7 +413,9 @@ pub fn jit_val_info(val: &JitVal) -> JitValInfo {
             if v.sign.len() != expected_bytes {
                 issues.push(format!(
                     "sign buffer len {} != expected {} for vec len {}",
-                    v.sign.len(), expected_bytes, v.len
+                    v.sign.len(),
+                    expected_bytes,
+                    v.len
                 ));
             }
             JitValInfo {
@@ -433,7 +435,10 @@ pub fn jit_val_info(val: &JitVal) -> JitValInfo {
         JitVal::Scalar(v, s) => {
             // Ternary values should be -2, -1, 1, or 2
             if ![-2, -1, 1, 2].contains(v) {
-                issues.push(format!("scalar value {} outside ternary range [-2,-1,1,2]", v));
+                issues.push(format!(
+                    "scalar value {} outside ternary range [-2,-1,1,2]",
+                    v
+                ));
             }
             JitValInfo {
                 val_type: format!("scalar({}, scale={})", v, s),
@@ -497,7 +502,9 @@ pub fn validate_vec_op(op: VecOpKind, val: &JitVal) -> Vec<String> {
         if v.sign.len() != v.extra.len() {
             issues.push(format!(
                 "{:?} sign/extra length mismatch: {} vs {}",
-                op, v.sign.len(), v.extra.len()
+                op,
+                v.sign.len(),
+                v.extra.len()
             ));
         }
     }
@@ -543,7 +550,10 @@ mod tests {
     fn jit_val_info_float_infinite() {
         let val = JitVal::Float(f32::INFINITY);
         let info = jit_val_info(&val);
-        assert!(info.validation_issues.iter().any(|i| i.contains("infinite")));
+        assert!(info
+            .validation_issues
+            .iter()
+            .any(|i| i.contains("infinite")));
     }
 
     #[test]
@@ -589,7 +599,10 @@ mod tests {
         };
         let val = JitVal::Vector(Arc::new(v));
         let info = jit_val_info(&val);
-        assert!(info.validation_issues.iter().any(|i| i.contains("length is 0")));
+        assert!(info
+            .validation_issues
+            .iter()
+            .any(|i| i.contains("length is 0")));
     }
 
     #[test]
@@ -1071,7 +1084,10 @@ mod tests {
             extra: vec![0x00].into(),
         };
         let info = jit_val_info(&JitVal::Vector(Arc::new(v)));
-        assert!(info.validation_issues.iter().any(|i| i.contains("sign buffer is empty")));
+        assert!(info
+            .validation_issues
+            .iter()
+            .any(|i| i.contains("sign buffer is empty")));
     }
 
     #[test]
@@ -1083,7 +1099,10 @@ mod tests {
             extra: vec![0x00, 0x00].into(),
         };
         let info = jit_val_info(&JitVal::Vector(Arc::new(v)));
-        assert!(info.validation_issues.iter().any(|i| i.contains("sign buffer len")));
+        assert!(info
+            .validation_issues
+            .iter()
+            .any(|i| i.contains("sign buffer len")));
     }
 
     #[test]
@@ -1129,7 +1148,7 @@ mod tests {
         match result {
             JitVal::Scalar(v, s) => {
                 assert_eq!(s, 1); // out_scale = max(1,1) = 1
-                // lv = 1>>0 = 1, rv = 1>>0 = 1, sum = 2, clamped = min(6,8)=6, enc=3 → val=2
+                                  // lv = 1>>0 = 1, rv = 1>>0 = 1, sum = 2, clamped = min(6,8)=6, enc=3 → val=2
                 assert_eq!(v, 2);
             }
             _ => panic!("expected Scalar"),
@@ -1142,8 +1161,8 @@ mod tests {
         match result {
             JitVal::Scalar(v, s) => {
                 assert_eq!(s, 2); // out_scale = max(2,0) = 2
-                // l_shift = (2-2).max(0) = 0, r_shift = (2-0).max(0) = 2
-                // lv = 2>>0 = 2, rv = 1>>2 = 0, sum = 2, clamped = 6, enc = 3 → val = 2
+                                  // l_shift = (2-2).max(0) = 0, r_shift = (2-0).max(0) = 2
+                                  // lv = 2>>0 = 2, rv = 1>>2 = 0, sum = 2, clamped = 6, enc = 3 → val = 2
                 assert_eq!(v, 2);
             }
             _ => panic!("expected Scalar"),
@@ -1384,7 +1403,12 @@ mod tests {
             extra: vec![0x00].into(),
         };
         let val = JitVal::Vector(Arc::new(v));
-        for op in [VecOpKind::Negate, VecOpKind::Abs, VecOpKind::ReduceSum, VecOpKind::SiLU] {
+        for op in [
+            VecOpKind::Negate,
+            VecOpKind::Abs,
+            VecOpKind::ReduceSum,
+            VecOpKind::SiLU,
+        ] {
             let issues = validate_vec_op(op, &val);
             assert!(issues.is_empty(), "expected no issues for {:?}", op);
         }

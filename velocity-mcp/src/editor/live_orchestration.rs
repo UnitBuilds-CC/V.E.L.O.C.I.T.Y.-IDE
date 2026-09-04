@@ -1,4 +1,4 @@
-﻿//! Live Multi-Agent Orchestration UI: real-time activity feed, worker progress
+//! Live Multi-Agent Orchestration UI: real-time activity feed, worker progress
 //! tracking, and coordination dashboard for Mission Control.
 
 use std::collections::VecDeque;

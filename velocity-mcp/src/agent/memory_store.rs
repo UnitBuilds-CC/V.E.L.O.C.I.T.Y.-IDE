@@ -1,4 +1,4 @@
-﻿//! Persistent agent memory backed by NDA files.
+//! Persistent agent memory backed by NDA files.
 //!
 //! Enables cross-session learning: the agent remembers successful strategies,
 //! failed approaches, and domain-specific knowledge between runs.
@@ -460,7 +460,7 @@ mod tests {
         let mut mem = PersistentMemory::open(dir.path());
         mem.remember("k", "content", &["t"], 0.5);
         mem.save().unwrap(); // first save
-        // Now dirty is false; second save should be a no-op
+                             // Now dirty is false; second save should be a no-op
         assert!(mem.save().is_ok());
     }
 

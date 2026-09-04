@@ -253,12 +253,8 @@ fn list_dir_lists_workspace_root() {
     fs::write(root.join("b.txt"), "").unwrap();
     fs::create_dir(root.join("subdir")).unwrap();
 
-    let output = call_tool_in_workspace(
-        &root,
-        "list_dir",
-        &json!({"relativeDirPath": "."}),
-    )
-    .unwrap();
+    let output =
+        call_tool_in_workspace(&root, "list_dir", &json!({"relativeDirPath": "."})).unwrap();
 
     assert!(output.contains("a.txt"));
     assert!(output.contains("b.txt"));
@@ -271,12 +267,8 @@ fn list_dir_lists_subdirectory() {
     fs::create_dir(root.join("src")).unwrap();
     fs::write(root.join("src/main.rs"), "fn main() {}").unwrap();
 
-    let output = call_tool_in_workspace(
-        &root,
-        "list_dir",
-        &json!({"relativeDirPath": "src"}),
-    )
-    .unwrap();
+    let output =
+        call_tool_in_workspace(&root, "list_dir", &json!({"relativeDirPath": "src"})).unwrap();
 
     assert!(output.contains("main.rs"));
 }
@@ -288,14 +280,13 @@ fn list_dir_lists_subdirectory() {
 #[test]
 fn grep_search_finds_matching_lines() {
     let (_temp, root) = setup_root();
-    fs::write(root.join("code.rs"), "fn hello() {}\nfn world() {}\nfn hello_world() {}").unwrap();
-
-    let output = call_tool_in_workspace(
-        &root,
-        "grep_search",
-        &json!({"query": "hello"}),
+    fs::write(
+        root.join("code.rs"),
+        "fn hello() {}\nfn world() {}\nfn hello_world() {}",
     )
     .unwrap();
+
+    let output = call_tool_in_workspace(&root, "grep_search", &json!({"query": "hello"})).unwrap();
 
     assert!(output.contains("hello"));
     assert!(output.contains("code.rs"));
@@ -314,7 +305,13 @@ fn grep_search_returns_empty_for_no_matches() {
     .unwrap();
 
     // Should return empty results or indicate no matches
-    assert!(!output.contains("nonexistent_pattern_xyz") || output.contains("0 match") || output.contains("no match") || output.is_empty() || !output.contains("code.rs"));
+    assert!(
+        !output.contains("nonexistent_pattern_xyz")
+            || output.contains("0 match")
+            || output.contains("no match")
+            || output.is_empty()
+            || !output.contains("code.rs")
+    );
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -340,11 +337,7 @@ fn run_command_returns_exit_code_info() {
     let (_temp, root) = setup_root();
 
     // Run a command that will fail
-    let result = call_tool_in_workspace(
-        &root,
-        "run_command",
-        &json!({"command": "exit 42"}),
-    );
+    let result = call_tool_in_workspace(&root, "run_command", &json!({"command": "exit 42"}));
 
     // Should still return output (with error info), not panic
     let _ = result;
@@ -391,12 +384,8 @@ fn delete_file_errors_on_missing_file() {
 fn fetch_panel_data_teams_returns_json() {
     let (_temp, root) = setup_root();
 
-    let output = call_tool_in_workspace(
-        &root,
-        "fetch_panel_data",
-        &json!({"panel": "teams"}),
-    )
-    .unwrap();
+    let output =
+        call_tool_in_workspace(&root, "fetch_panel_data", &json!({"panel": "teams"})).unwrap();
 
     let data: serde_json::Value = serde_json::from_str(&output).unwrap();
     assert_eq!(data["panel"], "teams");
@@ -406,12 +395,8 @@ fn fetch_panel_data_teams_returns_json() {
 fn fetch_panel_data_wiki_returns_json() {
     let (_temp, root) = setup_root();
 
-    let output = call_tool_in_workspace(
-        &root,
-        "fetch_panel_data",
-        &json!({"panel": "wiki"}),
-    )
-    .unwrap();
+    let output =
+        call_tool_in_workspace(&root, "fetch_panel_data", &json!({"panel": "wiki"})).unwrap();
 
     let data: serde_json::Value = serde_json::from_str(&output).unwrap();
     assert_eq!(data["panel"], "wiki");
@@ -421,12 +406,8 @@ fn fetch_panel_data_wiki_returns_json() {
 fn fetch_panel_data_graph_returns_json() {
     let (_temp, root) = setup_root();
 
-    let output = call_tool_in_workspace(
-        &root,
-        "fetch_panel_data",
-        &json!({"panel": "graph"}),
-    )
-    .unwrap();
+    let output =
+        call_tool_in_workspace(&root, "fetch_panel_data", &json!({"panel": "graph"})).unwrap();
 
     let data: serde_json::Value = serde_json::from_str(&output).unwrap();
     assert_eq!(data["panel"], "graph");
@@ -436,17 +417,15 @@ fn fetch_panel_data_graph_returns_json() {
 fn fetch_panel_data_bookmarks_returns_json() {
     let (_temp, root) = setup_root();
 
-    let output = call_tool_in_workspace(
-        &root,
-        "fetch_panel_data",
-        &json!({"panel": "bookmarks"}),
-    )
-    .unwrap();
+    let output =
+        call_tool_in_workspace(&root, "fetch_panel_data", &json!({"panel": "bookmarks"})).unwrap();
 
     let data: serde_json::Value = serde_json::from_str(&output).unwrap();
     // Bookmarks panel returns {"bookmarks": []} when no bookmarks exist
-    assert!(data.get("bookmarks").is_some() || data.get("panel").is_some(),
-        "bookmarks panel should return bookmarks array or panel field");
+    assert!(
+        data.get("bookmarks").is_some() || data.get("panel").is_some(),
+        "bookmarks panel should return bookmarks array or panel field"
+    );
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -457,12 +436,7 @@ fn fetch_panel_data_bookmarks_returns_json() {
 fn agent_checkpoint_list_returns_array() {
     let (_temp, root) = setup_root();
 
-    let output = call_tool_in_workspace(
-        &root,
-        "agent_checkpoint_list",
-        &json!({}),
-    )
-    .unwrap();
+    let output = call_tool_in_workspace(&root, "agent_checkpoint_list", &json!({})).unwrap();
 
     // Should return a valid response (may be empty list)
     assert!(!output.is_empty());
@@ -521,12 +495,8 @@ fn agent_memory_forget_removes_memory() {
     .unwrap();
 
     // Forget it
-    let output = call_tool_in_workspace(
-        &root,
-        "agent_memory_forget",
-        &json!({"key": "to_forget"}),
-    )
-    .unwrap();
+    let output =
+        call_tool_in_workspace(&root, "agent_memory_forget", &json!({"key": "to_forget"})).unwrap();
 
     assert!(!output.is_empty());
 }

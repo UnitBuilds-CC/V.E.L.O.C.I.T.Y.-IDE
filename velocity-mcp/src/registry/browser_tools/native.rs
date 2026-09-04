@@ -1,4 +1,4 @@
-﻿//! Native-engine browser tools.
+//! Native-engine browser tools.
 //!
 //! Unlike the static-crawl and runtime-capture tool families (which fetch a
 //! page and hand back a metadata snapshot), this family drives the pure-Rust

@@ -1,4 +1,4 @@
-﻿use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
@@ -357,7 +357,8 @@ impl UsageTracker {
                 }
             });
 
-        let stats = self.data
+        let stats = self
+            .data
             .accounts
             .entry(key)
             .or_insert_with(|| AccountStats {
@@ -444,7 +445,8 @@ impl UsageTracker {
             .and_then(|v| v.parse().ok())
             .unwrap_or(50);
 
-        let stats = self.data
+        let stats = self
+            .data
             .accounts
             .entry(key)
             .or_insert_with(|| AccountStats {

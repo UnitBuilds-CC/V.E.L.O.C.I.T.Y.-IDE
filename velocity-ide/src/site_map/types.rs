@@ -1,4 +1,4 @@
-﻿use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct VcTriple {
@@ -197,9 +197,12 @@ pub struct TripleIndex {
 impl TripleIndex {
     /// Build an index from a slice of triples.
     pub fn build(triples: &[VcTriple]) -> Self {
-        let mut by_subject: std::collections::HashMap<u64, Vec<usize>> = std::collections::HashMap::new();
-        let mut by_object: std::collections::HashMap<u64, Vec<usize>> = std::collections::HashMap::new();
-        let mut by_predicate: std::collections::HashMap<u16, Vec<usize>> = std::collections::HashMap::new();
+        let mut by_subject: std::collections::HashMap<u64, Vec<usize>> =
+            std::collections::HashMap::new();
+        let mut by_object: std::collections::HashMap<u64, Vec<usize>> =
+            std::collections::HashMap::new();
+        let mut by_predicate: std::collections::HashMap<u16, Vec<usize>> =
+            std::collections::HashMap::new();
 
         for (i, t) in triples.iter().enumerate() {
             by_subject.entry(t.subject_hash).or_default().push(i);
@@ -217,17 +220,26 @@ impl TripleIndex {
 
     /// Find triple indices by subject hash.
     pub fn by_subject(&self, hash: u64) -> &[usize] {
-        self.by_subject.get(&hash).map(|v| v.as_slice()).unwrap_or(&[])
+        self.by_subject
+            .get(&hash)
+            .map(|v| v.as_slice())
+            .unwrap_or(&[])
     }
 
     /// Find triple indices by object hash.
     pub fn by_object(&self, hash: u64) -> &[usize] {
-        self.by_object.get(&hash).map(|v| v.as_slice()).unwrap_or(&[])
+        self.by_object
+            .get(&hash)
+            .map(|v| v.as_slice())
+            .unwrap_or(&[])
     }
 
     /// Find triple indices by predicate id.
     pub fn by_predicate(&self, pred: u16) -> &[usize] {
-        self.by_predicate.get(&pred).map(|v| v.as_slice()).unwrap_or(&[])
+        self.by_predicate
+            .get(&pred)
+            .map(|v| v.as_slice())
+            .unwrap_or(&[])
     }
 
     /// Number of unique subjects in the index.
@@ -318,15 +330,27 @@ mod tests {
     #[test]
     fn validate_triples_clean() {
         let triples = vec![
-            VcTriple { subject_hash: 1, predicate_id: 0, object_hash: 2 },
-            VcTriple { subject_hash: 2, predicate_id: 1, object_hash: 3 },
+            VcTriple {
+                subject_hash: 1,
+                predicate_id: 0,
+                object_hash: 2,
+            },
+            VcTriple {
+                subject_hash: 2,
+                predicate_id: 1,
+                object_hash: 3,
+            },
         ];
         assert!(validate_triples(&triples).is_empty());
     }
 
     #[test]
     fn validate_triples_duplicate() {
-        let t = VcTriple { subject_hash: 1, predicate_id: 0, object_hash: 2 };
+        let t = VcTriple {
+            subject_hash: 1,
+            predicate_id: 0,
+            object_hash: 2,
+        };
         let triples = vec![t.clone(), t];
         let issues = validate_triples(&triples);
         assert!(issues.iter().any(|i| i.contains("duplicate")));
@@ -335,9 +359,27 @@ mod tests {
     #[test]
     fn entry_kind_distribution_test() {
         let entries = vec![
-            SiteMapEntry { kind: EntryKind::Kv, hash: 1, file: "a".into(), file_sha: "x".into(), size: 10 },
-            SiteMapEntry { kind: EntryKind::Node, hash: 2, file: "b".into(), file_sha: "y".into(), size: 20 },
-            SiteMapEntry { kind: EntryKind::Kv, hash: 3, file: "c".into(), file_sha: "z".into(), size: 30 },
+            SiteMapEntry {
+                kind: EntryKind::Kv,
+                hash: 1,
+                file: "a".into(),
+                file_sha: "x".into(),
+                size: 10,
+            },
+            SiteMapEntry {
+                kind: EntryKind::Node,
+                hash: 2,
+                file: "b".into(),
+                file_sha: "y".into(),
+                size: 20,
+            },
+            SiteMapEntry {
+                kind: EntryKind::Kv,
+                hash: 3,
+                file: "c".into(),
+                file_sha: "z".into(),
+                size: 30,
+            },
         ];
         let dist = entry_kind_distribution(&entries);
         assert_eq!(dist.kv, 2);
@@ -368,7 +410,9 @@ mod tests {
             file_sha: "abc".into(),
             size: 100,
         };
-        assert!(validate_entry(&e).iter().any(|i| i.contains("hash is zero")));
+        assert!(validate_entry(&e)
+            .iter()
+            .any(|i| i.contains("hash is zero")));
     }
 
     #[test]
@@ -412,7 +456,11 @@ mod tests {
 
     #[test]
     fn vc_triple_info_serializable() {
-        let t = VcTriple { subject_hash: 1, predicate_id: 0, object_hash: 2 };
+        let t = VcTriple {
+            subject_hash: 1,
+            predicate_id: 0,
+            object_hash: 2,
+        };
         let info = t.info();
         let json = serde_json::to_string(&info).unwrap();
         assert!(json.contains("predicate_id"));
@@ -483,9 +531,21 @@ mod tests {
     #[test]
     fn triple_index_build_basic() {
         let triples = vec![
-            VcTriple { subject_hash: 1, predicate_id: 0, object_hash: 2 },
-            VcTriple { subject_hash: 1, predicate_id: 1, object_hash: 3 },
-            VcTriple { subject_hash: 2, predicate_id: 0, object_hash: 3 },
+            VcTriple {
+                subject_hash: 1,
+                predicate_id: 0,
+                object_hash: 2,
+            },
+            VcTriple {
+                subject_hash: 1,
+                predicate_id: 1,
+                object_hash: 3,
+            },
+            VcTriple {
+                subject_hash: 2,
+                predicate_id: 0,
+                object_hash: 3,
+            },
         ];
         let idx = TripleIndex::build(&triples);
         assert_eq!(idx.triple_count, 3);
@@ -497,9 +557,21 @@ mod tests {
     #[test]
     fn triple_index_by_subject_lookup() {
         let triples = vec![
-            VcTriple { subject_hash: 1, predicate_id: 0, object_hash: 2 },
-            VcTriple { subject_hash: 1, predicate_id: 1, object_hash: 3 },
-            VcTriple { subject_hash: 2, predicate_id: 0, object_hash: 3 },
+            VcTriple {
+                subject_hash: 1,
+                predicate_id: 0,
+                object_hash: 2,
+            },
+            VcTriple {
+                subject_hash: 1,
+                predicate_id: 1,
+                object_hash: 3,
+            },
+            VcTriple {
+                subject_hash: 2,
+                predicate_id: 0,
+                object_hash: 3,
+            },
         ];
         let idx = TripleIndex::build(&triples);
         assert_eq!(idx.by_subject(1).len(), 2);
@@ -510,9 +582,21 @@ mod tests {
     #[test]
     fn triple_index_by_object_lookup() {
         let triples = vec![
-            VcTriple { subject_hash: 1, predicate_id: 0, object_hash: 3 },
-            VcTriple { subject_hash: 2, predicate_id: 0, object_hash: 3 },
-            VcTriple { subject_hash: 3, predicate_id: 0, object_hash: 4 },
+            VcTriple {
+                subject_hash: 1,
+                predicate_id: 0,
+                object_hash: 3,
+            },
+            VcTriple {
+                subject_hash: 2,
+                predicate_id: 0,
+                object_hash: 3,
+            },
+            VcTriple {
+                subject_hash: 3,
+                predicate_id: 0,
+                object_hash: 4,
+            },
         ];
         let idx = TripleIndex::build(&triples);
         assert_eq!(idx.by_object(3).len(), 2);
@@ -522,9 +606,21 @@ mod tests {
     #[test]
     fn triple_index_by_predicate_lookup() {
         let triples = vec![
-            VcTriple { subject_hash: 1, predicate_id: 0, object_hash: 2 },
-            VcTriple { subject_hash: 2, predicate_id: 0, object_hash: 3 },
-            VcTriple { subject_hash: 3, predicate_id: 1, object_hash: 4 },
+            VcTriple {
+                subject_hash: 1,
+                predicate_id: 0,
+                object_hash: 2,
+            },
+            VcTriple {
+                subject_hash: 2,
+                predicate_id: 0,
+                object_hash: 3,
+            },
+            VcTriple {
+                subject_hash: 3,
+                predicate_id: 1,
+                object_hash: 4,
+            },
         ];
         let idx = TripleIndex::build(&triples);
         assert_eq!(idx.by_predicate(0).len(), 2);
@@ -534,9 +630,11 @@ mod tests {
 
     #[test]
     fn triple_index_info_serializes() {
-        let triples = vec![
-            VcTriple { subject_hash: 1, predicate_id: 0, object_hash: 2 },
-        ];
+        let triples = vec![VcTriple {
+            subject_hash: 1,
+            predicate_id: 0,
+            object_hash: 2,
+        }];
         let idx = TripleIndex::build(&triples);
         let info = idx.info();
         let json = serde_json::to_string(&info).unwrap();
@@ -556,7 +654,11 @@ mod tests {
 
     #[test]
     fn vc_triple_json_has_3_keys() {
-        let t = VcTriple { subject_hash: 1, predicate_id: 2, object_hash: 3 };
+        let t = VcTriple {
+            subject_hash: 1,
+            predicate_id: 2,
+            object_hash: 3,
+        };
         let json = serde_json::to_string(&t).unwrap();
         let v: serde_json::Value = serde_json::from_str(&json).unwrap();
         assert_eq!(v.as_object().unwrap().len(), 3);
@@ -565,8 +667,11 @@ mod tests {
     #[test]
     fn entry_json_has_5_keys() {
         let e = SiteMapEntry {
-            kind: EntryKind::Kv, hash: 1, file: "a".into(),
-            file_sha: "abc".into(), size: 10,
+            kind: EntryKind::Kv,
+            hash: 1,
+            file: "a".into(),
+            file_sha: "abc".into(),
+            size: 10,
         };
         let json = serde_json::to_string(&e).unwrap();
         let v: serde_json::Value = serde_json::from_str(&json).unwrap();
@@ -576,9 +681,16 @@ mod tests {
     #[test]
     fn stats_json_has_10_keys() {
         let stats = SiteMapStats {
-            kv: 0, nodes: 0, programs: 0, snapshots: 0,
-            total_bytes: 0, root: 0, weight_root: 0,
-            kv_cache_size: 0, string_dict_size: 0, total_entries: 0,
+            kv: 0,
+            nodes: 0,
+            programs: 0,
+            snapshots: 0,
+            total_bytes: 0,
+            root: 0,
+            weight_root: 0,
+            kv_cache_size: 0,
+            string_dict_size: 0,
+            total_entries: 0,
         };
         let json = serde_json::to_string(&stats).unwrap();
         let v: serde_json::Value = serde_json::from_str(&json).unwrap();
@@ -587,7 +699,11 @@ mod tests {
 
     #[test]
     fn triple_info_json_has_4_keys() {
-        let t = VcTriple { subject_hash: 1, predicate_id: 0, object_hash: 2 };
+        let t = VcTriple {
+            subject_hash: 1,
+            predicate_id: 0,
+            object_hash: 2,
+        };
         let json = serde_json::to_string(&t.info()).unwrap();
         let v: serde_json::Value = serde_json::from_str(&json).unwrap();
         assert_eq!(v.as_object().unwrap().len(), 4);
@@ -613,7 +729,11 @@ mod tests {
 
     #[test]
     fn vc_triple_json_values() {
-        let t = VcTriple { subject_hash: 0xFF, predicate_id: 42, object_hash: 0xAB };
+        let t = VcTriple {
+            subject_hash: 0xFF,
+            predicate_id: 42,
+            object_hash: 0xAB,
+        };
         let json = serde_json::to_string(&t).unwrap();
         let v: serde_json::Value = serde_json::from_str(&json).unwrap();
         assert_eq!(v["subject_hash"], 0xFF);
@@ -624,8 +744,11 @@ mod tests {
     #[test]
     fn entry_json_values() {
         let e = SiteMapEntry {
-            kind: EntryKind::Node, hash: 123, file: "prog.nda".into(),
-            file_sha: "deadbeef".into(), size: 456,
+            kind: EntryKind::Node,
+            hash: 123,
+            file: "prog.nda".into(),
+            file_sha: "deadbeef".into(),
+            size: 456,
         };
         let json = serde_json::to_string(&e).unwrap();
         let v: serde_json::Value = serde_json::from_str(&json).unwrap();
@@ -637,9 +760,16 @@ mod tests {
     #[test]
     fn stats_json_values() {
         let stats = SiteMapStats {
-            kv: 10, nodes: 5, programs: 2, snapshots: 1,
-            total_bytes: 2048, root: 0xDEAD, weight_root: 0xBEEF,
-            kv_cache_size: 8, string_dict_size: 100, total_entries: 18,
+            kv: 10,
+            nodes: 5,
+            programs: 2,
+            snapshots: 1,
+            total_bytes: 2048,
+            root: 0xDEAD,
+            weight_root: 0xBEEF,
+            kv_cache_size: 8,
+            string_dict_size: 100,
+            total_entries: 18,
         };
         let json = serde_json::to_string(&stats).unwrap();
         let v: serde_json::Value = serde_json::from_str(&json).unwrap();
@@ -658,8 +788,20 @@ mod tests {
     #[test]
     fn dist_json_values() {
         let entries = vec![
-            SiteMapEntry { kind: EntryKind::Kv, hash: 1, file: "a".into(), file_sha: "x".into(), size: 10 },
-            SiteMapEntry { kind: EntryKind::Snapshot, hash: 2, file: "b".into(), file_sha: "y".into(), size: 20 },
+            SiteMapEntry {
+                kind: EntryKind::Kv,
+                hash: 1,
+                file: "a".into(),
+                file_sha: "x".into(),
+                size: 10,
+            },
+            SiteMapEntry {
+                kind: EntryKind::Snapshot,
+                hash: 2,
+                file: "b".into(),
+                file_sha: "y".into(),
+                size: 20,
+            },
         ];
         let dist = entry_kind_distribution(&entries);
         let json = serde_json::to_string(&dist).unwrap();
@@ -673,9 +815,11 @@ mod tests {
 
     #[test]
     fn triple_index_clone_independent() {
-        let triples = vec![
-            VcTriple { subject_hash: 1, predicate_id: 0, object_hash: 2 },
-        ];
+        let triples = vec![VcTriple {
+            subject_hash: 1,
+            predicate_id: 0,
+            object_hash: 2,
+        }];
         let idx = TripleIndex::build(&triples);
         let cloned = idx.clone();
         assert_eq!(cloned.triple_count, idx.triple_count);
@@ -685,8 +829,11 @@ mod tests {
     #[test]
     fn entry_clone_independent() {
         let e = SiteMapEntry {
-            kind: EntryKind::Program, hash: 42, file: "root.nda".into(),
-            file_sha: "abcdef".into(), size: 100,
+            kind: EntryKind::Program,
+            hash: 42,
+            file: "root.nda".into(),
+            file_sha: "abcdef".into(),
+            size: 100,
         };
         let mut cloned = e.clone();
         cloned.hash = 99;
@@ -695,9 +842,13 @@ mod tests {
 
     #[test]
     fn dist_clone_independent() {
-        let dist = entry_kind_distribution(&[
-            SiteMapEntry { kind: EntryKind::Kv, hash: 1, file: "a".into(), file_sha: "x".into(), size: 10 },
-        ]);
+        let dist = entry_kind_distribution(&[SiteMapEntry {
+            kind: EntryKind::Kv,
+            hash: 1,
+            file: "a".into(),
+            file_sha: "x".into(),
+            size: 10,
+        }]);
         let mut cloned = dist.clone();
         cloned.kv = 999;
         assert_ne!(cloned.kv, dist.kv);
@@ -708,9 +859,16 @@ mod tests {
     #[test]
     fn stats_display_contains_programs() {
         let stats = SiteMapStats {
-            kv: 0, nodes: 0, programs: 3, snapshots: 0,
-            total_bytes: 0, root: 0, weight_root: 0,
-            kv_cache_size: 0, string_dict_size: 0, total_entries: 3,
+            kv: 0,
+            nodes: 0,
+            programs: 3,
+            snapshots: 0,
+            total_bytes: 0,
+            root: 0,
+            weight_root: 0,
+            kv_cache_size: 0,
+            string_dict_size: 0,
+            total_entries: 3,
         };
         let display = format!("{}", stats);
         assert!(display.contains("3 programs"));
@@ -719,9 +877,16 @@ mod tests {
     #[test]
     fn stats_display_contains_snapshots() {
         let stats = SiteMapStats {
-            kv: 0, nodes: 0, programs: 0, snapshots: 7,
-            total_bytes: 0, root: 0, weight_root: 0,
-            kv_cache_size: 0, string_dict_size: 0, total_entries: 7,
+            kv: 0,
+            nodes: 0,
+            programs: 0,
+            snapshots: 7,
+            total_bytes: 0,
+            root: 0,
+            weight_root: 0,
+            kv_cache_size: 0,
+            string_dict_size: 0,
+            total_entries: 7,
         };
         let display = format!("{}", stats);
         assert!(display.contains("7 snapshots"));
@@ -730,9 +895,16 @@ mod tests {
     #[test]
     fn stats_display_contains_strings() {
         let stats = SiteMapStats {
-            kv: 0, nodes: 0, programs: 0, snapshots: 0,
-            total_bytes: 0, root: 0, weight_root: 0,
-            kv_cache_size: 0, string_dict_size: 256, total_entries: 0,
+            kv: 0,
+            nodes: 0,
+            programs: 0,
+            snapshots: 0,
+            total_bytes: 0,
+            root: 0,
+            weight_root: 0,
+            kv_cache_size: 0,
+            string_dict_size: 256,
+            total_entries: 0,
         };
         let display = format!("{}", stats);
         assert!(display.contains("256 strings"));
@@ -741,9 +913,16 @@ mod tests {
     #[test]
     fn stats_display_contains_cache() {
         let stats = SiteMapStats {
-            kv: 0, nodes: 0, programs: 0, snapshots: 0,
-            total_bytes: 0, root: 0, weight_root: 0,
-            kv_cache_size: 42, string_dict_size: 0, total_entries: 0,
+            kv: 0,
+            nodes: 0,
+            programs: 0,
+            snapshots: 0,
+            total_bytes: 0,
+            root: 0,
+            weight_root: 0,
+            kv_cache_size: 42,
+            string_dict_size: 0,
+            total_entries: 0,
         };
         let display = format!("{}", stats);
         assert!(display.contains("cache=42"));
@@ -752,9 +931,16 @@ mod tests {
     #[test]
     fn stats_display_root_hex() {
         let stats = SiteMapStats {
-            kv: 0, nodes: 0, programs: 0, snapshots: 0,
-            total_bytes: 0, root: 0xDEADBEEF, weight_root: 0,
-            kv_cache_size: 0, string_dict_size: 0, total_entries: 0,
+            kv: 0,
+            nodes: 0,
+            programs: 0,
+            snapshots: 0,
+            total_bytes: 0,
+            root: 0xDEADBEEF,
+            weight_root: 0,
+            kv_cache_size: 0,
+            string_dict_size: 0,
+            total_entries: 0,
         };
         let display = format!("{}", stats);
         assert!(display.contains("deadbeef"));
@@ -763,9 +949,16 @@ mod tests {
     #[test]
     fn stats_display_weight_root_hex() {
         let stats = SiteMapStats {
-            kv: 0, nodes: 0, programs: 0, snapshots: 0,
-            total_bytes: 0, root: 0, weight_root: 0xCAFEBABE,
-            kv_cache_size: 0, string_dict_size: 0, total_entries: 0,
+            kv: 0,
+            nodes: 0,
+            programs: 0,
+            snapshots: 0,
+            total_bytes: 0,
+            root: 0,
+            weight_root: 0xCAFEBABE,
+            kv_cache_size: 0,
+            string_dict_size: 0,
+            total_entries: 0,
         };
         let display = format!("{}", stats);
         assert!(display.contains("cafebabe"));
@@ -774,9 +967,16 @@ mod tests {
     #[test]
     fn stats_display_kb_format() {
         let stats = SiteMapStats {
-            kv: 0, nodes: 0, programs: 0, snapshots: 0,
-            total_bytes: 10240, root: 0, weight_root: 0,
-            kv_cache_size: 0, string_dict_size: 0, total_entries: 0,
+            kv: 0,
+            nodes: 0,
+            programs: 0,
+            snapshots: 0,
+            total_bytes: 10240,
+            root: 0,
+            weight_root: 0,
+            kv_cache_size: 0,
+            string_dict_size: 0,
+            total_entries: 0,
         };
         let display = format!("{}", stats);
         assert!(display.contains("10.0 KB"));
@@ -787,8 +987,11 @@ mod tests {
     #[test]
     fn validate_entry_all_invalid() {
         let e = SiteMapEntry {
-            kind: EntryKind::Kv, hash: 0, file: "".into(),
-            file_sha: "".into(), size: 0,
+            kind: EntryKind::Kv,
+            hash: 0,
+            file: "".into(),
+            file_sha: "".into(),
+            size: 0,
         };
         let issues = validate_entry(&e);
         // hash=0, file empty, file_sha empty, size=0
@@ -802,8 +1005,11 @@ mod tests {
     #[test]
     fn validate_entry_full_all_invalid() {
         let e = SiteMapEntry {
-            kind: EntryKind::Kv, hash: 0, file: "".into(),
-            file_sha: "xx".into(), size: 0,
+            kind: EntryKind::Kv,
+            hash: 0,
+            file: "".into(),
+            file_sha: "xx".into(),
+            size: 0,
         };
         let issues = validate_entry_full(&e);
         // hash=0, file empty, size=0, file_sha too short
@@ -813,8 +1019,11 @@ mod tests {
     #[test]
     fn validate_entry_full_combined_short_and_nonhex() {
         let e = SiteMapEntry {
-            kind: EntryKind::Kv, hash: 1, file: "a.kv".into(),
-            file_sha: "zz".into(), size: 10,
+            kind: EntryKind::Kv,
+            hash: 1,
+            file: "a.kv".into(),
+            file_sha: "zz".into(),
+            size: 10,
         };
         let issues = validate_entry_full(&e);
         // "zz" is both < 8 chars AND non-hex
@@ -826,14 +1035,22 @@ mod tests {
 
     #[test]
     fn validate_triple_null_object() {
-        let t = VcTriple { subject_hash: 1, predicate_id: 0, object_hash: 0 };
+        let t = VcTriple {
+            subject_hash: 1,
+            predicate_id: 0,
+            object_hash: 0,
+        };
         let issues = t.validate();
         assert!(issues.iter().any(|i| i.contains("object_hash")));
     }
 
     #[test]
     fn validate_triple_both_null_and_self_ref() {
-        let t = VcTriple { subject_hash: 0, predicate_id: 0, object_hash: 0 };
+        let t = VcTriple {
+            subject_hash: 0,
+            predicate_id: 0,
+            object_hash: 0,
+        };
         let issues = t.validate();
         // subject=0, object=0, and subject==object (self-ref)
         assert!(issues.len() >= 2);
@@ -848,7 +1065,11 @@ mod tests {
 
     #[test]
     fn validate_triples_with_invalid_and_duplicate() {
-        let t = VcTriple { subject_hash: 0, predicate_id: 0, object_hash: 0 };
+        let t = VcTriple {
+            subject_hash: 0,
+            predicate_id: 0,
+            object_hash: 0,
+        };
         let triples = vec![t.clone(), t];
         let issues = validate_triples(&triples);
         // Each triple has issues + duplicate
@@ -861,10 +1082,34 @@ mod tests {
     #[test]
     fn dist_all_kinds() {
         let entries = vec![
-            SiteMapEntry { kind: EntryKind::Kv, hash: 1, file: "a".into(), file_sha: "x".into(), size: 1 },
-            SiteMapEntry { kind: EntryKind::Node, hash: 2, file: "b".into(), file_sha: "y".into(), size: 2 },
-            SiteMapEntry { kind: EntryKind::Program, hash: 3, file: "c".into(), file_sha: "z".into(), size: 3 },
-            SiteMapEntry { kind: EntryKind::Snapshot, hash: 4, file: "d".into(), file_sha: "w".into(), size: 4 },
+            SiteMapEntry {
+                kind: EntryKind::Kv,
+                hash: 1,
+                file: "a".into(),
+                file_sha: "x".into(),
+                size: 1,
+            },
+            SiteMapEntry {
+                kind: EntryKind::Node,
+                hash: 2,
+                file: "b".into(),
+                file_sha: "y".into(),
+                size: 2,
+            },
+            SiteMapEntry {
+                kind: EntryKind::Program,
+                hash: 3,
+                file: "c".into(),
+                file_sha: "z".into(),
+                size: 3,
+            },
+            SiteMapEntry {
+                kind: EntryKind::Snapshot,
+                hash: 4,
+                file: "d".into(),
+                file_sha: "w".into(),
+                size: 4,
+            },
         ];
         let dist = entry_kind_distribution(&entries);
         assert_eq!(dist.kv, 1);
@@ -889,9 +1134,21 @@ mod tests {
     #[test]
     fn triple_index_shared_subject() {
         let triples = vec![
-            VcTriple { subject_hash: 100, predicate_id: 0, object_hash: 1 },
-            VcTriple { subject_hash: 100, predicate_id: 1, object_hash: 2 },
-            VcTriple { subject_hash: 100, predicate_id: 2, object_hash: 3 },
+            VcTriple {
+                subject_hash: 100,
+                predicate_id: 0,
+                object_hash: 1,
+            },
+            VcTriple {
+                subject_hash: 100,
+                predicate_id: 1,
+                object_hash: 2,
+            },
+            VcTriple {
+                subject_hash: 100,
+                predicate_id: 2,
+                object_hash: 3,
+            },
         ];
         let idx = TripleIndex::build(&triples);
         assert_eq!(idx.by_subject(100).len(), 3);
@@ -901,9 +1158,21 @@ mod tests {
     #[test]
     fn triple_index_shared_object() {
         let triples = vec![
-            VcTriple { subject_hash: 1, predicate_id: 0, object_hash: 999 },
-            VcTriple { subject_hash: 2, predicate_id: 0, object_hash: 999 },
-            VcTriple { subject_hash: 3, predicate_id: 0, object_hash: 999 },
+            VcTriple {
+                subject_hash: 1,
+                predicate_id: 0,
+                object_hash: 999,
+            },
+            VcTriple {
+                subject_hash: 2,
+                predicate_id: 0,
+                object_hash: 999,
+            },
+            VcTriple {
+                subject_hash: 3,
+                predicate_id: 0,
+                object_hash: 999,
+            },
         ];
         let idx = TripleIndex::build(&triples);
         assert_eq!(idx.by_object(999).len(), 3);
@@ -913,9 +1182,21 @@ mod tests {
     #[test]
     fn triple_index_info_matches_methods() {
         let triples = vec![
-            VcTriple { subject_hash: 1, predicate_id: 0, object_hash: 2 },
-            VcTriple { subject_hash: 3, predicate_id: 1, object_hash: 4 },
-            VcTriple { subject_hash: 1, predicate_id: 2, object_hash: 4 },
+            VcTriple {
+                subject_hash: 1,
+                predicate_id: 0,
+                object_hash: 2,
+            },
+            VcTriple {
+                subject_hash: 3,
+                predicate_id: 1,
+                object_hash: 4,
+            },
+            VcTriple {
+                subject_hash: 1,
+                predicate_id: 2,
+                object_hash: 4,
+            },
         ];
         let idx = TripleIndex::build(&triples);
         let info = idx.info();
@@ -928,8 +1209,16 @@ mod tests {
     #[test]
     fn triple_index_info_json_values() {
         let triples = vec![
-            VcTriple { subject_hash: 1, predicate_id: 0, object_hash: 2 },
-            VcTriple { subject_hash: 3, predicate_id: 1, object_hash: 4 },
+            VcTriple {
+                subject_hash: 1,
+                predicate_id: 0,
+                object_hash: 2,
+            },
+            VcTriple {
+                subject_hash: 3,
+                predicate_id: 1,
+                object_hash: 4,
+            },
         ];
         let info = TripleIndex::build(&triples).info();
         let json = serde_json::to_string(&info).unwrap();
@@ -953,8 +1242,11 @@ mod tests {
     #[test]
     fn entry_debug_contains_fields() {
         let e = SiteMapEntry {
-            kind: EntryKind::Kv, hash: 42, file: "test.kv".into(),
-            file_sha: "abc".into(), size: 100,
+            kind: EntryKind::Kv,
+            hash: 42,
+            file: "test.kv".into(),
+            file_sha: "abc".into(),
+            size: 100,
         };
         let debug = format!("{:?}", e);
         assert!(debug.contains("hash: 42"));
@@ -966,8 +1258,11 @@ mod tests {
     #[test]
     fn entry_json_roundtrip_via_value() {
         let e = SiteMapEntry {
-            kind: EntryKind::Snapshot, hash: 0xABCD, file: "snap.json".into(),
-            file_sha: "deadbeef01234567".into(), size: 9999,
+            kind: EntryKind::Snapshot,
+            hash: 0xABCD,
+            file: "snap.json".into(),
+            file_sha: "deadbeef01234567".into(),
+            size: 9999,
         };
         let json = serde_json::to_string(&e).unwrap();
         let v: serde_json::Value = serde_json::from_str(&json).unwrap();
@@ -979,7 +1274,11 @@ mod tests {
 
     #[test]
     fn vc_triple_pretty_json() {
-        let t = VcTriple { subject_hash: 1, predicate_id: 2, object_hash: 3 };
+        let t = VcTriple {
+            subject_hash: 1,
+            predicate_id: 2,
+            object_hash: 3,
+        };
         let pretty = serde_json::to_string_pretty(&t).unwrap();
         assert!(pretty.contains('\n'));
         assert!(pretty.contains("  "));
@@ -988,9 +1287,16 @@ mod tests {
     #[test]
     fn stats_pretty_json() {
         let stats = SiteMapStats {
-            kv: 1, nodes: 2, programs: 3, snapshots: 4,
-            total_bytes: 100, root: 0, weight_root: 0,
-            kv_cache_size: 5, string_dict_size: 10, total_entries: 10,
+            kv: 1,
+            nodes: 2,
+            programs: 3,
+            snapshots: 4,
+            total_bytes: 100,
+            root: 0,
+            weight_root: 0,
+            kv_cache_size: 5,
+            string_dict_size: 10,
+            total_entries: 10,
         };
         let pretty = serde_json::to_string_pretty(&stats).unwrap();
         let v: serde_json::Value = serde_json::from_str(&pretty).unwrap();
@@ -1002,7 +1308,11 @@ mod tests {
 
     #[test]
     fn triple_info_hash_format() {
-        let t = VcTriple { subject_hash: 0x0000000000000001, predicate_id: 0, object_hash: 0x0000000000000002 };
+        let t = VcTriple {
+            subject_hash: 0x0000000000000001,
+            predicate_id: 0,
+            object_hash: 0x0000000000000002,
+        };
         let info = t.info();
         assert_eq!(info.subject_hash.len(), 16); // 16 hex chars
         assert_eq!(info.object_hash.len(), 16);
@@ -1010,14 +1320,22 @@ mod tests {
 
     #[test]
     fn triple_info_with_issues() {
-        let t = VcTriple { subject_hash: 0, predicate_id: 0, object_hash: 0 };
+        let t = VcTriple {
+            subject_hash: 0,
+            predicate_id: 0,
+            object_hash: 0,
+        };
         let info = t.info();
         assert!(!info.validation_issues.is_empty());
     }
 
     #[test]
     fn triple_info_json_all_values() {
-        let t = VcTriple { subject_hash: 0xFF, predicate_id: 7, object_hash: 0xAA };
+        let t = VcTriple {
+            subject_hash: 0xFF,
+            predicate_id: 7,
+            object_hash: 0xAA,
+        };
         let info = t.info();
         let json = serde_json::to_string(&info).unwrap();
         let v: serde_json::Value = serde_json::from_str(&json).unwrap();

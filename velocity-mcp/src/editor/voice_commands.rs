@@ -1,4 +1,4 @@
-﻿//! Voice-to-Task: processes speech commands into actionable IDE tasks.
+//! Voice-to-Task: processes speech commands into actionable IDE tasks.
 //! Provides intent parsing, command mapping, and a voice command registry
 //! that bridges natural language to IDE actions.
 //!

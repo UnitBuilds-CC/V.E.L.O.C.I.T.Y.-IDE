@@ -15,10 +15,7 @@ pub struct NdaOpsReport {
 pub fn validate_binary_op(a: &NdaVec, b: &NdaVec) -> Vec<String> {
     let mut warnings = Vec::new();
     if a.len != b.len {
-        warnings.push(format!(
-            "length mismatch: {} vs {}",
-            a.len, b.len
-        ));
+        warnings.push(format!("length mismatch: {} vs {}", a.len, b.len));
     }
     warnings.extend(a.validate());
     warnings.extend(b.validate());
@@ -363,7 +360,11 @@ pub fn nda_vec_add_batch(x: &mut NdaVec, deltas: &[NdaVec]) -> NdaOpsReport {
         operation: "add_batch".to_string(),
         count: deltas.len(),
         total_elapsed_us: elapsed,
-        per_op_avg_us: if deltas.is_empty() { 0.0 } else { elapsed as f64 / deltas.len() as f64 },
+        per_op_avg_us: if deltas.is_empty() {
+            0.0
+        } else {
+            elapsed as f64 / deltas.len() as f64
+        },
     }
 }
 
@@ -377,7 +378,11 @@ pub fn rms_norm_batch(vecs: &[NdaVec], w: &NdaVec, eps_shift: u32) -> (Vec<NdaVe
         operation: "rms_norm_batch".to_string(),
         count: vecs.len(),
         total_elapsed_us: elapsed,
-        per_op_avg_us: if vecs.is_empty() { 0.0 } else { elapsed as f64 / vecs.len() as f64 },
+        per_op_avg_us: if vecs.is_empty() {
+            0.0
+        } else {
+            elapsed as f64 / vecs.len() as f64
+        },
     };
     (results, report)
 }
@@ -391,16 +396,17 @@ pub fn silu_batch(silu: &SiluLut, vecs: &[NdaVec]) -> (Vec<NdaVec>, NdaOpsReport
         operation: "silu_batch".to_string(),
         count: vecs.len(),
         total_elapsed_us: elapsed,
-        per_op_avg_us: if vecs.is_empty() { 0.0 } else { elapsed as f64 / vecs.len() as f64 },
+        per_op_avg_us: if vecs.is_empty() {
+            0.0
+        } else {
+            elapsed as f64 / vecs.len() as f64
+        },
     };
     (results, report)
 }
 
 /// Batch SwiGLU: apply SwiGLU to each (gate, up) pair.
-pub fn swiglu_batch(
-    pairs: &[(&NdaVec, &NdaVec)],
-    silu: &SiluLut,
-) -> (Vec<NdaVec>, NdaOpsReport) {
+pub fn swiglu_batch(pairs: &[(&NdaVec, &NdaVec)], silu: &SiluLut) -> (Vec<NdaVec>, NdaOpsReport) {
     let start = std::time::Instant::now();
     let results: Vec<NdaVec> = pairs
         .iter()
@@ -411,7 +417,11 @@ pub fn swiglu_batch(
         operation: "swiglu_batch".to_string(),
         count: pairs.len(),
         total_elapsed_us: elapsed,
-        per_op_avg_us: if pairs.is_empty() { 0.0 } else { elapsed as f64 / pairs.len() as f64 },
+        per_op_avg_us: if pairs.is_empty() {
+            0.0
+        } else {
+            elapsed as f64 / pairs.len() as f64
+        },
     };
     (results, report)
 }
@@ -556,10 +566,18 @@ pub fn validate_rms_norm_params(x: &NdaVec, w: &NdaVec, eps_shift: u32) -> Vec<S
         issues.push("vector length is 0".into());
     }
     if x.sign.len() != x.extra.len() {
-        issues.push(format!("x sign/extra length mismatch: {} vs {}", x.sign.len(), x.extra.len()));
+        issues.push(format!(
+            "x sign/extra length mismatch: {} vs {}",
+            x.sign.len(),
+            x.extra.len()
+        ));
     }
     if w.sign.len() != w.extra.len() {
-        issues.push(format!("w sign/extra length mismatch: {} vs {}", w.sign.len(), w.extra.len()));
+        issues.push(format!(
+            "w sign/extra length mismatch: {} vs {}",
+            w.sign.len(),
+            w.extra.len()
+        ));
     }
     if eps_shift > 14 {
         issues.push(format!("eps_shift {} exceeds maximum 14", eps_shift));
@@ -598,7 +616,9 @@ impl AliBiSlopes {
         let max_shift = self.shifts.iter().copied().max().unwrap_or(0);
         let unique = {
             let mut s = std::collections::HashSet::new();
-            for &v in &self.shifts { s.insert(v); }
+            for &v in &self.shifts {
+                s.insert(v);
+            }
             s.len()
         };
         AliBiSlopesInfo {
@@ -618,7 +638,10 @@ pub fn validate_alibi_config(n_heads: usize) -> Vec<String> {
         issues.push("n_heads is 0".into());
     }
     if n_heads > 128 {
-        issues.push(format!("n_heads {} exceeds typical maximum of 128", n_heads));
+        issues.push(format!(
+            "n_heads {} exceeds typical maximum of 128",
+            n_heads
+        ));
     }
     issues
 }
@@ -645,8 +668,16 @@ pub fn summarize_ops(reports: &[NdaOpsReport]) -> NdaOpsSummary {
         0.0
     };
 
-    let slowest = reports.iter().max_by(|a, b| a.per_op_avg_us.partial_cmp(&b.per_op_avg_us).unwrap_or(std::cmp::Ordering::Equal));
-    let fastest = reports.iter().min_by(|a, b| a.per_op_avg_us.partial_cmp(&b.per_op_avg_us).unwrap_or(std::cmp::Ordering::Equal));
+    let slowest = reports.iter().max_by(|a, b| {
+        a.per_op_avg_us
+            .partial_cmp(&b.per_op_avg_us)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+    let fastest = reports.iter().min_by(|a, b| {
+        a.per_op_avg_us
+            .partial_cmp(&b.per_op_avg_us)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
 
     NdaOpsSummary {
         total_operations,
@@ -780,8 +811,18 @@ mod tests {
 
     #[test]
     fn validate_rms_norm_params_zero_length() {
-        let x = NdaVec { len: 0, log2_scale: 0, sign: vec![].into(), extra: vec![].into() };
-        let w = NdaVec { len: 0, log2_scale: 0, sign: vec![].into(), extra: vec![].into() };
+        let x = NdaVec {
+            len: 0,
+            log2_scale: 0,
+            sign: vec![].into(),
+            extra: vec![].into(),
+        };
+        let w = NdaVec {
+            len: 0,
+            log2_scale: 0,
+            sign: vec![].into(),
+            extra: vec![].into(),
+        };
         let issues = validate_rms_norm_params(&x, &w, 2);
         assert!(issues.iter().any(|i| i.contains("0")));
     }
@@ -843,9 +884,24 @@ mod tests {
     #[test]
     fn summarize_ops_multiple() {
         let reports = vec![
-            NdaOpsReport { operation: "add".into(), count: 10, total_elapsed_us: 100, per_op_avg_us: 10.0 },
-            NdaOpsReport { operation: "norm".into(), count: 5, total_elapsed_us: 200, per_op_avg_us: 40.0 },
-            NdaOpsReport { operation: "silu".into(), count: 8, total_elapsed_us: 40, per_op_avg_us: 5.0 },
+            NdaOpsReport {
+                operation: "add".into(),
+                count: 10,
+                total_elapsed_us: 100,
+                per_op_avg_us: 10.0,
+            },
+            NdaOpsReport {
+                operation: "norm".into(),
+                count: 5,
+                total_elapsed_us: 200,
+                per_op_avg_us: 40.0,
+            },
+            NdaOpsReport {
+                operation: "silu".into(),
+                count: 8,
+                total_elapsed_us: 40,
+                per_op_avg_us: 5.0,
+            },
         ];
         let summary = summarize_ops(&reports);
         assert_eq!(summary.total_operations, 3);
@@ -904,8 +960,8 @@ mod tests {
     #[test]
     fn nda_embedding_get_returns_ndavec() {
         let data = vec![
-            1.0, -1.0, 0.5, -0.5,  // token 0
-            2.0, -2.0, 1.0, -1.0,  // token 1
+            1.0, -1.0, 0.5, -0.5, // token 0
+            2.0, -2.0, 1.0, -1.0, // token 1
         ];
         let embed = NdaEmbedding::from_f32(&data, 2, 4);
         let v0 = embed.get(0);
@@ -1085,7 +1141,7 @@ mod tests {
         let x = NdaVec {
             len: 8,
             log2_scale: 0,
-            sign: vec![0xFF; 2].into(), // 2 bytes
+            sign: vec![0xFF; 2].into(),  // 2 bytes
             extra: vec![0xFF; 1].into(), // 1 byte — mismatch
         };
         let w = NdaVec::from_i32_slice(&[1, 1, 1, 1, 1, 1, 1, 1], 0);
@@ -1099,7 +1155,7 @@ mod tests {
         let w = NdaVec {
             len: 4,
             log2_scale: 0,
-            sign: vec![0xFF; 2].into(), // 2 bytes
+            sign: vec![0xFF; 2].into(),  // 2 bytes
             extra: vec![0xFF; 1].into(), // 1 byte — mismatch
         };
         let issues = validate_rms_norm_params(&x, &w, 2);
@@ -1108,9 +1164,12 @@ mod tests {
 
     #[test]
     fn summarize_ops_single_report() {
-        let reports = vec![
-            NdaOpsReport { operation: "gemv".into(), count: 100, total_elapsed_us: 5000, per_op_avg_us: 50.0 },
-        ];
+        let reports = vec![NdaOpsReport {
+            operation: "gemv".into(),
+            count: 100,
+            total_elapsed_us: 5000,
+            per_op_avg_us: 50.0,
+        }];
         let summary = summarize_ops(&reports);
         assert_eq!(summary.total_operations, 1);
         assert_eq!(summary.total_ops_count, 100);
@@ -1123,8 +1182,18 @@ mod tests {
     #[test]
     fn summarize_ops_all_same_speed() {
         let reports = vec![
-            NdaOpsReport { operation: "a".into(), count: 10, total_elapsed_us: 100, per_op_avg_us: 10.0 },
-            NdaOpsReport { operation: "b".into(), count: 10, total_elapsed_us: 100, per_op_avg_us: 10.0 },
+            NdaOpsReport {
+                operation: "a".into(),
+                count: 10,
+                total_elapsed_us: 100,
+                per_op_avg_us: 10.0,
+            },
+            NdaOpsReport {
+                operation: "b".into(),
+                count: 10,
+                total_elapsed_us: 100,
+                per_op_avg_us: 10.0,
+            },
         ];
         let summary = summarize_ops(&reports);
         assert_eq!(summary.total_operations, 2);
@@ -1148,8 +1217,18 @@ mod tests {
 
     #[test]
     fn validate_binary_op_empty_vecs() {
-        let a = NdaVec { len: 0, log2_scale: 0, sign: vec![].into(), extra: vec![].into() };
-        let b = NdaVec { len: 0, log2_scale: 0, sign: vec![].into(), extra: vec![].into() };
+        let a = NdaVec {
+            len: 0,
+            log2_scale: 0,
+            sign: vec![].into(),
+            extra: vec![].into(),
+        };
+        let b = NdaVec {
+            len: 0,
+            log2_scale: 0,
+            sign: vec![].into(),
+            extra: vec![].into(),
+        };
         let w = validate_binary_op(&a, &b);
         // Same length (0) — no length mismatch, but validate() flags zero length
         assert!(w.iter().any(|s| s.contains("zero length")));
@@ -1178,16 +1257,21 @@ mod tests {
     #[test]
     fn ops_report_json_has_exactly_4_keys() {
         let report = NdaOpsReport {
-            operation: "test".into(), count: 1, total_elapsed_us: 10, per_op_avg_us: 10.0,
+            operation: "test".into(),
+            count: 1,
+            total_elapsed_us: 10,
+            per_op_avg_us: 10.0,
         };
-        let v: serde_json::Value = serde_json::from_str(&serde_json::to_string(&report).unwrap()).unwrap();
+        let v: serde_json::Value =
+            serde_json::from_str(&serde_json::to_string(&report).unwrap()).unwrap();
         assert_eq!(v.as_object().unwrap().len(), 4);
     }
 
     #[test]
     fn ops_summary_json_has_exactly_6_keys() {
         let summary = summarize_ops(&[]);
-        let v: serde_json::Value = serde_json::from_str(&serde_json::to_string(&summary).unwrap()).unwrap();
+        let v: serde_json::Value =
+            serde_json::from_str(&serde_json::to_string(&summary).unwrap()).unwrap();
         assert_eq!(v.as_object().unwrap().len(), 6);
     }
 
@@ -1195,7 +1279,8 @@ mod tests {
     fn embedding_info_json_has_exactly_5_keys() {
         let embed = NdaEmbedding::from_f32(&[1.0; 8], 1, 8);
         let info = embed.info();
-        let v: serde_json::Value = serde_json::from_str(&serde_json::to_string(&info).unwrap()).unwrap();
+        let v: serde_json::Value =
+            serde_json::from_str(&serde_json::to_string(&info).unwrap()).unwrap();
         assert_eq!(v.as_object().unwrap().len(), 5);
     }
 
@@ -1203,7 +1288,8 @@ mod tests {
     fn alibi_info_json_has_exactly_5_keys() {
         let slopes = AliBiSlopes::new(4);
         let info = slopes.info();
-        let v: serde_json::Value = serde_json::from_str(&serde_json::to_string(&info).unwrap()).unwrap();
+        let v: serde_json::Value =
+            serde_json::from_str(&serde_json::to_string(&info).unwrap()).unwrap();
         assert_eq!(v.as_object().unwrap().len(), 5);
     }
 
@@ -1212,9 +1298,13 @@ mod tests {
     #[test]
     fn ops_report_json_roundtrip_via_value() {
         let report = NdaOpsReport {
-            operation: "gemv".into(), count: 42, total_elapsed_us: 1234, per_op_avg_us: 29.38,
+            operation: "gemv".into(),
+            count: 42,
+            total_elapsed_us: 1234,
+            per_op_avg_us: 29.38,
         };
-        let v: serde_json::Value = serde_json::from_str(&serde_json::to_string(&report).unwrap()).unwrap();
+        let v: serde_json::Value =
+            serde_json::from_str(&serde_json::to_string(&report).unwrap()).unwrap();
         assert_eq!(v["operation"], "gemv");
         assert_eq!(v["count"], 42);
         assert_eq!(v["total_elapsed_us"], 1234);
@@ -1223,12 +1313,15 @@ mod tests {
     #[test]
     fn ops_summary_json_roundtrip_via_value() {
         let summary = NdaOpsSummary {
-            total_operations: 3, total_ops_count: 100, total_elapsed_us: 5000,
+            total_operations: 3,
+            total_ops_count: 100,
+            total_elapsed_us: 5000,
             overall_avg_us: 50.0,
             slowest_operation: Some("norm".into()),
             fastest_operation: Some("add".into()),
         };
-        let v: serde_json::Value = serde_json::from_str(&serde_json::to_string(&summary).unwrap()).unwrap();
+        let v: serde_json::Value =
+            serde_json::from_str(&serde_json::to_string(&summary).unwrap()).unwrap();
         assert_eq!(v["total_operations"], 3);
         assert_eq!(v["slowest_operation"], "norm");
         assert_eq!(v["fastest_operation"], "add");
@@ -1269,8 +1362,18 @@ mod tests {
     #[test]
     fn summarize_ops_overall_avg_formula() {
         let reports = vec![
-            NdaOpsReport { operation: "a".into(), count: 10, total_elapsed_us: 100, per_op_avg_us: 10.0 },
-            NdaOpsReport { operation: "b".into(), count: 20, total_elapsed_us: 400, per_op_avg_us: 20.0 },
+            NdaOpsReport {
+                operation: "a".into(),
+                count: 10,
+                total_elapsed_us: 100,
+                per_op_avg_us: 10.0,
+            },
+            NdaOpsReport {
+                operation: "b".into(),
+                count: 20,
+                total_elapsed_us: 400,
+                per_op_avg_us: 20.0,
+            },
         ];
         let summary = summarize_ops(&reports);
         // total_elapsed=500, total_count=30, avg=500/30
@@ -1280,9 +1383,24 @@ mod tests {
     #[test]
     fn summarize_ops_total_ops_count_is_sum() {
         let reports = vec![
-            NdaOpsReport { operation: "a".into(), count: 5, total_elapsed_us: 10, per_op_avg_us: 2.0 },
-            NdaOpsReport { operation: "b".into(), count: 15, total_elapsed_us: 30, per_op_avg_us: 2.0 },
-            NdaOpsReport { operation: "c".into(), count: 25, total_elapsed_us: 50, per_op_avg_us: 2.0 },
+            NdaOpsReport {
+                operation: "a".into(),
+                count: 5,
+                total_elapsed_us: 10,
+                per_op_avg_us: 2.0,
+            },
+            NdaOpsReport {
+                operation: "b".into(),
+                count: 15,
+                total_elapsed_us: 30,
+                per_op_avg_us: 2.0,
+            },
+            NdaOpsReport {
+                operation: "c".into(),
+                count: 25,
+                total_elapsed_us: 50,
+                per_op_avg_us: 2.0,
+            },
         ];
         let summary = summarize_ops(&reports);
         assert_eq!(summary.total_ops_count, 45);
@@ -1294,7 +1412,10 @@ mod tests {
     #[test]
     fn ops_report_debug_format() {
         let report = NdaOpsReport {
-            operation: "test".into(), count: 5, total_elapsed_us: 100, per_op_avg_us: 20.0,
+            operation: "test".into(),
+            count: 5,
+            total_elapsed_us: 100,
+            per_op_avg_us: 20.0,
         };
         let debug = format!("{:?}", report);
         assert!(debug.contains("NdaOpsReport"));
@@ -1305,7 +1426,10 @@ mod tests {
     #[test]
     fn ops_summary_debug_format() {
         let summary = summarize_ops(&[NdaOpsReport {
-            operation: "x".into(), count: 1, total_elapsed_us: 10, per_op_avg_us: 10.0,
+            operation: "x".into(),
+            count: 1,
+            total_elapsed_us: 10,
+            per_op_avg_us: 10.0,
         }]);
         let debug = format!("{:?}", summary);
         assert!(debug.contains("NdaOpsSummary"));
@@ -1343,7 +1467,10 @@ mod tests {
     #[test]
     fn ops_summary_clone() {
         let summary = summarize_ops(&[NdaOpsReport {
-            operation: "op".into(), count: 10, total_elapsed_us: 100, per_op_avg_us: 10.0,
+            operation: "op".into(),
+            count: 10,
+            total_elapsed_us: 100,
+            per_op_avg_us: 10.0,
         }]);
         let cloned = summary.clone();
         assert_eq!(cloned.total_operations, summary.total_operations);
@@ -1463,10 +1590,22 @@ mod tests {
 
     #[test]
     fn ops_report_eq_via_json() {
-        let r1 = NdaOpsReport { operation: "x".into(), count: 5, total_elapsed_us: 10, per_op_avg_us: 2.0 };
-        let r2 = NdaOpsReport { operation: "x".into(), count: 5, total_elapsed_us: 10, per_op_avg_us: 2.0 };
-        let j1: serde_json::Value = serde_json::from_str(&serde_json::to_string(&r1).unwrap()).unwrap();
-        let j2: serde_json::Value = serde_json::from_str(&serde_json::to_string(&r2).unwrap()).unwrap();
+        let r1 = NdaOpsReport {
+            operation: "x".into(),
+            count: 5,
+            total_elapsed_us: 10,
+            per_op_avg_us: 2.0,
+        };
+        let r2 = NdaOpsReport {
+            operation: "x".into(),
+            count: 5,
+            total_elapsed_us: 10,
+            per_op_avg_us: 2.0,
+        };
+        let j1: serde_json::Value =
+            serde_json::from_str(&serde_json::to_string(&r1).unwrap()).unwrap();
+        let j2: serde_json::Value =
+            serde_json::from_str(&serde_json::to_string(&r2).unwrap()).unwrap();
         assert_eq!(j1, j2);
     }
 }

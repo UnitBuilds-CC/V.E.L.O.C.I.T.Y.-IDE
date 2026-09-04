@@ -2,11 +2,11 @@
 //!
 //! Extracted verbatim from `tier3_panels.rs` (no logic changes).
 
-use eframe::egui;
-use egui::RichText;
 use super::struct_def::VelocityApp;
 use crate::editor::deploy_pipeline::{PipelineStage, StageStatus};
 use crate::editor::theme::{FONT_CAPTION, FONT_SMALL};
+use eframe::egui;
+use egui::RichText;
 
 impl VelocityApp {
     // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•

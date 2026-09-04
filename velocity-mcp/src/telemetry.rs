@@ -31,14 +31,14 @@
 //! }
 //! ```
 
+use std::fs;
+use std::path::PathBuf;
 use tracing_subscriber::{
     fmt::{self, format::FmtSpan},
     layer::SubscriberExt,
     util::SubscriberInitExt,
     EnvFilter, Layer,
 };
-use std::fs;
-use std::path::PathBuf;
 
 /// Trace output format.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -108,12 +108,9 @@ impl TracingConfig {
             .map(|s| TraceFormat::from_env_str(&s))
             .unwrap_or(TraceFormat::Pretty);
 
-        let log_dir = std::env::var("VELOCITY_TRACE_DIR")
-            .ok()
-            .map(PathBuf::from);
+        let log_dir = std::env::var("VELOCITY_TRACE_DIR").ok().map(PathBuf::from);
 
-        let level = std::env::var("VELOCITY_TRACE_LEVEL")
-            .unwrap_or_else(|_| "info".to_string());
+        let level = std::env::var("VELOCITY_TRACE_LEVEL").unwrap_or_else(|_| "info".to_string());
 
         let with_timings = std::env::var("VELOCITY_TRACE_TIMINGS")
             .map(|v| v != "false")
@@ -141,62 +138,54 @@ pub fn init_tracing() {
 /// Initialize tracing with an explicit configuration.
 pub fn init_tracing_with_config(config: &TracingConfig) {
     // Build the env filter. RUST_LOG takes precedence.
-    let env_filter = EnvFilter::try_from_default_env()
-        .unwrap_or_else(|_| EnvFilter::new(&config.level));
+    let env_filter =
+        EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(&config.level));
 
     // Build the console layer based on format.
     let console_layer = match config.format {
-        TraceFormat::Pretty => {
-            fmt::layer()
-                .pretty()
-                .with_span_events(if config.with_timings {
-                    FmtSpan::CLOSE
-                } else {
-                    FmtSpan::NONE
-                })
-                .with_thread_names(config.with_thread_names)
-                .with_thread_ids(config.with_thread_ids)
-                .with_file(config.with_source_location)
-                .with_line_number(config.with_source_location)
-                .with_filter(env_filter)
-                .boxed()
-        }
-        TraceFormat::Json => {
-            fmt::layer()
-                .json()
-                .with_span_events(if config.with_timings {
-                    FmtSpan::CLOSE
-                } else {
-                    FmtSpan::NONE
-                })
-                .with_thread_names(config.with_thread_names)
-                .with_thread_ids(config.with_thread_ids)
-                .with_file(config.with_source_location)
-                .with_line_number(config.with_source_location)
-                .with_filter(
-                    EnvFilter::try_from_default_env()
-                        .unwrap_or_else(|_| EnvFilter::new(&config.level)),
-                )
-                .boxed()
-        }
-        TraceFormat::Compact => {
-            fmt::layer()
-                .compact()
-                .with_span_events(if config.with_timings {
-                    FmtSpan::CLOSE
-                } else {
-                    FmtSpan::NONE
-                })
-                .with_thread_names(config.with_thread_names)
-                .with_thread_ids(config.with_thread_ids)
-                .with_file(config.with_source_location)
-                .with_line_number(config.with_source_location)
-                .with_filter(
-                    EnvFilter::try_from_default_env()
-                        .unwrap_or_else(|_| EnvFilter::new(&config.level)),
-                )
-                .boxed()
-        }
+        TraceFormat::Pretty => fmt::layer()
+            .pretty()
+            .with_span_events(if config.with_timings {
+                FmtSpan::CLOSE
+            } else {
+                FmtSpan::NONE
+            })
+            .with_thread_names(config.with_thread_names)
+            .with_thread_ids(config.with_thread_ids)
+            .with_file(config.with_source_location)
+            .with_line_number(config.with_source_location)
+            .with_filter(env_filter)
+            .boxed(),
+        TraceFormat::Json => fmt::layer()
+            .json()
+            .with_span_events(if config.with_timings {
+                FmtSpan::CLOSE
+            } else {
+                FmtSpan::NONE
+            })
+            .with_thread_names(config.with_thread_names)
+            .with_thread_ids(config.with_thread_ids)
+            .with_file(config.with_source_location)
+            .with_line_number(config.with_source_location)
+            .with_filter(
+                EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(&config.level)),
+            )
+            .boxed(),
+        TraceFormat::Compact => fmt::layer()
+            .compact()
+            .with_span_events(if config.with_timings {
+                FmtSpan::CLOSE
+            } else {
+                FmtSpan::NONE
+            })
+            .with_thread_names(config.with_thread_names)
+            .with_thread_ids(config.with_thread_ids)
+            .with_file(config.with_source_location)
+            .with_line_number(config.with_source_location)
+            .with_filter(
+                EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(&config.level)),
+            )
+            .boxed(),
     };
 
     // Optionally add a file layer for persistent NDJSON logs.
@@ -215,8 +204,7 @@ pub fn init_tracing_with_config(config: &TracingConfig) {
             .with_file(true)
             .with_line_number(true)
             .with_filter(
-                EnvFilter::try_from_default_env()
-                    .unwrap_or_else(|_| EnvFilter::new(&config.level)),
+                EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(&config.level)),
             );
 
         tracing_subscriber::registry()
@@ -224,9 +212,7 @@ pub fn init_tracing_with_config(config: &TracingConfig) {
             .with(file_layer)
             .init();
     } else {
-        tracing_subscriber::registry()
-            .with(console_layer)
-            .init();
+        tracing_subscriber::registry().with(console_layer).init();
     }
 }
 

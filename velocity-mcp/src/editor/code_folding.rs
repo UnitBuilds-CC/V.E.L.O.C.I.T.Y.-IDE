@@ -1,4 +1,4 @@
-﻿//! Code folding — detects foldable regions and manages collapsed state.
+//! Code folding — detects foldable regions and manages collapsed state.
 //!
 //! Foldable regions are detected by indentation level and bracket blocks.
 
