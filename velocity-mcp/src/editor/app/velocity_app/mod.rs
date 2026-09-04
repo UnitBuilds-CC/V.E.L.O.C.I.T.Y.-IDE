@@ -19,6 +19,11 @@ pub mod tier3_testing;
 pub mod tier3_triggers;
 pub mod tier3_voice;
 pub mod ui_render;
+pub mod ui_render_browse;
+pub mod ui_render_categories;
+pub mod ui_render_checkpoints;
+pub mod ui_render_search;
+pub mod ui_render_shortcuts;
 pub mod workflows_governance;
 
 pub use struct_def::VelocityApp;
