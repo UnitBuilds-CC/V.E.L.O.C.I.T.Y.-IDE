@@ -2108,7 +2108,7 @@ mod tests {
     #[test]
     fn deserialise_truncated_int() {
         // 'I' tag with no payload
-        let data: &[u8] = &[b'I'];
+        let data: &[u8] = b"I";
         let mut offset = 0;
         assert!(deserialise_node(data, &mut offset).is_err());
     }

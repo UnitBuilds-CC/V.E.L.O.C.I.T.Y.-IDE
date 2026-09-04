@@ -1045,7 +1045,7 @@ mod tests {
         assert_eq!(slopes.shifts.len(), 32);
         // All shifts should be in [1, 30]
         for &s in &slopes.shifts {
-            assert!(s >= 1 && s <= 30, "shift {} out of range", s);
+            assert!((1..=30).contains(&s), "shift {} out of range", s);
         }
     }
 

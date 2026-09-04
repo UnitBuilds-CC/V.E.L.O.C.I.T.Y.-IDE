@@ -3094,7 +3094,7 @@ mod tests {
         };
         let issues = validate_optimization_report(&report);
         // Both conditions trigger: input=0 with output>0
-        assert!(issues.len() >= 1);
+        assert!(!issues.is_empty());
     }
 
     // --- optimize_ast: store with side effects preserved ---

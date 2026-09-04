@@ -1626,7 +1626,7 @@ mod tests {
         // Structure opcodes should not also be arithmetic.
         let structure_ops = [NdaOpcode::Scope, NdaOpcode::EndScope, NdaOpcode::Root];
         for op in &structure_ops {
-            assert!(op.is_control_flow() == false || op.is_control_flow()); // just ensure no panic
+            assert!(!op.is_control_flow() || op.is_control_flow()); // just ensure no panic
             // Structure ops are not arithmetic.
             assert!(!op.is_arithmetic());
             assert!(!op.is_io());
@@ -2187,8 +2187,8 @@ mod tests {
         v.push_leaf(&leaf);
         // record_root should set computed_root from the last hash on stack
         v.record_root(leaf.hash());
-        assert_eq!(v.info().has_computed_root, true);
-        assert_eq!(v.info().has_claimed_root, true);
+        assert!(v.info().has_computed_root);
+        assert!(v.info().has_claimed_root);
     }
 
     #[test]

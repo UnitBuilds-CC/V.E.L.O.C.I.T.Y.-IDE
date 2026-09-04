@@ -1076,7 +1076,7 @@ mod tests {
     #[test]
     fn dispatch_workgroup_n1_ternary() {
         let cfg = GemvConfig {
-            k: 256, n: 1, is_ternary: true, weight_bytes: (256 / 16) * 4 * 1,
+            k: 256, n: 1, is_ternary: true, weight_bytes: (256 / 16) * 4,
         };
         let info = gemv_dispatch_info(&cfg);
         assert_eq!(info.workgroup_count, 1u32.div_ceil(256));
@@ -1086,7 +1086,7 @@ mod tests {
     #[test]
     fn dispatch_workgroup_n1_int4() {
         let cfg = GemvConfig {
-            k: 128, n: 1, is_ternary: false, weight_bytes: (128 / 2) * 1,
+            k: 128, n: 1, is_ternary: false, weight_bytes: (128 / 2),
         };
         let info = gemv_dispatch_info(&cfg);
         assert_eq!(info.workgroup_count, 1u32.div_ceil(64));

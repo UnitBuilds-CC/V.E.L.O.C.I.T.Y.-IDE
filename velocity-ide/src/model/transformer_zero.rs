@@ -1466,7 +1466,7 @@ mod tests {
         assert_eq!(report.total_tokens(), n + 100);
         assert!((report.cache_hit_rate() - 0.5).abs() < 1e-9);
         assert!((report.us_per_token() - 1000.0).abs() < 1e-9);
-        assert_eq!(report.token_ids.len(), n as usize);
+        assert_eq!(report.token_ids.len(), n);
     }
 
     #[test]

@@ -970,7 +970,7 @@ mod tests {
         let report = compile_with_report(src).unwrap();
         let json = report.to_json();
         assert_eq!(json["function_count"], 1);
-        assert!(json["program_hash"].as_str().unwrap().len() > 0);
+        assert!(!json["program_hash"].as_str().unwrap().is_empty());
     }
 
     #[test]

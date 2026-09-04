@@ -358,7 +358,7 @@ fn wiki_page_kind_derives() {
     let kind = WikiPageKind::File;
     let copied = kind;
     assert_eq!(kind, copied);
-    let cloned = kind.clone();
+    let cloned = kind;
     assert_eq!(kind, cloned);
     // Debug
     let debug = format!("{:?}", kind);
@@ -412,7 +412,7 @@ fn wiki_all_pages_includes_overview() {
     let model = build_wiki(&sm);
     let all: Vec<_> = model.all_pages().collect();
     // At minimum: overview page
-    assert!(all.len() >= 1);
+    assert!(!all.is_empty());
     assert_eq!(all[0].kind, WikiPageKind::Overview);
     assert_eq!(all[0].title, "Overview");
     let _ = std::fs::remove_dir_all(&dir);

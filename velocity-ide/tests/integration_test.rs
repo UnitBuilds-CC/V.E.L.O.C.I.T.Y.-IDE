@@ -172,14 +172,12 @@ fn version_and_banner_accessible() {
 fn jit_compile_and_run_simple() {
     use velocity_ide::site_map::NdaNode;
     // Use the JIT compiler module
-    let nodes = vec![
-        NdaNode::Int { value: 10 },
+    let nodes = [NdaNode::Int { value: 10 },
         NdaNode::Int { value: 20 },
         NdaNode::Add {
             lhs: Box::new(NdaNode::Int { value: 0 }),
             rhs: Box::new(NdaNode::Int { value: 0 }),
-        },
-    ];
+        }];
     // Verify node hashes are deterministic
     let h1 = nodes[0].hash();
     let h2 = nodes[0].hash();
@@ -341,7 +339,7 @@ fn module_info_serialization_through_api() {
         let json = serde_json::to_string(m).unwrap();
         let v: serde_json::Value = serde_json::from_str(&json).unwrap();
         assert_eq!(v.as_object().unwrap().len(), 3);
-        assert!(v["name"].as_str().unwrap().len() > 0);
-        assert!(v["description"].as_str().unwrap().len() > 0);
+        assert!(!v["name"].as_str().unwrap().is_empty());
+        assert!(!v["description"].as_str().unwrap().is_empty());
     }
 }

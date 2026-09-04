@@ -1738,7 +1738,7 @@ mod tests {
     fn pipeline_mode_derives() {
         // Clone
         let mode = PipelineMode::Nda;
-        let cloned = mode.clone();
+        let cloned = mode;
         assert_eq!(mode, cloned);
 
         // Copy

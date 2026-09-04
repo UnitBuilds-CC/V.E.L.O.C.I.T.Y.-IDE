@@ -398,7 +398,7 @@ mod tests {
         let cache_bytes = cfg.kv_cache_bytes(1, 512);
         assert!(cache_bytes > 0);
         // 2 * 1 * 512 * 24 * (2 * 64) * 4 = 3,145,728 bytes
-        let expected = 2 * 1 * 512 * 24 * (2 * 64) * 4;
+        let expected = 2 * 512 * 24 * (2 * 64) * 4;
         assert_eq!(cache_bytes, expected);
     }
 

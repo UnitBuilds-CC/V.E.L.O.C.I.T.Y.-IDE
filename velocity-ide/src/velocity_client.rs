@@ -1289,7 +1289,7 @@ ignored = true
         let resp: AuditLogResponse = serde_json::from_str(json).unwrap();
         assert_eq!(resp.total, 1);
         assert_eq!(resp.entries[0].model_breakdown[0].input_tokens, 3000);
-        assert_eq!(resp.entries[0].model_breakdown[0].success, true);
+        assert!(resp.entries[0].model_breakdown[0].success);
     }
 
     #[test]
@@ -1679,7 +1679,7 @@ after_section = "also no"
         for _ in 0..50 {
             let d = client.backoff_duration(1000);
             let ms = d.as_millis();
-            assert!(ms >= 750 && ms <= 1250, "jitter out of range: {ms}");
+            assert!((750..=1250).contains(&ms), "jitter out of range: {ms}");
         }
     }
 

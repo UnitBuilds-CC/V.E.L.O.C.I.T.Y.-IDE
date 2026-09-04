@@ -1023,7 +1023,7 @@ mod tests {
         let non_io = VelocityError::new(ErrorCode::ConfigNotFound, "no config");
         assert!(!non_io.is_io());
         let with_io_source = VelocityError::new(ErrorCode::InternalError, "wrapped")
-            .with_source(std::io::Error::new(std::io::ErrorKind::Other, "inner"));
+            .with_source(std::io::Error::other("inner"));
         assert!(with_io_source.is_io());
     }
 
@@ -1760,7 +1760,7 @@ mod tests {
 
     #[test]
     fn velocity_error_is_io_via_source_downcast() {
-        let io_err = std::io::Error::new(std::io::ErrorKind::Other, "inner io error");
+        let io_err = std::io::Error::other("inner io error");
         let err = VelocityError::new(ErrorCode::InternalError, "wrapped")
             .with_source(io_err);
         // InternalError is not normally io, but has an io::Error source
@@ -2013,7 +2013,7 @@ mod tests {
             .with_context("k1", "v1")
             .with_context("k2", "v2")
             .with_suggestion("try again")
-            .with_source(std::io::Error::new(std::io::ErrorKind::Other, "inner"));
+            .with_source(std::io::Error::other("inner"));
         assert_eq!(err.context.len(), 2);
         assert!(err.suggestion.is_some());
         assert!(err.source.is_some());

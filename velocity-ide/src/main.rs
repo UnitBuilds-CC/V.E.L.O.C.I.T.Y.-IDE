@@ -2617,7 +2617,7 @@ mod tests {
             validation_issues: vec!["issue1".into()],
         };
         let cloned = env.clone();
-        assert_eq!(cloned.velocity_configured, true);
+        assert!(cloned.velocity_configured);
         assert_eq!(cloned.provider_count, 5);
         assert_eq!(cloned.validation_issues.len(), 1);
     }

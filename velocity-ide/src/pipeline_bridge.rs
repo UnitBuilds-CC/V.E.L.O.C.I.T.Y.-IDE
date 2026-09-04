@@ -1438,7 +1438,7 @@ mod tests {
         let val: serde_json::Value = serde_json::from_str(&json).unwrap();
         assert_eq!(val["path"], "nda");
         assert!(val["text"].is_null());
-        assert_eq!(val["nda"]["root_hash"], 0xCAFEBABE as u64);
+        assert_eq!(val["nda"]["root_hash"], 0xCAFEBABE_u64);
         assert_eq!(val["nda"]["opcode_count"], 64);
         assert_eq!(val["nda"]["scope_similarity"], 0.72);
         assert_eq!(val["prompt_tokens"], 20);
@@ -1937,7 +1937,7 @@ mod tests {
         // Original unchanged
         assert_eq!(info.model_dir, "/original");
         assert_eq!(info.vocab_size, 100);
-        assert_eq!(info.path1_loaded, false);
+        assert!(!info.path1_loaded);
     }
 
     #[test]
@@ -2406,7 +2406,7 @@ mod tests {
             tokenizer_merge_count: 100,
         };
         let ratio = info.ffn_size as f64 / info.hidden_size as f64;
-        assert!(ratio >= 2.0 && ratio <= 4.0, "FFN ratio {} out of typical range", ratio);
+        assert!((2.0..=4.0).contains(&ratio), "FFN ratio {} out of typical range", ratio);
     }
 
     // ─── Block 193: JSON keys, clone independence, formulas, edge cases ─────
@@ -2706,7 +2706,7 @@ mod tests {
             n_layers: 6, hidden_size: 384,
         };
         let cloned = snap.clone();
-        assert_eq!(cloned.path1_loaded, true);
+        assert!(cloned.path1_loaded);
         assert_eq!(cloned.model_dir, "/test");
         assert_eq!(cloned.vocab_size, 1000);
     }
@@ -2774,7 +2774,7 @@ mod tests {
             scope_similarity: Some(0.95), site_map_hits: 10, site_map_misses: 0,
         };
         let sim = diag.scope_similarity.unwrap();
-        assert!(sim >= 0.0 && sim <= 1.0);
+        assert!((0.0..=1.0).contains(&sim));
     }
 
     #[test]
@@ -3391,7 +3391,7 @@ mod tests {
         let mut warnings: Vec<String> = Vec::new();
         let hidden_size = 100usize;
         let n_heads = 7usize;
-        if n_heads > 0 && hidden_size % n_heads != 0 {
+        if n_heads > 0 && !hidden_size.is_multiple_of(n_heads) {
             warnings.push(format!(
                 "hidden_size ({}) not divisible by n_heads ({})",
                 hidden_size, n_heads
@@ -3415,7 +3415,7 @@ mod tests {
         if hidden_size == 0 { warnings.push("hidden_size is 0".to_string()); }
         if n_heads == 0 { warnings.push("n_heads is 0".to_string()); }
         if max_seq_len == 0 { warnings.push("max_seq_len is 0".to_string()); }
-        if n_heads > 0 && hidden_size % n_heads != 0 {
+        if n_heads > 0 && !hidden_size.is_multiple_of(n_heads) {
             warnings.push("not divisible".to_string());
         }
         assert!(warnings.is_empty());

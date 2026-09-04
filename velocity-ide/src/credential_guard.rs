@@ -1389,7 +1389,7 @@ mod tests {
         };
         let a2 = a1.clone();
         assert_eq!(a2.exposed_env_vars.len(), 1);
-        assert_eq!(a2.clean, false);
+        assert!(!a2.clean);
     }
 
     #[test]
@@ -1575,7 +1575,7 @@ mod tests {
         let r2 = report.clone();
         assert_eq!(r2.secret_count, 3);
         assert_eq!(r2.labels.len(), 2);
-        assert_eq!(r2.is_scrubbed, true);
+        assert!(r2.is_scrubbed);
     }
 
     #[test]
@@ -1747,7 +1747,7 @@ mod tests {
         r2.labels.push("extra".into());
         r2.is_scrubbed = true;
         assert_eq!(r1.labels.len(), 1);
-        assert_eq!(r1.is_scrubbed, false);
+        assert!(!r1.is_scrubbed);
     }
 
     // ── Debug format ─────────────────────────────────────────────────────

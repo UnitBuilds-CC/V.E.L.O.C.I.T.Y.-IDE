@@ -1602,7 +1602,7 @@ mod tests {
         assert_eq!(info.bos_id, tok.bos_id);
         assert_eq!(info.eos_id, tok.eos_id);
         assert_eq!(info.is_tiktoken, tok.is_tiktoken());
-        assert_eq!(info.has_file_bytes, false);
+        assert!(!info.has_file_bytes);
         assert!(info.special_token_count >= 3); // <s>, </s>, <|endoftext|>
     }
 

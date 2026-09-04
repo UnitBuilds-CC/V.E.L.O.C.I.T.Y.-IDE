@@ -545,7 +545,7 @@ mod tests {
         for q in [0u8, 0x11, 0x22, 0x33, 0x44, 0x88, 0xCC, 0xFF] {
             for k in [0u8, 0x11, 0x22, 0x33, 0x44, 0x88, 0xCC, 0xFF] {
                 let val = DOT_4_LUT[q as usize][k as usize];
-                assert!(val >= -16 && val <= 16,
+                assert!((-16..=16).contains(&val),
                     "DOT_4_LUT[0x{:02X}][0x{:02X}] = {} out of range", q, k, val);
             }
         }
@@ -588,7 +588,7 @@ mod tests {
         // (+2,+2,+2,+2) + (-2,-2,-2,-2) = (0,0,0,0) → encodes as +1
         // +2: sign=1, extra=1 → xs=0xF, xe=0xF
         // -2: sign=0, extra=0 → ds=0x0, de=0x0
-        let key = 0x0F | (0x0F << 4) | (0x00 << 8) | (0x00 << 12);
+        let key = 0x0F | (0x0F << 4) ;
         let result = ADD_LUT_Q16[key as usize];
         let res_sign = result & 0x0F;
         let res_extra = (result >> 4) & 0x0F;
@@ -1028,7 +1028,7 @@ mod tests {
         // x_vals[1] = -1
         let w_vals = [0, 1, 4, 6, 8, 12, 16, 24, 0, -1, -4, -6, -8, -12, -16, -24];
         for (i, &w) in w_vals.iter().enumerate() {
-            assert_eq!(FP4_PRODUCT_LUT[1][i], -1 * w);
+            assert_eq!(FP4_PRODUCT_LUT[1][i], -w);
         }
     }
 
@@ -1037,7 +1037,7 @@ mod tests {
         // x_vals[2] = 1
         let w_vals = [0, 1, 4, 6, 8, 12, 16, 24, 0, -1, -4, -6, -8, -12, -16, -24];
         for (i, &w) in w_vals.iter().enumerate() {
-            assert_eq!(FP4_PRODUCT_LUT[2][i], 1 * w);
+            assert_eq!(FP4_PRODUCT_LUT[2][i], w);
         }
     }
 

@@ -1426,7 +1426,7 @@ mod tests {
         assert_eq!(val["per_layer"].as_array().unwrap().len(), 2);
         assert!(val["validation_issues"].is_array());
         assert_eq!(val["kv_dim"].as_u64().unwrap(), 32);
-        assert_eq!(val["final_norm_dispatch"].as_bool().unwrap(), true);
+        assert!(val["final_norm_dispatch"].as_bool().unwrap());
     }
 
     #[test]

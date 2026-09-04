@@ -1808,7 +1808,7 @@ mod tests {
     fn load_corrupt_magic() {
         let tmp = tempfile::tempdir().unwrap();
         let path = tmp.path().join("corrupt.nda");
-        std::fs::write(&path, &[0xFF, 0xFF, 0xFF, 0xFF]).unwrap();
+        std::fs::write(&path, [0xFF, 0xFF, 0xFF, 0xFF]).unwrap();
         let result = NdaMatrix::load(&path);
         assert!(result.is_err());
     }
@@ -2003,7 +2003,7 @@ mod tests {
         let m = make_quad_matrix(8, 8);
         m.save(&tmp.path().join("model_good.nda")).unwrap();
         // Write a corrupt file
-        std::fs::write(tmp.path().join("model_bad.nda"), &[0xFF; 4]).unwrap();
+        std::fs::write(tmp.path().join("model_bad.nda"), [0xFF; 4]).unwrap();
         let (matrices, report) = NdaMatrix::load_batch(tmp.path(), "model").unwrap();
         // Should load the good one and report the bad one
         assert_eq!(matrices.len(), 1);
@@ -2833,7 +2833,7 @@ mod tests {
     fn load_file_too_small() {
         let tmp = tempfile::tempdir().unwrap();
         let path = tmp.path().join("tiny.nda");
-        std::fs::write(&path, &[0x00, 0x4E]).unwrap(); // only 2 bytes
+        std::fs::write(&path, [0x00, 0x4E]).unwrap(); // only 2 bytes
         let result = NdaMatrix::load(&path);
         assert!(result.is_err());
     }

@@ -1980,10 +1980,8 @@ mod tests {
     fn put_nodes_batch_inserts() {
         let dir = temp_dir("batch2");
         let mut sm = SiteMap::open(&dir, 0).unwrap();
-        let nodes = vec![
-            NdaNode::Int { value: 1 },
-            NdaNode::Int { value: 2 },
-        ];
+        let nodes = [NdaNode::Int { value: 1 },
+            NdaNode::Int { value: 2 }];
         let node_refs: Vec<&NdaNode> = nodes.iter().collect();
         let keys = sm.put_nodes_batch(&node_refs).unwrap();
         assert_eq!(keys.len(), 2);

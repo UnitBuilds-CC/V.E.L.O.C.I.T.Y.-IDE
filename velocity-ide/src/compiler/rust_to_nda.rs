@@ -1483,7 +1483,7 @@ mod tests {
         let node = build_matrix_node(4, 16);
         match node {
             NdaNode::Matrix { rows, cols, sign, extra, .. } => {
-                let expected_bytes = rows as usize * ((cols as usize + 7) / 8);
+                let expected_bytes = rows as usize * (cols as usize).div_ceil(8);
                 assert_eq!(sign.len(), expected_bytes);
                 assert_eq!(extra.len(), expected_bytes);
             }

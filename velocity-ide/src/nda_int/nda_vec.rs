@@ -598,7 +598,7 @@ mod tests {
         assert_eq!(f32s.len(), 4);
         let scale = 2.0f32.powi(3);
         assert!((f32s[0] - 1.0 * scale).abs() < 1e-6);
-        assert!((f32s[1] - (-1.0) * scale).abs() < 1e-6);
+        assert!((f32s[1] - -scale).abs() < 1e-6);
         assert!((f32s[2] - 2.0 * scale).abs() < 1e-6);
         assert!((f32s[3] - (-2.0) * scale).abs() < 1e-6);
     }

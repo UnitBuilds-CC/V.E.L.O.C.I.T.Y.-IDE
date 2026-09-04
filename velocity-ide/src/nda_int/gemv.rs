@@ -435,14 +435,14 @@ mod tests {
     #[test]
     fn validate_gemv_params_length_mismatch() {
         let mat = make_quad_matrix(16, 64);
-        let x = NdaVec::from_f32_slice(&vec![1.0; 32]); // wrong length
+        let x = NdaVec::from_f32_slice(&[1.0; 32]); // wrong length
         let issues = validate_gemv_params(&mat, &x);
         assert!(issues.iter().any(|i| i.contains("!=")));
     }
 
     #[test]
     fn validate_gemv_params_zero_matrix() {
-        let mat = NdaMatrix::new_quad(0, 0, 1.0, vec![].into(), vec![].into());
+        let mat = NdaMatrix::new_quad(0, 0, 1.0, vec![], vec![]);
         let x = NdaVec::from_f32_slice(&[]);
         let issues = validate_gemv_params(&mat, &x);
         assert!(issues.iter().any(|i| i.contains("0 rows") || i.contains("0 cols")));
@@ -560,7 +560,7 @@ mod tests {
     #[test]
     fn gemv_quad_small_matrix() {
         let mat = make_quad_matrix(4, 16);
-        let x = NdaVec::from_f32_slice(&vec![1.0; 16]);
+        let x = NdaVec::from_f32_slice(&[1.0; 16]);
         let out = nda_gemv_nda_to_nda(&mat, &x);
         assert_eq!(out.len, 4);
     }
@@ -579,7 +579,7 @@ mod tests {
             q_scales: vec![],
             packed_codes: vec![],
         };
-        let x = NdaVec::from_f32_slice(&vec![1.0; 8]);
+        let x = NdaVec::from_f32_slice(&[1.0; 8]);
         let issues = validate_gemv_params(&mat, &x);
         assert!(issues.iter().any(|i| i.contains("no weight data")));
     }
@@ -652,7 +652,7 @@ mod tests {
     #[test]
     fn batch_gemv_single_input() {
         let mat = make_quad_matrix(8, 16);
-        let x = NdaVec::from_f32_slice(&vec![1.0; 16]);
+        let x = NdaVec::from_f32_slice(&[1.0; 16]);
         let (results, report) = nda_gemv_batch(&mat, &[x]);
         assert_eq!(results.len(), 1);
         assert_eq!(report.operations, 1);
@@ -900,7 +900,7 @@ mod tests {
     fn batch_gemv_report_fields_accurate() {
         let mat = make_quad_matrix(16, 32);
         let inputs: Vec<NdaVec> = (0..5)
-            .map(|_| NdaVec::from_f32_slice(&vec![0.5; 32]))
+            .map(|_| NdaVec::from_f32_slice(&[0.5; 32]))
             .collect();
         let (_, report) = nda_gemv_batch(&mat, &inputs);
         assert_eq!(report.matrix_rows, 16);

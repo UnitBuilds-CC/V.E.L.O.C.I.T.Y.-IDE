@@ -2032,7 +2032,7 @@ mod tests {
 
     #[test]
     fn compile_diagnostic_large_program_complexity() {
-        let many: Vec<_> = (0..250).map(|i| NdaNode::Int { value: i as i32 }).collect();
+        let many: Vec<_> = (0..250).map(|i| NdaNode::Int { value: i }).collect();
         let diag = compile_diagnostic(&many);
         assert_eq!(diag.estimated_complexity, "large");
         assert_eq!(diag.node_count, 250);
@@ -2202,7 +2202,7 @@ mod tests {
             f(&mut state).unwrap();
         }
         // After Let + Load, stack should have the value
-        assert!(state.stack.len() >= 1);
+        assert!(!state.stack.is_empty());
     }
 
     #[test]
@@ -2239,7 +2239,7 @@ mod tests {
             f(&mut state).unwrap();
         }
         // Add should produce a result on the stack
-        assert!(state.stack.len() >= 1);
+        assert!(!state.stack.is_empty());
     }
 
     #[test]

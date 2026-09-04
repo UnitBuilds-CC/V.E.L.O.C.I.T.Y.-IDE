@@ -62,7 +62,7 @@ fn bench_library_info(c: &mut criterion::Criterion) {
     let mut group = c.benchmark_group("library");
 
     group.bench_function("library_info", |bencher| {
-        bencher.iter(|| library_info())
+        bencher.iter(library_info)
     });
 
     group.bench_function("library_info_serialize", |bencher| {

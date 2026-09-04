@@ -1497,7 +1497,7 @@ mod inline_tests {
         let model = make_test_model();
         let syms = model.symbols_defined_by("src/main.rs");
         // main_fn has called_by = ["src/main.rs"], helper_fn has ["src/main.rs", "src/lib.rs"]
-        assert!(syms.len() >= 1);
+        assert!(!syms.is_empty());
     }
 
     #[test]

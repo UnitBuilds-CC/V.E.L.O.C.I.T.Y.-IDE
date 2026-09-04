@@ -3162,7 +3162,7 @@ mod tests {
         };
         let cloned = m.clone();
         assert_eq!(cloned.position, 42);
-        assert_eq!(cloned.gpu_active, true);
+        assert!(cloned.gpu_active);
         assert_eq!(cloned.layers_executed, 26);
         assert_eq!(cloned.total_kv_blocks, 520);
         assert_eq!(cloned.elapsed_us, 10000);
