@@ -90,6 +90,7 @@ fn bench_single_client_throughput() {
     );
 
     server.kill().ok();
+    server.wait().ok();
 }
 
 /// Benchmark: Concurrent client throughput
@@ -139,6 +140,7 @@ fn bench_concurrent_clients() {
     println!("Requests/sec: {:.2}", rps);
 
     server.kill().ok();
+    server.wait().ok();
 }
 
 /// Benchmark: Large payload handling
@@ -181,6 +183,7 @@ fn bench_large_payload() {
     );
 
     server.kill().ok();
+    server.wait().ok();
 }
 
 /// Benchmark: Memory usage under sustained load
@@ -217,4 +220,5 @@ fn bench_memory_under_load() {
     println!("Check process memory with: Get-Process velocity_mcp | Select-Object WorkingSet64");
 
     server.kill().ok();
+    server.wait().ok();
 }

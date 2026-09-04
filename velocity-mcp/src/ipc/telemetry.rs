@@ -476,7 +476,7 @@ mod tests {
     fn test_export_json() {
         let tc = TelemetryCollector::new();
         tc.counter_increment("test_counter", 42);
-        tc.gauge_set("test_gauge", 3.14);
+        tc.gauge_set("test_gauge", 3.5);
         tc.log(LogLevel::Info, "Test log");
 
         let json = tc.export_json();

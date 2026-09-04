@@ -178,7 +178,7 @@ impl VelocityApp {
                         });
                     });
                     if !dir.is_empty() {
-                        ui.label(RichText::new(&format!("  {}", dir)).size(9.0).color(palette.text_muted.gamma_multiply(0.7)));
+                        ui.label(RichText::new(format!("  {}", dir)).size(9.0).color(palette.text_muted.gamma_multiply(0.7)));
                     }
                 }
                 for &i in to_remove.iter().rev() {
@@ -440,7 +440,7 @@ impl VelocityApp {
                     });
             });
         } else if !self.chat.selected_model.is_empty() {
-            let short_model = self.chat.selected_model.rsplitn(2, '/').next().unwrap_or(&self.chat.selected_model);
+            let short_model = self.chat.selected_model.rsplit('/').next().unwrap_or(&self.chat.selected_model);
             ui.label(RichText::new(short_model).size(9.0).color(palette.text_muted));
         }
         ui.add_space(ITEM_SPACING);

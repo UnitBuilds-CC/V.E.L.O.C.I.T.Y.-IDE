@@ -230,7 +230,7 @@ pub fn init_tracing_with_config(config: &TracingConfig) {
     }
 }
 
-/// Convenience macro-like functions for common span patterns.
+// Convenience macro-like functions for common span patterns.
 
 /// Create a span for an MCP request.
 #[macro_export]

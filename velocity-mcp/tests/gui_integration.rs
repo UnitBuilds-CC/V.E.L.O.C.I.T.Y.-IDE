@@ -251,7 +251,7 @@ fn nav_location_tracks_positions() {
     };
 
     // Navigation history stack
-    let history = vec![loc1.clone(), loc2.clone(), loc3.clone()];
+    let history = [loc1.clone(), loc2.clone(), loc3.clone()];
     assert_eq!(history.len(), 3);
     assert_eq!(history[0].line, Some(42));
     assert_eq!(history[2].line, None);
