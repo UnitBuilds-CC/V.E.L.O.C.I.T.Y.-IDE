@@ -4,49 +4,52 @@
 //! Or use just: `just bench`
 
 use std::hint::black_box;
-use std::time::Duration;
+use std::path::PathBuf;
 
-/// Benchmark NDA vector operations.
-fn bench_nda_vec_ops(c: &mut criterion::Criterion) {
-    use velocity_ide::nda::NdaVec;
+/// Benchmark the quantized NDA matrix-vector product (core inference kernel).
+fn bench_nda_gemv(c: &mut criterion::Criterion) {
+    use velocity_ide::nda::{nda_gemv, NdaMatrix};
 
-    let mut group = c.benchmark_group("nda_vec");
+    let mut group = c.benchmark_group("nda_gemv");
 
-    let a = NdaVec::from_f32_slice(&[1.0; 896]);
-    let b = NdaVec::from_f32_slice(&[2.0; 896]);
+    // Synthetic v2-quad matrices with deterministic bitmaps (no RNG needed):
+    // sign/extra are the packed 2-bit-per-weight planes, sized (rows*cols)/8 B.
+    for (label, rows, cols) in [
+        ("gemv_896x896", 896_usize, 896_usize),
+        ("gemv_64x64", 64_usize, 64_usize),
+    ] {
+        let bitmap_bytes = (rows * cols).div_ceil(8);
+        let sign = vec![0b1010_1010u8; bitmap_bytes];
+        let extra = vec![0b0101_0101u8; bitmap_bytes];
+        let matrix = NdaMatrix::new_quad(rows, cols, 1.0, sign, extra);
+        let x: Vec<f32> = (0..cols).map(|i| (i as f32) * 0.001).collect();
 
-    group.bench_function("add_896", |bencher| {
-        bencher.iter(|| black_box(&a).add(black_box(&b)))
-    });
-
-    let a_small = NdaVec::from_f32_slice(&[1.0; 64]);
-    let b_small = NdaVec::from_f32_slice(&[2.0; 64]);
-
-    group.bench_function("add_64", |bencher| {
-        bencher.iter(|| black_box(&a_small).add(black_box(&b_small)))
-    });
+        group.bench_function(label, |bencher| {
+            bencher.iter(|| black_box(nda_gemv(&matrix, &x)))
+        });
+    }
 
     group.finish();
 }
 
-/// Benchmark tokenizer encoding.
+/// Benchmark tokenizer encoding using the bundled Qwen-coder tokenizer fixture.
 fn bench_tokenizer(c: &mut criterion::Criterion) {
     use velocity_ide::tokenizer::Tokenizer;
 
+    // The fixture ships with the repo; skip gracefully if it is absent (e.g. a
+    // partial checkout) so `cargo bench` never hard-fails on a missing model.
+    let path =
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../models/qwen-coder-0.5b/tokenizer.json");
+    let Ok(tokenizer) = Tokenizer::from_file(&path) else {
+        eprintln!("bench_tokenizer: skipping, fixture not found at {path:?}");
+        return;
+    };
+
     let mut group = c.benchmark_group("tokenizer");
 
-    // Create a minimal tokenizer for benchmarking
-    let vocab: Vec<String> = (0..256).map(|i| format!("tok_{}", i)).collect();
-    let merges: Vec<(String, String)> = vec![
-        ("tok_1".into(), "tok_2".into()),
-        ("tok_3".into(), "tok_4".into()),
-    ];
-    let tokenizer = Tokenizer::new(vocab, merges);
-
-    let input = "tok_1 tok_2 tok_3 tok_4 tok_5";
-
+    let input = "the quick brown fox jumps over the lazy dog";
     group.bench_function("encode_short", |bencher| {
-        bencher.iter(|| tokenizer.encode(black_box(input)))
+        bencher.iter(|| tokenizer.encode(black_box(input), false))
     });
 
     group.finish();
@@ -72,7 +75,7 @@ fn bench_library_info(c: &mut criterion::Criterion) {
 
 criterion::criterion_group!(
     benches,
-    bench_nda_vec_ops,
+    bench_nda_gemv,
     bench_tokenizer,
     bench_library_info,
 );
