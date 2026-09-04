@@ -9,6 +9,7 @@ use eframe::egui;
 use egui::RichText;
 
 use super::struct_def::VelocityApp;
+use super::tier3_common::{format_count, human_secs};
 use crate::editor::deploy_pipeline::{PipelineStage, StageStatus};
 use crate::editor::extensions::ExtensionState;
 use crate::editor::theme::{
@@ -25,22 +26,6 @@ enum ExtAction {
 }
 
 impl VelocityApp {
-    // --- Section header shared by the Tier-3 panels ---
-    pub(crate) fn tier3_header(
-        ui: &mut egui::Ui,
-        title: &str,
-        subtitle: &str,
-        accent: egui::Color32,
-        muted: egui::Color32,
-    ) {
-        ui.add_space(SECTION_SPACING);
-        ui.horizontal(|ui| {
-            ui.heading(RichText::new(title).strong().color(accent));
-            ui.label(RichText::new(subtitle).small().color(muted));
-        });
-        ui.separator();
-        ui.add_space(ITEM_SPACING);
-    }
 
     // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
     // Extensions -- registry manager
@@ -4487,36 +4472,3 @@ fn trigger_action_label(action: &crate::editor::triggers::TriggerAction) -> Stri
     }
 }
 
-fn human_secs(secs: u64) -> String {
-    if secs < 60 {
-        format!("{secs}s")
-    } else if secs < 3600 {
-        format!("{}m", secs / 60)
-    } else if secs < 86_400 {
-        format!("{}h", secs / 3600)
-    } else {
-        format!("{}d", secs / 86_400)
-    }
-}
-
-/// Format a count with K/M suffixes for readability.
-fn format_count(n: impl Into<u64>) -> String {
-    let n = n.into();
-    if n < 1_000 {
-        format!("{}", n)
-    } else if n < 1_000_000 {
-        let k = n as f64 / 1_000.0;
-        if k < 10.0 {
-            format!("{:.1}K", k)
-        } else {
-            format!("{:.0}K", k)
-        }
-    } else {
-        let m = n as f64 / 1_000_000.0;
-        if m < 10.0 {
-            format!("{:.1}M", m)
-        } else {
-            format!("{:.0}M", m)
-        }
-    }
-}
