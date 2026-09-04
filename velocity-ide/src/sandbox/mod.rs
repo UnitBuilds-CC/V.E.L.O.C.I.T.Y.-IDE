@@ -1680,7 +1680,7 @@ mod tests {
     fn estimate_resource_simple_program() {
         let nodes = vec![
             NdaNode::Int { value: 42 },
-            NdaNode::Float { value: 3.14 },
+            NdaNode::Float { value: 3.5 },
         ];
         let est = estimate_resource_usage(&nodes);
         assert_eq!(est.node_count, 2);
@@ -2223,7 +2223,7 @@ mod tests {
     fn estimate_resource_validation_clean_for_valid_program() {
         let nodes = vec![
             NdaNode::Int { value: 42 },
-            NdaNode::Float { value: 3.14 },
+            NdaNode::Float { value: 3.5 },
             NdaNode::Break,
         ];
         let est = estimate_resource_usage(&nodes);
@@ -2774,7 +2774,7 @@ mod tests {
         let site_map = SiteMap::open(
             &std::env::temp_dir().join("sandbox_float_sm"), 0
         ).unwrap();
-        let nodes = vec![NdaNode::Float { value: 3.14 }];
+        let nodes = vec![NdaNode::Float { value: 3.5 }];
         let result = NdaSandbox::run(&nodes, &input, &site_map);
         assert!(result.is_success());
         assert_eq!(*result.kind_counts.get("Float").unwrap_or(&0), 1);

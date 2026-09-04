@@ -1040,10 +1040,10 @@ mod tests {
 
     #[test]
     fn roundtrip_float() {
-        let node = NdaNode::Float { value: 3.14 };
+        let node = NdaNode::Float { value: 3.5 };
         let result = roundtrip(&node);
         match result {
-            NdaNode::Float { value } => assert!((value - 3.14).abs() < 1e-6),
+            NdaNode::Float { value } => assert!((value - 3.5).abs() < 1e-6),
             _ => panic!("expected Float"),
         }
     }
@@ -1693,7 +1693,7 @@ mod tests {
     fn batch_serialise_roundtrip() {
         let nodes = vec![
             NdaNode::Int { value: 42 },
-            NdaNode::Float { value: 3.14 },
+            NdaNode::Float { value: 3.5 },
             NdaNode::Break,
         ];
         let (serialized, report) = batch_serialise_nodes(&nodes);

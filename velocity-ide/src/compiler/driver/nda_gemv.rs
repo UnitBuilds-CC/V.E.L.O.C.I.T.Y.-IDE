@@ -1885,10 +1885,10 @@ mod tests {
     #[test]
     fn info_preserves_custom_scales() {
         let cfg = NdaGemvConfig {
-            k: 128, n: 64, version: 1, scales: [3.14, 2.71, 1.41],
+            k: 128, n: 64, version: 1, scales: [3.5, 2.71, 1.41],
         };
         let info = nda_gemv_info(&cfg);
-        assert_eq!(info.config.scales[0], 3.14);
+        assert_eq!(info.config.scales[0], 3.5);
         assert_eq!(info.config.scales[1], 2.71);
         assert_eq!(info.config.scales[2], 1.41);
     }

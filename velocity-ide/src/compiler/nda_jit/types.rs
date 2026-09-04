@@ -554,7 +554,7 @@ mod tests {
         let (sm, _dir) = make_test_sitemap();
         let mut state = JitState::new(&[1.0], &sm, 4);
         state.variables[0] = Some(JitVal::Scalar(42, 0));
-        state.variables[2] = Some(JitVal::Float(3.14));
+        state.variables[2] = Some(JitVal::Float(3.5));
         state.matrix_count = 3;
         state.norm_count = 1;
         state.loop_count = 2;
@@ -790,10 +790,10 @@ mod tests {
 
     #[test]
     fn jit_val_to_f32_vec() {
-        let v = JitVal::Float(3.14);
+        let v = JitVal::Float(3.5);
         let f32v = v.to_f32_vec();
         assert_eq!(f32v.len(), 1);
-        assert!((f32v[0] - 3.14).abs() < 1e-6);
+        assert!((f32v[0] - 3.5).abs() < 1e-6);
 
         let s = JitVal::Scalar(5, 0); // 5 * 2^0 = 5.0
         let f32s = s.to_f32_vec();
@@ -939,10 +939,10 @@ mod tests {
 
     #[test]
     fn jit_val_clone_preserves_float() {
-        let v = JitVal::Float(3.14);
+        let v = JitVal::Float(3.5);
         let v2 = v.clone();
         match v2 {
-            JitVal::Float(val) => assert!((val - 3.14).abs() < 1e-6),
+            JitVal::Float(val) => assert!((val - 3.5).abs() < 1e-6),
             _ => panic!("expected Float"),
         }
     }

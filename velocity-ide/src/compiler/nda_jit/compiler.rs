@@ -1250,7 +1250,7 @@ mod tests {
 
     #[test]
     fn bitwise_f32_xor_self_is_zero() {
-        let a = 3.14f32;
+        let a = 3.5f32;
         let result = bitwise_f32(BitwiseOp::Xor, a, a);
         assert_eq!(result.to_bits(), 0u32);
     }
@@ -1376,9 +1376,9 @@ mod tests {
 
     #[test]
     fn node_to_str_float() {
-        let s = node_to_str(&NdaNode::Float { value: 3.14 });
+        let s = node_to_str(&NdaNode::Float { value: 3.5 });
         assert!(s.starts_with("Float("));
-        assert!(s.contains("3.14"));
+        assert!(s.contains("3.5"));
     }
 
     #[test]
@@ -2128,7 +2128,7 @@ mod tests {
     #[test]
     fn jit_execute_float_pushes_float() {
         use crate::site_map::SiteMap;
-        let prog = compile(&[NdaNode::Float { value: 3.14 }]);
+        let prog = compile(&[NdaNode::Float { value: 3.5 }]);
         let sm = SiteMap::open(&std::env::temp_dir().join("jit_compiler_float_test"), 0).unwrap();
         let mut state = JitState::new(&[], &sm, 16);
         for f in &prog.fns {

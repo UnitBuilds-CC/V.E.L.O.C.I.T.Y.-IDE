@@ -522,12 +522,12 @@ mod tests {
 
     #[test]
     fn jit_val_info_float() {
-        let val = JitVal::Float(3.14);
+        let val = JitVal::Float(3.5);
         let info = jit_val_info(&val);
         assert!(info.is_float);
         assert!(!info.is_vector);
         assert!(!info.is_scalar);
-        assert_eq!(info.val_type, "float(3.14)");
+        assert_eq!(info.val_type, "float(3.5)");
         assert!(info.validation_issues.is_empty());
     }
 
@@ -1034,9 +1034,9 @@ mod tests {
 
     #[test]
     fn jit_val_info_float_negative() {
-        let info = jit_val_info(&JitVal::Float(-3.14));
+        let info = jit_val_info(&JitVal::Float(-3.5));
         assert!(info.is_float);
-        assert!((info.float_value.unwrap() - (-3.14)).abs() < 1e-6);
+        assert!((info.float_value.unwrap() - (-3.5)).abs() < 1e-6);
         assert!(info.validation_issues.is_empty());
     }
 

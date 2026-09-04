@@ -191,7 +191,7 @@ fn jit_compile_and_run_simple() {
 fn nda_node_variants_constructible() {
     use velocity_ide::site_map::NdaNode;
     let _int = NdaNode::Int { value: 42 };
-    let _float = NdaNode::Float { value: 3.14 };
+    let _float = NdaNode::Float { value: 3.5 };
     let _add = NdaNode::Add {
         lhs: Box::new(NdaNode::Int { value: 1 }),
         rhs: Box::new(NdaNode::Int { value: 2 }),

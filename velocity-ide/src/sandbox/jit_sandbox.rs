@@ -646,8 +646,8 @@ mod tests {
 
     #[test]
     fn structural_hash_same_float_same_hash() {
-        let n1 = vec![NdaNode::Float { value: 3.14 }];
-        let n2 = vec![NdaNode::Float { value: 3.14 }];
+        let n1 = vec![NdaNode::Float { value: 3.5 }];
+        let n2 = vec![NdaNode::Float { value: 3.5 }];
         assert_eq!(ast_structural_hash(&n1), ast_structural_hash(&n2));
     }
 

@@ -1958,7 +1958,7 @@ mod tests {
         let mut v = MerkleVerifier::new();
         let n1 = NdaNode::Int { value: 10 };
         let n2 = NdaNode::Int { value: 20 };
-        let n3 = NdaNode::Float { value: 3.14 };
+        let n3 = NdaNode::Float { value: 3.5 };
         v.push_leaf(&n1);
         v.push_leaf(&n2);
         v.push_leaf(&n3);
@@ -2495,7 +2495,7 @@ mod tests {
     fn hash_all_leaf_variants_deterministic() {
         let nodes = vec![
             NdaNode::Int { value: 42 },
-            NdaNode::Float { value: 3.14 },
+            NdaNode::Float { value: 3.5 },
             NdaNode::Call { target: 123 },
             NdaNode::Load { name_hash: 456 },
             NdaNode::Break,
@@ -2770,7 +2770,7 @@ mod tests {
         let bytes = estimated_memory_bytes(&int_node);
         assert_eq!(bytes, std::mem::size_of::<NdaNode>());
 
-        let float_node = NdaNode::Float { value: 3.14 };
+        let float_node = NdaNode::Float { value: 3.5 };
         assert_eq!(estimated_memory_bytes(&float_node), std::mem::size_of::<NdaNode>());
     }
 
@@ -2864,7 +2864,7 @@ mod tests {
     fn hash_new_variants_deterministic() {
         // Each new node variant should produce the same hash on repeated calls
         let nodes: Vec<NdaNode> = vec![
-            NdaNode::Float { value: 3.14 },
+            NdaNode::Float { value: 3.5 },
             NdaNode::Break,
             NdaNode::Load { name_hash: 0xABCD },
             NdaNode::Spawn { scope_hash: 0x1234 },
