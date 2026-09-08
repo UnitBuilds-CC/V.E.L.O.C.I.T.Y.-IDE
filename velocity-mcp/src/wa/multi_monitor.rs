@@ -34,6 +34,8 @@ pub struct MonitorInfo {
     pub physical_height: u32,
     /// Refresh rate in Hz.
     pub refresh_rate: u32,
+    /// Colour depth reported by the display device (bits per pixel).
+    pub bits_per_pixel: u32,
     /// Orientation.
     pub orientation: MonitorOrientation,
 }
@@ -298,6 +300,7 @@ fn parse_monitor_list(json: &str) -> Vec<MonitorInfo> {
                     physical_width: (bw as f64 * dpi_scale) as u32,
                     physical_height: (bh as f64 * dpi_scale) as u32,
                     refresh_rate: 0,
+                    bits_per_pixel: m.bits_per_pixel.unwrap_or(32),
                     orientation: if bh > bw {
                         MonitorOrientation::Portrait
                     } else {
@@ -388,6 +391,7 @@ mod tests {
                 physical_width: 3840,
                 physical_height: 2160,
                 refresh_rate: 60,
+                bits_per_pixel: 32,
                 orientation: MonitorOrientation::Landscape,
             },
             MonitorInfo {
@@ -412,6 +416,7 @@ mod tests {
                 physical_width: 1920,
                 physical_height: 1080,
                 refresh_rate: 144,
+                bits_per_pixel: 32,
                 orientation: MonitorOrientation::Landscape,
             },
         ])

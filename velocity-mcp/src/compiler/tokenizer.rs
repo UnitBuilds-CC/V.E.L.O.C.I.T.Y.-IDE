@@ -170,6 +170,11 @@ impl NdaEmbeddingTable {
         let idx = (token_id as usize) % self.active_embeddings.len();
         (&self.active_embeddings[idx], &self.pos_embeddings[idx])
     }
+
+    /// The embedding dimension (number of ternary weights) each token maps to.
+    pub fn embedding_dim(&self) -> usize {
+        self.embedding_dim
+    }
 }
 
 /// The V.E.L.O.C.I.T.Y. NDA Embedded Tokenizer pipeline.

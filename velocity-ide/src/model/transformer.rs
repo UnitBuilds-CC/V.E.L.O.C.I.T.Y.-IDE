@@ -322,8 +322,14 @@ fn silu(x: f32) -> f32 {
 /// K is retrieved from the NDA-KV cache (also v2 quad bitmaps).
 /// The dot product is computed entirely with integer popcount — zero FP32 in the hot loop.
 ///
+/// Every KV block's Merkle hash chain is verified as it is read, so a tampered
+/// cache entry contributes a zero score instead of being attended over.
+///
+/// Requires `h_start` to be byte-aligned — the full-width KV bitmaps are
+/// addressed at `h_start / 8` — so callers must only use this for a
+/// byte-aligned `head_dim`.
+///
 /// Returns the attention output vector of length `head_dim`.
-#[allow(dead_code)]
 #[allow(clippy::needless_range_loop)]
 fn attention_head(
     q_sign: &[u8],
@@ -712,6 +718,10 @@ pub struct Transformer {
     kv_cache: Vec<KvLayer>,
     scratch: TransformerScratch,
     gpu_pipeline: Option<crate::compiler::driver::VulkanModelPipeline>,
+    /// Selects [`attention_head`] (integer popcount + KV hash-chain
+    /// verification) over [`attention_head_float`] in the CPU attention loop.
+    /// Opt-in — see [`Transformer::set_bitwise_attention`].
+    bitwise_attention: bool,
 }
 
 impl Transformer {
@@ -746,12 +756,20 @@ impl Transformer {
             Self::try_build_gpu_pipeline(&config, &weights)
         };
 
+        // Opt-in integer attention path. Gated on a byte-aligned head_dim
+        // because `attention_head` addresses the KV bitmaps by whole bytes.
+        let bitwise_attention = config.head_dim.is_multiple_of(8)
+            && std::env::var("VELOCITY_BITWISE_ATTN")
+                .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+                .unwrap_or(false);
+
         Self {
             config,
             weights,
             kv_cache,
             scratch,
             gpu_pipeline,
+            bitwise_attention,
         }
     }
 
@@ -907,6 +925,32 @@ impl Transformer {
         for layer in &mut self.kv_cache {
             layer.blocks.clear();
         }
+    }
+
+    /// True when the integer (bitwise-popcount) attention path is active.
+    pub fn bitwise_attention(&self) -> bool {
+        self.bitwise_attention
+    }
+
+    /// Switch between the FP32 and the integer attention paths at runtime.
+    ///
+    /// The integer path quantises Q with the same v2 quad encoder the KV cache
+    /// already applies to K, so Q·K becomes pure popcount with no FP32 in the
+    /// dot product, and each KV block's Merkle hash chain is verified on read.
+    /// It is opt-in because 2-bit Q quantisation is lossy relative to FP32.
+    ///
+    /// Enabling is refused when `head_dim` is not a whole number of bytes:
+    /// [`attention_head`] indexes the full-width KV bitmaps at `h_start / 8`,
+    /// which only lands on a bit boundary for byte-aligned heads.
+    pub fn set_bitwise_attention(&mut self, enabled: bool) {
+        if enabled && !self.config.head_dim.is_multiple_of(8) {
+            log::warn!(
+                "bitwise attention unavailable: head_dim {} is not byte-aligned",
+                self.config.head_dim
+            );
+            return;
+        }
+        self.bitwise_attention = enabled;
     }
 
     /// Process one token at position `pos` and return a reference to the logit vector.
@@ -1077,6 +1121,7 @@ impl Transformer {
             let attn_scale = (hd as f32).sqrt().recip();
             let kv_layer = &self.kv_cache[layer_idx];
             let heads_per_kv = cfg.n_heads / cfg.n_kv_heads;
+            let bitwise = self.bitwise_attention;
             for head in 0..cfg.n_heads {
                 let hs = head * hd;
                 let he = hs + hd;
@@ -1084,14 +1129,26 @@ impl Transformer {
                 let hs_kv = kv_head_idx * hd;
                 let he_kv = hs_kv + hd;
 
-                attention_head_float(
-                    &self.scratch.q[hs..he],
-                    kv_layer,
-                    hs_kv,
-                    he_kv,
-                    attn_scale,
-                    &mut self.scratch.attn_out[hs..he],
-                );
+                if bitwise {
+                    // Quantise this head's Q with the same v2 quad encoder the
+                    // KV cache applies to K, then take the popcount dot product.
+                    let q_head = &self.scratch.q[hs..he];
+                    let q_scale = q_head.iter().map(|v| v.abs()).fold(0.0_f32, f32::max);
+                    let (q_sign, q_extra) = pack_vector(q_head, q_scale);
+                    let head_out = attention_head(
+                        &q_sign, &q_extra, q_scale, kv_layer, hs_kv, he_kv, attn_scale,
+                    );
+                    self.scratch.attn_out[hs..he].copy_from_slice(&head_out);
+                } else {
+                    attention_head_float(
+                        &self.scratch.q[hs..he],
+                        kv_layer,
+                        hs_kv,
+                        he_kv,
+                        attn_scale,
+                        &mut self.scratch.attn_out[hs..he],
+                    );
+                }
             }
 
             // 6. Output projection + residual

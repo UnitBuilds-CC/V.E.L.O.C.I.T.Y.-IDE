@@ -5,24 +5,6 @@ use crate::js::scope::ScopeRef;
 use crate::js::vm::JsValue;
 use std::collections::HashMap;
 
-#[allow(dead_code)]
-pub(super) fn call_object_method(
-    map: &HashMap<String, JsValue>,
-    method: &str,
-    _args: &[JsValue],
-) -> EvalResult {
-    Ok(match method {
-        "hasOwnProperty" => {
-            let key = _args.first().map(to_string).unwrap_or_default();
-            JsValue::Boolean(map.contains_key(&key))
-        }
-        "keys" => JsValue::Array(map.keys().map(|k| JsValue::String(k.clone())).collect()),
-        "values" => JsValue::Array(map.values().cloned().collect()),
-        "toString" | "toLocaleString" => JsValue::String("[object Object]".to_string()),
-        _ => JsValue::Undefined,
-    })
-}
-
 pub(super) fn call_map_method(
     map: &mut HashMap<String, JsValue>,
     method: &str,
@@ -380,25 +362,6 @@ pub(super) fn call_promise_method(
         }
         _ => Ok(JsValue::Undefined),
     }
-}
-
-#[allow(dead_code)]
-pub(super) fn call_date_method(
-    map: &HashMap<String, JsValue>,
-    method: &str,
-    _args: &[JsValue],
-) -> EvalResult {
-    let ts = if let Some(JsValue::Number(n)) = map.get("__value__") {
-        *n
-    } else {
-        0.0
-    };
-    Ok(match method {
-        "getTime" | "valueOf" => JsValue::Number(ts),
-        "toISOString" | "toJSON" => JsValue::String("1970-01-01T00:00:00.000Z".to_string()),
-        "toString" => JsValue::String(format!("Date({})", ts)),
-        _ => JsValue::Undefined,
-    })
 }
 
 pub(super) fn call_generator_method(map: &HashMap<String, JsValue>, method: &str) -> EvalResult {
@@ -861,14 +824,16 @@ mod tests {
     #[test]
     fn object_has_own_property_true() {
         let m = make_map_obj(vec![("foo", JsValue::Number(1.0))]);
-        let r = call_object_method(&m, "hasOwnProperty", &[JsValue::String("foo".into())]).unwrap();
+        let r = call_object_method_enhanced(&m, "hasOwnProperty", &[JsValue::String("foo".into())])
+            .unwrap();
         assert_eq!(r, JsValue::Boolean(true));
     }
 
     #[test]
     fn object_has_own_property_false() {
         let m = make_map_obj(vec![("foo", JsValue::Number(1.0))]);
-        let r = call_object_method(&m, "hasOwnProperty", &[JsValue::String("bar".into())]).unwrap();
+        let r = call_object_method_enhanced(&m, "hasOwnProperty", &[JsValue::String("bar".into())])
+            .unwrap();
         assert_eq!(r, JsValue::Boolean(false));
     }
 
@@ -878,7 +843,7 @@ mod tests {
             ("a", JsValue::Number(1.0)),
             ("b", JsValue::Number(2.0)),
         ]);
-        let r = call_object_method(&m, "keys", &[]).unwrap();
+        let r = call_object_method_enhanced(&m, "keys", &[]).unwrap();
         if let JsValue::Array(arr) = r {
             assert_eq!(arr.len(), 2);
             let mut keys: Vec<String> = Vec::new();
@@ -895,7 +860,7 @@ mod tests {
     #[test]
     fn object_values() {
         let m = make_map_obj(vec![("x", JsValue::Number(42.0))]);
-        let r = call_object_method(&m, "values", &[]).unwrap();
+        let r = call_object_method_enhanced(&m, "values", &[]).unwrap();
         if let JsValue::Array(arr) = r {
             assert_eq!(arr.len(), 1);
             assert_eq!(arr[0], JsValue::Number(42.0));
@@ -907,21 +872,21 @@ mod tests {
     #[test]
     fn object_to_string() {
         let m = make_map_obj(vec![]);
-        let r = call_object_method(&m, "toString", &[]).unwrap();
+        let r = call_object_method_enhanced(&m, "toString", &[]).unwrap();
         assert_eq!(r, JsValue::String("[object Object]".into()));
     }
 
     #[test]
     fn object_to_locale_string() {
         let m = make_map_obj(vec![]);
-        let r = call_object_method(&m, "toLocaleString", &[]).unwrap();
+        let r = call_object_method_enhanced(&m, "toLocaleString", &[]).unwrap();
         assert_eq!(r, JsValue::String("[object Object]".into()));
     }
 
     #[test]
     fn object_unknown_method() {
         let m = make_map_obj(vec![]);
-        let r = call_object_method(&m, "nope", &[]).unwrap();
+        let r = call_object_method_enhanced(&m, "nope", &[]).unwrap();
         assert_eq!(r, JsValue::Undefined);
     }
 
@@ -1321,35 +1286,35 @@ mod tests {
     #[test]
     fn date_get_time() {
         let d = make_date(1000.0);
-        let r = call_date_method(&d, "getTime", &[]).unwrap();
+        let r = call_date_method_enhanced(&d, "getTime", &[]).unwrap();
         assert_eq!(r, JsValue::Number(1000.0));
     }
 
     #[test]
     fn date_value_of() {
         let d = make_date(500.0);
-        let r = call_date_method(&d, "valueOf", &[]).unwrap();
+        let r = call_date_method_enhanced(&d, "valueOf", &[]).unwrap();
         assert_eq!(r, JsValue::Number(500.0));
     }
 
     #[test]
     fn date_to_iso_string() {
         let d = make_date(0.0);
-        let r = call_date_method(&d, "toISOString", &[]).unwrap();
+        let r = call_date_method_enhanced(&d, "toISOString", &[]).unwrap();
         assert_eq!(r, JsValue::String("1970-01-01T00:00:00.000Z".into()));
     }
 
     #[test]
     fn date_to_string_basic() {
         let d = make_date(0.0);
-        let r = call_date_method(&d, "toString", &[]).unwrap();
+        let r = call_date_method_enhanced(&d, "toString", &[]).unwrap();
         assert_eq!(r, JsValue::String("Date(0)".into()));
     }
 
     #[test]
     fn date_unknown_method() {
         let d = make_date(0.0);
-        let r = call_date_method(&d, "nope", &[]).unwrap();
+        let r = call_date_method_enhanced(&d, "nope", &[]).unwrap();
         assert_eq!(r, JsValue::Undefined);
     }
 

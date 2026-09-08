@@ -425,6 +425,33 @@ pub fn execute_sequence(sequence: &InputSequence) -> InputExecutionResult {
     }
 }
 
+/// Execute an input sequence through the generated PowerShell script.
+///
+/// Portable counterpart to [`execute_sequence`]: the sequence is rendered by
+/// [`build_input_sequence_script`] and driven by PowerShell instead of the
+/// native `SendInput` path. This keeps the script builder honest and gives
+/// callers an escape hatch when native injection is blocked.
+pub fn execute_sequence_script(sequence: &InputSequence) -> InputExecutionResult {
+    let script = build_input_sequence_script(sequence);
+    let expected = sequence.events.len();
+    match run_ps_script(&script) {
+        Ok(output) => InputExecutionResult {
+            success: true,
+            events_sent: expected,
+            detail: if output.trim().is_empty() {
+                "input sequence executed via PowerShell script".to_string()
+            } else {
+                output.trim().to_string()
+            },
+        },
+        Err(err) => InputExecutionResult {
+            success: false,
+            events_sent: 0,
+            detail: err,
+        },
+    }
+}
+
 /// T3d: Native Win32 SendInput execution — zero PowerShell overhead.
 /// Uses user32.dll SendInput for mouse and keyboard injection.
 #[cfg(target_os = "windows")]

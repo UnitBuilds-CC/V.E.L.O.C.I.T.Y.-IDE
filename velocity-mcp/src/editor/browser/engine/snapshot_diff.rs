@@ -335,7 +335,15 @@ pub fn extract_snapshot_value(
         "title" => Ok(snapshot.title.clone()),
         "summary" => Ok(snapshot.summary.clone()),
         "url" => Ok(snapshot.url.clone()),
-        "element" => {
+        "field" | "field_value" => {
+            let req_field = field
+                .or(name)
+                .ok_or_else(|| "extract field requires field name".to_string())?;
+            let form_field = find_form_field(snapshot, req_field)
+                .ok_or_else(|| format!("extract field not found: '{}'", req_field))?;
+            Ok(form_field.value.clone())
+        }
+        "element" | "element_value" | "element_name" | "element_url" => {
             let req_role = role.ok_or_else(|| "extract element requires role".to_string())?;
             let req_name = name.ok_or_else(|| "extract element requires name".to_string())?;
             let element = find_element(snapshot, req_role, req_name).ok_or_else(|| {
@@ -344,15 +352,11 @@ pub fn extract_snapshot_value(
                     req_role, req_name
                 )
             })?;
-            Ok(element.value.clone())
-        }
-        "field" => {
-            let req_field = field
-                .or(name)
-                .ok_or_else(|| "extract field requires field name".to_string())?;
-            let form_field = find_form_field(snapshot, req_field)
-                .ok_or_else(|| format!("extract field not found: '{}'", req_field))?;
-            Ok(form_field.value.clone())
+            match source.to_ascii_lowercase().as_str() {
+                "element_name" => Ok(element.name.clone()),
+                "element_url" => Ok(element.target_url.clone().unwrap_or_default()),
+                _ => Ok(element.value.clone()),
+            }
         }
         other => Err(format!("unsupported extract source '{}'", other)),
     }

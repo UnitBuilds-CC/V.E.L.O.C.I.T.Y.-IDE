@@ -496,49 +496,6 @@ pub fn wait_for_session(
     }
 }
 
-#[allow(dead_code)]
-fn extract_snapshot_value(
-    snapshot: &BrowserPageSnapshot,
-    source: &str,
-    role: Option<&str>,
-    name: Option<&str>,
-    field: Option<&str>,
-) -> Result<String, String> {
-    if source.eq_ignore_ascii_case("title") {
-        return Ok(snapshot.title.clone());
-    }
-    if source.eq_ignore_ascii_case("summary") {
-        return Ok(snapshot.summary.clone());
-    }
-    if source.eq_ignore_ascii_case("field_value") {
-        let field_name = field
-            .ok_or_else(|| "extract_text field is required for source=field_value".to_string())?;
-        let matched = find_form_field(snapshot, field_name)
-            .ok_or_else(|| format!("workflow extract field not found: '{}'", field_name))?;
-        return Ok(matched.value.clone());
-    }
-
-    let role =
-        role.ok_or_else(|| format!("extract_text role is required for source='{}'", source))?;
-    let name =
-        name.ok_or_else(|| format!("extract_text name is required for source='{}'", source))?;
-    let matched = find_element(snapshot, role, name).ok_or_else(|| {
-        format!(
-            "workflow extract target not found: role='{}' name='{}'",
-            role, name
-        )
-    })?;
-    if source.eq_ignore_ascii_case("element_name") {
-        Ok(matched.name.clone())
-    } else if source.eq_ignore_ascii_case("element_value") {
-        Ok(matched.value.clone())
-    } else if source.eq_ignore_ascii_case("element_url") {
-        Ok(matched.target_url.clone().unwrap_or_default())
-    } else {
-        Err(format!("unsupported workflow extract source: '{}'", source))
-    }
-}
-
 pub fn apply_fill_field(
     state: &mut BrowserReplayState,
     field_name: &str,

@@ -345,8 +345,9 @@ fn parse_forms(url: &str, html: &str) -> Vec<BrowserForm> {
     forms
 }
 
-#[allow(dead_code)]
-fn parse_html_to_snapshot(
+/// Convenience overload of [`parse_html_to_snapshot_with_runtime_state`] for callers
+/// that have no runtime state or protocol events to fold into the snapshot.
+pub fn parse_html_to_snapshot(
     url: &str,
     html: &str,
     cookies: &[BrowserCookie],

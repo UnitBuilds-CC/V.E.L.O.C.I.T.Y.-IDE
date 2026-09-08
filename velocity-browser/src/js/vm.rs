@@ -620,7 +620,23 @@ impl JsVirtualMachine {
                 // Graceful: log the error but don't propagate parse/eval failures
                 // This prevents a single broken script from crashing the entire page
                 if e.contains("unexpected token") || e.contains("expected ") {
-                    // Parse error - return undefined, don't crash
+                    // The full parser gave up. Before dropping the statement on the
+                    // floor, fall back to the simple `identifier = expression` shape so
+                    // an assignment inside a script we cannot fully parse still binds a
+                    // value instead of silently vanishing.
+                    if let Some((lhs, rhs)) = split_simple_assignment(statement) {
+                        let rhs = rhs.trim();
+                        if let Ok(value) = crate::js::interpreter::eval_script(rhs, &self.scope_ref)
+                        {
+                            {
+                                let mut s = self.scope_ref.lock_safe();
+                                s.locals.insert(lhs.to_string(), value.clone());
+                            }
+                            self.global_scope.insert(lhs.to_string(), value.clone());
+                            return Ok(value);
+                        }
+                    }
+                    // Still unparseable - return undefined, don't crash
                     return Ok(JsValue::Undefined);
                 }
                 return Err(e);
@@ -654,7 +670,6 @@ impl JsVirtualMachine {
 
 /// Split `x = expr` into ("x", "expr") when the left side is a simple
 /// identifier and the `=` is a real assignment (not part of ==/!=/<=/>=).
-#[allow(dead_code)]
 fn split_simple_assignment(stmt: &str) -> Option<(&str, &str)> {
     let bytes = stmt.as_bytes();
     for i in 0..bytes.len() {
@@ -673,7 +688,6 @@ fn split_simple_assignment(stmt: &str) -> Option<(&str, &str)> {
     None
 }
 
-#[allow(dead_code)]
 fn is_identifier(s: &str) -> bool {
     let mut chars = s.chars();
     match chars.next() {

@@ -262,9 +262,24 @@ pub fn apply_alibi_bias_i32(scores: &mut [i32], q_pos: usize, shift: u8, scale_s
     }
 }
 
+/// Decode one v2 quad element to its signed level: `{-2, -1, +1, +2}`.
+///
+/// `sign` picks the polarity and `XNOR(sign, extra)` selects magnitude 2 over 1
+/// — the same decode the attention and GEMV bit paths use.
+#[inline]
+fn decode_quad(sign: bool, extra: bool) -> i32 {
+    let mag = if sign == extra { 2 } else { 1 };
+    if sign {
+        mag
+    } else {
+        -mag
+    }
+}
+
 #[derive(Clone)]
 pub struct SiluLut {
-    #[allow(dead_code)]
+    /// SiLU output level per v2 quad input, indexed by `(sign << 1) | extra`:
+    /// `-2 → -1`, `-1 → -1`, `+1 → +1`, `+2 → +2`.
     table: [i32; 4],
 }
 
@@ -273,6 +288,15 @@ impl SiluLut {
         Self {
             table: [-1, -1, 1, 2],
         }
+    }
+
+    /// The four SiLU output levels, indexed by `(sign << 1) | extra`.
+    ///
+    /// This is the declarative form of the mapping [`SiluLut::apply`] computes
+    /// branch-free; exposed so callers decoding an NDA vector can push an
+    /// individual quad element through SiLU without re-deriving the bit trick.
+    pub fn table(&self) -> &[i32; 4] {
+        &self.table
     }
 
     pub fn apply(&self, x: &NdaVec) -> NdaVec {
@@ -287,12 +311,30 @@ impl SiluLut {
                 *last &= mask;
             }
         }
+        debug_assert!(
+            self.matches_table(x, &sign, &extra),
+            "SiLU bit trick diverged from the level table"
+        );
         NdaVec {
             len: x.len,
             log2_scale: x.log2_scale,
             sign,
             extra: extra.into(),
         }
+    }
+
+    /// Element-wise cross-check that the branch-free `extra |= !sign` trick in
+    /// [`SiluLut::apply`] reproduces [`SiluLut::table`] exactly. Debug builds
+    /// only — the release path stays pure bitwise.
+    fn matches_table(&self, x: &NdaVec, sign: &[u8], extra: &[u8]) -> bool {
+        (0..x.len).all(|i| {
+            let byte = i / 8;
+            let mask = 1u8 << (i % 8);
+            let want = self.table[usize::from((x.sign[byte] & mask) != 0) << 1
+                | usize::from((x.extra[byte] & mask) != 0)];
+            let got = decode_quad((sign[byte] & mask) != 0, (extra[byte] & mask) != 0);
+            want == got
+        })
     }
 }
 

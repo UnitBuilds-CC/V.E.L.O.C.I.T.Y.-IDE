@@ -17,7 +17,6 @@ thread_local! {
 }
 
 #[derive(Debug, Clone)]
-#[allow(dead_code)]
 struct TimerEntry {
     kind: TimerKind,
     delay_ms: f64,
@@ -118,10 +117,15 @@ pub(super) fn flush_timers() -> u32 {
         let mut v: Vec<_> = reg
             .iter()
             .filter(|(_, e)| !e.cancelled)
-            .map(|(id, e)| (*id, e.kind, e.callback.clone()))
+            .map(|(id, e)| (*id, e.kind, e.delay_ms, e.callback.clone()))
             .collect();
-        v.sort_by_key(|(id, _, _)| *id);
-        v
+        // Fire in the order a browser would: shortest delay first, then
+        // registration order to break ties. `delay_ms` is what makes that
+        // possible — id order alone would run a 5s timeout before a 0s one.
+        v.sort_by(|a, b| a.2.total_cmp(&b.2).then(a.0.cmp(&b.0)));
+        v.into_iter()
+            .map(|(id, kind, _, cb)| (id, kind, cb))
+            .collect()
     });
 
     let mut executed = 0u32;

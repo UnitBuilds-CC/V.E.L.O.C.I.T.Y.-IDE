@@ -54,7 +54,21 @@ fn all_advertised_tools_are_dispatchable() {
 
         // Call with empty arguments — the tool may fail (missing required args),
         // but it should NOT return "Unknown tool".
-        let result = call_tool_in_workspace(&root, &tool.name, &json!({}));
+        //
+        // The two capture tools default `outputPath` to a *relative* file name, so
+        // an empty-arg call grabs the real screen and drops a ~7 MB bitmap into the
+        // crate directory on every `cargo test`. Aim them at the scratch root
+        // instead — dispatch is still exercised, without leaking artifacts.
+        let args = match tool.name.as_str() {
+            "wa_screenshot" => json!({
+                "outputPath": root.join("screenshot.bmp").to_string_lossy()
+            }),
+            "wa_browser_screenshot" => json!({
+                "outputPath": root.join("browser_screenshot.png").to_string_lossy()
+            }),
+            _ => json!({}),
+        };
+        let result = call_tool_in_workspace(&root, &tool.name, &args);
         match &result {
             Ok(_) => {} // Tool accepted empty args (rare but valid)
             Err(e) => {

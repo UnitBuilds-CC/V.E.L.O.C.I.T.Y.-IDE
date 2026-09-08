@@ -364,7 +364,7 @@ fn parse_event_listen_result(json: &str, elapsed: Duration) -> EventListenResult
     }
     match serde_json::from_str::<PsEventResult>(json) {
         Ok(r) => {
-            let events = r
+            let events: Vec<UiaEvent> = r
                 .events
                 .unwrap_or_default()
                 .into_iter()
@@ -386,12 +386,23 @@ fn parse_event_listen_result(json: &str, elapsed: Duration) -> EventListenResult
                     }
                 })
                 .collect();
+            // Cross-check the script-reported event count against what actually
+            // parsed, so silent truncation/parse loss is surfaced, not swallowed.
+            let mut errors: Vec<String> = Vec::new();
+            if let Some(reported) = r.event_count {
+                if reported != events.len() {
+                    errors.push(format!(
+                        "event count mismatch: script reported {reported}, parsed {}",
+                        events.len()
+                    ));
+                }
+            }
             EventListenResult {
                 events,
                 listen_duration: elapsed,
                 hit_event_limit: r.hit_limit.unwrap_or(false),
                 timed_out: r.timed_out.unwrap_or(true),
-                errors: Vec::new(),
+                errors,
             }
         }
         Err(e) => EventListenResult {

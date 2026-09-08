@@ -3,7 +3,6 @@ use std::io::{Read, Write};
 use std::net::TcpStream;
 
 /// WebSocket opcodes per RFC 6455.
-#[allow(dead_code)]
 const OPCODE_CONTINUATION: u8 = 0x0;
 const OPCODE_TEXT: u8 = 0x1;
 const OPCODE_BINARY: u8 = 0x2;
@@ -30,6 +29,16 @@ impl WsFrame {
     /// Whether this is a close frame.
     pub fn is_close(&self) -> bool {
         self.opcode == OPCODE_CLOSE
+    }
+
+    /// Whether this frame continues a fragmented message (opcode 0x0).
+    pub fn is_continuation(&self) -> bool {
+        self.opcode == OPCODE_CONTINUATION
+    }
+
+    /// Whether more fragments of this message are still outstanding.
+    pub fn is_fragment(&self) -> bool {
+        !self.fin
     }
 }
 
@@ -180,6 +189,44 @@ impl NativeWsClient {
             opcode,
             payload,
         })
+    }
+
+    /// Read the next complete message, reassembling RFC 6455 fragments.
+    ///
+    /// A fragmented message arrives as one frame carrying the real opcode with
+    /// `fin = false`, followed by continuation frames (`opcode = 0x0`) whose
+    /// payloads are appended until a frame with `fin = true` closes it. Reading
+    /// raw [`recv_frame`]s instead would silently drop every fragment after the
+    /// first, because [`WsFrame::text`] only decodes `OPCODE_TEXT` frames.
+    pub fn recv_message(&mut self) -> Result<WsFrame, Box<dyn std::error::Error + Send + Sync>> {
+        let mut frame = self.recv_frame()?;
+        if frame.is_close() || !frame.is_fragment() {
+            return Ok(frame);
+        }
+        let mut payload = std::mem::take(&mut frame.payload);
+        loop {
+            let next = self.recv_frame()?;
+            if next.is_close() {
+                frame.payload = payload;
+                frame.fin = true;
+                return Ok(frame);
+            }
+            // Control frames may be interleaved inside a fragmented message and
+            // are never fragmented themselves; ping was already auto-answered by
+            // `recv_frame`, so just skip past them.
+            if next.opcode == OPCODE_PING || next.opcode == OPCODE_PONG {
+                continue;
+            }
+            if !next.is_continuation() {
+                return Err("websocket protocol error: expected a continuation frame".into());
+            }
+            payload.extend_from_slice(&next.payload);
+            if next.fin {
+                frame.payload = payload;
+                frame.fin = true;
+                return Ok(frame);
+            }
+        }
     }
 
     /// Low-level: send a masked frame with given opcode.

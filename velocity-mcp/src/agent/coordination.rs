@@ -216,6 +216,17 @@ impl CoordinationBus {
             .collect()
     }
 
+    /// Get all current file locks with the owning agent id and the unix-seconds
+    /// timestamp at which each lock was claimed, enabling stale-lock detection.
+    pub fn lock_details(&self) -> Vec<(PathBuf, String, u64)> {
+        let state = self.state.lock_safe();
+        state
+            .file_locks
+            .iter()
+            .map(|(path, lock)| (path.clone(), lock.agent_id.clone(), lock.claimed_at))
+            .collect()
+    }
+
     /// Get pending help requests for a specific agent.
     pub fn pending_help_for(&self, agent_id: &str) -> Vec<(String, String)> {
         let state = self.state.lock_safe();

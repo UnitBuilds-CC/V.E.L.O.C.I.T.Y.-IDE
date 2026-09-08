@@ -203,6 +203,18 @@ pub fn load_script(path: &Path) -> Result<WaScript, Box<dyn Error>> {
     Ok(serde_json::from_str(&content)?)
 }
 
+/// Load a script by name, preferring the NDA form and falling back to the legacy
+/// `.wa.json` layout — the script mirror of [`load_snapshot`].
+pub fn load_script_by_name(root: &Path, name: &str) -> Result<WaScript, Box<dyn Error>> {
+    let nda_path = script_nda_path(root, name)?;
+    if nda_path.exists() {
+        return crate::wa::nda::deserialize_script_nda(&read_nda_text(&nda_path)?);
+    }
+    let legacy_path = script_json_legacy_path(root, name)?;
+    let content = fs::read_to_string(legacy_path)?;
+    Ok(serde_json::from_str(&content)?)
+}
+
 pub fn create_session_report(
     root: &Path,
     session_id: &str,

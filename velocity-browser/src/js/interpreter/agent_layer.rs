@@ -129,7 +129,6 @@ fn nth_child_selector(snaps: &[DomElementSnapshot], node_id: usize) -> String {
 
 /// An interactive element as seen by an agent — compact, semantic, actionable.
 #[derive(Debug, Clone)]
-#[allow(dead_code)]
 pub(super) struct InteractiveElement {
     pub node_id: usize,
     pub role: &'static str,
@@ -192,15 +191,17 @@ pub(super) fn get_interactive_elements() -> Vec<InteractiveElement> {
             value,
             selector,
             disabled,
-            visible: true,
+            visible: is_visible(snap),
         });
     }
 
-    // Sort by actionability: buttons/links first, then inputs, then others.
+    // Sort by actionability: visible first, then buttons/links, then inputs.
     elements.sort_by(|a, b| {
         let score_a = actionability_score(a.role);
         let score_b = actionability_score(b.role);
-        score_b.cmp(&score_a)
+        b.visible
+            .cmp(&a.visible)
+            .then_with(|| score_b.cmp(&score_a))
     });
 
     elements
@@ -320,6 +321,30 @@ fn collect_text_walk(id: usize, snaps: &[DomElementSnapshot], out: &mut String) 
     }
 }
 
+/// Whether an element would actually be rendered.
+///
+/// `hidden`, `aria-hidden="true"`, `<input type="hidden">` and inline
+/// `display:none` / `visibility:hidden` styles all make an element
+/// non-actionable, so it must not be advertised to an agent as clickable.
+fn is_visible(snap: &DomElementSnapshot) -> bool {
+    if snap.attributes.contains_key("hidden") {
+        return false;
+    }
+    if snap.attributes.get("aria-hidden").map(|s| s.as_str()) == Some("true") {
+        return false;
+    }
+    if snap.tag == "input" && snap.attributes.get("type").map(|s| s.as_str()) == Some("hidden") {
+        return false;
+    }
+    if let Some(style) = snap.attributes.get("style") {
+        let style = style.to_ascii_lowercase().replace(' ', "");
+        if style.contains("display:none") || style.contains("visibility:hidden") {
+            return false;
+        }
+    }
+    true
+}
+
 fn actionability_score(role: &str) -> u8 {
     match role {
         "button" | "link" => 100,
@@ -373,7 +398,6 @@ pub(super) fn extract_main_content() -> Vec<ContentBlock> {
 
 /// A block of extracted content.
 #[derive(Debug, Clone)]
-#[allow(dead_code)]
 pub(super) struct ContentBlock {
     pub heading: String,
     pub text: String,
@@ -418,11 +442,11 @@ fn extract_blocks(
         let text = collect_text(node_id, snaps);
         let trimmed = text.split_whitespace().collect::<Vec<_>>().join(" ");
         if trimmed.len() > 20 {
-            let heading = current_heading.take().map(|(h, _)| h).unwrap_or_default();
+            let (heading, depth) = current_heading.take().unwrap_or_default();
             blocks.push(ContentBlock {
                 heading,
                 text: trimmed,
-                depth: 0,
+                depth,
             });
             return;
         }
@@ -471,7 +495,6 @@ fn is_content_container(tag: &str) -> bool {
 /// This is the first thing an agent should see when loading a page.
 /// Typically ~200-500 bytes, fitting easily in context.
 #[derive(Debug, Clone, Default)]
-#[allow(dead_code)]
 pub(super) struct PageSummary {
     pub title: String,
     pub url: String,
@@ -510,11 +533,28 @@ pub(super) fn summarize_page() -> PageSummary {
                     }
                 }
             }
-            "a" if snap.attributes.contains_key("href") => summary.link_count += 1,
+            "a" if snap.attributes.contains_key("href") => {
+                summary.link_count += 1;
+                summary.interactive_count += 1;
+            }
+            // The page's own URL: prefer an explicit canonical link, fall back to
+            // <base href>. Agents need this to resolve relative links and to tell
+            // two same-titled pages apart.
+            "link" if snap.attributes.get("rel").map(|s| s.as_str()) == Some("canonical") => {
+                if let Some(href) = snap.attributes.get("href") {
+                    if !href.is_empty() && summary.url.is_empty() {
+                        summary.url = href.clone();
+                    }
+                }
+            }
+            "base" if summary.url.is_empty() => {
+                if let Some(href) = snap.attributes.get("href") {
+                    summary.url = href.clone();
+                }
+            }
             "img" => summary.image_count += 1,
             "form" => summary.form_count += 1,
             "input" | "select" | "textarea" | "button" => summary.interactive_count += 1,
-            "a" if snap.attributes.contains_key("href") => summary.interactive_count += 1,
             "body" => {
                 let text = collect_text(snap.id, &snaps);
                 summary.total_text_length = text.len();
@@ -532,6 +572,11 @@ pub(super) fn summary_to_text(summary: &PageSummary) -> String {
     if !summary.title.is_empty() {
         out.push_str("Title: ");
         out.push_str(&summary.title);
+        out.push('\n');
+    }
+    if !summary.url.is_empty() {
+        out.push_str("URL: ");
+        out.push_str(&summary.url);
         out.push('\n');
     }
     out.push_str(&format!(
@@ -559,14 +604,15 @@ pub(super) fn interactive_elements_to_text(elements: &[InteractiveElement]) -> S
     let mut out = String::with_capacity(elements.len() * 80);
     for (i, el) in elements.iter().enumerate() {
         let disabled_mark = if el.disabled { " [disabled]" } else { "" };
+        let hidden_mark = if el.visible { "" } else { " [hidden]" };
         let value_part = if !el.value.is_empty() {
             format!(" value=\"{}\"", el.value)
         } else {
             String::new()
         };
         out.push_str(&format!(
-            "[{}] <{}> {}{}{} \u{2192} {}\n",
-            i, el.role, el.name, value_part, disabled_mark, el.selector,
+            "[{}] <{}> {}{}{}{} \u{2192} {}\n",
+            i, el.role, el.name, value_part, disabled_mark, hidden_mark, el.selector,
         ));
     }
     out
@@ -606,7 +652,6 @@ pub(super) fn capture_dom_state() -> DomState {
 }
 
 /// Check if two DOM states are meaningfully different.
-#[allow(dead_code)]
 pub(super) fn dom_states_differ(a: &DomState, b: &DomState) -> bool {
     a.node_count != b.node_count
         || a.interactive_count != b.interactive_count

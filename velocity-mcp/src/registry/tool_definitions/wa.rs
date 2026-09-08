@@ -360,7 +360,9 @@ pub fn get_wa_tools() -> Vec<Tool> {
             input_schema: json!({
                 "type": "object",
                 "properties": {
-                    "titleContains": { "type": "string", "description": "Optional title substring filter." }
+                    "titleContains": { "type": "string", "description": "Optional case-insensitive title substring filter." },
+                    "pid": { "type": "integer", "minimum": 1, "description": "Optional process id: list only windows owned by this pid." },
+                    "className": { "type": "string", "description": "Optional window class name: list only windows of this class." }
                 }
             }),
         },
@@ -404,10 +406,11 @@ pub fn get_wa_tools() -> Vec<Tool> {
         // ─── OCR Tools ───────────────────────────────────────────────────────────
         Tool {
             name: "wa_ocr_screen".to_string(),
-            description: "Perform OCR text recognition on a screen region or full screen.".to_string(),
+            description: "Perform OCR text recognition on a screen region, a full screen, or a specific window.".to_string(),
             input_schema: json!({
                 "type": "object",
                 "properties": {
+                    "pid": { "type": "integer", "minimum": 1, "description": "Optional process id: recognise that window's contents instead of a screen region." },
                     "x": { "type": "integer", "description": "Region X offset (pixels)." },
                     "y": { "type": "integer", "description": "Region Y offset (pixels)." },
                     "width": { "type": "integer", "description": "Region width." },
@@ -482,10 +485,14 @@ pub fn get_wa_tools() -> Vec<Tool> {
             input_schema: json!({
                 "type": "object",
                 "properties": {
+                    "id": { "type": "string", "description": "Optional stable trigger id. Auto-generated from the registration timestamp when omitted." },
                     "name": { "type": "string", "description": "Trigger name." },
                     "kind": { "type": "string", "enum": ["file_watch", "window_appears", "window_closes", "process_starts", "process_exits", "clipboard_changed", "system_idle", "delay", "interval"], "description": "Trigger type." },
-                    "target": { "type": "string", "description": "Target path/title/name depending on kind." },
-                    "actionScript": { "type": "string", "description": "PowerShell script to execute when triggered." }
+                    "target": { "type": "string", "description": "Target path/title/name/pid depending on kind." },
+                    "actionScript": { "type": "string", "description": "PowerShell script to execute when triggered." },
+                    "enabled": { "type": "boolean", "description": "Whether the trigger starts enabled. Defaults to true." },
+                    "durationMs": { "type": "integer", "minimum": 0, "description": "Delay/interval/idle-threshold in ms for the delay, interval, and system_idle kinds. Defaults to 1000." },
+                    "maxFires": { "type": "integer", "minimum": 1, "description": "Optional maximum number of times the trigger may fire." }
                 },
                 "required": ["name", "kind", "actionScript"]
             }),
@@ -575,6 +582,18 @@ pub fn get_wa_tools() -> Vec<Tool> {
         },
         // ─── File Dialog Tools ──────────────────────────────────────────────────
         Tool {
+            name: "wa_file_dialog_detect".to_string(),
+            description: "Detect a live file dialog and report its handle, owner process, title and kind (open / save_as / folder_browse).".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "processId": { "type": "integer", "description": "Optional PID of the process owning the dialog." },
+                    "titleContains": { "type": "string", "description": "Optional case-insensitive title filter. Defaults to Open|Save|Browse|Select." },
+                    "timeoutMs": { "type": "integer", "minimum": 0, "description": "How long to wait for a dialog to appear, in milliseconds. Defaults to 5000." }
+                }
+            }),
+        },
+        Tool {
             name: "wa_file_dialog_open".to_string(),
             description: "Interact with an open file dialog: set the file path and confirm.".to_string(),
             input_schema: json!({
@@ -642,6 +661,14 @@ pub fn get_wa_tools() -> Vec<Tool> {
                     "columns": { "type": "integer", "description": "Number of columns in the tile grid. Default 2." },
                     "monitor": { "type": "integer", "description": "Monitor index to tile on. Default 0 (primary)." }
                 }
+            }),
+        },
+        Tool {
+            name: "wa_monitor_list".to_string(),
+            description: "Enumerate all connected monitors with bounds, work area, DPI scaling, physical resolution, refresh rate and colour depth.".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {}
             }),
         },
         // ─── Browser Bridge Tools ───────────────────────────────────────────────
@@ -773,6 +800,388 @@ pub fn get_wa_tools() -> Vec<Tool> {
                     "maxChildren": { "type": "integer", "minimum": 1, "description": "Maximum children inspected per node. Default 64." }
                 },
                 "required": ["processId", "pattern"]
+            }),
+        },
+        Tool {
+            name: "wa_uia_root".to_string(),
+            description: "Read the root UIAutomation element for a process or the desktop, with explicit control over the cached tree.".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "processId": { "type": "integer", "minimum": 1, "description": "Target process id." },
+                    "scope": { "type": "string", "enum": ["process", "desktop"], "description": "Root scope: the process root or the desktop root. Defaults to process." },
+                    "refresh": { "type": "boolean", "description": "When true, invalidate the cached tree before rebuilding. Defaults to false." },
+                    "maxDepth": { "type": "integer", "minimum": 0, "description": "Maximum traversal depth. Default 4." },
+                    "maxChildren": { "type": "integer", "minimum": 1, "description": "Maximum children inspected per node. Default 64." }
+                },
+                "required": ["processId"]
+            }),
+        },
+        // ─── Selector Resolution (CSS / XPath) ────────────────────────────────
+        Tool {
+            name: "wa_resolve_css_selector".to_string(),
+            description: "Resolve a CSS-style selector against a saved WA semantic snapshot and return matching nodes.".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "sessionId": { "type": "string", "description": "WA session identifier." },
+                    "snapshotName": { "type": "string", "description": "Optional snapshot name. Defaults to the latest snapshot for the session." },
+                    "cssSelector": { "type": "string", "description": "CSS-style selector expression to resolve." }
+                },
+                "required": ["sessionId", "cssSelector"]
+            }),
+        },
+        Tool {
+            name: "wa_resolve_xpath".to_string(),
+            description: "Resolve an XPath expression against a saved WA semantic snapshot and return matching nodes.".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "sessionId": { "type": "string", "description": "WA session identifier." },
+                    "snapshotName": { "type": "string", "description": "Optional snapshot name. Defaults to the latest snapshot for the session." },
+                    "xpath": { "type": "string", "description": "XPath expression to resolve." }
+                },
+                "required": ["sessionId", "xpath"]
+            }),
+        },
+        // ─── Recovery Planning ────────────────────────────────────────────────
+        Tool {
+            name: "wa_recovery_plan".to_string(),
+            description: "Return the ordered recovery action plan for a known automation failure scenario.".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "scenario": { "type": "string", "enum": ["element_not_found", "blocked_by_popup"], "description": "Failure scenario to plan recovery for. Defaults to element_not_found." }
+                }
+            }),
+        },
+        Tool {
+            name: "wa_recovery_adaptive_wait".to_string(),
+            description: "Feed observed element ready-times to the adaptive wait estimator and get the recommended poll interval.".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "observationsMs": { "type": "array", "items": { "type": "integer", "minimum": 0 }, "description": "Previously observed ready-times in milliseconds." }
+                }
+            }),
+        },
+        // ─── Screenshot ───────────────────────────────────────────────────────
+        Tool {
+            name: "wa_screenshot".to_string(),
+            description: "Capture the full screen, a single window by PID, or a screen region and persist it as a Windows bitmap.".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "outputPath": { "type": "string", "description": "Destination file path. The capture backend writes BMP data. Defaults to screenshot.bmp." },
+                    "pid": { "type": "integer", "minimum": 1, "description": "Optional process id to capture a specific window instead of the full screen." },
+                    "region": {
+                        "type": "object",
+                        "description": "Optional screen region. Takes precedence over full-screen capture when pid is omitted.",
+                        "properties": {
+                            "x": { "type": "integer" },
+                            "y": { "type": "integer" },
+                            "width": { "type": "integer", "minimum": 1 },
+                            "height": { "type": "integer", "minimum": 1 }
+                        }
+                    }
+                }
+            }),
+        },
+        // ─── Window Lookup ────────────────────────────────────────────────────
+        Tool {
+            name: "wa_window_foreground".to_string(),
+            description: "Return the current foreground (focused) desktop window, if any.".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {}
+            }),
+        },
+        Tool {
+            name: "wa_vdesktop_window_info".to_string(),
+            description: "Report which virtual desktop a window belongs to and whether it is on the current desktop.".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "hwnd": { "type": "integer", "description": "Window handle to inspect." }
+                },
+                "required": ["hwnd"]
+            }),
+        },
+        // ─── Registry (extended) ──────────────────────────────────────────────
+        Tool {
+            name: "wa_registry_delete".to_string(),
+            description: "Delete a Windows registry value.".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "hive": { "type": "string", "enum": ["HKCU", "HKLM", "HKCR", "HKU", "HKCC"], "description": "Registry hive." },
+                    "path": { "type": "string", "description": "Registry key path." },
+                    "name": { "type": "string", "description": "Value name to delete." }
+                },
+                "required": ["hive", "path", "name"]
+            }),
+        },
+        Tool {
+            name: "wa_registry_exists".to_string(),
+            description: "Check whether a registry key (and optionally a specific value under it) exists.".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "hive": { "type": "string", "enum": ["HKCU", "HKLM", "HKCR", "HKU", "HKCC"], "description": "Registry hive." },
+                    "path": { "type": "string", "description": "Registry key path." },
+                    "name": { "type": "string", "description": "Optional value name. When omitted, tests for the key itself." }
+                },
+                "required": ["hive", "path"]
+            }),
+        },
+        Tool {
+            name: "wa_registry_enumerate".to_string(),
+            description: "Enumerate the values and subkeys under a registry key.".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "hive": { "type": "string", "enum": ["HKCU", "HKLM", "HKCR", "HKU", "HKCC"], "description": "Registry hive." },
+                    "path": { "type": "string", "description": "Registry key path to enumerate." }
+                },
+                "required": ["hive", "path"]
+            }),
+        },
+        // ─── System Tray / UAC / DPI ──────────────────────────────────────────
+        Tool {
+            name: "wa_tray_list".to_string(),
+            description: "List system tray (notification area) icons with their tooltips and owning processes.".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {}
+            }),
+        },
+        Tool {
+            name: "wa_tray_click".to_string(),
+            description: "Click a system tray icon identified by its tooltip text.".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "tooltip": { "type": "string", "description": "Tooltip text of the tray icon to click." },
+                    "action": { "type": "string", "enum": ["click", "double_click", "right_click"], "description": "Mouse action to perform. Defaults to click." }
+                },
+                "required": ["tooltip"]
+            }),
+        },
+        Tool {
+            name: "wa_uac_detect".to_string(),
+            description: "Detect whether a UAC (User Account Control) consent prompt is currently visible.".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {}
+            }),
+        },
+        Tool {
+            name: "wa_system_dpi".to_string(),
+            description: "Query the current system DPI and the equivalent scale percentage.".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {}
+            }),
+        },
+        // ─── OCR (extended) ───────────────────────────────────────────────────
+        Tool {
+            name: "wa_ocr_languages".to_string(),
+            description: "List the OCR language tags available on this system.".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {}
+            }),
+        },
+        // ─── Desktop Platform ─────────────────────────────────────────────────
+        Tool {
+            name: "wa_platform_info".to_string(),
+            description: "Report the host desktop platform and whether native desktop automation is supported.".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {}
+            }),
+        },
+        Tool {
+            name: "wa_platform_tree_snapshot".to_string(),
+            description: "Capture a platform-native accessibility tree snapshot for an application and persist it to the workspace.".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "appName": { "type": "string", "description": "Application name or window title substring to capture." }
+                }
+            }),
+        },
+        // ─── Input Injection ──────────────────────────────────────────────────
+        Tool {
+            name: "wa_input_sequence".to_string(),
+            description: "Build and atomically inject a sequence of low-level mouse and keyboard events via native SendInput.".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "label": { "type": "string", "description": "Label for the sequence, used in logging. Defaults to mcp-input-sequence." },
+                    "viaScript": { "type": "boolean", "description": "Inject through the generated PowerShell script instead of native SendInput. Defaults to false." },
+                    "steps": {
+                        "type": "array",
+                        "description": "Ordered input operations to inject.",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "op": { "type": "string", "enum": ["click", "right_click", "middle_click", "move", "type", "key_combo", "scroll", "wait", "drag_drop"], "description": "Operation kind." },
+                                "x": { "type": "integer", "description": "Screen x coordinate (click / right_click / middle_click / move)." },
+                                "y": { "type": "integer", "description": "Screen y coordinate (click / right_click / middle_click / move)." },
+                                "absolute": { "type": "boolean", "description": "For move: use absolute screen coordinates. Defaults to true." },
+                                "text": { "type": "string", "description": "For type: the text to enter." },
+                                "key": { "type": "string", "description": "For key_combo: the primary key, e.g. A, F5, Enter, Tab." },
+                                "modifiers": { "type": "array", "items": { "type": "string", "enum": ["ctrl", "shift", "alt", "win", "ctrl_shift", "ctrl_alt", "alt_shift", "ctrl_shift_alt"] }, "description": "For key_combo: modifier keys held during the press." },
+                                "vertical": { "type": "integer", "description": "For scroll: vertical clicks, positive = up." },
+                                "horizontal": { "type": "integer", "description": "For scroll: horizontal clicks, positive = right." },
+                                "ms": { "type": "integer", "minimum": 0, "description": "For wait: pause duration in milliseconds. Defaults to 100." },
+                                "from": { "type": "object", "description": "For drag_drop: origin point {x, y}." },
+                                "to": { "type": "object", "description": "For drag_drop: destination point {x, y}." }
+                            },
+                            "required": ["op"]
+                        }
+                    }
+                },
+                "required": ["steps"]
+            }),
+        },
+        // ─── Interaction Recording ────────────────────────────────────────────
+        Tool {
+            name: "wa_record_start".to_string(),
+            description: "Start a shared interaction recording session and return the PowerShell hook script that produces events.".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "sessionId": { "type": "string", "description": "Recording session identifier. Defaults to default." },
+                    "processId": { "type": "integer", "minimum": 1, "description": "Optional process id to restrict recording to." },
+                    "windowTitle": { "type": "string", "description": "Optional window title substring to restrict recording to." },
+                    "durationSeconds": { "type": "integer", "minimum": 1, "description": "Hook capture duration in seconds. Defaults to 30." }
+                }
+            }),
+        },
+        Tool {
+            name: "wa_record_ingest".to_string(),
+            description: "Ingest recorded interaction events (as emitted by the recording hook) into the active recording session.".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "events": {
+                        "type": "array",
+                        "description": "Recorded events to append.",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "kind": { "type": "string", "enum": ["click", "double_click", "type", "key_combo", "focus", "scroll", "drag_drop", "window_activate"], "description": "Event kind." },
+                                "offsetMs": { "type": "integer", "minimum": 0, "description": "Offset from recording start in milliseconds." },
+                                "x": { "type": "integer" },
+                                "y": { "type": "integer" },
+                                "button": { "type": "string", "enum": ["left", "right", "middle"] },
+                                "text": { "type": "string" },
+                                "keys": { "type": "array", "items": { "type": "string" } },
+                                "deltaX": { "type": "integer" },
+                                "deltaY": { "type": "integer" },
+                                "fromX": { "type": "integer" },
+                                "fromY": { "type": "integer" },
+                                "toX": { "type": "integer" },
+                                "toY": { "type": "integer" },
+                                "windowTitle": { "type": "string" },
+                                "processId": { "type": "integer", "minimum": 1 },
+                                "target": { "type": "object", "description": "Optional UIA target: nodeId, role, name, automationId." }
+                            },
+                            "required": ["kind"]
+                        }
+                    }
+                },
+                "required": ["events"]
+            }),
+        },
+        Tool {
+            name: "wa_record_pause".to_string(),
+            description: "Pause or resume the active recording session.".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "resume": { "type": "boolean", "description": "When true resume recording, otherwise pause it. Defaults to false." }
+                }
+            }),
+        },
+        Tool {
+            name: "wa_record_status".to_string(),
+            description: "Report the state, event count, and elapsed time of the active recording session.".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {}
+            }),
+        },
+        Tool {
+            name: "wa_record_replay_plan".to_string(),
+            description: "Compute the inter-step replay delays for the recorded events under a given replay configuration.".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "speedMultiplier": { "type": "number", "exclusiveMinimum": 0, "description": "Replay speed: 1.0 real-time, 2.0 double speed. Defaults to 1.0." },
+                    "minStepDelayMs": { "type": "integer", "minimum": 0, "description": "Minimum delay between steps. Defaults to 50." },
+                    "verifyPostconditions": { "type": "boolean", "description": "Verify focus/value postconditions per step. Defaults to true." },
+                    "stopOnFailure": { "type": "boolean", "description": "Stop replay on first failure. Defaults to true." }
+                }
+            }),
+        },
+        Tool {
+            name: "wa_record_stop".to_string(),
+            description: "Stop the active recording session and optionally persist it as a WA semantic script artifact.".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "scriptName": { "type": "string", "description": "Script name to persist under. Defaults to recorded-script." },
+                    "persist": { "type": "boolean", "description": "When false, stop without writing an artifact. Defaults to true." }
+                }
+            }),
+        },
+        // ─── Cross-Context Browser/Desktop Bridge ─────────────────────────────
+        Tool {
+            name: "wa_bridge_run".to_string(),
+            description: "Execute an ordered cross-context workflow that mixes browser actions, desktop actions, cross-context waits, and data transfers.".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "name": { "type": "string", "description": "Workflow name. Defaults to bridge-workflow." },
+                    "timeoutMs": { "type": "integer", "minimum": 1, "description": "Global workflow timeout in milliseconds. Defaults to 30000." },
+                    "failFast": { "type": "boolean", "description": "Abort on the first failing step. Defaults to true." },
+                    "downloadDir": { "type": "string", "description": "Directory for browser downloads. Defaults to <workspace>/output/downloads." },
+                    "steps": {
+                        "type": "array",
+                        "minItems": 1,
+                        "description": "Ordered workflow steps. Each step declares a context and an action.",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "context": { "type": "string", "enum": ["browser", "desktop", "wait", "transfer"], "description": "Execution context for the step." },
+                                "action": { "type": "string", "description": "Action name. browser: navigate, click, type, download, trigger_upload, eval_js, wait_for_element. desktop: open_file, focus_window, type_text, handle_file_dialog, click_element, copy_to_clipboard, paste_from_clipboard. wait: file_appears, window_appears, browser_navigates, clipboard_contains, process_starts. transfer: browser_to_desktop, desktop_to_browser, download_and_open, read_desktop_text." },
+                                "url": { "type": "string" },
+                                "selector": { "type": "string" },
+                                "text": { "type": "string" },
+                                "script": { "type": "string" },
+                                "expectedFilename": { "type": "string" },
+                                "inputSelector": { "type": "string" },
+                                "timeoutMs": { "type": "integer", "minimum": 0 },
+                                "path": { "type": "string" },
+                                "titleContains": { "type": "string" },
+                                "name": { "type": "string" },
+                                "role": { "type": "string" },
+                                "urlContains": { "type": "string" },
+                                "browserSelector": { "type": "string" },
+                                "desktopTarget": { "type": "string" },
+                                "desktopSource": { "type": "string" },
+                                "downloadUrl": { "type": "string" },
+                                "appExe": { "type": "string" },
+                                "elementName": { "type": "string" }
+                            },
+                            "required": ["context", "action"]
+                        }
+                    }
+                },
+                "required": ["steps"]
             }),
         },
     ]

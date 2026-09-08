@@ -813,12 +813,12 @@ fn type_name_of(ty: &Type) -> String {
 
 // ─── Fallback visitor ─────────────────────────────────────────────────────────
 
-/// A simple syn visitor that collects any Int/Array nodes from sub-expressions
-/// that the main match arm doesn't explicitly handle.
+/// A simple syn visitor that collects any Int/Array nodes — and any call edges —
+/// from sub-expressions that the main match arm doesn't explicitly handle.
 struct ExprCollector<'a> {
     nodes: Vec<NdaNode>,
-    /// Retained for future call-graph surfacing; populated but not yet consumed.
-    #[allow(dead_code)]
+    /// Call targets found inside sub-expressions. Feeds `CompiledFn::callees`,
+    /// and therefore `RustToNda::call_graph`.
     callees: &'a mut Vec<String>,
 }
 
@@ -837,6 +837,22 @@ impl<'a> Visit<'_> for ExprCollector<'a> {
             }
             _ => {}
         }
+    }
+
+    fn visit_expr_call(&mut self, call: &ExprCall) {
+        // The main match arm only records the calls it handles directly; a call
+        // nested inside a cast, index, tuple, match arm, … lands here instead.
+        // Record the edge so `call_graph` still sees it, then keep descending.
+        let name = expr_to_name(&call.func);
+        if !name.is_empty() {
+            self.callees.push(name);
+        }
+        syn::visit::visit_expr_call(self, call);
+    }
+
+    fn visit_expr_method_call(&mut self, call: &ExprMethodCall) {
+        self.callees.push(call.method.to_string());
+        syn::visit::visit_expr_method_call(self, call);
     }
 }
 

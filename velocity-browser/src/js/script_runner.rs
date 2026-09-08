@@ -15,7 +15,6 @@ use crate::parser::html::NodeType;
 
 /// Collected script to execute: inline body or fetched source.
 #[derive(Debug, Clone)]
-#[allow(dead_code)]
 struct ScriptEntry {
     pub source: String,
     pub is_defer: bool,
@@ -37,22 +36,26 @@ pub fn execute_page_scripts(
     current_url: &str,
 ) {
     let script_nodes = find_script_nodes(tree);
-    let mut deferred: Vec<String> = Vec::new();
+    let mut deferred: Vec<ScriptEntry> = Vec::new();
 
     for (script_body, is_defer) in script_nodes {
         if script_body.trim().is_empty() {
             continue;
         }
         if is_defer {
-            deferred.push(script_body);
+            deferred.push(ScriptEntry {
+                source: script_body,
+                is_defer: true,
+            });
         } else {
             execute_single_script(tree, vm, scheduler, trace, &script_body);
         }
     }
 
     // Execute deferred scripts after all synchronous scripts
-    for script in deferred {
-        execute_single_script(tree, vm, scheduler, trace, &script);
+    for entry in deferred {
+        debug_assert!(entry.is_defer, "only defer scripts belong in the queue");
+        execute_single_script(tree, vm, scheduler, trace, &entry.source);
     }
 
     // Drain event loop after all scripts

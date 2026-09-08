@@ -139,13 +139,11 @@ pub(super) fn snapshot_dom() -> (Vec<DomElementSnapshot>, usize) {
 }
 
 /// Get the root element ID.
-#[allow(dead_code)]
 pub(super) fn get_root_id() -> usize {
     ensure_root()
 }
 
 /// Get the total number of DOM nodes.
-#[allow(dead_code)]
 pub(super) fn dom_node_count() -> usize {
     DOM_NODES.with(|nodes| nodes.borrow().len())
 }
@@ -388,6 +386,21 @@ pub(super) fn call_document_method(method: &str, args: &[JsValue]) -> JsValue {
             JsValue::Object(vt)
         }
         // ── Agent empowerment APIs ────────────────────────────────────────────
+        "domStats" => {
+            // Cheap liveness probe for an agent: the document root handle and the
+            // total node count, without paying for a full snapshot walk.
+            let mut obj = HashMap::new();
+            obj.insert(
+                "__type__".to_string(),
+                JsValue::String("DomStats".to_string()),
+            );
+            obj.insert("rootId".to_string(), JsValue::Number(get_root_id() as f64));
+            obj.insert(
+                "nodeCount".to_string(),
+                JsValue::Number(dom_node_count() as f64),
+            );
+            JsValue::Object(obj)
+        }
         "getInteractiveElements" => {
             let elements = super::agent_layer::get_interactive_elements();
             let arr: Vec<JsValue> = elements
@@ -404,6 +417,7 @@ pub(super) fn call_document_method(method: &str, args: &[JsValue]) -> JsValue {
                     obj.insert("value".to_string(), JsValue::String(el.value));
                     obj.insert("selector".to_string(), JsValue::String(el.selector));
                     obj.insert("disabled".to_string(), JsValue::Boolean(el.disabled));
+                    obj.insert("visible".to_string(), JsValue::Boolean(el.visible));
                     JsValue::Object(obj)
                 })
                 .collect();
@@ -421,6 +435,7 @@ pub(super) fn call_document_method(method: &str, args: &[JsValue]) -> JsValue {
                     let mut obj = HashMap::new();
                     obj.insert("heading".to_string(), JsValue::String(b.heading));
                     obj.insert("text".to_string(), JsValue::String(b.text));
+                    obj.insert("depth".to_string(), JsValue::Number(b.depth as f64));
                     JsValue::Object(obj)
                 })
                 .collect();
@@ -434,6 +449,7 @@ pub(super) fn call_document_method(method: &str, args: &[JsValue]) -> JsValue {
                 JsValue::String("PageSummary".to_string()),
             );
             obj.insert("title".to_string(), JsValue::String(summary.title));
+            obj.insert("url".to_string(), JsValue::String(summary.url));
             obj.insert(
                 "links".to_string(),
                 JsValue::Number(summary.link_count as f64),
@@ -654,6 +670,9 @@ pub(super) fn call_document_method(method: &str, args: &[JsValue]) -> JsValue {
             // the final DOM state — the agent's "page is quiet, act now"
             // primitive.
             let lifecycle_listeners = super::browser_env::advance_lifecycle();
+            // Snapshot before pumping timers so we can tell the agent whether
+            // settling actually mutated the page, not just that it went quiet.
+            let initial_state = super::agent_layer::capture_dom_state();
             let mut timers_run = 0u32;
             let mut rounds = 0u32;
             while rounds < 10 {
@@ -687,6 +706,13 @@ pub(super) fn call_document_method(method: &str, args: &[JsValue]) -> JsValue {
             obj.insert(
                 "textHash".to_string(),
                 JsValue::Number(hash_to_js(state.body_text_hash)),
+            );
+            obj.insert(
+                "domChanged".to_string(),
+                JsValue::Boolean(super::agent_layer::dom_states_differ(
+                    &initial_state,
+                    &state,
+                )),
             );
             JsValue::Object(obj)
         }
@@ -775,6 +801,7 @@ pub(super) fn call_document_method(method: &str, args: &[JsValue]) -> JsValue {
                     obj.insert("value".to_string(), JsValue::String(el.value));
                     obj.insert("checked".to_string(), JsValue::Boolean(checked));
                     obj.insert("disabled".to_string(), JsValue::Boolean(el.disabled));
+                    obj.insert("visible".to_string(), JsValue::Boolean(el.visible));
                     JsValue::Object(obj)
                 })
                 .collect();

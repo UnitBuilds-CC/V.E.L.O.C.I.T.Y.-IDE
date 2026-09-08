@@ -180,6 +180,13 @@ pub fn build_file_dialog_script(target: &FileDialogTarget, action: &FileDialogAc
         .map(|p| format!("$targetPid = {p}"))
         .unwrap_or_else(|| "$targetPid = $null".to_string());
     let timeout_ms = target.wait_timeout.as_millis();
+    // The confirm button label depends on the dialog kind, so the target's `kind`
+    // determines which button the SetPath action clicks (Open vs Save vs Select Folder).
+    let confirm_button = match target.kind {
+        FileDialogKind::Open | FileDialogKind::OpenMultiple => "Open|OK",
+        FileDialogKind::SaveAs => "Save",
+        FileDialogKind::FolderBrowse => "Select Folder|Browse|OK",
+    };
 
     let action_code = match action {
         FileDialogAction::SetPath(path) => {
@@ -199,7 +206,7 @@ if ($null -ne $fileNameEdit) {{
         [System.Windows.Automation.ControlType]::Button)))
     foreach ($btn in $buttons) {{
         $name = $btn.Current.Name
-        if ($name -match '(Open|Save|Select Folder|OK)') {{
+        if ($name -match '{confirm_button}') {{
             $invokePattern = $btn.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern)
             $invokePattern.Invoke()
             break
@@ -345,11 +352,15 @@ foreach ($w in $windows) {{
     $name = $w.Current.Name
     if ($null -ne $targetPid -and $w.Current.ProcessId -ne $targetPid) {{ continue }}
     if ($name -match $titlePattern) {{
+        $kind = 'open'
+        if ($name -match 'Save As|Save') {{ $kind = 'save' }}
+        elseif ($name -match 'Browse For Folder|Select Folder|Choose Folder') {{ $kind = 'folder' }}
         $result = @{{
-            hwnd = 0
+            found = $true
+            hwnd = [int64]$w.Current.NativeWindowHandle
             process_id = $w.Current.ProcessId
             title = $name
-            kind = "open"
+            kind = $kind
         }}
         ConvertTo-Json $result -Compress
         exit
@@ -408,11 +419,36 @@ fn parse_dialog_info(json: &str) -> Option<FileDialogInfo> {
         hwnd: info.hwnd.unwrap_or(0),
         process_id: info.process_id.unwrap_or(0),
         title: info.title.unwrap_or_default(),
-        kind: FileDialogKind::Open,
+        kind: dialog_kind_from_token(info.kind.as_deref()),
         current_folder: None,
         current_filename: None,
         filters: Vec::new(),
     })
+}
+
+/// Map the `kind` token emitted by the detect script onto a [`FileDialogKind`].
+///
+/// Unrecognised or missing tokens fall back to [`FileDialogKind::Open`], which
+/// matches the historical behaviour of the detector.
+fn dialog_kind_from_token(kind: Option<&str>) -> FileDialogKind {
+    match kind.map(|k| k.trim().to_ascii_lowercase()).as_deref() {
+        Some("save" | "saveas" | "save_as") => FileDialogKind::SaveAs,
+        Some("folder" | "browse" | "folderbrowse" | "select_folder") => {
+            FileDialogKind::FolderBrowse
+        }
+        Some("open_multiple" | "openmultiple" | "open_multi") => FileDialogKind::OpenMultiple,
+        _ => FileDialogKind::Open,
+    }
+}
+
+/// Render a [`FileDialogKind`] as the stable snake_case token used in tool output.
+pub fn dialog_kind_token(kind: FileDialogKind) -> &'static str {
+    match kind {
+        FileDialogKind::Open => "open",
+        FileDialogKind::SaveAs => "save_as",
+        FileDialogKind::FolderBrowse => "folder_browse",
+        FileDialogKind::OpenMultiple => "open_multiple",
+    }
 }
 
 fn parse_dialog_result(json: &str, action: &FileDialogAction) -> FileDialogResult {
