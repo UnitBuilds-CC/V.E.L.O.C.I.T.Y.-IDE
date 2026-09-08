@@ -5,6 +5,7 @@
 //! Per the testing strategy: "A tool is not considered wired until its definition,
 //! dispatch, permission behavior, valid call, and invalid call are covered."
 
+use crate::errors::ToolError;
 use crate::registry::{call_tool_in_workspace, get_tools};
 use serde_json::json;
 use std::fs;
@@ -211,13 +212,23 @@ fn tool_categories_are_represented() {
     );
 }
 
-/// Unknown tools should return an error from dispatch.
+/// Unknown tools should return a structured `ToolError::ToolNotFound`.
 #[test]
 fn unknown_tool_returns_error() {
     let (_temp, root) = setup_root();
     let result = call_tool_in_workspace(&root, "totally_fake_tool_xyz", &json!({}));
-    assert!(result.is_err());
-    assert!(result.unwrap_err().to_string().contains("Unknown tool"));
+    let err = result.unwrap_err();
+
+    // Match the variant, not the message text: dispatch must report an
+    // unrecognised tool in a machine-readable form.
+    match err.downcast_ref::<ToolError>() {
+        Some(ToolError::ToolNotFound(name)) => assert_eq!(name, "totally_fake_tool_xyz"),
+        Some(other) => panic!("expected ToolNotFound, got {other:?}"),
+        None => panic!("dispatch error should downcast to ToolError, got: {err}"),
+    }
+
+    // The rendered message still has to name the offending tool.
+    assert!(err.to_string().contains("totally_fake_tool_xyz"));
 }
 
 /// Tool names should follow naming conventions (snake_case, category prefix).

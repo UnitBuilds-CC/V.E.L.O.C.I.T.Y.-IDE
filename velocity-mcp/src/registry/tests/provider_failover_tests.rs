@@ -9,7 +9,6 @@
 use crate::agent::AiProvider;
 use crate::editor::expert_team::{ExpertMember, ExpertTeam};
 use crate::editor::team_router::{debug_routing, parse_team_directive, resolve_team, route_member};
-use serde_json::json;
 use std::fs;
 
 fn setup_root() -> (tempfile::TempDir, std::path::PathBuf) {

@@ -1,4 +1,3 @@
-#![allow(dead_code)] // Reserved WA automation API surface; awaiting full MCP dispatch wiring.
 //! Scheduler and trigger system for Windows desktop automation.
 //!
 //! Provides time-based triggers, file-watcher triggers, window-appearance

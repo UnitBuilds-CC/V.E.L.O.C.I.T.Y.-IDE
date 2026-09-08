@@ -3,7 +3,6 @@ use super::VelocityApp;
 use crate::automation::AgentTaskKind;
 use crate::editor::chat_panel::render_chat_panel;
 use crate::editor::code_editor::CodeEditor;
-use crate::editor::task_timeline::{render_mission_activity_feed, TaskTimelineSnapshot};
 use crate::editor::theme::{Density, ThemeVariant, WorkspaceProfile};
 use crate::editor::usage_panel::render_usage_panel;
 use eframe::egui;

@@ -14,12 +14,11 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::net::{SocketAddr, UdpSocket};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
-use std::time::{SystemTime, UNIX_EPOCH};
 
-use super::peer_link::{now_secs, PeerIdentity, PeerManager, PeerMessageKind};
+use super::peer_link::{now_secs, PeerIdentity, PeerManager};
 
 // ── Auto-Reconnect ──
 

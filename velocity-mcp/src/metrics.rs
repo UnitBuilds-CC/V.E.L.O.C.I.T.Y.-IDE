@@ -26,8 +26,7 @@
 //! ```
 
 use prometheus::{
-    Counter, CounterVec, Encoder, Gauge, GaugeVec, Histogram, HistogramOpts, HistogramVec, Opts,
-    Registry, TextEncoder,
+    Counter, CounterVec, Encoder, Gauge, HistogramOpts, HistogramVec, Opts, Registry, TextEncoder,
 };
 use std::sync::LazyLock;
 use std::time::Duration;

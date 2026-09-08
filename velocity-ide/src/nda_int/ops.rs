@@ -233,7 +233,6 @@ pub fn rms_norm_nda(x: &NdaVec, w: &NdaVec, eps_shift: u32) -> NdaVec {
 #[derive(Clone, Debug)]
 pub struct AliBiSlopes {
     pub shifts: Vec<u8>,
-    #[allow(dead_code)]
     pub n_heads: usize,
 }
 
@@ -469,10 +468,8 @@ pub fn swiglu_batch(pairs: &[(&NdaVec, &NdaVec)], silu: &SiluLut) -> (Vec<NdaVec
 }
 
 pub struct NdaEmbedding {
-    #[allow(dead_code)]
     pub vocab_size: usize,
     pub hidden_size: usize,
-    #[allow(dead_code)]
     pub log2_scale: i8,
     pub sign: Vec<u8>,
     pub extra: Vec<u8>,
@@ -495,7 +492,6 @@ impl NdaEmbedding {
         self.hidden_size.div_ceil(8)
     }
 
-    #[allow(dead_code)]
     pub fn get(&self, id: usize) -> NdaVec {
         let stride = self.stride();
         let start = id * stride;

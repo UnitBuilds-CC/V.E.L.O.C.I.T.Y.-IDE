@@ -5,8 +5,6 @@
 //! modes (unknown tool, bad arguments, I/O, governance denial) plus a catch-all
 //! `Internal` for unexpected issues.
 
-use std::fmt;
-
 /// Top-level error returned by the tool dispatch pipeline.
 #[derive(Debug, thiserror::Error)]
 pub enum ToolError {

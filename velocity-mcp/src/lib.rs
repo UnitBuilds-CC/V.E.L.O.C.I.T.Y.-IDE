@@ -23,8 +23,6 @@
 #![allow(clippy::redundant_closure)]
 #![allow(clippy::if_same_then_else)]
 #![allow(clippy::should_implement_trait)]
-#![allow(unused_imports)]
-#![allow(unused_variables)]
 #![allow(ambiguous_glob_reexports)]
 
 pub mod agent;

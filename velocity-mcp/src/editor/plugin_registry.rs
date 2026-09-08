@@ -3,7 +3,7 @@
 //! The registry manages all loaded plugins, handles tool dispatch to the
 //! correct plugin, and provides discovery of available tools for the agent.
 
-use super::plugin_sdk::{PluginHandler, PluginManifest, PluginPermission, PluginResult};
+use super::plugin_sdk::{PluginHandler, PluginPermission, PluginResult};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};

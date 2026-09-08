@@ -10,7 +10,6 @@
 //! (`request_help`/`HelpRequested`, `drain`/`try_recv`, `all_progress`,
 //! `pending_help_for`, `reset`) is the delegation API for the multi-agent team
 //! runtime and is intentionally retained ahead of that integration.
-#![allow(dead_code)] // reserved multi-agent delegation API (see module docs)
 
 use crate::safety::SafeMutex;
 use crossbeam_channel::{Receiver, Sender};

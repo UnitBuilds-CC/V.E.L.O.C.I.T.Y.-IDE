@@ -1,4 +1,5 @@
-#![allow(dead_code)] // Reserved WA automation API surface; awaiting full MCP dispatch wiring.
+#![cfg_attr(not(windows), allow(dead_code))]
+// Win32/UIA FFI surface: wired and live on Windows (force-warn clean); the COM APIs are absent on other platforms.
 //! Direct COM/UIA FFI bindings for high-performance Windows automation.
 //!
 //! Provides Rust-native bindings to Windows UIAutomation COM interfaces,

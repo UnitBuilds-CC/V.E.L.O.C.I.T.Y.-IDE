@@ -1,4 +1,3 @@
-#![allow(dead_code, unused_imports, unused_variables)]
 //! Continuation Ledger: cross-model context handoff system.
 //!
 //! When a model fails mid-edit or gets swapped, the continuation ledger
@@ -11,10 +10,10 @@
 //! 3. **Model-agnostic**: The ledger is a universal contract, not tied to any model
 //! 4. **Edit-precise**: Captures exact partial file states for mid-edit recovery
 
-use std::collections::HashMap;
+use std::collections::HashSet;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::time::{Duration, Instant, SystemTime};
+use std::time::{Duration, SystemTime};
 
 // ─── Core Ledger Types ───────────────────────────────────────────────────────
 
@@ -83,6 +82,8 @@ pub struct ScopedFileBrief {
 #[derive(Debug, Clone)]
 pub struct SymbolRef {
     pub name: String,
+    /// Scoped file (relative to the SiteMap root) the reference was resolved
+    /// against — i.e. which of *our* files this external symbol touches.
     pub file: String,
     pub relationship: String,
 }
@@ -568,11 +569,21 @@ fn build_edit_journal(
     changed_files: &[String],
 ) -> EditJournal {
     let mut completed_edits = Vec::new();
+    let mut created_files = Vec::new();
 
     for changed in changed_files {
         let path = PathBuf::from(changed);
         let full_path = workspace_root.join(&path);
         let intent = format!("Modified {}", path.display());
+
+        // A changed file that was never in scope is one this attempt brought
+        // into existence. Record it as a creation only if it really is on disk,
+        // so the next model does not treat a planned-but-unwritten file as
+        // pre-existing context.
+        let in_scope = scope_files.iter().any(|f| f == &path);
+        if !in_scope && full_path.exists() {
+            created_files.push(path.clone());
+        }
 
         // We record the edit as completed since it appears in changed_files
         completed_edits.push(FileEdit {
@@ -582,6 +593,21 @@ fn build_edit_journal(
         });
     }
 
+    // A scoped file that is still present in the run's scope snapshot but gone
+    // from disk was deleted during this attempt. Keying off the snapshot keeps
+    // this precise: a scope entry that never existed on disk is a stale scope,
+    // not a deletion.
+    let snapshot_dir = workspace_root
+        .join(".velocity")
+        .join("agentic")
+        .join("runs")
+        .join("scope_snapshot");
+    let deleted_files: Vec<PathBuf> = scope_files
+        .iter()
+        .filter(|f| snapshot_dir.join(f).exists() && !workspace_root.join(f).exists())
+        .cloned()
+        .collect();
+
     // Detect partial edits: files in scope that were modified but not in changed_files
     // This indicates a mid-edit state
     let partial_edit = detect_partial_edit(workspace_root, scope_files, changed_files);
@@ -589,8 +615,8 @@ fn build_edit_journal(
     EditJournal {
         completed_edits,
         partial_edit,
-        created_files: Vec::new(),
-        deleted_files: Vec::new(),
+        created_files,
+        deleted_files,
     }
 }
 
@@ -785,16 +811,42 @@ pub fn enrich_from_site_map(
     let mut callers = Vec::new();
     let mut deps = Vec::new();
 
+    // Normalise the caller-supplied scope to SiteMap-root-relative paths so the
+    // in-scope filter and the narrative agree whether absolute or
+    // workspace-relative paths were passed in.
+    let relative = |p: &Path| -> String {
+        p.strip_prefix(site_map_root)
+            .unwrap_or(p)
+            .display()
+            .to_string()
+            .replace('\\', "/")
+    };
+    let scope_paths: HashSet<String> = scoped_files.iter().map(|p| relative(p)).collect();
+
+    // Symbols owned by in-scope files are not "external": the next model sees
+    // them directly, so reporting them as callers that must not break would
+    // misdirect the handoff.
+    let in_scope_symbols: HashSet<&str> = brief
+        .scoped_files
+        .iter()
+        .filter(|f| scope_paths.contains(&relative(&f.path)))
+        .flat_map(|f| f.symbols.iter().map(|s| s.as_str()))
+        .collect();
+
     for file_brief in &brief.scoped_files {
+        let anchor = relative(&file_brief.path);
         for symbol_name in &file_brief.symbols {
             let symbol_hash = fnv1a_hash(symbol_name);
 
             // Find external callers
             for caller_hash in find_callers(symbol_hash) {
                 if let Some(caller_name) = string_resolver(caller_hash) {
+                    if in_scope_symbols.contains(caller_name.as_str()) {
+                        continue;
+                    }
                     callers.push(SymbolRef {
                         name: caller_name,
-                        file: String::new(),
+                        file: anchor.clone(),
                         relationship: format!("calls {}", symbol_name),
                     });
                 }
@@ -803,9 +855,12 @@ pub fn enrich_from_site_map(
             // Find external dependencies
             for dep_hash in find_deps(symbol_hash) {
                 if let Some(dep_name) = string_resolver(dep_hash) {
+                    if in_scope_symbols.contains(dep_name.as_str()) {
+                        continue;
+                    }
                     deps.push(SymbolRef {
                         name: dep_name,
-                        file: String::new(),
+                        file: anchor.clone(),
                         relationship: format!("depended by {}", symbol_name),
                     });
                 }
@@ -813,9 +868,13 @@ pub fn enrich_from_site_map(
         }
     }
 
-    // Deduplicate
-    callers.dedup_by(|a, b| a.name == b.name);
-    deps.dedup_by(|a, b| a.name == b.name);
+    // Deduplicate. `Vec::dedup_by` only collapses *adjacent* entries, and the
+    // same external symbol is routinely reached from several scoped files, so
+    // filter on the full identity instead.
+    let mut seen = HashSet::new();
+    callers.retain(|r| seen.insert((r.name.clone(), r.file.clone())));
+    seen.clear();
+    deps.retain(|r| seen.insert((r.name.clone(), r.file.clone())));
 
     // Update narrative with relationship info
     if !callers.is_empty() || !deps.is_empty() {
@@ -843,6 +902,14 @@ pub fn enrich_from_site_map(
         }
         brief.narrative.push_str(&extra);
     }
+
+    // Name the graph source and the scope it was drawn from, so the receiving
+    // model knows the relationships are not exhaustive and where to re-query.
+    brief.narrative.push_str(&format!(
+        "\nRelationship graph: {} scoped file(s) under {}.",
+        scope_paths.len(),
+        site_map_root.display()
+    ));
 
     brief.external_callers = callers;
     brief.external_dependencies = deps;

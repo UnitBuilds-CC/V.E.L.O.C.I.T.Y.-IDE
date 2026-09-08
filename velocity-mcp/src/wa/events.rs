@@ -1,4 +1,3 @@
-#![allow(dead_code)] // Reserved WA automation API surface; awaiting full MCP dispatch wiring.
 //! Accessibility tree event subscription for Windows desktop automation.
 //!
 //! Provides event-driven UI change detection using Windows UIAutomation

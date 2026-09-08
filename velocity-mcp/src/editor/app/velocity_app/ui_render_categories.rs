@@ -1,8 +1,6 @@
 //! Activity-bar category dispatch rendering for `VelocityApp`.
 //!
 //! Extracted verbatim from `ui_render.rs` (no logic changes).
-use super::super::helpers::*;
-use super::super::types::*;
 use super::struct_def::VelocityApp;
 use crate::editor::theme::IdePalette;
 use eframe::egui;

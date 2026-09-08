@@ -3,7 +3,6 @@ use std::path::PathBuf;
 use super::super::types::*;
 use super::struct_def::VelocityApp;
 use crate::agent::UiToAgentMessage;
-use crate::editor::mode_config::ModeConfig;
 
 impl VelocityApp {
     pub fn focus_panel(&mut self, kind: TabKind) {

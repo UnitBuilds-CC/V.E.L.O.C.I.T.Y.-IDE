@@ -1,4 +1,3 @@
-#![allow(dead_code)] // Reserved WA automation API surface; awaiting full MCP dispatch wiring.
 //! Screenshot capture and visual verification for Windows desktop automation.
 //!
 //! Provides screen capture via Win32 GDI (BitBlt), image comparison using

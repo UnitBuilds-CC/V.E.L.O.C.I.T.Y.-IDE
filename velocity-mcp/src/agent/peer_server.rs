@@ -19,15 +19,13 @@
 //! | POST | `/peer/task/complete` | Complete a task |
 //! | GET | `/peer/health` | Health check |
 
-use serde::{Deserialize, Serialize};
 use std::io::{Read, Write};
 use std::net::TcpListener;
-use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
-use super::peer_link::{PeerManager, PeerMessage, PeerMessageKind};
+use super::peer_link::{PeerManager, PeerMessage};
 
 /// Configuration for the peer API server.
 #[derive(Debug, Clone)]

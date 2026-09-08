@@ -1294,9 +1294,13 @@ impl VelocityApp {
                 error,
             } => {
                 self.pending_file_loads.remove(&tab_id);
-                self.status_message = format!("Failed to read file: {:?}", path);
+                // Surface the underlying cause: "permission denied", "file not
+                // found" and "file locked" all need a different user response,
+                // so the reason has to reach the status line and the toast
+                // (matching FileSaveFailed below).
+                self.status_message = format!("Error reading {}: {}", path.display(), error);
                 self.toasts.push(crate::editor::toast::Toast::error(format!(
-                    "Failed to open: {}",
+                    "Failed to open {}: {error}",
                     path.file_name().unwrap_or_default().to_string_lossy()
                 )));
             }

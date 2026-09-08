@@ -1,4 +1,5 @@
-#![allow(dead_code)] // Reserved WA automation API surface; awaiting full MCP dispatch wiring.
+#![cfg_attr(not(windows), allow(dead_code))]
+// Win32-backed window surface: wired and live on Windows (force-warn clean); the OS APIs are absent on other platforms.
 //! Window management for Windows desktop automation.
 //!
 //! Provides window enumeration, positional control (move, resize, minimize,

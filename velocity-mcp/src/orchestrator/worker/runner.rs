@@ -291,7 +291,7 @@ pub fn execute_live_task(
         // fallback chain receives structured context about what was tried,
         // what partially changed, and what still needs doing.
         let scope_paths: Vec<PathBuf> = scoped_paths.explicit_files.clone();
-        let ledger = ContinuationLedger::capture(
+        let mut ledger = ContinuationLedger::capture(
             &format!("task-{}", assignment.task.id.0),
             &assignment.instructions,
             &format!("{:?}", assignment.task_kind),
@@ -307,6 +307,23 @@ pub fn execute_live_task(
             route_start.elapsed(),
             false,
         );
+
+        // Enrich the brief with the workspace SiteMap so the next route in the
+        // fallback chain inherits the call graph around the scoped files, not
+        // just their contents. Best-effort: a missing or unreadable map leaves
+        // the brief exactly as captured.
+        if let Ok(site_map) = crate::automation::open_workspace_site_map(&assignment.workspace_root)
+        {
+            let site_map_root = assignment.workspace_root.join(".velocity").join("site_map");
+            crate::editor::continuation_ledger::enrich_from_site_map(
+                &mut ledger.environment,
+                &site_map_root,
+                &scope_paths,
+                &|hash| site_map.resolve_string(hash),
+                &|hash| site_map.get_callers(hash),
+                &|hash| site_map.get_dependencies(hash),
+            );
+        }
         // Persist ledger for diagnostics and potential manual inspection.
         let ledger_path = run_dir.join(format!(
             "continuation_ledger_attempt_{}.txt",

@@ -44,5 +44,8 @@ pub fn call_tool_in_workspace(
     }
 
     log::warn!("tool dispatch: unknown tool '{}'", name);
-    Err(format!("Unknown tool: {}", name).into())
+    // Return the structured variant rather than an opaque string: callers (the
+    // JSON-RPC layer, the parity tests, plugin bridges) branch on the failure
+    // mode instead of matching message text.
+    Err(Box::new(ToolError::ToolNotFound(name.to_string())))
 }

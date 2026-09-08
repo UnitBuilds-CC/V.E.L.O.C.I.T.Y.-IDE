@@ -8,7 +8,6 @@
 //! complex multi-tool plugins with configuration and state.
 
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 
 /// Manifest describing a plugin's identity and capabilities.
 #[derive(Debug, Clone, Serialize, Deserialize)]

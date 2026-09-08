@@ -24,9 +24,6 @@
 #![allow(clippy::redundant_closure)]
 #![allow(clippy::if_same_then_else)]
 #![allow(clippy::should_implement_trait)]
-#![allow(dead_code)]
-#![allow(unused_imports)]
-#![allow(unused_variables)]
 
 use eframe::egui;
 use std::process;
@@ -34,7 +31,6 @@ use std::process;
 use velocity_ide::site_map::{NdaNode, SiteMap, VcTriple};
 use velocity_mcp::agent;
 use velocity_mcp::automation;
-use velocity_mcp::compiler;
 use velocity_mcp::editor;
 use velocity_mcp::ipc;
 

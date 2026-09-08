@@ -7,7 +7,6 @@
 //! - Support plan revision and rollback
 
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 
 /// A single step in a plan.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -411,7 +410,7 @@ pub fn decompose_task(goal: &str) -> Plan {
             vec![s4.clone()],
             2,
         );
-        let s6 = plan.add_step(
+        let _s6 = plan.add_step(
             "Document",
             "Update documentation and comments",
             vec![s5.clone()],
@@ -442,7 +441,7 @@ pub fn decompose_task(goal: &str) -> Plan {
             vec![s3.clone()],
             2,
         );
-        let s5 = plan.add_step(
+        let _s5 = plan.add_step(
             "Add regression test",
             "Prevent this bug from recurring",
             vec![s4.clone()],
@@ -467,7 +466,7 @@ pub fn decompose_task(goal: &str) -> Plan {
             vec![s2.clone()],
             4,
         );
-        let s4 = plan.add_step(
+        let _s4 = plan.add_step(
             "Run tests",
             "Ensure no behavior changes",
             vec![s3.clone()],
@@ -487,7 +486,7 @@ pub fn decompose_task(goal: &str) -> Plan {
             3,
         );
         let s3 = plan.add_step("Run tests", "Execute the test suite", vec![s2.clone()], 2);
-        let s4 = plan.add_step(
+        let _s4 = plan.add_step(
             "Analyze results",
             "Review failures and coverage gaps",
             vec![s3.clone()],
@@ -508,7 +507,7 @@ pub fn decompose_task(goal: &str) -> Plan {
             2,
         );
         let s3 = plan.add_step("Execute", "Carry out the plan", vec![s2.clone()], 3);
-        let s4 = plan.add_step("Verify", "Check the results", vec![s3.clone()], 2);
+        let _s4 = plan.add_step("Verify", "Check the results", vec![s3.clone()], 2);
     }
 
     plan
@@ -536,6 +535,7 @@ mod tests {
         let s2 = plan.add_step("Implement", "Write code", vec![s1.clone()], 3);
         assert_eq!(plan.steps.len(), 2);
         assert_eq!(plan.steps[1].depends_on, vec![s1]);
+        assert_eq!(plan.steps[1].id, s2);
     }
 
     #[test]
@@ -666,8 +666,8 @@ mod tests {
     #[test]
     fn complexity_is_clamped() {
         let mut plan = Plan::new("Test");
-        let s1 = plan.add_step("Low", "x", vec![], 0); // clamped to 1
-        let s2 = plan.add_step("High", "x", vec![], 99); // clamped to 5
+        let _s1 = plan.add_step("Low", "x", vec![], 0); // clamped to 1
+        let _s2 = plan.add_step("High", "x", vec![], 99); // clamped to 5
         assert_eq!(plan.steps[0].complexity, 1);
         assert_eq!(plan.steps[1].complexity, 5);
     }

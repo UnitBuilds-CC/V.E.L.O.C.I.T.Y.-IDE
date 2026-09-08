@@ -30,8 +30,6 @@
 //
 // — NOT just isolated matrix multiply patterns.
 
-#![allow(dead_code)]
-
 use std::{collections::HashMap, fs, path::Path};
 
 use anyhow::{Context, Result};
@@ -1262,15 +1260,8 @@ mod tests {
         "#;
         let mut compiler = RustToNda::new();
         let root = compiler.compile_source(source).unwrap();
-        fn has_if(node: &NdaNode) -> bool {
-            match node {
-                NdaNode::If { .. } => true,
-                NdaNode::Scope { children } => children.iter().any(has_if),
-                _ => false,
-            }
-        }
-        // If the compiler translates if-expressions, we should find one
-        // (or at minimum, Int nodes from the arms)
+        // `Expr::If` desugars into a `Scope` of arm nodes — the compiler emits no
+        // dedicated `NdaNode::If` — so assert the arms produced Int nodes.
         fn count_ints(node: &NdaNode) -> usize {
             match node {
                 NdaNode::Int { .. } => 1,

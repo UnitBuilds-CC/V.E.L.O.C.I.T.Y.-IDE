@@ -109,7 +109,7 @@ fn list_dir_rejects_parent_traversal() {
 /// Absolute paths should be rejected (all paths must be relative to workspace).
 #[test]
 fn write_file_rejects_absolute_paths() {
-    let (temp, root) = setup_root();
+    let (_temp, root) = setup_root();
 
     let result = call_tool_in_workspace(
         &root,

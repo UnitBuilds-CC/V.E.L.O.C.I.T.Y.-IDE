@@ -1,22 +1,19 @@
 // V.E.L.O.C.I.T.Y.-IDE — main entry point
 
-// Public API surfaces are defined across modules for future wiring.
-// These items are intentionally available but not yet called from main.
-#![allow(dead_code)]
-
-mod compiler;
-mod credential_guard;
-mod model;
-mod nda;
-mod nda_int;
-mod pipeline_bridge;
-mod pipeline_nda;
-mod provider_usage;
-mod safety;
-mod sandbox;
-mod site_map;
-mod tokenizer;
-mod velocity_client;
+// Consume the `velocity_ide` library directly instead of re-declaring the
+// module tree here. Re-declaring compiled every module a second time as part
+// of the binary and made the crate's `pub use` re-exports (e.g. the globs in
+// `compiler::nda_jit`) look unused inside this private module tree.
+use velocity_ide::compiler;
+use velocity_ide::credential_guard;
+use velocity_ide::model;
+use velocity_ide::nda;
+use velocity_ide::pipeline_bridge;
+use velocity_ide::pipeline_nda;
+use velocity_ide::provider_usage;
+use velocity_ide::site_map;
+use velocity_ide::tokenizer;
+use velocity_ide::velocity_client;
 
 use std::{
     io::{BufRead, BufReader, Write},
@@ -445,8 +442,8 @@ fn main() -> Result<()> {
                 anyhow::bail!("Invalid generate arguments ({} issue(s))", issues.len());
             }
             if args.zero_float {
-                let mode = crate::pipeline_nda::PipelineMode::from_str(&args.mode);
-                if mode != crate::pipeline_nda::PipelineMode::Text {
+                let mode = pipeline_nda::PipelineMode::from_str(&args.mode);
+                if mode != pipeline_nda::PipelineMode::Text {
                     run_generate_zero_nda(args, mode)
                 } else {
                     run_generate_zero(args, cli.json)
@@ -490,8 +487,8 @@ fn main() -> Result<()> {
 // ─── Seed ──────────────────────────────────────────────────────────────────
 
 fn run_seed(args: SeedArgs) -> Result<()> {
-    use crate::compiler::rust_to_nda::seed_from_source;
-    use crate::site_map::SiteMap;
+    use compiler::rust_to_nda::seed_from_source;
+    use site_map::SiteMap;
 
     if args.source.is_empty() {
         anyhow::bail!("No source files specified.  Use --source seeds/*.rs");

@@ -319,11 +319,13 @@ mod tests {
         let r2 = tree.add_root("Approach B: parallelism", 0.8);
         assert_eq!(tree.thought_count(), 2);
         assert_eq!(tree.roots.len(), 2);
+        assert!(tree.roots.contains(&r2));
 
         let c1 = tree.add_child(&r1, "Use LRU cache", 0.6).unwrap();
         let c2 = tree.add_child(&r1, "Use write-through cache", 0.5).unwrap();
         assert_eq!(tree.thoughts[&r1].children.len(), 2);
         assert_eq!(tree.thoughts[&c1].depth, 1);
+        assert_eq!(tree.thoughts[&c2].depth, 1);
     }
 
     #[test]
@@ -334,6 +336,7 @@ mod tests {
         tree.add_child(&c1, "Add null check", 0.95).unwrap();
 
         let r2 = tree.add_root("Rewrite module", 0.3);
+        assert!(tree.roots.contains(&r2));
 
         tree.evaluate(&r1, ThoughtEvaluation::Promising);
         tree.evaluate(&c1, ThoughtEvaluation::Promising);
@@ -373,6 +376,7 @@ mod tests {
         let mut tree = ReasoningTree::new("test");
         let r = tree.add_root("root", 0.5);
         let c = tree.add_child(&r, "child", 0.5).unwrap();
+        assert_eq!(tree.thoughts[&c].depth, 1);
         assert_eq!(tree.unexplored().len(), 2);
         tree.mark_explored(&r);
         assert_eq!(tree.unexplored().len(), 1);
@@ -386,6 +390,8 @@ mod tests {
         let c1 = tree.add_child(&r, "child1", 0.5).unwrap();
         let c2 = tree.add_child(&r, "child2", 0.5).unwrap();
         assert_eq!(tree.leaf_count(), 2); // root now has children, c1+c2 are leaves
+        assert_eq!(tree.thoughts[&c1].depth, 1);
+        assert_eq!(tree.thoughts[&c2].depth, 1);
     }
 
     #[test]

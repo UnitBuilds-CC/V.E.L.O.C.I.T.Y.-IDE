@@ -4,7 +4,7 @@
 
 use super::struct_def::VelocityApp;
 use super::tier3_common::format_count;
-use crate::editor::task_timeline::render_task_timeline;
+use crate::editor::task_timeline::{render_mission_activity_feed, render_task_timeline};
 use crate::editor::theme::{
     IdePalette, FONT_BODY, FONT_CAPTION, FONT_SMALL, ITEM_SPACING, SECTION_SPACING,
 };
@@ -1263,6 +1263,20 @@ impl VelocityApp {
                     ui.label(RichText::new(goal).size(FONT_SMALL).color(palette.text));
                 });
         }
+
+        // Mission activity: the same event stream the Timeline panel draws, but
+        // scoped to whichever task Mission Control currently has selected (or
+        // the whole mission when nothing is selected).
+        ui.add_space(SECTION_SPACING);
+        let selected_task_id = self.mission_control.selected_task_id;
+        let activity_snapshot =
+            crate::editor::task_timeline::TaskTimelineSnapshot::new(&self.task_timeline);
+        egui::ScrollArea::vertical()
+            .id_salt("mission_activity_feed_scroll")
+            .max_height(220.0)
+            .show(ui, |ui| {
+                render_mission_activity_feed(ui, &activity_snapshot, selected_task_id, 40, palette);
+            });
     }
 
     pub fn render_wiki_subpanel(&mut self, ui: &mut egui::Ui, palette: IdePalette) {
@@ -1302,57 +1316,76 @@ impl VelocityApp {
                 );
             });
         } else {
-            egui::ScrollArea::vertical().show(ui, |ui| {
-                for (tab_id, doc) in &self.nda_docs {
-                    let title = doc.doc.title().unwrap_or("Untitled").to_string();
-                    let status = if doc.sealed {
-                        "\u{1f512} Sealed"
-                    } else {
-                        "\u{1f513} Open"
-                    };
-                    let dirty_mark = if doc.dirty { " *" } else { "" };
-                    egui::Frame::new()
-                        .fill(palette.bg_secondary)
-                        .corner_radius(egui::CornerRadius::same(4))
-                        .inner_margin(egui::Margin::symmetric(8, 6))
-                        .show(ui, |ui| {
-                            ui.horizontal(|ui| {
+            // Entries are keyed by the editor tab that owns the document, so
+            // clicking one jumps to that tab. The activation is deferred until
+            // the scroll area finishes, because the list borrows `nda_docs`.
+            let activate = egui::ScrollArea::vertical()
+                .show(ui, |ui| {
+                    let mut activate = None;
+                    for (tab_id, doc) in &self.nda_docs {
+                        let title = doc.doc.title().unwrap_or("Untitled").to_string();
+                        let status = if doc.sealed {
+                            "\u{1f512} Sealed"
+                        } else {
+                            "\u{1f513} Open"
+                        };
+                        let dirty_mark = if doc.dirty { " *" } else { "" };
+                        let frame = egui::Frame::new()
+                            .fill(palette.bg_secondary)
+                            .corner_radius(egui::CornerRadius::same(4))
+                            .inner_margin(egui::Margin::symmetric(8, 6))
+                            .show(ui, |ui| {
+                                ui.horizontal(|ui| {
+                                    ui.label(
+                                        RichText::new(format!("{}{}", title, dirty_mark))
+                                            .size(FONT_SMALL)
+                                            .strong()
+                                            .color(palette.text),
+                                    );
+                                    ui.with_layout(
+                                        egui::Layout::right_to_left(egui::Align::Center),
+                                        |ui| {
+                                            ui.label(RichText::new(status).size(9.0).color(
+                                                if doc.sealed {
+                                                    palette.warning
+                                                } else {
+                                                    palette.text_muted
+                                                },
+                                            ));
+                                        },
+                                    );
+                                });
+                                if let Some(path) = &doc.path {
+                                    let rel =
+                                        path.strip_prefix(&self.workspace_root).unwrap_or(path);
+                                    ui.label(
+                                        RichText::new(rel.display().to_string())
+                                            .size(9.0)
+                                            .color(palette.text_muted),
+                                    );
+                                }
                                 ui.label(
-                                    RichText::new(format!("{}{}", title, dirty_mark))
-                                        .size(FONT_SMALL)
-                                        .strong()
-                                        .color(palette.text),
-                                );
-                                ui.with_layout(
-                                    egui::Layout::right_to_left(egui::Align::Center),
-                                    |ui| {
-                                        ui.label(RichText::new(status).size(9.0).color(
-                                            if doc.sealed {
-                                                palette.warning
-                                            } else {
-                                                palette.text_muted
-                                            },
-                                        ));
-                                    },
+                                    RichText::new(format!("{} triple(s)", doc.doc.triples.len()))
+                                        .size(9.0)
+                                        .color(palette.text_muted.gamma_multiply(0.8)),
                                 );
                             });
-                            if let Some(path) = &doc.path {
-                                let rel = path.strip_prefix(&self.workspace_root).unwrap_or(path);
-                                ui.label(
-                                    RichText::new(rel.display().to_string())
-                                        .size(9.0)
-                                        .color(palette.text_muted),
-                                );
-                            }
-                            ui.label(
-                                RichText::new(format!("{} triple(s)", doc.doc.triples.len()))
-                                    .size(9.0)
-                                    .color(palette.text_muted.gamma_multiply(0.8)),
-                            );
-                        });
-                    ui.add_space(2.0);
-                }
-            });
+                        if frame
+                            .response
+                            .interact(egui::Sense::click())
+                            .on_hover_text("Open this document's tab")
+                            .clicked()
+                        {
+                            activate = Some(tab_id.clone());
+                        }
+                        ui.add_space(2.0);
+                    }
+                    activate
+                })
+                .inner;
+            if let Some(id) = activate {
+                self.activate_tab_by_id(&id);
+            }
         }
     }
 
@@ -1635,6 +1668,14 @@ impl VelocityApp {
                         RichText::new(format!("{} total remaining", format_count(total_remaining)))
                             .size(9.0)
                             .color(palette.text_muted),
+                    );
+                    ui.label(
+                        RichText::new(format!(
+                            "{} requests \u{00b7}",
+                            format_count(total_requests)
+                        ))
+                        .size(9.0)
+                        .color(palette.text_muted),
                     );
                 });
             });

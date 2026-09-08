@@ -1,9 +1,8 @@
 //! CSS/XPath selector resolution for Windows Automation node trees.
 //!
-//! NOTE: The CSS/XPath parsing and scoring API is built out ahead of its
-//! wiring into the WA action pipeline, so several parsers and helpers read as
-//! dead until the resolver is invoked from tool dispatch.
-#![allow(dead_code)] // selector resolver API awaiting WA-pipeline integration
+//! Wired into MCP dispatch via `wa_resolve_selector` / `wa_plan_action` (see
+//! `registry::wa_tools`): those drive `resolve_selector` / `plan_action`, which
+//! in turn exercise the full parse/score helper chain below.
 
 use std::error::Error;
 use std::io::{Error as IoError, ErrorKind};

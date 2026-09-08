@@ -1,4 +1,5 @@
-#![allow(dead_code)] // Reserved WA automation API surface; awaiting full MCP dispatch wiring.
+#![cfg_attr(not(windows), allow(dead_code))]
+// Win32-backed input surface: wired and live on Windows (force-warn clean); the OS APIs are absent on other platforms.
 //! Advanced input capabilities for Windows desktop automation.
 //!
 //! Extends the basic click/type/focus actions with:
