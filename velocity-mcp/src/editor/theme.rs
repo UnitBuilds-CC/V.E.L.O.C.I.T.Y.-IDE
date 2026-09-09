@@ -33,7 +33,7 @@ pub const SECTION_SPACING: f32 = 8.0;
 pub const ITEM_SPACING: f32 = 4.0;
 
 /// Semantic font sizes for the IDE UI. Use these instead of inline `.size()`.
-pub const FONT_CAPTION: f32 = 9.0;
+pub const FONT_CAPTION: f32 = 10.0;
 pub const FONT_SMALL: f32 = 11.0;
 pub const FONT_BODY: f32 = 13.0;
 pub const FONT_HEADING: f32 = 15.0;
@@ -66,7 +66,9 @@ impl IdePalette {
             bg_secondary: Color32::from_rgb(248, 248, 250),
             bg_tertiary: Color32::from_rgb(237, 237, 242),
             text: Color32::from_rgb(32, 32, 38),
-            text_muted: Color32::from_rgb(115, 115, 130),
+            // Darkened from (115,115,130) to clear WCAG AA (~5.1:1) for muted body
+            // text on the panel fill (bg_secondary), not just the white bg_primary.
+            text_muted: Color32::from_rgb(105, 105, 120),
             text_disabled: Color32::from_rgb(180, 180, 190),
             accent: Color32::from_rgb(59, 130, 246),
             info: Color32::from_rgb(59, 130, 246),
@@ -265,15 +267,15 @@ impl WorkspaceProfile {
         }
     }
 
-    /// Distinct geometric glyph per mode — reinforces the "night and day"
-    /// identity in the toolbar pills and the status-bar badge. Restricted to
-    /// shapes already known to render in the bundled fonts.
+    /// Distinct Phosphor icon per mode — reinforces the "night and day"
+    /// identity in the toolbar pills and the status-bar badge. Rendered via the
+    /// embedded Phosphor icon font registered in `setup_fonts`.
     pub fn glyph(self) -> &'static str {
         match self {
-            Self::Coder => "\u{25e7}",
-            Self::AutomationOperator => "\u{25b6}",
-            Self::MissionControl => "\u{25c7}",
-            Self::Accessibility => "\u{25cc}",
+            Self::Coder => egui_phosphor::regular::CODE,
+            Self::AutomationOperator => egui_phosphor::regular::ROBOT,
+            Self::MissionControl => egui_phosphor::regular::GAUGE,
+            Self::Accessibility => egui_phosphor::regular::EYE,
         }
     }
 }
@@ -374,164 +376,43 @@ impl AppearanceSettings {
 }
 
 pub fn setup_fonts(fonts: &mut FontDefinitions) -> FontId {
-    // Prefer an embedded bundled font when available for consistent rendering.
-    if let Some(data) = include_font() {
-        fonts
-            .font_data
-            .insert("code".into(), Arc::new(FontData::from_owned(data)));
-        // Prefer the embedded font for both code and proportional fallbacks.
-        fonts
-            .families
-            .entry(FontFamily::Monospace)
-            .or_default()
-            .insert(0, "code".into());
-        fonts
-            .families
-            .entry(FontFamily::Proportional)
-            .or_default()
-            .push("code".into());
-        // Return bumped base size (16pt) for improved readability.
-        return FontId::new(16.0, FontFamily::Monospace);
-    }
+    // Embed the bundled Inter (UI) and JetBrains Mono (code) faces at compile time
+    // for deterministic, cross-platform rendering. `include_bytes!` resolves relative
+    // to this file (velocity-mcp/src/editor), so `../../../assets` is the repo-root
+    // assets directory. egui's default emoji/symbol fonts stay as trailing fallbacks.
+    fonts.font_data.insert(
+        "inter".into(),
+        Arc::new(FontData::from_static(include_bytes!(
+            "../../../assets/fonts/static/Inter_18pt-Regular.ttf"
+        ))),
+    );
+    fonts.font_data.insert(
+        "jbmono".into(),
+        Arc::new(FontData::from_static(include_bytes!(
+            "../../../assets/fonts/fonts/ttf/JetBrainsMono-Regular.ttf"
+        ))),
+    );
 
-    // First, check for repository-bundled free fonts in assets/fonts/*. If the
-    // user (or our font fetch script) placed JetBrainsMono/Inter here, prefer
-    // those for deterministic cross-platform rendering.
-    if let Ok(current_exe) = std::env::current_exe() {
-        if let Some(exe_dir) = current_exe.parent() {
-            let assets_fonts = exe_dir.join("assets").join("fonts");
-            if assets_fonts.exists() {
-                let jb = assets_fonts.join("JetBrainsMono-Regular.ttf");
-                let jb_bold = assets_fonts.join("JetBrainsMono-Bold.ttf");
-                let inter = assets_fonts.join("Inter-Regular.ttf");
-                let inter_bold = assets_fonts.join("Inter-Bold.ttf");
+    // Inter is the primary proportional (UI) face; JetBrains Mono the primary
+    // monospace (code) face. Inserted at index 0 so they win over egui defaults.
+    fonts
+        .families
+        .entry(FontFamily::Proportional)
+        .or_default()
+        .insert(0, "inter".into());
+    fonts
+        .families
+        .entry(FontFamily::Monospace)
+        .or_default()
+        .insert(0, "jbmono".into());
 
-                if jb.exists() {
-                    if let Ok(data) = std::fs::read(&jb) {
-                        fonts
-                            .font_data
-                            .insert("jbmono".to_string(), Arc::new(FontData::from_owned(data)));
-                        fonts
-                            .families
-                            .entry(FontFamily::Monospace)
-                            .or_default()
-                            .insert(0, "jbmono".to_string());
-                    }
-                }
-                if jb_bold.exists() {
-                    if let Ok(data) = std::fs::read(&jb_bold) {
-                        fonts.font_data.insert(
-                            "jbmono_bold".to_string(),
-                            Arc::new(FontData::from_owned(data)),
-                        );
-                        // prefer bold variant when available
-                        fonts
-                            .families
-                            .entry(FontFamily::Monospace)
-                            .or_default()
-                            .insert(0, "jbmono_bold".to_string());
-                    }
-                }
-                if inter.exists() {
-                    if let Ok(data) = std::fs::read(&inter) {
-                        fonts
-                            .font_data
-                            .insert("inter".to_string(), Arc::new(FontData::from_owned(data)));
-                        fonts
-                            .families
-                            .entry(FontFamily::Proportional)
-                            .or_default()
-                            .insert(0, "inter".to_string());
-                    }
-                }
-                if inter_bold.exists() {
-                    if let Ok(data) = std::fs::read(&inter_bold) {
-                        fonts.font_data.insert(
-                            "inter_bold".to_string(),
-                            Arc::new(FontData::from_owned(data)),
-                        );
-                        fonts
-                            .families
-                            .entry(FontFamily::Proportional)
-                            .or_default()
-                            .insert(0, "inter_bold".to_string());
-                    }
-                }
-            }
-        }
-    }
+    // Phosphor icons: registers the icon font as a proportional fallback so icon
+    // codepoints (egui_phosphor::regular::*) render inline with normal text.
+    egui_phosphor::add_to_fonts(fonts, egui_phosphor::Variant::Regular);
 
-    // At runtime, attempt to load common system fonts on Windows so glyph coverage
-    // (symbols, emoji, UI glyphs) is available even when no embedded font is shipped.
-    #[cfg(target_os = "windows")]
-    {
-        let candidates: &[(&str, &str)] = &[
-            ("consola", r"C:\\Windows\\Fonts\\consola.ttf"),
-            ("segoe_ui_symbol", r"C:\\Windows\\Fonts\\seguisym.ttf"),
-            ("segoe_ui", r"C:\\Windows\\Fonts\\segoeui.ttf"),
-            ("segoe_ui_emoji", r"C:\\Windows\\Fonts\\SegoeUIEmoji.ttf"),
-        ];
-        for (name, path) in candidates.iter() {
-            if std::path::Path::new(path).exists() {
-                if let Ok(data) = std::fs::read(path) {
-                    // insert under a stable key and prefer it for monospace/proportional families
-                    fonts
-                        .font_data
-                        .insert((*name).to_string(), Arc::new(FontData::from_owned(data)));
-                    // Prefer the found monospace as the monospace first family entry (regular)
-                    fonts
-                        .families
-                        .entry(FontFamily::Monospace)
-                        .or_default()
-                        .push((*name).to_string());
-                    // Also add to proportional family to improve glyph coverage for UI icons.
-                    fonts
-                        .families
-                        .entry(FontFamily::Proportional)
-                        .or_default()
-                        .push((*name).to_string());
-
-                    // Attempt to locate and prefer a bold variant where present. This
-                    // increases perceived weight without requiring an embedded bold TTF.
-                    let bold_candidates = [
-                        path.replace(".ttf", "Bold.ttf"),
-                        path.replace(".ttf", "bd.ttf"),
-                        path.replace(".ttf", "b.ttf"),
-                    ];
-                    for bpath in bold_candidates.iter() {
-                        if std::path::Path::new(bpath).exists() {
-                            if let Ok(bdata) = std::fs::read(bpath) {
-                                let bold_key = format!("{}_bold", name);
-                                fonts.font_data.insert(
-                                    bold_key.clone(),
-                                    Arc::new(FontData::from_owned(bdata)),
-                                );
-                                // Insert bold variant at the front of the family lists so it's preferred.
-                                fonts
-                                    .families
-                                    .entry(FontFamily::Monospace)
-                                    .or_default()
-                                    .insert(0, bold_key.clone());
-                                fonts
-                                    .families
-                                    .entry(FontFamily::Proportional)
-                                    .or_default()
-                                    .insert(0, bold_key);
-                                break;
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    // Default to a slightly larger monospace font id for readability (bumped +2pt).
+    // Base code font id (bumped +2pt for readability); AppearanceSettings applies
+    // the user's ui_scale/code_scale on top of this.
     FontId::new(16.0, FontFamily::Monospace)
-}
-
-fn include_font() -> Option<Vec<u8>> {
-    None
 }
 
 pub fn apply_theme(ctx: &egui::Context, appearance: AppearanceSettings) {

@@ -40,6 +40,7 @@ image = { version = "0.24", default-features = false, features = ["png", "jpeg",
 eframe = "0.35.0"
 egui = "0.35.0"
 egui_dock = "0.20"
+egui-phosphor = "0.13"
 epaint = "0.35.0"
 syntect = { version = "5.2", default-features = false, features = ["default-fancy"] }
 portable-pty = "0.9"
