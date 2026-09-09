@@ -2,6 +2,7 @@ use std::path::PathBuf;
 
 use super::super::types::*;
 use super::struct_def::VelocityApp;
+use super::tier3_common::primary_button;
 use crate::agent::UiToAgentMessage;
 
 impl VelocityApp {
@@ -640,7 +641,7 @@ impl VelocityApp {
                 DebugState::Stopped => "Stopped",
             };
             ui.label(
-                egui::RichText::new(format!("\u{1F41E} {}", state_label))
+                egui::RichText::new(format!("{} {}", egui_phosphor::regular::BUG, state_label))
                     .size(10.0)
                     .color(match state {
                         DebugState::Running => palette.success,
@@ -656,7 +657,10 @@ impl VelocityApp {
             let can_stop = state == DebugState::Running || state == DebugState::Paused;
 
             if ui
-                .add_enabled(can_continue, egui::Button::new("\u{25B6} Continue"))
+                .add_enabled(
+                    can_continue,
+                    egui::Button::new(format!("{} Continue", egui_phosphor::regular::PLAY)),
+                )
                 .clicked()
             {
                 if let Some(dap) = &mut self.dap_client {
@@ -664,7 +668,10 @@ impl VelocityApp {
                 }
             }
             if ui
-                .add_enabled(can_step, egui::Button::new("\u{23ED} Step Over"))
+                .add_enabled(
+                    can_step,
+                    egui::Button::new(format!("{} Step Over", egui_phosphor::regular::ARROW_RIGHT)),
+                )
                 .clicked()
             {
                 if let Some(dap) = &mut self.dap_client {
@@ -672,7 +679,10 @@ impl VelocityApp {
                 }
             }
             if ui
-                .add_enabled(can_step, egui::Button::new("\u{2B07} Step Into"))
+                .add_enabled(
+                    can_step,
+                    egui::Button::new(format!("{} Step Into", egui_phosphor::regular::ARROW_DOWN)),
+                )
                 .clicked()
             {
                 if let Some(dap) = &mut self.dap_client {
@@ -680,7 +690,10 @@ impl VelocityApp {
                 }
             }
             if ui
-                .add_enabled(can_step, egui::Button::new("\u{2B06} Step Out"))
+                .add_enabled(
+                    can_step,
+                    egui::Button::new(format!("{} Step Out", egui_phosphor::regular::ARROW_UP)),
+                )
                 .clicked()
             {
                 if let Some(dap) = &mut self.dap_client {
@@ -690,7 +703,8 @@ impl VelocityApp {
             if ui
                 .add_enabled(
                     can_stop,
-                    egui::Button::new("\u{23F9} Stop").fill(palette.error),
+                    egui::Button::new(format!("{} Stop", egui_phosphor::regular::STOP))
+                        .fill(palette.error),
                 )
                 .clicked()
             {
@@ -705,7 +719,7 @@ impl VelocityApp {
             ui.add_space(16.0);
             ui.vertical_centered(|ui| {
                 ui.label(
-                    egui::RichText::new("\u{1F41E}")
+                    egui::RichText::new(egui_phosphor::regular::BUG)
                         .size(22.0)
                         .color(palette.text_muted.gamma_multiply(0.6)),
                 );
@@ -718,10 +732,21 @@ impl VelocityApp {
                 );
                 ui.add_space(2.0);
                 ui.label(
-                    egui::RichText::new("Press F5 or click Continue to start debugging")
+                    egui::RichText::new("Launch a session to hit breakpoints and inspect state.")
                         .size(9.0)
                         .color(palette.text_muted),
                 );
+                ui.add_space(8.0);
+                if primary_button(
+                    ui,
+                    palette,
+                    format!("{} Start debugging", egui_phosphor::regular::PLAY),
+                )
+                .on_hover_text("Launch a DAP session for the active target (F5)")
+                .clicked()
+                {
+                    self.launch_debug_session();
+                }
             });
             return;
         }

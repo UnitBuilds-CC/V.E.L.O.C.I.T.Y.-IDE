@@ -37,7 +37,7 @@ impl VelocityApp {
             );
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 if ui
-                    .small_button("\u{21bb}")
+                    .small_button(egui_phosphor::regular::ARROWS_CLOCKWISE)
                     .on_hover_text("Refresh tree")
                     .clicked()
                 {
@@ -56,7 +56,7 @@ impl VelocityApp {
         // File filter input
         ui.horizontal(|ui| {
             ui.label(
-                RichText::new("\u{2315}")
+                RichText::new(egui_phosphor::regular::MAGNIFYING_GLASS)
                     .size(FONT_SMALL)
                     .color(palette.text_muted),
             );
@@ -74,7 +74,7 @@ impl VelocityApp {
             if !self.file_tree_filter.is_empty() {
                 if ui
                     .small_button(
-                        RichText::new("\u{2715}")
+                        RichText::new(egui_phosphor::regular::X)
                             .size(9.0)
                             .color(palette.text_muted),
                     )
@@ -145,7 +145,7 @@ impl VelocityApp {
             ui.add_space(16.0);
             ui.vertical_centered(|ui| {
                 ui.label(
-                    RichText::new("\u{1F516}")
+                    RichText::new(egui_phosphor::regular::BOOKMARK)
                         .size(24.0)
                         .color(palette.text_muted.gamma_multiply(0.5)),
                 );
@@ -186,7 +186,7 @@ impl VelocityApp {
                         }
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                             if ui
-                                .small_button("\u{2715}")
+                                .small_button(egui_phosphor::regular::X)
                                 .on_hover_text("Remove")
                                 .clicked()
                             {
@@ -226,7 +226,7 @@ impl VelocityApp {
             ui.add_space(16.0);
             ui.vertical_centered(|ui| {
                 ui.label(
-                    RichText::new("\u{2B50}")
+                    RichText::new(egui_phosphor::regular::STAR)
                         .size(24.0)
                         .color(palette.text_muted.gamma_multiply(0.5)),
                 );
@@ -268,7 +268,7 @@ impl VelocityApp {
                         }
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                             if ui
-                                .small_button("\u{2715}")
+                                .small_button(egui_phosphor::regular::X)
                                 .on_hover_text("Remove")
                                 .clicked()
                             {
@@ -305,15 +305,19 @@ impl VelocityApp {
         ui.horizontal(|ui| {
             if let Some(b) = &branch {
                 ui.label(
-                    RichText::new(format!("\u{e0a0} {}", b))
-                        .size(FONT_SMALL)
-                        .strong()
-                        .color(palette.accent),
+                    RichText::new(format!(
+                        "{} {}",
+                        egui_phosphor::regular::ARROWS_LEFT_RIGHT,
+                        b
+                    ))
+                    .size(FONT_SMALL)
+                    .strong()
+                    .color(palette.accent),
                 );
             }
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 if ui
-                    .small_button("\u{21bb}")
+                    .small_button(egui_phosphor::regular::ARROWS_CLOCKWISE)
                     .on_hover_text("Refresh")
                     .clicked()
                 {
@@ -327,7 +331,7 @@ impl VelocityApp {
             ui.add_space(16.0);
             ui.vertical_centered(|ui| {
                 ui.label(
-                    RichText::new("\u{2714}")
+                    RichText::new(egui_phosphor::regular::CHECK_CIRCLE)
                         .size(24.0)
                         .color(palette.success.gamma_multiply(0.6)),
                 );
@@ -337,6 +341,26 @@ impl VelocityApp {
                         .color(palette.text_muted)
                         .size(FONT_SMALL),
                 );
+                ui.add_space(2.0);
+                ui.label(
+                    RichText::new("Changes appear here as you edit and stage files.")
+                        .color(palette.text_muted.gamma_multiply(0.7))
+                        .size(FONT_CAPTION),
+                );
+                ui.add_space(ITEM_SPACING);
+                if primary_button(
+                    ui,
+                    palette,
+                    format!(
+                        "{} Refresh status",
+                        egui_phosphor::regular::ARROWS_CLOCKWISE
+                    ),
+                )
+                .on_hover_text("Re-scan the working tree for changes")
+                .clicked()
+                {
+                    self.git_state.refresh(&self.workspace_root);
+                }
             });
         } else {
             // Staged/unstaged summary strip
@@ -446,7 +470,7 @@ impl VelocityApp {
             );
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 if ui
-                    .small_button("\u{21bb}")
+                    .small_button(egui_phosphor::regular::ARROWS_CLOCKWISE)
                     .on_hover_text("Refresh")
                     .clicked()
                 {
@@ -464,7 +488,7 @@ impl VelocityApp {
                 .show(ui, |ui| {
                     ui.horizontal(|ui| {
                         ui.label(
-                            RichText::new("\u{e0a0}")
+                            RichText::new(egui_phosphor::regular::ARROWS_LEFT_RIGHT)
                                 .size(FONT_BODY)
                                 .color(palette.accent),
                         );
@@ -489,16 +513,24 @@ impl VelocityApp {
             ui.horizontal(|ui| {
                 if self.git_state.ahead > 0 {
                     ui.label(
-                        RichText::new(format!("\u{2191} {} ahead", self.git_state.ahead))
-                            .size(FONT_SMALL)
-                            .color(palette.success),
+                        RichText::new(format!(
+                            "{} {} ahead",
+                            egui_phosphor::regular::ARROW_UP,
+                            self.git_state.ahead
+                        ))
+                        .size(FONT_SMALL)
+                        .color(palette.success),
                     );
                 }
                 if self.git_state.behind > 0 {
                     ui.label(
-                        RichText::new(format!("\u{2193} {} behind", self.git_state.behind))
-                            .size(FONT_SMALL)
-                            .color(palette.warning),
+                        RichText::new(format!(
+                            "{} {} behind",
+                            egui_phosphor::regular::ARROW_DOWN,
+                            self.git_state.behind
+                        ))
+                        .size(FONT_SMALL)
+                        .color(palette.warning),
                     );
                 }
             });
@@ -507,7 +539,7 @@ impl VelocityApp {
         if let Some(err) = &self.git_state.last_error {
             ui.add_space(SECTION_SPACING);
             ui.label(
-                RichText::new(format!("\u{26a0} {}", err))
+                RichText::new(format!("{} {}", egui_phosphor::regular::WARNING, err))
                     .size(9.0)
                     .color(palette.error),
             );
@@ -523,7 +555,7 @@ impl VelocityApp {
             );
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 if ui
-                    .small_button("\u{21bb}")
+                    .small_button(egui_phosphor::regular::ARROWS_CLOCKWISE)
                     .on_hover_text("Refresh log")
                     .clicked()
                 {
@@ -537,7 +569,7 @@ impl VelocityApp {
             ui.add_space(16.0);
             ui.vertical_centered(|ui| {
                 ui.label(
-                    RichText::new("\u{1f4dc}")
+                    RichText::new(egui_phosphor::regular::SCROLL)
                         .size(22.0)
                         .color(palette.text_muted.gamma_multiply(0.5)),
                 );
@@ -608,7 +640,7 @@ impl VelocityApp {
                 palette.text_muted
             };
             ui.label(
-                RichText::new(format!("\u{25cf} {}", status))
+                RichText::new(format!("{} {}", egui_phosphor::regular::CIRCLE, status))
                     .size(FONT_SMALL)
                     .color(status_color),
             );
@@ -626,7 +658,7 @@ impl VelocityApp {
                 // Clear conversation button
                 if !self.chat.messages.is_empty() {
                     if ui
-                        .small_button("\u{2715}")
+                        .small_button(egui_phosphor::regular::X)
                         .on_hover_text("Clear conversation")
                         .clicked()
                     {
@@ -638,13 +670,13 @@ impl VelocityApp {
                     let think_resp = ui
                         .selectable_label(
                             self.chat.thinking_enabled,
-                            RichText::new("\u{1f9e0}").size(FONT_SMALL).color(
-                                if self.chat.thinking_enabled {
+                            RichText::new(egui_phosphor::regular::BRAIN)
+                                .size(FONT_SMALL)
+                                .color(if self.chat.thinking_enabled {
                                     palette.accent
                                 } else {
                                     palette.text_muted
-                                },
-                            ),
+                                }),
                         )
                         .on_hover_text(if self.chat.thinking_enabled {
                             "Thinking: ON"
@@ -735,7 +767,7 @@ impl VelocityApp {
                 ui.add_space(16.0);
                 ui.vertical_centered(|ui| {
                     ui.label(
-                        RichText::new("\u{1F4AC}")
+                        RichText::new(egui_phosphor::regular::CHAT_CIRCLE)
                             .size(24.0)
                             .color(palette.text_muted.gamma_multiply(0.5)),
                     );
@@ -792,7 +824,7 @@ impl VelocityApp {
                 send = true;
             }
             if ui
-                .button(RichText::new("\u{27a4}").size(FONT_BODY))
+                .button(RichText::new(egui_phosphor::regular::PAPER_PLANE_TILT).size(FONT_BODY))
                 .clicked()
             {
                 send = true;
@@ -868,9 +900,15 @@ impl VelocityApp {
                 for (i, att) in self.multimodal_attachments.iter().enumerate() {
                     let kind_label = att.kind.label();
                     let kind_icon = match att.kind {
-                        crate::editor::multimodal::AttachmentKind::Image => "\u{1f5bc}",
-                        crate::editor::multimodal::AttachmentKind::Audio => "\u{1f3b5}",
-                        crate::editor::multimodal::AttachmentKind::Document => "\u{1f4c4}",
+                        crate::editor::multimodal::AttachmentKind::Image => {
+                            egui_phosphor::regular::IMAGE
+                        }
+                        crate::editor::multimodal::AttachmentKind::Audio => {
+                            egui_phosphor::regular::MUSIC_NOTE
+                        }
+                        crate::editor::multimodal::AttachmentKind::Document => {
+                            egui_phosphor::regular::FILE_TEXT
+                        }
                     };
                     let file_name = att
                         .path
@@ -893,7 +931,7 @@ impl VelocityApp {
                         );
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                             if ui
-                                .small_button("\u{2715}")
+                                .small_button(egui_phosphor::regular::X)
                                 .on_hover_text("Remove")
                                 .clicked()
                             {
@@ -949,9 +987,9 @@ impl VelocityApp {
             let build_ok = self.build_errors_count == 0;
             ui.horizontal(|ui| {
                 let (icon, color) = if build_ok {
-                    ("\u{2714}", palette.success)
+                    (egui_phosphor::regular::CHECK, palette.success)
                 } else {
-                    ("\u{2716}", palette.error)
+                    (egui_phosphor::regular::X, palette.error)
                 };
                 ui.label(RichText::new(icon).size(FONT_BODY).color(color));
                 if build_ok {
@@ -974,7 +1012,7 @@ impl VelocityApp {
             ui.add_space(8.0);
             ui.vertical_centered(|ui| {
                 ui.label(
-                    RichText::new("\u{1f3d7}")
+                    RichText::new(egui_phosphor::regular::HAMMER)
                         .size(22.0)
                         .color(palette.accent.gamma_multiply(0.5)),
                 );
@@ -998,7 +1036,7 @@ impl VelocityApp {
         // Build controls
         ui.horizontal(|ui| {
             let build_btn = egui::Button::new(
-                RichText::new("\u{25b6} Build")
+                RichText::new(format!("{} Build", egui_phosphor::regular::PLAY))
                     .size(FONT_SMALL)
                     .color(palette.text),
             );
@@ -1006,7 +1044,7 @@ impl VelocityApp {
                 self.status_message = "Building\u{2026}".to_string();
             }
             let run_btn = egui::Button::new(
-                RichText::new("\u{25b6} Run")
+                RichText::new(format!("{} Run", egui_phosphor::regular::PLAY))
                     .size(FONT_SMALL)
                     .color(palette.text),
             );
@@ -1014,7 +1052,7 @@ impl VelocityApp {
                 self.status_message = "Running\u{2026}".to_string();
             }
             let stop_btn = egui::Button::new(
-                RichText::new("\u{25a0} Stop")
+                RichText::new(format!("{} Stop", egui_phosphor::regular::STOP))
                     .size(FONT_SMALL)
                     .color(palette.error),
             );
@@ -1079,24 +1117,40 @@ impl VelocityApp {
         // Summary strip
         ui.horizontal(|ui| {
             ui.label(
-                RichText::new(format!("\u{2714} {}", snapshot.done_tasks))
-                    .size(FONT_SMALL)
-                    .color(palette.success),
+                RichText::new(format!(
+                    "{} {}",
+                    egui_phosphor::regular::CHECK,
+                    snapshot.done_tasks
+                ))
+                .size(FONT_SMALL)
+                .color(palette.success),
             );
             ui.label(
-                RichText::new(format!("\u{2716} {}", snapshot.failed_tasks))
-                    .size(FONT_SMALL)
-                    .color(palette.error),
+                RichText::new(format!(
+                    "{} {}",
+                    egui_phosphor::regular::X,
+                    snapshot.failed_tasks
+                ))
+                .size(FONT_SMALL)
+                .color(palette.error),
             );
             ui.label(
-                RichText::new(format!("\u{25b6} {}", snapshot.running_tasks))
-                    .size(FONT_SMALL)
-                    .color(palette.warning),
+                RichText::new(format!(
+                    "{} {}",
+                    egui_phosphor::regular::PLAY,
+                    snapshot.running_tasks
+                ))
+                .size(FONT_SMALL)
+                .color(palette.warning),
             );
             ui.label(
-                RichText::new(format!("\u{22ef} {}", snapshot.pending_tasks))
-                    .size(FONT_SMALL)
-                    .color(palette.text_muted),
+                RichText::new(format!(
+                    "{} {}",
+                    egui_phosphor::regular::DOTS_THREE,
+                    snapshot.pending_tasks
+                ))
+                .size(FONT_SMALL)
+                .color(palette.text_muted),
             );
         });
         ui.add_space(ITEM_SPACING);
@@ -1110,7 +1164,7 @@ impl VelocityApp {
             );
             if snapshot.execution_running {
                 ui.label(
-                    RichText::new("\u{25cf} running")
+                    RichText::new(format!("{} running", egui_phosphor::regular::CIRCLE))
                         .size(9.0)
                         .color(palette.success),
                 );
@@ -1118,9 +1172,12 @@ impl VelocityApp {
         });
         if snapshot.has_dependency_cycle {
             ui.label(
-                RichText::new("\u{26a0} Dependency cycle detected")
-                    .size(9.0)
-                    .color(palette.error),
+                RichText::new(format!(
+                    "{} Dependency cycle detected",
+                    egui_phosphor::regular::WARNING
+                ))
+                .size(9.0)
+                .color(palette.error),
             );
         }
         ui.add_space(ITEM_SPACING);
@@ -1310,7 +1367,7 @@ impl VelocityApp {
             ui.add_space(16.0);
             ui.vertical_centered(|ui| {
                 ui.label(
-                    RichText::new("\u{1f512}")
+                    RichText::new(egui_phosphor::regular::LOCK)
                         .size(24.0)
                         .color(palette.text_muted.gamma_multiply(0.5)),
                 );
@@ -1336,9 +1393,9 @@ impl VelocityApp {
                     for (tab_id, doc) in &self.nda_docs {
                         let title = doc.doc.title().unwrap_or("Untitled").to_string();
                         let status = if doc.sealed {
-                            "\u{1f512} Sealed"
+                            format!("{} Sealed", egui_phosphor::regular::LOCK)
                         } else {
-                            "\u{1f513} Open"
+                            format!("{} Open", egui_phosphor::regular::LOCK_OPEN)
                         };
                         let dirty_mark = if doc.dirty { " *" } else { "" };
                         let frame = egui::Frame::new()
@@ -1422,7 +1479,7 @@ impl VelocityApp {
             ui.add_space(16.0);
             ui.vertical_centered(|ui| {
                 ui.label(
-                    RichText::new("\u{1f9e9}")
+                    RichText::new(egui_phosphor::regular::PUZZLE_PIECE)
                         .size(24.0)
                         .color(palette.text_muted.gamma_multiply(0.5)),
                 );
@@ -1518,7 +1575,7 @@ impl VelocityApp {
         // Search filter
         ui.horizontal(|ui| {
             ui.label(
-                RichText::new("\u{2315}")
+                RichText::new(egui_phosphor::regular::MAGNIFYING_GLASS)
                     .size(FONT_SMALL)
                     .color(palette.text_muted),
             );
@@ -1536,7 +1593,7 @@ impl VelocityApp {
             if !self.skill_filter.is_empty() {
                 if ui
                     .small_button(
-                        RichText::new("\u{2715}")
+                        RichText::new(egui_phosphor::regular::X)
                             .size(9.0)
                             .color(palette.text_muted),
                     )
@@ -1551,7 +1608,7 @@ impl VelocityApp {
         if self.skill_files.is_empty() {
             ui.add_space(16.0);
             ui.vertical_centered(|ui| {
-                ui.label(RichText::new("\u{1f3af}").size(24.0).color(palette.text_muted.gamma_multiply(0.5)));
+                ui.label(RichText::new(egui_phosphor::regular::TARGET).size(24.0).color(palette.text_muted.gamma_multiply(0.5)));
                 ui.add_space(ITEM_SPACING);
                 ui.label(RichText::new("No skills defined").size(FONT_BODY).strong().color(palette.text));
                 ui.add_space(2.0);
@@ -1636,7 +1693,7 @@ impl VelocityApp {
             ui.add_space(16.0);
             ui.vertical_centered(|ui| {
                 ui.label(
-                    RichText::new("\u{1f4ca}")
+                    RichText::new(egui_phosphor::regular::CHART_BAR)
                         .size(24.0)
                         .color(palette.text_muted.gamma_multiply(0.5)),
                 );
@@ -1789,7 +1846,8 @@ impl VelocityApp {
                         ui.horizontal(|ui| {
                             ui.label(
                                 RichText::new(format!(
-                                    "\u{2191} {} in",
+                                    "{} {} in",
+                                    egui_phosphor::regular::ARROW_UP,
                                     format_count(usage.tokens_in)
                                 ))
                                 .size(9.0)
@@ -1797,7 +1855,8 @@ impl VelocityApp {
                             );
                             ui.label(
                                 RichText::new(format!(
-                                    "\u{2193} {} out",
+                                    "{} {} out",
+                                    egui_phosphor::regular::ARROW_DOWN,
                                     format_count(usage.tokens_out)
                                 ))
                                 .size(9.0)

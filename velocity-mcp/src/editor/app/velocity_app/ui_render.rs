@@ -2,6 +2,7 @@ use super::super::helpers::*;
 use super::super::render::TabViewerImpl;
 use super::super::types::*;
 use super::struct_def::VelocityApp;
+use super::tier3_common::primary_button;
 use crate::editor::agent_ui_render::{render_agent_metrics, RenderSnapshot};
 use crate::editor::theme::FONT_CAPTION;
 use eframe::egui;
@@ -1472,6 +1473,13 @@ impl eframe::App for VelocityApp {
                         .clamp(80.0, crate::editor::bottom_panel::MAX_PANEL_HEIGHT);
                     // Tab strip
                     let tab_labels = ["Terminal", "Problems", "Debug", "Output", "Checkpoints"];
+                    let tab_tips = [
+                        "Integrated shell and command output",
+                        "Compiler diagnostics: errors and warnings",
+                        "Debug session: call stack, variables, and watches",
+                        "Build, run, and agent command output",
+                        "Saved restore points for this workspace",
+                    ];
                     ui.horizontal(|ui| {
                         ui.spacing_mut().item_spacing.x = 2.0;
                         for (i, label) in tab_labels.iter().enumerate() {
@@ -1503,7 +1511,7 @@ impl eframe::App for VelocityApp {
                                 .fill(egui::Color32::TRANSPARENT)
                                 .stroke(egui::Stroke::NONE)
                                 .min_size(egui::vec2(0.0, 24.0));
-                            let resp = ui.add(btn);
+                            let resp = ui.add(btn).on_hover_text(tab_tips[i]);
                             // Accent underline for active tab
                             if is_active {
                                 let rect = resp.rect;
@@ -1524,10 +1532,11 @@ impl eframe::App for VelocityApp {
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                             if ui
                                 .small_button(
-                                    egui::RichText::new("\u{2715}")
+                                    egui::RichText::new(egui_phosphor::regular::X)
                                         .size(9.0)
                                         .color(palette.text_muted),
                                 )
+                                .on_hover_text("Collapse panel")
                                 .clicked()
                             {
                                 self.bottom_panel_state.collapsed = true;
@@ -1557,7 +1566,7 @@ impl eframe::App for VelocityApp {
                                         ui.add_space(16.0);
                                         ui.vertical_centered(|ui| {
                                             ui.label(
-                                                egui::RichText::new("\u{2714}")
+                                                egui::RichText::new(egui_phosphor::regular::CHECK)
                                                     .size(22.0)
                                                     .color(palette.success),
                                             );
@@ -1570,9 +1579,11 @@ impl eframe::App for VelocityApp {
                                             );
                                             ui.add_space(2.0);
                                             ui.label(
-                                                egui::RichText::new("Your code is clean. Keep going!")
-                                                    .size(10.0)
-                                                    .color(palette.text_muted),
+                                                egui::RichText::new(
+                                                    "Your code is clean. Keep going!",
+                                                )
+                                                .size(10.0)
+                                                .color(palette.text_muted),
                                             );
                                         });
                                     } else {
@@ -1580,13 +1591,21 @@ impl eframe::App for VelocityApp {
                                             if ec > 0 {
                                                 ui.colored_label(
                                                     palette.error,
-                                                    format!("\u{2716} {} error(s)", ec),
+                                                    format!(
+                                                        "{} {} error(s)",
+                                                        egui_phosphor::regular::X,
+                                                        ec
+                                                    ),
                                                 );
                                             }
                                             if wc > 0 {
                                                 ui.colored_label(
                                                     palette.warning,
-                                                    format!("\u{26A0} {} warning(s)", wc),
+                                                    format!(
+                                                        "{} {} warning(s)",
+                                                        egui_phosphor::regular::WARNING,
+                                                        wc
+                                                    ),
                                                 );
                                             }
                                         });
@@ -1634,6 +1653,7 @@ impl eframe::App for VelocityApp {
                             } else {
                                 // Show build/command output
                                 let content_h = ui.available_height();
+                                let mut run_build = false;
                                 egui::ScrollArea::vertical()
                                     .max_height(content_h)
                                     .show(ui, |ui| {
@@ -1648,9 +1668,11 @@ impl eframe::App for VelocityApp {
                                             ui.add_space(12.0);
                                             ui.vertical_centered(|ui| {
                                                 ui.label(
-                                                    egui::RichText::new(egui_phosphor::regular::GEAR)
-                                                        .size(20.0)
-                                                        .color(palette.text_muted.gamma_multiply(0.6)),
+                                                    egui::RichText::new(
+                                                        egui_phosphor::regular::GEAR,
+                                                    )
+                                                    .size(20.0)
+                                                    .color(palette.text_muted.gamma_multiply(0.6)),
                                                 );
                                                 ui.add_space(4.0);
                                                 ui.label(
@@ -1661,13 +1683,31 @@ impl eframe::App for VelocityApp {
                                                 );
                                                 ui.add_space(2.0);
                                                 ui.label(
-                                                    egui::RichText::new("Run a build (Ctrl+B) or command to see output here")
-                                                        .size(9.0)
-                                                        .color(palette.text_muted),
+                                                    egui::RichText::new(
+                                                        "Run a build or command to see output here",
+                                                    )
+                                                    .size(9.0)
+                                                    .color(palette.text_muted),
                                                 );
+                                                ui.add_space(8.0);
+                                                if primary_button(
+                                                    ui,
+                                                    palette,
+                                                    format!(
+                                                        "{} Run build  Ctrl+B",
+                                                        egui_phosphor::regular::HAMMER
+                                                    ),
+                                                )
+                                                .clicked()
+                                                {
+                                                    run_build = true;
+                                                }
                                             });
                                         }
                                     });
+                                if run_build {
+                                    self.build_active();
+                                }
                             }
                         }
                         crate::editor::bottom_panel::TAB_CHECKPOINTS => {

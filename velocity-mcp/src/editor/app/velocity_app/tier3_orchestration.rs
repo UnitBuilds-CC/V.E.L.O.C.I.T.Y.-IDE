@@ -3,6 +3,7 @@
 //! Extracted verbatim from `tier3_panels.rs` (no logic changes).
 
 use super::struct_def::VelocityApp;
+use super::tier3_common::primary_button;
 use crate::editor::theme::{
     CARD_INNER_MARGIN, CARD_RADIUS, FONT_CAPTION, FONT_SMALL, ITEM_SPACING, SECTION_SPACING,
 };
@@ -126,16 +127,43 @@ impl VelocityApp {
                 .strong()
                 .color(palette.accent),
         );
+        let mut go_orchestrator = false;
         egui::ScrollArea::vertical()
             .id_salt("orchestration_activity_scroll")
             .max_height(250.0)
             .show(ui, |ui| {
                 if self.live_orchestration.activity_feed.is_empty() {
-                    ui.label(
-                        RichText::new("No activity yet. Activity appears when agents are running.")
-                            .size(FONT_CAPTION)
-                            .color(palette.text_muted),
-                    );
+                    ui.add_space(12.0);
+                    ui.vertical_centered(|ui| {
+                        ui.label(
+                            RichText::new(egui_phosphor::regular::PULSE)
+                                .size(22.0)
+                                .color(palette.text_muted.gamma_multiply(0.5)),
+                        );
+                        ui.add_space(4.0);
+                        ui.label(
+                            RichText::new("No activity yet")
+                                .size(FONT_SMALL)
+                                .strong()
+                                .color(palette.text),
+                        );
+                        ui.add_space(2.0);
+                        ui.label(
+                            RichText::new("Events stream in while agents run orchestrated tasks.")
+                                .size(FONT_CAPTION)
+                                .color(palette.text_muted),
+                        );
+                        ui.add_space(ITEM_SPACING);
+                        if primary_button(
+                            ui,
+                            palette,
+                            format!("{} Open Orchestrator", egui_phosphor::regular::ROBOT),
+                        )
+                        .clicked()
+                        {
+                            go_orchestrator = true;
+                        }
+                    });
                 } else {
                     for event in self.live_orchestration.activity_feed.iter().rev() {
                         let color = match event.kind {
@@ -172,6 +200,9 @@ impl VelocityApp {
                     }
                 }
             });
+        if go_orchestrator {
+            self.focus_orchestrator_tab();
+        }
     }
 
     // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
@@ -197,90 +228,109 @@ impl VelocityApp {
         );
         ui.add_space(6.0);
 
+        let mut go_orchestrator = false;
         egui::ScrollArea::vertical()
             .id_salt("continuation_ledger_scroll")
-            .show(ui, |ui| {
-                match &self.continuation_ledger {
-                    None => {
-                        ui.add_space(16.0);
-                        ui.vertical_centered(|ui| {
+            .show(ui, |ui| match &self.continuation_ledger {
+                None => {
+                    ui.add_space(16.0);
+                    ui.vertical_centered(|ui| {
+                        ui.label(
+                            RichText::new(egui_phosphor::regular::CLIPBOARD)
+                                .size(24.0)
+                                .color(palette.text_muted.gamma_multiply(0.5)),
+                        );
+                        ui.add_space(ITEM_SPACING);
+                        ui.label(
+                            RichText::new("No active continuation ledger")
+                                .size(FONT_SMALL)
+                                .strong()
+                                .color(palette.text),
+                        );
+                        ui.add_space(2.0);
+                        ui.label(
+                            RichText::new(
+                                "A ledger is created when handing off context between models.",
+                            )
+                            .size(FONT_CAPTION)
+                            .color(palette.text_muted),
+                        );
+                        ui.add_space(ITEM_SPACING);
+                        if primary_button(
+                            ui,
+                            palette,
+                            format!("{} Open Orchestrator", egui_phosphor::regular::ROBOT),
+                        )
+                        .clicked()
+                        {
+                            go_orchestrator = true;
+                        }
+                    });
+                }
+                Some(ledger) => {
+                    egui::Frame::new()
+                        .fill(palette.bg_secondary)
+                        .corner_radius(CARD_RADIUS)
+                        .inner_margin(CARD_INNER_MARGIN)
+                        .show(ui, |ui| {
                             ui.label(
-                                RichText::new("\u{1f4cb}")
-                                    .size(24.0)
-                                    .color(palette.text_muted.gamma_multiply(0.5)),
+                                RichText::new(format!("Ledger: {}", ledger.id))
+                                    .strong()
+                                    .color(palette.accent),
                             );
                             ui.add_space(ITEM_SPACING);
                             ui.label(
-                                RichText::new(
-                                    "No active continuation ledger.\nA ledger is created when handing off context between models.",
-                                )
-                                .size(FONT_SMALL)
+                                RichText::new(format!("Mission: {}", ledger.mission.goal))
+                                    .size(FONT_CAPTION)
+                                    .color(palette.text),
+                            );
+                            ui.label(
+                                RichText::new(format!(
+                                    "Scoped files: {}",
+                                    ledger.environment.scoped_files.len()
+                                ))
+                                .size(FONT_CAPTION)
+                                .color(palette.text),
+                            );
+                            ui.label(
+                                RichText::new(format!(
+                                    "Edit journal: {} entries",
+                                    ledger.journal.completed_edits.len()
+                                ))
+                                .size(FONT_CAPTION)
+                                .color(palette.text),
+                            );
+                            ui.label(
+                                RichText::new(format!(
+                                    "Progress: {}/{} steps done",
+                                    ledger
+                                        .progress
+                                        .steps
+                                        .iter()
+                                        .filter(|s| matches!(
+                                            s.status,
+                                            crate::editor::continuation_ledger::StepStatus::Done
+                                        ))
+                                        .count(),
+                                    ledger.progress.steps.len()
+                                ))
+                                .size(FONT_CAPTION)
+                                .color(palette.success),
+                            );
+                            ui.label(
+                                RichText::new(format!(
+                                    "Provenance: {} model attempt(s)",
+                                    ledger.provenance.len()
+                                ))
+                                .size(FONT_CAPTION)
                                 .color(palette.text_muted),
                             );
                         });
-                    }
-                    Some(ledger) => {
-                        egui::Frame::new()
-                            .fill(palette.bg_secondary)
-                            .corner_radius(CARD_RADIUS)
-                            .inner_margin(CARD_INNER_MARGIN)
-                            .show(ui, |ui| {
-                                ui.label(
-                                    RichText::new(format!("Ledger: {}", ledger.id))
-                                        .strong()
-                                        .color(palette.accent),
-                                );
-                                ui.add_space(ITEM_SPACING);
-                                ui.label(
-                                    RichText::new(format!("Mission: {}", ledger.mission.goal))
-                                        .size(FONT_CAPTION)
-                                        .color(palette.text),
-                                );
-                                ui.label(
-                                    RichText::new(format!(
-                                        "Scoped files: {}",
-                                        ledger.environment.scoped_files.len()
-                                    ))
-                                    .size(FONT_CAPTION)
-                                    .color(palette.text),
-                                );
-                                ui.label(
-                                    RichText::new(format!(
-                                        "Edit journal: {} entries",
-                                        ledger.journal.completed_edits.len()
-                                    ))
-                                    .size(FONT_CAPTION)
-                                    .color(palette.text),
-                                );
-                                ui.label(
-                                    RichText::new(format!(
-                                        "Progress: {}/{} steps done",
-                                        ledger
-                                            .progress
-                                            .steps
-                                            .iter()
-                                            .filter(|s| matches!(
-                                                s.status,
-                                                crate::editor::continuation_ledger::StepStatus::Done
-                                            ))
-                                            .count(),
-                                        ledger.progress.steps.len()
-                                    ))
-                                    .size(FONT_CAPTION)
-                                    .color(palette.success),
-                                );
-                                ui.label(
-                                    RichText::new(format!(
-                                        "Provenance: {} model attempt(s)",
-                                        ledger.provenance.len()
-                                    ))
-                                    .size(FONT_CAPTION)
-                                    .color(palette.text_muted),
-                                );
-                            });
-                    }
                 }
             });
+        if go_orchestrator {
+            self.focus_orchestrator_tab();
+        }
     }
 
     pub fn render_background_agents_panel(&mut self, ui: &mut egui::Ui) {
@@ -310,7 +360,7 @@ impl VelocityApp {
                     ui.add_space(16.0);
                     ui.vertical_centered(|ui| {
                         ui.label(
-                            RichText::new("\u{1f916}")
+                            RichText::new(egui_phosphor::regular::ROBOT)
                                 .size(24.0)
                                 .color(palette.text_muted.gamma_multiply(0.5)),
                         );
@@ -334,7 +384,10 @@ impl VelocityApp {
                             .inner_margin(CARD_INNER_MARGIN)
                             .show(ui, |ui| {
                                 ui.horizontal(|ui| {
-                                    ui.label(RichText::new("\u{25cf}").color(status_color));
+                                    ui.label(
+                                        RichText::new(egui_phosphor::regular::CIRCLE)
+                                            .color(status_color),
+                                    );
                                     ui.label(RichText::new(&agent.id).strong().color(palette.text));
                                     ui.label(
                                         RichText::new(if agent.enabled {
@@ -402,7 +455,7 @@ impl VelocityApp {
                     ui.add_space(16.0);
                     ui.vertical_centered(|ui| {
                         ui.label(
-                            RichText::new("\u{2714}")
+                            RichText::new(egui_phosphor::regular::CHECK)
                                 .size(24.0)
                                 .color(palette.success.gamma_multiply(0.5)),
                         );
@@ -501,7 +554,7 @@ impl VelocityApp {
                     ui.add_space(16.0);
                     ui.vertical_centered(|ui| {
                         ui.label(
-                            RichText::new("\u{1f465}")
+                            RichText::new(egui_phosphor::regular::USERS)
                                 .size(24.0)
                                 .color(palette.text_muted.gamma_multiply(0.5)),
                         );
@@ -580,7 +633,10 @@ impl VelocityApp {
                                 .inner_margin(CARD_INNER_MARGIN)
                                 .show(ui, |ui| {
                                     ui.horizontal(|ui| {
-                                        ui.label(RichText::new("\u{25cf}").color(status_color));
+                                        ui.label(
+                                            RichText::new(egui_phosphor::regular::CIRCLE)
+                                                .color(status_color),
+                                        );
                                         ui.label(
                                             RichText::new(&session.name)
                                                 .strong()

@@ -3,6 +3,7 @@
 //! Extracted verbatim from `tier3_panels.rs` (no logic changes).
 
 use super::struct_def::VelocityApp;
+use super::tier3_common::{primary_button, secondary_button};
 use crate::editor::theme::{
     CARD_INNER_MARGIN, CARD_RADIUS, FONT_CAPTION, FONT_SMALL, ITEM_SPACING,
 };
@@ -37,16 +38,23 @@ impl VelocityApp {
         // Controls
         let mut load = false;
         let mut save = false;
+        let mut go_orchestrator = false;
         ui.horizontal(|ui| {
-            if ui
-                .button(RichText::new("\u{1f504} Load All").size(FONT_SMALL))
-                .clicked()
+            if secondary_button(
+                ui,
+                palette,
+                format!("{} Load All", egui_phosphor::regular::ARROWS_CLOCKWISE),
+            )
+            .clicked()
             {
                 load = true;
             }
-            if ui
-                .button(RichText::new("\u{1f4be} Save All").size(FONT_SMALL))
-                .clicked()
+            if secondary_button(
+                ui,
+                palette,
+                format!("{} Save All", egui_phosphor::regular::FLOPPY_DISK),
+            )
+            .clicked()
             {
                 save = true;
             }
@@ -63,7 +71,7 @@ impl VelocityApp {
             ui.add_space(16.0);
             ui.vertical_centered(|ui| {
                 ui.label(
-                    RichText::new("\u{1f9e0}")
+                    RichText::new(egui_phosphor::regular::BRAIN)
                         .size(22.0)
                         .color(palette.text_muted.gamma_multiply(0.5)),
                 );
@@ -76,10 +84,22 @@ impl VelocityApp {
                 );
                 ui.add_space(2.0);
                 ui.label(
-                    RichText::new("Memories are created during agent execution")
-                        .size(9.0)
-                        .color(palette.text_muted.gamma_multiply(0.7)),
+                    RichText::new(
+                        "Memories build up while agents run. Start a mission to fill this store.",
+                    )
+                    .size(9.0)
+                    .color(palette.text_muted.gamma_multiply(0.7)),
                 );
+                ui.add_space(8.0);
+                if primary_button(
+                    ui,
+                    palette,
+                    format!("{} Open Orchestrator", egui_phosphor::regular::ROBOT),
+                )
+                .clicked()
+                {
+                    go_orchestrator = true;
+                }
             });
         } else {
             egui::ScrollArea::vertical()
@@ -88,7 +108,8 @@ impl VelocityApp {
                     for store in &self.agent_memory.stores {
                         egui::CollapsingHeader::new(
                             RichText::new(format!(
-                                "\u{1f464} {} ({} memories)",
+                                "{} {} ({} memories)",
+                                egui_phosphor::regular::USER,
                                 store.member_id,
                                 store.memories.len()
                             ))
@@ -150,6 +171,9 @@ impl VelocityApp {
                 });
         }
 
+        if go_orchestrator {
+            self.focus_orchestrator_tab();
+        }
         if load {
             self.agent_memory.load_all();
             self.toasts
@@ -194,7 +218,7 @@ impl VelocityApp {
                     ui.add_space(16.0);
                     ui.vertical_centered(|ui| {
                         ui.label(
-                            RichText::new("\u{1f4da}")
+                            RichText::new(egui_phosphor::regular::BOOKS)
                                 .size(24.0)
                                 .color(palette.text_muted.gamma_multiply(0.5)),
                         );
@@ -262,7 +286,7 @@ impl VelocityApp {
                     ui.add_space(16.0);
                     ui.vertical_centered(|ui| {
                         ui.label(
-                            RichText::new("\u{1f512}")
+                            RichText::new(egui_phosphor::regular::LOCK)
                                 .size(24.0)
                                 .color(palette.text_muted.gamma_multiply(0.5)),
                         );
@@ -291,7 +315,7 @@ impl VelocityApp {
                             .show(ui, |ui| {
                                 ui.horizontal(|ui| {
                                     ui.label(
-                                        RichText::new("\u{1f512}")
+                                        RichText::new(egui_phosphor::regular::LOCK)
                                             .size(FONT_SMALL)
                                             .color(palette.text_muted),
                                     );

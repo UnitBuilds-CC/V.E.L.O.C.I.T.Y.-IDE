@@ -3,6 +3,7 @@
 //! Extracted verbatim from `tier3_panels.rs` (no logic changes).
 
 use super::struct_def::VelocityApp;
+use super::tier3_common::primary_button;
 use crate::editor::theme::{
     CARD_INNER_MARGIN, CARD_RADIUS, FONT_CAPTION, FONT_SMALL, ITEM_SPACING,
 };
@@ -30,9 +31,18 @@ impl VelocityApp {
 
         ui.horizontal(|ui| {
             let (label, color) = if listening {
-                ("\u{25cf} Listening", palette.error)
+                (
+                    format!("{} Listening", egui_phosphor::regular::MICROPHONE),
+                    palette.error,
+                )
             } else {
-                ("\u{25cb} Start listening", palette.text_muted)
+                (
+                    format!(
+                        "{} Start listening",
+                        egui_phosphor::regular::MICROPHONE_SLASH
+                    ),
+                    palette.text_muted,
+                )
             };
             if ui
                 .button(RichText::new(label).size(FONT_SMALL).color(color))
@@ -49,9 +59,15 @@ impl VelocityApp {
             ui.add(
                 egui::TextEdit::singleline(&mut self.voice_input.last_transcription)
                     .hint_text("Type a phrase, e.g. 'run tests'\u{2026}")
-                    .desired_width(ui.available_width() - 70.0),
+                    .desired_width(ui.available_width() - 96.0),
             );
-            if ui.button(RichText::new("Parse").size(FONT_SMALL)).clicked() {
+            if primary_button(
+                ui,
+                palette,
+                format!("{} Parse", egui_phosphor::regular::ARROW_RIGHT),
+            )
+            .clicked()
+            {
                 parse = true;
             }
         });
@@ -94,6 +110,7 @@ impl VelocityApp {
                 .strong()
                 .color(palette.accent),
         );
+        let mut picked: Option<String> = None;
         egui::ScrollArea::vertical()
             .id_salt("voice_history_scroll")
             .show(ui, |ui| {
@@ -101,7 +118,7 @@ impl VelocityApp {
                     ui.add_space(8.0);
                     ui.vertical_centered(|ui| {
                         ui.label(
-                            RichText::new("\u{1f3a4}")
+                            RichText::new(egui_phosphor::regular::MICROPHONE)
                                 .size(18.0)
                                 .color(palette.text_muted.gamma_multiply(0.5)),
                         );
@@ -111,6 +128,33 @@ impl VelocityApp {
                                 .size(FONT_CAPTION)
                                 .color(palette.text_muted),
                         );
+                        ui.add_space(6.0);
+                        ui.label(
+                            RichText::new("Try an example:")
+                                .size(FONT_CAPTION)
+                                .color(palette.text_muted.gamma_multiply(0.8)),
+                        );
+                        ui.add_space(2.0);
+                        for phrase in [
+                            "run tests",
+                            "build the project",
+                            "explain this file",
+                            "open settings",
+                        ] {
+                            if ui
+                                .button(
+                                    RichText::new(format!(
+                                        "{} {}",
+                                        egui_phosphor::regular::ARROW_RIGHT,
+                                        phrase
+                                    ))
+                                    .size(FONT_CAPTION),
+                                )
+                                .clicked()
+                            {
+                                picked = Some(phrase.to_string());
+                            }
+                        }
                     });
                 }
                 for cmd in self.voice_input.command_history.iter().rev() {
@@ -128,6 +172,11 @@ impl VelocityApp {
                     });
                 }
             });
+
+        if let Some(phrase) = picked {
+            self.voice_input.last_transcription = phrase;
+            parse = true;
+        }
 
         if parse {
             let text = self.voice_input.last_transcription.clone();
@@ -175,7 +224,7 @@ impl VelocityApp {
                     ui.add_space(16.0);
                     ui.vertical_centered(|ui| {
                         ui.label(
-                            RichText::new("\u{1f4ce}")
+                            RichText::new(egui_phosphor::regular::PAPERCLIP)
                                 .size(24.0)
                                 .color(palette.text_muted.gamma_multiply(0.5)),
                         );
@@ -201,7 +250,10 @@ impl VelocityApp {
                             .inner_margin(CARD_INNER_MARGIN)
                             .show(ui, |ui| {
                                 ui.horizontal(|ui| {
-                                    ui.label(RichText::new("\u{25cf}").color(kind_color));
+                                    ui.label(
+                                        RichText::new(egui_phosphor::regular::CIRCLE)
+                                            .color(kind_color),
+                                    );
                                     ui.label(
                                         RichText::new(att.kind.label())
                                             .small()
