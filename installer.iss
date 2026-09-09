@@ -1,8 +1,10 @@
 ; ─────────────────────────────────────────────────────────────────────────
 ; V.E.L.O.C.I.T.Y. — Inno Setup Installer
 ; ─────────────────────────────────────────────────────────────────────────
-; Build with:  ISCC.exe /DMyAppVersion=1.0.0 /S"signtool=$qC:\Program Files (x86)\Windows Kits\10\bin\10.0.22621.0\x64\signtool.exe$q /f $q<certificate>$q /p $q<password>$q /tr http://timestamp.digicert.com /td sha256 /fd sha256" installer.iss
-; Or simply:   .\build_release.ps1
+; Build with:  ISCC.exe /DMyAppVersion=1.0.0 /S"signtool=$qC:\Program Files (x86)\Windows Kits\10\bin\10.0.22621.0\x64\signtool.exe$q /f $q<certificate>$q /p $q<password>$q /tr http://timestamp.digicert.com /td sha256 /fd sha256 $f" installer.iss
+;              ($f is required: Inno replaces it with the quoted name of each file to sign.)
+; Or simply:   .\build_signed_installer.ps1 -CertPath <pfx> -CertPassword <secret>
+; Unsigned:    .\build_release.ps1
 ; ─────────────────────────────────────────────────────────────────────────
 
 #ifndef MyAppVersion

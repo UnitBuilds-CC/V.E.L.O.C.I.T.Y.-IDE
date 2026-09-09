@@ -8,6 +8,18 @@ vulnerability = "deny"
 unmaintained = "warn"
 yanked = "warn"
 notice = "warn"
+# Transitive advisories that cannot be bumped yet and whose vulnerable code path
+# is never exercised by this project. Kept in lockstep with `.cargo/audit.toml`;
+# see that file for the full per-advisory reachability analysis.
+#   RUSTSEC-2024-0437 (protobuf 2.28.0): prometheus 0.13.4 is used via TextEncoder
+#     only; the vulnerable protobuf *parsing* recursion path is never reached.
+#   RUSTSEC-2026-0194 / RUSTSEC-2026-0195 (quick-xml 0.39.4): build-time dep of
+#     wayland-scanner (Linux-only); not compiled for the win-x64 target.
+ignore = [
+    "RUSTSEC-2024-0437",
+    "RUSTSEC-2026-0194",
+    "RUSTSEC-2026-0195",
+]
 
 [licenses]
 unlicensed = "deny"

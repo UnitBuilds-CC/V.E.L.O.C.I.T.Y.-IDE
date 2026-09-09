@@ -1,0 +1,33 @@
+# cargo-audit configuration
+# See: https://github.com/RustSec/rustsec/tree/main/cargo-audit
+#
+# NOTE ON LOCATION: cargo-audit only auto-discovers this file at
+# `~/.cargo/audit.toml` (user home) or `.cargo/audit.toml` (project root).
+# It does NOT read a bare `audit.toml` at the repository root, so this file
+# must stay under `.cargo/` for `cargo audit` (local and CI) to honor the
+# ignores below.
+
+[advisories]
+# Each ignore below is a transitive dependency we cannot bump ourselves, paired
+# with a reachability analysis showing the vulnerable code path is never
+# exercised by this project. Revisit each when the pinning parent ships a fix.
+#
+# RUSTSEC-2026-0194 / RUSTSEC-2026-0195 (quick-xml 0.39.4):
+#   Transitive dep from wayland-scanner (Linux-only GUI stack). wayland-scanner
+#   pins quick-xml <0.40; fix requires upstream release. Not exploitable in our
+#   project: wayland-scanner is a build-time code generator, and our targets are
+#   Windows-only for the GUI stack (quick-xml 0.39.4 is not compiled for the
+#   win-x64 target; the Windows tree resolves quick-xml 0.41.0).
+#
+# RUSTSEC-2024-0437 (protobuf 2.28.0):
+#   Transitive dep of prometheus 0.13.4, which pins protobuf ^2 (no prometheus
+#   release uses protobuf 3 yet). velocity-mcp uses prometheus ONLY through
+#   TextEncoder to export in-process metrics in the Prometheus text format; it
+#   never parses protobuf. The advisory is a crash from uncontrolled recursion
+#   while *parsing* malformed protobuf input, so the vulnerable path is never
+#   exercised. Drop this ignore once prometheus adopts protobuf >=3.7.2.
+ignore = [
+    "RUSTSEC-2026-0194",
+    "RUSTSEC-2026-0195",
+    "RUSTSEC-2024-0437",
+]
