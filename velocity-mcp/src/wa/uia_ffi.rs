@@ -916,6 +916,16 @@ fn invoke_pattern_com(
     // SAFETY: FindFirst on valid `desktop` with a valid `condition`; returns an element or Err.
     let com_elem = unsafe { desktop.FindFirst(TreeScope_Descendants, &condition) }
         .map_err(|e| format!("FindFirst: {:?}", e))?;
+    // Soundness guard: UIA's FindFirst reports success (S_OK) with a NULL element when nothing
+    // matches the condition, and the `windows` binding surfaces that as a concrete interface (not
+    // `Option`), so a not-found result would otherwise be dereferenced by the `GetCurrentPattern`
+    // calls below. Reject it explicitly to turn "not found" into a clean error, not undefined behavior.
+    if com_elem.as_raw().is_null() {
+        return Err(format!(
+            "UIA element not found (automation_id={:?}, name={:?})",
+            element.automation_id, element.name
+        ));
+    }
 
     match pattern {
         // SAFETY: GetCurrentPattern + cast + invoke on valid `com_elem`.

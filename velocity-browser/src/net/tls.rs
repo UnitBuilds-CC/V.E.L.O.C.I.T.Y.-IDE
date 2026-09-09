@@ -7,11 +7,47 @@
 //! `aws-lc-rs`/NASM toolchain requirement on Windows.
 
 use std::io::{Read, Write};
-use std::net::TcpStream;
+use std::net::{TcpStream, ToSocketAddrs};
 use std::sync::{Arc, OnceLock};
+use std::time::Duration;
 
 use rustls::pki_types::ServerName;
 use rustls::{ClientConfig, ClientConnection, RootCertStore, StreamOwned};
+
+/// Upper bound on establishing a TCP connection. A production browser must never
+/// hang indefinitely on a blackholed peer, a dead proxy, or an unreachable origin.
+const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
+/// Upper bound on any single socket read or write, so a connected-but-stalled peer
+/// cannot wedge the agent forever. This is a per-operation bound, not per-transfer.
+const IO_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// Resolve `addr` (`host:port`) and connect with a bounded timeout, then arm
+/// read/write timeouts so no socket operation can block indefinitely.
+///
+/// DNS resolution inside `to_socket_addrs` is itself blocking and is not separately
+/// bounded here; IP-literal addresses (including loopback) resolve instantly.
+/// Bounding the connect + I/O phases covers the dominant real-world hang cases.
+fn connect_bounded(addr: &str) -> std::io::Result<TcpStream> {
+    let addrs: Vec<std::net::SocketAddr> = addr.to_socket_addrs()?.collect();
+    if addrs.is_empty() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::AddrNotAvailable,
+            format!("no socket addresses resolved for {addr}"),
+        ));
+    }
+    let mut last_err = None;
+    for socket_addr in addrs {
+        match TcpStream::connect_timeout(&socket_addr, CONNECT_TIMEOUT) {
+            Ok(stream) => {
+                let _ = stream.set_read_timeout(Some(IO_TIMEOUT));
+                let _ = stream.set_write_timeout(Some(IO_TIMEOUT));
+                return Ok(stream);
+            }
+            Err(e) => last_err = Some(e),
+        }
+    }
+    Err(last_err.unwrap_or_else(|| std::io::Error::other("TCP connect failed")))
+}
 
 #[derive(Debug, Clone)]
 pub enum ProxyType {
@@ -55,9 +91,9 @@ impl ProxyResolver {
         target_port: u16,
     ) -> Result<TcpStream, std::io::Error> {
         match &self.proxy_type {
-            ProxyType::Direct => TcpStream::connect(format!("{target_host}:{target_port}")),
+            ProxyType::Direct => connect_bounded(&format!("{target_host}:{target_port}")),
             ProxyType::Http(proxy_addr) => {
-                let mut stream = TcpStream::connect(proxy_addr)?;
+                let mut stream = connect_bounded(proxy_addr)?;
                 let request = build_http_connect_request(target_host, target_port);
                 stream.write_all(request.as_bytes())?;
                 stream.flush()?;
@@ -66,7 +102,7 @@ impl ProxyResolver {
                 Ok(stream)
             }
             ProxyType::Socks5(proxy_addr) => {
-                let mut stream = TcpStream::connect(proxy_addr)?;
+                let mut stream = connect_bounded(proxy_addr)?;
                 // Greeting: offer only the "no authentication" method.
                 stream.write_all(&socks5_greeting())?;
                 stream.flush()?;
@@ -264,7 +300,7 @@ impl NativeTlsStream {
         let server_name = ServerName::try_from(hostname.to_string()).map_err(|_| {
             std::io::Error::new(std::io::ErrorKind::InvalidInput, "invalid DNS hostname")
         })?;
-        let socket = TcpStream::connect(addr)?;
+        let socket = connect_bounded(addr)?;
         let conn = ClientConnection::new(client_config(), server_name)
             .map_err(|e| std::io::Error::other(e.to_string()))?;
         Ok(Self {
