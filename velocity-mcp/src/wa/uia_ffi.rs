@@ -592,6 +592,7 @@ fn com_element_to_cached(
     let automation_id = unsafe { elem.CurrentAutomationId() }
         .map(|s| bstr_to_string(&s))
         .unwrap_or_default();
+    // SAFETY: COM property getter on valid `elem` (see module `# Safety Invariants`).
     let name = unsafe { elem.CurrentName() }
         .map(|s| bstr_to_string(&s))
         .unwrap_or_default();
@@ -600,10 +601,12 @@ fn com_element_to_cached(
         .map(|s| bstr_to_string(&s))
         .unwrap_or_default();
 
+    // SAFETY: COM property getter on valid `elem`; returns a by-value control type id.
     let control_type = unsafe { elem.CurrentControlType() }
         .map(|ct| control_type_name(ct.0))
         .unwrap_or_else(|_| "Unknown".to_string());
 
+    // SAFETY: COM property getter on valid `elem`; returns a by-value RECT (no pointer).
     let bounding_rect = unsafe { elem.CurrentBoundingRectangle() }
         .map(|r| UiaRect {
             x: r.left as f64,
@@ -622,9 +625,11 @@ fn com_element_to_cached(
     let is_enabled = unsafe { elem.CurrentIsEnabled() }
         .map(|b| b.as_bool())
         .unwrap_or(false);
+    // SAFETY: COM property getter on valid `elem`; returns a by-value BOOL.
     let is_offscreen = unsafe { elem.CurrentIsOffscreen() }
         .map(|b| b.as_bool())
         .unwrap_or(true);
+    // SAFETY: COM property getter on valid `elem`; returns a by-value process id.
     let process_id = unsafe { elem.CurrentProcessId() }.unwrap_or(0) as u32;
 
     // Detect supported patterns via GetCurrentPattern
@@ -638,15 +643,19 @@ fn com_element_to_cached(
     if unsafe { elem.GetCurrentPattern(UIA_InvokePatternId) }.is_ok() {
         supported_patterns.push(UiaPattern::Invoke);
     }
+    // SAFETY: GetCurrentPattern on valid `elem`; Ok if supported, Err otherwise.
     if unsafe { elem.GetCurrentPattern(UIA_ValuePatternId) }.is_ok() {
         supported_patterns.push(UiaPattern::Value);
     }
+    // SAFETY: GetCurrentPattern on valid `elem`; Ok if supported, Err otherwise.
     if unsafe { elem.GetCurrentPattern(UIA_TogglePatternId) }.is_ok() {
         supported_patterns.push(UiaPattern::Toggle);
     }
+    // SAFETY: GetCurrentPattern on valid `elem`; Ok if supported, Err otherwise.
     if unsafe { elem.GetCurrentPattern(UIA_SelectionPatternId) }.is_ok() {
         supported_patterns.push(UiaPattern::Selection);
     }
+    // SAFETY: GetCurrentPattern on valid `elem`; Ok if supported, Err otherwise.
     if unsafe { elem.GetCurrentPattern(UIA_SelectionItemPatternId) }.is_ok() {
         supported_patterns.push(UiaPattern::SelectionItem);
     }
@@ -654,9 +663,11 @@ fn com_element_to_cached(
     if unsafe { elem.GetCurrentPattern(UIA_ExpandCollapsePatternId) }.is_ok() {
         supported_patterns.push(UiaPattern::ExpandCollapse);
     }
+    // SAFETY: GetCurrentPattern on valid `elem`; Ok if supported, Err otherwise.
     if unsafe { elem.GetCurrentPattern(UIA_ScrollPatternId) }.is_ok() {
         supported_patterns.push(UiaPattern::Scroll);
     }
+    // SAFETY: GetCurrentPattern on valid `elem`; Ok if supported, Err otherwise.
     if unsafe { elem.GetCurrentPattern(UIA_RangeValuePatternId) }.is_ok() {
         supported_patterns.push(UiaPattern::RangeValue);
     }
@@ -766,6 +777,8 @@ fn build_tree_com(
     max_children: u32,
 ) -> Result<CachedUiaTree, String> {
     // Get the desktop root
+    // SAFETY: GetRootElement on valid `auto` (IUIAutomation from CoCreateInstance); returns a
+    // valid root element handle, refcounted by the `windows` crate RAII wrapper.
     let desktop =
         unsafe { auto.GetRootElement() }.map_err(|e| format!("GetRootElement failed: {:?}", e))?;
 
@@ -773,6 +786,7 @@ fn build_tree_com(
     // SAFETY: COM tree walker calls on valid `auto` and `walker` from CoCreateInstance.
     let true_cond = unsafe { auto.CreateTrueCondition() }
         .map_err(|e| format!("CreateTrueCondition failed: {:?}", e))?;
+    // SAFETY: CreateTreeWalker on valid `auto` with a valid `true_cond`; returns a valid walker.
     let walker = unsafe { auto.CreateTreeWalker(&true_cond) }
         .map_err(|e| format!("CreateTreeWalker failed: {:?}", e))?;
 
@@ -783,11 +797,13 @@ fn build_tree_com(
         .map_err(|e| format!("GetFirstChildElement failed: {:?}", e))?;
 
     loop {
+        // SAFETY: property getter on valid `current` element from the desktop tree walk.
         let elem_pid = unsafe { current.CurrentProcessId() }.unwrap_or(0) as u32;
         if elem_pid == pid {
             target_window = Some(current);
             break;
         }
+        // SAFETY: walker call on valid `walker`/`current`; returns a valid sibling or Err.
         match unsafe { walker.GetNextSiblingElement(&current) } {
             Ok(next) => current = next,
             Err(_) => break,
@@ -887,71 +903,87 @@ fn invoke_pattern_com(
     let condition = if !element.automation_id.is_empty() {
         let bstr = BSTR::from(element.automation_id.as_str());
         let var: VARIANT = bstr.into();
+        // SAFETY: CreatePropertyCondition on valid `auto`; `var` is a valid BSTR VARIANT.
         unsafe { auto.CreatePropertyCondition(UIA_AutomationIdPropertyId, &var) }
     } else {
         let bstr = BSTR::from(element.name.as_str());
         let var: VARIANT = bstr.into();
+        // SAFETY: CreatePropertyCondition on valid `auto`; `var` is a valid BSTR VARIANT.
         unsafe { auto.CreatePropertyCondition(UIA_NamePropertyId, &var) }
     }
     .map_err(|e| format!("CreatePropertyCondition: {:?}", e))?;
 
+    // SAFETY: FindFirst on valid `desktop` with a valid `condition`; returns an element or Err.
     let com_elem = unsafe { desktop.FindFirst(TreeScope_Descendants, &condition) }
         .map_err(|e| format!("FindFirst: {:?}", e))?;
 
     match pattern {
         // SAFETY: GetCurrentPattern + cast + invoke on valid `com_elem`.
         UiaPattern::Invoke => {
+            // SAFETY: GetCurrentPattern on valid `com_elem` (from FindFirst); pattern obj or Err.
             let pattern_obj = unsafe { com_elem.GetCurrentPattern(UIA_InvokePatternId) }
                 .map_err(|e| format!("GetInvokePattern: {:?}", e))?;
             let invoke: IUIAutomationInvokePattern = pattern_obj
                 .cast()
                 .map_err(|e| format!("Cast InvokePattern: {:?}", e))?;
+            // SAFETY: Invoke() on a valid IUIAutomationInvokePattern cast from `com_elem`.
             unsafe { invoke.Invoke() }.map_err(|e| format!("Invoke: {:?}", e))?;
         }
         // SAFETY: GetCurrentPattern + cast + method call on valid `com_elem`.
         UiaPattern::Value => {
             let val = value.unwrap_or("");
+            // SAFETY: GetCurrentPattern on valid `com_elem` (from FindFirst); pattern obj or Err.
             let pattern_obj = unsafe { com_elem.GetCurrentPattern(UIA_ValuePatternId) }
                 .map_err(|e| format!("GetValuePattern: {:?}", e))?;
             let value_pattern: IUIAutomationValuePattern = pattern_obj
                 .cast()
                 .map_err(|e| format!("Cast ValuePattern: {:?}", e))?;
+            // SAFETY: SetValue on a valid IUIAutomationValuePattern cast from `com_elem`.
             unsafe { value_pattern.SetValue(&BSTR::from(val)) }
                 .map_err(|e| format!("SetValue: {:?}", e))?;
         }
         // SAFETY: GetCurrentPattern + cast + method call on valid `com_elem`.
         UiaPattern::Toggle => {
+            // SAFETY: GetCurrentPattern on valid `com_elem` (from FindFirst); pattern obj or Err.
             let pattern_obj = unsafe { com_elem.GetCurrentPattern(UIA_TogglePatternId) }
                 .map_err(|e| format!("GetTogglePattern: {:?}", e))?;
             let toggle: IUIAutomationTogglePattern = pattern_obj
                 .cast()
                 .map_err(|e| format!("Cast TogglePattern: {:?}", e))?;
+            // SAFETY: Toggle() on a valid IUIAutomationTogglePattern cast from `com_elem`.
             unsafe { toggle.Toggle() }.map_err(|e| format!("Toggle: {:?}", e))?;
         }
         // SAFETY: GetCurrentPattern + cast + method call on valid `com_elem`.
         UiaPattern::ExpandCollapse => {
+            // SAFETY: GetCurrentPattern on valid `com_elem` (from FindFirst); pattern obj or Err.
             let pattern_obj = unsafe { com_elem.GetCurrentPattern(UIA_ExpandCollapsePatternId) }
                 .map_err(|e| format!("GetExpandCollapsePattern: {:?}", e))?;
             let ec: IUIAutomationExpandCollapsePattern = pattern_obj
                 .cast()
                 .map_err(|e| format!("Cast ExpandCollapsePattern: {:?}", e))?;
             match value.unwrap_or("Expand") {
+                // SAFETY: Collapse() on a valid IUIAutomationExpandCollapsePattern from `com_elem`.
                 "Collapse" => unsafe { ec.Collapse() }.map_err(|e| format!("Collapse: {:?}", e))?,
+                // SAFETY: Expand() on a valid IUIAutomationExpandCollapsePattern from `com_elem`.
                 _ => unsafe { ec.Expand() }.map_err(|e| format!("Expand: {:?}", e))?,
             }
         }
         // SAFETY: GetCurrentPattern + cast + method call on valid `com_elem`.
         UiaPattern::SelectionItem => {
+            // SAFETY: GetCurrentPattern on valid `com_elem` (from FindFirst); pattern obj or Err.
             let pattern_obj = unsafe { com_elem.GetCurrentPattern(UIA_SelectionItemPatternId) }
                 .map_err(|e| format!("GetSelectionItemPattern: {:?}", e))?;
             let si: IUIAutomationSelectionItemPattern = pattern_obj
                 .cast()
                 .map_err(|e| format!("Cast SelectionItemPattern: {:?}", e))?;
             match value.unwrap_or("Select") {
+                // SAFETY: AddToSelection() on a valid IUIAutomationSelectionItemPattern.
                 "AddToSelection" => unsafe { si.AddToSelection() }
                     .map_err(|e| format!("AddToSelection: {:?}", e))?,
+                // SAFETY: RemoveFromSelection() on a valid IUIAutomationSelectionItemPattern.
                 "RemoveFromSelection" => unsafe { si.RemoveFromSelection() }
                     .map_err(|e| format!("RemoveFromSelection: {:?}", e))?,
+                // SAFETY: Select() on a valid IUIAutomationSelectionItemPattern from `com_elem`.
                 _ => unsafe { si.Select() }.map_err(|e| format!("Select: {:?}", e))?,
             }
         }
@@ -960,15 +992,18 @@ fn invoke_pattern_com(
         // All pattern objects are valid COM interfaces with proper refcounting via `windows` crate.
         UiaPattern::RangeValue => {
             let val: f64 = value.unwrap_or("50").parse().unwrap_or(50.0);
+            // SAFETY: GetCurrentPattern on valid `com_elem` (from FindFirst); pattern obj or Err.
             let pattern_obj = unsafe { com_elem.GetCurrentPattern(UIA_RangeValuePatternId) }
                 .map_err(|e| format!("GetRangeValuePattern: {:?}", e))?;
             let rv: IUIAutomationRangeValuePattern = pattern_obj
                 .cast()
                 .map_err(|e| format!("Cast RangeValuePattern: {:?}", e))?;
+            // SAFETY: SetValue on a valid IUIAutomationRangeValuePattern cast from `com_elem`.
             unsafe { rv.SetValue(val) }.map_err(|e| format!("SetRangeValue: {:?}", e))?;
         }
         // SAFETY: COM pattern calls on valid `com_elem`.
         UiaPattern::Scroll => {
+            // SAFETY: GetCurrentPattern on valid `com_elem` (from FindFirst); pattern obj or Err.
             let pattern_obj = unsafe { com_elem.GetCurrentPattern(UIA_ScrollPatternId) }
                 .map_err(|e| format!("GetScrollPattern: {:?}", e))?;
             let scroll: IUIAutomationScrollPattern = pattern_obj
@@ -982,11 +1017,13 @@ fn invoke_pattern_com(
                 "PageDown" => (ScrollAmount_NoAmount, ScrollAmount_LargeIncrement),
                 _ => (ScrollAmount_NoAmount, ScrollAmount_SmallIncrement),
             };
+            // SAFETY: Scroll() on a valid IUIAutomationScrollPattern cast from `com_elem`.
             unsafe { scroll.Scroll(h, v) }.map_err(|e| format!("Scroll: {:?}", e))?;
         }
         // SAFETY: COM pattern calls on valid `com_elem`.
         UiaPattern::Transform => {
             let spec = value.unwrap_or("");
+            // SAFETY: GetCurrentPattern on valid `com_elem` (from FindFirst); pattern obj or Err.
             let pattern_obj = unsafe { com_elem.GetCurrentPattern(UIA_TransformPatternId) }
                 .map_err(|e| format!("GetTransformPattern: {:?}", e))?;
             let tf: IUIAutomationTransformPattern = pattern_obj
@@ -1033,26 +1070,33 @@ fn invoke_pattern_com(
         }
         // SAFETY: COM pattern calls on valid `com_elem`.
         UiaPattern::ScrollItem => {
+            // SAFETY: GetCurrentPattern on valid `com_elem` (from FindFirst); pattern obj or Err.
             let pattern_obj = unsafe { com_elem.GetCurrentPattern(UIA_ScrollItemPatternId) }
                 .map_err(|e| format!("GetScrollItemPattern: {:?}", e))?;
             let si: IUIAutomationScrollItemPattern = pattern_obj
                 .cast()
                 .map_err(|e| format!("Cast ScrollItemPattern: {:?}", e))?;
+            // SAFETY: ScrollIntoView() on a valid IUIAutomationScrollItemPattern from `com_elem`.
             unsafe { si.ScrollIntoView() }.map_err(|e| format!("ScrollIntoView: {:?}", e))?;
         }
         // SAFETY: COM pattern calls on valid `com_elem`.
         UiaPattern::Window => {
+            // SAFETY: GetCurrentPattern on valid `com_elem` (from FindFirst); pattern obj or Err.
             let pattern_obj = unsafe { com_elem.GetCurrentPattern(UIA_WindowPatternId) }
                 .map_err(|e| format!("GetWindowPattern: {:?}", e))?;
             let win: IUIAutomationWindowPattern = pattern_obj
                 .cast()
                 .map_err(|e| format!("Cast WindowPattern: {:?}", e))?;
             match value.unwrap_or("Normal") {
+                // SAFETY: Close() on a valid IUIAutomationWindowPattern cast from `com_elem`.
                 "Close" => unsafe { win.Close() }.map_err(|e| format!("Close: {:?}", e))?,
+                // SAFETY: SetWindowVisualState on a valid IUIAutomationWindowPattern.
                 "Maximize" => unsafe { win.SetWindowVisualState(WindowVisualState_Maximized) }
                     .map_err(|e| format!("Maximize: {:?}", e))?,
+                // SAFETY: SetWindowVisualState on a valid IUIAutomationWindowPattern.
                 "Minimize" => unsafe { win.SetWindowVisualState(WindowVisualState_Minimized) }
                     .map_err(|e| format!("Minimize: {:?}", e))?,
+                // SAFETY: SetWindowVisualState on a valid IUIAutomationWindowPattern.
                 _ => unsafe { win.SetWindowVisualState(WindowVisualState_Normal) }
                     .map_err(|e| format!("Normal: {:?}", e))?,
             }

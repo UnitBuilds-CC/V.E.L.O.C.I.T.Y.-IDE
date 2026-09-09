@@ -74,6 +74,11 @@ impl SecretString {
     pub fn zeroize(&mut self) {
         // Volatile write prevents the compiler from optimizing away the zeroing.
         for byte in self.inner.iter_mut() {
+            // SAFETY: `byte` is an exclusive `&mut u8` to a live, initialized element of
+            // `self.inner` obtained from `iter_mut`, so the derived pointer is valid, aligned
+            // (`u8` has alignment 1) and writable. `write_volatile` only overwrites the
+            // element with 0 without touching the Vec's length/capacity, keeping the
+            // allocation intact; each element is visited exactly once, so no aliasing occurs.
             unsafe {
                 std::ptr::write_volatile(byte as *mut u8, 0);
             }

@@ -253,9 +253,9 @@ impl VulkanDriver {
             }
         }
 
+        let mut success = true;
         // SAFETY: Read back 1024 u32 values from the same mapped region. All offsets
         // are within the mapped range. HOST_COHERENT guarantees visibility without flush.
-        let mut success = true;
         unsafe {
             for i in 0..1024 {
                 let val = ptr.add(i).read();
@@ -522,8 +522,12 @@ pub fn create_uninitialized_device_local_buffer(
     let alloc_info = vk::MemoryAllocateInfo::builder()
         .allocation_size(mem_reqs.size)
         .memory_type_index(memory_type_index);
-    // SAFETY: allocate_memory for DEVICE_LOCAL memory; bind_buffer_memory connects them.
+    // SAFETY: allocate_memory for DEVICE_LOCAL memory sized to `mem_reqs.size`, using a
+    // `memory_type_index` selected from the buffer's compatible `memory_type_bits`.
     let memory = unsafe { device.allocate_memory(&alloc_info, None)? };
+    // SAFETY: bind_buffer_memory wraps vkBindBufferMemory. `buffer` (created above) and
+    // `memory` (just allocated) are valid, not-yet-bound handles; the allocation is at least
+    // `mem_reqs.size` bytes and offset 0 satisfies the buffer's alignment requirement.
     unsafe { device.bind_buffer_memory(buffer, memory, 0)? };
     Ok((buffer, memory))
 }

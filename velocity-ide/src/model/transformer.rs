@@ -483,6 +483,15 @@ fn lm_head(
         .for_each(|(v, logit)| {
             let offset = v * hidden_size;
             let mut sum = 0.0f32;
+            // SAFETY: Callers uphold this fn's contract — `out_logits.len() == vocab_size`,
+            // `hidden.len() == hidden_size`, and `weights.len() == vocab_size * hidden_size`
+            // (guaranteed by the pre-allocated scratch buffers at both production call sites
+            // and by every unit test). `v` ranges over `0..out_logits.len()`, so with
+            // `offset = v * hidden_size` the reads `weights[offset..offset + hidden_size]`
+            // peak at `vocab_size * hidden_size - 1` and `hidden[0..hidden_size]` stays in
+            // bounds. `weights`/`hidden` are shared (`&`) borrows that are only read, while
+            // each rayon task writes solely its own disjoint `&mut` element of `out_logits`,
+            // so the parallel iteration is free of data races.
             unsafe {
                 let w_ptr = weights.as_ptr().add(offset);
                 let h_ptr = hidden.as_ptr();

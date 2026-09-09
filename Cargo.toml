@@ -5,6 +5,12 @@ members = ["velocity-mcp", "velocity-ide", "velocity-ide-gui", "velocity-browser
 # Exclude archived & legacy dirs that are not Rust packages
 exclude = ["archive", "bin", "scratch", "memory", ".velocity", "browsing", "fuzz", "shared", "Kimi-Code"]
 
+[workspace.lints.clippy]
+# Every `unsafe` block/impl must carry an adjacent `// SAFETY:` comment stating the soundness
+# invariants it relies on (FFI/GPU/JIT/crypto/shmem). Each member crate inherits this via
+# `[lints] workspace = true`; `cargo clippy -- -D warnings` escalates it to a hard error.
+undocumented_unsafe_blocks = "warn"
+
 [profile.dev]
 debug = 1 # Generates minimal line-table debug symbols, saving massive disk space and preventing MSVC linker errors
 

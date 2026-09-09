@@ -33,8 +33,12 @@ pub struct ExecPage {
 
 // SAFETY: ExecPage owns a region of executable memory allocated via VirtualAlloc/mmap.
 // The raw pointer is valid for the lifetime of the ExecPage, and Drop ensures it is freed.
-// Send/Sync are safe because the memory region is exclusively owned and not aliased.
+// The region is exclusively owned and never aliased, so transferring ownership to another
+// thread (Send) cannot introduce a data race.
 unsafe impl Send for ExecPage {}
+// SAFETY: Same ownership invariant as `Send`: the executable region is exclusively owned and
+// mutated only through `&mut` (or during construction), so a shared `&ExecPage` exposed to
+// multiple threads reveals only immutable state — no concurrent mutation and no aliasing.
 unsafe impl Sync for ExecPage {}
 
 impl ExecPage {
