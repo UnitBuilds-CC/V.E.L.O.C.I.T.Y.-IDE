@@ -3,10 +3,9 @@
 //! Extracted verbatim from `tier3_panels.rs` (no logic changes).
 
 use super::struct_def::VelocityApp;
+use super::tier3_common::primary_button;
 use crate::editor::extensions::ExtensionState;
-use crate::editor::theme::{
-    CARD_INNER_MARGIN, CARD_RADIUS, FONT_BODY, FONT_CAPTION, FONT_SMALL, ITEM_SPACING,
-};
+use crate::editor::theme::{CARD_INNER_MARGIN, CARD_RADIUS, FONT_BODY, FONT_CAPTION, ITEM_SPACING};
 use eframe::egui;
 use egui::RichText;
 
@@ -37,9 +36,12 @@ impl VelocityApp {
         let mut pending: Option<ExtAction> = None;
 
         ui.horizontal(|ui| {
-            if ui
-                .button(RichText::new("\u{27f3} Rescan").size(FONT_SMALL))
-                .clicked()
+            if primary_button(
+                ui,
+                palette,
+                format!("{} Rescan", egui_phosphor::regular::ARROWS_CLOCKWISE),
+            )
+            .clicked()
             {
                 rescan = true;
             }
@@ -59,7 +61,7 @@ impl VelocityApp {
                     ui.add_space(16.0);
                     ui.vertical_centered(|ui| {
                         ui.label(
-                            RichText::new("\u{25c7}")
+                            RichText::new(egui_phosphor::regular::PUZZLE_PIECE)
                                 .size(26.0)
                                 .color(palette.text_muted),
                         );
@@ -77,9 +79,12 @@ impl VelocityApp {
                                 .color(palette.text_muted),
                         );
                         ui.add_space(ITEM_SPACING);
-                        if ui
-                            .button(RichText::new("\u{27f3}  Rescan").size(FONT_SMALL))
-                            .clicked()
+                        if primary_button(
+                            ui,
+                            palette,
+                            format!("{}  Rescan", egui_phosphor::regular::ARROWS_CLOCKWISE),
+                        )
+                        .clicked()
                         {
                             let ws = self.workspace_root.clone();
                             self.extension_registry.scan(&ws);

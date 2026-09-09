@@ -8,7 +8,7 @@ use eframe::egui;
 use egui::RichText;
 
 use super::struct_def::VelocityApp;
-use crate::editor::theme::{ITEM_SPACING, SECTION_SPACING};
+use crate::editor::theme::{IdePalette, FONT_SMALL, ITEM_SPACING, SECTION_SPACING};
 
 impl VelocityApp {
     // --- Section header shared by the Tier-3 panels ---
@@ -27,6 +27,48 @@ impl VelocityApp {
         ui.separator();
         ui.add_space(ITEM_SPACING);
     }
+}
+
+/// Primary action button: accent fill, on-accent label, and a taller hit target
+/// so the single main action in a panel clearly outranks the rest (UX audit #8).
+/// Returns the [`egui::Response`] so callers can chain `.clicked()` / hover text.
+pub(crate) fn primary_button(
+    ui: &mut egui::Ui,
+    palette: IdePalette,
+    text: impl Into<String>,
+) -> egui::Response {
+    ui.add(
+        egui::Button::new(
+            RichText::new(text.into())
+                .size(FONT_SMALL)
+                .strong()
+                .color(palette.text_on_accent),
+        )
+        .fill(palette.accent)
+        .corner_radius(egui::CornerRadius::same(6))
+        .min_size(egui::vec2(0.0, 28.0)),
+    )
+}
+
+/// Secondary action button: neutral surface with a hairline border, visually
+/// recessive next to [`primary_button`]. Use for everything that is not the one
+/// primary action of a panel.
+pub(crate) fn secondary_button(
+    ui: &mut egui::Ui,
+    palette: IdePalette,
+    text: impl Into<String>,
+) -> egui::Response {
+    ui.add(
+        egui::Button::new(
+            RichText::new(text.into())
+                .size(FONT_SMALL)
+                .color(palette.text),
+        )
+        .fill(palette.bg_tertiary)
+        .stroke(egui::Stroke::new(0.5, palette.border))
+        .corner_radius(egui::CornerRadius::same(6))
+        .min_size(egui::vec2(0.0, 24.0)),
+    )
 }
 
 /// Format a duration in seconds as a compact human string (s/m/h/d).

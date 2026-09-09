@@ -8,6 +8,7 @@ pub struct StatusBarActions {
     pub clicked_build: bool,
     pub clicked_position: bool,
     pub clicked_provider: bool,
+    pub clicked_command_palette: bool,
 }
 
 pub struct StatusBar;
@@ -78,9 +79,9 @@ impl StatusBar {
                     // Build indicator — subtle pill
                     {
                         let (icon, color) = if build_ok {
-                            ("\u{2714}", palette.success)
+                            (egui_phosphor::regular::CHECK, palette.success)
                         } else {
-                            ("\u{2716}", palette.error)
+                            (egui_phosphor::regular::X, palette.error)
                         };
                         let build_bg = if build_ok {
                             palette.success.gamma_multiply(0.10)
@@ -112,9 +113,13 @@ impl StatusBar {
                     if let Some(b) = branch {
                         ui.add_space(4.0);
                         ui.label(
-                            egui::RichText::new(format!("\u{2387} {}", b))
-                                .size(11.0)
-                                .color(palette.text_muted),
+                            egui::RichText::new(format!(
+                                "{} {}",
+                                egui_phosphor::regular::GIT_BRANCH,
+                                b
+                            ))
+                            .size(11.0)
+                            .color(palette.text_muted),
                         );
                     }
 
@@ -171,6 +176,35 @@ impl StatusBar {
                                 ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
                             }
                             provider_response.on_hover_text("Open settings");
+
+                            // Command palette affordance — a clickable pill so the palette
+                            // is discoverable without memorizing the shortcut (UX audit #6).
+                            ui.add_space(4.0);
+                            {
+                                let cmd_pill = egui::Frame::new()
+                                    .fill(palette.bg_tertiary)
+                                    .corner_radius(egui::CornerRadius::same(3))
+                                    .inner_margin(egui::Margin::symmetric(6, 1));
+                                let cmd_response = cmd_pill
+                                    .show(ui, |ui| {
+                                        ui.label(
+                                            egui::RichText::new(format!(
+                                                "{}  Ctrl+Shift+P",
+                                                egui_phosphor::regular::COMMAND
+                                            ))
+                                            .size(10.0)
+                                            .color(palette.text_muted),
+                                        )
+                                    })
+                                    .inner;
+                                if cmd_response.clicked() {
+                                    actions.clicked_command_palette = true;
+                                }
+                                if cmd_response.hovered() {
+                                    ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+                                }
+                                cmd_response.on_hover_text("Open command palette");
+                            }
 
                             // Status message (right-aligned, before provider)
                             if !status.is_empty() {

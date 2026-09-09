@@ -4,6 +4,7 @@
 use super::struct_def::VelocityApp;
 use crate::editor::theme::IdePalette;
 use eframe::egui;
+use egui_phosphor::regular as ph;
 
 impl VelocityApp {
     // ── Activity Bar Category Panels ──
@@ -26,18 +27,25 @@ impl VelocityApp {
         ui: &mut egui::Ui,
         palette: IdePalette,
         category: usize,
-        tabs: &[&str],
+        tabs: &[(&str, &str)],
     ) {
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = 2.0;
-            for (i, tab) in tabs.iter().enumerate() {
+            for (i, (icon, label)) in tabs.iter().enumerate() {
                 let is_selected = self.activity_sub_panel[category] == i;
                 let text_color = if is_selected {
                     palette.text
                 } else {
                     palette.text_muted
                 };
-                let btn = egui::Button::new(egui::RichText::new(*tab).size(11.0).color(text_color))
+                // Active sub-tab reads stronger; the rest stay muted (UX audit #7).
+                let mut text = egui::RichText::new(format!("{icon} {label}"))
+                    .size(11.0)
+                    .color(text_color);
+                if is_selected {
+                    text = text.strong();
+                }
+                let btn = egui::Button::new(text)
                     .fill(egui::Color32::TRANSPARENT)
                     .stroke(egui::Stroke::NONE)
                     .min_size(egui::Vec2::new(0.0, 28.0));
@@ -66,9 +74,13 @@ impl VelocityApp {
     }
 
     pub(super) fn render_files_category(&mut self, ui: &mut egui::Ui, palette: IdePalette) {
-        let tabs = ["Files", "Bookmarks", "Favorites"];
+        let tabs = [
+            (ph::FOLDER, "Files"),
+            (ph::BOOKMARK, "Bookmarks"),
+            (ph::STAR, "Favorites"),
+        ];
         self.render_sub_tabs(ui, palette, 0, &tabs);
-        self.render_category_header(ui, palette, tabs[self.activity_sub_panel[0]]);
+        self.render_category_header(ui, palette, tabs[self.activity_sub_panel[0]].1);
 
         match self.activity_sub_panel[0] {
             0 => self.render_file_tree_subpanel(ui, palette),
@@ -79,9 +91,13 @@ impl VelocityApp {
     }
 
     pub(super) fn render_search_category(&mut self, ui: &mut egui::Ui, palette: IdePalette) {
-        let tabs = ["Search", "Semantic", "Code Graph"];
+        let tabs = [
+            (ph::MAGNIFYING_GLASS, "Search"),
+            (ph::BRAIN, "Semantic"),
+            (ph::TREE_STRUCTURE, "Code Graph"),
+        ];
         self.render_sub_tabs(ui, palette, 1, &tabs);
-        self.render_category_header(ui, palette, tabs[self.activity_sub_panel[1]]);
+        self.render_category_header(ui, palette, tabs[self.activity_sub_panel[1]].1);
 
         match self.activity_sub_panel[1] {
             0 => self.search_panel(ui),
@@ -92,9 +108,13 @@ impl VelocityApp {
     }
 
     pub(super) fn render_git_category(&mut self, ui: &mut egui::Ui, palette: IdePalette) {
-        let tabs = ["Changes", "Branches", "Commits"];
+        let tabs = [
+            (ph::FILE_TEXT, "Changes"),
+            (ph::GIT_BRANCH, "Branches"),
+            (ph::GIT_COMMIT, "Commits"),
+        ];
         self.render_sub_tabs(ui, palette, 2, &tabs);
-        self.render_category_header(ui, palette, tabs[self.activity_sub_panel[2]]);
+        self.render_category_header(ui, palette, tabs[self.activity_sub_panel[2]].1);
 
         match self.activity_sub_panel[2] {
             0 => self.render_git_changes_subpanel(ui, palette),
@@ -105,9 +125,13 @@ impl VelocityApp {
     }
 
     pub(super) fn render_chat_category(&mut self, ui: &mut egui::Ui, palette: IdePalette) {
-        let tabs = ["Chat", "Voice", "Multimodal"];
+        let tabs = [
+            (ph::CHAT_CIRCLE, "Chat"),
+            (ph::MICROPHONE, "Voice"),
+            (ph::PAPERCLIP, "Multimodal"),
+        ];
         self.render_sub_tabs(ui, palette, 3, &tabs);
-        self.render_category_header(ui, palette, tabs[self.activity_sub_panel[3]]);
+        self.render_category_header(ui, palette, tabs[self.activity_sub_panel[3]].1);
 
         match self.activity_sub_panel[3] {
             0 => self.render_chat_subpanel(ui, palette),
@@ -118,9 +142,15 @@ impl VelocityApp {
     }
 
     pub(super) fn render_build_category(&mut self, ui: &mut egui::Ui, palette: IdePalette) {
-        let tabs = ["Build", "Test", "Deploy", "Debug", "LSP"];
+        let tabs = [
+            (ph::HAMMER, "Build"),
+            (ph::FLASK, "Test"),
+            (ph::ROCKET_LAUNCH, "Deploy"),
+            (ph::BUG, "Debug"),
+            (ph::PLUGS, "LSP"),
+        ];
         self.render_sub_tabs(ui, palette, 4, &tabs);
-        self.render_category_header(ui, palette, tabs[self.activity_sub_panel[4]]);
+        self.render_category_header(ui, palette, tabs[self.activity_sub_panel[4]].1);
 
         match self.activity_sub_panel[4] {
             0 => self.render_build_subpanel(ui, palette),
@@ -134,15 +164,15 @@ impl VelocityApp {
 
     pub(super) fn render_agents_category(&mut self, ui: &mut egui::Ui, palette: IdePalette) {
         let tabs = [
-            "Activity",
-            "Roster",
-            "Orchestration",
-            "Memory",
-            "Timeline",
-            "Metrics",
+            (ph::PULSE, "Activity"),
+            (ph::USERS, "Roster"),
+            (ph::GRAPH, "Orchestration"),
+            (ph::BRAIN, "Memory"),
+            (ph::CLOCK, "Timeline"),
+            (ph::CHART_BAR, "Metrics"),
         ];
         self.render_sub_tabs(ui, palette, 5, &tabs);
-        self.render_category_header(ui, palette, tabs[self.activity_sub_panel[5]]);
+        self.render_category_header(ui, palette, tabs[self.activity_sub_panel[5]].1);
 
         match self.activity_sub_panel[5] {
             0 => self.render_activity_panel(ui),
@@ -156,9 +186,14 @@ impl VelocityApp {
     }
 
     pub(super) fn render_knowledge_category(&mut self, ui: &mut egui::Ui, palette: IdePalette) {
-        let tabs = ["Wiki", "Knowledge Base", "Snippets", "NDA"];
+        let tabs = [
+            (ph::BOOK_OPEN, "Wiki"),
+            (ph::DATABASE, "Knowledge Base"),
+            (ph::CODE, "Snippets"),
+            (ph::LOCK, "NDA"),
+        ];
         self.render_sub_tabs(ui, palette, 6, &tabs);
-        self.render_category_header(ui, palette, tabs[self.activity_sub_panel[6]]);
+        self.render_category_header(ui, palette, tabs[self.activity_sub_panel[6]].1);
 
         match self.activity_sub_panel[6] {
             0 => self.render_wiki_subpanel(ui, palette),
@@ -171,15 +206,15 @@ impl VelocityApp {
 
     pub(super) fn render_workspace_category(&mut self, ui: &mut egui::Ui, palette: IdePalette) {
         let tabs = [
-            "Extensions",
-            "Plugins",
-            "Skills",
-            "Team Studio",
-            "Usage",
-            "Governance",
+            (ph::PUZZLE_PIECE, "Extensions"),
+            (ph::PLUG, "Plugins"),
+            (ph::LIGHTNING, "Skills"),
+            (ph::USERS, "Team Studio"),
+            (ph::GAUGE, "Usage"),
+            (ph::SHIELD, "Governance"),
         ];
         self.render_sub_tabs(ui, palette, 7, &tabs);
-        self.render_category_header(ui, palette, tabs[self.activity_sub_panel[7]]);
+        self.render_category_header(ui, palette, tabs[self.activity_sub_panel[7]].1);
 
         match self.activity_sub_panel[7] {
             0 => self.render_extensions_panel(ui),

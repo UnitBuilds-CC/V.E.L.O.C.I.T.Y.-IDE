@@ -269,9 +269,9 @@ fn render_header(
 
         ui.add_space(4.0);
         let thoughts_label = if state.show_thoughts {
-            "\u{25c9} Reasoning"
+            format!("{} Reasoning", egui_phosphor::regular::EYE)
         } else {
-            "\u{25cb} Reasoning"
+            format!("{} Reasoning", egui_phosphor::regular::EYE_SLASH)
         };
         if ui
             .add(egui::Button::new(egui::RichText::new(thoughts_label).size(9.0)).frame(false))
@@ -299,9 +299,9 @@ fn render_messages(ui: &mut egui::Ui, state: &mut ChatPanelState, palette: IdePa
             if state.messages.is_empty() {
                 ui.vertical_centered(|ui| {
                     ui.add_space(28.0);
-                    // Accent diamond icon
+                    // Accent sparkle icon
                     ui.label(
-                        egui::RichText::new("\u{25c7}")
+                        egui::RichText::new(egui_phosphor::regular::SPARKLE)
                             .size(28.0)
                             .color(palette.accent.gamma_multiply(0.6)),
                     );
@@ -321,10 +321,10 @@ fn render_messages(ui: &mut egui::Ui, state: &mut ChatPanelState, palette: IdePa
                     ui.add_space(14.0);
                     // Example prompts as clickable suggestion chips
                     let suggestions = [
-                        ("\u{1f4dd}", "Explain this codebase"),
-                        ("\u{1f41b}", "Find and fix bugs"),
-                        ("\u{2705}", "Write tests for my code"),
-                        ("\u{2699}", "Refactor a module"),
+                        (egui_phosphor::regular::NOTE_PENCIL, "Explain this codebase"),
+                        (egui_phosphor::regular::BUG, "Find and fix bugs"),
+                        (egui_phosphor::regular::CHECK_SQUARE, "Write tests for my code"),
+                        (egui_phosphor::regular::WRENCH, "Refactor a module"),
                     ];
                     for (icon, suggestion) in &suggestions {
                         let resp = ui.add(
@@ -465,7 +465,13 @@ fn render_markdown(ui: &mut egui::Ui, text: &str, palette: IdePalette) {
                             ui.with_layout(
                                 egui::Layout::right_to_left(egui::Align::Center),
                                 |ui| {
-                                    if ui.small_button("\u{1f4cb} Copy").clicked() {
+                                    if ui
+                                        .small_button(format!(
+                                            "{} Copy",
+                                            egui_phosphor::regular::COPY
+                                        ))
+                                        .clicked()
+                                    {
                                         ui.ctx().copy_text(code.clone());
                                     }
                                 },
@@ -841,7 +847,10 @@ fn render_input(
                                     state.attach_input.clear();
                                 }
                                 Err(_) => {
-                                    state.attach_input = format!("\u{26a0} cannot read: {path}")
+                                    state.attach_input = format!(
+                                        "{} cannot read: {path}",
+                                        egui_phosphor::regular::WARNING
+                                    )
                                 }
                             }
                         }
@@ -857,7 +866,12 @@ fn render_input(
                                 .and_then(|n| n.to_str())
                                 .unwrap_or("file");
                             if ui
-                                .small_button(format!("{} {} \u{2716}", att.kind.label(), name))
+                                .small_button(format!(
+                                    "{} {} {}",
+                                    att.kind.label(),
+                                    name,
+                                    egui_phosphor::regular::X
+                                ))
                                 .clicked()
                             {
                                 remove = Some(i);

@@ -3,7 +3,8 @@
 //! Extracted verbatim from `tier3_panels.rs` (no logic changes).
 
 use super::struct_def::VelocityApp;
-use crate::editor::theme::{FONT_CAPTION, FONT_SMALL, ITEM_SPACING, SECTION_SPACING};
+use super::tier3_common::primary_button;
+use crate::editor::theme::{FONT_BODY, FONT_CAPTION, FONT_SMALL, ITEM_SPACING, SECTION_SPACING};
 use eframe::egui;
 use egui::RichText;
 
@@ -37,6 +38,7 @@ impl VelocityApp {
             palette.text_muted,
         );
 
+        let mut redetect = false;
         egui::ScrollArea::vertical()
             .id_salt("lsp_scroll")
             .show(ui, |ui| {
@@ -47,7 +49,7 @@ impl VelocityApp {
                         ui.add_space(16.0);
                         ui.vertical_centered(|ui| {
                             ui.label(
-                                RichText::new("\u{1f4c6}")
+                                RichText::new(egui_phosphor::regular::PLUGS)
                                     .size(22.0)
                                     .color(palette.text_muted.gamma_multiply(0.5)),
                             );
@@ -66,6 +68,16 @@ impl VelocityApp {
                                 .size(9.0)
                                 .color(palette.text_muted.gamma_multiply(0.7)),
                             );
+                            ui.add_space(ITEM_SPACING);
+                            if primary_button(
+                                ui,
+                                palette,
+                                format!("{} Re-detect servers", egui_phosphor::regular::PLUGS),
+                            )
+                            .clicked()
+                            {
+                                redetect = true;
+                            }
                         });
                     } else {
                         // Diagnostics summary
@@ -139,20 +151,40 @@ impl VelocityApp {
                     ui.add_space(16.0);
                     ui.vertical_centered(|ui| {
                         ui.label(
-                            RichText::new("\u{25c7}")
+                            RichText::new(egui_phosphor::regular::PLUGS)
                                 .size(26.0)
                                 .color(palette.text_muted),
                         );
+                        ui.add_space(4.0);
                         ui.label(
-                            RichText::new(
-                                "LSP not initialized. LSP servers are configured per-language.",
-                            )
-                            .size(FONT_SMALL)
-                            .color(palette.text_muted),
+                            RichText::new("Language servers not initialized")
+                                .size(FONT_BODY)
+                                .strong()
+                                .color(palette.text),
                         );
+                        ui.add_space(2.0);
+                        ui.label(
+                            RichText::new("Detect servers from your workspace manifest files.")
+                                .size(FONT_CAPTION)
+                                .color(palette.text_muted),
+                        );
+                        ui.add_space(ITEM_SPACING);
+                        if primary_button(
+                            ui,
+                            palette,
+                            format!("{} Detect servers", egui_phosphor::regular::PLUGS),
+                        )
+                        .clicked()
+                        {
+                            redetect = true;
+                        }
                     });
                 }
             });
+        if redetect {
+            let ws = self.workspace_root.clone();
+            self.lsp_manager = Some(crate::editor::lsp_client::LspManager::auto_detect(&ws));
+        }
     }
 
     // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
@@ -173,19 +205,38 @@ impl VelocityApp {
             palette.text_muted,
         );
 
+        let mut attach = false;
         if self.dap_client.is_none() {
             ui.add_space(16.0);
             ui.vertical_centered(|ui| {
                 ui.label(
-                    RichText::new("\u{25c7}")
+                    RichText::new(egui_phosphor::regular::PLUG)
                         .size(26.0)
                         .color(palette.text_muted),
                 );
+                ui.add_space(4.0);
                 ui.label(
-                    RichText::new("Debugger not connected. Use 'Debug: Attach' from the toolbar.")
-                        .size(FONT_SMALL)
+                    RichText::new("Debugger not connected")
+                        .size(FONT_BODY)
+                        .strong()
+                        .color(palette.text),
+                );
+                ui.add_space(2.0);
+                ui.label(
+                    RichText::new("Attach to a running process to start a debug session.")
+                        .size(FONT_CAPTION)
                         .color(palette.text_muted),
                 );
+                ui.add_space(ITEM_SPACING);
+                if primary_button(
+                    ui,
+                    palette,
+                    format!("{}  Attach", egui_phosphor::regular::PLUG),
+                )
+                .clicked()
+                {
+                    attach = true;
+                }
             });
         } else {
             ui.label(
@@ -279,6 +330,9 @@ impl VelocityApp {
                     }
                 }
             }
+        }
+        if attach {
+            self.launch_debug_session();
         }
     }
 

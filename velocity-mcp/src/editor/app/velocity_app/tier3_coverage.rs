@@ -8,6 +8,7 @@ use eframe::egui;
 use egui::RichText;
 
 use super::struct_def::VelocityApp;
+use super::tier3_common::{primary_button, secondary_button};
 use crate::editor::theme::{
     CARD_INNER_MARGIN, CARD_RADIUS, FONT_CAPTION, FONT_SMALL, ITEM_SPACING,
 };
@@ -30,11 +31,10 @@ impl VelocityApp {
         let mut analyze_lsp = false;
         let mut generate = false;
         ui.horizontal(|ui| {
-            if ui.button(RichText::new("Analyze workspace").size(FONT_SMALL)).clicked() {
+            if primary_button(ui, palette, "Analyze workspace").clicked() {
                 analyze = true;
             }
-            if ui
-                .button(RichText::new("Analyze file (LSP)").size(FONT_SMALL))
+            if secondary_button(ui, palette, "Analyze file (LSP)")
                 .on_hover_text("Discover testable functions in the active file via the language server's documentSymbol outline")
                 .clicked()
             {

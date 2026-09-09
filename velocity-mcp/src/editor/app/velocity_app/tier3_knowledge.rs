@@ -3,8 +3,10 @@
 //! Extracted verbatim from `tier3_panels.rs` (no logic changes).
 
 use super::struct_def::VelocityApp;
+use super::tier3_common::{primary_button, secondary_button};
 use crate::editor::theme::{
-    CARD_INNER_MARGIN, CARD_RADIUS, FONT_CAPTION, FONT_SMALL, ITEM_SPACING, SECTION_SPACING,
+    CARD_INNER_MARGIN, CARD_RADIUS, FONT_BODY, FONT_CAPTION, FONT_SMALL, ITEM_SPACING,
+    SECTION_SPACING,
 };
 use eframe::egui;
 use egui::RichText;
@@ -37,16 +39,10 @@ impl VelocityApp {
                     .hint_text("path to a file or folder\u{2026}")
                     .desired_width(ui.available_width() - 190.0),
             );
-            if ui
-                .button(RichText::new("Ingest").size(FONT_SMALL))
-                .clicked()
-            {
+            if secondary_button(ui, palette, "Ingest").clicked() {
                 ingest_path = true;
             }
-            if ui
-                .button(RichText::new("Index workspace").size(FONT_SMALL))
-                .clicked()
-            {
+            if primary_button(ui, palette, "Index workspace").clicked() {
                 ingest_workspace = true;
             }
         });
@@ -258,19 +254,23 @@ impl VelocityApp {
         let mut build_index = false;
         ui.horizontal(|ui| {
             if self.semantic_index.is_none() {
-                if ui
-                    .button(RichText::new("\u{1f528} Build Index").size(FONT_SMALL))
-                    .clicked()
+                if primary_button(
+                    ui,
+                    palette,
+                    format!("{} Build Index", egui_phosphor::regular::HAMMER),
+                )
+                .clicked()
                 {
                     build_index = true;
                 }
-            } else {
-                if ui
-                    .button(RichText::new("\u{1f504} Rebuild Index").size(FONT_SMALL))
-                    .clicked()
-                {
-                    build_index = true;
-                }
+            } else if secondary_button(
+                ui,
+                palette,
+                format!("{} Rebuild Index", egui_phosphor::regular::ARROWS_CLOCKWISE),
+            )
+            .clicked()
+            {
+                build_index = true;
             }
             ui.label(
                 RichText::new("TF-IDF semantic search")
@@ -284,17 +284,35 @@ impl VelocityApp {
             ui.add_space(16.0);
             ui.vertical_centered(|ui| {
                 ui.label(
-                    RichText::new("\u{25c7}")
+                    RichText::new(egui_phosphor::regular::MAGNIFYING_GLASS)
                         .size(26.0)
                         .color(palette.text_muted),
                 );
+                ui.add_space(4.0);
+                ui.label(
+                    RichText::new("Semantic index not built")
+                        .size(FONT_BODY)
+                        .strong()
+                        .color(palette.text),
+                );
+                ui.add_space(2.0);
                 ui.label(
                     RichText::new(
-                        "Semantic index not built. Click 'Build Index' to enable semantic search.",
+                        "Build the TF-IDF index to enable semantic search across the workspace.",
                     )
-                    .size(FONT_SMALL)
+                    .size(FONT_CAPTION)
                     .color(palette.text_muted),
                 );
+                ui.add_space(ITEM_SPACING);
+                if primary_button(
+                    ui,
+                    palette,
+                    format!("{} Build Index", egui_phosphor::regular::HAMMER),
+                )
+                .clicked()
+                {
+                    build_index = true;
+                }
             });
         } else {
             ui.label(
@@ -344,17 +362,38 @@ impl VelocityApp {
             ui.add_space(16.0);
             ui.vertical_centered(|ui| {
                 ui.label(
-                    RichText::new("\u{25c7}")
+                    RichText::new(egui_phosphor::regular::CODE)
                         .size(26.0)
                         .color(palette.text_muted),
                 );
+                ui.add_space(4.0);
                 ui.label(
-                    RichText::new(
-                        "No snippets loaded. Snippets are loaded from .velocity/snippets.json",
-                    )
-                    .size(FONT_SMALL)
-                    .color(palette.text_muted),
+                    RichText::new("No snippets loaded")
+                        .size(FONT_BODY)
+                        .strong()
+                        .color(palette.text),
                 );
+                ui.add_space(2.0);
+                ui.label(
+                    RichText::new("Snippets load from .velocity/snippets.json in your workspace.")
+                        .size(FONT_CAPTION)
+                        .color(palette.text_muted),
+                );
+                ui.add_space(ITEM_SPACING);
+                if primary_button(
+                    ui,
+                    palette,
+                    format!(
+                        "{} Reload snippets",
+                        egui_phosphor::regular::ARROWS_CLOCKWISE
+                    ),
+                )
+                .clicked()
+                {
+                    let path = self.workspace_root.join(".velocity").join("snippets.json");
+                    self.snippet_collection =
+                        crate::editor::snippets::SnippetCollection::load_from_file(&path);
+                }
             });
         } else {
             egui::ScrollArea::vertical()

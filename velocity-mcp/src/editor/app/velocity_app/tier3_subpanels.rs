@@ -3,7 +3,8 @@
 //! Extracted verbatim from `tier3_panels.rs` (no logic changes).
 
 use super::struct_def::VelocityApp;
-use super::tier3_common::format_count;
+use super::tier3_common::{format_count, primary_button};
+use crate::editor::app::types::TabKind;
 use crate::editor::task_timeline::{render_mission_activity_feed, render_task_timeline};
 use crate::editor::theme::{
     IdePalette, FONT_BODY, FONT_CAPTION, FONT_SMALL, ITEM_SPACING, SECTION_SPACING,
@@ -835,7 +836,7 @@ impl VelocityApp {
             ui.add_space(16.0);
             ui.vertical_centered(|ui| {
                 ui.label(
-                    RichText::new("\u{1f4ce}")
+                    RichText::new(egui_phosphor::regular::PAPERCLIP)
                         .size(24.0)
                         .color(palette.text_muted.gamma_multiply(0.5)),
                 );
@@ -850,6 +851,16 @@ impl VelocityApp {
                         .color(palette.text_muted.gamma_multiply(0.7))
                         .size(9.0),
                 );
+                ui.add_space(ITEM_SPACING);
+                if primary_button(
+                    ui,
+                    palette,
+                    format!("{} Go to Chat", egui_phosphor::regular::CHAT_CIRCLE),
+                )
+                .clicked()
+                {
+                    self.focus_panel(TabKind::Chat);
+                }
             });
         } else {
             egui::ScrollArea::vertical().show(ui, |ui| {

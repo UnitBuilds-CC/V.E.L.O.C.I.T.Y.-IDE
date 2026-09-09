@@ -155,21 +155,6 @@ impl eframe::App for VelocityApp {
                         ui.separator();
                         // A fixed set of compact menus avoids controls wrapping or moving when
                         // profiles change, while every primary surface stays within two clicks.
-                        ui.menu_button(egui::RichText::new("Velocity").strong(), |ui| {
-                            if ui.button("Command Palette  Ctrl+Shift+P").clicked() {
-                                self.open_command_palette();
-                                ui.close();
-                            }
-                            if ui.button("Keyboard Shortcuts  F1").clicked() {
-                                self.show_shortcuts = true;
-                                ui.close();
-                            }
-                            ui.separator();
-                            if ui.button("Settings  Ctrl+,").clicked() {
-                                self.focus_panel(TabKind::Settings);
-                                ui.close();
-                            }
-                        });
                         ui.menu_button("File", |ui| {
                             if ui.button("New File  Ctrl+N").clicked() {
                                 self.open_editor(None);
@@ -194,6 +179,13 @@ impl eframe::App for VelocityApp {
                             }
                         });
                         ui.menu_button("Navigate", |ui| {
+                            // Command palette gets a visible home here (also surfaced in the
+                            // status bar and on the welcome screen) — UX audit #6.
+                            if ui.button("Command Palette  Ctrl+Shift+P").clicked() {
+                                self.open_command_palette();
+                                ui.close();
+                            }
+                            ui.separator();
                             if ui.button("Chat  Ctrl+J").clicked() {
                                 self.focus_panel(TabKind::Chat);
                                 ui.close();
@@ -244,9 +236,22 @@ impl eframe::App for VelocityApp {
                                 ("Deploy pipeline", TabKind::Pipeline),
                                 ("Debugger", TabKind::Debugger),
                                 ("Language servers", TabKind::LanguageServers),
+                            ] {
+                                if ui.button(label).clicked() {
+                                    self.focus_panel(panel);
+                                    ui.close();
+                                }
+                            }
+                            ui.separator();
+                            ui.label(
+                                egui::RichText::new("Advanced")
+                                    .small()
+                                    .color(palette.text_muted),
+                            );
+                            for (label, panel) in [
                                 ("Snippets", TabKind::Snippets),
                                 ("Inline suggestions", TabKind::InlineSuggestions),
-                                ("Precompiled cache", TabKind::PrecompCache),
+                                ("Build cache", TabKind::PrecompCache),
                             ] {
                                 if ui.button(label).clicked() {
                                     self.focus_panel(panel);
@@ -254,62 +259,66 @@ impl eframe::App for VelocityApp {
                                 }
                             }
                         });
-                        ui.menu_button("Agents", |ui| {
-                            for (label, panel) in [
-                                ("Live activity", TabKind::Activity),
-                                ("Agent roster", TabKind::Agents),
-                                ("Background agents", TabKind::BackgroundAgents),
-                                ("Live orchestration", TabKind::LiveOrchestration),
-                                ("Task queue", TabKind::Queue),
-                                ("Timeline", TabKind::Timeline),
-                                ("Mission metrics", TabKind::Metrics),
-                                ("Conflict resolver", TabKind::ConflictResolver),
-                                ("Improvement engine", TabKind::ImprovementEngine),
-                                ("Continuity ledger", TabKind::ContinuationLedger),
-                            ] {
-                                if ui.button(label).clicked() {
-                                    self.focus_panel(panel);
-                                    ui.close();
+                        // Tools — merges the former Agents / Knowledge / Automate top-level
+                        // menus into submenus so the top bar stays compact (UX audit #4).
+                        ui.menu_button("Tools", |ui| {
+                            ui.menu_button("Agents", |ui| {
+                                for (label, panel) in [
+                                    ("Live activity", TabKind::Activity),
+                                    ("Agent roster", TabKind::Agents),
+                                    ("Background agents", TabKind::BackgroundAgents),
+                                    ("Orchestration", TabKind::LiveOrchestration),
+                                    ("Task queue", TabKind::Queue),
+                                    ("Timeline", TabKind::Timeline),
+                                    ("Mission metrics", TabKind::Metrics),
+                                    ("Conflict resolver", TabKind::ConflictResolver),
+                                    ("Self-improvement", TabKind::ImprovementEngine),
+                                    ("Session continuity", TabKind::ContinuationLedger),
+                                ] {
+                                    if ui.button(label).clicked() {
+                                        self.focus_panel(panel);
+                                        ui.close();
+                                    }
                                 }
-                            }
-                        });
-                        ui.menu_button("Knowledge", |ui| {
-                            for (label, panel) in [
-                                ("Knowledge base", TabKind::Knowledge),
-                                ("Wiki", TabKind::Wiki),
-                                ("Code graph", TabKind::Graph),
-                                ("Semantic search", TabKind::SemanticSearch),
-                                ("Bookmarks", TabKind::Bookmarks),
-                                ("Favorites", TabKind::Favorites),
-                                ("Agent memory", TabKind::AgentMemory),
-                                ("Shared memory", TabKind::SharedMemory),
-                                ("Persistent memory", TabKind::PersistentMemory),
-                                ("Recent changes", TabKind::Changes),
-                            ] {
-                                if ui.button(label).clicked() {
-                                    self.focus_panel(panel);
-                                    ui.close();
+                            });
+                            ui.menu_button("Knowledge", |ui| {
+                                for (label, panel) in [
+                                    ("Knowledge base", TabKind::Knowledge),
+                                    ("Wiki", TabKind::Wiki),
+                                    ("Code graph", TabKind::Graph),
+                                    ("Semantic search", TabKind::SemanticSearch),
+                                    ("Bookmarks", TabKind::Bookmarks),
+                                    ("Favorites", TabKind::Favorites),
+                                    ("Agent memory", TabKind::AgentMemory),
+                                    ("Shared memory", TabKind::SharedMemory),
+                                    ("Persistent memory", TabKind::PersistentMemory),
+                                    ("Recent changes", TabKind::Changes),
+                                ] {
+                                    if ui.button(label).clicked() {
+                                        self.focus_panel(panel);
+                                        ui.close();
+                                    }
                                 }
-                            }
-                        });
-                        ui.menu_button("Automate", |ui| {
-                            for (label, panel) in [
-                                ("Workflows", TabKind::Workflows),
-                                ("Triggers", TabKind::Triggers),
-                                ("Automation flows", TabKind::Flows),
-                                ("Automation targets", TabKind::Targets),
-                                ("Execution logs", TabKind::Logs),
-                                ("Recordings", TabKind::Recordings),
-                                ("Voice commands", TabKind::Voice),
-                                ("Multimodal attachments", TabKind::Multimodal),
-                                ("Accessibility audit", TabKind::AccessibilityAudit),
-                                ("Governance", TabKind::Governance),
-                            ] {
-                                if ui.button(label).clicked() {
-                                    self.focus_panel(panel);
-                                    ui.close();
+                            });
+                            ui.menu_button("Automation", |ui| {
+                                for (label, panel) in [
+                                    ("Workflows", TabKind::Workflows),
+                                    ("Triggers", TabKind::Triggers),
+                                    ("Automation flows", TabKind::Flows),
+                                    ("Targets", TabKind::Targets),
+                                    ("Execution logs", TabKind::Logs),
+                                    ("Recordings", TabKind::Recordings),
+                                    ("Voice commands", TabKind::Voice),
+                                    ("Multimodal", TabKind::Multimodal),
+                                    ("Accessibility", TabKind::AccessibilityAudit),
+                                    ("Governance", TabKind::Governance),
+                                ] {
+                                    if ui.button(label).clicked() {
+                                        self.focus_panel(panel);
+                                        ui.close();
+                                    }
                                 }
-                            }
+                            });
                         });
                         ui.menu_button("Workspace", |ui| {
                             ui.label(
@@ -345,12 +354,25 @@ impl eframe::App for VelocityApp {
                                 ui.close();
                             }
                         });
+                        // Help menu
+                        ui.menu_button("Help", |ui| {
+                            if ui.button("Keyboard Shortcuts  F1").clicked() {
+                                self.show_shortcuts = true;
+                                ui.close();
+                            }
+                            ui.separator();
+                            if ui.button("Settings  Ctrl+,").clicked() {
+                                self.focus_panel(TabKind::Settings);
+                                ui.close();
+                            }
+                        });
                         let active_mode = self.appearance.profile;
                         ui.menu_button(
                             egui::RichText::new(format!(
-                                "Layouts: {} {} \u{25be}",
+                                "Layouts: {} {} {}",
                                 active_mode.glyph(),
-                                active_mode.short_label()
+                                active_mode.short_label(),
+                                egui_phosphor::regular::CARET_DOWN
                             ))
                             .color(palette.accent),
                             |ui| {
@@ -426,9 +448,9 @@ impl eframe::App for VelocityApp {
                         // Right panel toggle
                         {
                             let icon = if self.right_sidebar_visible {
-                                "\u{25a3}"
+                                egui_phosphor::regular::CHECK_SQUARE
                             } else {
-                                "\u{25a2}"
+                                egui_phosphor::regular::SQUARE
                             };
                             let hint = if self.right_sidebar_visible {
                                 "Hide right panel  (Ctrl+Shift+E)"
@@ -466,9 +488,9 @@ impl eframe::App for VelocityApp {
                         // Left panel toggle
                         {
                             let icon = if self.left_sidebar_visible {
-                                "\u{25a3}"
+                                egui_phosphor::regular::CHECK_SQUARE
                             } else {
-                                "\u{25a2}"
+                                egui_phosphor::regular::SQUARE
                             };
                             let hint = if self.left_sidebar_visible {
                                 "Hide sidebar  (Ctrl+E)"
@@ -521,7 +543,7 @@ impl eframe::App for VelocityApp {
                             ui.painter().text(
                                 btn_rect.center(),
                                 egui::Align2::CENTER_CENTER,
-                                "\u{1f4c2}",
+                                egui_phosphor::regular::SQUARES_FOUR,
                                 egui::FontId::proportional(12.0),
                                 palette.text_muted,
                             );
@@ -580,7 +602,7 @@ impl eframe::App for VelocityApp {
                             for (i, comp) in components.iter().enumerate() {
                                 if i > 0 {
                                     ui.label(
-                                        egui::RichText::new("\u{203a}")
+                                        egui::RichText::new(egui_phosphor::regular::CARET_RIGHT)
                                             .color(palette.text_muted)
                                             .weak(),
                                     );
@@ -610,7 +632,7 @@ impl eframe::App for VelocityApp {
                             }
                             if let Some(symbol) = &symbol_for_click {
                                 ui.label(
-                                    egui::RichText::new("\u{203a}")
+                                    egui::RichText::new(egui_phosphor::regular::CARET_RIGHT)
                                         .color(palette.text_muted)
                                         .weak(),
                                 );
@@ -643,16 +665,36 @@ impl eframe::App for VelocityApp {
                     ui.vertical_centered(|ui| {
                         ui.add_space(8.0);
 
-                        // Activity bar icons - 8 main categories with recognizable glyphs and labels
+                        // Activity bar icons - 8 main categories, Phosphor icons + labels
                         let activities = [
-                            ("\u{2263}", "Files", "Files", "Ctrl+E"),
-                            ("\u{2315}", "Search", "Search", "Ctrl+Shift+F"),
-                            ("\u{2387}", "Git", "Git", "Ctrl+G"),
-                            ("\u{25ef}", "Chat", "Chat", "Ctrl+J"),
-                            ("\u{2699}", "Build", "Build", "Ctrl+B"),
-                            ("\u{229b}", "Agents", "Agents", "Ctrl+D"),
-                            ("\u{25a1}", "Knowledge", "Know", "Ctrl+K"),
-                            ("\u{229e}", "Workspace", "Work", "Ctrl+Shift+X"),
+                            (egui_phosphor::regular::FOLDER, "Files", "Files", "Ctrl+E"),
+                            (
+                                egui_phosphor::regular::MAGNIFYING_GLASS,
+                                "Search",
+                                "Search",
+                                "Ctrl+Shift+F",
+                            ),
+                            (egui_phosphor::regular::GIT_BRANCH, "Git", "Git", "Ctrl+G"),
+                            (
+                                egui_phosphor::regular::CHAT_CIRCLE,
+                                "Chat",
+                                "Chat",
+                                "Ctrl+J",
+                            ),
+                            (egui_phosphor::regular::HAMMER, "Build", "Build", "Ctrl+B"),
+                            (egui_phosphor::regular::ROBOT, "Agents", "Agents", "Ctrl+D"),
+                            (
+                                egui_phosphor::regular::BOOK_OPEN,
+                                "Knowledge",
+                                "Know",
+                                "Ctrl+K",
+                            ),
+                            (
+                                egui_phosphor::regular::SQUARES_FOUR,
+                                "Workspace",
+                                "Work",
+                                "Ctrl+Shift+X",
+                            ),
                         ];
 
                         for (i, (icon, label, short_label, shortcut)) in
@@ -698,12 +740,12 @@ impl eframe::App for VelocityApp {
                             } else {
                                 palette.text_muted
                             };
-                            let icon_pos = egui::pos2(rect.center().x, rect.min.y + 14.0);
+                            let icon_pos = egui::pos2(rect.center().x, rect.min.y + 15.0);
                             ui.painter().text(
                                 icon_pos,
                                 egui::Align2::CENTER_CENTER,
                                 *icon,
-                                egui::FontId::proportional(15.0),
+                                egui::FontId::proportional(18.0),
                                 icon_color,
                             );
 
@@ -715,12 +757,12 @@ impl eframe::App for VelocityApp {
                             } else {
                                 palette.text_muted.gamma_multiply(0.7)
                             };
-                            let label_pos = egui::pos2(rect.center().x, rect.min.y + 34.0);
+                            let label_pos = egui::pos2(rect.center().x, rect.min.y + 35.0);
                             ui.painter().text(
                                 label_pos,
                                 egui::Align2::CENTER_CENTER,
                                 *short_label,
-                                egui::FontId::proportional(8.5),
+                                egui::FontId::proportional(10.0),
                                 label_color,
                             );
 
@@ -754,7 +796,7 @@ impl eframe::App for VelocityApp {
                             ui.painter().text(
                                 gear_rect.center(),
                                 egui::Align2::CENTER_CENTER,
-                                "\u{2699}",
+                                egui_phosphor::regular::GEAR,
                                 egui::FontId::proportional(14.0),
                                 if gear_resp.hovered() {
                                     palette.text
@@ -828,9 +870,13 @@ impl eframe::App for VelocityApp {
                             );
                             if let Some(br) = &branch {
                                 ui.label(
-                                    egui::RichText::new(format!("\u{2387} {}", br))
-                                        .size(9.0)
-                                        .color(palette.text_muted),
+                                    egui::RichText::new(format!(
+                                        "{} {}",
+                                        egui_phosphor::regular::GIT_BRANCH,
+                                        br
+                                    ))
+                                    .size(9.0)
+                                    .color(palette.text_muted),
                                 );
                             }
                         });
@@ -898,7 +944,11 @@ impl eframe::App for VelocityApp {
                     // -- Active changes (collapsible) --
                     if let Some(change_preview) = &active_change_preview {
                         self.smart_sidebar.add_quick_action(0, "Review current changes", &change_preview.file_label, 0);
-                        let changes_header = if self.right_changes_collapsed { "\u{25b8} Changes" } else { "\u{25be} Changes" };
+                        let changes_header = if self.right_changes_collapsed {
+                            format!("{} Changes", egui_phosphor::regular::CARET_RIGHT)
+                        } else {
+                            format!("{} Changes", egui_phosphor::regular::CARET_DOWN)
+                        };
                         if ui.add(egui::Button::new(egui::RichText::new(changes_header).size(10.0).strong().color(palette.warning)).frame(false)).clicked() {
                             self.right_changes_collapsed = !self.right_changes_collapsed;
                         }
@@ -968,9 +1018,9 @@ impl eframe::App for VelocityApp {
                     if let Some(symbol) = &active_symbol {
                         self.smart_sidebar.add_symbol(0, symbol, "active-buffer", cursor_pos.map(|(line, _)| line as u32).unwrap_or(0), 0);
                         let sym_header = if self.right_symbol_collapsed {
-                            format!("\u{25b8} {}()", symbol)
+                            format!("{} {}()", egui_phosphor::regular::CARET_RIGHT, symbol)
                         } else {
-                            format!("\u{25be} {}()", symbol)
+                            format!("{} {}()", egui_phosphor::regular::CARET_DOWN, symbol)
                         };
                         if ui.add(egui::Button::new(egui::RichText::new(&sym_header).size(10.0).strong().color(palette.accent)).frame(false)).clicked() {
                             self.right_symbol_collapsed = !self.right_symbol_collapsed;
@@ -986,7 +1036,7 @@ impl eframe::App for VelocityApp {
                                 );
                                 for name in self.cached_callers.clone() {
                                     if ui
-                                        .link(egui::RichText::new(format!("\u{2192} {}", name)).size(11.0))
+                                        .link(egui::RichText::new(format!("{} {}", egui_phosphor::regular::ARROW_RIGHT, name)).size(11.0))
                                         .clicked()
                                     {
                                         self.jump_to_symbol_name(&name);
@@ -1003,7 +1053,7 @@ impl eframe::App for VelocityApp {
                                 );
                                 for name in self.cached_deps.clone() {
                                     if ui
-                                        .link(egui::RichText::new(format!("\u{2192} {}", name)).size(11.0))
+                                        .link(egui::RichText::new(format!("{} {}", egui_phosphor::regular::ARROW_RIGHT, name)).size(11.0))
                                         .clicked()
                                     {
                                         self.jump_to_symbol_name(&name);
@@ -1088,6 +1138,10 @@ impl eframe::App for VelocityApp {
             // Open settings tab.
             self.toggle_panel(TabKind::Settings);
         }
+        if sb_actions.clicked_command_palette {
+            // Open the command palette (UX audit #6 discoverability affordance).
+            self.open_command_palette();
+        }
 
         egui::CentralPanel::default()
             .frame(egui::Frame::new().fill(palette.bg_primary))
@@ -1168,7 +1222,7 @@ impl eframe::App for VelocityApp {
                                 ui.horizontal(|ui| {
                                     // Folder icon
                                     ui.label(
-                                        egui::RichText::new("\u{1f4c1}")
+                                        egui::RichText::new(egui_phosphor::regular::FOLDER)
                                             .size(18.0)
                                             .color(palette.accent),
                                     );
@@ -1196,9 +1250,13 @@ impl eframe::App for VelocityApp {
                                             .inner_margin(egui::Margin::symmetric(6, 2))
                                             .show(ui, |ui| {
                                                 ui.label(
-                                                    egui::RichText::new(format!("\u{2387} {}", br))
-                                                        .size(9.0)
-                                                        .color(palette.text_muted),
+                                                    egui::RichText::new(format!(
+                                                        "{} {}",
+                                                        egui_phosphor::regular::GIT_BRANCH,
+                                                        br
+                                                    ))
+                                                    .size(9.0)
+                                                    .color(palette.text_muted),
                                                 );
                                             });
                                     }
@@ -1244,7 +1302,7 @@ impl eframe::App for VelocityApp {
                             ui.painter().text(
                                 egui::pos2(btn_rect.min.x + 14.0, btn_rect.center().y),
                                 egui::Align2::LEFT_CENTER,
-                                "\u{2795}  New Task",
+                                format!("{}  New Task", egui_phosphor::regular::PLUS),
                                 egui::FontId::proportional(13.0),
                                 palette.text_on_accent,
                             );
@@ -1265,12 +1323,32 @@ impl eframe::App for VelocityApp {
 
                         // Secondary actions
                         let secondary_actions = [
-                            ("\u{1f4c2}  Open File", "Ctrl+O", "open_file"),
-                            ("\u{2315}  Quick Open", "Ctrl+P", "quick_open"),
-                            ("\u{2699}  Build Project", "Ctrl+B", "build"),
-                            ("\u{21f3}  Command Palette", "Ctrl+Shift+P", "cmd_palette"),
+                            (
+                                egui_phosphor::regular::FOLDER_OPEN,
+                                "Open File",
+                                "Ctrl+O",
+                                "open_file",
+                            ),
+                            (
+                                egui_phosphor::regular::MAGNIFYING_GLASS,
+                                "Quick Open",
+                                "Ctrl+P",
+                                "quick_open",
+                            ),
+                            (
+                                egui_phosphor::regular::HAMMER,
+                                "Build Project",
+                                "Ctrl+B",
+                                "build",
+                            ),
+                            (
+                                egui_phosphor::regular::COMMAND,
+                                "Command Palette",
+                                "Ctrl+Shift+P",
+                                "cmd_palette",
+                            ),
                         ];
-                        for (label, shortcut, id) in &secondary_actions {
+                        for (icon, label, shortcut, id) in &secondary_actions {
                             let btn_rect = egui::Rect::from_min_size(
                                 ui.cursor().min,
                                 egui::vec2(btn_w, 30.0),
@@ -1296,7 +1374,7 @@ impl eframe::App for VelocityApp {
                             ui.painter().text(
                                 egui::pos2(btn_rect.min.x + 14.0, btn_rect.center().y),
                                 egui::Align2::LEFT_CENTER,
-                                *label,
+                                format!("{}  {}", icon, label),
                                 egui::FontId::proportional(12.0),
                                 palette.text,
                             );
@@ -1344,11 +1422,11 @@ impl eframe::App for VelocityApp {
                                 let display = if dir.is_empty() || dir == "." {
                                     file_name.to_string()
                                 } else {
-                                    format!("{}  \u{203a}  {}", file_name, dir)
+                                    format!("{}  {}  {}", file_name, egui_phosphor::regular::CARET_RIGHT, dir)
                                 };
                                 let resp = ui.add(
                                     egui::Button::new(
-                                        egui::RichText::new(format!("\u{203a}  {}", display))
+                                        egui::RichText::new(format!("{}  {}", egui_phosphor::regular::CARET_RIGHT, display))
                                             .size(11.0)
                                             .color(palette.text_muted),
                                     )
@@ -1570,7 +1648,7 @@ impl eframe::App for VelocityApp {
                                             ui.add_space(12.0);
                                             ui.vertical_centered(|ui| {
                                                 ui.label(
-                                                    egui::RichText::new("\u{2699}")
+                                                    egui::RichText::new(egui_phosphor::regular::GEAR)
                                                         .size(20.0)
                                                         .color(palette.text_muted.gamma_multiply(0.6)),
                                                 );
