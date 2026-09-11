@@ -19,16 +19,21 @@ V.E.L.O.C.I.T.Y. is a Rust workspace (`resolver = "2"`) containing six crates:
 velocity-workspace/
 ├── velocity-mcp/       # MCP server + IDE editor (primary crate)
 │   ├── src/agent/      # Provider dispatch, reasoning loop
-│   ├── src/editor/     # egui UI layer
-│   ├── src/registry/   # Tool registry
+│   ├── src/editor/     # egui UI, VelocityApp, tier3 sub-panels
+│   ├── src/registry/   # Tool registry, system tools
+│   ├── src/ipc/        # Shared memory, protocol
 │   └── docs/           # Architecture & format docs
 ├── velocity-browser/   # Browser engine (no CDP)
 │   ├── src/dom/        # Slab DOM tree, shadow slots, mutations
 │   ├── src/layout/     # Flexbox, grid, parallel layout
 │   └── src/agentic/    # AOM tree, OCR, action predictor
 └── velocity-ide/       # Compiler & AST
-    ├── src/compiler/   # Lexer, parser, JIT sandbox
-    └── src/nda_int/    # NDA interpreter
+    ├── src/compiler/   # Lexer, parser, JIT, shaders
+    │   ├── driver/     # Vulkan init, GEMV, BitNet, pipeline exec
+    │   └── nda_jit/    # JIT compiler, optimizer, x86 emitter
+    ├── src/model/      # Transformer model, weights, config
+    ├── src/nda_int/    # NDA interpreter
+    └── src/site_map/   # Triple store, Merkle verifier
 ```
 
 ## Commands

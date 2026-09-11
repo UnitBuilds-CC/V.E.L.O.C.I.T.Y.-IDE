@@ -22,5 +22,5 @@ name = "fuzz_html_parser"
 path = "fuzz_targets/fuzz_html_parser.rs"
 
 [[bin]]
-name = "fuzz_wasm_runner"
-path = "fuzz_targets/fuzz_wasm_runner.rs"
+name = "fuzz_nda_compiler"
+path = "fuzz_targets/fuzz_nda_compiler.rs"

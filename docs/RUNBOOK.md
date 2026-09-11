@@ -2,6 +2,8 @@
 
 This runbook provides procedures for common operational tasks and incident response for Velocity IDE.
 
+> **Scope:** This runbook covers the MCP server (`velocity_mcp`), the desktop GUI (`velocity_ide_gui`), and the drone agent (`velocity-drone`). The MCP server communicates over stdio JSON-RPC — it does not expose an HTTP API. The Velocity Router (`velocity-router`) is a separate service with its own runbook.
+
 ## Table of Contents
 
 - [Quick Reference](#quick-reference)
@@ -74,15 +76,15 @@ journalctl -u velocity-mcp -f
 ### Health Checks
 
 ```bash
-# Basic health check
-curl -s http://localhost:8080/health || echo "UNHEALTHY"
-
-# Detailed health (if implemented)
-curl -s http://localhost:8080/health/detailed | jq .
-
-# MCP protocol health
+# MCP server health (stdio JSON-RPC)
 echo '{"jsonrpc":"2.0","method":"health","id":1}' | \
   timeout 5 velocity_mcp --mode stdio
+
+# GUI process check
+pgrep -f velocity_ide_gui || echo "GUI not running"
+
+# Drone agent status
+pgrep -f velocity-drone || echo "Drone not running"
 ```
 
 ---

@@ -100,16 +100,24 @@ cargo test --workspace
 ### 5. Run
 
 ```bash
-# GUI mode
+# GUI mode (desktop)
+./target/release/velocity_ide_gui
+
+# CLI mode
 ./target/release/velocity_ide
 
-# MCP server mode (headless)
+# MCP server mode (headless, stdio JSON-RPC)
 ./target/release/velocity_mcp --mode stdio
+
+# Drone agent
+./target/release/velocity-drone
 ```
 
 ---
 
 ## Docker Deployment
+
+> **Note:** The Docker image builds all workspace binaries but is primarily intended for headless MCP server or CI use. The GUI desktop application (`velocity_ide_gui`) requires a GPU and display server not available in standard containers.
 
 ### Build Image
 
@@ -174,8 +182,10 @@ cargo build --release
 ```
 
 Binaries are in `target/release/`:
-- `velocity_ide` — GUI application
-- `velocity_mcp` — MCP server (headless)
+- `velocity_ide_gui` — GUI desktop application (egui/wgpu)
+- `velocity_ide` — CLI entry point
+- `velocity_mcp` — MCP server (headless, stdio JSON-RPC)
+- `velocity-drone` — Autonomous drone agent
 
 ### 2. Systemd Service (Linux)
 
