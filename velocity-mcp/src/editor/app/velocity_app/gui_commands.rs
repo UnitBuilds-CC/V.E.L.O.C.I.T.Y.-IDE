@@ -60,7 +60,10 @@ impl VelocityApp {
             .tabs
             .iter()
             .filter_map(|tab| {
-                if let crate::editor::app::types::TabKind::Editor { path: Some(ref p), .. } = tab.kind {
+                if let crate::editor::app::types::TabKind::Editor {
+                    path: Some(ref p), ..
+                } = tab.kind
+                {
                     Some(p.display().to_string())
                 } else {
                     None
@@ -73,7 +76,10 @@ impl VelocityApp {
             .as_ref()
             .and_then(|id| self.tabs.iter().find(|t| &t.id == id))
             .and_then(|tab| {
-                if let crate::editor::app::types::TabKind::Editor { path: Some(ref p), .. } = tab.kind {
+                if let crate::editor::app::types::TabKind::Editor {
+                    path: Some(ref p), ..
+                } = tab.kind
+                {
                     Some(p.display().to_string())
                 } else {
                     None
@@ -81,7 +87,14 @@ impl VelocityApp {
             });
 
         let panel_names = [
-            "files", "search", "git", "chat", "build", "agents", "knowledge", "workspace",
+            "files",
+            "search",
+            "git",
+            "chat",
+            "build",
+            "agents",
+            "knowledge",
+            "workspace",
         ];
         let active_panel = panel_names
             .get(self.activity_bar_selection)
@@ -95,7 +108,11 @@ impl VelocityApp {
             workspace_root: self.workspace_root.display().to_string(),
             sidebar_visible: self.left_sidebar_visible,
             chat_message_count: self.chat.messages.len(),
-            git_branch: if self.git_state.branch.is_empty() { None } else { Some(self.git_state.branch.clone()) },
+            git_branch: if self.git_state.branch.is_empty() {
+                None
+            } else {
+                Some(self.git_state.branch.clone())
+            },
         };
 
         GuiResponse {
@@ -108,7 +125,14 @@ impl VelocityApp {
     /// Navigate to a specific activity bar panel.
     fn cmd_navigate_panel(&mut self, panel: String) -> GuiResponse {
         let panel_names = [
-            "files", "search", "git", "chat", "build", "agents", "knowledge", "workspace",
+            "files",
+            "search",
+            "git",
+            "chat",
+            "build",
+            "agents",
+            "knowledge",
+            "workspace",
         ];
 
         let idx = panel_names.iter().position(|&p| p == panel);

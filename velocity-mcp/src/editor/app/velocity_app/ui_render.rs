@@ -383,138 +383,223 @@ impl eframe::App for VelocityApp {
                         let active_mode = self.appearance.profile;
                         // Zero-alloc: LayoutJob for the menu button label.
                         let mut layouts_btn_job = egui::text::LayoutJob::default();
-                        layouts_btn_job.append("Layouts: ", 0.0, egui::TextFormat {
-                            font_id: egui::FontId::proportional(11.0),
-                            color: palette.accent,
-                            ..Default::default()
-                        });
-                        layouts_btn_job.append(active_mode.glyph(), 0.0, egui::TextFormat {
-                            font_id: crate::editor::theme::icon_font_id(12.0),
-                            color: palette.accent,
-                            ..Default::default()
-                        });
-                        layouts_btn_job.append(" ", 0.0, egui::TextFormat {
-                            font_id: egui::FontId::proportional(11.0),
-                            color: palette.accent,
-                            ..Default::default()
-                        });
-                        layouts_btn_job.append(active_mode.short_label(), 0.0, egui::TextFormat {
-                            font_id: egui::FontId::proportional(11.0),
-                            color: palette.accent,
-                            ..Default::default()
-                        });
-                        layouts_btn_job.append(" ", 0.0, egui::TextFormat {
-                            font_id: egui::FontId::proportional(11.0),
-                            color: palette.accent,
-                            ..Default::default()
-                        });
-                        layouts_btn_job.append(egui_phosphor::regular::CARET_DOWN, 0.0, egui::TextFormat {
-                            font_id: crate::editor::theme::icon_font_id(10.0),
-                            color: palette.accent,
-                            ..Default::default()
-                        });
-                        ui.menu_button(
-                            layouts_btn_job,
-                            |ui| {
-                                ui.label(
-                                    egui::RichText::new("Workspaces")
-                                        .small()
-                                        .color(palette.text_muted),
-                                );
-                                // Build and Mission are the product-level workspaces.
-                                // Specialized profiles remain available without competing
-                                // with the default mental model.
-                                for mode in [
-                                    crate::editor::theme::WorkspaceProfile::Coder,
-                                    crate::editor::theme::WorkspaceProfile::MissionControl,
-                                ] {
-                                    let selected = mode == active_mode;
-                                    let label = mode.short_label();
-                                    // Zero-alloc: LayoutJob for selectable label.
-                                    let mut mode_job = egui::text::LayoutJob::default();
-                                    mode_job.append(mode.glyph(), 0.0, egui::TextFormat {
-                                        font_id: crate::editor::theme::icon_font_id(12.0),
-                                        color: if selected { palette.accent } else { palette.text },
-                                        ..Default::default()
-                                    });
-                                    mode_job.append(" ", 0.0, egui::TextFormat {
-                                        font_id: egui::FontId::proportional(11.0),
-                                        color: if selected { palette.accent } else { palette.text },
-                                        ..Default::default()
-                                    });
-                                    mode_job.append(label, 0.0, egui::TextFormat {
-                                        font_id: egui::FontId::proportional(11.0),
-                                        color: if selected { palette.accent } else { palette.text },
-                                        ..Default::default()
-                                    });
-                                    mode_job.append("  ", 0.0, egui::TextFormat {
-                                        font_id: egui::FontId::proportional(10.0),
-                                        color: palette.text_muted,
-                                        ..Default::default()
-                                    });
-                                    mode_job.append(mode.shortcut_hint(), 0.0, egui::TextFormat {
-                                        font_id: egui::FontId::proportional(10.0),
-                                        color: palette.text_muted,
-                                        ..Default::default()
-                                    });
-                                    if ui
-                                        .selectable_label(selected, mode_job)
-                                        .on_hover_text(mode.description())
-                                        .clicked()
-                                    {
-                                        self.set_work_mode(mode);
-                                        ui.close();
-                                    }
-                                }
-                                ui.separator();
-                                ui.label(
-                                    egui::RichText::new("Specialized layouts")
-                                        .small()
-                                        .color(palette.text_muted),
-                                );
-                                for mode in [
-                                    crate::editor::theme::WorkspaceProfile::AutomationOperator,
-                                    crate::editor::theme::WorkspaceProfile::Accessibility,
-                                ] {
-                                    let selected = mode == active_mode;
-                                    let label = mode.label();
-                                    let mut mode_job = egui::text::LayoutJob::default();
-                                    mode_job.append(mode.glyph(), 0.0, egui::TextFormat {
-                                        font_id: crate::editor::theme::icon_font_id(12.0),
-                                        color: if selected { palette.accent } else { palette.text },
-                                        ..Default::default()
-                                    });
-                                    mode_job.append(" ", 0.0, egui::TextFormat {
-                                        font_id: egui::FontId::proportional(11.0),
-                                        color: if selected { palette.accent } else { palette.text },
-                                        ..Default::default()
-                                    });
-                                    mode_job.append(label, 0.0, egui::TextFormat {
-                                        font_id: egui::FontId::proportional(11.0),
-                                        color: if selected { palette.accent } else { palette.text },
-                                        ..Default::default()
-                                    });
-                                    mode_job.append("  ", 0.0, egui::TextFormat {
-                                        font_id: egui::FontId::proportional(10.0),
-                                        color: palette.text_muted,
-                                        ..Default::default()
-                                    });
-                                    mode_job.append(mode.shortcut_hint(), 0.0, egui::TextFormat {
-                                        font_id: egui::FontId::proportional(10.0),
-                                        color: palette.text_muted,
-                                        ..Default::default()
-                                    });
-                                    if ui
-                                        .selectable_label(selected, mode_job)
-                                        .on_hover_text(mode.description())
-                                        .clicked()
-                                    {
-                                        self.set_work_mode(mode);
-                                        ui.close();
-                                    }
-                                }
+                        layouts_btn_job.append(
+                            "Layouts: ",
+                            0.0,
+                            egui::TextFormat {
+                                font_id: egui::FontId::proportional(11.0),
+                                color: palette.accent,
+                                ..Default::default()
                             },
                         );
+                        layouts_btn_job.append(
+                            active_mode.glyph(),
+                            0.0,
+                            egui::TextFormat {
+                                font_id: crate::editor::theme::icon_font_id(12.0),
+                                color: palette.accent,
+                                ..Default::default()
+                            },
+                        );
+                        layouts_btn_job.append(
+                            " ",
+                            0.0,
+                            egui::TextFormat {
+                                font_id: egui::FontId::proportional(11.0),
+                                color: palette.accent,
+                                ..Default::default()
+                            },
+                        );
+                        layouts_btn_job.append(
+                            active_mode.short_label(),
+                            0.0,
+                            egui::TextFormat {
+                                font_id: egui::FontId::proportional(11.0),
+                                color: palette.accent,
+                                ..Default::default()
+                            },
+                        );
+                        layouts_btn_job.append(
+                            " ",
+                            0.0,
+                            egui::TextFormat {
+                                font_id: egui::FontId::proportional(11.0),
+                                color: palette.accent,
+                                ..Default::default()
+                            },
+                        );
+                        layouts_btn_job.append(
+                            egui_phosphor::regular::CARET_DOWN,
+                            0.0,
+                            egui::TextFormat {
+                                font_id: crate::editor::theme::icon_font_id(10.0),
+                                color: palette.accent,
+                                ..Default::default()
+                            },
+                        );
+                        ui.menu_button(layouts_btn_job, |ui| {
+                            ui.label(
+                                egui::RichText::new("Workspaces")
+                                    .small()
+                                    .color(palette.text_muted),
+                            );
+                            // Build and Mission are the product-level workspaces.
+                            // Specialized profiles remain available without competing
+                            // with the default mental model.
+                            for mode in [
+                                crate::editor::theme::WorkspaceProfile::Coder,
+                                crate::editor::theme::WorkspaceProfile::MissionControl,
+                            ] {
+                                let selected = mode == active_mode;
+                                let label = mode.short_label();
+                                // Zero-alloc: LayoutJob for selectable label.
+                                let mut mode_job = egui::text::LayoutJob::default();
+                                mode_job.append(
+                                    mode.glyph(),
+                                    0.0,
+                                    egui::TextFormat {
+                                        font_id: crate::editor::theme::icon_font_id(12.0),
+                                        color: if selected {
+                                            palette.accent
+                                        } else {
+                                            palette.text
+                                        },
+                                        ..Default::default()
+                                    },
+                                );
+                                mode_job.append(
+                                    " ",
+                                    0.0,
+                                    egui::TextFormat {
+                                        font_id: egui::FontId::proportional(11.0),
+                                        color: if selected {
+                                            palette.accent
+                                        } else {
+                                            palette.text
+                                        },
+                                        ..Default::default()
+                                    },
+                                );
+                                mode_job.append(
+                                    label,
+                                    0.0,
+                                    egui::TextFormat {
+                                        font_id: egui::FontId::proportional(11.0),
+                                        color: if selected {
+                                            palette.accent
+                                        } else {
+                                            palette.text
+                                        },
+                                        ..Default::default()
+                                    },
+                                );
+                                mode_job.append(
+                                    "  ",
+                                    0.0,
+                                    egui::TextFormat {
+                                        font_id: egui::FontId::proportional(10.0),
+                                        color: palette.text_muted,
+                                        ..Default::default()
+                                    },
+                                );
+                                mode_job.append(
+                                    mode.shortcut_hint(),
+                                    0.0,
+                                    egui::TextFormat {
+                                        font_id: egui::FontId::proportional(10.0),
+                                        color: palette.text_muted,
+                                        ..Default::default()
+                                    },
+                                );
+                                if ui
+                                    .selectable_label(selected, mode_job)
+                                    .on_hover_text(mode.description())
+                                    .clicked()
+                                {
+                                    self.set_work_mode(mode);
+                                    ui.close();
+                                }
+                            }
+                            ui.separator();
+                            ui.label(
+                                egui::RichText::new("Specialized layouts")
+                                    .small()
+                                    .color(palette.text_muted),
+                            );
+                            for mode in [
+                                crate::editor::theme::WorkspaceProfile::AutomationOperator,
+                                crate::editor::theme::WorkspaceProfile::Accessibility,
+                            ] {
+                                let selected = mode == active_mode;
+                                let label = mode.label();
+                                let mut mode_job = egui::text::LayoutJob::default();
+                                mode_job.append(
+                                    mode.glyph(),
+                                    0.0,
+                                    egui::TextFormat {
+                                        font_id: crate::editor::theme::icon_font_id(12.0),
+                                        color: if selected {
+                                            palette.accent
+                                        } else {
+                                            palette.text
+                                        },
+                                        ..Default::default()
+                                    },
+                                );
+                                mode_job.append(
+                                    " ",
+                                    0.0,
+                                    egui::TextFormat {
+                                        font_id: egui::FontId::proportional(11.0),
+                                        color: if selected {
+                                            palette.accent
+                                        } else {
+                                            palette.text
+                                        },
+                                        ..Default::default()
+                                    },
+                                );
+                                mode_job.append(
+                                    label,
+                                    0.0,
+                                    egui::TextFormat {
+                                        font_id: egui::FontId::proportional(11.0),
+                                        color: if selected {
+                                            palette.accent
+                                        } else {
+                                            palette.text
+                                        },
+                                        ..Default::default()
+                                    },
+                                );
+                                mode_job.append(
+                                    "  ",
+                                    0.0,
+                                    egui::TextFormat {
+                                        font_id: egui::FontId::proportional(10.0),
+                                        color: palette.text_muted,
+                                        ..Default::default()
+                                    },
+                                );
+                                mode_job.append(
+                                    mode.shortcut_hint(),
+                                    0.0,
+                                    egui::TextFormat {
+                                        font_id: egui::FontId::proportional(10.0),
+                                        color: palette.text_muted,
+                                        ..Default::default()
+                                    },
+                                );
+                                if ui
+                                    .selectable_label(selected, mode_job)
+                                    .on_hover_text(mode.description())
+                                    .clicked()
+                                {
+                                    self.set_work_mode(mode);
+                                    ui.close();
+                                }
+                            }
+                        });
                     } else {
                         // `use_unified_header` is always true; this branch is kept
                         // as a placeholder for a potential lightweight header mode.
@@ -699,21 +784,33 @@ impl eframe::App for VelocityApp {
                                     let seg_clicked = seg_resp.clicked();
                                     // Zero-alloc: LayoutJob instead of format!("Reveal {} in file tree", comp).
                                     let mut reveal_job = egui::text::LayoutJob::default();
-                                    reveal_job.append("Reveal ", 0.0, egui::TextFormat {
-                                        font_id: egui::FontId::proportional(10.0),
-                                        color: palette.text_muted,
-                                        ..Default::default()
-                                    });
-                                    reveal_job.append(comp, 0.0, egui::TextFormat {
-                                        font_id: egui::FontId::proportional(10.0),
-                                        color: palette.text_muted,
-                                        ..Default::default()
-                                    });
-                                    reveal_job.append(" in file tree", 0.0, egui::TextFormat {
-                                        font_id: egui::FontId::proportional(10.0),
-                                        color: palette.text_muted,
-                                        ..Default::default()
-                                    });
+                                    reveal_job.append(
+                                        "Reveal ",
+                                        0.0,
+                                        egui::TextFormat {
+                                            font_id: egui::FontId::proportional(10.0),
+                                            color: palette.text_muted,
+                                            ..Default::default()
+                                        },
+                                    );
+                                    reveal_job.append(
+                                        comp,
+                                        0.0,
+                                        egui::TextFormat {
+                                            font_id: egui::FontId::proportional(10.0),
+                                            color: palette.text_muted,
+                                            ..Default::default()
+                                        },
+                                    );
+                                    reveal_job.append(
+                                        " in file tree",
+                                        0.0,
+                                        egui::TextFormat {
+                                            font_id: egui::FontId::proportional(10.0),
+                                            color: palette.text_muted,
+                                            ..Default::default()
+                                        },
+                                    );
                                     seg_resp.on_hover_text(reveal_job);
                                     if seg_clicked {
                                         // Set file tree filter to show this path component.
@@ -867,26 +964,42 @@ impl eframe::App for VelocityApp {
                             }
                             // Zero-alloc: LayoutJob instead of format!("{}  ({})", label, shortcut).
                             let mut hover_job = egui::text::LayoutJob::default();
-                            hover_job.append(*label, 0.0, egui::TextFormat {
-                                font_id: egui::FontId::proportional(11.0),
-                                color: label_color,
-                                ..Default::default()
-                            });
-                            hover_job.append("  (", 0.0, egui::TextFormat {
-                                font_id: egui::FontId::proportional(10.0),
-                                color: palette.text_muted,
-                                ..Default::default()
-                            });
-                            hover_job.append(shortcut, 0.0, egui::TextFormat {
-                                font_id: egui::FontId::proportional(10.0),
-                                color: palette.text_muted,
-                                ..Default::default()
-                            });
-                            hover_job.append(")", 0.0, egui::TextFormat {
-                                font_id: egui::FontId::proportional(10.0),
-                                color: palette.text_muted,
-                                ..Default::default()
-                            });
+                            hover_job.append(
+                                label,
+                                0.0,
+                                egui::TextFormat {
+                                    font_id: egui::FontId::proportional(11.0),
+                                    color: label_color,
+                                    ..Default::default()
+                                },
+                            );
+                            hover_job.append(
+                                "  (",
+                                0.0,
+                                egui::TextFormat {
+                                    font_id: egui::FontId::proportional(10.0),
+                                    color: palette.text_muted,
+                                    ..Default::default()
+                                },
+                            );
+                            hover_job.append(
+                                shortcut,
+                                0.0,
+                                egui::TextFormat {
+                                    font_id: egui::FontId::proportional(10.0),
+                                    color: palette.text_muted,
+                                    ..Default::default()
+                                },
+                            );
+                            hover_job.append(
+                                ")",
+                                0.0,
+                                egui::TextFormat {
+                                    font_id: egui::FontId::proportional(10.0),
+                                    color: palette.text_muted,
+                                    ..Default::default()
+                                },
+                            );
                             interact_resp.on_hover_text(hover_job);
                             ui.add_space(1.0);
                         }
@@ -1006,9 +1119,7 @@ impl eframe::App for VelocityApp {
                                         .color(palette.text_muted),
                                 );
                                 ui.label(
-                                    egui::RichText::new(br)
-                                        .size(9.0)
-                                        .color(palette.text_muted),
+                                    egui::RichText::new(br).size(9.0).color(palette.text_muted),
                                 );
                             }
                         });
@@ -1295,9 +1406,7 @@ impl eframe::App for VelocityApp {
         let _ = write!(
             self.cached_status_perf,
             "{} | {}ms f{}",
-            self.status_message,
-            self.last_frame_ms as u32,
-            self.frame_count
+            self.status_message, self.last_frame_ms as u32, self.frame_count
         );
         self.cached_profile_label.clear();
         let _ = write!(

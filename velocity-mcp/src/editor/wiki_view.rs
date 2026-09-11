@@ -310,8 +310,7 @@ impl WikiView {
                 let mut sm = velocity_ide::site_map::SiteMap::open(&sitemap_dir, weight_root)
                     .map_err(|e| e.to_string())?;
                 let reports = velocity_ide::compiler::rust_to_nda::RustToNda::compile_directory(
-                    &root,
-                    &mut sm,
+                    &root, &mut sm,
                 )
                 .map_err(|e| e.to_string())?;
                 let count = reports.len();

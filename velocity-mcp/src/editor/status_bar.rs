@@ -120,11 +120,7 @@ impl StatusBar {
                                 .font(crate::editor::theme::icon_font_id(11.0))
                                 .color(palette.text_muted),
                         );
-                        ui.label(
-                            egui::RichText::new(b)
-                                .size(11.0)
-                                .color(palette.text_muted),
-                        );
+                        ui.label(egui::RichText::new(b).size(11.0).color(palette.text_muted));
                     }
 
                     if let Some((line, col)) = position {
@@ -203,8 +199,8 @@ impl StatusBar {
                         right.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
                     }
                     provider_response.on_hover_text(format!(
-                                            "{provider_label} / {model_label}\nClick to open settings"
-                                        ));
+                        "{provider_label} / {model_label}\nClick to open settings"
+                    ));
 
                     // Command palette affordance — a clickable pill so the palette
                     // is discoverable without memorizing the shortcut (UX audit #6).

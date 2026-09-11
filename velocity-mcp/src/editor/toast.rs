@@ -114,9 +114,7 @@ impl ToastQueue {
                                         if ui
                                             .button(
                                                 egui::RichText::new(egui_phosphor::regular::X)
-                                                    .font(crate::editor::theme::icon_font_id(
-                                                        12.0,
-                                                    ))
+                                                    .font(crate::editor::theme::icon_font_id(12.0))
                                                     .color(stroke_color),
                                             )
                                             .clicked()

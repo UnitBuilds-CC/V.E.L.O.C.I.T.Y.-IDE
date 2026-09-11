@@ -413,32 +413,32 @@ impl VelocityApp {
                 .id_salt("git_changes_list_scroll")
                 .max_height(list_height)
                 .show(ui, |ui| {
-                for entry in &self.git_state.entries {
-                    let rel = entry
-                        .path
-                        .strip_prefix(&self.workspace_root)
-                        .unwrap_or(&entry.path);
-                    let icon = entry.status.icon();
-                    let color = match entry.status {
-                        crate::editor::git_ui::GitFileStatus::Modified => palette.warning,
-                        crate::editor::git_ui::GitFileStatus::Added => palette.success,
-                        crate::editor::git_ui::GitFileStatus::Deleted => palette.error,
-                        crate::editor::git_ui::GitFileStatus::Conflicted => palette.error,
-                        _ => palette.text_muted,
-                    };
-                    ui.horizontal(|ui| {
-                        ui.label(RichText::new(icon).size(FONT_SMALL).strong().color(color));
-                        if entry.staged {
-                            ui.label(RichText::new("S").size(8.0).color(palette.accent));
-                        }
-                        ui.label(
-                            RichText::new(rel.display().to_string())
-                                .size(FONT_SMALL)
-                                .color(palette.text),
-                        );
-                    });
-                }
-            });
+                    for entry in &self.git_state.entries {
+                        let rel = entry
+                            .path
+                            .strip_prefix(&self.workspace_root)
+                            .unwrap_or(&entry.path);
+                        let icon = entry.status.icon();
+                        let color = match entry.status {
+                            crate::editor::git_ui::GitFileStatus::Modified => palette.warning,
+                            crate::editor::git_ui::GitFileStatus::Added => palette.success,
+                            crate::editor::git_ui::GitFileStatus::Deleted => palette.error,
+                            crate::editor::git_ui::GitFileStatus::Conflicted => palette.error,
+                            _ => palette.text_muted,
+                        };
+                        ui.horizontal(|ui| {
+                            ui.label(RichText::new(icon).size(FONT_SMALL).strong().color(color));
+                            if entry.staged {
+                                ui.label(RichText::new("S").size(8.0).color(palette.accent));
+                            }
+                            ui.label(
+                                RichText::new(rel.display().to_string())
+                                    .size(FONT_SMALL)
+                                    .color(palette.text),
+                            );
+                        });
+                    }
+                });
 
             // Commit area
             ui.add_space(SECTION_SPACING);

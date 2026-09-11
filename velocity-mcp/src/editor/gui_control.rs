@@ -76,10 +76,7 @@ pub struct GuiControlHandle {
 /// The `egui_ctx` is used to request repaints when commands arrive.
 pub fn start_listener(
     egui_ctx: egui::Context,
-) -> (
-    Receiver<(GuiCommand, Sender<GuiResponse>)>,
-    Arc<AtomicBool>,
-) {
+) -> (Receiver<(GuiCommand, Sender<GuiResponse>)>, Arc<AtomicBool>) {
     let (cmd_tx, cmd_rx) = crossbeam_channel::unbounded::<(GuiCommand, Sender<GuiResponse>)>();
     let shutdown = Arc::new(AtomicBool::new(false));
     let shutdown_clone = shutdown.clone();
@@ -105,7 +102,10 @@ fn listener_loop(
     let listener = match std::net::TcpListener::bind(("127.0.0.1", GUI_CONTROL_PORT)) {
         Ok(l) => l,
         Err(e) => {
-            eprintln!("[gui_control] Failed to bind TCP listener on port {}: {}", GUI_CONTROL_PORT, e);
+            eprintln!(
+                "[gui_control] Failed to bind TCP listener on port {}: {}",
+                GUI_CONTROL_PORT, e
+            );
             return;
         }
     };
@@ -130,9 +130,11 @@ fn listener_loop(
 
         let _ = stream.set_read_timeout(Some(std::time::Duration::from_secs(10)));
 
-        let reader = BufReader::new(stream.try_clone().unwrap_or_else(|_| {
-            panic!("failed to clone stream")
-        }));
+        let reader = BufReader::new(
+            stream
+                .try_clone()
+                .unwrap_or_else(|_| panic!("failed to clone stream")),
+        );
 
         for line in reader.lines() {
             if shutdown.load(Ordering::Relaxed) {

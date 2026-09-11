@@ -726,7 +726,9 @@ pub fn handle_system_tool(
         // ── GUI Control Bridge ─────────────────────────────────────────────
         "gui_open_file" => {
             let path = arguments["path"].as_str().ok_or("path is required")?;
-            let cmd = crate::editor::gui_control::GuiCommand::OpenFile { path: path.to_string() };
+            let cmd = crate::editor::gui_control::GuiCommand::OpenFile {
+                path: path.to_string(),
+            };
             let resp = crate::editor::gui_control::send_command(&cmd)?;
             serde_json::to_string(&resp)?
         }
@@ -737,7 +739,9 @@ pub fn handle_system_tool(
         }
         "gui_navigate_panel" => {
             let panel = arguments["panel"].as_str().ok_or("panel is required")?;
-            let cmd = crate::editor::gui_control::GuiCommand::NavigatePanel { panel: panel.to_string() };
+            let cmd = crate::editor::gui_control::GuiCommand::NavigatePanel {
+                panel: panel.to_string(),
+            };
             let resp = crate::editor::gui_control::send_command(&cmd)?;
             serde_json::to_string(&resp)?
         }

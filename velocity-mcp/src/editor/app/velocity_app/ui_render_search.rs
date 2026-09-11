@@ -228,10 +228,7 @@ impl VelocityApp {
                                         &display_data[hit_idx];
                                     ui.group(|ui| {
                                         ui.set_max_width(ui.available_width());
-                                        if ui
-                                            .link(link_label)
-                                            .on_hover_text(path_display)
-                                            .clicked()
+                                        if ui.link(link_label).on_hover_text(path_display).clicked()
                                         {
                                             let abs_path = self.workspace_root.join(&hit.path);
                                             self.push_nav_location();

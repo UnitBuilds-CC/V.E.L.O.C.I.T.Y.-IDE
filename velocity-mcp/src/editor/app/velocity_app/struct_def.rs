@@ -540,7 +540,12 @@ pub struct VelocityApp {
     // ─── GUI Control Bridge ────────────────────────────────────────────────
     /// Receiver for commands from external processes (MCP server, AI agents).
     /// The gui_control listener thread sends (command, response_sender) pairs.
-    pub gui_cmd_rx: Option<crossbeam_channel::Receiver<(crate::editor::gui_control::GuiCommand, crossbeam_channel::Sender<crate::editor::gui_control::GuiResponse>)>>,
+    pub gui_cmd_rx: Option<
+        crossbeam_channel::Receiver<(
+            crate::editor::gui_control::GuiCommand,
+            crossbeam_channel::Sender<crate::editor::gui_control::GuiResponse>,
+        )>,
+    >,
     /// Handle to the gui_control listener (holds shutdown flag).
     pub gui_control_handle: Option<crate::editor::gui_control::GuiControlHandle>,
 }
@@ -1306,9 +1311,7 @@ impl VelocityApp {
         // Start the GUI control listener (TCP for external MCP/agent control)
         let (cmd_rx, shutdown) = crate::editor::gui_control::start_listener(cc.egui_ctx.clone());
         app.gui_cmd_rx = Some(cmd_rx);
-        app.gui_control_handle = Some(crate::editor::gui_control::GuiControlHandle {
-            shutdown,
-        });
+        app.gui_control_handle = Some(crate::editor::gui_control::GuiControlHandle { shutdown });
         app.open_editor(None);
         app.apply_workspace_profile(app.appearance.profile);
         app.restore_workspace_preferences();

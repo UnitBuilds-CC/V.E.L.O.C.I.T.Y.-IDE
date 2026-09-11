@@ -2,12 +2,10 @@
 # See: https://embarkstudios.github.io/cargo-deny/
 
 [advisories]
-db-path = "~/.cargo/advisory-db"
+db-path = "~/.cargo/advisory-dbs"
 db-urls = ["https://github.com/rustsec/advisory-db"]
-vulnerability = "deny"
-unmaintained = "warn"
 yanked = "warn"
-notice = "warn"
+unmaintained = "all"
 # Transitive advisories that cannot be bumped yet and whose vulnerable code path
 # is never exercised by this project. Kept in lockstep with `.cargo/audit.toml`;
 # see that file for the full per-advisory reachability analysis.
@@ -22,7 +20,6 @@ ignore = [
 ]
 
 [licenses]
-unlicensed = "deny"
 allow = [
     "MIT",
     "Apache-2.0",
@@ -32,15 +29,10 @@ allow = [
     "Zlib",
     "MPL-2.0",
     "Unicode-DFS-2016",
+    "Unicode-3.0",
+    "BSL-1.0",
+    "OpenSSL",
 ]
-deny = [
-    "GPL-2.0",
-    "GPL-3.0",
-    "AGPL-3.0",
-]
-copyleft = "warn"
-allow-osi-fsf-free = "either"
-default-allow = "deny"
 
 [bans]
 multiple-versions = "warn"
