@@ -37,12 +37,18 @@ fn walk(root: &Path, dir: &Path, query: &str, max_results: usize, results: &mut 
         if path.is_dir() {
             walk(root, &path, query, max_results, results);
         } else if path.is_file() {
-            search_file(root, &path, query, results);
+            search_file(root, &path, query, max_results, results);
         }
     }
 }
 
-fn search_file(root: &Path, path: &Path, query: &str, results: &mut Vec<SearchHit>) {
+fn search_file(
+    root: &Path,
+    path: &Path,
+    query: &str,
+    max_results: usize,
+    results: &mut Vec<SearchHit>,
+) {
     const MAX_FILE_BYTES: u64 = 2 * 1024 * 1024;
     let Ok(meta) = fs::metadata(path) else { return };
     if meta.len() > MAX_FILE_BYTES {
@@ -52,6 +58,11 @@ fn search_file(root: &Path, path: &Path, query: &str, results: &mut Vec<SearchHi
         return;
     };
     for (idx, line) in text.lines().enumerate() {
+        // A single file can hold far more matches than the budget: honor the
+        // cap per line, not just between files, so "N results" stays truthful.
+        if results.len() >= max_results {
+            break;
+        }
         if line.to_lowercase().contains(query) {
             results.push(SearchHit {
                 path: path.strip_prefix(root).unwrap_or(path).to_path_buf(),
@@ -301,5 +312,24 @@ pub fn icon_for_path(path: &Path) -> &'static str {
         Some("html" | "css") => "<>",
         Some("cpp" | "c" | "h") => "c",
         _ => "f",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn project_search_finds_literal_in_own_source_tree() {
+        // The crate's own src/ tree is full of "fn " — the synchronous walk
+        // must surface hits for it. Guards against regressions in `walk` /
+        // `search_file` (e.g. over-eager skipping or unreadable files).
+        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let hits = project_search(&root, "fn ", 100);
+        assert!(
+            !hits.is_empty(),
+            "project_search found nothing for \"fn \" under {}",
+            root.display()
+        );
     }
 }

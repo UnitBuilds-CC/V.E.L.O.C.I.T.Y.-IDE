@@ -34,6 +34,8 @@ pub struct WikiView {
     state: LoadState,
     /// Receiver for a wiki model being built on a background thread.
     rx: Option<std::sync::mpsc::Receiver<Result<WikiModel, String>>>,
+    /// Receiver for a background index rebuild (populates dictionary.json).
+    index_rx: Option<std::sync::mpsc::Receiver<Result<(usize, String), String>>>,
 }
 
 impl Default for WikiView {
@@ -50,6 +52,7 @@ impl WikiView {
             query: String::new(),
             state: LoadState::Idle,
             rx: None,
+            index_rx: None,
         }
     }
 
@@ -66,7 +69,8 @@ impl WikiView {
         }
         // Drain the background builder and keep animating while it runs.
         self.poll_refresh(toasts);
-        if matches!(self.state, LoadState::Loading) {
+        self.poll_index(toasts);
+        if matches!(self.state, LoadState::Loading) || self.index_rx.is_some() {
             ui.ctx().request_repaint();
         }
 
@@ -95,39 +99,97 @@ impl WikiView {
             });
             ui.separator();
 
-            // Toolbar
+            // Toolbar. Plain `ui.button` inherits `weak_bg_fill = bg_secondary`, which
+            // matches the panel and renders the buttons as chrome-less text; give each
+            // an explicit neutral fill + hairline border so they read as buttons.
             ui.horizontal(|ui| {
+                // Breathing room so the neutral buttons don't read as one merged slab.
+                ui.spacing_mut().item_spacing.x = 8.0;
                 if ui
-                    .button(egui::RichText::new("Refresh").color(palette.text))
+                    .add(
+                        egui::Button::new(egui::RichText::new("Refresh").color(palette.text))
+                            .fill(palette.bg_tertiary)
+                            .stroke(egui::Stroke::new(0.5, palette.border))
+                            .corner_radius(egui::CornerRadius::same(6))
+                            .min_size(egui::vec2(0.0, 24.0)),
+                    )
                     .on_hover_text("Rebuild the wiki from the site map")
                     .clicked()
                 {
                     self.refresh(workspace_root);
                 }
                 if ui
-                    .button(egui::RichText::new("Export Markdown").color(palette.success))
+                    .add(
+                        egui::Button::new(
+                            egui::RichText::new("Export Markdown").color(palette.success),
+                        )
+                        .fill(palette.bg_tertiary)
+                        .stroke(egui::Stroke::new(0.5, palette.border))
+                        .corner_radius(egui::CornerRadius::same(6))
+                        .min_size(egui::vec2(0.0, 24.0)),
+                    )
                     .on_hover_text("Write interlinked .wiki/ pages you can commit to git")
                     .clicked()
                 {
                     self.export(workspace_root, toasts);
                 }
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    let enabled = self.selected_page().is_some();
-                    let button = egui::Button::new(
-                        egui::RichText::new("Generate Detailed Page").color(palette.accent),
-                    );
-                    if ui
-                        .add_enabled(enabled, button)
-                        .on_hover_text(
-                            "Ask the agent to write a detailed narrative for the selected page",
-                        )
-                        .clicked()
-                    {
-                        if let Some(prompt) = self.detail_prompt() {
-                            action = Some(WikiAction::GenerateDetail(prompt));
-                        }
+                let indexing = self.index_rx.is_some();
+                let index_label = if indexing {
+                    "Indexing\u{2026}"
+                } else {
+                    "Rebuild Index"
+                };
+                let index_color = if indexing {
+                    palette.text_muted
+                } else {
+                    palette.text
+                };
+                if ui
+                    .add_enabled(
+                        !indexing,
+                        egui::Button::new(egui::RichText::new(index_label).color(index_color))
+                            .fill(palette.bg_tertiary)
+                            .stroke(egui::Stroke::new(0.5, palette.border))
+                            .corner_radius(egui::CornerRadius::same(6))
+                            .min_size(egui::vec2(0.0, 24.0)),
+                    )
+                    .on_hover_text("Compile all .rs files to populate the wiki's name dictionary")
+                    .clicked()
+                {
+                    self.rebuild_index(workspace_root);
+                }
+                let enabled = self.selected_page().is_some();
+                // The painter's disabled alpha dims the whole button, but an
+                // accent-colored label would still read as "green = on", so
+                // the inactive look swaps to muted text.
+                let label_color = if enabled {
+                    palette.accent
+                } else {
+                    palette.text_muted
+                };
+                let stroke_color = if enabled {
+                    palette.border
+                } else {
+                    palette.border.gamma_multiply(0.6)
+                };
+                let button = egui::Button::new(
+                    egui::RichText::new("Generate Detailed Page").color(label_color),
+                )
+                .fill(palette.bg_tertiary)
+                .stroke(egui::Stroke::new(0.5, stroke_color))
+                .corner_radius(egui::CornerRadius::same(6))
+                .min_size(egui::vec2(0.0, 24.0));
+                if ui
+                    .add_enabled(enabled, button)
+                    .on_hover_text(
+                        "Ask the agent to write a detailed narrative for the selected page",
+                    )
+                    .clicked()
+                {
+                    if let Some(prompt) = self.detail_prompt() {
+                        action = Some(WikiAction::GenerateDetail(prompt));
                     }
-                });
+                }
             });
             ui.separator();
 
@@ -158,16 +220,20 @@ impl WikiView {
                 return;
             }
 
-            let tree_width = (ui.available_width() * 0.32).clamp(200.0, 320.0);
+            let tree_width = (ui.available_width() * 0.40).clamp(220.0, 400.0);
             let tree_width = tree_width.round() as usize;
             let mut navigate_to: Option<String> = None;
             ui.horizontal(|ui| {
                 ui.vertical(|ui| {
                     ui.set_width(tree_width as f32);
+                    ui.set_min_height(400.0);
+                    ui.add_space(4.0);
                     self.render_tree(ui, palette);
+                    ui.add_space(4.0);
                 });
                 ui.separator();
                 ui.vertical(|ui| {
+                    ui.set_min_height(400.0);
                     navigate_to = self.render_detail(ui, palette);
                 });
             });
@@ -224,6 +290,65 @@ impl WikiView {
             Err(std::sync::mpsc::TryRecvError::Empty) => {}
             Err(std::sync::mpsc::TryRecvError::Disconnected) => {
                 self.rx = None;
+            }
+        }
+    }
+
+    /// Rebuild the workspace index: compile all `.rs` files to populate the
+    /// site map's string dictionary, then refresh the wiki. Without this, the
+    /// dictionary.json is empty and every entity resolves to a hex hash.
+    pub fn rebuild_index(&mut self, workspace_root: &std::path::Path) {
+        let root = workspace_root.to_path_buf();
+        let (tx, rx) = std::sync::mpsc::channel();
+        self.index_rx = Some(rx);
+        std::thread::spawn(move || {
+            let result = (|| -> Result<(usize, String), String> {
+                let sitemap_dir = root.join(".velocity").join("site_map");
+                let weight_root =
+                    velocity_ide::site_map::SiteMap::read_persisted_weight_root(&sitemap_dir)
+                        .unwrap_or(0);
+                let mut sm = velocity_ide::site_map::SiteMap::open(&sitemap_dir, weight_root)
+                    .map_err(|e| e.to_string())?;
+                let reports = velocity_ide::compiler::rust_to_nda::RustToNda::compile_directory(
+                    &root,
+                    &mut sm,
+                )
+                .map_err(|e| e.to_string())?;
+                let count = reports.len();
+                // Drop the site map so the dictionary is flushed to disk before
+                // the wiki refresh reads it.
+                drop(sm);
+                Ok((count, root.display().to_string()))
+            })();
+            let _ = tx.send(result);
+        });
+    }
+
+    /// Poll the background indexer; on success, trigger a wiki refresh.
+    fn poll_index(&mut self, toasts: &mut ToastQueue) {
+        let Some(rx) = &self.index_rx else {
+            return;
+        };
+        match rx.try_recv() {
+            Ok(Ok((count, _root))) => {
+                self.index_rx = None;
+                toasts.push(Toast::success(format!(
+                    "Indexed {} file(s) \u{2014} refreshing wiki\u{2026}",
+                    count
+                )));
+                // The dictionary is now on disk; rebuild the wiki from it.
+                // We need workspace_root — use the model's absence as a signal
+                // to refresh on the next ui() call via Idle state.
+                self.state = LoadState::Idle;
+                self.model = None;
+            }
+            Ok(Err(err)) => {
+                self.index_rx = None;
+                toasts.push(Toast::error(format!("Index failed: {}", err)));
+            }
+            Err(std::sync::mpsc::TryRecvError::Empty) => {}
+            Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                self.index_rx = None;
             }
         }
     }
@@ -322,7 +447,8 @@ and any notable relationships. Use Markdown. Do not repeat the raw lists verbati
                 if !symbols.is_empty() {
                     self.tree_section(ui, "SYMBOLS", palette);
                     for (idx, title) in symbols {
-                        self.tree_row(ui, "\u{0192}", &title, PageRef::Symbol(idx), palette);
+                        let label = symbol_display_title(&title);
+                        self.tree_row(ui, "\u{0192}", &label, PageRef::Symbol(idx), palette);
                     }
                 }
 
@@ -339,7 +465,7 @@ and any notable relationships. Use Markdown. Do not repeat the raw lists verbati
     }
 
     fn tree_section(&self, ui: &mut egui::Ui, label: &str, palette: IdePalette) {
-        ui.add_space(8.0);
+        ui.add_space(12.0);
         ui.label(
             egui::RichText::new(label)
                 .size(10.0)
@@ -364,7 +490,7 @@ and any notable relationships. Use Markdown. Do not repeat the raw lists verbati
                 palette.bg_primary
             })
             .corner_radius(egui::CornerRadius::same(6))
-            .inner_margin(egui::Margin::symmetric(6, 2))
+            .inner_margin(egui::Margin::symmetric(6, 4))
             .show(ui, |ui| {
                 ui.horizontal(|ui| {
                     ui.label(egui::RichText::new(glyph).size(11.0).color(if selected {
@@ -501,4 +627,19 @@ and any notable relationships. Use Markdown. Do not repeat the raw lists verbati
             self.selected = Some(PageRef::Symbol(idx));
         }
     }
+}
+
+/// Unresolved site-map symbols arrive as bare hex hashes (e.g.
+/// "028a2b205607bfec"). Show a compact tagged form so the tree reads as
+/// identifiers, not walls of digits.
+fn symbol_display_title(title: &str) -> String {
+    let is_bare_hex = title.len() >= 8 && title.chars().all(|c| c.is_ascii_hexdigit());
+    if !is_bare_hex {
+        return title.to_string();
+    }
+    let mut compact: String = title.chars().take(8).collect();
+    if title.chars().count() > 8 {
+        compact.push('\u{2026}');
+    }
+    format!("#{compact}")
 }

@@ -29,7 +29,11 @@ impl VelocityApp {
         category: usize,
         tabs: &[(&str, &str)],
     ) {
-        ui.horizontal(|ui| {
+        // Wrap rather than overflow: on a narrow sidebar the three icon+label tabs can
+        // exceed the panel width, and a non-wrapping `horizontal` would push the last
+        // tab past the sidebar edge. Wrapping drops it to a second row so the tab strip
+        // always fits the available width (auto-scales with the sidebar).
+        ui.horizontal_wrapped(|ui| {
             ui.spacing_mut().item_spacing.x = 2.0;
             for (i, (icon, label)) in tabs.iter().enumerate() {
                 let is_selected = self.activity_sub_panel[category] == i;
@@ -38,14 +42,37 @@ impl VelocityApp {
                 } else {
                     palette.text_muted
                 };
-                // Active sub-tab reads stronger; the rest stay muted (UX audit #7).
-                let mut text = egui::RichText::new(format!("{icon} {label}"))
-                    .size(11.0)
-                    .color(text_color);
-                if is_selected {
-                    text = text.strong();
-                }
-                let btn = egui::Button::new(text)
+                // The selected tab reads stronger via brighter colour + the accent
+                // underline painted below — deliberately *not* via font weight.
+                // Bold glyphs have wider advances, so bolding only the selected tab
+                // resized it and shoved its neighbours sideways every time the
+                // selection moved (the "nested tabs shift" bug). Colour + underline
+                // carry the same state at zero layout cost (UX audit #7).
+                // Build the tab as two text runs so the icon resolves through the
+                // dedicated Phosphor family while the label stays on Inter: a single
+                // `RichText` can only carry one font, and Inter's colliding PUA glyphs
+                // would otherwise render the icon as an accented Latin letter.
+                let mut job = egui::text::LayoutJob::default();
+                job.append(
+                    icon,
+                    0.0,
+                    egui::TextFormat {
+                        font_id: crate::editor::theme::icon_font_id(11.0),
+                        color: text_color,
+                        ..Default::default()
+                    },
+                );
+                let label_run = format!(" {label}");
+                job.append(
+                    &label_run,
+                    0.0,
+                    egui::TextFormat {
+                        font_id: egui::FontId::proportional(11.0),
+                        color: text_color,
+                        ..Default::default()
+                    },
+                );
+                let btn = egui::Button::new(job)
                     .fill(egui::Color32::TRANSPARENT)
                     .stroke(egui::Stroke::NONE)
                     .min_size(egui::Vec2::new(0.0, 28.0));

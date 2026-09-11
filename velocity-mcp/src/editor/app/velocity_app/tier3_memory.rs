@@ -11,10 +11,19 @@ use eframe::egui;
 use egui::RichText;
 
 impl VelocityApp {
-    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
-    // Agent Memory -- persistent per-member knowledge store
-    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+    /// Ensure agent memory is loaded from disk on first access.
+    /// This defers the potentially expensive disk I/O until the user actually
+    /// needs the data (opens the Agent Memory panel or an agent saves memory).
+    pub fn ensure_agent_memory_loaded(&mut self) {
+        if !self.agent_memory_loaded {
+            self.agent_memory.load_all();
+            self.agent_memory_loaded = true;
+        }
+    }
+
     pub fn render_agent_memory_panel(&mut self, ui: &mut egui::Ui) {
+        // Lazy-load agent memory on first panel access
+        self.ensure_agent_memory_loaded();
         let palette = self.palette();
         let total_memories: usize = self
             .agent_memory
@@ -176,6 +185,7 @@ impl VelocityApp {
         }
         if load {
             self.agent_memory.load_all();
+            self.agent_memory_loaded = true;
             self.toasts
                 .push(crate::editor::toast::Toast::success(format!(
                     "Loaded {} member store(s)",

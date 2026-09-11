@@ -172,7 +172,7 @@ impl VelocityApp {
                                         ui.label(RichText::new(format!("{} members", member_count))
                                             .size(9.0).color(palette.text_muted));
                                         if !is_preset
-                                            && ui.small_button(RichText::new("\u{2715}").size(9.0).color(palette.error)).clicked() {
+                                            && ui.small_button(RichText::new(egui_phosphor::regular::X).font(crate::editor::theme::icon_font_id(9.0)).color(palette.error)).clicked() {
                                                 self.expert_teams.remove(idx);
                                                 let _ = save_expert_teams(&self.workspace_root, &self.expert_teams);
                                                 self.team_gallery_expanded = None;

@@ -65,6 +65,7 @@ impl ChatPanelState {
             content: text,
         });
         self.agent_active = true;
+        self.cap_messages();
     }
 
     pub fn append_agent_token(&mut self, token: &str) {
@@ -104,6 +105,16 @@ impl ChatPanelState {
         });
     }
 
+    /// Cap chat history to prevent unbounded memory growth in long sessions.
+    /// Keeps the most recent 200 messages (user + agent + thought turns).
+    pub fn cap_messages(&mut self) {
+        const MAX_MESSAGES: usize = 200;
+        if self.messages.len() > MAX_MESSAGES {
+            let excess = self.messages.len() - MAX_MESSAGES;
+            self.messages.drain(0..excess);
+        }
+    }
+
     /// Compose the outgoing prompt for the next turn, folding in any attached
     /// files via the multimodal content assembler, then clear the attachments.
     pub fn compose_and_take_prompt(&mut self, text: &str) -> String {
@@ -136,6 +147,7 @@ impl ChatPanelState {
                 content,
             });
         }
+        self.cap_messages();
     }
 }
 
@@ -209,14 +221,37 @@ fn render_header(
         });
     });
 
-    // Row 2: provider + model selectors + reasoning toggle (compact controls row)
-    ui.horizontal(|ui| {
+    // Row 2: provider + model selectors + reasoning toggle (compact controls row).
+    // Combo widths adapt to the panel: the old fixed 100 + 140 widths overflowed
+    // narrow dock panes, clipping the model text and pushing the reasoning
+    // toggle off the right edge. `horizontal_wrapped` lets the toggle fall to
+    // its own line as a last resort instead of being cut off.
+    ui.horizontal_wrapped(|ui| {
         ui.spacing_mut().item_spacing.x = 4.0;
+
+        let avail = ui.available_width();
+        let provider_w = 100.0_f32.min((avail * 0.34).max(76.0));
+        // Size the model combo to fit its full label (e.g.
+        // "moonshotai/kimi-k2.7-code") so the name stays readable instead of
+        // being hard-truncated; only truly narrow dock panes fall back to the
+        // 80px minimum. +26 covers the combo arrow button and inner padding.
+        let body_font = egui::TextStyle::Body.resolve(ui.style());
+        let model_text_w = ui
+            .painter()
+            .layout_no_wrap(
+                state.selected_model.clone(),
+                body_font,
+                egui::Color32::WHITE,
+            )
+            .size()
+            .x
+            .max(80.0);
+        let model_w = (model_text_w + 26.0).min((avail - provider_w - 92.0).max(80.0));
 
         let provider_label = state.provider.label();
         let mut provider_changed = false;
         egui::ComboBox::from_id_salt("floating_agent_provider")
-            .width(100.0)
+            .width(provider_w)
             .selected_text(provider_label)
             .show_ui(ui, |ui| {
                 for provider in [
@@ -254,8 +289,8 @@ fn render_header(
 
         let mut model_changed = false;
         egui::ComboBox::from_id_salt("floating_agent_model")
-            .width(140.0)
-            .selected_text(truncate_model_label(&state.selected_model, 22))
+            .width(model_w)
+            .selected_text(state.selected_model.clone())
             .show_ui(ui, |ui| {
                 for model in state.available_models.clone() {
                     model_changed |= ui
@@ -268,13 +303,37 @@ fn render_header(
         }
 
         ui.add_space(4.0);
-        let thoughts_label = if state.show_thoughts {
-            format!("{} Reasoning", egui_phosphor::regular::EYE)
+        // EYE / EYE_SLASH collide with an Inter PUA alternate when drawn through
+        // the shared proportional family (rendered as "Ž"), so compose the
+        // button label as two runs: the icon via the Phosphor family, the text
+        // via the normal body font.
+        let eye_icon = if state.show_thoughts {
+            egui_phosphor::regular::EYE
         } else {
-            format!("{} Reasoning", egui_phosphor::regular::EYE_SLASH)
+            egui_phosphor::regular::EYE_SLASH
         };
+        let fg = ui.visuals().widgets.inactive.fg_stroke.color;
+        let mut thoughts_job = egui::text::LayoutJob::default();
+        thoughts_job.append(
+            eye_icon,
+            0.0,
+            egui::TextFormat {
+                font_id: crate::editor::theme::icon_font_id(10.0),
+                color: fg,
+                ..Default::default()
+            },
+        );
+        thoughts_job.append(
+            " Reasoning",
+            0.0,
+            egui::TextFormat {
+                font_id: egui::FontId::proportional(9.0),
+                color: fg,
+                ..Default::default()
+            },
+        );
         if ui
-            .add(egui::Button::new(egui::RichText::new(thoughts_label).size(9.0)).frame(false))
+            .add(egui::Button::new(thoughts_job).frame(false))
             .on_hover_text("Toggle agent reasoning display")
             .clicked()
         {
@@ -918,14 +977,6 @@ fn render_input(
                 });
             });
         });
-}
-
-fn truncate_model_label(model: &str, max: usize) -> String {
-    if model.len() <= max {
-        model.to_string()
-    } else {
-        format!("\u{2026}{}", &model[model.len().saturating_sub(max - 1)..])
-    }
 }
 
 /// Flatten OpenAI-style content parts (from the multimodal assembler) into a

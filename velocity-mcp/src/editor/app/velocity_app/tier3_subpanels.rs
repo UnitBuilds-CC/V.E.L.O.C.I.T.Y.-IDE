@@ -3,7 +3,7 @@
 //! Extracted verbatim from `tier3_panels.rs` (no logic changes).
 
 use super::struct_def::VelocityApp;
-use super::tier3_common::{format_count, primary_button};
+use super::tier3_common::{format_count, primary_button, secondary_button};
 use crate::editor::app::types::TabKind;
 use crate::editor::task_timeline::{render_mission_activity_feed, render_task_timeline};
 use crate::editor::theme::{
@@ -110,6 +110,16 @@ impl VelocityApp {
                     );
                 }
             });
+            // Clicking a file row only records its relative path (the renderer
+            // has no `self`); open it here now that the borrow on `file_tree`
+            // has ended. Previously this string was written and discarded, so
+            // clicking files in the tree did nothing.
+            if !path_string.is_empty() {
+                let path = self.workspace_root.join(&path_string);
+                if path.is_file() {
+                    self.open_editor(Some(path));
+                }
+            }
         } else {
             ui.label(
                 RichText::new("Building file tree\u{2026}")
@@ -395,7 +405,14 @@ impl VelocityApp {
                 }
             });
             ui.add_space(ITEM_SPACING);
-            egui::ScrollArea::vertical().show(ui, |ui| {
+            // Reserve room for the commit area below: an unconstrained
+            // ScrollArea swallows the panel's whole remaining height, pushing
+            // the Commit / Stage All controls off the bottom edge.
+            let list_height = (ui.available_height() - 130.0).max(80.0);
+            egui::ScrollArea::vertical()
+                .id_salt("git_changes_list_scroll")
+                .max_height(list_height)
+                .show(ui, |ui| {
                 for entry in &self.git_state.entries {
                     let rel = entry
                         .path
@@ -434,20 +451,14 @@ impl VelocityApp {
                     .desired_width(ui.available_width()),
             );
             ui.horizontal(|ui| {
-                if ui
-                    .button(RichText::new("Commit").size(FONT_SMALL))
-                    .clicked()
-                {
+                if primary_button(ui, palette, "Commit").clicked() {
                     if !self.git_state.commit_message.trim().is_empty() {
                         self.status_message =
                             format!("Committing: {}", self.git_state.commit_message.trim());
                         self.git_state.commit_message.clear();
                     }
                 }
-                if ui
-                    .button(RichText::new("Stage All").size(FONT_SMALL))
-                    .clicked()
-                {
+                if secondary_button(ui, palette, "Stage All").clicked() {
                     self.status_message = "All files staged".to_string();
                 }
             });

@@ -782,7 +782,10 @@ impl NdaDocumentView {
                         .color(color),
                 );
                 if ui
-                    .small_button("\u{2715}")
+                    .small_button(
+                        egui::RichText::new(egui_phosphor::regular::X)
+                            .font(crate::editor::theme::icon_font_id(11.0)),
+                    )
                     .on_hover_text("Remove triple")
                     .clicked()
                 {
@@ -932,7 +935,10 @@ impl NdaDocumentView {
                     swap = Some((i, i + 1));
                 }
                 if ui
-                    .small_button("\u{2715}")
+                    .small_button(
+                        egui::RichText::new(egui_phosphor::regular::X)
+                            .font(crate::editor::theme::icon_font_id(11.0)),
+                    )
                     .on_hover_text("Remove command")
                     .clicked()
                 {

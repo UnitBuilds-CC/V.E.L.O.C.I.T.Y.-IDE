@@ -26,12 +26,42 @@ use super::super::types::*;
 use crate::agent::AiProvider;
 use crate::editor::theme::{apply_theme, AppearanceSettings, IdePalette, WorkspaceProfile};
 
+/// Left sidebar width bounds, in logical pixels.
+///
+/// `MIN_W` keeps the file tree legible when the panel is dragged narrow. `MAX_W`
+/// is an absolute ceiling; at render time the effective cap is further limited to
+/// a fraction of the window (see `ui_render.rs`) so the sidebar can be pulled out
+/// into the canvas for wide panels — e.g. Team Studio's two-column layout —
+/// without ever swallowing the editor. The render loop and the preference/layout
+/// loaders all clamp to these bounds, so a saved width survives a reload or a mode
+/// switch instead of snapping back to the old 420px cap.
+pub const LEFT_SIDEBAR_MIN_W: f32 = 180.0;
+pub const LEFT_SIDEBAR_MAX_W: f32 = 1400.0;
+
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize)]
 pub struct ModeLayout {
     pub left_visible: bool,
     pub left_width: f32,
     pub right_visible: bool,
     pub right_width: f32,
+}
+
+/// Pre-formatted display strings for a search hit. Built once when hits change,
+/// then reused every frame — avoids 4-5 `format!()` allocations per hit during render.
+#[derive(Debug, Clone)]
+pub struct SearchHitDisplay {
+    /// File name for the clickable link (e.g., "main.rs").
+    pub file_name: String,
+    /// Full path for hover tooltip (e.g., "src/main.rs").
+    pub path_display: String,
+    /// "path : line N" label for the metadata row.
+    pub path_line: String,
+    /// Truncated code preview (≤80 chars + ellipsis).
+    pub text_preview: String,
+    /// Pre-computed icon glyph for this file type (e.g., "rs", "md", "{}").
+    pub icon: &'static str,
+    /// Pre-formatted link label: "{icon} {file_name}".
+    pub link_label: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -252,6 +282,10 @@ pub struct VelocityApp {
     pub gpu_name: String,
     pub search_query: String,
     pub search_hits: Vec<crate::editor::search::SearchHit>,
+    /// Pre-formatted display strings for search hits (avoids per-frame format! allocations).
+    pub search_hit_cache: Vec<SearchHitDisplay>,
+    /// Pre-formatted "N results" label (updated only when hits change).
+    pub search_count_label: String,
     /// Replacement text for the workspace find-and-replace panel.
     pub replace_query: String,
     /// Debounce timer: when the search query last changed (runs after a pause).
@@ -344,6 +378,8 @@ pub struct VelocityApp {
     pub checkpoint_manager: crate::editor::checkpoint::CheckpointManager,
     /// Persistent per-member agent knowledge store.
     pub agent_memory: crate::editor::agent_memory::AgentMemoryManager,
+    /// Whether agent_memory has been loaded from disk (lazy-loaded on first access).
+    pub agent_memory_loaded: bool,
     /// Live multi-agent orchestration activity feed and progress.
     pub live_orchestration: crate::editor::live_orchestration::LiveOrchestrationState,
     /// Speculative pre-computation cache for agent workers.
@@ -362,6 +398,8 @@ pub struct VelocityApp {
     pub voice_input: crate::editor::voice_commands::VoiceInputState,
     /// Unified knowledge / RAG store queried by agents and the Knowledge panel.
     pub knowledge_base: crate::editor::knowledge_base::KnowledgeBase,
+    /// Whether knowledge_base has been loaded from disk (lazy-loaded on first access).
+    pub knowledge_base_loaded: bool,
     /// Draft query text in the Knowledge panel search box.
     pub knowledge_query: String,
     /// Draft path text in the Knowledge panel ingest box.
@@ -477,6 +515,27 @@ pub struct VelocityApp {
     pub collaboration: crate::agent::collaboration::CollaborationManager,
     /// Persistent memory store (NDA-encrypted at rest).
     pub persistent_memory: crate::agent::memory_store::PersistentMemory,
+
+    // ─── Performance Profiling ──────────────────────────────────────────────
+    /// Frame counter for profiling.
+    pub frame_count: u64,
+    /// Last frame's duration in milliseconds (for display).
+    pub last_frame_ms: f32,
+    /// When the last frame started (for computing delta).
+    pub last_frame_instant: Option<Instant>,
+    /// Cached status-bar perf label (e.g., "Ready | 13ms f42"). Updated each frame
+    /// but reuses the same String buffer — avoids 2 format!() allocations per frame.
+    pub cached_status_perf: String,
+    /// Cached profile label (e.g., "⚡ Coder").
+    pub cached_profile_label: String,
+    /// Cached right-sidebar "Changes" header (collapsed/expanded variants).
+    pub cached_changes_header_right: String,
+    pub cached_changes_header_down: String,
+    /// Cached right-sidebar diff-stat label (e.g., "+12 -3").
+    pub cached_diff_stat: String,
+    /// Cached right-sidebar "Symbols" header (collapsed/expanded variants).
+    pub cached_sym_header_right: String,
+    pub cached_sym_header_down: String,
 }
 
 impl VelocityApp {
@@ -552,7 +611,9 @@ impl VelocityApp {
         }
         self.thinking_enabled = preferences.thinking_enabled;
         self.left_sidebar_visible = preferences.left_sidebar_visible;
-        self.left_sidebar_width = preferences.left_sidebar_width.clamp(180.0, 420.0);
+        self.left_sidebar_width = preferences
+            .left_sidebar_width
+            .clamp(LEFT_SIDEBAR_MIN_W, LEFT_SIDEBAR_MAX_W);
         self.right_sidebar_visible = preferences.right_sidebar_visible;
         self.right_sidebar_width = preferences.right_sidebar_width.clamp(220.0, 600.0);
         self.mode_layouts = preferences.mode_layouts;
@@ -620,6 +681,41 @@ impl VelocityApp {
             apply_theme(ctx, self.appearance);
             self.last_applied_appearance = Some(self.appearance);
         }
+    }
+
+    /// Assign new search hits and rebuild the pre-formatted display cache.
+    /// Called whenever `search_hits` changes — avoids 4-5 `format!()` allocations
+    /// per hit during every render frame.
+    pub fn update_search_hits(&mut self, hits: Vec<crate::editor::search::SearchHit>) {
+        self.search_hit_cache = hits
+            .iter()
+            .map(|hit| {
+                let file_name = hit
+                    .path
+                    .file_name()
+                    .map(|n| n.to_string_lossy().to_string())
+                    .unwrap_or_else(|| hit.path.display().to_string());
+                let path_display = hit.path.display().to_string();
+                let path_line = format!("{} : line {}", hit.path.display(), hit.line);
+                let text_preview = if hit.text.len() > 80 {
+                    format!("{}\u{2026}", &hit.text[..80])
+                } else {
+                    hit.text.clone()
+                };
+                let icon = crate::editor::search::icon_for_path(&hit.path);
+                let link_label = format!("{} {}", icon, file_name);
+                SearchHitDisplay {
+                    file_name,
+                    path_display,
+                    path_line,
+                    text_preview,
+                    icon,
+                    link_label,
+                }
+            })
+            .collect();
+        self.search_count_label = format!("{} results", self.search_hit_cache.len());
+        self.search_hits = hits;
     }
 
     fn find_tab_by_kind(tabs: &[Tab], kind: &TabKind) -> Option<Tab> {
@@ -762,7 +858,9 @@ impl VelocityApp {
             // keep the stored width but constrain it to reasonable bounds
             // Clamp sidebar widths to the same bounds the render loop uses
             // so switching modes never causes a visible size jump.
-            self.left_sidebar_width = layout.left_width.clamp(180.0, 420.0);
+            self.left_sidebar_width = layout
+                .left_width
+                .clamp(LEFT_SIDEBAR_MIN_W, LEFT_SIDEBAR_MAX_W);
             self.right_sidebar_width = layout.right_width.clamp(220.0, 600.0);
             self.right_sidebar_visible = layout.right_visible;
         } else {
@@ -770,7 +868,7 @@ impl VelocityApp {
             self.right_sidebar_visible = new_right_visible;
             // Ensure sensible default widths so toggling doesn't aggressively
             // shrink the central content when panels appear/disappear.
-            if self.left_sidebar_width < 180.0 {
+            if self.left_sidebar_width < LEFT_SIDEBAR_MIN_W {
                 self.left_sidebar_width = 220.0;
             }
             if self.right_sidebar_width < 220.0 {
@@ -859,7 +957,9 @@ impl VelocityApp {
     fn restore_mode_layout(&mut self, profile: WorkspaceProfile) {
         if let Some(layout) = self.mode_layouts.get(&profile).copied() {
             self.left_sidebar_visible = layout.left_visible;
-            self.left_sidebar_width = layout.left_width.clamp(180.0, 420.0);
+            self.left_sidebar_width = layout
+                .left_width
+                .clamp(LEFT_SIDEBAR_MIN_W, LEFT_SIDEBAR_MAX_W);
             self.right_sidebar_visible = layout.right_visible;
             self.right_sidebar_width = layout.right_width.clamp(220.0, 600.0);
         }
@@ -1031,6 +1131,8 @@ impl VelocityApp {
             gpu_name,
             search_query: String::new(),
             search_hits: Vec::new(),
+            search_hit_cache: Vec::new(),
+            search_count_label: String::new(),
             replace_query: String::new(),
             search_pending_since: None,
             pending_cursor_line: None,
@@ -1098,11 +1200,8 @@ impl VelocityApp {
             word_wrap: false,
             browse_state: crate::editor::browse_panel::BrowseState::default(),
             checkpoint_manager: crate::editor::checkpoint::CheckpointManager::new(&workspace_root),
-            agent_memory: {
-                let mut mgr = crate::editor::agent_memory::AgentMemoryManager::new(&workspace_root);
-                mgr.load_all();
-                mgr
-            },
+            agent_memory: crate::editor::agent_memory::AgentMemoryManager::new(&workspace_root),
+            agent_memory_loaded: false, // Lazy-loaded on first access
             live_orchestration: crate::editor::live_orchestration::LiveOrchestrationState::new(),
             precomp_cache: crate::editor::speculative_precomp::PrecomputationCache::new(),
             semantic_index: None,
@@ -1112,7 +1211,8 @@ impl VelocityApp {
             test_generator: crate::editor::test_generator::TestGenerator::default(),
             deploy_pipeline: None,
             voice_input: crate::editor::voice_commands::VoiceInputState::new(),
-            knowledge_base: crate::editor::knowledge_base::KnowledgeBase::load(&workspace_root),
+            knowledge_base: crate::editor::knowledge_base::KnowledgeBase::new(),
+            knowledge_base_loaded: false, // Lazy-loaded on first access
             knowledge_query: String::new(),
             knowledge_ingest_input: String::new(),
             knowledge_results: Vec::new(),
@@ -1181,6 +1281,17 @@ impl VelocityApp {
             background_agents: crate::agent::background_agents::BackgroundAgentRegistry::new(),
             conflict_resolver: crate::agent::conflict_resolution::ConflictResolver::new(),
             collaboration: crate::agent::collaboration::CollaborationManager::new(),
+            // Performance profiling
+            frame_count: 0,
+            last_frame_ms: 0.0,
+            last_frame_instant: None,
+            cached_status_perf: String::new(),
+            cached_profile_label: String::new(),
+            cached_changes_header_right: String::new(),
+            cached_changes_header_down: String::new(),
+            cached_diff_stat: String::new(),
+            cached_sym_header_right: String::new(),
+            cached_sym_header_down: String::new(),
         };
         app.open_editor(None);
         app.apply_workspace_profile(app.appearance.profile);

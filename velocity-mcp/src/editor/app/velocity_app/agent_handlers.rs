@@ -652,6 +652,8 @@ impl VelocityApp {
                     }
 
                     // Persist agent memory after session (save any accumulated state)
+                    // Ensure loaded first to avoid overwriting disk data with empty state
+                    self.ensure_agent_memory_loaded();
                     self.agent_memory.save_all();
 
                     self.status_message = "Agent finished".into();

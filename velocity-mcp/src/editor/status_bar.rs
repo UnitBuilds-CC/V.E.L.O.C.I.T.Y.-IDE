@@ -112,14 +112,18 @@ impl StatusBar {
 
                     if let Some(b) = branch {
                         ui.add_space(4.0);
+                        // Icon and label are separate runs: GIT_BRANCH collides with an
+                        // Inter PUA glyph, so it must draw through the Phosphor family
+                        // (otherwise it renders as an accented "å").
                         ui.label(
-                            egui::RichText::new(format!(
-                                "{} {}",
-                                egui_phosphor::regular::GIT_BRANCH,
-                                b
-                            ))
-                            .size(11.0)
-                            .color(palette.text_muted),
+                            egui::RichText::new(egui_phosphor::regular::GIT_BRANCH)
+                                .font(crate::editor::theme::icon_font_id(11.0))
+                                .color(palette.text_muted),
+                        );
+                        ui.label(
+                            egui::RichText::new(b)
+                                .size(11.0)
+                                .color(palette.text_muted),
                         );
                     }
 
@@ -139,84 +143,123 @@ impl StatusBar {
                         pos_response.on_hover_text("Go to line");
                     }
 
-                    ui.with_layout(
-                        egui::Layout::right_to_left(egui::Align::Center),
-                        |ui: &mut egui::Ui| {
-                            ui.spacing_mut().item_spacing.x = 4.0;
-                            // Provider / model pill
-                            let model_short = if model_label.len() > 24 {
-                                format!(
-                                    "\u{2026}{}",
-                                    &model_label[model_label.len().saturating_sub(23)..]
-                                )
-                            } else {
-                                model_label.to_string()
-                            };
-                            let provider_pill = egui::Frame::new()
-                                .fill(palette.bg_tertiary)
-                                .corner_radius(egui::CornerRadius::same(3))
-                                .inner_margin(egui::Margin::symmetric(5, 1));
-                            let provider_response = provider_pill
-                                .show(ui, |ui| {
-                                    ui.label(
-                                        egui::RichText::new(format!(
-                                            "{} / {}",
-                                            provider_label, model_short
-                                        ))
-                                        .monospace()
-                                        .size(10.0)
-                                        .color(palette.text_muted),
-                                    )
-                                })
-                                .inner;
-                            if provider_response.clicked() {
-                                actions.clicked_provider = true;
-                            }
-                            if provider_response.hovered() {
-                                ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
-                            }
-                            provider_response.on_hover_text("Open settings");
+                    // ── Right group: provider/model + command palette, laid out
+                    // right-to-left inside a reserved child that spans the row. Using a
+                    // child (instead of `with_layout` on the shared cursor) lets us learn
+                    // where the group begins so the middle status message can be clipped
+                    // to the gap and never overprint the left pills. ──
+                    let row_rect = ui.max_rect();
+                    let mut right = ui.new_child(
+                        egui::UiBuilder::new()
+                            .max_rect(row_rect)
+                            .layout(egui::Layout::right_to_left(egui::Align::Center)),
+                    );
+                    right.spacing_mut().item_spacing.x = 4.0;
 
-                            // Command palette affordance — a clickable pill so the palette
-                            // is discoverable without memorizing the shortcut (UX audit #6).
-                            ui.add_space(4.0);
-                            {
-                                let cmd_pill = egui::Frame::new()
-                                    .fill(palette.bg_tertiary)
-                                    .corner_radius(egui::CornerRadius::same(3))
-                                    .inner_margin(egui::Margin::symmetric(6, 1));
-                                let cmd_response = cmd_pill
-                                    .show(ui, |ui| {
-                                        ui.label(
-                                            egui::RichText::new(format!(
-                                                "{}  Ctrl+Shift+P",
-                                                egui_phosphor::regular::COMMAND
-                                            ))
-                                            .size(10.0)
-                                            .color(palette.text_muted),
-                                        )
-                                    })
-                                    .inner;
-                                if cmd_response.clicked() {
-                                    actions.clicked_command_palette = true;
-                                }
-                                if cmd_response.hovered() {
-                                    ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
-                                }
-                                cmd_response.on_hover_text("Open command palette");
-                            }
+                    // Provider / model pill. Registry tags like "@cf/" identify
+                    // the host, not the model, so they are dropped for display
+                    // and the remaining name fits the pill in full. Truly long
+                    // names keep their distinguishing tail (char-safe slicing);
+                    // the complete id stays one hover away.
+                    let model_display = match model_label
+                        .strip_prefix('@')
+                        .and_then(|rest| rest.split_once('/'))
+                    {
+                        Some((_tag, tail)) if tail.contains('/') => tail,
+                        _ => model_label,
+                    };
+                    // Count chars without allocating a Vec — char::count is O(n)
+                    // but avoids the heap allocation of .collect::<Vec<char>>().
+                    let char_count = model_display.chars().count();
+                    let model_short = if char_count > 32 {
+                        // Take the last 31 chars (char-safe via skip).
+                        let skip = char_count - 31;
+                        let tail: String = model_display.chars().skip(skip).collect();
+                        format!("\u{2026}{tail}")
+                    } else {
+                        model_display.to_string()
+                    };
+                    let provider_pill = egui::Frame::new()
+                        .fill(palette.bg_tertiary)
+                        .corner_radius(egui::CornerRadius::same(3))
+                        .inner_margin(egui::Margin::symmetric(5, 1));
+                    let provider_response = provider_pill
+                        .show(&mut right, |ui| {
+                            ui.label(
+                                egui::RichText::new(format!(
+                                    "{} / {}",
+                                    provider_label, model_short
+                                ))
+                                .monospace()
+                                .size(10.0)
+                                .color(palette.text_muted),
+                            )
+                        })
+                        .inner;
+                    if provider_response.clicked() {
+                        actions.clicked_provider = true;
+                    }
+                    if provider_response.hovered() {
+                        right.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+                    }
+                    provider_response.on_hover_text(format!(
+                                            "{provider_label} / {model_label}\nClick to open settings"
+                                        ));
 
-                            // Status message (right-aligned, before provider)
-                            if !status.is_empty() {
-                                ui.add_space(4.0);
+                    // Command palette affordance — a clickable pill so the palette
+                    // is discoverable without memorizing the shortcut (UX audit #6).
+                    right.add_space(4.0);
+                    {
+                        let cmd_pill = egui::Frame::new()
+                            .fill(palette.bg_tertiary)
+                            .corner_radius(egui::CornerRadius::same(3))
+                            .inner_margin(egui::Margin::symmetric(6, 1));
+                        let cmd_response = cmd_pill
+                            .show(&mut right, |ui| {
                                 ui.label(
+                                    egui::RichText::new(format!(
+                                        "{}  Ctrl+P",
+                                        egui_phosphor::regular::COMMAND
+                                    ))
+                                    .size(10.0)
+                                    .color(palette.text_muted),
+                                )
+                            })
+                            .inner;
+                        if cmd_response.clicked() {
+                            actions.clicked_command_palette = true;
+                        }
+                        if cmd_response.hovered() {
+                            right.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+                        }
+                        cmd_response.on_hover_text("Open command palette");
+                    }
+                    let right_left_edge = right.cursor().max.x;
+                    drop(right);
+
+                    // ── Middle: the free-form status message, clipped to the gap
+                    // between the left and right groups so a long message can no longer
+                    // run under the mode/build pills (the status-bar overlap bug). ──
+                    if !status.is_empty() {
+                        let x = ui.cursor().min.x + 8.0;
+                        let avail = (right_left_edge - x - 8.0).max(0.0);
+                        if avail > 24.0 {
+                            let text_h = 16.0;
+                            let rect = egui::Rect::from_min_size(
+                                egui::pos2(x, row_rect.center().y - text_h / 2.0),
+                                egui::vec2(avail, text_h),
+                            );
+                            ui.put(
+                                rect,
+                                egui::Label::new(
                                     egui::RichText::new(status)
                                         .size(11.0)
                                         .color(palette.text_muted),
-                                );
-                            }
-                        },
-                    );
+                                )
+                                .truncate(),
+                            );
+                        }
+                    }
                 });
                 ui.add_space(3.0);
             });

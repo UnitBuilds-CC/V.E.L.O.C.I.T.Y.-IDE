@@ -1,7 +1,7 @@
 use super::super::helpers::*;
 use super::super::render::TabViewerImpl;
 use super::super::types::*;
-use super::struct_def::VelocityApp;
+use super::struct_def::{VelocityApp, LEFT_SIDEBAR_MAX_W, LEFT_SIDEBAR_MIN_W};
 use super::tier3_common::primary_button;
 use crate::editor::agent_ui_render::{render_agent_metrics, RenderSnapshot};
 use crate::editor::theme::FONT_CAPTION;
@@ -14,6 +14,15 @@ impl eframe::App for VelocityApp {
     }
 
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        // ─── Frame-time profiling ───────────────────────────────────────────
+        let frame_start = std::time::Instant::now();
+        if let Some(last) = self.last_frame_instant {
+            self.last_frame_ms = last.elapsed().as_secs_f32() * 1000.0;
+        }
+        self.last_frame_instant = Some(frame_start);
+        self.frame_count += 1;
+        // ────────────────────────────────────────────────────────────────────
+
         let ctx = ui.ctx().clone();
         self.apply_appearance(&ctx);
         let palette = self.palette();
@@ -117,11 +126,12 @@ impl eframe::App for VelocityApp {
                 if self.tab_is_dirty(active_id) {
                     if let Some(path) = self.tab_path(active_id).cloned() {
                         if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
-                            if let Some(content) =
-                                self.buffers.get(active_id).map(|b| b.content().to_string())
+                            // Pass &str directly — content() already returns &str,
+                            // no need to allocate a full buffer copy.
+                            if let Some(content) = self.buffers.get(active_id).map(|b| b.content())
                             {
                                 if let Some(lsp) = self.lsp_manager.as_mut() {
-                                    lsp.sync_document(ext, &path, &content);
+                                    lsp.sync_document(ext, &path, content);
                                 }
                                 self.last_lsp_sync = Some(std::time::Instant::now());
                             }
@@ -182,7 +192,7 @@ impl eframe::App for VelocityApp {
                         ui.menu_button("Navigate", |ui| {
                             // Command palette gets a visible home here (also surfaced in the
                             // status bar and on the welcome screen) — UX audit #6.
-                            if ui.button("Command Palette  Ctrl+Shift+P").clicked() {
+                            if ui.button("Command Palette  Ctrl+P").clicked() {
                                 self.open_command_palette();
                                 ui.close();
                             }
@@ -368,14 +378,40 @@ impl eframe::App for VelocityApp {
                             }
                         });
                         let active_mode = self.appearance.profile;
+                        // Zero-alloc: LayoutJob for the menu button label.
+                        let mut layouts_btn_job = egui::text::LayoutJob::default();
+                        layouts_btn_job.append("Layouts: ", 0.0, egui::TextFormat {
+                            font_id: egui::FontId::proportional(11.0),
+                            color: palette.accent,
+                            ..Default::default()
+                        });
+                        layouts_btn_job.append(active_mode.glyph(), 0.0, egui::TextFormat {
+                            font_id: crate::editor::theme::icon_font_id(12.0),
+                            color: palette.accent,
+                            ..Default::default()
+                        });
+                        layouts_btn_job.append(" ", 0.0, egui::TextFormat {
+                            font_id: egui::FontId::proportional(11.0),
+                            color: palette.accent,
+                            ..Default::default()
+                        });
+                        layouts_btn_job.append(active_mode.short_label(), 0.0, egui::TextFormat {
+                            font_id: egui::FontId::proportional(11.0),
+                            color: palette.accent,
+                            ..Default::default()
+                        });
+                        layouts_btn_job.append(" ", 0.0, egui::TextFormat {
+                            font_id: egui::FontId::proportional(11.0),
+                            color: palette.accent,
+                            ..Default::default()
+                        });
+                        layouts_btn_job.append(egui_phosphor::regular::CARET_DOWN, 0.0, egui::TextFormat {
+                            font_id: crate::editor::theme::icon_font_id(10.0),
+                            color: palette.accent,
+                            ..Default::default()
+                        });
                         ui.menu_button(
-                            egui::RichText::new(format!(
-                                "Layouts: {} {} {}",
-                                active_mode.glyph(),
-                                active_mode.short_label(),
-                                egui_phosphor::regular::CARET_DOWN
-                            ))
-                            .color(palette.accent),
+                            layouts_btn_job,
                             |ui| {
                                 ui.label(
                                     egui::RichText::new("Workspaces")
@@ -391,16 +427,35 @@ impl eframe::App for VelocityApp {
                                 ] {
                                     let selected = mode == active_mode;
                                     let label = mode.short_label();
+                                    // Zero-alloc: LayoutJob for selectable label.
+                                    let mut mode_job = egui::text::LayoutJob::default();
+                                    mode_job.append(mode.glyph(), 0.0, egui::TextFormat {
+                                        font_id: crate::editor::theme::icon_font_id(12.0),
+                                        color: if selected { palette.accent } else { palette.text },
+                                        ..Default::default()
+                                    });
+                                    mode_job.append(" ", 0.0, egui::TextFormat {
+                                        font_id: egui::FontId::proportional(11.0),
+                                        color: if selected { palette.accent } else { palette.text },
+                                        ..Default::default()
+                                    });
+                                    mode_job.append(label, 0.0, egui::TextFormat {
+                                        font_id: egui::FontId::proportional(11.0),
+                                        color: if selected { palette.accent } else { palette.text },
+                                        ..Default::default()
+                                    });
+                                    mode_job.append("  ", 0.0, egui::TextFormat {
+                                        font_id: egui::FontId::proportional(10.0),
+                                        color: palette.text_muted,
+                                        ..Default::default()
+                                    });
+                                    mode_job.append(mode.shortcut_hint(), 0.0, egui::TextFormat {
+                                        font_id: egui::FontId::proportional(10.0),
+                                        color: palette.text_muted,
+                                        ..Default::default()
+                                    });
                                     if ui
-                                        .selectable_label(
-                                            selected,
-                                            format!(
-                                                "{} {}  {}",
-                                                mode.glyph(),
-                                                label,
-                                                mode.shortcut_hint()
-                                            ),
-                                        )
+                                        .selectable_label(selected, mode_job)
                                         .on_hover_text(mode.description())
                                         .clicked()
                                     {
@@ -418,16 +473,36 @@ impl eframe::App for VelocityApp {
                                     crate::editor::theme::WorkspaceProfile::AutomationOperator,
                                     crate::editor::theme::WorkspaceProfile::Accessibility,
                                 ] {
+                                    let selected = mode == active_mode;
+                                    let label = mode.label();
+                                    let mut mode_job = egui::text::LayoutJob::default();
+                                    mode_job.append(mode.glyph(), 0.0, egui::TextFormat {
+                                        font_id: crate::editor::theme::icon_font_id(12.0),
+                                        color: if selected { palette.accent } else { palette.text },
+                                        ..Default::default()
+                                    });
+                                    mode_job.append(" ", 0.0, egui::TextFormat {
+                                        font_id: egui::FontId::proportional(11.0),
+                                        color: if selected { palette.accent } else { palette.text },
+                                        ..Default::default()
+                                    });
+                                    mode_job.append(label, 0.0, egui::TextFormat {
+                                        font_id: egui::FontId::proportional(11.0),
+                                        color: if selected { palette.accent } else { palette.text },
+                                        ..Default::default()
+                                    });
+                                    mode_job.append("  ", 0.0, egui::TextFormat {
+                                        font_id: egui::FontId::proportional(10.0),
+                                        color: palette.text_muted,
+                                        ..Default::default()
+                                    });
+                                    mode_job.append(mode.shortcut_hint(), 0.0, egui::TextFormat {
+                                        font_id: egui::FontId::proportional(10.0),
+                                        color: palette.text_muted,
+                                        ..Default::default()
+                                    });
                                     if ui
-                                        .selectable_label(
-                                            mode == active_mode,
-                                            format!(
-                                                "{} {}  {}",
-                                                mode.glyph(),
-                                                mode.label(),
-                                                mode.shortcut_hint()
-                                            ),
-                                        )
+                                        .selectable_label(selected, mode_job)
                                         .on_hover_text(mode.description())
                                         .clicked()
                                     {
@@ -473,7 +548,7 @@ impl eframe::App for VelocityApp {
                                 btn_rect.center(),
                                 egui::Align2::CENTER_CENTER,
                                 icon,
-                                egui::FontId::proportional(13.0),
+                                crate::editor::theme::icon_font_id(13.0),
                                 if self.right_sidebar_visible {
                                     palette.accent
                                 } else {
@@ -513,7 +588,7 @@ impl eframe::App for VelocityApp {
                                 btn_rect.center(),
                                 egui::Align2::CENTER_CENTER,
                                 icon,
-                                egui::FontId::proportional(13.0),
+                                crate::editor::theme::icon_font_id(13.0),
                                 if self.left_sidebar_visible {
                                     palette.accent
                                 } else {
@@ -545,7 +620,7 @@ impl eframe::App for VelocityApp {
                                 btn_rect.center(),
                                 egui::Align2::CENTER_CENTER,
                                 egui_phosphor::regular::SQUARES_FOUR,
-                                egui::FontId::proportional(12.0),
+                                crate::editor::theme::icon_font_id(12.0),
                                 palette.text_muted,
                             );
                             resp.on_hover_text("Switch workspace  (Ctrl+Shift+W)");
@@ -619,7 +694,24 @@ impl eframe::App for VelocityApp {
                                         ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
                                     }
                                     let seg_clicked = seg_resp.clicked();
-                                    seg_resp.on_hover_text(format!("Reveal {} in file tree", comp));
+                                    // Zero-alloc: LayoutJob instead of format!("Reveal {} in file tree", comp).
+                                    let mut reveal_job = egui::text::LayoutJob::default();
+                                    reveal_job.append("Reveal ", 0.0, egui::TextFormat {
+                                        font_id: egui::FontId::proportional(10.0),
+                                        color: palette.text_muted,
+                                        ..Default::default()
+                                    });
+                                    reveal_job.append(comp, 0.0, egui::TextFormat {
+                                        font_id: egui::FontId::proportional(10.0),
+                                        color: palette.text_muted,
+                                        ..Default::default()
+                                    });
+                                    reveal_job.append(" in file tree", 0.0, egui::TextFormat {
+                                        font_id: egui::FontId::proportional(10.0),
+                                        color: palette.text_muted,
+                                        ..Default::default()
+                                    });
+                                    seg_resp.on_hover_text(reveal_job);
                                     if seg_clicked {
                                         // Set file tree filter to show this path component.
                                         let filter_path: String = components[..=i].join("/");
@@ -746,7 +838,7 @@ impl eframe::App for VelocityApp {
                                 icon_pos,
                                 egui::Align2::CENTER_CENTER,
                                 *icon,
-                                egui::FontId::proportional(18.0),
+                                crate::editor::theme::icon_font_id(18.0),
                                 icon_color,
                             );
 
@@ -770,7 +862,29 @@ impl eframe::App for VelocityApp {
                             if interact_resp.clicked() {
                                 self.activity_bar_selection = i;
                             }
-                            interact_resp.on_hover_text(format!("{}  ({})", label, shortcut));
+                            // Zero-alloc: LayoutJob instead of format!("{}  ({})", label, shortcut).
+                            let mut hover_job = egui::text::LayoutJob::default();
+                            hover_job.append(*label, 0.0, egui::TextFormat {
+                                font_id: egui::FontId::proportional(11.0),
+                                color: label_color,
+                                ..Default::default()
+                            });
+                            hover_job.append("  (", 0.0, egui::TextFormat {
+                                font_id: egui::FontId::proportional(10.0),
+                                color: palette.text_muted,
+                                ..Default::default()
+                            });
+                            hover_job.append(shortcut, 0.0, egui::TextFormat {
+                                font_id: egui::FontId::proportional(10.0),
+                                color: palette.text_muted,
+                                ..Default::default()
+                            });
+                            hover_job.append(")", 0.0, egui::TextFormat {
+                                font_id: egui::FontId::proportional(10.0),
+                                color: palette.text_muted,
+                                ..Default::default()
+                            });
+                            interact_resp.on_hover_text(hover_job);
                             ui.add_space(1.0);
                         }
 
@@ -798,7 +912,7 @@ impl eframe::App for VelocityApp {
                                 gear_rect.center(),
                                 egui::Align2::CENTER_CENTER,
                                 egui_phosphor::regular::GEAR,
-                                egui::FontId::proportional(14.0),
+                                crate::editor::theme::icon_font_id(14.0),
                                 if gear_resp.hovered() {
                                     palette.text
                                 } else {
@@ -843,15 +957,25 @@ impl eframe::App for VelocityApp {
                     });
                 });
 
-            // Main sidebar panel (content changes based on activity bar selection)
+            // Main sidebar panel (content changes based on activity bar selection).
+            //
+            // The drag range is bounded natively with `min_size`/`max_size` instead
+            // of by capping the *content* width inside the closure. The old inner
+            // `set_max_width(420.0)` froze content at 420px no matter how far the
+            // handle was dragged, so wide panels (Team Studio's two-column layout,
+            // the code graph, etc.) stayed cramped while dragging only added dead
+            // space. The effective max scales with the window so the sidebar can be
+            // pulled out into the canvas without swallowing the editor.
+            let left_sidebar_max = (ui.ctx().input(|i| i.viewport_rect()).width() * 0.6)
+                .clamp(LEFT_SIDEBAR_MIN_W, LEFT_SIDEBAR_MAX_W);
             let panel_response = egui::Panel::left("left_sidebar")
                 .resizable(true)
                 .default_size(self.left_sidebar_width)
+                .min_size(LEFT_SIDEBAR_MIN_W)
+                .max_size(left_sidebar_max)
                 .show(ui, |ui: &mut egui::Ui| {
-                    // Clamp sidebar width to prevent runaway expansion
-                    let w = ui.available_width().clamp(180.0, 420.0);
-                    ui.set_max_width(w);
-                    self.left_sidebar_width = w;
+                    // Content fills the drag-bounded panel; no artificial cap.
+                    self.left_sidebar_width = ui.available_width();
 
                     // Workspace header: name + branch at top of sidebar
                     {
@@ -870,14 +994,18 @@ impl eframe::App for VelocityApp {
                                     .color(palette.text),
                             );
                             if let Some(br) = &branch {
+                                // Split icon + label: GIT_BRANCH collides with an Inter
+                                // PUA glyph, so the icon must draw through the Phosphor
+                                // family (else it renders as an accented "å").
                                 ui.label(
-                                    egui::RichText::new(format!(
-                                        "{} {}",
-                                        egui_phosphor::regular::GIT_BRANCH,
-                                        br
-                                    ))
-                                    .size(9.0)
-                                    .color(palette.text_muted),
+                                    egui::RichText::new(egui_phosphor::regular::GIT_BRANCH)
+                                        .font(crate::editor::theme::icon_font_id(9.0))
+                                        .color(palette.text_muted),
+                                );
+                                ui.label(
+                                    egui::RichText::new(br)
+                                        .size(9.0)
+                                        .color(palette.text_muted),
                                 );
                             }
                         });
@@ -899,7 +1027,11 @@ impl eframe::App for VelocityApp {
                         _ => self.render_files_category(ui, palette),
                     }
                 });
-            self.left_sidebar_width = panel_response.response.rect.width().clamp(180.0, 420.0);
+            self.left_sidebar_width = panel_response
+                .response
+                .rect
+                .width()
+                .clamp(LEFT_SIDEBAR_MIN_W, LEFT_SIDEBAR_MAX_W);
         }
 
         if self.right_sidebar_visible {
@@ -925,12 +1057,26 @@ impl eframe::App for VelocityApp {
                     // Mode-specific right panel header
                     ui.horizontal(|ui| {
                         for panel in right_panels {
-                            ui.label(
-                                egui::RichText::new(format!("{} {}", panel.icon, panel.label))
-                                    .size(9.0)
-                                    .strong()
-                                    .color(palette.accent),
-                            );
+                            // Zero-alloc: LayoutJob with two runs instead of format!().
+                            // Note: panel icons are regular Unicode symbols (◎, ±, ★),
+                            // NOT Phosphor codepoints — use proportional font.
+                            let mut job = egui::text::LayoutJob::default();
+                            job.append(panel.icon, 0.0, egui::TextFormat {
+                                font_id: egui::FontId::proportional(10.0),
+                                color: palette.accent,
+                                ..Default::default()
+                            });
+                            job.append(" ", 0.0, egui::TextFormat {
+                                font_id: egui::FontId::proportional(9.0),
+                                color: palette.accent,
+                                ..Default::default()
+                            });
+                            job.append(panel.label, 0.0, egui::TextFormat {
+                                font_id: egui::FontId::proportional(9.0),
+                                color: palette.accent,
+                                ..Default::default()
+                            });
+                            ui.label(job);
                         }
                     });
                     ui.add_space(2.0);
@@ -945,19 +1091,32 @@ impl eframe::App for VelocityApp {
                     // -- Active changes (collapsible) --
                     if let Some(change_preview) = &active_change_preview {
                         self.smart_sidebar.add_quick_action(0, "Review current changes", &change_preview.file_label, 0);
+                        // Cache the collapsible headers — write!() reuses the buffer.
+                        use std::fmt::Write as _;
+                        if self.cached_changes_header_right.is_empty() {
+                            let _ = write!(self.cached_changes_header_right, "{} Changes", egui_phosphor::regular::CARET_RIGHT);
+                        }
+                        if self.cached_changes_header_down.is_empty() {
+                            let _ = write!(self.cached_changes_header_down, "{} Changes", egui_phosphor::regular::CARET_DOWN);
+                        }
                         let changes_header = if self.right_changes_collapsed {
-                            format!("{} Changes", egui_phosphor::regular::CARET_RIGHT)
+                            &self.cached_changes_header_right
                         } else {
-                            format!("{} Changes", egui_phosphor::regular::CARET_DOWN)
+                            &self.cached_changes_header_down
                         };
                         if ui.add(egui::Button::new(egui::RichText::new(changes_header).size(10.0).strong().color(palette.warning)).frame(false)).clicked() {
                             self.right_changes_collapsed = !self.right_changes_collapsed;
                         }
                         if !self.right_changes_collapsed {
+                            // Cache the diff stat — only rebuild when the numbers change.
+                            let new_stat = format!("+{} -{}", change_preview.added_lines, change_preview.removed_lines);
+                            if self.cached_diff_stat != new_stat {
+                                self.cached_diff_stat = new_stat;
+                            }
                             ui.group(|ui| {
                                 ui.horizontal(|ui| {
                                     ui.label(egui::RichText::new(&change_preview.file_label).strong().color(palette.warning));
-                                    ui.label(egui::RichText::new(format!("+{} -{}", change_preview.added_lines, change_preview.removed_lines)).small().color(palette.text_muted));
+                                    ui.label(egui::RichText::new(&self.cached_diff_stat).small().color(palette.text_muted));
                                 });
                                 ui.horizontal(|ui| {
                                     if ui.small_button("Save").clicked() { self.save_active(); }
@@ -1018,47 +1177,78 @@ impl eframe::App for VelocityApp {
                     }
                     if let Some(symbol) = &active_symbol {
                         self.smart_sidebar.add_symbol(0, symbol, "active-buffer", cursor_pos.map(|(line, _)| line as u32).unwrap_or(0), 0);
+                        // Reuse cached symbol headers — write!() keeps the buffer's capacity.
+                        use std::fmt::Write as _;
+                        self.cached_sym_header_right.clear();
+                        let _ = write!(self.cached_sym_header_right, "{} {}()", egui_phosphor::regular::CARET_RIGHT, symbol);
+                        self.cached_sym_header_down.clear();
+                        let _ = write!(self.cached_sym_header_down, "{} {}()", egui_phosphor::regular::CARET_DOWN, symbol);
                         let sym_header = if self.right_symbol_collapsed {
-                            format!("{} {}()", egui_phosphor::regular::CARET_RIGHT, symbol)
+                            &self.cached_sym_header_right
                         } else {
-                            format!("{} {}()", egui_phosphor::regular::CARET_DOWN, symbol)
+                            &self.cached_sym_header_down
                         };
-                        if ui.add(egui::Button::new(egui::RichText::new(&sym_header).size(10.0).strong().color(palette.accent)).frame(false)).clicked() {
+                        if ui.add(egui::Button::new(egui::RichText::new(sym_header.as_str()).size(10.0).strong().color(palette.accent)).frame(false)).clicked() {
                             self.right_symbol_collapsed = !self.right_symbol_collapsed;
                         }
                         if !self.right_symbol_collapsed {
                             if !self.cached_callers.is_empty() {
                                 ui.add_space(4.0);
+                                // Cache the header — write!() reuses the buffer.
+                                use std::fmt::Write as _;
+                                let callers_count = self.cached_callers.len();
+                                let mut callers_header = String::with_capacity(24);
+                                let _ = write!(callers_header, "Callers ({})", callers_count);
                                 ui.label(
-                                    egui::RichText::new(format!("Callers ({})", self.cached_callers.len()))
+                                    egui::RichText::new(callers_header)
                                         .small()
                                         .strong()
                                         .color(palette.text_muted),
                                 );
-                                for name in self.cached_callers.clone() {
+                                // Index-based iteration avoids cloning the Vec.
+                                let clicked_caller: Option<String> = (0..callers_count).find_map(|i| {
+                                    let name = &self.cached_callers[i];
+                                    let mut link_text = String::with_capacity(name.len() + 4);
+                                    let _ = write!(link_text, "{} {}", egui_phosphor::regular::ARROW_RIGHT, name);
                                     if ui
-                                        .link(egui::RichText::new(format!("{} {}", egui_phosphor::regular::ARROW_RIGHT, name)).size(11.0))
+                                        .link(egui::RichText::new(link_text).size(11.0))
                                         .clicked()
                                     {
-                                        self.jump_to_symbol_name(&name);
+                                        Some(name.clone())
+                                    } else {
+                                        None
                                     }
+                                });
+                                if let Some(name) = clicked_caller {
+                                    self.jump_to_symbol_name(&name);
                                 }
                             }
                             if !self.cached_deps.is_empty() {
                                 ui.add_space(4.0);
+                                let deps_count = self.cached_deps.len();
+                                let mut deps_header = String::with_capacity(24);
+                                let _ = write!(deps_header, "Dependencies ({})", deps_count);
                                 ui.label(
-                                    egui::RichText::new(format!("Dependencies ({})", self.cached_deps.len()))
+                                    egui::RichText::new(deps_header)
                                         .small()
                                         .strong()
                                         .color(palette.text_muted),
                                 );
-                                for name in self.cached_deps.clone() {
+                                let clicked_dep: Option<String> = (0..deps_count).find_map(|i| {
+                                    let name = &self.cached_deps[i];
+                                    let mut link_text = String::with_capacity(name.len() + 4);
+                                    let _ = write!(link_text, "{} {}", egui_phosphor::regular::ARROW_RIGHT, name);
                                     if ui
-                                        .link(egui::RichText::new(format!("{} {}", egui_phosphor::regular::ARROW_RIGHT, name)).size(11.0))
+                                        .link(egui::RichText::new(link_text).size(11.0))
                                         .clicked()
                                     {
-                                        self.jump_to_symbol_name(&name);
+                                        Some(name.clone())
+                                    } else {
+                                        None
                                     }
+                                });
+                                if let Some(name) = clicked_dep {
+                                    self.jump_to_symbol_name(&name);
                                 }
                             }
                         }
@@ -1095,18 +1285,32 @@ impl eframe::App for VelocityApp {
         } else {
             &self.selected_model
         };
+        // Reuse cached buffers — clear() + write!() avoids per-frame heap
+        // allocations (the String keeps its capacity between frames).
+        use std::fmt::Write as _;
+        self.cached_status_perf.clear();
+        let _ = write!(
+            self.cached_status_perf,
+            "{} | {}ms f{}",
+            self.status_message,
+            self.last_frame_ms as u32,
+            self.frame_count
+        );
+        self.cached_profile_label.clear();
+        let _ = write!(
+            self.cached_profile_label,
+            "{} {}",
+            self.appearance.profile.glyph(),
+            self.appearance.profile.short_label()
+        );
         let sb_actions = crate::editor::status_bar::StatusBar::show(
             ui,
             palette,
             branch.as_deref(),
             cursor_pos,
             build_ok,
-            &self.status_message,
-            &format!(
-                "{} {}",
-                self.appearance.profile.glyph(),
-                self.appearance.profile.short_label()
-            ),
+            &self.cached_status_perf,
+            &self.cached_profile_label,
             self.provider.label(),
             model_name,
         );
@@ -1165,6 +1369,20 @@ impl eframe::App for VelocityApp {
                 egui_dock::DockArea::new(&mut dock_state)
                     .style(dock_style)
                     .show_inside(ui, &mut viewer);
+                // Sync `active_tab` to the editor tab the user actually focused in the
+                // dock. `egui_dock` tracks focus internally, but the app only updates
+                // `active_tab` on programmatic open/close, so clicking a tab in the tab
+                // bar left it stale and editor-scoped shortcuts (Ctrl+F/Ctrl+H, save,
+                // undo) targeted the wrong buffer (or none). Restricted to editor tabs
+                // so focusing side panels keeps its existing behavior.
+                if let Some((_, focused)) = dock_state.find_active_focused() {
+                    if matches!(focused.kind, TabKind::Editor { .. }) {
+                        let focused_id = focused.id.clone();
+                        if self.active_tab.as_ref() != Some(&focused_id) {
+                            self.active_tab = Some(focused_id);
+                        }
+                    }
+                }
                 self.dock_state = Some(dock_state);
             } else if self.tabs.is_empty() {
                 // Welcome screen when no tabs are open
@@ -1250,15 +1468,23 @@ impl eframe::App for VelocityApp {
                                             .corner_radius(egui::CornerRadius::same(4))
                                             .inner_margin(egui::Margin::symmetric(6, 2))
                                             .show(ui, |ui| {
-                                                ui.label(
-                                                    egui::RichText::new(format!(
-                                                        "{} {}",
-                                                        egui_phosphor::regular::GIT_BRANCH,
-                                                        br
-                                                    ))
-                                                    .size(9.0)
-                                                    .color(palette.text_muted),
-                                                );
+                                                // Icon + label split so GIT_BRANCH draws
+                                                // through the Phosphor family (avoids the
+                                                // colliding Inter "å" glyph).
+                                                ui.horizontal(|ui| {
+                                                    ui.label(
+                                                        egui::RichText::new(
+                                                            egui_phosphor::regular::GIT_BRANCH,
+                                                        )
+                                                        .font(crate::editor::theme::icon_font_id(9.0))
+                                                        .color(palette.text_muted),
+                                                    );
+                                                    ui.label(
+                                                        egui::RichText::new(br)
+                                                            .size(9.0)
+                                                            .color(palette.text_muted),
+                                                    );
+                                                });
                                             });
                                     }
                                     if dir_count > 0 {
@@ -1345,7 +1571,7 @@ impl eframe::App for VelocityApp {
                             (
                                 egui_phosphor::regular::COMMAND,
                                 "Command Palette",
-                                "Ctrl+Shift+P",
+                                "Ctrl+P",
                                 "cmd_palette",
                             ),
                         ];

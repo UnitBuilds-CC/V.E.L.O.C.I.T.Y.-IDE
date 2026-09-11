@@ -26,8 +26,18 @@ impl VelocityApp {
             .fill(palette.bg_primary)
             .show(ui, |ui| {
                 ui.vertical(|ui| {
-                    ui.horizontal(|ui| {
-                        ui.heading("Search & Replace");
+                    // Title + toggle on one wrapping row. A full-size `heading` beside a
+                    // right-to-left button in a non-wrapping `horizontal` let the wide
+                    // heading eat the row so the toggle overflowed the sidebar edge; a
+                    // smaller strong label in a `horizontal_wrapped` row keeps both on one
+                    // line when there's room and drops the toggle below when it's narrow.
+                    ui.horizontal_wrapped(|ui| {
+                        ui.label(
+                            egui::RichText::new("Search & Replace")
+                                .strong()
+                                .size(12.0)
+                                .color(palette.text),
+                        );
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                             let semantic_label = if self.semantic_search_active {
                                 "\u{2295} Semantic"
@@ -76,19 +86,23 @@ impl VelocityApp {
                             if self.semantic_search_active {
                                 self.run_semantic_search();
                             } else {
-                                self.search_hits = crate::editor::search::project_search(
+                                self.update_search_hits(crate::editor::search::project_search(
                                     &self.workspace_root,
                                     &self.search_query,
                                     100,
-                                );
+                                ));
                             }
                         }
                     });
-                    ui.horizontal(|ui| {
+                    // Wrapping row with a reserve sized for the real button width: a
+                    // too-small fixed reserve let "Replace All" run past the sidebar
+                    // edge. When the sidebar is too narrow for field+button, the
+                    // button wraps to the next line instead of clipping.
+                    ui.horizontal_wrapped(|ui| {
                         ui.add(
                             egui::TextEdit::singleline(&mut self.replace_query)
                                 .hint_text("Replace with\u{2026}")
-                                .desired_width(ui.available_width() - 90.0),
+                                .desired_width((ui.available_width() - 120.0).max(60.0)),
                         );
                         let can_replace = !self.search_query.is_empty();
                         if ui
@@ -115,11 +129,11 @@ impl VelocityApp {
                                 ));
                             }
                             // Refresh results against the updated files.
-                            self.search_hits = crate::editor::search::project_search(
+                            self.update_search_hits(crate::editor::search::project_search(
                                 &self.workspace_root,
                                 &self.search_query,
                                 100,
-                            );
+                            ));
                         }
                     });
                     // Run the debounced search once typing has settled (~250ms).
@@ -129,11 +143,11 @@ impl VelocityApp {
                             if self.semantic_search_active {
                                 self.run_semantic_search();
                             } else {
-                                self.search_hits = crate::editor::search::project_search(
+                                self.update_search_hits(crate::editor::search::project_search(
                                     &self.workspace_root,
                                     &self.search_query,
                                     100,
-                                );
+                                ));
                             }
                         } else {
                             ui.ctx()
@@ -159,12 +173,13 @@ impl VelocityApp {
                                         for query in suggested_queries {
                                             if ui.small_button(*query).clicked() {
                                                 self.search_query = (*query).to_string();
-                                                self.search_hits =
+                                                self.update_search_hits(
                                                     crate::editor::search::project_search(
                                                         &self.workspace_root,
                                                         &self.search_query,
                                                         100,
-                                                    );
+                                                    ),
+                                                );
                                             }
                                         }
                                     });
@@ -173,8 +188,11 @@ impl VelocityApp {
                                         ui.add_space(20.0);
                                         ui.label(
                                             egui::RichText::new(format!(
-                                                "No results for \"{}\"",
-                                                self.search_query
+                                                // Show the searched scope so a stale
+                                                // workspace root is immediately visible.
+                                                "No results for \"{}\" in {}",
+                                                self.search_query,
+                                                self.workspace_root.display()
                                             ))
                                             .color(palette.text_muted),
                                         );
@@ -182,34 +200,53 @@ impl VelocityApp {
                                 }
                             } else {
                                 ui.label(
-                                    egui::RichText::new(format!("{} results", hits.len()))
+                                    egui::RichText::new(&self.search_count_label)
                                         .small()
                                         .color(palette.text_muted),
                                 );
-                                for hit in &hits {
-                                    let icon = crate::editor::search::icon_for_path(&hit.path);
-                                    let title = format!(
-                                        "{} {} : line {}",
-                                        icon,
-                                        hit.path.display(),
-                                        hit.line
-                                    );
+                                // Pre-extract display strings from the cache into a
+                                // local Vec so the closure below doesn't borrow self
+                                // immutably (which would conflict with the mutable
+                                // self access needed for click handling). The clones
+                                // are cheap compared to the format!() calls they
+                                // replace — and only happen when the search panel is
+                                // visible.
+                                let display_data: Vec<_> = self
+                                    .search_hit_cache
+                                    .iter()
+                                    .map(|d| {
+                                        (
+                                            d.link_label.clone(),
+                                            d.path_display.clone(),
+                                            d.path_line.clone(),
+                                            d.text_preview.clone(),
+                                        )
+                                    })
+                                    .collect();
+                                for (hit_idx, hit) in hits.iter().enumerate() {
+                                    let (link_label, path_display, path_line, text_preview) =
+                                        &display_data[hit_idx];
                                     ui.group(|ui| {
-                                        ui.horizontal(|ui| {
-                                            if ui.link(title).clicked() {
-                                                let abs_path = self.workspace_root.join(&hit.path);
-                                                self.push_nav_location();
-                                                self.open_editor(Some(abs_path));
-                                                self.pending_cursor_line = Some(hit.line);
-                                            }
-                                        });
-                                        let truncated = if hit.text.len() > 80 {
-                                            format!("{}\u{2026}", &hit.text[..80])
-                                        } else {
-                                            hit.text.clone()
-                                        };
+                                        ui.set_max_width(ui.available_width());
+                                        if ui
+                                            .link(link_label)
+                                            .on_hover_text(path_display)
+                                            .clicked()
+                                        {
+                                            let abs_path = self.workspace_root.join(&hit.path);
+                                            self.push_nav_location();
+                                            self.open_editor(Some(abs_path));
+                                            self.pending_cursor_line = Some(hit.line);
+                                        }
                                         ui.label(
-                                            egui::RichText::new(truncated).monospace().size(11.0),
+                                            egui::RichText::new(path_line)
+                                                .size(9.0)
+                                                .color(palette.text_muted),
+                                        );
+                                        ui.label(
+                                            egui::RichText::new(text_preview)
+                                                .monospace()
+                                                .size(11.0),
                                         );
                                     });
                                 }

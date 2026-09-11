@@ -108,8 +108,17 @@ impl ToastQueue {
                                 ui.with_layout(
                                     egui::Layout::right_to_left(egui::Align::Center),
                                     |ui| {
+                                        // U+2715 (✕) isn't covered by the bundled fonts and
+                                        // rendered as a tofu box, so draw the close glyph
+                                        // through the dedicated Phosphor icon family instead.
                                         if ui
-                                            .button(egui::RichText::new("\u{2715}").size(12.0))
+                                            .button(
+                                                egui::RichText::new(egui_phosphor::regular::X)
+                                                    .font(crate::editor::theme::icon_font_id(
+                                                        12.0,
+                                                    ))
+                                                    .color(stroke_color),
+                                            )
                                             .clicked()
                                         {
                                             toast.created = Instant::now() - toast.ttl;

@@ -904,6 +904,42 @@ pub fn seed_from_source(source_path: &Path, site_map: &mut SiteMap) -> Result<Se
 
     let n_stored = compiler.store_all(site_map, &root)?;
 
+    // Register file path and function names as strings, then store triples
+    // so the wiki can classify entities as files vs symbols.
+    let file_path_str = source_path.display().to_string();
+    let file_hash = site_map.register_string(&file_path_str)?;
+    let fn_names: Vec<String> = compiler.functions.keys().cloned().collect();
+    for name in &fn_names {
+        site_map.register_string(name)?;
+    }
+    let mut triples = Vec::new();
+    // File defines each function (predicate 1 = Defines).
+    for name in &fn_names {
+        let fn_hash = site_map.hash_string(name);
+        triples.push(crate::site_map::VcTriple {
+            subject_hash: file_hash,
+            predicate_id: 1,
+            object_hash: fn_hash,
+        });
+    }
+    // Caller calls callee (predicate 2 = Calls).
+    for cf in compiler.functions.values() {
+        let caller_hash = site_map.hash_string(&cf.name);
+        for callee in &cf.callees {
+            if compiler.functions.contains_key(callee) {
+                let callee_hash = site_map.hash_string(callee);
+                triples.push(crate::site_map::VcTriple {
+                    subject_hash: caller_hash,
+                    predicate_id: 2,
+                    object_hash: callee_hash,
+                });
+            }
+        }
+    }
+    if !triples.is_empty() {
+        site_map.put_file_snapshot(&file_path_str, &triples)?;
+    }
+
     // Build resolved call graph and count resolved edges.
     let call_graph = compiler.call_graph();
     let total_edges: usize = compiler.functions.values().map(|cf| cf.callees.len()).sum();

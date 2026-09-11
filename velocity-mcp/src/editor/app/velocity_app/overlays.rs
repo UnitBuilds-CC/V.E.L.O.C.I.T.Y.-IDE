@@ -190,7 +190,11 @@ impl VelocityApp {
                             ui.with_layout(
                                 egui::Layout::right_to_left(egui::Align::Center),
                                 |ui| {
-                                    if ui.button("\u{2715}").clicked() {
+                                    // U+2715 (✕) is not covered by the bundled fonts (tofu),
+                                    // so render the close glyph through the Phosphor family.
+                                    let close = egui::RichText::new(egui_phosphor::regular::X)
+                                        .font(crate::editor::theme::icon_font_id(13.0));
+                                    if ui.button(close).clicked() {
                                         open = false;
                                     }
                                 },
@@ -1042,9 +1046,10 @@ impl VelocityApp {
                     node.name.clone()
                 };
                 egui::CollapsingHeader::new(
-                    egui::RichText::new(format!("\u{25b8} {}", dir_name))
-                        .size(10.0)
-                        .color(palette.text),
+                    // No manual "▸": CollapsingHeader already paints its own
+                    // disclosure triangle, and the U+25B8 glyph isn't covered by the
+                    // bundled fonts, so the hand-added arrow rendered as a tofu box.
+                    egui::RichText::new(dir_name).size(10.0).color(palette.text),
                 )
                 .default_open(node.path == workspace_root)
                 .show(ui, |ui| {

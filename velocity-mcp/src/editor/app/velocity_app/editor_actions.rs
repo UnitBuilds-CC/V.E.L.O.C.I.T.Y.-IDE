@@ -998,8 +998,8 @@ impl VelocityApp {
             ));
         }
         if let Some(ref index) = self.semantic_index {
-            let hits = index.search(&self.search_query, 50);
-            self.search_hits = hits
+            let hits = index
+                .search(&self.search_query, 50)
                 .into_iter()
                 .map(|h| crate::editor::search::SearchHit {
                     path: h.path,
@@ -1007,6 +1007,7 @@ impl VelocityApp {
                     text: format!("[{:.0}%] {}", h.score * 100.0, h.preview),
                 })
                 .collect();
+            self.update_search_hits(hits);
         }
     }
 

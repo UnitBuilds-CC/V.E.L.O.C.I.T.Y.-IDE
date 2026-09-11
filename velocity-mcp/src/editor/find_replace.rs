@@ -238,7 +238,13 @@ impl FindReplaceState {
             }
 
             // Close
-            if ui.small_button("\u{2715}").clicked() {
+            if ui
+                .small_button(
+                    egui::RichText::new(egui_phosphor::regular::X)
+                        .font(crate::editor::theme::icon_font_id(11.0)),
+                )
+                .clicked()
+            {
                 self.close();
             }
         });
@@ -302,22 +308,23 @@ pub fn render_find_replace(
                 if resp.changed() {
                     state.recompute_matches(content.as_str());
                 }
-                // Match count
-                let match_text = if state.matches.is_empty() {
-                    if state.use_regex
-                        && !state.query.is_empty()
-                        && crate::editor::regex_engine::Regex::compile(
-                            &state.query,
-                            !state.case_sensitive,
-                        )
-                        .is_err()
-                    {
-                        "Bad regex".to_string()
-                    } else {
-                        "No matches".to_string()
-                    }
-                } else {
+                // Match count. Only surface a status once the user has typed a
+                // query: an empty field is "nothing to search for yet", not "no
+                // matches", so keep the label blank until a query exists.
+                let match_text = if !state.matches.is_empty() {
                     format!("{}/{}", state.current_match + 1, state.matches.len())
+                } else if state.query.is_empty() {
+                    String::new()
+                } else if state.use_regex
+                    && crate::editor::regex_engine::Regex::compile(
+                        &state.query,
+                        !state.case_sensitive,
+                    )
+                    .is_err()
+                {
+                    "Bad regex".to_string()
+                } else {
+                    "No matches".to_string()
                 };
                 ui.label(match_text);
 
@@ -342,7 +349,13 @@ pub fn render_find_replace(
                     state.use_regex = !state.use_regex;
                     state.recompute_matches(content.as_str());
                 }
-                if ui.small_button("\u{2715}").clicked() {
+                if ui
+                    .small_button(
+                        egui::RichText::new(egui_phosphor::regular::X)
+                            .font(crate::editor::theme::icon_font_id(11.0)),
+                    )
+                    .clicked()
+                {
                     state.close();
                 }
             });

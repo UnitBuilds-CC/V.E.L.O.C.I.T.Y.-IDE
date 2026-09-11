@@ -3,9 +3,11 @@
 //! Extracted verbatim from `tier3_panels.rs` (no logic changes).
 
 use super::struct_def::VelocityApp;
-use super::tier3_common::primary_button;
+use super::tier3_common::{icon_label_job, primary_button_job};
 use crate::editor::extensions::ExtensionState;
-use crate::editor::theme::{CARD_INNER_MARGIN, CARD_RADIUS, FONT_BODY, FONT_CAPTION, ITEM_SPACING};
+use crate::editor::theme::{
+    CARD_INNER_MARGIN, CARD_RADIUS, FONT_BODY, FONT_CAPTION, FONT_SMALL, ITEM_SPACING,
+};
 use eframe::egui;
 use egui::RichText;
 
@@ -36,10 +38,18 @@ impl VelocityApp {
         let mut pending: Option<ExtAction> = None;
 
         ui.horizontal(|ui| {
-            if primary_button(
+            // ARROWS_CLOCKWISE collides with an Inter PUA alternate in the shared
+            // proportional font (rendered as a stray dot before the label), so the
+            // button label goes through the two-run icon+text layout.
+            if primary_button_job(
                 ui,
                 palette,
-                format!("{} Rescan", egui_phosphor::regular::ARROWS_CLOCKWISE),
+                icon_label_job(
+                    egui_phosphor::regular::ARROWS_CLOCKWISE,
+                    "Rescan",
+                    FONT_SMALL,
+                    palette.text_on_accent,
+                ),
             )
             .clicked()
             {
@@ -79,10 +89,15 @@ impl VelocityApp {
                                 .color(palette.text_muted),
                         );
                         ui.add_space(ITEM_SPACING);
-                        if primary_button(
+                        if primary_button_job(
                             ui,
                             palette,
-                            format!("{}  Rescan", egui_phosphor::regular::ARROWS_CLOCKWISE),
+                            icon_label_job(
+                                egui_phosphor::regular::ARROWS_CLOCKWISE,
+                                "Rescan",
+                                FONT_SMALL,
+                                palette.text_on_accent,
+                            ),
                         )
                         .clicked()
                         {

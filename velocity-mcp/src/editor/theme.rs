@@ -341,8 +341,11 @@ impl AppearanceSettings {
     }
 
     pub fn ui_font_id(self) -> FontId {
-        // Increase base UI size by 2pt for better readability.
-        FontId::new(16.0 * self.ui_scale, FontFamily::Proportional)
+        // Base size for default-styled widgets (text inputs, buttons, chips). Kept
+        // compact so these match the hand-sized 9-14px sidebar labels instead of
+        // towering over them; an 18.4px base made controls ~2x the surrounding text
+        // and wide enough to clip at the sidebar edge.
+        FontId::new(13.0 * self.ui_scale, FontFamily::Proportional)
     }
 
     pub fn code_font_id(self) -> FontId {
@@ -406,13 +409,37 @@ pub fn setup_fonts(fonts: &mut FontDefinitions) -> FontId {
         .or_default()
         .insert(0, "jbmono".into());
 
-    // Phosphor icons: registers the icon font as a proportional fallback so icon
-    // codepoints (egui_phosphor::regular::*) render inline with normal text.
+    // Phosphor icons: registered as a proportional fallback so icon codepoints
+    // (egui_phosphor::regular::*) can render inline with text. It MUST stay *behind*
+    // Inter in the shared Proportional chain: egui picks the first family font that
+    // has a glyph for each character, and Phosphor claims the lowercase ASCII
+    // codepoints (mapping them to blank glyphs), so hoisting it to the front made
+    // every lowercase letter in the UI disappear. Inter, conversely, carries a few
+    // PUA stylistic-alternate glyphs that collide with some Phosphor icon codepoints
+    // (FOLDER E24A, GEAR E270, GIT_BRANCH E278, BOOK_OPEN E0E6, …), so those inline
+    // icons can render as accented Latin. Widgets that draw a *pure* icon glyph
+    // (activity bar, etc.) use the dedicated `phosphor-icons` family below, where
+    // Phosphor is primary, so they resolve correctly without disturbing normal text.
     egui_phosphor::add_to_fonts(fonts, egui_phosphor::Variant::Regular);
+    fonts
+        .families
+        .entry(FontFamily::Name("phosphor-icons".into()))
+        .or_default()
+        .push("phosphor".into());
 
     // Base code font id (bumped +2pt for readability); AppearanceSettings applies
     // the user's ui_scale/code_scale on top of this.
     FontId::new(16.0, FontFamily::Monospace)
+}
+
+/// A [`FontId`] that renders Phosphor icon glyphs directly through the dedicated
+/// `phosphor-icons` family registered in [`setup_fonts`], bypassing Inter's
+/// colliding PUA stylistic-alternate glyphs (which otherwise turn FOLDER/GEAR/
+/// GIT_BRANCH/BOOK_OPEN into accented Latin letters). Use ONLY for strings holding a
+/// *single* icon glyph — mixed icon+text must keep the normal proportional family so
+/// the text still renders (the icon family carries no usable Latin coverage).
+pub fn icon_font_id(size: f32) -> FontId {
+    FontId::new(size, FontFamily::Name("phosphor-icons".into()))
 }
 
 pub fn apply_theme(ctx: &egui::Context, appearance: AppearanceSettings) {
@@ -467,10 +494,25 @@ pub fn apply_theme(ctx: &egui::Context, appearance: AppearanceSettings) {
     visuals.widgets.noninteractive.fg_stroke.color = palette.text_muted;
     visuals.widgets.noninteractive.corner_radius = widget_radius;
 
+    // Disabled: egui renders disabled widgets by painting them at
+    // `disabled_alpha` opacity. The stock 0.35 left idle actions like
+    // "Generate Detailed Page" barely distinguishable from the panel
+    // background; raising it keeps them discoverable while still reading
+    // clearly dimmer than their enabled neighbors.
+    visuals.disabled_alpha = 0.6;
+
     // Inactive: transparent-ish buttons that only reveal fill on hover.
     visuals.widgets.inactive.bg_fill = palette.bg_tertiary;
     visuals.widgets.inactive.weak_bg_fill = palette.bg_secondary;
-    visuals.widgets.inactive.bg_stroke = egui::Stroke::NONE;
+    // Match the *width* of the hovered/active/open strokes (all 1px) so a framed
+    // widget allocates the same size in every state. egui derives a button's inner
+    // margin as `button_padding + expansion - bg_stroke.width` (widget_style.rs),
+    // so an inactive stroke of width 0 against a hovered stroke of width 1 shrank
+    // every button/`selectable_label` by 2px on hover — the sidebar rows (files,
+    // bookmarks, favorites) and the nested sub-tabs jittered as the pointer moved.
+    // A transparent 1px stroke keeps the border invisible until hover while holding
+    // the layout stable.
+    visuals.widgets.inactive.bg_stroke = egui::Stroke::new(1.0, egui::Color32::TRANSPARENT);
     visuals.widgets.inactive.fg_stroke.color = palette.text;
     visuals.widgets.inactive.corner_radius = widget_radius;
 
@@ -508,9 +550,13 @@ pub fn apply_theme(ctx: &egui::Context, appearance: AppearanceSettings) {
     style.spacing.scroll.floating = true;
     style.spacing.scroll.bar_inner_margin = 2.0;
 
+    // Compact, coherent type scale. Default-styled widgets (inputs, buttons, chips)
+    // draw with Body/Button, while most sidebar labels are hand-sized at 9-14px; the
+    // old 20/16/13pt bases (~23/18.4/15px at ui_scale 1.15) made controls tower over
+    // those labels and grow wide enough to clip at the sidebar edge.
     style.text_styles.insert(
         TextStyle::Heading,
-        FontId::new(20.0 * appearance.ui_scale, FontFamily::Proportional),
+        FontId::new(17.0 * appearance.ui_scale, FontFamily::Proportional),
     );
     style
         .text_styles
@@ -520,7 +566,7 @@ pub fn apply_theme(ctx: &egui::Context, appearance: AppearanceSettings) {
         .insert(TextStyle::Button, appearance.ui_font_id());
     style.text_styles.insert(
         TextStyle::Small,
-        FontId::new(13.0 * appearance.ui_scale, FontFamily::Proportional),
+        FontId::new(11.0 * appearance.ui_scale, FontFamily::Proportional),
     );
     style
         .text_styles

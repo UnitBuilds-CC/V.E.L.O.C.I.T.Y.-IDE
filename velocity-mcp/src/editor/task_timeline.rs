@@ -410,7 +410,7 @@ pub fn render_mission_activity_feed(
         let (icon, color) = match event.event_type {
             TaskEventType::Started => ("\u{25b6}", palette.accent),
             TaskEventType::Completed => ("\u{2713}", palette.success),
-            TaskEventType::Failed => ("\u{2715}", palette.error),
+            TaskEventType::Failed => ("\u{00d7}", palette.error),
             TaskEventType::Cancelled => ("\u{2298}", palette.text_muted),
             TaskEventType::ToolCall => ("\u{2699}", palette.warning),
             TaskEventType::ToolResult => ("\u{2713}", palette.success),
@@ -513,7 +513,7 @@ pub fn render_task_timeline(
                     let (icon, color) = match event.event_type {
                         TaskEventType::Started => ("\u{25b6}", palette.accent),
                         TaskEventType::Completed => ("\u{2713}", palette.success),
-                        TaskEventType::Failed => ("\u{2715}", palette.error),
+                        TaskEventType::Failed => ("\u{00d7}", palette.error),
                         TaskEventType::Cancelled => ("\u{2298}", palette.text_muted),
                         TaskEventType::ToolCall => ("\u{2699}", palette.warning),
                         TaskEventType::ToolResult => ("\u{2713}", palette.success),

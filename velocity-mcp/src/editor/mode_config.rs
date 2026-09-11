@@ -80,7 +80,8 @@ static CODER_RIGHT_PANELS: &[RightPanel] = &[
     RightPanel {
         id: "ai_suggestions",
         label: "AI Suggestions",
-        icon: "\u{2726}",
+        // U+2605 (BLACK STAR) — Inter covers this; U+2726 (✦) renders as tofu.
+        icon: "\u{2605}",
     },
 ];
 

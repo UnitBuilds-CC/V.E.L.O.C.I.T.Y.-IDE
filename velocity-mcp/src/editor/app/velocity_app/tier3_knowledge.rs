@@ -12,10 +12,20 @@ use eframe::egui;
 use egui::RichText;
 
 impl VelocityApp {
-    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
-    // Knowledge -- unified RAG store (ingest + search)
-    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+    /// Ensure knowledge base is loaded from disk on first access.
+    /// This defers the potentially expensive JSON parsing until the user actually
+    /// opens the Knowledge panel or an agent queries the knowledge base.
+    pub fn ensure_knowledge_base_loaded(&mut self) {
+        if !self.knowledge_base_loaded {
+            let ws = self.workspace_root.clone();
+            self.knowledge_base = crate::editor::knowledge_base::KnowledgeBase::load(&ws);
+            self.knowledge_base_loaded = true;
+        }
+    }
+
     pub fn render_knowledge_panel(&mut self, ui: &mut egui::Ui) {
+        // Lazy-load knowledge base on first panel access
+        self.ensure_knowledge_base_loaded();
         let palette = self.palette();
         let sources = self.knowledge_base.sources();
         Self::tier3_header(
@@ -33,12 +43,16 @@ impl VelocityApp {
         // Ingestion: a path field (file or folder) plus whole-workspace index.
         let mut ingest_path = false;
         let mut ingest_workspace = false;
-        ui.horizontal(|ui| {
-            ui.add(
-                egui::TextEdit::singleline(&mut self.knowledge_ingest_input)
-                    .hint_text("path to a file or folder\u{2026}")
-                    .desired_width(ui.available_width() - 190.0),
-            );
+        // Stacked so it auto-fits a narrow sidebar: the old single row reserved a
+        // fixed 190px for the two buttons (`available_width() - 190.0`), which went
+        // negative and pushed the buttons past the sidebar edge below ~215px wide.
+        ui.add(
+            egui::TextEdit::singleline(&mut self.knowledge_ingest_input)
+                .hint_text("path to a file or folder\u{2026}")
+                .desired_width(ui.available_width()),
+        );
+        ui.add_space(4.0);
+        ui.horizontal_wrapped(|ui| {
             if secondary_button(ui, palette, "Ingest").clicked() {
                 ingest_path = true;
             }
@@ -54,11 +68,10 @@ impl VelocityApp {
             let resp = ui.add(
                 egui::TextEdit::singleline(&mut self.knowledge_query)
                     .hint_text("search knowledge\u{2026}")
-                    .desired_width(ui.available_width() - 70.0),
+                    .desired_width((ui.available_width() - 70.0).max(60.0)),
             );
-            if ui
-                .button(RichText::new("Search").size(FONT_SMALL))
-                .clicked()
+            let search_clicked = secondary_button(ui, palette, "Search").clicked();
+            if search_clicked
                 || (resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)))
             {
                 do_search = true;

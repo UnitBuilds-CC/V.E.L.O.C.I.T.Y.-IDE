@@ -50,6 +50,54 @@ pub(crate) fn primary_button(
     )
 }
 
+/// Two-run layout for an icon+label pair. The icon draws through the dedicated
+/// `phosphor-icons` family: several Phosphor codepoints (ARROWS_CLOCKWISE,
+/// EYE/EYE_SLASH, GIT_BRANCH, …) collide with Inter PUA stylistic alternates in
+/// the shared proportional family and render as stray punctuation (a dot, "Ž"),
+/// so mixed icon+text strings must not go through it as one run.
+pub(crate) fn icon_label_job(
+    icon: &str,
+    label: &str,
+    size: f32,
+    color: egui::Color32,
+) -> egui::text::LayoutJob {
+    let mut job = egui::text::LayoutJob::default();
+    job.append(
+        icon,
+        0.0,
+        egui::TextFormat {
+            font_id: crate::editor::theme::icon_font_id(size + 1.0),
+            color,
+            ..Default::default()
+        },
+    );
+    job.append(
+        &format!(" {label}"),
+        0.0,
+        egui::TextFormat {
+            font_id: egui::FontId::proportional(size),
+            color,
+            ..Default::default()
+        },
+    );
+    job
+}
+
+/// [`primary_button`] variant taking a precomposed [`egui::text::LayoutJob`]
+/// label (see [`icon_label_job`]) so icon+text buttons render correctly.
+pub(crate) fn primary_button_job(
+    ui: &mut egui::Ui,
+    palette: IdePalette,
+    job: egui::text::LayoutJob,
+) -> egui::Response {
+    ui.add(
+        egui::Button::new(job)
+            .fill(palette.accent)
+            .corner_radius(egui::CornerRadius::same(6))
+            .min_size(egui::vec2(0.0, 28.0)),
+    )
+}
+
 /// Secondary action button: neutral surface with a hairline border, visually
 /// recessive next to [`primary_button`]. Use for everything that is not the one
 /// primary action of a panel.

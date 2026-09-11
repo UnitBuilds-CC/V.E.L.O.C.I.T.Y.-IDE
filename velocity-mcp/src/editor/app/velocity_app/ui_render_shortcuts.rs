@@ -33,7 +33,8 @@ impl VelocityApp {
             } else if cmd && shift && i.key_pressed(egui::Key::P) {
                 self.open_command_palette();
             } else if cmd && i.key_pressed(egui::Key::P) {
-                self.open_quick_open();
+                // Ctrl+P opens the command palette (alias for Ctrl+Shift+P).
+                self.open_command_palette();
             } else if cmd && shift && i.key_pressed(egui::Key::T) {
                 self.reopen_closed_tab();
             } else if cmd && i.key_pressed(egui::Key::G) {
