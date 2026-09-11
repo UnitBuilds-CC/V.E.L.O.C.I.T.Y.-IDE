@@ -8,6 +8,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Wiki Rebuild Index**: Toolbar button to compile all .rs files and populate the wiki's name dictionary (520 files · 15,574 symbols). Fixed triple extraction in `seed_from_source()` to register file paths and function names as strings, enabling proper file/symbol classification.
+- **Ctrl+P Quick-Open**: Ctrl+P now opens the command palette (alias for Ctrl+Shift+P). Updated status bar, Navigate menu, and layouts menu labels to reflect the new binding.
+- **Lazy-Load Memory Optimization**: Agent memory and knowledge base now defer disk I/O until first panel access, saving ~23 MB at idle. Scales with agent count — each agent's memory file is loaded only when needed.
+- **Chat Message Cap**: Chat history capped at 200 messages to prevent unbounded memory growth in long sessions. Applied after user pushes, agent replies, and history restore.
 - **Activity bar system**: 8-category icon strip (Files, Search, Git, Chat, Build, Agents, Knowledge, Workspace) with 40+ navigable sub-panels, VS Code-style selection indicator, and Unicode glyphs
 - **Full sub-panel implementations**: 19 sub-panels with real data bindings — file tree with filter, bookmarks, favorites, code graph, git changes with staged/unstaged summary, branches, commits, chat with model selector and thinking toggle, multimodal attachments, build controls, agent roster, mission metrics, wiki, NDA documents, plugin registry, skills with search, usage dashboard
 - **Theme overhaul**: Modernized 5 color palettes (Midnight, Daylight, Operator, Mission, High Contrast) with HSL-based IdePalette system, green accent (#22C55E) for Midnight
@@ -43,6 +47,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Rustdoc**: Fixed all unresolved link warnings in doc comments
 
 ### Fixed
+- **Font Coverage**: Swapped U+2726 (✦) for U+2605 (★) in AI Suggestions panel icon — Inter font covers ★ but not ✦, which rendered as tofu (hollow box).
+- **Wiki Type Mismatch**: Fixed `unwrap_or(0)` type mismatch in `rebuild_index()` — `read_persisted_weight_root` returns `Option<u64>` but `open` takes `u64`.
 - Fixed 2 unsafe `unwrap()` patterns in `usage.rs` that could panic
 - Fixed empty format string warnings by embedding literals in format strings
 - Fixed `is_multiple_of()` clippy lints across 22 files
