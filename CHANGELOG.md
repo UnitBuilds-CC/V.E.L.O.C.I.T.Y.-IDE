@@ -16,7 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Full sub-panel implementations**: 19 sub-panels with real data bindings — file tree with filter, bookmarks, favorites, code graph, git changes with staged/unstaged summary, branches, commits, chat with model selector and thinking toggle, multimodal attachments, build controls, agent roster, mission metrics, wiki, NDA documents, plugin registry, skills with search, usage dashboard
 - **Theme overhaul**: Modernized 5 color palettes (Midnight, Daylight, Operator, Mission, High Contrast) with HSL-based IdePalette system, green accent (#22C55E) for Midnight
 - **GUI extraction**: Created `velocity-ide-gui` crate as standalone GUI launcher, separating UI from MCP server backend
-- **Comprehensive test suite**: Expanded to 9,200+ tests across all crates
+- **Comprehensive test suite**: Expanded to 9,000+ tests across all crates
 - **Provider failover tests**: 38 contract tests for serde, routing, and persistence
 - **NDA compiler tests**: 29 new tests for tokenizer and JIT compiler
 - **Orchestrator tests**: 13 orchestrator + 8 decompose contract tests
@@ -74,7 +74,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Build
 - Release build optimized: `strip = true`, `lto = "thin"`, `opt-level = "s"`, `codegen-units = 16`, `panic = "abort"`
-- All 9,200+ tests passing (zero failures)
+- All 9,000+ tests passing (zero failures)
 - CI now includes: fmt, clippy, test, build, audit, deny, coverage, SBOM generation
 
 ## [1.0.0] - 2026-08-18

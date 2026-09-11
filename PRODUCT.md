@@ -1,9 +1,5 @@
 # Product
 
-## Register
-
-product
-
 ## Users
 A broad technical audience uses this product: developers, automation operators, QA and workflow testers, and small teams coordinating agent-assisted work. The primary default user is an operator supervising multiple agents and reviewing their work, but the system also supports code editing, browser automation, desktop automation, and execution oversight.
 

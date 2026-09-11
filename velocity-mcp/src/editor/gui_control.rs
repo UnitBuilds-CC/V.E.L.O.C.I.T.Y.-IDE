@@ -130,11 +130,13 @@ fn listener_loop(
 
         let _ = stream.set_read_timeout(Some(std::time::Duration::from_secs(10)));
 
-        let reader = BufReader::new(
-            stream
-                .try_clone()
-                .unwrap_or_else(|_| panic!("failed to clone stream")),
-        );
+        let reader = match stream.try_clone() {
+            Ok(s) => BufReader::new(s),
+            Err(e) => {
+                log::error!("gui-control: failed to clone stream: {e}");
+                continue;
+            }
+        };
 
         for line in reader.lines() {
             if shutdown.load(Ordering::Relaxed) {

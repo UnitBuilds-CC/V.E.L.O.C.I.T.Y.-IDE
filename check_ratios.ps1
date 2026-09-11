@@ -4,7 +4,7 @@ $files = @(
     'velocity-ide\src\main.rs',
     'velocity-ide\src\provider_usage.rs',
     'velocity-ide\src\lib.rs',
-    'velocity-ide\src\pipeline_execution.rs',
+    'velocity-ide\src\compiler\driver\pipeline_execution.rs',
     'velocity-ide\src\pipeline_bridge.rs',
     'velocity-ide\src\nda.rs',
     'velocity-ide\src\tokenizer.rs',
