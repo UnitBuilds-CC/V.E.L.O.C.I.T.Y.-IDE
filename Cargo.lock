@@ -4733,7 +4733,6 @@ dependencies = [
  "velocity-browser",
  "velocity-ide",
  "windows 0.58.0",
- "winres",
 ]
 
 [[package]]

@@ -30,7 +30,7 @@ RUN mkdir -p velocity-mcp/src && echo "fn main() {}" > velocity-mcp/src/main.rs 
     mkdir -p e2e/src && echo "fn main() {}" > e2e/src/main.rs
 
 # Build dependencies (this layer is cached unless Cargo.toml changes)
-RUN cargo build --release || true
+RUN cargo build --release
 
 # Copy actual source code
 COPY . .

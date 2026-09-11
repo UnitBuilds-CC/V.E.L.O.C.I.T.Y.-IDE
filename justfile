@@ -93,9 +93,9 @@ rebuild: clean build
 
 # Generate documentation
 doc:
-    cargo doc --workspace --no-deps --open
+    cargo doc --workspace --no-deps
 
-# Generate documentation (open in browser)
+# Generate documentation and open in browser
 doc-open:
     cargo doc --workspace --no-deps --open
 
@@ -129,7 +129,7 @@ pre-commit: fmt-check clippy
 
 # Check documentation for warnings
 doc-check:
-    cargo doc --workspace --no-deps 2>&1 | findstr /i "warning" || echo "No doc warnings"
+    cargo doc --workspace --no-deps 2>&1
 
 # ─── Release ───────────────────────────────────────────────────────────────
 
@@ -147,7 +147,7 @@ package: release
 
 # Watch for changes and rebuild
 watch:
-    cargo watch --clear --execute "cargo check"
+    cargo watch --clear -x check
 
 # Run benchmarks
 bench:

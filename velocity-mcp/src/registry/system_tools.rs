@@ -1130,6 +1130,9 @@ fn execute_rust_fallback_tool(
     }
 }
 
+// SAFETY: CreateProcessW/CreateRemoteThread are Windows kernel32 process/thread
+// creation APIs. We populate STARTUPINFOW and PROCESS_INFORMATION correctly,
+// pass valid wide-string command lines, and close all handles after use.
 #[cfg(target_os = "windows")]
 #[allow(non_snake_case)]
 extern "system" {

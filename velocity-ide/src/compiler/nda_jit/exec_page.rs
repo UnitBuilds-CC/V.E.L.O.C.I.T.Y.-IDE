@@ -1,3 +1,6 @@
+// SAFETY: VirtualAlloc/VirtualFree are Windows kernel32 APIs for reserving and
+// committing pages of virtual memory. We call them with correct allocation types
+// and protect flags; the returned pointer is freed with the matching VirtualFree.
 #[cfg(windows)]
 extern "system" {
     fn VirtualAlloc(

@@ -141,7 +141,7 @@ fn nda_serialization_roundtrip() {
 #[test]
 fn library_info_accessible() {
     let info = velocity_ide::library_info();
-    assert!(info.module_count >= 15);
+    assert!(info.module_count >= 16);
     assert!(!info.features.is_empty());
     assert!(info.name.contains("velocity"));
 }
@@ -150,7 +150,7 @@ fn library_info_accessible() {
 #[test]
 fn module_inventory_accessible() {
     let inv = velocity_ide::module_inventory();
-    assert_eq!(inv.len(), 15);
+    assert_eq!(inv.len(), 16);
     let names: Vec<&str> = inv.iter().map(|m| m.name).collect();
     assert!(names.contains(&"compiler"));
     assert!(names.contains(&"wiki"));
@@ -338,8 +338,8 @@ fn library_info_json_through_public_api() {
     let info = velocity_ide::library_info();
     let json = serde_json::to_string(&info).unwrap();
     let v: serde_json::Value = serde_json::from_str(&json).unwrap();
-    assert!(v["module_count"].as_u64().unwrap() >= 15);
-    assert!(v["modules"].as_array().unwrap().len() >= 15);
+    assert!(v["module_count"].as_u64().unwrap() >= 16);
+    assert!(v["modules"].as_array().unwrap().len() >= 16);
 }
 
 /// Test ModuleInfo serialization through public API.

@@ -131,6 +131,11 @@ pub fn module_inventory() -> Vec<ModuleInfo> {
             is_public: true,
         },
         ModuleInfo {
+            name: "logging",
+            description: "Structured logging, telemetry sinks, log configuration",
+            is_public: true,
+        },
+        ModuleInfo {
             name: "wiki",
             description: "Wiki generation, search, markdown rendering",
             is_public: true,
@@ -202,12 +207,13 @@ mod tests {
     #[test]
     fn module_inventory_has_all_modules() {
         let inv = module_inventory();
-        assert!(inv.len() >= 15);
+        assert!(inv.len() >= 16);
         let names: Vec<&str> = inv.iter().map(|m| m.name).collect();
         assert!(names.contains(&"compiler"));
         assert!(names.contains(&"sandbox"));
         assert!(names.contains(&"velocity_client"));
         assert!(names.contains(&"credential_guard"));
+        assert!(names.contains(&"logging"));
         assert!(names.contains(&"wiki"));
     }
 
@@ -312,7 +318,7 @@ mod tests {
         let mut cloned = info.clone();
         cloned.module_count = 9999;
         cloned.features.push("injected".into());
-        assert_eq!(info.module_count, 15);
+        assert_eq!(info.module_count, 16);
         assert!(!info.features.contains(&"injected".to_string()));
     }
 
@@ -331,7 +337,7 @@ mod tests {
         assert!(pretty.contains('\n'));
         assert!(pretty.contains("  "));
         let v: serde_json::Value = serde_json::from_str(&pretty).unwrap();
-        assert_eq!(v["module_count"], 15);
+        assert_eq!(v["module_count"], 16);
     }
 
     #[test]
@@ -416,6 +422,7 @@ mod tests {
             "velocity_client",
             "provider_usage",
             "credential_guard",
+            "logging",
             "wiki",
         ];
         for e in &expected {
@@ -439,7 +446,7 @@ mod tests {
         let json = serde_json::to_string(&inv).unwrap();
         let v: serde_json::Value = serde_json::from_str(&json).unwrap();
         assert!(v.is_array());
-        assert_eq!(v.as_array().unwrap().len(), 15);
+        assert_eq!(v.as_array().unwrap().len(), 16);
     }
 
     // ── Banner tests ─────────────────────────────────────────────────────────

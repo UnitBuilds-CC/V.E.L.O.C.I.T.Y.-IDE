@@ -23,6 +23,10 @@ pub const STATE_PROCESSING: u8 = 2;
 pub const STATE_RES_READY: u8 = 3;
 pub const STATE_ERROR: u8 = 4;
 
+// SAFETY: CreateEventW/SetEvent/WaitForSingleObject/CloseHandle are Windows
+// kernel32 synchronization primitives. We create events with valid parameters,
+// signal/wait on them within their documented lifetime, and close handles to
+// avoid resource leaks.
 #[cfg(target_os = "windows")]
 extern "system" {
     fn CreateEventW(
