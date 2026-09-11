@@ -37,6 +37,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Platform README**: Multi-repo overview (IDE, router, website)
 
 ### Changed
+- **CI tool installs**: Replaced `cargo install` with `taiki-e/install-action` pre-built binaries for cargo-audit, cargo-deny, and cargo-llvm-cov — saves ~6 min per CI run
+- **CI actions upgrade**: `actions/checkout@v5` (Node 24), `codecov/codecov-action@v6` — eliminates Node 20 deprecation warnings
+- **Release workflow**: Now ships all 4 binaries (velocity_ide, velocity_mcp, velocity_ide_gui, velocity-drone). macOS target updated to `aarch64-apple-darwin` for ARM runners
 - **Architecture**: Editor modules remain in `velocity-mcp` (contain backend logic used by non-editor modules)
 - **Error handling**: Eliminated unsafe `unwrap()` patterns in production code paths
 - **Dependencies**: Removed `once_cell` crate — replaced with `std::sync::LazyLock` (Rust 1.80+). Loosened exact version pins for `ash`, `gpu-allocator`, `tempfile` to semver ranges
@@ -47,6 +50,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Rustdoc**: Fixed all unresolved link warnings in doc comments
 
 ### Fixed
+- **CI pipeline**: Added missing `libc` dependency for Unix targets (Linux/macOS) — fixes compilation of `exec_page.rs` (mmap/munmap) and `crypto.rs` (getuid)
+- **cargo-deny config**: Updated `deny.toml` to 0.16+ format — removed deprecated fields (`vulnerability`, `unmaintained="warn"`, `default-allow`, etc.)
+- **Test struct initializers**: Added 16 missing fields to `VelocityApp` test constructors in `tests.rs`
+- **Clippy warning**: Fixed `explicit_auto_deref` lint in `ui_render.rs`
+- **Formatting**: Ran `cargo fmt` across all workspace crates (28 files)
 - **Font Coverage**: Swapped U+2726 (✦) for U+2605 (★) in AI Suggestions panel icon — Inter font covers ★ but not ✦, which rendered as tofu (hollow box).
 - **Wiki Type Mismatch**: Fixed `unwrap_or(0)` type mismatch in `rebuild_index()` — `read_persisted_weight_root` returns `Option<u64>` but `open` takes `u64`.
 - Fixed 2 unsafe `unwrap()` patterns in `usage.rs` that could panic

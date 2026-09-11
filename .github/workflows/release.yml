@@ -23,11 +23,11 @@ jobs:
             target: x86_64-pc-windows-msvc
             artifact: velocity-windows
           - os: macos-latest
-            target: x86_64-apple-darwin
+            target: aarch64-apple-darwin
             artifact: velocity-macos
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
@@ -50,6 +50,8 @@ jobs:
           mkdir -p dist
           cp target/${{ matrix.target }}/release/velocity_ide dist/
           cp target/${{ matrix.target }}/release/velocity_mcp dist/
+          cp target/${{ matrix.target }}/release/velocity_ide_gui dist/
+          cp target/${{ matrix.target }}/release/velocity-drone dist/
           cd dist && tar -czf ../${{ matrix.artifact }}.tar.gz *
 
       - name: Prepare artifacts (Windows)
@@ -58,6 +60,8 @@ jobs:
           mkdir dist
           cp target/${{ matrix.target }}/release/velocity_ide.exe dist/
           cp target/${{ matrix.target }}/release/velocity_mcp.exe dist/
+          cp target/${{ matrix.target }}/release/velocity_ide_gui.exe dist/
+          cp target/${{ matrix.target }}/release/velocity-drone.exe dist/
           cd dist && 7z a ../${{ matrix.artifact }}.zip *
 
       - name: Upload artifacts
@@ -72,7 +76,7 @@ jobs:
     name: Generate SBOM
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
       - name: Install cargo-cyclonedx
         run: cargo install cargo-cyclonedx
@@ -94,7 +98,7 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Download all artifacts
         uses: actions/download-artifact@v4
         with:
