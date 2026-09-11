@@ -80,3 +80,6 @@ pub mod workflow_ai;
 pub mod workflow_canvas;
 pub mod workflow_templates;
 pub mod workflow_version;
+
+// GUI Control Bridge — external MCP/agent control of the running IDE
+pub mod gui_control;

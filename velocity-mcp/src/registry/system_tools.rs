@@ -722,6 +722,31 @@ pub fn handle_system_tool(
             let v = crate::editor::multimodal::describe_image(&path)?;
             serde_json::to_string(&v)?
         }
+
+        // ── GUI Control Bridge ─────────────────────────────────────────────
+        "gui_open_file" => {
+            let path = arguments["path"].as_str().ok_or("path is required")?;
+            let cmd = crate::editor::gui_control::GuiCommand::OpenFile { path: path.to_string() };
+            let resp = crate::editor::gui_control::send_command(&cmd)?;
+            serde_json::to_string(&resp)?
+        }
+        "gui_get_state" => {
+            let cmd = crate::editor::gui_control::GuiCommand::GetState {};
+            let resp = crate::editor::gui_control::send_command(&cmd)?;
+            serde_json::to_string(&resp)?
+        }
+        "gui_navigate_panel" => {
+            let panel = arguments["panel"].as_str().ok_or("panel is required")?;
+            let cmd = crate::editor::gui_control::GuiCommand::NavigatePanel { panel: panel.to_string() };
+            let resp = crate::editor::gui_control::send_command(&cmd)?;
+            serde_json::to_string(&resp)?
+        }
+        "gui_quit" => {
+            let cmd = crate::editor::gui_control::GuiCommand::Quit {};
+            let resp = crate::editor::gui_control::send_command(&cmd)?;
+            serde_json::to_string(&resp)?
+        }
+
         _ => return Ok(None),
     };
 

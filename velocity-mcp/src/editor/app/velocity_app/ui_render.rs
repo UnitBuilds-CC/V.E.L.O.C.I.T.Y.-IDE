@@ -23,6 +23,9 @@ impl eframe::App for VelocityApp {
         self.frame_count += 1;
         // ────────────────────────────────────────────────────────────────────
 
+        // ─── Process GUI control commands from external processes ───────────
+        self.process_gui_commands();
+
         let ctx = ui.ctx().clone();
         self.apply_appearance(&ctx);
         let palette = self.palette();

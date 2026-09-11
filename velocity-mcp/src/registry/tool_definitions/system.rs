@@ -302,5 +302,45 @@ pub fn get_system_tools() -> Vec<Tool> {
                 "required": ["path"]
             }),
         },
+
+        // ── GUI Control Bridge ─────────────────────────────────────────────
+        Tool {
+            name: "gui_open_file".to_string(),
+            description: "Open a file in the running IDE's editor. Requires the GUI to be running. Sends a command via the GUI control named pipe.".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "path": { "type": "string", "description": "Workspace-relative path to the file to open." }
+                },
+                "required": ["path"]
+            }),
+        },
+        Tool {
+            name: "gui_get_state".to_string(),
+            description: "Get the current state of the running IDE: open files, active file, active panel, sidebar visibility, chat message count, git branch. Requires the GUI to be running.".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {},
+            }),
+        },
+        Tool {
+            name: "gui_navigate_panel".to_string(),
+            description: "Navigate to a specific panel in the IDE's activity bar. Valid panels: files, search, git, chat, build, agents, knowledge, workspace. Requires the GUI to be running.".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "panel": { "type": "string", "description": "Panel name: files, search, git, chat, build, agents, knowledge, or workspace." }
+                },
+                "required": ["panel"]
+            }),
+        },
+        Tool {
+            name: "gui_quit".to_string(),
+            description: "Quit the running IDE. Requires the GUI to be running.".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {},
+            }),
+        },
     ]
 }
