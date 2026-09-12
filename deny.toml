@@ -13,10 +13,20 @@ unmaintained = "all"
 #     only; the vulnerable protobuf *parsing* recursion path is never reached.
 #   RUSTSEC-2026-0194 / RUSTSEC-2026-0195 (quick-xml 0.39.4): build-time dep of
 #     wayland-scanner (Linux-only); not compiled for the win-x64 target.
+#   RUSTSEC-2025-0141 (bincode): syntect 5.3.0 dep, unmaintained but stable.
+#   RUSTSEC-2024-0436 (paste): egui_dock 0.20.1 dep, can't update without egui 0.36.
+#   RUSTSEC-2026-0192 (ttf-parser): Linux-only deep transitive from winit.
+#   RUSTSEC-2024-0320 (yaml-rust): syntect 5.3.0 dep, unmaintained but stable.
+#   RUSTSEC-2026-0221 (event-listener): Unix-only deep transitive from zbus.
 ignore = [
     "RUSTSEC-2024-0437",
     "RUSTSEC-2026-0194",
     "RUSTSEC-2026-0195",
+    "RUSTSEC-2025-0141",
+    "RUSTSEC-2024-0436",
+    "RUSTSEC-2026-0192",
+    "RUSTSEC-2024-0320",
+    "RUSTSEC-2026-0221",
 ]
 
 [licenses]
@@ -32,6 +42,15 @@ allow = [
     "Unicode-3.0",
     "BSL-1.0",
     "OpenSSL",
+    # Font licenses from epaint_default_fonts (egui default fonts)
+    "OFL-1.1",
+    "Ubuntu-font-1.0",
+    # Creative Commons Zero (hexf-parse via naga/wgpu, notify)
+    "CC0-1.0",
+    # Data license for webpki-roots (bundled CA certificates)
+    "CDLA-Permissive-2.0",
+    # Workspace crates are proprietary (see LICENSE file)
+    "LicenseRef-Proprietary",
 ]
 
 [bans]

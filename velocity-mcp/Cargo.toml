@@ -4,6 +4,7 @@ version = "1.0.0"
 edition = "2021"
 authors = ["UnitBuilds <ian@unitbuilds.com>"]
 description = "A high-performance, zero-allocation Model Context Protocol (MCP) server in Rust"
+license = "LicenseRef-Proprietary"
 
 [features]
 default = ["full"]
@@ -35,7 +36,7 @@ velocity-ide = { path = "../velocity-ide" }
 velocity-browser = { path = "../velocity-browser" }
 thiserror = "2"
 dirs = "5"
-notify = "7"
+notify = "8"
 image = { version = "0.24", default-features = false, features = ["png", "jpeg", "gif", "bmp", "webp"] }
 eframe = "0.35.0"
 egui = "0.35.0"

@@ -4,6 +4,7 @@ version = "1.0.0"
 edition = "2021"
 authors = ["UnitBuilds <ian@unitbuilds.com>"]
 description = "V.E.L.O.C.I.T.Y. IDE — Native egui/eframe workspace editor"
+license = "LicenseRef-Proprietary"
 
 [[bin]]
 name = "velocity_ide_gui"
@@ -21,7 +22,7 @@ syntect = { version = "5.2", default-features = false, features = ["default-fanc
 image = { version = "0.24", default-features = false, features = ["png", "jpeg", "gif", "bmp", "webp"] }
 crossbeam-channel = "0.5"
 dirs = "5"
-notify = "7"
+notify = "8"
 portable-pty = "0.9"
 log = "0.4"
 env_logger = "0.11"

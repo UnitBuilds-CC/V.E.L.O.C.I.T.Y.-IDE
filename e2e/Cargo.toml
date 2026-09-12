@@ -3,6 +3,7 @@ name = "velocity-e2e"
 version = "1.0.0"
 publish = false
 edition = "2021"
+license = "LicenseRef-Proprietary"
 
 # E2E tests are integration tests that spawn actual binaries.
 # They live in tests/ and are run via `cargo test`.
