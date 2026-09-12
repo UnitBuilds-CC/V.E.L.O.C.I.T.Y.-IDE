@@ -1630,7 +1630,7 @@ The Peer panel manages **direct device-to-device connections** for file transfer
 - Progress percentage and error messages
 - Attach files to provide context
 
-**Message types:** PairRequest, PairAccepted, PairRejected, Heartbeat, Chat, TaskRequest, TaskProgress, TaskCompletion
+**Message types:** PairRequest, PairAccepted, PairRejected, Heartbeat, Chat, TaskRequest, TaskProgress, TaskComplete, TaskFailed, FileTransferStart, FileTransferChunk, FileTransferComplete, StatusRequest, StatusResponse
 
 ### Drone Subsystem
 
