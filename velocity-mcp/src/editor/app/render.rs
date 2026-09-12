@@ -962,6 +962,18 @@ impl<'a> TabViewerImpl<'a> {
                                         crate::agent::AiProvider::OpenRouter,
                                         crate::agent::AiProvider::AzureOpenAi,
                                         crate::agent::AiProvider::LocalOllama,
+                                        crate::agent::AiProvider::OpenAI,
+                                        crate::agent::AiProvider::Anthropic,
+                                        crate::agent::AiProvider::GoogleVertex,
+                                        crate::agent::AiProvider::Deepseek,
+                                        crate::agent::AiProvider::AlibabaQwen,
+                                        crate::agent::AiProvider::Groq,
+                                        crate::agent::AiProvider::Mistral,
+                                        crate::agent::AiProvider::TogetherAi,
+                                        crate::agent::AiProvider::FireworksAi,
+                                        crate::agent::AiProvider::Perplexity,
+                                        crate::agent::AiProvider::Cerebras,
+                                        crate::agent::AiProvider::AwsBedrock,
                                     ] {
                                         provider_changed |= ui
                                             .selectable_value(&mut provider, prov, prov.label())
