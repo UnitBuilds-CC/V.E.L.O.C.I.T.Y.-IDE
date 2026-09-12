@@ -57,6 +57,13 @@ A complete guide to using the V.E.L.O.C.I.T.Y. Cognitive IDE — a native, GPU-a
   - [Appearance Settings](#appearance-settings)
   - [Keybindings](#keybindings)
   - [Provider Configuration](#provider-configuration)
+    - [Registering a Provider](#registering-a-provider)
+    - [Saving & Reloading Credentials](#saving--reloading-credentials)
+    - [Refreshing the Model Catalog](#refreshing-the-model-catalog)
+    - [Selecting a Model](#selecting-a-model)
+    - [Workspace Provider Settings File](#workspace-provider-settings-file)
+    - [Environment Variables](#environment-variables)
+    - [Automatic Failover](#automatic-failover)
 - [Keyboard Shortcuts Reference](#keyboard-shortcuts-reference)
 - [Troubleshooting](#troubleshooting)
 
@@ -361,6 +368,8 @@ Velocity IDE supports 16 AI providers with automatic failover:
 2. Click the model dropdown at the top
 3. Select a provider, then a model
 
+> **First time setup?** See [Registering a Provider](#registering-a-provider) for step-by-step instructions on configuring credentials and refreshing the model catalog.
+
 **Reasoning toggle:** Click the "Show thoughts" checkbox to see the agent's reasoning process.
 
 ### Agent Approvals
@@ -642,29 +651,152 @@ Keybindings are configurable via `.velocity/keybindings.json`:
 
 ### Provider Configuration
 
-Configure AI providers in `~/.velocity/config.toml`:
+Velocity IDE manages AI providers through two mechanisms: the **in-app Settings UI** (recommended) and a **workspace provider settings file** for persistent credential storage.
 
-```toml
-[providers.openai]
-api_key = "sk-..."
-base_url = "https://api.openai.com/v1"
+**Opening provider settings:**
+1. Open Settings (`Ctrl+,`)
+2. Scroll to the **Providers & credentials** section
+3. Each provider appears as a collapsible header with a status badge (green = configured, grey = unconfigured)
 
-[providers.anthropic]
-api_key = "sk-ant-..."
+#### Registering a Provider
 
-[providers.cloudflare]
-api_key = "..."
-account_id = "..."
+Each provider has specific fields you need to fill in. Expand the provider's section and enter your credentials:
 
-[providers.ollama]
-base_url = "http://localhost:11434"
-model = "llama3.2"
+**Cloudflare Workers AI** (default, no API key required for free tier):
+| Field | Description | Example |
+|-------|-------------|---------|
+| Account ID | Your Cloudflare account ID | `abc123...` |
+| API token | Cloudflare API token with Workers AI access | `xyz789...` |
+| Tier | `free` or `paid` | `free` |
+| Label | Display name in the UI | `default` |
+
+**OpenRouter** (access to 100+ models through one key):
+| Field | Description | Example |
+|-------|-------------|---------|
+| API key | OpenRouter API key | `sk-or-...` |
+| Tier | `free` or `paid` | `free` |
+| Label | Display name | `OR-Default` |
+
+**Azure OpenAI**:
+| Field | Description | Example |
+|-------|-------------|---------|
+| Endpoint | Your Azure resource endpoint | `https://my-resource.openai.azure.com` |
+| API key | Azure OpenAI key | `abc123...` |
+| Deployment | Deployment name | `gpt-4o` |
+| API version | API version string | `2024-06-01` |
+| Tier | `free` or `paid` | `paid` |
+
+**Local Ollama** (runs models on your machine):
+| Field | Description | Example |
+|-------|-------------|---------|
+| Host | Ollama server URL | `http://localhost:11434` |
+| Default model | Model to use by default | `llama3.2` |
+| Label | Display name | `Local-Ollama` |
+
+**API-key providers** (OpenAI, Anthropic, Google Vertex, Deepseek, Groq, Mistral, Alibaba Qwen, Together AI, Fireworks AI, Perplexity, Cerebras, AWS Bedrock):
+
+Each of these providers has a single **API key** field. Expand the provider section and paste your key.
+
+#### Saving & Reloading Credentials
+
+After entering credentials:
+- Click **Save provider settings** (green button) to write credentials to the workspace settings file
+- Click **Reload** to re-read credentials from disk (useful if you edited the file externally)
+- Credentials are stored in `.velocity/workspace-preferences.json` within your workspace root (NDA-encrypted)
+
+> **Security note:** API keys are stored locally in your workspace. Never commit the `.velocity/workspace-preferences.json` file to version control — it is already excluded by the default `.gitignore`.
+
+#### Refreshing the Model Catalog
+
+After configuring a provider, you need to refresh the model list so the IDE can discover available models:
+
+1. Open Settings (`Ctrl+,`)
+2. In the **Agent defaults** section, select your provider from the dropdown
+3. Click the **↻ Models** button
+4. The IDE queries the provider's API and populates the model dropdown
+5. Select a model from the dropdown
+
+The model catalog is cached for 10 minutes to reduce API calls. If you don't see newly available models, wait a few minutes and click **↻ Models** again.
+
+> **Tip:** When you switch providers, the IDE automatically refreshes the model list for the new provider.
+
+#### Selecting a Model
+
+Once models are loaded:
+1. In Settings → **Agent defaults**, choose a provider and model from the dropdowns
+2. Or use the model selector in the Chat panel header
+3. The selected model is shown in the status bar provider pill (bottom-right)
+4. Your selection persists across sessions
+
+#### Workspace Provider Settings File
+
+The `.velocity/workspace-preferences.json` file stores all provider credentials in JSON format:
+
+```json
+{
+  "cloudflare": {
+    "account_id": "your-account-id",
+    "api_token": "your-api-token",
+    "tier": "free",
+    "label": "default"
+  },
+  "openrouter": {
+    "api_key": "sk-or-...",
+    "tier": "free",
+    "label": "OR-Default"
+  },
+  "azure_openai": {
+    "endpoint": "https://your-resource.openai.azure.com",
+    "api_key": "...",
+    "deployment": "gpt-4o",
+    "api_version": "2024-06-01",
+    "tier": "paid",
+    "label": "Azure-Default"
+  },
+  "ollama": {
+    "host": "http://localhost:11434",
+    "default_model": "llama3.2",
+    "label": "Local-Ollama"
+  },
+  "openai":    { "api_key": "sk-...", "tier": "paid", "label": "OpenAI" },
+  "anthropic": { "api_key": "sk-ant-...", "tier": "paid", "label": "Anthropic" },
+  "google":    { "api_key": "...", "tier": "paid", "label": "Google" },
+  "deepseek":  { "api_key": "...", "tier": "paid", "label": "Deepseek" },
+  "groq":      { "api_key": "gsk_...", "tier": "paid", "label": "Groq" },
+  "mistral":   { "api_key": "...", "tier": "paid", "label": "Mistral" },
+  "alibaba":   { "api_key": "...", "tier": "paid", "label": "Alibaba" },
+  "together":  { "api_key": "...", "tier": "paid", "label": "Together" },
+  "fireworks": { "api_key": "...", "tier": "paid", "label": "Fireworks" },
+  "perplexity":{ "api_key": "...", "tier": "paid", "label": "Perplexity" },
+  "cerebras":  { "api_key": "...", "tier": "paid", "label": "Cerebras" },
+  "bedrock":   { "api_key": "...", "tier": "paid", "label": "Bedrock" }
+}
 ```
 
-**Environment variables:**
-- `VELOCITY_API_KEY` — Default API key
-- `RUST_LOG` — Log level (trace, debug, info, warn, error)
-- `CF_ACCOUNT_N_ID` / `CF_ACCOUNT_N_TOKEN` — Cloudflare account credentials
+You can edit this file directly and click **Reload** in Settings to apply changes.
+
+#### Environment Variables
+
+As an alternative to the settings file, you can configure providers via environment variables:
+
+| Variable | Description |
+|----------|-------------|
+| `VELOCITY_API_KEY` | Default API key (used when no provider-specific key is set) |
+| `CF_ACCOUNT_N_ID` | Cloudflare account ID (where N is the account number: 1, 2, ...) |
+| `CF_ACCOUNT_N_TOKEN` | Cloudflare API token |
+| `CF_ACCOUNT_N_DAILY_LIMIT` | Override daily request limit for a Cloudflare account |
+| `OPENROUTER_API_KEY` | OpenRouter API key |
+| `BEDROCK_PROXY_URL` | URL for the AWS Bedrock proxy endpoint |
+| `RUST_LOG` | Log level (`trace`, `debug`, `info`, `warn`, `error`) |
+
+Environment variables take precedence over the workspace settings file. This is useful for CI/CD pipelines or shared workstations where you don't want to write credentials to disk.
+
+#### Automatic Failover
+
+Velocity IDE supports automatic failover across providers. If the active provider returns an error (rate limit, auth failure, timeout), the IDE automatically tries the next configured provider. To maximize failover reliability:
+- Configure at least 2 providers
+- Keep Cloudflare Workers AI as a fallback (it has a generous free tier)
+- Ensure API keys are valid and not expired
 
 ---
 
