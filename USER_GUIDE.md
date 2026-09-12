@@ -364,7 +364,7 @@ The file tree shows your workspace structure with:
 ### Bookmarks & Favorites
 
 **Bookmarks** mark specific locations in files for quick navigation:
-- Toggle bookmark with `F2` (or right-click → Toggle Bookmark)
+- Toggle bookmark with `Ctrl+Shift+B` (or right-click → Toggle Bookmark)
 - Navigate bookmarks with the Bookmarks sub-panel
 
 **Favorites** pin frequently-used files to the top of the file tree:
@@ -486,19 +486,19 @@ Velocity IDE supports 16 AI providers with automatic failover:
 | Cloudflare Workers AI | `@cf/moonshotai/kimi-k2.7-code` | Default, no API key needed |
 | OpenRouter | `tencent/hy3:free` | Access to 100+ models |
 | OpenAI | `gpt-4o` | Requires API key |
-| Anthropic | `claude-sonnet-4-20250514` | Requires API key |
+| Anthropic | `claude-3-5-sonnet-20241022` | Requires API key |
 | Azure OpenAI | `gpt-4o` | Requires deployment endpoint |
 | Local Ollama | `llama3.2` | Runs locally, no API key |
 | Deepseek | `deepseek-chat` | Requires API key |
-| Google Vertex | `gemini-2.5-pro` | Requires GCP credentials |
+| Google Vertex | `gemini-1.5-pro` | Requires GCP credentials |
 | Groq | `llama-3.3-70b-versatile` | Requires API key |
 | Mistral | `mistral-large-latest` | Requires API key |
-| Together AI | `meta-llama/Meta-Llama-3.1-70B-Instruct-Turbo` | Requires API key |
-| Fireworks AI | `accounts/fireworks/models/llama-v3p1-70b-instruct` | Requires API key |
-| Perplexity | `llama-3.1-sonar-large-128k-online` | Requires API key |
-| Cerebras | `llama3.1-70b` | Requires API key |
-| AWS Bedrock | `anthropic.claude-3-5-sonnet-20241022-v2:0` | Requires AWS credentials |
-| Alibaba Qwen | `qwen-max` | Requires API key |
+| Together AI | `meta-llama/Meta-Llama-3.1-405B-Instruct-Turbo` | Requires API key |
+| Fireworks AI | `accounts/fireworks/models/llama-v3p3-70b-instruct` | Requires API key |
+| Perplexity | `sonar-pro` | Requires API key |
+| Cerebras | `llama-3.3-70b` | Requires API key |
+| AWS Bedrock | `anthropic.claude-3-sonnet-20240229-v1:0` | Requires AWS credentials |
+| Alibaba Qwen | `qwen-plus` | Requires API key |
 
 **Changing models:**
 1. Open Chat panel
@@ -586,9 +586,9 @@ To connect an external AI assistant, add Velocity as an MCP server in the assist
 
 ### Available MCP Tools
 
-The server exposes 50+ tools across 4 categories:
+The server exposes 130+ tools across 4 categories:
 
-**System Tools** (27 tools):
+**System Tools** (15 tools):
 | Tool | Description |
 |------|-------------|
 | `read_file` | Read file contents |
@@ -619,7 +619,7 @@ The server exposes 50+ tools across 4 categories:
 | `gui_get_state` | Get current GUI state |
 | `gui_navigate_panel` | Navigate to a GUI panel |
 
-**Browser Tools** (~15 tools): `web_navigate`, `browser_create_session`, `browser_runtime_capture`, `browser_runtime_visual_capture`, and more for headless browser automation.
+**Browser Tools** (~109 tools): `web_navigate`, `browser_create_session`, `browser_runtime_capture`, `browser_runtime_visual_capture`, and many more for headless browser automation.
 
 **Windows Automation Tools**: UI automation, screenshot capture, registry access, advanced input simulation.
 
@@ -771,7 +771,7 @@ The knowledge base stores chunks of text for semantic retrieval:
 - **Ranking:** TF-IDF + cosine similarity
 - **Storage:** `.velocity/knowledge/store.json`
 - **Ingest:** Text, file paths, or directories recursively
-- **Supported extensions:** 30+ (md, txt, rs, py, js, ts, go, java, etc.)
+- **Supported extensions:** 28 (md, txt, rs, py, js, ts, tsx, jsx, go, java, c, cpp, h, hpp, cs, rb, toml, yaml, yml, json, csv, sql, sh, html, css, log, ini, cfg)
 
 **Usage:** The agent queries the knowledge base when answering questions about your codebase.
 
@@ -780,8 +780,8 @@ The knowledge base stores chunks of text for semantic retrieval:
 Agent memory persists learnings across sessions:
 
 - **Per-member storage** — Each agent member has isolated memory
-- **Categories:** Pattern, preference, architecture, lesson, context
-- **Search:** Keyword-based with scoring
+- **Tag-based organization** — Memories are tagged with freeform labels (e.g., `tool`, `file_io`, `success`) for filtering
+- **Search:** Keyword-based with relevance scoring (0.0–1.0)
 - **Encryption:** NDA-encrypted storage per member ID
 - **Context injection:** Memories are automatically injected into agent prompts
 
@@ -793,7 +793,7 @@ Beyond per-session agent memory, Velocity IDE maintains **persistent memory** th
 
 - **NDA-encrypted at rest** — Stored in `.velocity/` with AES-256-GCM encryption
 - **Per-workspace** — Each workspace has its own isolated memory store
-- **Categories:** Pattern, preference, architecture, lesson, context
+- **Tag-based organization** — Entries are tagged with freeform labels for filtering and search
 - **Agent-accessible** — Agents can `remember`, `recall`, and `forget` entries via MCP tools
 - **Self-improvement integration** — The self-improvement engine stores learned failure patterns here
 
@@ -1145,7 +1145,8 @@ The Site Map is the IDE's **semantic memory** — a persistent, content-addresse
 ├── kv/              # Token key-value pair records
 ├── nodes/           # NDA program nodes (AST elements)
 ├── programs/        # Complete NDA programs
-└── weight_root      # Persisted model weight root hash
+├── metadata.nda     # NDA-encrypted metadata (includes weight root hash)
+└── metadata.json    # Plaintext metadata (includes weight root hash)
 ```
 
 **How the IDE uses it:**
