@@ -17,6 +17,9 @@ A complete guide to using the V.E.L.O.C.I.T.Y. Cognitive IDE — a native, GPU-a
   - [Workspace Modes](#workspace-modes)
   - [Themes & Appearance](#themes--appearance)
   - [Status Bar](#status-bar)
+  - [Toast Notifications](#toast-notifications)
+  - [Bottom Panel](#bottom-panel)
+  - [Accessibility Mode](#accessibility-mode)
 - [Command Palette](#command-palette)
 - [Menu Bar Reference](#menu-bar-reference)
 - [Working with Files](#working-with-files)
@@ -25,11 +28,15 @@ A complete guide to using the V.E.L.O.C.I.T.Y. Cognitive IDE — a native, GPU-a
   - [Search & Replace](#search--replace)
   - [Semantic Search](#semantic-search)
   - [Code Graph](#code-graph)
+  - [Outline](#outline)
+  - [Local File History](#local-file-history)
 - [Code Editing](#code-editing)
   - [Editor Features](#editor-features)
   - [Find & Replace](#find--replace)
   - [Code Folding](#code-folding)
   - [Inline Suggestions](#inline-suggestions)
+  - [Code Snippets](#code-snippets)
+  - [Diagnostics (Problems Panel)](#diagnostics-problems-panel)
 - [AI Chat & Agents](#ai-chat--agents)
   - [Chat Panel](#chat-panel)
   - [Model Selection](#model-selection)
@@ -69,6 +76,13 @@ A complete guide to using the V.E.L.O.C.I.T.Y. Cognitive IDE — a native, GPU-a
   - [Test Generator](#test-generator)
   - [Deploy Pipeline](#deploy-pipeline)
   - [Debugger](#debugger)
+  - [Workflow Canvas](#workflow-canvas)
+  - [Workflow Templates](#workflow-templates)
+  - [Workflow Version History](#workflow-version-history)
+  - [Triggers & Unattended Execution](#triggers--unattended-execution)
+  - [Governance & Policy Engine](#governance--policy-engine)
+  - [Workspace Checkpoints](#workspace-checkpoints)
+  - [Precompilation Cache](#precompilation-cache)
 - [Plugins & Extensions](#plugins--extensions)
   - [Plugin Registry](#plugin-registry)
   - [Extensions](#extensions)
@@ -85,6 +99,7 @@ A complete guide to using the V.E.L.O.C.I.T.Y. Cognitive IDE — a native, GPU-a
   - [NDA Format](#nda-format)
 - [Collaboration & Drones](#collaboration--drones)
   - [Collaboration Manager](#collaboration-manager)
+  - [Peer Collaboration Panel](#peer-collaboration-panel)
   - [Drone Subsystem](#drone-subsystem)
 - [Security Model](#security-model)
 - [Usage Tracking](#usage-tracking)
@@ -288,6 +303,78 @@ The status bar at the bottom shows:
 - **Cursor position** — Line and column (click to go to line)
 - **Provider pill** — Current AI provider and model (click to open settings)
 - **Command palette** — `Ctrl+P` shortcut reminder
+- **Workspace switcher** — Click to switch between known workspace projects (also `Ctrl+Shift+W`)
+
+### Toast Notifications
+
+Toast notifications appear as **non-intrusive overlays** in the bottom-right corner to inform you about IDE events:
+
+**Notification levels:**
+| Level | Color | Example |
+|-------|-------|---------|
+| Info | Blue | "File saved successfully" |
+| Success | Green | "Build completed" |
+| Warning | Amber | "API key expiring soon" |
+| Error | Red | "Provider connection failed" |
+
+**Behavior:**
+- **Duration:** 4 seconds before auto-dismiss
+- **Progress bar** — Shows remaining time on the newest toast
+- **Dismissible** — Click the × button to close immediately
+- **Fade-out** — Toasts fade out in the last 2 seconds
+- **Stacking** — Multiple toasts stack vertically
+
+### Bottom Panel
+
+The bottom panel provides tabbed access to build output, diagnostics, and more. It is resizable (drag the top edge, max height 600px) and collapsible.
+
+**Tabs vary by workspace mode:**
+
+| Mode | Tabs |
+|------|------|
+| **Coder** | Terminal, Problems, Output, Checkpoints, Chat |
+| **Automation Operator** | Split view: Live Action Preview + Console |
+| **Mission Control** | Dashboard (agent grid) |
+| **Accessibility** | Audit Results, Keyboard Nav Map, Chat |
+
+**Coder mode tabs:**
+- **Terminal** — Command input with `$ ` prompt and output buffer
+- **Problems** — Error and warning counts with diagnostic messages (see [Diagnostics](#diagnostics-problems-panel))
+- **Output** — Build and run output with color-coded lines (errors in red, warnings in amber, commands in accent color)
+- **Checkpoints** — Workspace checkpoint list with restore/discard actions (see [Workspace Checkpoints](#workspace-checkpoints))
+- **Chat** — Quick chat access
+
+### Accessibility Mode
+
+Accessibility mode (`Ctrl+4`) provides comprehensive features for users with disabilities:
+
+**Screen Reader Simulation:**
+- Simulates a screen reader that announces focused elements
+- Navigate with `Tab` / `Shift+Tab` through focusable elements
+- Speech buffer shows recent announcements
+- Elements are announced with their role, name, and value
+
+**Accessibility Tree:**
+- Hierarchical tree of all UI elements with 29 ARIA roles: Alert, Button, Checkbox, Dialog, Document, Form, Heading, Image, Link, List, ListItem, Menu, MenuItem, Navigation, ProgressBar, Radio, Region, Search, Slider, StatusBar, Tab, TabList, TabPanel, TextBox, Toolbar, Tree, TreeItem, Window, and more
+- Each element shows its role, name, bounds, and focusability
+- Available as a right panel: **Accessibility Tree** (icon ⬿)
+
+**High Contrast Palette:**
+- Dark mode: Pure black background `[0,0,0]`, white foreground `[255,255,255]` — **21:1 contrast ratio** (exceeds WCAG AAA)
+- Light mode: White background, black foreground
+- WCAG 2.1 relative luminance formula used for contrast calculations
+- Customizable per-element colors for selection, cursor, errors, warnings, and focus ring
+
+**Right panels in Accessibility mode:**
+| Panel | Icon | Purpose |
+|-------|------|---------|
+| Accessibility Tree | ⬿ | Browse the full UI element hierarchy |
+| Contrast Checker | ◐ | Verify contrast ratios meet WCAG standards |
+| ARIA Inspector | ⊜ | Inspect ARIA roles and properties of elements |
+
+**Toolbar actions:** Audit (✓), Contrast (◐), SR Sim (♿)
+
+**Keyboard navigation map:** 10 default bindings for full keyboard control — see the [Accessibility Mode shortcuts](#accessibility-mode) table in the Keyboard Shortcuts Reference.
 
 ---
 
@@ -307,13 +394,13 @@ The Command Palette is a fuzzy-search overlay for quickly executing any IDE comm
 
 | Category | Examples |
 |----------|----------|
-| **File** | New File, Open File, Save, Save All, Close Tab, Reopen Closed Tab, Go to Line, Go to Symbol, Go to Definition |
+| **File** | New File, Open File, Quick Open, Save, Save As, Save All, Close Tab, Close Other Tabs, Reopen Closed Tab, Go to Line, Go to Symbol, Go to Definition, Find All References, Show Hover Info, Next Tab, Previous Tab |
 | **Build** | Build, Run, Deploy Pipeline, Rollback Deploy, Test Generator, Test Coverage |
 | **Edit** | Find, Find & Replace |
-| **Panels** | Chat, Output, Orchestrator, Mission Control, Search, Usage, Settings, Extensions, Voice Commands |
+| **Panels** | Chat, Output, Orchestrator, Mission Control, Search, Usage, Settings, Extensions, Voice Commands, Live Activity, Test Coverage |
 | **Agent** | Request Inline Suggestion, Approve All Tools, Decline All Tools, Plan Sub-Agents, Refresh Models |
-| **Workspace** | Switch Mode (Coder/Operator/Mission/Accessibility), Reset Layout, Wiki Export, NDA Document operations |
-| **View** | Toggle Sidebar, Toggle History, Reset Layout |
+| **Workspace** | Switch Mode (Coder/Operator/Mission/Accessibility), Reset Layout, Wiki Export, NDA Document operations, Switch Workspace |
+| **View** | Toggle Sidebar, Toggle Minimap, Toggle History, Split Editor, Reset Layout |
 | **Knowledge** | Code Graph, Knowledge Base, Bookmarks, Agent Memory, Shared Memory |
 | **Automation** | Triggers, Workflows, Governance |
 
@@ -449,6 +536,27 @@ The code graph visualizes symbol relationships:
 - Interactive — click nodes to navigate
 - Access via **Search → Code Graph** sub-panel
 
+### Outline
+
+The Outline panel shows the symbol structure of the currently open file:
+- Lists functions, structs, classes, enums, and other symbols
+- Click any symbol to jump to its definition
+- Updates automatically as you switch between files
+- Uses both keyword-based extraction and LSP document symbols
+- Available as a sidebar tab in Coder mode
+
+### Local File History
+
+Velocity IDE automatically saves snapshots of your files as you edit, so you can recover previous versions:
+
+- **Snapshots per file:** Up to 20 automatic snapshots
+- **Storage:** `.velocity/history/` (NDA-encrypted index)
+- **Age labels:** Each snapshot shows relative time (e.g., "5m ago", "2h ago", "3d ago")
+- **Diff view:** Compare any snapshot against the current version with a line-based diff (`+` added, `-` removed)
+- **Recovery:** Click a snapshot to view its content; restore it to replace the current file
+
+File history is completely automatic — no configuration needed. Every time you save a file, a snapshot is recorded. The oldest snapshots are pruned when the limit of 20 is reached.
+
 ---
 
 ## Code Editing
@@ -461,9 +569,18 @@ The code editor supports:
 - **Auto-indent** — Automatic indentation on new lines
 - **Bracket matching** — Highlights matching brackets
 - **Breadcrumbs** — Navigation path at top of editor
-- **Minimap** — Overview of file structure (right side)
+- **Minimap** — Overview of file structure (right side), toggle with `Ctrl+Shift+M`
 - **Line numbers** — Click to set breakpoints
-- **Word wrap** — Toggle with `Alt+Z`
+- **Word wrap** — Toggle with `Alt+Z` or via Settings → Editor
+- **Split editor** — `Ctrl+\` opens the same file in a side-by-side view for viewing different parts simultaneously
+- **Hover info** — Shows LSP hover information for the symbol under the cursor (also available via Command Palette → Show Hover Info)
+
+### Unsaved Changes
+
+When you close a tab with unsaved changes (`Ctrl+W`), a confirmation dialog appears with three options:
+- **Save** — Save changes and close
+- **Don't Save** — Discard changes and close
+- **Cancel** — Keep the tab open
 
 ### Find & Replace
 
@@ -494,6 +611,62 @@ AI-powered inline code suggestions:
 - Trigger with `Ctrl+Shift+I`
 - Suggestions appear as ghost text
 - Press `Tab` to accept, `Escape` to dismiss
+
+### Code Snippets
+
+Snippets are templates for common code patterns with interactive placeholders:
+
+**Using snippets:**
+1. Type a snippet prefix (e.g., `fn`, `test`, `struct`)
+2. Press `Ctrl+Space` to trigger completion
+3. The snippet expands with highlighted placeholders
+4. Press `Tab` to jump to the next placeholder, `Shift+Tab` to go back
+5. Press `Escape` to exit the snippet session
+
+**Placeholder syntax:**
+| Syntax | Description | Example |
+|--------|-------------|---------|
+| `$N` | Tab stop (cursor position) | `$1`, `$2`, `$0` (final) |
+| `${N:default}` | Placeholder with default text | `${1:my_function}` |
+| `${N\|opt1,opt2\|}` | Choice placeholder | `${1\|pub,priv\|}` |
+| `${N/regex/format/}` | Transform placeholder | `${1/./\u$0/}` |
+
+**Built-in variables:** `$TM_FILENAME` (current file name), `$TM_FILENAME_BASE` (name without extension), `$CLIPBOARD` (clipboard content)
+
+**Custom snippets:** Create `.velocity/snippets.json` in your workspace using VS Code-compatible format:
+
+```json
+{
+  "Print Debug": {
+    "prefix": "dbg",
+    "body": ["println!(\"${1:debug}: {:?}\", ${1:value});"],
+    "description": "Print debug statement"
+  }
+}
+```
+
+**Built-in Rust snippets:** `fn`, `impl`, `test`, `match`, `struct`, `enum`, `for`, `if`
+
+### Diagnostics (Problems Panel)
+
+The Problems panel shows compiler and linter diagnostics for your codebase:
+
+**Opening:** Click the **Problems** tab in the bottom panel, or note the error/warning counts in the status bar.
+
+**Features:**
+- **Error/warning squiggles** — Colored underlines in the editor (red = error, yellow = warning, blue = info, grey = hint)
+- **Inline popups** — Hover over a squiggly line to see the full diagnostic message
+- **Filter tabs:** All, Errors, Warnings
+- **Per-file counts** — Error and warning counts shown per file
+- **Click to jump** — Click any diagnostic to navigate to the exact file, line, and column
+
+**Severity levels:**
+| Level | Indicator | Color |
+|-------|-----------|-------|
+| Error | Red squiggle | Red |
+| Warning | Yellow squiggle | Amber |
+| Info | Blue squiggle | Blue |
+| Hint | Grey squiggle | Grey |
 
 ---
 
@@ -1049,6 +1222,134 @@ The debugger supports:
 - **Continue** — `F5`
 - **Stop** — `Shift+F5`
 
+### Workflow Canvas
+
+The Workflow Canvas is a **visual, node-based designer** for building multi-step agent workflows:
+
+**Opening:** **Tools → Automation → Workflows**
+
+**Node types:**
+| Node | Color | Purpose |
+|------|-------|---------|
+| Start | Green | Entry point — every workflow begins here |
+| Agent Task | Blue | Sends a prompt to an AI agent (optionally routed to a team) |
+| Tool | Orange | Executes an MCP tool with arguments |
+| Connector | Purple | Makes an HTTP request via a configured connector |
+| Condition | Deep Orange | Branch point — evaluates a description to true/false |
+| End | Grey | Exit point — workflow terminates here |
+
+**Canvas controls:**
+- **Drag nodes** to reposition them
+- **Connect ports** — drag from an output port (`ok`, `fail`, `true`, `false`) to another node's input
+- **Pan** — middle mouse button or `Ctrl+drag`
+- **Zoom** — scroll wheel (range: 0.3× to 3.0×)
+- **Delete** — select a node and press Delete
+
+**Execution:** Click **Run** to execute the workflow. Nodes are processed in topological order. Each node shows a status overlay: Idle, Running, Succeeded, Failed, or Skipped. The canvas detects cycles and prevents execution of invalid graphs.
+
+### Workflow Templates
+
+Eight pre-built templates provide one-click workflow creation:
+
+| Template | Category | Description |
+|----------|----------|-------------|
+| Code Review Pipeline | Code Quality | Compilation check, lint, then summarize changes |
+| Test & Report | Testing | Run tests, check coverage, generate summary |
+| Safe Refactor | Code Quality | Analyze code, apply refactor, validate with tests |
+| Research & Document | Research | Browse web for topic, summarize findings, write docs |
+| Build, Deploy & Verify | Deployment | Build project, deploy, run smoke tests |
+| Bug Investigation | Review | Read logs, analyze error, propose fix, validate |
+| Feature Implementation | Automation | Plan feature, implement, test, document |
+| Dependency Audit | Code Quality | Check outdated deps, analyze breaking changes, update safely |
+
+To use a template: open the Workflow Canvas, click **New from Template**, and select one. The canvas is pre-populated with nodes and edges — customize as needed.
+
+### Workflow Version History
+
+Every workflow save creates an automatic version snapshot:
+
+- **Versioning** — Auto-incrementing version numbers starting at 1
+- **Browse history** — View all versions with timestamps and notes
+- **Compare versions** — Structural diff showing nodes/edges added and removed
+- **Rollback** — Restore any previous version with one click
+- **Storage:** `.velocity/workflow_versions/{id}.json`
+
+### Triggers & Unattended Execution
+
+Triggers automate workflow execution based on events or schedules:
+
+**Opening:** **Tools → Automation → Triggers**
+
+**Trigger types:**
+| Type | Description | Example |
+|------|-------------|---------|
+| Schedule | Fire at regular intervals | `30s`, `5m`, `1h`, `2d`, `daily@09:00` |
+| File Watch | Fire when files change | Path + glob pattern (e.g., `src/**/*.rs`) |
+| Webhook | Fire on incoming HTTP POST | Token-authenticated endpoint |
+| Manual | Fire on demand | Click to execute |
+
+**Actions:** Each trigger performs one of:
+- **Run Workflow** — Execute a specific workflow by ID
+- **Agent Prompt** — Send a prompt directly to the agent
+
+**Configuration:** Triggers are persisted to `.velocity/triggers.json`. Enable/disable individual triggers from the UI. Schedule triggers support both interval-based (`5m` = every 5 minutes) and daily-at (`daily@09:00` = 9 AM UTC) scheduling.
+
+### Governance & Policy Engine
+
+The Policy Engine controls what the agent is allowed to do:
+
+**Opening:** **Tools → Automation → Governance**
+
+**Policy rules:** Each rule matches on tool name, path prefix, or domain and applies one of:
+| Effect | Description |
+|--------|-------------|
+| Allow | Permit the operation unconditionally |
+| Deny | Block the operation |
+| RequireApproval | Queue the operation for manual approval |
+
+**Budget enforcement:** Set maximum token usage or cost limits. When the budget is exhausted, all operations are denied until reset.
+
+**Approval queue:** Operations requiring approval appear in a queue with:
+- Tool name, summary, and creation timestamp
+- **Approve** or **Deny** buttons per item
+- Status tracking: Pending → Approved/Denied
+
+**Rule matching:** Rules are evaluated in order — first match wins. Tool names support wildcards (`*` matches any tool). Path prefixes match file paths. Domain matching checks URL-related arguments.
+
+**Storage:** Policies are saved to `.velocity/policy.json`, approval queue to `.velocity/approvals.json`.
+
+### Workspace Checkpoints
+
+Checkpoints are **git-stash-based snapshots** taken before agent operations, letting you safely undo agent changes:
+
+**Opening:** **Checkpoints** tab in the bottom panel
+
+**How checkpoints work:**
+1. Before an agent modifies files, a checkpoint is automatically created
+2. The checkpoint is stored as a git stash with a descriptive label
+3. If you're unhappy with the changes, click **Restore** to revert to the checkpoint
+4. Or click **Discard** to remove the checkpoint and keep the changes
+
+**Checkpoint info:** Each checkpoint shows its label, creation time, and number of files changed.
+
+**Agent MCP tools:** `agent_checkpoint_create`, `agent_checkpoint_restore`, `agent_checkpoint_list` — agents can create and manage checkpoints programmatically.
+
+### Precompilation Cache
+
+The precompilation cache **speculatively indexes files** for faster agent execution:
+
+**Opening:** **Build → Build Cache** or the Precomp Cache sidebar panel
+
+**What it does:**
+- Extracts symbol outlines (functions, structs, enums, traits, etc.) from source files
+- Reads import statements from the first 50 lines of each file
+- Generates top-level summaries for quick context
+- Caches results by task ID for reuse across agent operations
+
+**How it helps:** When an agent needs context about your codebase, it can pull from the precomp cache instead of re-reading and re-parsing files — significantly reducing latency for large projects.
+
+**Warm-up:** The IDE automatically pre-indexes your open editor files on startup. Files larger than 2 MB are skipped.
+
 ---
 
 ## Plugins & Extensions
@@ -1287,6 +1588,50 @@ The Collaboration Manager supports **multi-user, multi-agent teamwork** with rol
 
 **Persistence:** Collaboration state is saved to `.velocity/collaboration.json`.
 
+### Peer Collaboration Panel
+
+The Peer panel manages **direct device-to-device connections** for file transfer, task delegation, and chat:
+
+**Opening:** **Workspace → Peers**
+
+**Peer Server:**
+- **Start/Stop** — Control the local peer server
+- **Port** — Configurable port (default 9191)
+- **Local Peer ID** — Your unique identifier shown when listening
+
+**Connecting to a peer:**
+1. Enter the peer's host, port, and name in the **Add Peer** section
+2. Click **Connect** — a pairing handshake is performed
+3. The peer appears in **Connected Peers** with online/offline status
+
+**Peer capabilities:** Each peer advertises what it can do:
+| Capability | Description |
+|------------|-------------|
+| File Execution | Run files and scripts |
+| Test Runner | Execute test suites |
+| Screen Capture | Capture screenshots |
+| GUI Automation | Control desktop UI |
+| Build System | Compile and build projects |
+| Network Monitor | Monitor network activity |
+| General | General-purpose tasks |
+
+**Per-peer actions:**
+- **Chat** — Send text messages directly to the peer (messages show direction arrows ←/→ with timestamps)
+- **Health Check** — Query the peer's status and capabilities
+- **Remove** — Disconnect and remove the peer
+
+**Active transfers:** Real-time view of file uploads/downloads with:
+- Direction (↑ Outgoing / ↓ Incoming)
+- Filename and progress percentage
+- Completion checkmark when finished
+
+**Delegated tasks:** Send prompts to peers for remote execution:
+- Task status: Pending → Running → Completed/Failed/Cancelled
+- Progress percentage and error messages
+- Attach files to provide context
+
+**Message types:** PairRequest, PairAccepted, PairRejected, Heartbeat, Chat, TaskRequest, TaskProgress, TaskCompletion
+
 ### Drone Subsystem
 
 Drones are **lightweight, portable agent endpoints** deployable on any machine — they don't require the full IDE.
@@ -1483,6 +1828,13 @@ Open Settings with `Ctrl+,` and navigate to **Appearance**:
 - **UI Scale** — Float multiplier for interface fonts (default 1.15)
 - **Code Scale** — Float multiplier for code fonts (default 1.12)
 
+### Editor Settings
+
+In Settings → **Editor** section:
+
+- **Show breadcrumbs** — Toggle navigation breadcrumbs above the editor (default: on)
+- **Word wrap** — Toggle word wrap in the editor (also `Alt+Z`)
+
 ### Keybindings
 
 Keybindings are configurable via `.velocity/keybindings.json`:
@@ -1673,6 +2025,8 @@ Velocity IDE supports automatic failover across providers. If the active provide
 | Save all | `Ctrl+Shift+S` |
 | Close file | `Ctrl+W` |
 | Quick open | `Ctrl+P` |
+| Split editor | `Ctrl+\` |
+| Switch workspace | `Ctrl+Shift+W` |
 
 ### Edit Operations
 
@@ -1704,6 +2058,10 @@ Velocity IDE supports automatic failover across providers. If the active provide
 | Forward | `Alt+Right` |
 | Next tab | `Ctrl+PageDown` |
 | Previous tab | `Ctrl+PageUp` |
+| MRU tab switcher | `Ctrl+Tab` |
+| MRU switcher (reverse) | `Ctrl+Shift+Tab` |
+
+**Ctrl+Tab MRU Switcher:** Hold `Ctrl` and tap `Tab` to open a most-recently-used tab switcher overlay. Keep holding `Ctrl` and tap `Tab` to cycle forward, `Ctrl+Shift+Tab` to cycle backward. Release `Ctrl` to switch to the selected tab. The overlay shows a scrollable list of all open tabs with the selected one highlighted. Also works by clicking a tab in the overlay.
 
 ### View
 
@@ -1719,6 +2077,7 @@ Velocity IDE supports automatic failover across providers. If the active provide
 | Toggle extensions | `Ctrl+Shift+X` |
 | Toggle activity | `Ctrl+Shift+A` |
 | Toggle voice | `Ctrl+Shift+V` |
+| Toggle minimap | `Ctrl+Shift+M` |
 | Fold | `Ctrl+Shift+[` |
 | Unfold | `Ctrl+Shift+]` |
 | Fold all | `Ctrl+K Ctrl+0` |
