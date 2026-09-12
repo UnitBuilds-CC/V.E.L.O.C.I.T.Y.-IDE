@@ -16,6 +16,8 @@ A complete guide to using the V.E.L.O.C.I.T.Y. Cognitive IDE — a native, GPU-a
   - [Workspace Modes](#workspace-modes)
   - [Themes & Appearance](#themes--appearance)
   - [Status Bar](#status-bar)
+- [Command Palette](#command-palette)
+- [Menu Bar Reference](#menu-bar-reference)
 - [Working with Files](#working-with-files)
   - [File Tree](#file-tree)
   - [Bookmarks & Favorites](#bookmarks--favorites)
@@ -33,10 +35,17 @@ A complete guide to using the V.E.L.O.C.I.T.Y. Cognitive IDE — a native, GPU-a
   - [Agent Approvals](#agent-approvals)
   - [Voice Commands](#voice-commands)
   - [Multimodal Input](#multimodal-input)
+- [MCP Server Integration](#mcp-server-integration)
+  - [How It Works](#how-it-works)
+  - [Starting the MCP Server](#starting-the-mcp-server)
+  - [Configuring External Assistants](#configuring-external-assistants)
+  - [Available MCP Tools](#available-mcp-tools)
+  - [GUI Control Bridge](#gui-control-bridge)
 - [Browser Automation](#browser-automation)
   - [Browse Panel](#browse-panel)
   - [Automation Flows](#automation-flows)
   - [Targets & Recordings](#targets--recordings)
+  - [Windows Desktop Automation](#windows-desktop-automation)
 - [Git Integration](#git-integration)
   - [Changes Panel](#changes-panel)
   - [Branches & Commits](#branches--commits)
@@ -44,6 +53,16 @@ A complete guide to using the V.E.L.O.C.I.T.Y. Cognitive IDE — a native, GPU-a
   - [Wiki System](#wiki-system)
   - [Knowledge Base](#knowledge-base)
   - [Agent Memory](#agent-memory)
+  - [Persistent Memory](#persistent-memory)
+  - [Shared Memory (Multi-Agent Collaboration)](#shared-memory-multi-agent-collaboration)
+- [Orchestrator & Agent Teams](#orchestrator--agent-teams)
+  - [Orchestrator](#orchestrator)
+  - [Team Studio](#team-studio)
+  - [Agent Roster](#agent-roster)
+  - [Background Agents](#background-agents)
+  - [Self-Improvement Engine](#self-improvement-engine)
+  - [Conflict Resolver](#conflict-resolver)
+  - [Session Continuity (Continuation Ledger)](#session-continuity-continuation-ledger)
 - [Build & Deploy](#build--deploy)
   - [Build Panel](#build-panel)
   - [Test Generator](#test-generator)
@@ -53,6 +72,22 @@ A complete guide to using the V.E.L.O.C.I.T.Y. Cognitive IDE — a native, GPU-a
   - [Plugin Registry](#plugin-registry)
   - [Extensions](#extensions)
   - [Skills](#skills)
+- [Connectors & External Services](#connectors--external-services)
+  - [Connector Types](#connector-types)
+  - [Setting Up a Connector](#setting-up-a-connector)
+  - [OAuth2 Integration](#oauth2-integration)
+  - [Sync Engine](#sync-engine)
+  - [Webhooks](#webhooks)
+  - [Integration Templates](#integration-templates)
+- [Site Map & NDA Format](#site-map--nda-format)
+  - [Site Map](#site-map)
+  - [NDA Format](#nda-format)
+- [Collaboration & Drones](#collaboration--drones)
+  - [Collaboration Manager](#collaboration-manager)
+  - [Drone Subsystem](#drone-subsystem)
+- [Security Model](#security-model)
+- [Usage Tracking](#usage-tracking)
+- [Workspace Preferences](#workspace-preferences)
 - [Settings & Configuration](#settings--configuration)
   - [Appearance Settings](#appearance-settings)
   - [Keybindings](#keybindings)
@@ -208,6 +243,108 @@ The status bar at the bottom shows:
 - **Cursor position** — Line and column (click to go to line)
 - **Provider pill** — Current AI provider and model (click to open settings)
 - **Command palette** — `Ctrl+P` shortcut reminder
+
+---
+
+## Command Palette
+
+The Command Palette is a fuzzy-search overlay for quickly executing any IDE command.
+
+**Opening:** `Ctrl+Shift+P` or `Ctrl+P`
+
+**How it works:**
+1. Type to filter commands using fuzzy matching (e.g., "tsb" matches "Toggle Sidebar")
+2. Matched characters are highlighted with accent color
+3. Use arrow keys to navigate, `Enter` to execute, `Escape` to close
+4. Commands are grouped by category with headers
+
+**Available command categories:**
+
+| Category | Examples |
+|----------|----------|
+| **File** | New File, Open File, Save, Save All, Close Tab, Reopen Closed Tab, Go to Line, Go to Symbol, Go to Definition |
+| **Build** | Build, Run, Deploy Pipeline, Rollback Deploy, Test Generator, Test Coverage |
+| **Edit** | Find, Find & Replace |
+| **Panels** | Chat, Output, Orchestrator, Mission Control, Search, Usage, Settings, Extensions, Voice Commands |
+| **Agent** | Request Inline Suggestion, Approve All Tools, Decline All Tools, Plan Sub-Agents, Refresh Models |
+| **Workspace** | Switch Mode (Coder/Operator/Mission/Accessibility), Reset Layout, Wiki Export, NDA Document operations |
+| **View** | Toggle Sidebar, Toggle History, Reset Layout |
+| **Knowledge** | Code Graph, Knowledge Base, Bookmarks, Agent Memory, Shared Memory |
+| **Automation** | Triggers, Workflows, Governance |
+
+Commands are context-aware — some only appear in specific workspace modes. Keyboard shortcuts are shown right-aligned in monospace next to each command.
+
+---
+
+## Menu Bar Reference
+
+The menu bar at the top provides access to all IDE features. Here is the complete menu structure:
+
+### File Menu
+| Item | Shortcut | Description |
+|------|----------|-------------|
+| New File | `Ctrl+N` | Create a new untitled file |
+| Open File... | `Ctrl+O` | Browse and open a file |
+| Quick Open | `Ctrl+P` | Fuzzy-search file by name |
+| Save | `Ctrl+S` | Save the active file |
+| Save All | `Ctrl+Shift+S` | Save all modified files |
+
+### Navigate Menu
+| Item | Shortcut | Description |
+|------|----------|-------------|
+| Command Palette | `Ctrl+P` | Open the command palette |
+| Chat | `Ctrl+J` | Focus the chat panel |
+| Search | `Ctrl+Shift+F` | Focus the search panel |
+| Research browser | — | Open the research browser panel |
+| Review changes | — | Open the git review panel |
+| Output | `` Ctrl+` `` | Toggle the output panel |
+| Terminal | — | Open the terminal |
+
+### Build Menu
+| Item | Shortcut | Description |
+|------|----------|-------------|
+| Build | `Ctrl+B` | Trigger a project build |
+| Run | `Ctrl+R` | Run the project |
+| Test generator | — | Generate tests for selected code |
+| Test coverage | — | View test coverage analysis |
+| Deploy pipeline | — | Open the deploy pipeline view |
+| Debugger | — | Open the debugger |
+| Language servers | — | View LSP status |
+| Snippets | — | Manage code snippets |
+| Inline suggestions | `Ctrl+Shift+I` | Trigger AI inline suggestion |
+| Build cache | — | View build cache status |
+
+### Tools Menu
+
+The Tools menu has three submenus:
+
+**Tools > Agents:**
+Live Activity, Agent Roster, Background Agents, Orchestration, Task Queue, Timeline, Mission Metrics, Conflict Resolver, Self-Improvement, Session Continuity
+
+**Tools > Knowledge:**
+Knowledge Base, Wiki, Code Graph, Semantic Search, Bookmarks, Favorites, Agent Memory, Shared Memory, Persistent Memory, Recent Changes
+
+**Tools > Automation:**
+Workflows, Triggers, Automation Flows, Targets, Execution Logs, Recordings, Voice Commands, Multimodal, Accessibility, Governance
+
+### Workspace Menu
+| Item | Description |
+|------|-------------|
+| Extensions | Open the extensions panel |
+| Plugin registry | Open the MCP plugin registry |
+| Skills | Manage agent skills |
+| Collaboration | Open the collaboration panel |
+| Peers | View connected peer devices |
+| Usage | View API usage statistics |
+| New NDA document | Create a new NDA document |
+| Import active file to NDA | Convert the current file to NDA format |
+| Open NDA browser viewer | Launch the PWA viewer for NDA documents |
+
+### Help Menu
+| Item | Shortcut | Description |
+|------|----------|-------------|
+| Keyboard Shortcuts | `F1` | Show all keyboard shortcuts |
+| Settings | `Ctrl+,` | Open IDE settings |
 
 ---
 
@@ -411,6 +548,99 @@ Attach files to chat messages for context:
 
 ---
 
+## MCP Server Integration
+
+Velocity IDE includes a built-in **Model Context Protocol (MCP)** server that allows external AI assistants (Claude Desktop, ChatGPT, Cursor, etc.) to interact with your workspace.
+
+### How It Works
+
+The MCP server runs as a separate process and communicates via **JSON-RPC 2.0** over stdio — the standard MCP transport. External assistants spawn the server as a child process and exchange requests/responses over stdin/stdout.
+
+### Starting the MCP Server
+
+```bash
+# Default stdio mode (for external AI assistants)
+velocity_mcp --mode stdio
+
+# Shared memory mode (for IPC with the GUI process)
+velocity_mcp --mode shmem --buffer-path <path>
+```
+
+### Configuring External Assistants
+
+To connect an external AI assistant, add Velocity as an MCP server in the assistant's configuration:
+
+**Claude Desktop** (`claude_desktop_config.json`):
+```json
+{
+  "mcpServers": {
+    "velocity-ide": {
+      "command": "C:\\path\\to\\velocity_mcp.exe",
+      "args": ["--mode", "stdio"]
+    }
+  }
+}
+```
+
+**Other MCP-compatible assistants** follow the same pattern — specify the binary path and `--mode stdio` argument.
+
+### Available MCP Tools
+
+The server exposes 50+ tools across 4 categories:
+
+**System Tools** (27 tools):
+| Tool | Description |
+|------|-------------|
+| `read_file` | Read file contents |
+| `write_file` | Write file contents |
+| `list_dir` | List directory contents |
+| `delete_file` | Delete a file |
+| `grep_search` | Search files with regex |
+| `run_command` | Execute a shell command |
+| `convert_to_nda` | Convert a file to NDA document format |
+| `read_nda` | Read an NDA document |
+| `execute_nda` | Execute an NDA program |
+| `fetch_panel_data` | Get data from IDE panels (teams, wiki, graph, bookmarks, files) |
+| `agent_checkpoint_create` | Create an agent checkpoint |
+| `agent_checkpoint_restore` | Restore from a checkpoint |
+| `agent_checkpoint_list` | List all checkpoints |
+| `agent_memory_remember` | Store a memory for the agent |
+| `agent_memory_recall` | Search agent memories |
+| `agent_memory_forget` | Delete an agent memory |
+| `code_generate_tests` | Generate tests for code |
+| `code_coverage_analyze` | Analyze test coverage |
+| `knowledge_ingest` | Ingest text into the knowledge base |
+| `knowledge_search` | Search the knowledge base |
+| `workflow_run` | Run an automation workflow |
+| `connector_call` | Call an external connector |
+| `generate_image` | Generate an image via AI |
+| `describe_image` | Describe an image via AI |
+| `gui_open_file` | Open a file in the GUI |
+| `gui_get_state` | Get current GUI state |
+| `gui_navigate_panel` | Navigate to a GUI panel |
+
+**Browser Tools** (~15 tools): `web_navigate`, `browser_create_session`, `browser_runtime_capture`, `browser_runtime_visual_capture`, and more for headless browser automation.
+
+**Windows Automation Tools**: UI automation, screenshot capture, registry access, advanced input simulation.
+
+**Team Tools**: `create_expert_team`, `list_expert_teams`, `update_expert_team`, `create_skill_file`, `list_skills`.
+
+### GUI Control Bridge
+
+In addition to MCP, the running IDE exposes a **TCP control bridge** at `localhost:19821` for external processes to control the GUI:
+
+| Command | Description |
+|---------|-------------|
+| `OpenFile { path }` | Open a file in the editor |
+| `GetState` | Get current IDE state as JSON |
+| `NavigatePanel { panel }` | Switch to a specific panel |
+| `Screenshot` | Capture the IDE window as an image |
+| `Quit` | Close the IDE |
+
+This is useful for scripting IDE interactions or integrating with CI/CD pipelines.
+
+---
+
 ## Browser Automation
 
 ### Browse Panel
@@ -454,6 +684,36 @@ In **Automation Operator** mode (`Ctrl+2`), you can create and run automation fl
 - Record a browsing session
 - Replay it as an automation flow
 - Edit steps to parameterize
+
+### Windows Desktop Automation
+
+In **Automation Operator** mode (`Ctrl+2`), Velocity IDE provides full Windows desktop automation via UI Automation (UIA):
+
+**Recording desktop interactions:**
+1. Open **Automation → Recordings** panel
+2. Click **Start Recording**
+3. Interact with any Windows application normally
+4. Click **Stop Recording** — the session is saved as a replayable WaScript artifact
+
+**What gets recorded:** Clicks, double-clicks, text input, key combinations, focus changes, scroll events, drag-and-drop, and window activations — each with precise UIA node targets and timing.
+
+**UIA capabilities:**
+- **Element selection** — Find any UI element by automation ID, name, control type, or class name
+- **Advanced input** — Simulate keyboard and mouse input at the OS level
+- **Clipboard** — Read/write clipboard content
+- **Screenshots** — Capture the screen or specific windows
+- **OCR** — Read text from screen regions using optical character recognition
+- **Window management** — Move, resize, minimize, maximize, and arrange windows
+- **Multi-monitor** — Automate across multiple displays
+- **Virtual desktops** — Switch between Windows virtual desktops
+- **Process management** — Start, stop, and monitor processes
+- **File dialogs** — Handle native open/save file dialogs
+- **Toast notifications** — Read and interact with Windows notifications
+- **Windows Registry** — Read registry keys for automation configuration
+
+**Cross-context bridge:** Velocity can automate workflows that span both browser and desktop — for example, download a file in the browser, then automatically open it in a desktop application. The bridge handles context switching, file appearance monitoring, and clipboard transfers.
+
+**Automation triggers:** Set up automatic triggers that fire when conditions are met (file changes, build completion, specific log patterns, etc.). Configure via **Automation → Triggers**.
 
 ---
 
@@ -526,6 +786,182 @@ Agent memory persists learnings across sessions:
 - **Context injection:** Memories are automatically injected into agent prompts
 
 **Viewing memory:** Open **Agents → Memory** sub-panel.
+
+### Persistent Memory
+
+Beyond per-session agent memory, Velocity IDE maintains **persistent memory** that survives across restarts:
+
+- **NDA-encrypted at rest** — Stored in `.velocity/` with AES-256-GCM encryption
+- **Per-workspace** — Each workspace has its own isolated memory store
+- **Categories:** Pattern, preference, architecture, lesson, context
+- **Agent-accessible** — Agents can `remember`, `recall`, and `forget` entries via MCP tools
+- **Self-improvement integration** — The self-improvement engine stores learned failure patterns here
+
+### Shared Memory (Multi-Agent Collaboration)
+
+When multiple agents work together, **shared memory** provides a common knowledge store:
+
+- **Knowledge entries** — Structured entries with title, content, category, tags, and access level
+- **Categories:** Architecture, Conventions, Known Issues, Guides, Project Facts, Agent Patterns, Notes
+- **Access control:** Public, Team Only, or Private per entry
+- **File annotations** — Attach notes, warnings, TODOs, or questions to specific file locations and line ranges
+- **Search** — Keyword search across all entries, filterable by tag or category
+
+**Viewing shared memory:** Open **Tools → Knowledge → Shared Memory**.
+
+---
+
+## Orchestrator & Agent Teams
+
+### Orchestrator
+
+The Orchestrator is a **meta-agent control plane** that decomposes large goals into a parallel task graph and dispatches sub-agent workers.
+
+**Opening:** `Ctrl+Shift+Y` or **Tools → Agents → Orchestration**
+
+**How it works:**
+1. You provide a high-level goal
+2. The orchestrator decomposes it into a **Task Graph** (DAG) of scoped sub-tasks
+3. Tasks are topologically sorted into parallel phases — independent tasks run concurrently
+4. Each task is assigned to a sub-agent worker with its own provider, model, and thinking configuration
+5. The orchestrator monitors workers, detects file collisions, and validates outputs
+
+**Task lifecycle:**
+| Status | Meaning |
+|--------|---------|
+| Pending | Waiting to be dispatched |
+| Running | Actively being processed by a worker |
+| Done | Completed successfully |
+| Failed | Worker encountered an error |
+| Blocked | Waiting on a dependency or collision |
+
+**Collision detection:** When multiple tasks modify the same file, the orchestrator detects the conflict and either serializes the tasks or flags them for manual resolution. Scope violations (files touched outside a task's declared scope) are also caught.
+
+**UI features:**
+- **Execute** — Start the task graph
+- **Reset** — Clear all task statuses and start over
+- **Retry Blocked** — Retry tasks that are stuck
+- **Policy editor** — Customize orchestration policies
+- **Live monitoring** — Real-time stats: tasks, phases, done, blocked, active workers
+
+### Team Studio
+
+The Team Studio lets you create and manage **expert teams** of specialized AI agents.
+
+**Opening:** **Agents → Roster** or the Team Studio panel
+
+**Creating a team:**
+1. Click **New Team**
+2. Enter a name and optional purpose
+3. The team card expands for editing
+
+**Adding agents to a team:**
+1. Click **New Agent** within a team
+2. Enter name, role/specialty, scope paths (comma-separated file patterns), and operating instructions
+3. The agent inherits the current provider and model
+
+**Team gallery:** Expandable cards show each team's members with their name, role, provider, model, skills, and workflow instructions.
+
+**Launching a team:**
+1. Click **Launch Team** on an expanded team card
+2. All agents start working on their assigned scopes
+3. Use **Cancel Running** to stop all agents
+
+**AI-assisted team creation:** The Team Builder Chat at the bottom lets you describe a team in natural language — the AI creates the team structure for you.
+
+**Usage syntax:** Once created, reference teams with `@<slug> <task>` or "send it to the \<name\> team".
+
+### Agent Roster
+
+The Agent Roster sidebar shows all active agents with:
+- **Live status indicators** — Running (green), Idle (grey), Failed (red), Blocked (yellow)
+- **Orchestrator snapshot** — Done/failed/running/pending task counts
+- **Runtime status** — Active worker count and uptime
+- **Quick actions** — Inspect, cancel, or reassign individual agents
+
+### Background Agents
+
+Background agents are **autonomous monitors** that run independently of the main agent loop:
+
+**Opening:** **Tools → Agents → Background Agents**
+
+**Default monitors:**
+| Monitor | Interval | Default State |
+|---------|----------|---------------|
+| Git Status | 60 seconds | Enabled |
+| Build Health (`cargo check`) | 5 minutes | Disabled (opt-in) |
+| Dependency Updates (`cargo outdated`) | 24 hours | Disabled (opt-in) |
+
+**Monitor types:**
+- **File Changes** — Watch a directory for modifications matching patterns
+- **Build Health** — Run build/test commands periodically
+- **Dependency Updates** — Check for outdated dependencies
+- **Log Errors** — Scan log files for error patterns
+- **Git Status** — Monitor uncommitted changes and behind-remote status
+- **Custom** — User-defined periodic check with a custom prompt
+
+**Actions:** When a monitor detects something, it creates an action with severity (Info, Suggestion, Warning, Critical), title, description, and suggestion. Actions appear in the RECENT ACTIONS section and can be acknowledged.
+
+**Configuration:** State is persisted to `.velocity/background_agents.json`. Enable/disable monitors and adjust intervals from the UI.
+
+### Self-Improvement Engine
+
+The self-improvement engine **automatically learns from agent failures** to improve future sessions:
+
+**Opening:** **Tools → Agents → Self-Improvement**
+
+**How it works:**
+1. During a session, every tool failure is classified into a category (Syntax, Logic, Permission, Timeout, Dependency, Not Found, Rejected, Network, Unknown)
+2. At session end, patterns with 2+ occurrences generate corrective prompt directives
+3. These directives are stored in persistent memory
+4. At the start of future sessions, relevant directives are loaded and injected into the agent's system prompt
+
+**Example directives:**
+- *Syntax:* "Before writing code, verify syntax against the target language's grammar..."
+- *Permission:* "Check file permissions and ownership before write operations..."
+- *Timeout:* "Break long operations into smaller steps..."
+
+**User interaction:** Fully automatic — no configuration needed. The engine runs silently as part of the agent loop. You can view accumulated failure patterns and success statistics in the Self-Improvement panel.
+
+### Conflict Resolver
+
+When multiple agents or users operate concurrently, the conflict resolver tracks and manages resource contention:
+
+**Opening:** **Tools → Agents → Conflict Resolver**
+
+**Locking model:**
+- **Exclusive locks** — Block all other actors (same actor can re-lock)
+- **Shared locks** — Coexist with other shared locks, block exclusive locks
+- **Auto-expiry** — Locks expire after 5 minutes to prevent deadlocks
+
+**Conflict detection:** Write+write, create+create, delete+anything, read+write, and execute+update operations all conflict. Read+read never conflicts.
+
+**Resolution strategies:**
+| Strategy | Description |
+|----------|-------------|
+| Keep Latest | Use the most recent modification (default) |
+| Keep First | Use the first operation's result |
+| Keep Second | Use the second operation's result |
+| Merge | Attempt to merge both changes |
+| Discard Both | Discard both and flag for manual resolution |
+| Manual | Require user intervention |
+
+**Semantic coupling:** The resolver uses the SiteMap to detect when different files call each other, preventing concurrent edits to tightly coupled code even if they don't overlap line-by-line.
+
+### Session Continuity (Continuation Ledger)
+
+The continuation ledger enables **cross-model context handoff** when a model fails mid-task or gets swapped:
+
+**Opening:** **Tools → Agents → Session Continuity**
+
+**What it captures:**
+- **Mission spec** — Goal, task kind, expectations, constraints
+- **Scope environment** — Files in scope with symbols, line counts, and roles
+- **Edit journal** — Completed edits (with diffs and intents) and any partial in-progress edit
+- **Progress state** — Step-by-step checklist with Done/InProgress/Pending/Failed statuses
+- **Model provenance** — Which model attempted what, how long it took, and why it failed
+
+**How it helps:** When a new model takes over, it receives a structured continuation prompt with all the context needed to resume without gaps or duplication — no raw transcript dumps, just structured deltas and progress markers.
 
 ---
 
@@ -615,6 +1051,377 @@ Skills are reusable instruction sets for the agent:
 - **Skill files** — Markdown files that teach the agent specific workflows
 - **Activation** — Skills activate based on context or explicit invocation
 - **Management** — View and manage skills in **Workspace → Skills**
+
+---
+
+## Connectors & External Services
+
+The Connector system lets the IDE integrate with external services like GitHub, GitLab, Jira, Slack, Discord, and Notion.
+
+### Connector Types
+
+| Service | Base URL | Auth Method |
+|---------|----------|-------------|
+| GitHub | `https://api.github.com` | Bearer token |
+| GitLab | `https://gitlab.com/api/v4` | `PRIVATE-TOKEN` header |
+| Jira | `https://api.atlassian.com/ex/jira/{cloud_id}` | Bearer token |
+| Slack | `https://slack.com/api` | Bearer token |
+| Discord | `https://discord.com/api/v10` | Bearer token |
+| Notion | `https://api.notion.com/v1` | Bearer token + version header |
+| Webhook | Arbitrary URL | None (POST-only) |
+| Generic REST | Any URL | Bearer, custom header, or query param |
+
+### Setting Up a Connector
+
+1. Open **Workspace → Connectors** or use the `connector_call` MCP tool
+2. Click **Add Connector**
+3. Select a service template or choose Generic REST
+4. Enter the base URL and authentication credentials
+5. Click **Save** — credentials are stored encrypted in the secret store
+
+### OAuth2 Integration
+
+For services that support OAuth2 (GitHub, GitLab, Notion):
+1. The IDE initiates an authorization code flow
+2. Your browser opens to the service's consent page
+3. After approval, the IDE exchanges the code for an access token
+4. Tokens are automatically refreshed before expiry (30-second early window)
+5. State is persisted to `.velocity/oauth2_state.json`
+
+### Sync Engine
+
+The sync engine provides **bi-directional synchronization** between your workspace and external services:
+
+- **Directions:** Pull Only, Push Only, or Bi-Directional
+- **Poll intervals:** Configurable per rule (e.g., every 60 seconds, every hour)
+- **Field mappings:** Map local fields to remote fields
+- **Filters:** Only sync specific resource types or matching patterns
+- **Conflict resolution:** When both sides change, choose Keep Local, Keep Remote, Keep Both, or Discard Both
+
+### Webhooks
+
+**Outgoing webhooks** fire HTTP POST requests when events occur:
+- Workflow Completed / Failed
+- Build Completed / Failed
+- File Changed
+- Task Started / Completed
+- Critical Alert
+- Custom events
+
+**Incoming webhooks** receive HTTP POST from external services with HMAC-SHA256 signature verification for authenticity.
+
+### Integration Templates
+
+Six built-in templates provide one-step setup:
+- **GitHub** — Issues + PRs sync, CI/CD webhooks
+- **GitLab** — Issues + MRs sync, build webhooks
+- **Jira** — Issues + sprints sync
+- **Slack** — Notifications for critical alerts, build status, task updates
+- **Discord** — Build notifications, agent alerts
+- **Notion** — Pages + databases sync
+
+---
+
+## Site Map & NDA Format
+
+### Site Map
+
+The Site Map is the IDE's **semantic memory** — a persistent, content-addressed knowledge store that powers Go to Symbol, the code graph, and the compiler cache.
+
+**Location:** `.velocity/site_map/`
+
+**What it stores:**
+- **Semantic triples** — Subject-predicate-object relationships between code symbols (e.g., "function A calls function B")
+- **NDA program nodes** — Compiled AST nodes with 38 opcodes covering the full NDA vocabulary
+- **Key-value records** — Cached token embeddings for fast retrieval
+- **String dictionary** — Registered symbol names mapped to content hashes
+
+**How it's generated:** During NDA compilation, every emitted node is hashed through a Merkle verifier. When a scope closes, child hashes fold into a parent hash. The root hash carries the top-level integrity check — if it mismatches, the compilation is rejected as structurally invalid.
+
+**Directory structure:**
+```
+.velocity/site_map/
+├── index.json       # Metadata index (hash → entry for all entries)
+├── kv/              # Token key-value pair records
+├── nodes/           # NDA program nodes (AST elements)
+├── programs/        # Complete NDA programs
+└── weight_root      # Persisted model weight root hash
+```
+
+**How the IDE uses it:**
+- **Go to Symbol** (`Ctrl+Shift+O`) — Fuzzy-searches the site map's symbol index
+- **Code graph** — Derives caller/callee relationships from triples
+- **Compiler cache** — Checks site map for cache hits before recompiling
+- **Conflict resolution** — Semantic coupling detection uses triples to find related files
+
+**Merkle integrity:** Every NDA program is verified during generation. Corrupted objects cannot be stored because the hash would mismatch, ensuring the site map is always internally consistent.
+
+### NDA Format
+
+**NDA (Non-linear Decomposed Attention)** is Velocity IDE's native binary format, serving two purposes:
+
+#### NDA Weight Matrices (Model Weights)
+
+A binary format for extremely compact neural network weight storage where **inference is pure add/subtract — no multiplications**.
+
+| Version | Bits/Weight | Encoding | Description |
+|---------|-------------|----------|-------------|
+| v1 | 2 | Ternary {-1, 0, +1} | Legacy: active+pos bitmaps |
+| v2 | 2 | Quad {-2, -1, +1, +2} | Current: sign+extra bitmaps |
+| v3 | 4 | FP4 E2M1 | Blockwise logarithmic, double-quantized |
+| v4 | 2 | FP2 E1M0 | Blockwise logarithmic, most compact |
+
+**v2 decode rule (XNOR, no multiplication):**
+- `sign=0, extra=0` → -2 (subtract twice)
+- `sign=0, extra=1` → -1 (subtract once)
+- `sign=1, extra=0` → +1 (add once)
+- `sign=1, extra=1` → +2 (add twice)
+
+Model weights are stored in `models/` as `.nda` files (e.g., `models/qwen-coder-0.5b/`).
+
+#### NDA Documents (Portable Documents)
+
+A separate use of `.nda` for **portable, self-describing documents** with semantic provenance:
+
+**Contents:**
+- Semantic triples (subject-predicate-object)
+- Display commands (DrawText, DrawImage)
+- Revision history with author identity
+
+**Two modes:**
+- **Portable** — Plain NDA1 layout, openable in any browser via the PWA viewer
+- **Sealed** — Encrypted with AES-256-GCM using the workspace key; not browser-viewable
+
+**Working with NDA documents:**
+1. **New NDA Document** — Workspace menu → creates a blank NDA editor tab
+2. **Import Active File to NDA** — Workspace menu → converts the current file (text becomes DrawText commands, images become DrawImage commands)
+3. **Open NDA Browser Viewer** — Workspace menu → writes a standalone PWA HTML viewer to `.velocity/nda_viewer.html` and opens it in your browser
+
+**NDA document editor views:**
+- **Canvas** — Visual rendering of the document
+- **Triples** — Semantic data (subject-predicate-object)
+- **History** — Revision chain with author info
+- **Bytes** — Raw hex view
+
+**Files using .nda extension:**
+- Model weights: `models/qwen-coder-0.5b/*.nda`
+- Expert teams: `.velocity/expert_teams.nda`
+- Skills: `.velocity/skills/<id>.nda`
+- Automation runs: `.velocity/wa-runs/*.wa-run.nda`
+- Account usage: `memory/.account_usage.nda`
+- Build diagnostics: `.velocity/build_diagnostics.nda`
+- Fact stores: `runs/desktop/facts.nda`
+
+---
+
+## Collaboration & Drones
+
+### Collaboration Manager
+
+The Collaboration Manager supports **multi-user, multi-agent teamwork** with role-based access control:
+
+**Opening:** **Workspace → Collaboration**
+
+**User roles:**
+| Role | Permissions |
+|------|-------------|
+| Owner | Full access including team management |
+| Admin | Manage workflows and run agents |
+| Editor | Run agents and view sessions |
+| Viewer | View only |
+
+**Features:**
+- **Presence tracking** — See who's online via heartbeats (5-minute timeout)
+- **Shared sessions** — Create, join, pause, and complete collaborative sessions
+- **Session messaging** — Chat-style communication between users and agents within a session
+- **Session lifecycle:** Draft → Active → Paused → Completed (or Abandoned)
+- **Message history** — Last 500 messages per session with FIFO eviction
+
+**Cross-device peers:** Connect other devices running Velocity IDE via peer links. Each peer advertises capabilities (GUI automation, file execution, etc.) and can be delegated tasks remotely.
+
+**Persistence:** Collaboration state is saved to `.velocity/collaboration.json`.
+
+### Drone Subsystem
+
+Drones are **lightweight, portable agent endpoints** deployable on any machine — they don't require the full IDE.
+
+**Use cases:**
+- Remote execution on different hardware (e.g., GPU machine, ARM device)
+- E2E testing across multiple machines
+- CI/CD integration
+- Edge computing
+
+**How drones work:**
+1. Deploy `velocity-drone` on the target machine
+2. The drone starts an HTTP server on port 9191
+3. Pair the drone with your IDE via `POST /peer/pair`
+4. Send files and tasks to the drone
+
+**Drone API endpoints:**
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/peer/health` | GET | Status, capabilities, uptime |
+| `/peer/identity` | GET | Full drone identity (ID, name, environment, capabilities) |
+| `/peer/pair` | POST | Pair the drone with an IDE instance |
+| `/peer/message` | POST | Send a message to the drone |
+| `/peer/file/start` | POST | Begin a chunked file upload |
+| `/peer/file/chunk` | POST | Upload a file chunk (base64) |
+| `/peer/file/complete` | POST | Finalize upload with SHA-256 verification |
+| `/peer/task` | POST | Delegate a task (shell command) |
+| `/peer/task/{id}/status` | GET | Poll task progress |
+
+**Capabilities advertised:** `file_execution`, `test_runner`, `build_system`, `screen_capture`, `gui_automation`, `network_monitor`, `general`
+
+**File transfer:** Files are uploaded in chunks with SHA-256 verification. The drone validates the checksum and stores files in `.velocity/drops/` with path traversal protection.
+
+**Task execution:** Tasks run asynchronously (background thread, max 8 concurrent). Each task records exit code, stdout, and stderr.
+
+---
+
+## Security Model
+
+Velocity IDE implements defense-in-depth security across all layers.
+
+### Path Traversal Protection
+
+All file operations go through `resolve_workspace_path()` which:
+1. **Canonicalizes** the path (resolves symlinks, `..`, `.`)
+2. **Verifies** the canonical path starts with the workspace root
+3. **Rejects** any path that escapes the workspace with "Access Denied: Path escapes workspace root"
+
+This applies to reads, writes, and deletes — preventing both accidental and malicious path traversal attacks.
+
+### NDA Encryption at Rest
+
+Sensitive data is encrypted using the workspace's master key:
+
+- **Master key:** One 32-byte key per workspace, stored in `.velocity/nda.key`
+- **Key sealing:** The master key is sealed via **Windows DPAPI** (`CryptProtectData`) — tied to the current OS user account and machine
+- **Subkey derivation:** Per-artifact subkeys are derived via **HKDF** for domain separation (secrets, site map, transcripts never share a key)
+- **Encryption:** **AES-256-GCM** with hardware AES-NI acceleration
+- **Envelope format:** `NDA1` — includes nonce, ciphertext, and authentication tag
+
+**What's encrypted:**
+- Agent memory and transcripts
+- Account usage data
+- Expert team configurations
+- Build diagnostics
+- Site map entries
+- All `.nda` sealed documents
+
+### Secret Store
+
+API keys, tokens, and passwords are managed through an encrypted secret store:
+
+- **Storage:** `.velocity/secrets.nda` — sealed under the `secrets` artifact class
+- **Never in plaintext:** Secrets are only stored encrypted; if key material is unavailable, the save fails loudly
+- **Handles, not values:** The connector registry stores only handles (names) into the secret store, never the actual secrets
+- **Masked display:** The UI shows first 4 characters + bullets (e.g., `sk-a••••`)
+- **Redaction:** All known secret values are scrubbed from text before logging or UI display
+
+### Hardcoded Secret Detection
+
+When agents write files, `scan_file_content()` automatically checks for patterns like `api_key = "sk-` or `secret = "` and warns about potential hardcoded secrets.
+
+### Workspace Key Hierarchy
+
+```
+.velocity/
+├── nda.key              # Master key (DPAPI-sealed)
+├── secrets.nda          # Encrypted secret store
+├── provider-settings.json  # Provider credentials (workspace-local)
+├── oauth2_state.json    # OAuth2 tokens (encrypted)
+└── connectors.json      # Connector configs (secrets as handles only)
+```
+
+---
+
+## Usage Tracking
+
+Velocity IDE tracks daily API usage per account to help you stay within limits.
+
+**Opening:** **Workspace → Usage**
+
+### What's Tracked
+
+| Metric | Description |
+|--------|-------------|
+| Requests | Number of API calls made today |
+| Tokens in | Input tokens consumed |
+| Tokens out | Output tokens generated |
+| Daily limit | Maximum requests per day |
+| Remaining | Requests remaining today |
+| Exhausted | Whether the account has hit its limit |
+
+### Daily Limits
+
+| Tier | Default Limit | Override |
+|------|---------------|----------|
+| Free | 50 requests/day | `CF_ACCOUNT_{n}_DAILY_LIMIT` env var |
+| Paid | 500 requests/day | `CF_ACCOUNT_{n}_DAILY_LIMIT` env var |
+
+Limits reset at midnight UTC. When an account is exhausted, the IDE automatically switches to the next available account (if you have multiple configured).
+
+### Multi-Account Rotation
+
+Velocity supports up to 30 Cloudflare Workers AI accounts and multiple OpenRouter accounts:
+
+```
+CF_ACCOUNT_1_ID=abc...  CF_ACCOUNT_1_TOKEN=xyz...  CF_ACCOUNT_1_TIER=free
+CF_ACCOUNT_2_ID=def...  CF_ACCOUNT_2_TOKEN=uvw...  CF_ACCOUNT_2_TIER=paid
+OPENROUTER_ACCOUNT_1_KEY=sk-or-...
+OPENROUTER_ACCOUNT_2_KEY=sk-or-...
+```
+
+The IDE randomly selects from non-exhausted accounts for each request, providing automatic load balancing across your API keys.
+
+### Storage
+
+Usage data is dual-written to:
+- `memory/.account_usage.nda` — NDA-encrypted (authoritative)
+- `memory/.account_usage.json` — Plaintext backup
+
+Data is keyed by UTC date and auto-resets when the date changes.
+
+---
+
+## Workspace Preferences
+
+Velocity IDE persists your workspace configuration to `.velocity/workspace-preferences.json`.
+
+### What's Stored
+
+| Setting | Description |
+|---------|-------------|
+| `appearance` | Theme, workspace mode/profile |
+| `provider` | Active AI provider label |
+| `selected_model` | Active model ID |
+| `auto_approve` | Auto-approve tool actions |
+| `show_thoughts` | Show model reasoning |
+| `thinking_enabled` | Extended thinking mode |
+| `left_sidebar_visible` | Left sidebar visibility |
+| `left_sidebar_width` | Left sidebar width |
+| `right_sidebar_visible` | Right sidebar visibility |
+| `right_sidebar_width` | Right sidebar width |
+| `mode_layouts` | Per-mode panel arrangements |
+| `open_tabs` | File paths from last session |
+| `active_tab` | Active editor tab from last session |
+
+### Session Restoration
+
+When you reopen the IDE, it automatically:
+1. Restores your theme, mode, and sidebar layout
+2. Reopens all editor tabs from your last session
+3. Restores the active provider and model
+4. Reapplies per-mode panel arrangements
+
+### Per-Mode Layouts
+
+Each workspace mode (Coder, Automation Operator, Mission Control, Accessibility) remembers its own sidebar visibility and widths. Switching modes restores your customized layout for that mode.
+
+### Manual Editing
+
+You can edit `.velocity/workspace-preferences.json` directly. Changes take effect after restarting the IDE or reloading provider settings from the Settings panel.
 
 ---
 
@@ -975,4 +1782,4 @@ cargo clean
 
 ---
 
-*V.E.L.O.C.I.T.Y. IDE v2.4.0 — Built with Rust, powered by AI.*
+*V.E.L.O.C.I.T.Y. IDE v2.4.0 — Built with Rust, powered by AI. Comprehensive user guide covering all IDE features, agent orchestration, automation, security, and integration.*
