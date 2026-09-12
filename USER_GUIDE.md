@@ -267,6 +267,15 @@ Each mode changes:
 - **Bottom panel layout** — Tabbed, split, or dashboard view
 - **Toolbar actions** — Mode-specific quick actions
 
+**Right panels per mode:**
+
+| Mode | Right Panels |
+|------|-------------|
+| **Coder** | Symbol Context, Active Changes, AI Suggestions |
+| **Automation Operator** | Flow Inspector (⧉), Element Picker (⊞), Action Log (≡) |
+| **Mission Control** | Agent Detail (⊙), Task Inspector (⊟), Alerts (⚠) |
+| **Accessibility** | Accessibility Tree (⬿), Contrast Checker (◐), ARIA Inspector (⊜) |
+
 **Switching modes:** Click the mode badge in the status bar (bottom-left) or use the keyboard shortcut.
 
 ### Themes & Appearance
@@ -2069,6 +2078,7 @@ Velocity IDE supports automatic failover across providers. If the active provide
 |---------|----------|
 | Command palette | `Ctrl+Shift+P` |
 | Toggle sidebar | `Ctrl+E` |
+| Toggle right sidebar | `Ctrl+Shift+E` |
 | Toggle terminal | `` Ctrl+` `` |
 | Toggle chat | `Ctrl+J` |
 | Toggle orchestrator | `Ctrl+Shift+Y` |
