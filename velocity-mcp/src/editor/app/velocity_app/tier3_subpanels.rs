@@ -71,17 +71,16 @@ impl VelocityApp {
                     .desired_width(filter_width)
                     .text_color(palette.text),
             );
-            if !self.file_tree_filter.is_empty() {
-                if ui
+            if !self.file_tree_filter.is_empty()
+                && ui
                     .small_button(
                         RichText::new(egui_phosphor::regular::X)
                             .size(9.0)
                             .color(palette.text_muted),
                     )
                     .clicked()
-                {
-                    self.file_tree_filter.clear();
-                }
+            {
+                self.file_tree_filter.clear();
             }
         });
         ui.add_space(ITEM_SPACING);
@@ -451,12 +450,12 @@ impl VelocityApp {
                     .desired_width(ui.available_width()),
             );
             ui.horizontal(|ui| {
-                if primary_button(ui, palette, "Commit").clicked() {
-                    if !self.git_state.commit_message.trim().is_empty() {
-                        self.status_message =
-                            format!("Committing: {}", self.git_state.commit_message.trim());
-                        self.git_state.commit_message.clear();
-                    }
+                if primary_button(ui, palette, "Commit").clicked()
+                    && !self.git_state.commit_message.trim().is_empty()
+                {
+                    self.status_message =
+                        format!("Committing: {}", self.git_state.commit_message.trim());
+                    self.git_state.commit_message.clear();
                 }
                 if secondary_button(ui, palette, "Stage All").clicked() {
                     self.status_message = "All files staged".to_string();
@@ -667,14 +666,13 @@ impl VelocityApp {
 
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 // Clear conversation button
-                if !self.chat.messages.is_empty() {
-                    if ui
+                if !self.chat.messages.is_empty()
+                    && ui
                         .small_button(egui_phosphor::regular::X)
                         .on_hover_text("Clear conversation")
                         .clicked()
-                    {
-                        self.chat.messages.clear();
-                    }
+                {
+                    self.chat.messages.clear();
                 }
                 // Thinking toggle
                 if self.chat.thinking_supported {
@@ -1601,17 +1599,16 @@ impl VelocityApp {
                     .desired_width(filter_width)
                     .text_color(palette.text),
             );
-            if !self.skill_filter.is_empty() {
-                if ui
+            if !self.skill_filter.is_empty()
+                && ui
                     .small_button(
                         RichText::new(egui_phosphor::regular::X)
                             .size(9.0)
                             .color(palette.text_muted),
                     )
                     .clicked()
-                {
-                    self.skill_filter.clear();
-                }
+            {
+                self.skill_filter.clear();
             }
         });
         ui.add_space(ITEM_SPACING);

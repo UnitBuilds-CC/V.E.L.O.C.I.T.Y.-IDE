@@ -66,185 +66,131 @@ pub struct Metrics {
 
 impl Metrics {
     /// Create a new metrics instance.
+    ///
+    /// # Panics
+    ///
+    /// Panics if metric names conflict or are invalid — these are hardcoded
+    /// constants so failure indicates a programming error.
     pub fn new() -> Self {
         let registry = Registry::new();
 
+        // Helper closures to reduce boilerplate.
+        let counter_vec = |name: &str, help: &str, labels: &[&str]| -> CounterVec {
+            let c = CounterVec::new(Opts::new(name, help), labels)
+                .unwrap_or_else(|e| panic!("metric {name}: {e}"));
+            registry
+                .register(Box::new(c.clone()))
+                .unwrap_or_else(|e| panic!("register {name}: {e}"));
+            c
+        };
+        let histogram_vec =
+            |name: &str, help: &str, buckets: Vec<f64>, labels: &[&str]| -> HistogramVec {
+                let h = HistogramVec::new(HistogramOpts::new(name, help).buckets(buckets), labels)
+                    .unwrap_or_else(|e| panic!("metric {name}: {e}"));
+                registry
+                    .register(Box::new(h.clone()))
+                    .unwrap_or_else(|e| panic!("register {name}: {e}"));
+                h
+            };
+        let gauge = |name: &str, help: &str| -> Gauge {
+            let g = Gauge::new(name, help).unwrap_or_else(|e| panic!("metric {name}: {e}"));
+            registry
+                .register(Box::new(g.clone()))
+                .unwrap_or_else(|e| panic!("register {name}: {e}"));
+            g
+        };
+        let counter = |name: &str, help: &str| -> Counter {
+            let c = Counter::new(name, help).unwrap_or_else(|e| panic!("metric {name}: {e}"));
+            registry
+                .register(Box::new(c.clone()))
+                .unwrap_or_else(|e| panic!("register {name}: {e}"));
+            c
+        };
+
         // Request metrics
-        let requests_total = CounterVec::new(
-            Opts::new(
-                "velocity_mcp_requests_total",
-                "Total number of MCP requests",
-            ),
+        let requests_total = counter_vec(
+            "velocity_mcp_requests_total",
+            "Total number of MCP requests",
             &["method", "status"],
-        )
-        .expect("metric can be created");
-        registry
-            .register(Box::new(requests_total.clone()))
-            .expect("collector can be registered");
-
-        let request_duration_seconds = HistogramVec::new(
-            HistogramOpts::new(
-                "velocity_mcp_request_duration_seconds",
-                "MCP request duration in seconds",
-            )
-            .buckets(vec![0.001, 0.005, 0.01, 0.05, 0.1, 0.5, 1.0, 5.0, 10.0]),
+        );
+        let request_duration_seconds = histogram_vec(
+            "velocity_mcp_request_duration_seconds",
+            "MCP request duration in seconds",
+            vec![0.001, 0.005, 0.01, 0.05, 0.1, 0.5, 1.0, 5.0, 10.0],
             &["method"],
-        )
-        .expect("metric can be created");
-        registry
-            .register(Box::new(request_duration_seconds.clone()))
-            .expect("collector can be registered");
-
-        let requests_in_flight = Gauge::new(
+        );
+        let requests_in_flight = gauge(
             "velocity_mcp_requests_in_flight",
             "Number of requests currently being processed",
-        )
-        .expect("metric can be created");
-        registry
-            .register(Box::new(requests_in_flight.clone()))
-            .expect("collector can be registered");
+        );
 
         // Tool metrics
-        let tool_executions_total = CounterVec::new(
-            Opts::new(
-                "velocity_mcp_tool_executions_total",
-                "Total number of tool executions",
-            ),
+        let tool_executions_total = counter_vec(
+            "velocity_mcp_tool_executions_total",
+            "Total number of tool executions",
             &["tool", "status"],
-        )
-        .expect("metric can be created");
-        registry
-            .register(Box::new(tool_executions_total.clone()))
-            .expect("collector can be registered");
-
-        let tool_duration_seconds = HistogramVec::new(
-            HistogramOpts::new(
-                "velocity_mcp_tool_duration_seconds",
-                "Tool execution duration in seconds",
-            )
-            .buckets(vec![0.001, 0.01, 0.1, 0.5, 1.0, 5.0, 10.0, 30.0, 60.0]),
+        );
+        let tool_duration_seconds = histogram_vec(
+            "velocity_mcp_tool_duration_seconds",
+            "Tool execution duration in seconds",
+            vec![0.001, 0.01, 0.1, 0.5, 1.0, 5.0, 10.0, 30.0, 60.0],
             &["tool"],
-        )
-        .expect("metric can be created");
-        registry
-            .register(Box::new(tool_duration_seconds.clone()))
-            .expect("collector can be registered");
-
-        let tool_errors_total = CounterVec::new(
-            Opts::new(
-                "velocity_mcp_tool_errors_total",
-                "Total number of tool execution errors",
-            ),
+        );
+        let tool_errors_total = counter_vec(
+            "velocity_mcp_tool_errors_total",
+            "Total number of tool execution errors",
             &["tool", "error_type"],
-        )
-        .expect("metric can be created");
-        registry
-            .register(Box::new(tool_errors_total.clone()))
-            .expect("collector can be registered");
+        );
 
         // Provider metrics
-        let provider_calls_total = CounterVec::new(
-            Opts::new(
-                "velocity_mcp_provider_calls_total",
-                "Total number of API calls to providers",
-            ),
+        let provider_calls_total = counter_vec(
+            "velocity_mcp_provider_calls_total",
+            "Total number of API calls to providers",
             &["provider", "model", "status"],
-        )
-        .expect("metric can be created");
-        registry
-            .register(Box::new(provider_calls_total.clone()))
-            .expect("collector can be registered");
-
-        let provider_latency_seconds = HistogramVec::new(
-            HistogramOpts::new(
-                "velocity_mcp_provider_latency_seconds",
-                "Provider API call latency in seconds",
-            )
-            .buckets(vec![0.1, 0.5, 1.0, 2.0, 5.0, 10.0, 30.0, 60.0]),
+        );
+        let provider_latency_seconds = histogram_vec(
+            "velocity_mcp_provider_latency_seconds",
+            "Provider API call latency in seconds",
+            vec![0.1, 0.5, 1.0, 2.0, 5.0, 10.0, 30.0, 60.0],
             &["provider", "model"],
-        )
-        .expect("metric can be created");
-        registry
-            .register(Box::new(provider_latency_seconds.clone()))
-            .expect("collector can be registered");
-
-        let provider_errors_total = CounterVec::new(
-            Opts::new(
-                "velocity_mcp_provider_errors_total",
-                "Total number of provider API errors",
-            ),
+        );
+        let provider_errors_total = counter_vec(
+            "velocity_mcp_provider_errors_total",
+            "Total number of provider API errors",
             &["provider", "error_type"],
-        )
-        .expect("metric can be created");
-        registry
-            .register(Box::new(provider_errors_total.clone()))
-            .expect("collector can be registered");
+        );
 
         // Resource metrics
-        let memory_usage_bytes = Gauge::new(
+        let memory_usage_bytes = gauge(
             "velocity_mcp_memory_usage_bytes",
             "Current memory usage in bytes",
-        )
-        .expect("metric can be created");
-        registry
-            .register(Box::new(memory_usage_bytes.clone()))
-            .expect("collector can be registered");
-
-        let cpu_time_seconds = Counter::new(
+        );
+        let cpu_time_seconds = counter(
             "velocity_mcp_cpu_time_seconds_total",
             "Total CPU time consumed",
-        )
-        .expect("metric can be created");
-        registry
-            .register(Box::new(cpu_time_seconds.clone()))
-            .expect("collector can be registered");
-
-        let active_sessions = Gauge::new(
+        );
+        let active_sessions = gauge(
             "velocity_mcp_active_sessions",
             "Number of active MCP sessions",
-        )
-        .expect("metric can be created");
-        registry
-            .register(Box::new(active_sessions.clone()))
-            .expect("collector can be registered");
+        );
 
         // Agent metrics
-        let agent_executions_total = CounterVec::new(
-            Opts::new(
-                "velocity_mcp_agent_executions_total",
-                "Total number of agent executions",
-            ),
+        let agent_executions_total = counter_vec(
+            "velocity_mcp_agent_executions_total",
+            "Total number of agent executions",
             &["agent_type", "status"],
-        )
-        .expect("metric can be created");
-        registry
-            .register(Box::new(agent_executions_total.clone()))
-            .expect("collector can be registered");
-
-        let agent_duration_seconds = HistogramVec::new(
-            HistogramOpts::new(
-                "velocity_mcp_agent_duration_seconds",
-                "Agent execution duration in seconds",
-            )
-            .buckets(vec![1.0, 5.0, 10.0, 30.0, 60.0, 300.0, 600.0]),
+        );
+        let agent_duration_seconds = histogram_vec(
+            "velocity_mcp_agent_duration_seconds",
+            "Agent execution duration in seconds",
+            vec![1.0, 5.0, 10.0, 30.0, 60.0, 300.0, 600.0],
             &["agent_type"],
-        )
-        .expect("metric can be created");
-        registry
-            .register(Box::new(agent_duration_seconds.clone()))
-            .expect("collector can be registered");
-
-        let tokens_processed_total = CounterVec::new(
-            Opts::new(
-                "velocity_mcp_tokens_processed_total",
-                "Total number of tokens processed",
-            ),
+        );
+        let tokens_processed_total = counter_vec(
+            "velocity_mcp_tokens_processed_total",
+            "Total number of tokens processed",
             &["provider", "direction"],
-        )
-        .expect("metric can be created");
-        registry
-            .register(Box::new(tokens_processed_total.clone()))
-            .expect("collector can be registered");
+        );
 
         Self {
             registry,

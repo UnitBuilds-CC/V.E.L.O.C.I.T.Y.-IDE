@@ -449,8 +449,7 @@ pub fn parse_runtime_session_capture_response(
                                 .and_then(serde_json::Value::as_i64),
                         })
                     } else {
-                        item.as_str()
-                            .map(|raw| parse_runtime_session_cookie_value(raw))
+                        item.as_str().map(parse_runtime_session_cookie_value)
                     }
                 })
                 .collect::<Vec<_>>()

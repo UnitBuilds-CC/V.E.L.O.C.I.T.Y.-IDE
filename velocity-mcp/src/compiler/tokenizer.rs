@@ -5,6 +5,12 @@ pub struct Tokenizer {
     rev_vocab: HashMap<u32, String>,
 }
 
+impl Default for Tokenizer {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Tokenizer {
     /// Creates a new tokenizer with a default vocabulary containing basic ASCII (0..255)
     /// and common subwords & code keywords to guarantee 100% text coverage.

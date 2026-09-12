@@ -559,7 +559,7 @@ impl PeerManager {
 
         let transfer_id = format!("xfer_{}_{}", now_secs(), self.transfers.len());
         let sha256 = simple_hash_hex(file_data);
-        let total_chunks = ((file_data.len() + self.chunk_size - 1) / self.chunk_size) as u32;
+        let total_chunks = file_data.len().div_ceil(self.chunk_size) as u32;
 
         let transfer = FileTransfer {
             id: transfer_id.clone(),
@@ -741,11 +741,10 @@ impl PeerManager {
 
         // Execute instructions if provided.
         let exec_output = if deploy_ok {
-            if let Some(instructions) = &transfer.instructions {
-                Some(execute_deploy_instructions(instructions, &dest, &workspace))
-            } else {
-                None
-            }
+            transfer
+                .instructions
+                .as_ref()
+                .map(|instructions| execute_deploy_instructions(instructions, &dest, &workspace))
         } else {
             None
         };
@@ -1008,7 +1007,7 @@ fn simple_hash_hex(data: &[u8]) -> String {
 /// Minimal base64 encoding for file chunks.
 fn base64_encode(data: &[u8]) -> String {
     const CHARS: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-    let mut result = String::with_capacity((data.len() + 2) / 3 * 4);
+    let mut result = String::with_capacity(data.len().div_ceil(3) * 4);
     for chunk in data.chunks(3) {
         let b0 = chunk[0] as u32;
         let b1 = if chunk.len() > 1 { chunk[1] as u32 } else { 0 };

@@ -3,7 +3,7 @@ resolver = "2"
 members = ["velocity-mcp", "velocity-ide", "velocity-ide-gui", "velocity-browser", "drone", "e2e"]
 
 # Exclude archived & legacy dirs that are not Rust packages
-exclude = ["archive", "bin", "scratch", "memory", ".velocity", "browsing", "fuzz", "shared", "Kimi-Code"]
+exclude = ["archive", "bin", "scratch", "memory", ".velocity", "browsing", "fuzz", "shared", "Kimi-Code", "velocity-workflow-daemon"]
 
 [workspace.lints.clippy]
 # Every `unsafe` block/impl must carry an adjacent `// SAFETY:` comment stating the soundness

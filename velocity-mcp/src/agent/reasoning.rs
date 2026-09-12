@@ -189,23 +189,19 @@ impl ReasoningTree {
         // Greedily follow the highest-confidence child at each level.
         let mut path = Vec::new();
         let mut current_id = root_id;
-        loop {
-            if let Some(thought) = self.thoughts.get(&current_id) {
-                path.push(thought);
-                // Find best child.
-                let best_child = thought
-                    .children
-                    .iter()
-                    .filter_map(|cid| self.thoughts.get(cid).map(|t| (cid, t.confidence)))
-                    .max_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal))
-                    .map(|(cid, _)| cid.clone());
+        while let Some(thought) = self.thoughts.get(&current_id) {
+            path.push(thought);
+            // Find best child.
+            let best_child = thought
+                .children
+                .iter()
+                .filter_map(|cid| self.thoughts.get(cid).map(|t| (cid, t.confidence)))
+                .max_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal))
+                .map(|(cid, _)| cid.clone());
 
-                match best_child {
-                    Some(child_id) => current_id = child_id,
-                    None => break,
-                }
-            } else {
-                break;
+            match best_child {
+                Some(child_id) => current_id = child_id,
+                None => break,
             }
         }
         path

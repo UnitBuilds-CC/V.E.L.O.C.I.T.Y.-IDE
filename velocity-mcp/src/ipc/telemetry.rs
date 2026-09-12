@@ -17,7 +17,7 @@ static GLOBAL_TELEMETRY: OnceLock<TelemetryCollector> = OnceLock::new();
 
 /// Get or initialize the global telemetry collector
 pub fn global() -> &'static TelemetryCollector {
-    GLOBAL_TELEMETRY.get_or_init(|| TelemetryCollector::new())
+    GLOBAL_TELEMETRY.get_or_init(TelemetryCollector::new)
 }
 
 /// Metric types supported by the collector

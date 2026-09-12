@@ -1,12 +1,12 @@
-//! Velocity Workflow Core — foundational types and traits.
+//! Velocity Workflow Core â€” foundational types and traits.
 //!
 //! This crate defines the core abstractions for the Velocity Workflow Engine:
-//! - [`WorkflowId`], [`StepId`], [`RunId`] — Strongly-typed identifiers
-//! - [`Workflow`] — A named, ordered sequence of steps
-//! - [`Step`] — A unit of work within a workflow
-//! - [`VirtualObject`] — Batchable state mutation target (Restate-style)
-//! - [`WorkflowState`] — Execution state machine
-//! - [`StepOutcome`] — Result of executing a step
+//! - [`WorkflowId`], [`StepId`], [`RunId`] â€” Strongly-typed identifiers
+//! - [`Workflow`] â€” A named, ordered sequence of steps
+//! - [`Step`] â€” A unit of work within a workflow
+//! - [`VirtualObject`] â€” Batchable state mutation target (Restate-style)
+//! - [`WorkflowState`] â€” Execution state machine
+//! - [`StepOutcome`] â€” Result of executing a step
 //!
 //! # Virtual Object Batching
 //!
@@ -30,4 +30,3 @@ pub use virtual_object::*;
 pub use workflow::*;
 pub use state::*;
 pub use config::*;
-

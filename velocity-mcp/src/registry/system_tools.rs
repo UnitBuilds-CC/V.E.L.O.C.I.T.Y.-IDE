@@ -1334,7 +1334,7 @@ fn run_in_dll_sandbox(
             return Err("Failed to locate kernel32.dll in host".into());
         }
 
-        let load_library_addr = GetProcAddress(h_kernel32, b"LoadLibraryW\0".as_ptr());
+        let load_library_addr = GetProcAddress(h_kernel32, c"LoadLibraryW".as_ptr() as *const u8);
         if load_library_addr.is_null() {
             CloseHandle(pi.hThread);
             CloseHandle(pi.hProcess);

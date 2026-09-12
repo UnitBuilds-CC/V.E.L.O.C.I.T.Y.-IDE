@@ -88,13 +88,14 @@ impl OperationKind {
 }
 
 /// How to resolve a conflict.
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, Default)]
 pub enum Resolution {
     /// Keep the first operation's result.
     KeepFirst,
     /// Keep the second operation's result.
     KeepSecond,
     /// Keep the most recent operation.
+    #[default]
     KeepLatest,
     /// Merge both operations (if possible).
     Merge,
@@ -102,12 +103,6 @@ pub enum Resolution {
     DiscardBoth,
     /// Manual resolution required.
     Manual,
-}
-
-impl Default for Resolution {
-    fn default() -> Self {
-        Self::KeepLatest
-    }
 }
 
 impl Resolution {

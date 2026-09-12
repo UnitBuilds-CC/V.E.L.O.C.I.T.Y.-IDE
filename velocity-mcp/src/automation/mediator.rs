@@ -94,6 +94,12 @@ pub struct MediatorArena {
     locks: Mutex<HashMap<PathBuf, Vec<EditLock>>>,
 }
 
+impl Default for MediatorArena {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl MediatorArena {
     pub fn new() -> Self {
         Self {

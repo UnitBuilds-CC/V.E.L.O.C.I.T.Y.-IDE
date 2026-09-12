@@ -912,13 +912,13 @@ impl VelocityApp {
                                 ui.selectable_value(&mut to_idx, i, label.as_str());
                             }
                         });
-                    if ui.small_button(RichText::new("Link").size(8.0)).clicked() {
-                        if from_idx != to_idx {
-                            if let Some(canvas) = self.workflow_canvases.get_mut(&sel_id) {
-                                let from = node_ids[from_idx].0.clone();
-                                let to = node_ids[to_idx].0.clone();
-                                canvas.add_edge(from, "ok", to);
-                            }
+                    if ui.small_button(RichText::new("Link").size(8.0)).clicked()
+                        && from_idx != to_idx
+                    {
+                        if let Some(canvas) = self.workflow_canvases.get_mut(&sel_id) {
+                            let from = node_ids[from_idx].0.clone();
+                            let to = node_ids[to_idx].0.clone();
+                            canvas.add_edge(from, "ok", to);
                         }
                     }
                 }

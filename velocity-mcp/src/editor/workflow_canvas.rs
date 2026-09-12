@@ -13,6 +13,12 @@ use std::collections::HashMap;
 #[derive(Debug, Clone, Hash, PartialEq, Eq, Serialize, Deserialize)]
 pub struct NodeId(pub String);
 
+impl Default for NodeId {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl NodeId {
     pub fn new() -> Self {
         use std::time::{SystemTime, UNIX_EPOCH};

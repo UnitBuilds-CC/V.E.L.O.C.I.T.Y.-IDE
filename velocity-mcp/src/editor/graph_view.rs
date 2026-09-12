@@ -44,6 +44,12 @@ pub struct MerkleGraphView {
     selected: Option<Selection>,
 }
 
+impl Default for MerkleGraphView {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl MerkleGraphView {
     pub fn new() -> Self {
         Self {

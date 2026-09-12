@@ -288,18 +288,17 @@ impl VelocityApp {
                                 .desired_width(200.0)
                                 .hint_text("Type a message..."),
                         );
-                        if ui.button("Send").clicked()
+                        if (ui.button("Send").clicked()
                             || (response.lost_focus()
-                                && ui.input(|i| i.key_pressed(egui::Key::Enter)))
+                                && ui.input(|i| i.key_pressed(egui::Key::Enter))))
+                            && !self.peer_chat_message.is_empty()
                         {
-                            if !self.peer_chat_message.is_empty() {
-                                self.peer_manager.send_message(
-                                    selected_id,
-                                    crate::agent::peer_link::PeerMessageKind::Chat,
-                                    serde_json::json!({ "text": self.peer_chat_message.clone() }),
-                                );
-                                self.peer_chat_message.clear();
-                            }
+                            self.peer_manager.send_message(
+                                selected_id,
+                                crate::agent::peer_link::PeerMessageKind::Chat,
+                                serde_json::json!({ "text": self.peer_chat_message.clone() }),
+                            );
+                            self.peer_chat_message.clear();
                         }
                     });
                 } else {

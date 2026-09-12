@@ -290,10 +290,8 @@ pub fn render_git_content(
                     .strong()
                     .color(palette.success),
             );
-            if !staged.is_empty() {
-                if ui.small_button("Unstage All").clicked() {
-                    action = GitTabAction::UnstageAll;
-                }
+            if !staged.is_empty() && ui.small_button("Unstage All").clicked() {
+                action = GitTabAction::UnstageAll;
             }
         });
         if staged.is_empty() {
@@ -350,10 +348,8 @@ pub fn render_git_content(
                     .strong()
                     .color(palette.warning),
             );
-            if !unstaged.is_empty() {
-                if ui.small_button("Stage All").clicked() {
-                    action = GitTabAction::StageAll;
-                }
+            if !unstaged.is_empty() && ui.small_button("Stage All").clicked() {
+                action = GitTabAction::StageAll;
             }
         });
         if unstaged.is_empty() {

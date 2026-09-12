@@ -543,6 +543,12 @@ impl A11yRole {
     }
 }
 
+impl Default for ScreenReaderSim {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ScreenReaderSim {
     pub fn new() -> Self {
         Self {
