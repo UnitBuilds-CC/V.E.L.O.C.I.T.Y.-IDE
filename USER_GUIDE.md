@@ -723,7 +723,7 @@ In **Automation Operator** mode (`Ctrl+2`), Velocity IDE provides full Windows d
 
 The Git Changes panel shows modified files:
 
-- **Status indicators:** Modified (M), Added (A), Deleted (D), Renamed (R), Untracked (U), Conflicted (C)
+- **Status indicators:** Modified (M), Added (A), Deleted (D), Renamed (R), Untracked (?), Conflicted (!)
 - **Stage/unstage** — Click the +/− icons or right-click → Stage/Unstage
 - **Stage All / Unstage All** — Buttons at the top
 - **Diff view** — Click a file to see the diff
@@ -1033,11 +1033,11 @@ Extensions live in `.velocity/extensions/` and can be WASM or Lua:
   "entry_point": "main.wasm",
   "activation_events": ["onStartup", "onFileOpen"],
   "contributions": {
-    "commands": ["myExtension.hello"],
+    "commands": [{"id": "myExtension.hello", "title": "Hello", "category": "MyExt"}],
     "keybindings": [{"key": "Ctrl+Alt+H", "command": "myExtension.hello"}],
-    "themes": ["myTheme"],
-    "languages": ["myLang"],
-    "snippets": ["mySnippet"]
+    "themes": [{"label": "MyTheme", "path": "themes/my.json"}],
+    "languages": [{"id": "myLang", "extensions": [".my"], "configuration": "./lang.json"}],
+    "snippets": [{"language": "myLang", "path": "snippets/my.json"}]
   }
 }
 ```
@@ -1271,7 +1271,7 @@ Drones are **lightweight, portable agent endpoints** deployable on any machine �
 | `/peer/task` | POST | Delegate a task (shell command) |
 | `/peer/task/{id}/status` | GET | Poll task progress |
 
-**Capabilities advertised:** `file_execution`, `test_runner`, `build_system`, `screen_capture`, `gui_automation`, `network_monitor`, `general`
+**Capabilities advertised:** `file_execution`, `test_runner`, `build_system`, `general`
 
 **File transfer:** Files are uploaded in chunks with SHA-256 verification. The drone validates the checksum and stores files in `.velocity/drops/` with path traversal protection.
 
@@ -1445,8 +1445,16 @@ Keybindings are configurable via `.velocity/keybindings.json`:
 ```json
 {
   "bindings": [
-    {"key": "Ctrl+Shift+P", "command": "view.command_palette"},
-    {"key": "Ctrl+E", "command": "view.toggle_sidebar", "when": "editorFocus"}
+    {
+      "command": "view.command_palette",
+      "binding": {"key": "P", "ctrl": true, "shift": true, "alt": false},
+      "when": null
+    },
+    {
+      "command": "view.toggle_sidebar",
+      "binding": {"key": "E", "ctrl": true, "shift": false, "alt": false},
+      "when": "editorFocus"
+    }
   ]
 }
 ```
