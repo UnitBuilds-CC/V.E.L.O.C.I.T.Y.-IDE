@@ -11,6 +11,7 @@ A complete guide to using the V.E.L.O.C.I.T.Y. Cognitive IDE — a native, GPU-a
   - [Installation](#installation)
   - [First Launch](#first-launch)
   - [Opening a Workspace](#opening-a-workspace)
+  - [Quick Start Tutorial](#quick-start-tutorial)
 - [Interface Overview](#interface-overview)
   - [The Activity Bar](#the-activity-bar)
   - [Workspace Modes](#workspace-modes)
@@ -101,6 +102,9 @@ A complete guide to using the V.E.L.O.C.I.T.Y. Cognitive IDE — a native, GPU-a
     - [Automatic Failover](#automatic-failover)
 - [Keyboard Shortcuts Reference](#keyboard-shortcuts-reference)
 - [Troubleshooting](#troubleshooting)
+  - [Common Issues](#common-issues)
+  - [Data & Storage](#data--storage)
+- [Frequently Asked Questions](#frequently-asked-questions)
 
 ---
 
@@ -168,6 +172,47 @@ On first launch, you'll see the main IDE window with:
 3. Click **Select Folder**
 
 The IDE will index your workspace and populate the file tree. For large projects, indexing happens in the background — you can start working immediately.
+
+### Quick Start Tutorial
+
+New to Velocity IDE? Here's a walkthrough of a typical development workflow:
+
+**Step 1: Open your project**
+1. Launch Velocity IDE
+2. Press `Ctrl+O` and select your project folder
+3. The file tree populates in the left sidebar
+
+**Step 2: Configure your AI provider**
+1. Press `Ctrl+,` to open Settings
+2. Scroll to **Providers & credentials**
+3. Expand your provider (e.g., Cloudflare Workers AI) and enter credentials
+4. Click **Save provider settings** (green button)
+5. In **Agent defaults**, click **↻ Models** to load available models
+6. Select a model from the dropdown
+
+**Step 3: Explore your codebase**
+1. Press `Ctrl+Shift+F` to search across files
+2. Press `Ctrl+Shift+O` to jump to a symbol by name
+3. Click **Knowledge → Wiki** to see auto-generated documentation
+4. Click **Search → Code Graph** to visualize symbol relationships
+
+**Step 4: Chat with the AI agent**
+1. Press `Ctrl+J` to open the chat panel
+2. Try a suggestion chip: "Explain this codebase"
+3. Ask specific questions: "Where is authentication handled?"
+4. Request changes: "Add error handling to the login function"
+5. Review and approve the agent's proposed changes
+
+**Step 5: Build and test**
+1. Press `Ctrl+B` to build the project
+2. Click errors in the build panel to jump to source locations
+3. Use **Build → Test generator** to create tests for a module
+4. Press `F5` to start debugging, `F9` to set breakpoints
+
+**Step 6: Commit your changes**
+1. Press `Ctrl+G` to open the Git panel
+2. Review modified files, stage changes with the + icon
+3. Enter a commit message and click **Commit**
 
 ---
 
@@ -1777,6 +1822,119 @@ cargo clean
 - Enable **GPU acceleration** for smoother rendering
 - Use **Compact density** for maximum information density
 - Use **Spacious density** for reduced eye strain during long sessions
+
+### Common Issues
+
+**Model list is empty after switching providers:**
+- Click **↻ Models** in Settings → Agent defaults to refresh
+- The model catalog is cached for 10 minutes — if you just configured a provider, wait a moment and retry
+- Verify your API key is correct by checking the provider status badge (green = configured)
+
+**Agent approval dialog doesn't appear:**
+- Check that **Auto-approve tools** is not enabled in Settings → Agent defaults
+- If auto-approve is on, the agent executes tools without asking — disable it for more control
+
+**Wiki shows zero pages:**
+- Click **Rebuild Index** in the Wiki toolbar to compile source files into the name dictionary
+- The wiki generates pages from semantic triples stored in the site map — if no triples exist, the wiki will be empty
+- After adding new source files, click **Rebuild Index** again
+
+**Knowledge base search returns no results:**
+- Ensure content has been ingested via the Knowledge Base panel
+- The knowledge base uses TF-IDF ranking — very common words may not match well
+- Check that `.velocity/knowledge/store.json` exists and is not empty
+
+**Provider settings not saving:**
+- Ensure the `.velocity/` directory exists and is writable
+- Check that `.velocity/provider-settings.json` is not read-only
+- On Windows, verify that Windows Defender or antivirus is not blocking writes to `.velocity/`
+
+**NDA document appears blank in browser viewer:**
+- Ensure the document is in **Portable** mode, not **Sealed** (sealed documents require the workspace key)
+- Check that `.velocity/nda_viewer.html` was written correctly
+- Try opening the viewer directly: navigate to the file in your browser
+
+**Git panel shows no changes:**
+- Click **Refresh** in the Git panel
+- Verify you're in a git repository (check for `.git/` directory)
+- Ensure files are actually modified (check with `git status` in terminal)
+
+**Voice commands not working (Windows):**
+- Ensure microphone permissions are granted in Windows Settings → Privacy → Microphone
+- Verify the Windows Speech Recognition service is running
+- Voice commands are only available on Windows
+
+**Orchestrator tasks stuck in "Blocked":**
+- Check for file collisions — multiple tasks may be trying to edit the same file
+- Click **Retry Blocked** to attempt re-execution
+- Use **Reset** to clear all task statuses and start over
+
+**Extensions not loading:**
+- Verify the extension manifest (`manifest.json`) is valid JSON
+- Check that `entry_point` points to a valid `.wasm` or `.lua` file
+- Ensure the extension is in `.velocity/extensions/`
+- Check the extension state in **Workspace → Extensions** — it should show "Active"
+
+### Data & Storage
+
+**Where does Velocity IDE store data?**
+
+| Location | Contents |
+|----------|----------|
+| `.velocity/site_map/` | Semantic code index (Merkle-verified) |
+| `.velocity/workspace-preferences.json` | UI settings, open tabs, provider/model selection |
+| `.velocity/provider-settings.json` | Provider API keys and credentials |
+| `.velocity/nda.key` | Workspace encryption master key (DPAPI-sealed) |
+| `.velocity/secrets.nda` | Encrypted secret store |
+| `.velocity/connectors.json` | External service connector configs |
+| `.velocity/knowledge/store.json` | Knowledge base chunks |
+| `.velocity/extensions/` | Installed extensions |
+| `.velocity/skills/` | Agent skill definitions |
+| `.velocity/expert_teams.nda` | Expert team configurations |
+| `.velocity/background_agents.json` | Background agent monitor configs |
+| `.velocity/collaboration.json` | Collaboration manager state |
+| `.velocity/shared_memory.json` | Shared knowledge entries |
+| `memory/.account_usage.nda` | API usage tracking (encrypted) |
+
+**Can I delete `.velocity/` to start fresh?**
+Yes, but you'll lose: wiki data, knowledge base, agent memory, provider settings, and all workspace preferences. The site map will be rebuilt from source files on next open. Provider settings and API keys will need to be re-entered.
+
+**Is it safe to commit `.velocity/` to git?**
+No. The default `.gitignore` excludes `.velocity/` because it contains API keys, encryption keys, and machine-specific data. Only `.velocity/workspace-preferences.json` (if you strip provider credentials) and wiki exports (`.wiki/`) are safe to commit.
+
+---
+
+## Frequently Asked Questions
+
+**Q: Do I need an API key to use Velocity IDE?**
+A: No. Cloudflare Workers AI has a free tier that works without an API key (using the built-in default account). However, for production use, configuring your own credentials gives you higher limits and access to more models.
+
+**Q: Can I use Velocity IDE offline?**
+A: Yes, for editing, building, and browsing your codebase. AI chat, inline suggestions, and browser automation require network access. Local Ollama provides fully offline AI capabilities if you have models downloaded.
+
+**Q: How do I update Velocity IDE?**
+A: Download the latest release from GitHub Releases and replace the binary. If you built from source, run `git pull` then `cargo build --release`.
+
+**Q: Can I use multiple AI providers at once?**
+A: Yes. Configure multiple providers in Settings → Providers & credentials. The IDE uses one active provider at a time but automatically fails over to the next configured provider if the active one returns an error.
+
+**Q: What happens to my chat history?**
+A: Chat history (up to 200 messages) is persisted to NDA-encrypted storage and restored when you reopen the IDE. Use the **Clear** button in the chat panel to reset the conversation.
+
+**Q: Can I customize the keyboard shortcuts?**
+A: Yes. Edit `.velocity/keybindings.json` — see the [Keybindings](#keybindings) section for the format. The IDE warns you if two commands share the same shortcut.
+
+**Q: Does Velocity IDE support remote development?**
+A: Yes, via the Drone subsystem. Deploy `velocity-drone` on a remote machine, pair it with your IDE, and send files/tasks for remote execution.
+
+**Q: How do I report a bug?**
+A: Open an issue on [GitHub Issues](https://github.com/UnitBuilds-CC/V.E.L.O.C.I.T.Y.-IDE/issues) with steps to reproduce, expected behavior, and actual behavior. Include your OS version and Velocity IDE version (shown in the title bar).
+
+**Q: Can I contribute to Velocity IDE?**
+A: Yes! See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines. We welcome bug reports, feature requests, and pull requests.
+
+**Q: What languages does the editor support?**
+A: Syntax highlighting for 28+ languages including Rust, Python, JavaScript, TypeScript, Go, Java, C/C++, C#, Ruby, HTML, CSS, JSON, YAML, TOML, Markdown, SQL, Shell, and more. The AI agent can work with any language.
 
 ---
 
