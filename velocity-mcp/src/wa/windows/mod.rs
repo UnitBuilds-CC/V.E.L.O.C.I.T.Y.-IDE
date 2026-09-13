@@ -21,7 +21,6 @@ pub(crate) fn save_windows_capture_report_from_json(
 #[cfg(test)]
 mod tests {
     use super::payloads::*;
-    use super::reports::*;
     use super::*;
 
     #[test]

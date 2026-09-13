@@ -1,5 +1,6 @@
 pub mod browser_tools;
 pub mod dispatch;
+pub mod lazy;
 pub mod parsers;
 pub mod system_tools;
 pub mod team_tools;
@@ -8,6 +9,7 @@ pub mod types;
 pub mod wa_tools;
 
 pub use dispatch::call_tool_in_workspace;
+pub use lazy::{LazyToolRegistry, LruToolCache, ToolMetrics, ToolTimer, DEFAULT_CACHE_CAPACITY};
 pub use tool_definitions::get_tools;
 
 use serde_json::Value;

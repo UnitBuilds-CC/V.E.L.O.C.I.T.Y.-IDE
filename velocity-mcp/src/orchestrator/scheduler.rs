@@ -12,15 +12,23 @@ pub struct Plan {
 }
 
 /// Build a phase-based execution plan so tasks in the same phase are independent.
+/// Within each phase, tasks are sorted by priority (highest first) so workers
+/// pick urgent work before lower-priority tasks.
 pub fn plan(graph: &TaskGraph) -> Plan {
     let mut completed: HashSet<TaskId> = HashSet::new();
     let mut phases: Vec<Vec<TaskId>> = Vec::new();
 
     while completed.len() < graph.tasks.len() {
-        let ready: Vec<TaskId> = graph.ready(&completed).into_iter().map(|t| t.id).collect();
+        let mut ready: Vec<TaskId> = graph.ready(&completed).into_iter().map(|t| t.id).collect();
         if ready.is_empty() {
             break; // cycle or misconfiguration
         }
+        // Sort within each phase by priority (highest first).
+        ready.sort_by(|a, b| {
+            let pa = graph.tasks.get(a).map(|t| t.priority).unwrap_or(0);
+            let pb = graph.tasks.get(b).map(|t| t.priority).unwrap_or(0);
+            pb.cmp(&pa)
+        });
         completed.extend(ready.iter().copied());
         phases.push(ready);
     }

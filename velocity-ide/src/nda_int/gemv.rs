@@ -184,7 +184,7 @@ pub fn topk_i32(logits: &[i32], k: usize) -> Vec<(u32, i32)> {
         .enumerate()
         .map(|(i, &v)| (i as u32, v))
         .collect();
-    indexed.sort_by(|a, b| b.1.cmp(&a.1));
+    indexed.sort_by_key(|a| std::cmp::Reverse(a.1));
     indexed.truncate(k);
     indexed
 }
@@ -209,7 +209,6 @@ pub fn nda_gemv_batch(matrix: &NdaMatrix, inputs: &[NdaVec]) -> (Vec<NdaVec>, Ge
     (results, report)
 }
 
-#[allow(dead_code)]
 pub fn lm_head_nda_to_i32(matrix: &NdaMatrix, x: &NdaVec) -> Vec<i32> {
     debug_assert!(matrix.is_quad());
     debug_assert_eq!(x.len, matrix.cols);
@@ -250,7 +249,6 @@ pub fn lm_head_nda_to_i32(matrix: &NdaMatrix, x: &NdaVec) -> Vec<i32> {
     out
 }
 
-#[allow(dead_code)]
 pub fn nda_gemv_nda_to_i32(matrix: &NdaMatrix, x: &NdaVec) -> Vec<i32> {
     lm_head_nda_to_i32(matrix, x)
 }

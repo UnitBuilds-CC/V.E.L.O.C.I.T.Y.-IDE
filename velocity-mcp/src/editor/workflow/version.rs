@@ -3,7 +3,7 @@
 //! Each time a workflow canvas is saved, a snapshot is stored. Users can
 //! browse history, compare versions, and rollback to any previous state.
 
-use super::workflow_canvas::WorkflowCanvas;
+use super::canvas::WorkflowCanvas;
 use serde::{Deserialize, Serialize};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -217,7 +217,7 @@ fn now_secs() -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::editor::workflow_canvas::{CanvasNodeKind, NodePosition};
+    use crate::editor::workflow::canvas::{CanvasNodeKind, NodePosition};
 
     fn test_canvas() -> WorkflowCanvas {
         let mut c = WorkflowCanvas::new("wf1", "Test");

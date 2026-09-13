@@ -12,12 +12,30 @@ exclude = ["archive", "bin", "scratch", "memory", ".velocity", "browsing", "fuzz
 undocumented_unsafe_blocks = "warn"
 
 [profile.dev]
-debug = 1 # Generates minimal line-table debug symbols, saving massive disk space and preventing MSVC linker errors
+debug = 1              # Minimal line-table debug symbols (not full DWARF)
+split-debuginfo = "unpacked"  # PDB in separate files → faster linking, smaller artifacts
+opt-level = 0          # No optimization in dev — maximum compile speed
+codegen-units = 512    # Maximum parallel codegen (dev only; trade runtime perf for compile speed)
+incremental = true     # Already the default for dev, but explicit for clarity
+
+# Zero debug info for third-party deps in dev — they rarely need stack traces
+[profile.dev.package."*"]
+debug = 0
+opt-level = 0
+
+# Fast proc-macro / build-script compilation — these don't benefit from optimization
+[profile.dev.build-override]
+opt-level = 0
+codegen-units = 512
+
+[profile.test]
+codegen-units = 512    # Fast test compiles mirror dev
+incremental = true
 
 [profile.release]
-strip = true      # Strip debug symbols from release binaries
-lto = "thin"      # Thin LTO: good size reduction without excessive compile times
-opt-level = "s"   # Optimize for size over speed
-codegen-units = 16 # Parallel codegen for faster release builds
-panic = "abort"   # Abort on panic (no unwinding overhead, smaller binaries)
-
+strip = true           # Strip debug symbols from release binaries
+lto = "thin"           # Thin LTO: good size reduction without excessive compile times
+opt-level = "s"        # Optimize for size over speed
+codegen-units = 16     # Parallel codegen for faster release builds
+panic = "abort"        # Abort on panic (no unwinding overhead, smaller binaries)
+split-debuginfo = "off" # No separate debug files in release

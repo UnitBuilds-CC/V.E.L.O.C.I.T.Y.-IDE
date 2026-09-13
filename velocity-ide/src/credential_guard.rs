@@ -64,9 +64,10 @@ impl SecretString {
 
     /// Access the secret as a string slice.
     pub fn as_str(&self) -> &str {
-        // SAFETY: The inner Vec was constructed from a valid UTF-8 String.
-        // We only ever write valid UTF-8 bytes (or zeros during zeroize).
-        unsafe { std::str::from_utf8_unchecked(&self.inner) }
+        // The inner Vec was constructed from a valid UTF-8 String, but we use
+        // safe validation here to avoid undefined behaviour if the invariant is
+        // ever violated (e.g. after a partial zeroize).
+        std::str::from_utf8(&self.inner).unwrap_or("")
     }
 
     /// Zeroize the buffer without dropping.

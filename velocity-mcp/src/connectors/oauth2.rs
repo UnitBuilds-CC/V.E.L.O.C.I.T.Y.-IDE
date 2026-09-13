@@ -255,7 +255,8 @@ impl OAuth2Manager {
         self.get_token(provider_id).is_some()
     }
 
-    /// Save manager state to disk.
+    /// Save manager state to disk. Tokens are encrypted via the workspace
+    /// master key before writing — they never touch disk in the clear.
     pub fn save(&self) -> Result<(), String> {
         let root = self
             .workspace_root
@@ -270,21 +271,49 @@ impl OAuth2Manager {
         };
         let json =
             serde_json::to_vec_pretty(&state).map_err(|e| format!("Serialize failed: {e}"))?;
-        std::fs::write(dir.join("oauth2_state.json"), json)
+
+        // Encrypt the entire state blob with the workspace master key.
+        let sealed = crate::agent::crypto::seal(root, b"oauth2_state", &json)
+            .ok_or_else(|| "Failed to encrypt OAuth2 state (crypto unavailable)".to_string())?;
+        std::fs::write(dir.join("oauth2_state.nda"), sealed)
             .map_err(|e| format!("Write failed: {e}"))?;
+
+        // Remove legacy plaintext file if it exists.
+        let legacy = dir.join("oauth2_state.json");
+        if legacy.exists() {
+            let _ = std::fs::remove_file(legacy);
+        }
         Ok(())
     }
 
-    /// Load manager state from disk.
+    /// Load manager state from disk. Tries encrypted `.nda` first, then
+    /// falls back to legacy plaintext `.json` (and re-saves encrypted).
     pub fn load(workspace_root: &Path) -> Self {
         let mut mgr = Self::with_workspace(workspace_root);
-        let path = workspace_root.join(".velocity").join("oauth2_state.json");
-        if let Ok(bytes) = std::fs::read(&path) {
+
+        // Try encrypted format first.
+        let nda_path = workspace_root.join(".velocity").join("oauth2_state.nda");
+        if let Ok(sealed) = std::fs::read(&nda_path) {
+            let json = crate::agent::crypto::open(workspace_root, b"oauth2_state", &sealed);
+            if let Ok(state) = serde_json::from_slice::<PersistedOAuth2State>(&json) {
+                for provider in state.providers {
+                    mgr.providers.insert(provider.id.clone(), provider);
+                }
+                mgr.tokens = state.tokens;
+                return mgr;
+            }
+        }
+
+        // Fallback: legacy plaintext (and migrate to encrypted).
+        let json_path = workspace_root.join(".velocity").join("oauth2_state.json");
+        if let Ok(bytes) = std::fs::read(&json_path) {
             if let Ok(state) = serde_json::from_slice::<PersistedOAuth2State>(&bytes) {
                 for provider in state.providers {
                     mgr.providers.insert(provider.id.clone(), provider);
                 }
                 mgr.tokens = state.tokens;
+                // Migrate to encrypted format.
+                let _ = mgr.save();
             }
         }
         mgr
@@ -335,12 +364,28 @@ pub fn create_default_providers() -> Vec<OAuth2Provider> {
 }
 
 fn generate_state(provider_id: &str, connector_id: &str) -> String {
+    // Use cryptographic randomness to prevent CSRF state prediction.
+    let mut random_bytes = [0u8; 32];
+    crate::agent::crypto::fill_random(&mut random_bytes);
+    // Mix in provider/connector identity for uniqueness.
+    let context = format!("{provider_id}:{connector_id}");
+    let context_hash = {
+        let mut h: u64 = 0xcbf29ce484222325;
+        for byte in context.bytes() {
+            h ^= byte as u64;
+            h = h.wrapping_mul(0x100000001b3);
+        }
+        h
+    };
+    // Combine random bytes with context hash for a unique, unpredictable state.
     let ts = now_secs();
-    let hash = ts
-        .wrapping_mul(6364136223846793005)
-        .wrapping_add((provider_id.len() as u64).wrapping_mul(1442695040888963407))
-        .wrapping_add((connector_id.len() as u64).wrapping_mul(7046029254386353131));
-    format!("{:016x}{:08x}", hash, ts % 0xFFFFFFFF)
+    format!("{:016x}{:016x}{:08x}", {
+        let mut acc: u64 = 0;
+        for chunk in random_bytes[..8].chunks(8) {
+            acc = acc.wrapping_add(u64::from_le_bytes(chunk.try_into().unwrap_or([0; 8])));
+        }
+        acc
+    }, context_hash, ts % 0xFFFFFFFF)
 }
 
 /// Minimal URL encoding for OAuth parameters.

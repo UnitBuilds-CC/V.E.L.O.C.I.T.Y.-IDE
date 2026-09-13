@@ -15,7 +15,7 @@ impl VelocityApp {
     pub fn render_lsp_panel(&mut self, ui: &mut egui::Ui) {
         let palette = self.palette();
 
-        let (server_count, diag_count) = match &self.lsp_manager {
+        let (server_count, diag_count) = match &self.lsp_state.lsp_manager {
             Some(mgr) => (mgr.server_count(), mgr.diagnostics_count()),
             None => (0, 0),
         };
@@ -42,7 +42,7 @@ impl VelocityApp {
         egui::ScrollArea::vertical()
             .id_salt("lsp_scroll")
             .show(ui, |ui| {
-                if let Some(mgr) = &mut self.lsp_manager {
+                if let Some(mgr) = &mut self.lsp_state.lsp_manager {
                     let snapshot = mgr.server_snapshot();
 
                     if snapshot.is_empty() {
@@ -183,7 +183,7 @@ impl VelocityApp {
             });
         if redetect {
             let ws = self.workspace_root.clone();
-            self.lsp_manager = Some(crate::editor::lsp_client::LspManager::auto_detect(&ws));
+            self.lsp_state.lsp_manager = Some(crate::editor::lsp_client::LspManager::auto_detect(&ws));
         }
     }
 

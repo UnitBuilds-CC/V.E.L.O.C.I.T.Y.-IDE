@@ -138,6 +138,9 @@ pub struct FailureStats {
     pub total_successes: usize,
 }
 
+/// Maximum number of failure records retained before ring-buffer eviction.
+const MAX_FAILURES: usize = 512;
+
 /// The self-improvement engine. Collects failures during a session,
 /// then analyzes patterns and generates prompt refinements.
 pub struct ImprovementEngine {
@@ -191,6 +194,9 @@ impl ImprovementEngine {
             loop_index,
             timestamp: current_ts(),
         });
+        if self.failures.len() > MAX_FAILURES {
+            self.failures.remove(0);
+        }
     }
 
     /// Record a tool success.

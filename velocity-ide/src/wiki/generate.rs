@@ -224,7 +224,7 @@ impl WikiModel {
     /// Find the most-referenced symbol pages (by incoming call count).
     pub fn top_symbols(&self, limit: usize) -> Vec<&WikiPage> {
         let mut syms: Vec<&WikiPage> = self.symbol_pages.iter().collect();
-        syms.sort_by(|a, b| b.called_by.len().cmp(&a.called_by.len()));
+        syms.sort_by_key(|a| std::cmp::Reverse(a.called_by.len()));
         syms.truncate(limit);
         syms
     }
@@ -412,7 +412,7 @@ impl WikiModel {
                     .or_insert(0usize) += 1;
             }
             let mut v: Vec<(String, usize)> = counts.into_iter().collect();
-            v.sort_by(|a, b| b.1.cmp(&a.1));
+            v.sort_by_key(|a| std::cmp::Reverse(a.1));
             v
         };
 
@@ -448,7 +448,7 @@ impl WikiModel {
                 (p, total)
             })
             .collect();
-        scored.sort_by(|a, b| b.1.cmp(&a.1));
+        scored.sort_by_key(|a| std::cmp::Reverse(a.1));
         scored.truncate(limit);
         scored
     }

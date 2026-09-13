@@ -12,6 +12,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Mutex, OnceLock};
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
+use crate::safety::SafeMutex;
+
 /// Global telemetry instance
 static GLOBAL_TELEMETRY: OnceLock<TelemetryCollector> = OnceLock::new();
 
@@ -130,14 +132,14 @@ impl TelemetryCollector {
 
     /// Increment a counter by the given amount
     pub fn counter_increment(&self, name: &str, amount: u64) {
-        let mut counters = self.counters.lock().unwrap();
+        let mut counters = self.counters.lock_safe();
         let counter = counters.entry(name.to_string()).or_default();
         counter.fetch_add(amount, Ordering::Relaxed);
     }
 
     /// Get the current value of a counter
     pub fn counter_get(&self, name: &str) -> u64 {
-        let counters = self.counters.lock().unwrap();
+        let counters = self.counters.lock_safe();
         counters
             .get(name)
             .map(|c| c.load(Ordering::Relaxed))
@@ -148,13 +150,13 @@ impl TelemetryCollector {
 
     /// Set a gauge to a specific value
     pub fn gauge_set(&self, name: &str, value: f64) {
-        let mut gauges = self.gauges.lock().unwrap();
+        let mut gauges = self.gauges.lock_safe();
         gauges.insert(name.to_string(), value);
     }
 
     /// Get the current value of a gauge
     pub fn gauge_get(&self, name: &str) -> Option<f64> {
-        let gauges = self.gauges.lock().unwrap();
+        let gauges = self.gauges.lock_safe();
         gauges.get(name).copied()
     }
 
@@ -162,7 +164,7 @@ impl TelemetryCollector {
 
     /// Record a value in a histogram
     pub fn histogram_record(&self, name: &str, value: f64) {
-        let mut histograms = self.histograms.lock().unwrap();
+        let mut histograms = self.histograms.lock_safe();
         let hist = histograms.entry(name.to_string()).or_default();
         hist.push(value);
         // Keep only last 1000 values
@@ -173,7 +175,7 @@ impl TelemetryCollector {
 
     /// Get histogram statistics
     pub fn histogram_stats(&self, name: &str) -> Option<HistogramStats> {
-        let histograms = self.histograms.lock().unwrap();
+        let histograms = self.histograms.lock_safe();
         histograms.get(name).map(|values| {
             if values.is_empty() {
                 return HistogramStats {
@@ -187,7 +189,7 @@ impl TelemetryCollector {
                 };
             }
             let mut sorted = values.clone();
-            sorted.sort_by(|a, b| a.partial_cmp(b).unwrap());
+            sorted.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
             let count = sorted.len();
             let sum: f64 = sorted.iter().sum();
             HistogramStats {
@@ -238,7 +240,7 @@ impl TelemetryCollector {
             fields,
         };
 
-        let mut logs = self.logs.lock().unwrap();
+        let mut logs = self.logs.lock_safe();
         logs.push(event);
         if logs.len() > self.max_logs {
             logs.remove(0);
@@ -247,7 +249,7 @@ impl TelemetryCollector {
 
     /// Get all logged events
     pub fn logs(&self) -> Vec<LogEvent> {
-        self.logs.lock().unwrap().clone()
+        self.logs.lock_safe().clone()
     }
 
     // ─── Spans ───────────────────────────────────────────────────────────
@@ -263,7 +265,7 @@ impl TelemetryCollector {
 
     /// Record a completed span
     pub fn record_span(&self, span: SpanRecord) {
-        let mut spans = self.spans.lock().unwrap();
+        let mut spans = self.spans.lock_safe();
         spans.push(span);
         if spans.len() > self.max_spans {
             spans.remove(0);
@@ -272,7 +274,7 @@ impl TelemetryCollector {
 
     /// Get all recorded spans
     pub fn spans(&self) -> Vec<SpanRecord> {
-        self.spans.lock().unwrap().clone()
+        self.spans.lock_safe().clone()
     }
 
     // ─── Export ──────────────────────────────────────────────────────────
@@ -281,20 +283,18 @@ impl TelemetryCollector {
     pub fn export_json(&self) -> serde_json::Value {
         let counters: HashMap<String, u64> = self
             .counters
-            .lock()
-            .unwrap()
+            .lock_safe()
             .iter()
             .map(|(k, v)| (k.clone(), v.load(Ordering::Relaxed)))
             .collect();
 
-        let gauges: HashMap<String, f64> = self.gauges.lock().unwrap().clone();
+        let gauges: HashMap<String, f64> = self.gauges.lock_safe().clone();
 
         let histograms: HashMap<String, HistogramStats> = self
             .histograms
-            .lock()
-            .unwrap()
-            .iter()
-            .filter_map(|(name, _)| self.histogram_stats(name).map(|s| (name.clone(), s)))
+            .lock_safe()
+            .keys()
+            .filter_map(|name| self.histogram_stats(name).map(|s| (name.clone(), s)))
             .collect();
 
         serde_json::json!({
@@ -319,11 +319,11 @@ impl TelemetryCollector {
 
     /// Clear all collected data
     pub fn clear(&self) {
-        self.counters.lock().unwrap().clear();
-        self.gauges.lock().unwrap().clear();
-        self.histograms.lock().unwrap().clear();
-        self.logs.lock().unwrap().clear();
-        self.spans.lock().unwrap().clear();
+        self.counters.lock_safe().clear();
+        self.gauges.lock_safe().clear();
+        self.histograms.lock_safe().clear();
+        self.logs.lock_safe().clear();
+        self.spans.lock_safe().clear();
     }
 }
 

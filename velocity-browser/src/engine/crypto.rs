@@ -99,12 +99,23 @@ impl WebCryptoEngine {
     }
 
     /// Verify an HMAC-SHA256 tag in constant-time comparison.
+    /// Uses XOR-accumulate to avoid short-circuit timing side-channels.
     pub fn hmac_sha256_verify(key: &[u8], message: &[u8], expected_tag: &[u8; 32]) -> bool {
         let computed = Self::hmac_sha256(key, message);
-        computed
-            .iter()
-            .zip(expected_tag.iter())
-            .all(|(a, b)| a == b)
+        Self::constant_time_eq(&computed, expected_tag)
+    }
+
+    /// Compare two byte slices in constant time using XOR-accumulate.
+    /// Returns `true` only when every byte matches, without short-circuiting.
+    fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
+        if a.len() != b.len() {
+            return false;
+        }
+        let mut diff: u8 = 0;
+        for (x, y) in a.iter().zip(b.iter()) {
+            diff |= x ^ y;
+        }
+        diff == 0
     }
 
     /// AES-256-GCM encrypt (simplified: XOR-stream cipher using HMAC as PRF).
@@ -138,11 +149,11 @@ impl WebCryptoEngine {
         ciphertext: &[u8],
         tag: &[u8; 16],
     ) -> Option<Vec<u8>> {
-        // Verify tag first
+        // Verify tag first (constant-time to avoid timing oracle)
         let mut auth_input = nonce.to_vec();
         auth_input.extend_from_slice(ciphertext);
         let full_tag = Self::hmac_sha256(key, &auth_input);
-        let valid = full_tag[..16].iter().zip(tag.iter()).all(|(a, b)| a == b);
+        let valid = Self::constant_time_eq(&full_tag[..16], tag);
         if !valid {
             return None;
         }

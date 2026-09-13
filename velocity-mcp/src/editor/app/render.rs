@@ -84,16 +84,27 @@ impl<'a> TabViewer for TabViewerImpl<'a> {
                                         let diff_marks = buf.diff_marks.clone();
                                         let options = crate::editor::code_editor::EditorOptions {
                                             cursor_offset: 0,
-                                            diagnostic_lines: self.app.diagnostics.lines_for_file(
+                                            diagnostic_lines: self.app.lsp_state.diagnostics.lines_for_file(
                                                 path.as_deref().unwrap_or(std::path::Path::new("")),
                                             ),
                                             breakpoints: buf.breakpoints.clone(),
                                             collapsed_lines: buf.fold_state.collapsed_lines(),
                                             word_wrap: self.app.word_wrap,
+                                            visible_line_range: {
+                                                // Estimate visible line range from the UI clip rect
+                                                // and code font height for viewport-only gutter rendering.
+                                                let clip = ui.clip_rect();
+                                                let font_height = self.app.appearance.code_font_id().size;
+                                                let line_h = (font_height * 1.4).max(1.0); // approximate line height
+                                                let first_visible = (clip.top() / line_h).floor().max(0.0) as usize + 1;
+                                                let visible_count = (clip.height() / line_h).ceil() as usize + 2; // +2 for safety margin
+                                                let last_visible = first_visible + visible_count;
+                                                Some((first_visible, last_visible))
+                                            },
                                         };
-                                        editor.show_enhanced(
+                                        let response = editor.show_enhanced(
                                             ui,
-                                            buf.content_mut(),
+                                            buf.content_mut_lazy(),
                                             path.as_deref(),
                                             self.app.pending_cursor_line,
                                             &locks,
@@ -101,6 +112,12 @@ impl<'a> TabViewer for TabViewerImpl<'a> {
                                             &diff_marks,
                                             &options,
                                         );
+                                        // Only mark the buffer dirty when egui actually
+                                        // mutated the text — avoids O(n) LineIndex rebuilds
+                                        // on every idle frame.
+                                        if response.changed() {
+                                            buf.mark_mutated_pub();
+                                        }
                                         if self.app.pending_cursor_line.is_some() {
                                             self.app.pending_cursor_line = None;
                                         }
@@ -111,7 +128,7 @@ impl<'a> TabViewer for TabViewerImpl<'a> {
                                             let palette = self.app.appearance.palette();
                                             // Use the editor's cursor position for popup placement.
                                             let cursor_pos = ui.cursor().min;
-                                            self.app.diagnostics.render_inline_popup_at_line(
+                                            self.app.lsp_state.diagnostics.render_inline_popup_at_line(
                                                 ui,
                                                 file_path,
                                                 cursor_line,
@@ -166,6 +183,10 @@ impl<'a> TabViewer for TabViewerImpl<'a> {
                     self.app.thinking_enabled = self.app.chat.thinking_enabled;
                     self.app.provider = self.app.chat.provider;
                     self.app.save_workspace_preferences();
+                }
+                if self.app.chat.clear_timeline {
+                    self.app.task_timeline.clear();
+                    self.app.chat.clear_timeline = false;
                 }
             }
             TabKind::Output => self.output_panel(ui),
@@ -1762,8 +1783,10 @@ impl<'a> TabViewerImpl<'a> {
                                             if ui.selectable_label(is_selected, "Inspect").clicked() {
                                                 self.app.mission_control.set_selected_task(Some(task.id));
                                             }
-                                            if ui.small_button("Stop").clicked() {
-                                                self.app.orchestrator.stop_task_action(crate::orchestrator::TaskId(task.id));
+                                            if ui.small_button("Stop").clicked()
+                                                && self.app.orchestrator.stop_task_action(crate::orchestrator::TaskId(task.id))
+                                            {
+                                                self.app.cancel_requested = true;
                                             }
                                             if ui.small_button("Retry").clicked() {
                                                 self.app.orchestrator.retry_task_action(crate::orchestrator::TaskId(task.id), &self.app.workspace_root, &self.app.mediator);
@@ -1775,6 +1798,102 @@ impl<'a> TabViewerImpl<'a> {
                                     });
                                 ui.add_space(4.0);
                             });
+                        }
+
+                        // Desktop automation summary panel
+                        {
+                            let task_kind_label = snapshot.task_kind.as_deref();
+                            if let Some(summary) = crate::editor::app::wa::desktop_automation_mission_summary(
+                                &snapshot.tasks,
+                                task_kind_label,
+                            ) {
+                                ui.add_space(8.0);
+                                egui::Frame::new()
+                                    .fill(palette.bg_secondary)
+                                    .stroke(egui::Stroke::new(1.0, palette.accent.gamma_multiply(0.4)))
+                                    .corner_radius(egui::CornerRadius::same(6))
+                                    .inner_margin(egui::Margin::same(8))
+                                    .show(ui, |ui| {
+                                        ui.label(
+                                            egui::RichText::new(format!(
+                                                "Desktop Automation: {} task(s) \u{2014} {} live, {} artifacts, {} awaiting",
+                                                summary.task_count,
+                                                summary.live_count,
+                                                summary.artifact_count,
+                                                summary.awaiting_count,
+                                            ))
+                                            .small()
+                                            .strong(),
+                                        );
+                                        if !summary.state_labels.is_empty() {
+                                            ui.horizontal_wrapped(|ui| {
+                                                for label in &summary.state_labels {
+                                                    ui.label(
+                                                        egui::RichText::new(label)
+                                                            .small()
+                                                            .color(palette.text_muted),
+                                                    );
+                                                }
+                                            });
+                                        }
+                                    });
+                            }
+
+                            // Selected task WA status and cues
+                            if let Some(task) = selected_task {
+                                let wa_status =
+                                    crate::editor::app::wa::desktop_automation_selected_task_status(task);
+                                let wa_cues =
+                                    crate::editor::app::wa::desktop_automation_selected_task_cues(task);
+                                ui.add_space(4.0);
+                                egui::Frame::new()
+                                    .fill(palette.bg_tertiary)
+                                    .stroke(egui::Stroke::new(1.0, palette.border))
+                                    .corner_radius(egui::CornerRadius::same(4))
+                                    .inner_margin(egui::Margin::same(6))
+                                    .show(ui, |ui| {
+                                        ui.horizontal(|ui| {
+                                            ui.label(
+                                                egui::RichText::new(wa_status.state_label)
+                                                    .small()
+                                                    .strong()
+                                                    .color(palette.accent),
+                                            );
+                                            ui.label(
+                                                egui::RichText::new(format!(
+                                                    "artifacts: {} \u{00b7} outputs: {} \u{00b7} evidence updates: {}",
+                                                    wa_status.artifact_count,
+                                                    wa_status.output_count,
+                                                    wa_status.evidence_update_count,
+                                                ))
+                                                .small()
+                                                .color(palette.text_muted),
+                                            );
+                                        });
+                                        ui.label(
+                                            egui::RichText::new(wa_status.state_detail)
+                                                .small()
+                                                .color(palette.text_muted),
+                                        );
+                                        if !wa_cues.artifact_lines.is_empty() {
+                                            ui.add_space(2.0);
+                                            for line in &wa_cues.artifact_lines {
+                                                ui.label(
+                                                    egui::RichText::new(format!("\u{2022} {line}"))
+                                                        .small()
+                                                        .monospace()
+                                                        .color(palette.text_muted),
+                                                );
+                                            }
+                                        }
+                                        ui.add_space(2.0);
+                                        ui.label(
+                                            egui::RichText::new(format!("Next: {}", wa_cues.next_action))
+                                                .small()
+                                                .color(palette.warning),
+                                        );
+                                    });
+                            }
                         }
 
                         // Intervention input

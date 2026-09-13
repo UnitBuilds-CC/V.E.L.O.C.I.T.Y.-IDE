@@ -5,7 +5,30 @@ use crate::usage::{
 };
 use crossbeam_channel::Sender;
 use serde_json::{json, Value};
+use std::path::PathBuf;
 use std::time::Duration;
+
+/// Resolve an API key by checking provider-settings.json first (where the
+/// Settings UI saves keys), then falling back to the environment variable.
+pub(crate) fn resolve_api_key(workspace_root: &PathBuf, settings_field: &str, env_var: &str) -> String {
+    let settings_path = workspace_root
+        .join(".velocity")
+        .join("provider-settings.json");
+    if let Ok(contents) = std::fs::read_to_string(&settings_path) {
+        if let Ok(json) = serde_json::from_str::<serde_json::Value>(&contents) {
+            if let Some(key) = json
+                .get(settings_field)
+                .and_then(|s| s.get("api_key"))
+                .and_then(|k| k.as_str())
+            {
+                if !key.trim().is_empty() {
+                    return key.to_string();
+                }
+            }
+        }
+    }
+    std::env::var(env_var).unwrap_or_default()
+}
 
 pub fn execute_openrouter_request<'a>(
     or_accounts: &'a [OpenRouterAccount],
@@ -198,14 +221,19 @@ pub fn execute_azure_request(
             .ok();
         return None;
     }
-    let account = &azure_accounts[0];
+    // Select account by priority (.n): lower = higher priority.
+    let account = azure_accounts
+        .iter()
+        .min_by_key(|a| a.n)
+        .expect("azure_accounts is non-empty");
+    // Tier-aware retry budget: paid tiers get more attempts than free.
+    let max_attempts = if account.tier == "paid" { 3 } else { 2 };
     let endpoint = account.endpoint.trim_end_matches('/');
     let api_url = format!(
         "{}/openai/deployments/{}/chat/completions?api-version={}",
         endpoint, account.deployment, account.api_version
     );
     let mut attempt = 0;
-    let max_attempts = 2;
     let mut azure_response = None;
     while attempt < max_attempts {
         attempt += 1;
@@ -250,10 +278,13 @@ pub fn execute_ollama_request(
     request_body: &Value,
     ui_tx: &Sender<AgentToUiMessage>,
 ) -> Option<ureq::Response> {
-    let host = ollama_accounts
-        .first()
-        .map(|account| account.host.as_str())
+    let account = ollama_accounts.first();
+    let host = account
+        .map(|a| a.host.as_str())
         .unwrap_or("http://localhost:11434");
+    let label = account
+        .map(|a| a.label.as_str())
+        .unwrap_or("Local-Ollama");
     let api_url = ollama_chat_url(host);
     match ureq::post(&api_url)
         .timeout(Duration::from_secs(60))
@@ -264,8 +295,7 @@ pub fn execute_ollama_request(
         Err(e) => {
             ui_tx
                 .send(AgentToUiMessage::StatusUpdate(format!(
-                    "Local Ollama connection error at {host}: {:?}",
-                    e
+                    "Ollama '{label}' connection error at {host}: {e:?}",
                 )))
                 .ok();
             None
@@ -282,55 +312,96 @@ pub fn ollama_chat_url(host: &str) -> String {
 
 /// Execute a request against an OpenAI-compatible API endpoint.
 /// Used by Deepseek, Alibaba Qwen, Groq, Mistral, and other compatible providers.
+/// Retries up to 3 times with exponential backoff on 429/5xx errors.
 fn execute_openai_compatible_request(
     api_url: &str,
+    settings_field: &str,
     api_key_env_var: &str,
     request_body: &Value,
     ui_tx: &Sender<AgentToUiMessage>,
     provider_name: &str,
+    workspace_root: &PathBuf,
 ) -> Option<ureq::Response> {
-    let api_key = std::env::var(api_key_env_var).unwrap_or_default();
+    let api_key = resolve_api_key(workspace_root, settings_field, api_key_env_var);
     if api_key.trim().is_empty() {
         ui_tx
             .send(AgentToUiMessage::StatusUpdate(format!(
-                "{provider_name} API key not set. Export {api_key_env_var} to use this provider."
+                "{provider_name} API key not set. Configure it in Settings or export {api_key_env_var}."
             )))
             .ok();
         return None;
     }
-    match ureq::post(api_url)
-        .timeout(Duration::from_secs(60))
-        .set("Authorization", &format!("Bearer {}", api_key))
-        .set("Content-Type", "application/json")
-        .send_json(request_body)
-    {
-        Ok(res) => Some(res),
-        Err(ureq::Error::Status(401, _)) => {
-            ui_tx
-                .send(AgentToUiMessage::StatusUpdate(format!(
-                    "{provider_name} authentication failed. Check your {api_key_env_var} API key."
-                )))
-                .ok();
-            None
-        }
-        Err(ureq::Error::Status(429, _)) => {
-            ui_tx
-                .send(AgentToUiMessage::StatusUpdate(format!(
-                    "{provider_name} rate limit exceeded (429). Try again shortly."
-                )))
-                .ok();
-            None
-        }
-        Err(e) => {
-            ui_tx
-                .send(AgentToUiMessage::StatusUpdate(format!(
-                    "{provider_name} request error: {:?}",
-                    e
-                )))
-                .ok();
-            None
+
+    let max_attempts = 3u32;
+    for attempt in 1..=max_attempts {
+        match ureq::post(api_url)
+            .timeout(Duration::from_secs(60))
+            .set("Authorization", &format!("Bearer {}", api_key))
+            .set("Content-Type", "application/json")
+            .send_json(request_body)
+        {
+            Ok(res) => return Some(res),
+            Err(ureq::Error::Status(401, _)) => {
+                // Auth errors are not retryable.
+                ui_tx
+                    .send(AgentToUiMessage::StatusUpdate(format!(
+                        "{provider_name} authentication failed. Check your API key in Settings."
+                    )))
+                    .ok();
+                return None;
+            }
+            Err(ureq::Error::Status(429, _)) => {
+                if attempt < max_attempts {
+                    let wait_secs = attempt * 2; // 2s, 4s exponential
+                    ui_tx
+                        .send(AgentToUiMessage::StatusUpdate(format!(
+                            "{provider_name} rate limit (429). Retrying in {wait_secs}s (attempt {attempt}/{max_attempts})..."
+                        )))
+                        .ok();
+                    std::thread::sleep(Duration::from_secs(wait_secs as u64));
+                } else {
+                    ui_tx
+                        .send(AgentToUiMessage::StatusUpdate(format!(
+                            "{provider_name} rate limit exceeded after {max_attempts} retries."
+                        )))
+                        .ok();
+                    return None;
+                }
+            }
+            Err(ureq::Error::Status(code, _)) if code >= 500 => {
+                if attempt < max_attempts {
+                    let wait_secs = attempt; // 1s, 2s for server errors
+                    ui_tx
+                        .send(AgentToUiMessage::StatusUpdate(format!(
+                            "{provider_name} server error ({code}). Retrying in {wait_secs}s (attempt {attempt}/{max_attempts})..."
+                        )))
+                        .ok();
+                    std::thread::sleep(Duration::from_secs(wait_secs as u64));
+                } else {
+                    ui_tx
+                        .send(AgentToUiMessage::StatusUpdate(format!(
+                            "{provider_name} server error after {max_attempts} retries."
+                        )))
+                        .ok();
+                    return None;
+                }
+            }
+            Err(e) => {
+                if attempt < max_attempts {
+                    std::thread::sleep(Duration::from_secs(1));
+                } else {
+                    ui_tx
+                        .send(AgentToUiMessage::StatusUpdate(format!(
+                            "{provider_name} request error: {:?}",
+                            e
+                        )))
+                        .ok();
+                    return None;
+                }
+            }
         }
     }
+    None
 }
 
 /// Deepseek API — OpenAI-compatible endpoint.
@@ -338,13 +409,16 @@ fn execute_openai_compatible_request(
 pub fn execute_deepseek_request(
     request_body: &Value,
     ui_tx: &Sender<AgentToUiMessage>,
+    workspace_root: &PathBuf,
 ) -> Option<ureq::Response> {
     execute_openai_compatible_request(
         "https://api.deepseek.com/chat/completions",
+        "deepseek",
         "DEEPSEEK_API_KEY",
         request_body,
         ui_tx,
         "Deepseek",
+        workspace_root,
     )
 }
 
@@ -353,13 +427,16 @@ pub fn execute_deepseek_request(
 pub fn execute_alibaba_qwen_request(
     request_body: &Value,
     ui_tx: &Sender<AgentToUiMessage>,
+    workspace_root: &PathBuf,
 ) -> Option<ureq::Response> {
     execute_openai_compatible_request(
         "https://dashscope-intl.aliyuncs.com/compatible-mode/v1/chat/completions",
+        "alibaba",
         "DASHSCOPE_API_KEY",
         request_body,
         ui_tx,
         "Alibaba Qwen",
+        workspace_root,
     )
 }
 
@@ -368,13 +445,16 @@ pub fn execute_alibaba_qwen_request(
 pub fn execute_groq_request(
     request_body: &Value,
     ui_tx: &Sender<AgentToUiMessage>,
+    workspace_root: &PathBuf,
 ) -> Option<ureq::Response> {
     execute_openai_compatible_request(
         "https://api.groq.com/openai/v1/chat/completions",
+        "groq",
         "GROQ_API_KEY",
         request_body,
         ui_tx,
         "Groq",
+        workspace_root,
     )
 }
 
@@ -383,13 +463,16 @@ pub fn execute_groq_request(
 pub fn execute_mistral_request(
     request_body: &Value,
     ui_tx: &Sender<AgentToUiMessage>,
+    workspace_root: &PathBuf,
 ) -> Option<ureq::Response> {
     execute_openai_compatible_request(
         "https://api.mistral.ai/v1/chat/completions",
+        "mistral",
         "MISTRAL_API_KEY",
         request_body,
         ui_tx,
         "Mistral AI",
+        workspace_root,
     )
 }
 
@@ -398,13 +481,16 @@ pub fn execute_mistral_request(
 pub fn execute_openai_request(
     request_body: &Value,
     ui_tx: &Sender<AgentToUiMessage>,
+    workspace_root: &PathBuf,
 ) -> Option<ureq::Response> {
     execute_openai_compatible_request(
         "https://api.openai.com/v1/chat/completions",
+        "openai",
         "OPENAI_API_KEY",
         request_body,
         ui_tx,
         "OpenAI",
+        workspace_root,
     )
 }
 
@@ -413,21 +499,22 @@ pub fn execute_openai_request(
 pub fn execute_google_request(
     request_body: &Value,
     ui_tx: &Sender<AgentToUiMessage>,
+    workspace_root: &PathBuf,
 ) -> Option<ureq::Response> {
-    let api_key = std::env::var("GOOGLE_API_KEY").unwrap_or_default();
+    let api_key = resolve_api_key(workspace_root, "google", "GOOGLE_API_KEY");
     if api_key.trim().is_empty() {
         ui_tx
             .send(AgentToUiMessage::StatusUpdate(
-                "Google API key not set. Export GOOGLE_API_KEY to use this provider.".to_string(),
+                "Google API key not set. Configure it in Settings or export GOOGLE_API_KEY.".to_string(),
             ))
             .ok();
         return None;
     }
-    let url = format!(
-        "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions?key={api_key}"
-    );
+    let url =
+        "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions".to_string();
     match ureq::post(&url)
         .timeout(Duration::from_secs(60))
+        .set("x-goog-api-key", &api_key)
         .set("Content-Type", "application/json")
         .send_json(request_body)
     {
@@ -435,7 +522,7 @@ pub fn execute_google_request(
         Err(ureq::Error::Status(401, _)) => {
             ui_tx
                 .send(AgentToUiMessage::StatusUpdate(
-                    "Google authentication failed. Check your GOOGLE_API_KEY.".to_string(),
+                    "Google authentication failed. Check your API key in Settings.".to_string(),
                 ))
                 .ok();
             None
@@ -457,13 +544,16 @@ pub fn execute_google_request(
 pub fn execute_together_request(
     request_body: &Value,
     ui_tx: &Sender<AgentToUiMessage>,
+    workspace_root: &PathBuf,
 ) -> Option<ureq::Response> {
     execute_openai_compatible_request(
         "https://api.together.xyz/v1/chat/completions",
+        "together",
         "TOGETHER_API_KEY",
         request_body,
         ui_tx,
         "Together AI",
+        workspace_root,
     )
 }
 
@@ -472,13 +562,16 @@ pub fn execute_together_request(
 pub fn execute_fireworks_request(
     request_body: &Value,
     ui_tx: &Sender<AgentToUiMessage>,
+    workspace_root: &PathBuf,
 ) -> Option<ureq::Response> {
     execute_openai_compatible_request(
         "https://api.fireworks.ai/inference/v1/chat/completions",
+        "fireworks",
         "FIREWORKS_API_KEY",
         request_body,
         ui_tx,
         "Fireworks AI",
+        workspace_root,
     )
 }
 
@@ -487,13 +580,16 @@ pub fn execute_fireworks_request(
 pub fn execute_perplexity_request(
     request_body: &Value,
     ui_tx: &Sender<AgentToUiMessage>,
+    workspace_root: &PathBuf,
 ) -> Option<ureq::Response> {
     execute_openai_compatible_request(
         "https://api.perplexity.ai/chat/completions",
+        "perplexity",
         "PERPLEXITY_API_KEY",
         request_body,
         ui_tx,
         "Perplexity",
+        workspace_root,
     )
 }
 
@@ -502,13 +598,16 @@ pub fn execute_perplexity_request(
 pub fn execute_cerebras_request(
     request_body: &Value,
     ui_tx: &Sender<AgentToUiMessage>,
+    workspace_root: &PathBuf,
 ) -> Option<ureq::Response> {
     execute_openai_compatible_request(
         "https://api.cerebras.ai/v1/chat/completions",
+        "cerebras",
         "CEREBRAS_API_KEY",
         request_body,
         ui_tx,
         "Cerebras",
+        workspace_root,
     )
 }
 
@@ -518,6 +617,7 @@ pub fn execute_cerebras_request(
 pub fn execute_bedrock_request(
     request_body: &Value,
     ui_tx: &Sender<AgentToUiMessage>,
+    workspace_root: &PathBuf,
 ) -> Option<ureq::Response> {
     // If a proxy URL is configured, use it as an OpenAI-compatible endpoint.
     if let Ok(proxy_url) = std::env::var("BEDROCK_PROXY_URL") {
@@ -525,10 +625,12 @@ pub fn execute_bedrock_request(
             let url = format!("{}/chat/completions", proxy_url.trim_end_matches('/'));
             return execute_openai_compatible_request(
                 &url,
+                "bedrock",
                 "BEDROCK_API_KEY",
                 request_body,
                 ui_tx,
                 "AWS Bedrock",
+                workspace_root,
             );
         }
     }
@@ -542,32 +644,15 @@ pub fn execute_bedrock_request(
     None
 }
 
-/// Anthropic Messages API — converts OpenAI-format request body to Anthropic format.
-/// API docs: https://docs.anthropic.com/en/api/messages
-pub fn execute_anthropic_request(
-    request_body: &Value,
-    ui_tx: &Sender<AgentToUiMessage>,
-) -> Option<ureq::Response> {
-    let api_key = std::env::var("ANTHROPIC_API_KEY").unwrap_or_default();
-    if api_key.trim().is_empty() {
-        ui_tx
-            .send(AgentToUiMessage::StatusUpdate(
-                "Anthropic API key not set. Export ANTHROPIC_API_KEY to use this provider."
-                    .to_string(),
-            ))
-            .ok();
-        return None;
-    }
-    // Convert OpenAI-format messages to Anthropic format:
-    // Extract system message separately, keep user/assistant messages.
+/// Convert an OpenAI-format request body into an Anthropic Messages API body.
+///
+/// Returns `Ok(body)` ready to POST, or `Err(message)` when the input is
+/// missing required fields (e.g. no `messages` array).  This is a pure
+/// function with no side-effects so it can be thoroughly unit-tested.
+pub fn build_anthropic_body(request_body: &Value) -> Result<Value, String> {
     let messages = request_body.get("messages").and_then(|m| m.as_array());
     let Some(messages) = messages else {
-        ui_tx
-            .send(AgentToUiMessage::StatusUpdate(
-                "Anthropic request failed: no messages in request body.".to_string(),
-            ))
-            .ok();
-        return None;
+        return Err("no messages in request body".to_string());
     };
     let mut system_text = String::new();
     let mut anthropic_messages = Vec::new();
@@ -590,13 +675,10 @@ pub fn execute_anthropic_request(
                 anthropic_messages.push(Value::Object(entry));
             }
             "assistant" => {
-                // If the assistant message has tool_calls, convert them to
-                // Anthropic tool_use content blocks.
                 let mut entry = serde_json::Map::new();
                 entry.insert("role".to_string(), Value::String("assistant".to_string()));
                 if let Some(tool_calls) = msg.get("tool_calls").and_then(|t| t.as_array()) {
                     let mut blocks = Vec::new();
-                    // Include text content if present
                     if let Some(text) = content.as_str() {
                         if !text.is_empty() {
                             let mut text_block = serde_json::Map::new();
@@ -635,7 +717,6 @@ pub fn execute_anthropic_request(
                 anthropic_messages.push(Value::Object(entry));
             }
             "tool" => {
-                // OpenAI tool results → Anthropic user message with tool_result block
                 let tool_call_id = msg
                     .get("tool_call_id")
                     .and_then(|id| id.as_str())
@@ -659,9 +740,7 @@ pub fn execute_anthropic_request(
             _ => {}
         }
     }
-    // Anthropic requires at least one user message.  If the conversation
-    // contains only system messages, promote the system text as a user
-    // message so the API accepts the request.
+    // Anthropic requires at least one user message.
     if anthropic_messages.is_empty() {
         let fallback_content = if !system_text.is_empty() {
             system_text.clone()
@@ -689,8 +768,6 @@ pub fn execute_anthropic_request(
         body.insert("system".to_string(), Value::String(system_text));
     }
     // Convert OpenAI-format tools to Anthropic format.
-    // OpenAI: {"type":"function","function":{"name","description","parameters"}}
-    // Anthropic: {"name","description","input_schema"}
     if let Some(tools) = request_body.get("tools").and_then(|t| t.as_array()) {
         let anthropic_tools: Vec<Value> = tools
             .iter()
@@ -714,12 +791,38 @@ pub fn execute_anthropic_request(
             body.insert("tools".to_string(), Value::Array(anthropic_tools));
         }
     }
-    // Force non-streaming: the loop runner's SSE parser only understands
-    // OpenAI-format events.  Anthropic uses a different wire format, so we
-    // receive the full response at once and let the loop runner parse it
-    // via the provider-specific branch.
     body.insert("stream".to_string(), Value::Bool(false));
-    let anthropic_body = Value::Object(body);
+    Ok(Value::Object(body))
+}
+
+/// Anthropic Messages API — converts OpenAI-format request body to Anthropic format.
+/// API docs: https://docs.anthropic.com/en/api/messages
+pub fn execute_anthropic_request(
+    request_body: &Value,
+    ui_tx: &Sender<AgentToUiMessage>,
+    workspace_root: &PathBuf,
+) -> Option<ureq::Response> {
+    let api_key = resolve_api_key(workspace_root, "anthropic", "ANTHROPIC_API_KEY");
+    if api_key.trim().is_empty() {
+        ui_tx
+            .send(AgentToUiMessage::StatusUpdate(
+                "Anthropic API key not set. Configure it in Settings or export ANTHROPIC_API_KEY."
+                    .to_string(),
+            ))
+            .ok();
+        return None;
+    }
+    let anthropic_body = match build_anthropic_body(request_body) {
+        Ok(body) => body,
+        Err(msg) => {
+            ui_tx
+                .send(AgentToUiMessage::StatusUpdate(format!(
+                    "Anthropic request failed: {msg}"
+                )))
+                .ok();
+            return None;
+        }
+    };
     match ureq::post("https://api.anthropic.com/v1/messages")
         .timeout(Duration::from_secs(120))
         .set("x-api-key", &api_key)
@@ -758,6 +861,10 @@ pub fn execute_anthropic_request(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::agent::executor::utils::{build_request, estimate_tokens, is_quota_exhausted_error};
+    use crate::agent::models::{ApiStyle, ModelInfo};
+
+    // ── ollama_chat_url ──────────────────────────────────────────────
 
     #[test]
     fn ollama_url_appends_openai_chat_path() {
@@ -779,6 +886,8 @@ mod tests {
         );
     }
 
+    // ── bedrock URL shape ────────────────────────────────────────────
+
     #[test]
     fn bedrock_url_appends_chat_completions() {
         let url = format!(
@@ -795,5 +904,566 @@ mod tests {
             "https://bedrock-proxy.example.com/".trim_end_matches('/')
         );
         assert_eq!(url, "https://bedrock-proxy.example.com/chat/completions");
+    }
+
+    // ── resolve_api_key ──────────────────────────────────────────────
+
+    #[test]
+    fn resolve_api_key_reads_from_provider_settings_json() {
+        let dir = tempfile::tempdir().unwrap();
+        let velocity_dir = dir.path().join(".velocity");
+        std::fs::create_dir_all(&velocity_dir).unwrap();
+        let settings = json!({
+            "anthropic": {
+                "api_key": "sk-ant-from-file"
+            }
+        });
+        std::fs::write(velocity_dir.join("provider-settings.json"), settings.to_string()).unwrap();
+
+        let root = dir.path().to_path_buf();
+        let key = resolve_api_key(&root, "anthropic", "NONEXISTENT_ENV_VAR_FOR_TEST");
+        assert_eq!(key, "sk-ant-from-file");
+    }
+
+    #[test]
+    fn resolve_api_key_falls_back_to_env_var() {
+        let dir = tempfile::tempdir().unwrap();
+        // No provider-settings.json → must fall through to env var.
+        let root = dir.path().to_path_buf();
+        std::env::set_var("VELOCITY_TEST_RESOLVE_KEY", "sk-from-env");
+        let key = resolve_api_key(&root, "anthropic", "VELOCITY_TEST_RESOLVE_KEY");
+        assert_eq!(key, "sk-from-env");
+        std::env::remove_var("VELOCITY_TEST_RESOLVE_KEY");
+    }
+
+    #[test]
+    fn resolve_api_key_returns_empty_when_nothing_configured() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().to_path_buf();
+        let key = resolve_api_key(&root, "nonexistent_provider", "VELOCITY_NONEXISTENT_ENV_VAR_XYZ");
+        assert_eq!(key, "");
+    }
+
+    #[test]
+    fn resolve_api_key_ignores_empty_key_in_settings() {
+        let dir = tempfile::tempdir().unwrap();
+        let velocity_dir = dir.path().join(".velocity");
+        std::fs::create_dir_all(&velocity_dir).unwrap();
+        let settings = json!({
+            "openai": {
+                "api_key": "   "
+            }
+        });
+        std::fs::write(velocity_dir.join("provider-settings.json"), settings.to_string()).unwrap();
+
+        let root = dir.path().to_path_buf();
+        // Whitespace-only key should be treated as empty → fall back to env.
+        let key = resolve_api_key(&root, "openai", "VELOCITY_NONEXISTENT_ENV_VAR_XYZ");
+        assert_eq!(key, "");
+    }
+
+    #[test]
+    fn resolve_api_key_prefers_file_over_env() {
+        let dir = tempfile::tempdir().unwrap();
+        let velocity_dir = dir.path().join(".velocity");
+        std::fs::create_dir_all(&velocity_dir).unwrap();
+        let settings = json!({
+            "groq": {
+                "api_key": "sk-from-file"
+            }
+        });
+        std::fs::write(velocity_dir.join("provider-settings.json"), settings.to_string()).unwrap();
+
+        std::env::set_var("VELOCITY_TEST_GROQ_KEY", "sk-from-env");
+        let root = dir.path().to_path_buf();
+        let key = resolve_api_key(&root, "groq", "VELOCITY_TEST_GROQ_KEY");
+        assert_eq!(key, "sk-from-file");
+        std::env::remove_var("VELOCITY_TEST_GROQ_KEY");
+    }
+
+    // ── build_anthropic_body ─────────────────────────────────────────
+
+    #[test]
+    fn anthropic_body_basic_user_message() {
+        let req = json!({
+            "model": "claude-sonnet-4-20250514",
+            "max_tokens": 1024,
+            "messages": [
+                {"role": "user", "content": "Hello Claude"}
+            ]
+        });
+        let body = build_anthropic_body(&req).unwrap();
+        assert_eq!(body["model"], "claude-sonnet-4-20250514");
+        assert_eq!(body["max_tokens"], 1024);
+        assert_eq!(body["stream"], false);
+        let msgs = body["messages"].as_array().unwrap();
+        assert_eq!(msgs.len(), 1);
+        assert_eq!(msgs[0]["role"], "user");
+        assert_eq!(msgs[0]["content"], "Hello Claude");
+        // No system key when there's no system message.
+        assert!(body.get("system").is_none());
+    }
+
+    #[test]
+    fn anthropic_body_extracts_system_message() {
+        let req = json!({
+            "messages": [
+                {"role": "system", "content": "You are a helpful assistant."},
+                {"role": "user", "content": "Hi"}
+            ]
+        });
+        let body = build_anthropic_body(&req).unwrap();
+        assert_eq!(body["system"], "You are a helpful assistant.");
+        let msgs = body["messages"].as_array().unwrap();
+        // System message should NOT appear in the messages array.
+        assert_eq!(msgs.len(), 1);
+        assert_eq!(msgs[0]["role"], "user");
+        assert_eq!(msgs[0]["content"], "Hi");
+    }
+
+    #[test]
+    fn anthropic_body_system_only_promotes_to_user() {
+        // When only a system message exists, Anthropic requires at least one
+        // user message. The converter should promote the system text.
+        let req = json!({
+            "messages": [
+                {"role": "system", "content": "You are a pirate."}
+            ]
+        });
+        let body = build_anthropic_body(&req).unwrap();
+        assert_eq!(body["system"], "You are a pirate.");
+        let msgs = body["messages"].as_array().unwrap();
+        assert_eq!(msgs.len(), 1);
+        assert_eq!(msgs[0]["role"], "user");
+        assert_eq!(msgs[0]["content"], "You are a pirate.");
+    }
+
+    #[test]
+    fn anthropic_body_empty_messages_falls_back_to_continue() {
+        // No messages at all → should produce a "Continue" fallback.
+        let req = json!({
+            "messages": []
+        });
+        let body = build_anthropic_body(&req).unwrap();
+        let msgs = body["messages"].as_array().unwrap();
+        assert_eq!(msgs.len(), 1);
+        assert_eq!(msgs[0]["role"], "user");
+        assert_eq!(msgs[0]["content"], "Continue");
+    }
+
+    #[test]
+    fn anthropic_body_no_messages_key_returns_error() {
+        let req = json!({"model": "claude-sonnet-4-20250514"});
+        let err = build_anthropic_body(&req).unwrap_err();
+        assert!(err.contains("no messages"), "got: {err}");
+    }
+
+    #[test]
+    fn anthropic_body_converts_tool_calls_to_tool_use_blocks() {
+        let req = json!({
+            "messages": [
+                {
+                    "role": "assistant",
+                    "content": "",
+                    "tool_calls": [
+                        {
+                            "id": "call_123",
+                            "function": {
+                                "name": "read_file",
+                                "arguments": "{\"path\":\"/tmp/x.rs\"}"
+                            }
+                        }
+                    ]
+                },
+                {
+                    "role": "tool",
+                    "tool_call_id": "call_123",
+                    "content": "file contents here"
+                }
+            ]
+        });
+        let body = build_anthropic_body(&req).unwrap();
+        let msgs = body["messages"].as_array().unwrap();
+        assert_eq!(msgs.len(), 2);
+
+        // Assistant message should have tool_use block.
+        let assistant_content = msgs[0]["content"].as_array().unwrap();
+        assert_eq!(assistant_content.len(), 1);
+        assert_eq!(assistant_content[0]["type"], "tool_use");
+        assert_eq!(assistant_content[0]["id"], "call_123");
+        assert_eq!(assistant_content[0]["name"], "read_file");
+        assert_eq!(assistant_content[0]["input"]["path"], "/tmp/x.rs");
+
+        // Tool result should be a user message with tool_result block.
+        assert_eq!(msgs[1]["role"], "user");
+        let tool_result_content = msgs[1]["content"].as_array().unwrap();
+        assert_eq!(tool_result_content.len(), 1);
+        assert_eq!(tool_result_content[0]["type"], "tool_result");
+        assert_eq!(tool_result_content[0]["tool_use_id"], "call_123");
+        assert_eq!(tool_result_content[0]["content"], "file contents here");
+    }
+
+    #[test]
+    fn anthropic_body_assistant_with_text_and_tool_calls() {
+        let req = json!({
+            "messages": [
+                {
+                    "role": "assistant",
+                    "content": "Let me check that.",
+                    "tool_calls": [
+                        {
+                            "id": "call_abc",
+                            "function": {
+                                "name": "grep_search",
+                                "arguments": "{\"pattern\":\"fn main\"}"
+                            }
+                        }
+                    ]
+                }
+            ]
+        });
+        let body = build_anthropic_body(&req).unwrap();
+        let msgs = body["messages"].as_array().unwrap();
+        let blocks = msgs[0]["content"].as_array().unwrap();
+        // Should have a text block AND a tool_use block.
+        assert_eq!(blocks.len(), 2);
+        assert_eq!(blocks[0]["type"], "text");
+        assert_eq!(blocks[0]["text"], "Let me check that.");
+        assert_eq!(blocks[1]["type"], "tool_use");
+        assert_eq!(blocks[1]["name"], "grep_search");
+    }
+
+    #[test]
+    fn anthropic_body_converts_tools_to_anthropic_format() {
+        let req = json!({
+            "messages": [
+                {"role": "user", "content": "Use a tool"}
+            ],
+            "tools": [
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "read_file",
+                        "description": "Read a file from disk",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "path": {"type": "string"}
+                            },
+                            "required": ["path"]
+                        }
+                    }
+                }
+            ]
+        });
+        let body = build_anthropic_body(&req).unwrap();
+        let tools = body["tools"].as_array().unwrap();
+        assert_eq!(tools.len(), 1);
+        // Anthropic format: name, description, input_schema (not "function" wrapper).
+        assert_eq!(tools[0]["name"], "read_file");
+        assert_eq!(tools[0]["description"], "Read a file from disk");
+        assert!(tools[0].get("input_schema").is_some());
+        assert!(tools[0].get("function").is_none());
+        assert_eq!(tools[0]["input_schema"]["required"][0], "path");
+    }
+
+    #[test]
+    fn anthropic_body_default_model_and_max_tokens() {
+        // When model and max_tokens are absent, defaults should apply.
+        let req = json!({
+            "messages": [
+                {"role": "user", "content": "Hi"}
+            ]
+        });
+        let body = build_anthropic_body(&req).unwrap();
+        assert_eq!(body["model"], "claude-sonnet-4-20250514");
+        assert_eq!(body["max_tokens"], 4096);
+    }
+
+    #[test]
+    fn anthropic_body_ignores_unknown_roles() {
+        let req = json!({
+            "messages": [
+                {"role": "system", "content": "sys"},
+                {"role": "function", "content": "should be ignored"},
+                {"role": "user", "content": "real message"}
+            ]
+        });
+        let body = build_anthropic_body(&req).unwrap();
+        let msgs = body["messages"].as_array().unwrap();
+        // "function" role is ignored; only user message passes through.
+        assert_eq!(msgs.len(), 1);
+        assert_eq!(msgs[0]["content"], "real message");
+    }
+
+    #[test]
+    fn anthropic_body_tool_with_missing_tool_call_id() {
+        // tool_call_id missing → defaults to "unknown".
+        let req = json!({
+            "messages": [
+                {"role": "tool", "content": "result data"}
+            ]
+        });
+        let body = build_anthropic_body(&req).unwrap();
+        let msgs = body["messages"].as_array().unwrap();
+        let block = &msgs[0]["content"][0];
+        assert_eq!(block["tool_use_id"], "unknown");
+    }
+
+    #[test]
+    fn anthropic_body_tool_with_invalid_json_arguments() {
+        // If arguments is not valid JSON, input should default to {}.
+        let req = json!({
+            "messages": [
+                {
+                    "role": "assistant",
+                    "content": "",
+                    "tool_calls": [
+                        {
+                            "id": "call_bad",
+                            "function": {
+                                "name": "broken",
+                                "arguments": "not valid json {"
+                            }
+                        }
+                    ]
+                }
+            ]
+        });
+        let body = build_anthropic_body(&req).unwrap();
+        let blocks = body["messages"][0]["content"].as_array().unwrap();
+        assert_eq!(blocks[0]["input"], json!({}));
+    }
+
+    #[test]
+    fn anthropic_body_multiple_user_messages_preserved() {
+        let req = json!({
+            "messages": [
+                {"role": "user", "content": "first"},
+                {"role": "assistant", "content": "reply"},
+                {"role": "user", "content": "second"}
+            ]
+        });
+        let body = build_anthropic_body(&req).unwrap();
+        let msgs = body["messages"].as_array().unwrap();
+        assert_eq!(msgs.len(), 3);
+        assert_eq!(msgs[0]["content"], "first");
+        assert_eq!(msgs[1]["content"], "reply");
+        assert_eq!(msgs[2]["content"], "second");
+    }
+
+    // ── is_quota_exhausted_error (from utils) ────────────────────────
+
+    #[test]
+    fn quota_exhausted_detects_4006_code() {
+        assert!(is_quota_exhausted_error("Error 4006: daily limit reached"));
+    }
+
+    #[test]
+    fn quota_exhausted_detects_quota_keyword() {
+        assert!(is_quota_exhausted_error("Your quota has been exceeded."));
+    }
+
+    #[test]
+    fn quota_exhausted_negative_for_generic_error() {
+        assert!(!is_quota_exhausted_error("Internal server error"));
+        assert!(!is_quota_exhausted_error(""));
+    }
+
+    // ── estimate_tokens (from utils) ─────────────────────────────────
+
+    #[test]
+    fn estimate_tokens_empty_string_returns_one() {
+        assert_eq!(estimate_tokens(""), 1);
+    }
+
+    #[test]
+    fn estimate_tokens_short_text_returns_at_least_one() {
+        let est = estimate_tokens("Hi");
+        assert!(est >= 1);
+    }
+
+    #[test]
+    fn estimate_tokens_code_higher_than_prose() {
+        // Code has more symbols → higher token estimate per char.
+        let prose = "This is a simple sentence that a user might type in a chat window.";
+        let code = "fn main() { let x: Vec<u32> = (0..100).filter(|n| n % 2 == 0).collect(); }";
+        let prose_est = estimate_tokens(prose);
+        let code_est = estimate_tokens(code);
+        // Same length roughly, but code should estimate more tokens.
+        assert!(
+            code_est >= prose_est,
+            "code_est={code_est} should be >= prose_est={prose_est}"
+        );
+    }
+
+    // ── build_request (from utils) ───────────────────────────────────
+
+    fn test_model_info(api_style: ApiStyle, supports_tools: bool, supports_thinking: bool) -> ModelInfo {
+        ModelInfo {
+            id: "test-model".to_string(),
+            label: "Test Model".to_string(),
+            api_style,
+            supports_tools,
+            supports_thinking,
+        }
+    }
+
+    #[test]
+    fn build_request_openai_chat_includes_messages() {
+        let profile = test_model_info(ApiStyle::OpenAiChat, true, false);
+        let messages = vec![
+            crate::agent::models::ChatMessage {
+                role: "user".to_string(),
+                content: "Hello".to_string(),
+                name: None,
+                tool_call_id: None,
+                tool_calls: None,
+            },
+        ];
+        let req = build_request(&profile, "gpt-4o", &messages, &[], false, AiProvider::OpenRouter);
+        assert_eq!(req["model"], "gpt-4o");
+        assert_eq!(req["stream"], true);
+        assert!(req["messages"].is_array());
+        assert_eq!(req["messages"][0]["content"], "Hello");
+        // No tools → no tools key.
+        assert!(req.get("tools").is_none());
+    }
+
+    #[test]
+    fn build_request_openai_chat_with_tools() {
+        let profile = test_model_info(ApiStyle::OpenAiTools, true, false);
+        let messages = vec![
+            crate::agent::models::ChatMessage {
+                role: "user".to_string(),
+                content: "Search".to_string(),
+                name: None,
+                tool_call_id: None,
+                tool_calls: None,
+            },
+        ];
+        let tools = vec![json!({"type": "function", "function": {"name": "search"}})];
+        let req = build_request(&profile, "gpt-4o", &messages, &tools, false, AiProvider::OpenRouter);
+        assert!(req["tools"].is_array());
+        assert_eq!(req["tools"][0]["function"]["name"], "search");
+    }
+
+    #[test]
+    fn build_request_prompt_completion_uses_prompt_field() {
+        let profile = test_model_info(ApiStyle::PromptCompletion, false, false);
+        let messages = vec![
+            crate::agent::models::ChatMessage {
+                role: "user".to_string(),
+                content: "Hello".to_string(),
+                name: None,
+                tool_call_id: None,
+                tool_calls: None,
+            },
+        ];
+        let req = build_request(&profile, "llama3", &messages, &[], false, AiProvider::CloudflareWorkersAi);
+        assert!(req.get("prompt").is_some());
+        assert!(req.get("messages").is_none());
+        assert!(req["prompt"].as_str().unwrap().contains("user: Hello"));
+    }
+
+    #[test]
+    fn build_request_thinking_cloudflare() {
+        let profile = test_model_info(ApiStyle::OpenAiChat, false, true);
+        let messages = vec![
+            crate::agent::models::ChatMessage {
+                role: "user".to_string(),
+                content: "Think".to_string(),
+                name: None,
+                tool_call_id: None,
+                tool_calls: None,
+            },
+        ];
+        let req = build_request(&profile, "model", &messages, &[], true, AiProvider::CloudflareWorkersAi);
+        assert_eq!(req["thinking"], true);
+    }
+
+    #[test]
+    fn build_request_thinking_openrouter() {
+        let profile = test_model_info(ApiStyle::OpenAiChat, false, true);
+        let messages = vec![
+            crate::agent::models::ChatMessage {
+                role: "user".to_string(),
+                content: "Think".to_string(),
+                name: None,
+                tool_call_id: None,
+                tool_calls: None,
+            },
+        ];
+        let req = build_request(&profile, "model", &messages, &[], true, AiProvider::OpenRouter);
+        assert_eq!(req["reasoning"]["effort"], "high");
+        assert_eq!(req["reasoning"]["exclude"], false);
+    }
+
+    #[test]
+    fn build_request_thinking_azure() {
+        let profile = test_model_info(ApiStyle::OpenAiChat, false, true);
+        let messages = vec![
+            crate::agent::models::ChatMessage {
+                role: "user".to_string(),
+                content: "Think".to_string(),
+                name: None,
+                tool_call_id: None,
+                tool_calls: None,
+            },
+        ];
+        let req = build_request(&profile, "model", &messages, &[], true, AiProvider::AzureOpenAi);
+        assert_eq!(req["reasoning_effort"], "high");
+    }
+
+    #[test]
+    fn build_request_thinking_ollama() {
+        let profile = test_model_info(ApiStyle::OpenAiChat, false, true);
+        let messages = vec![
+            crate::agent::models::ChatMessage {
+                role: "user".to_string(),
+                content: "Think".to_string(),
+                name: None,
+                tool_call_id: None,
+                tool_calls: None,
+            },
+        ];
+        let req = build_request(&profile, "model", &messages, &[], true, AiProvider::LocalOllama);
+        assert_eq!(req["think"], true);
+    }
+
+    #[test]
+    fn build_request_thinking_disabled_no_thinking_key() {
+        let profile = test_model_info(ApiStyle::OpenAiChat, false, true);
+        let messages = vec![
+            crate::agent::models::ChatMessage {
+                role: "user".to_string(),
+                content: "No think".to_string(),
+                name: None,
+                tool_call_id: None,
+                tool_calls: None,
+            },
+        ];
+        let req = build_request(&profile, "model", &messages, &[], false, AiProvider::OpenRouter);
+        assert!(req.get("reasoning").is_none());
+        assert!(req.get("thinking").is_none());
+        assert!(req.get("think").is_none());
+    }
+
+    #[test]
+    fn build_request_no_tools_when_unsupported() {
+        let profile = test_model_info(ApiStyle::OpenAiChat, false, false);
+        let messages = vec![
+            crate::agent::models::ChatMessage {
+                role: "user".to_string(),
+                content: "Hi".to_string(),
+                name: None,
+                tool_call_id: None,
+                tool_calls: None,
+            },
+        ];
+        let tools = vec![json!({"type": "function", "function": {"name": "search"}})];
+        let req = build_request(&profile, "model", &messages, &tools, false, AiProvider::OpenRouter);
+        // Model doesn't support tools → tools key should be absent.
+        assert!(req.get("tools").is_none());
     }
 }

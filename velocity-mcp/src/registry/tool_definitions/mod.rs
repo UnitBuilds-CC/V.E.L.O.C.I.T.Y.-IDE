@@ -1,4 +1,5 @@
 pub mod browser;
+pub mod drone;
 pub mod system;
 pub mod team;
 pub mod wa;
@@ -10,5 +11,6 @@ pub fn get_tools() -> Vec<Tool> {
     tools.extend(browser::get_browser_tools());
     tools.extend(wa::get_wa_tools());
     tools.extend(team::get_team_tools());
+    tools.extend(drone::get_drone_tools());
     tools
 }

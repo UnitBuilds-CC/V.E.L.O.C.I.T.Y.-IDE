@@ -58,6 +58,9 @@ impl DroneIdentity {
                 "file_execution".into(),
                 "test_runner".into(),
                 "build_system".into(),
+                "screen_capture".into(),
+                "gui_automation".into(),
+                "network_monitor".into(),
                 "general".into(),
             ],
             first_seen: now,
@@ -287,6 +290,13 @@ impl Task {
 
 // ── Drone Core ──
 
+/// Maximum number of completed tasks retained before cleanup.
+const MAX_TASKS: usize = 64;
+/// Maximum number of concurrent file transfers tracked.
+const MAX_TRANSFERS: usize = 32;
+/// Maximum number of paired peers.
+const MAX_PAIRED_PEERS: usize = 16;
+
 /// Core drone logic: manages identity, transfers, tasks, messages, and paired peers.
 pub struct DroneCore {
     pub identity: DroneIdentity,
@@ -313,6 +323,30 @@ impl DroneCore {
         }
     }
 
+    /// Remove completed tasks beyond the retention limit.
+    pub fn cleanup_completed_tasks(&self) {
+        let mut tasks = self.tasks.lock_safe();
+        if tasks.len() <= MAX_TASKS {
+            return;
+        }
+        // Collect completed task IDs.
+        let completed: Vec<String> = tasks
+            .iter()
+            .filter(|(_, t)| {
+                let t = t.lock_safe();
+                t.status == "completed" || t.status == "failed"
+            })
+            .map(|(id, _)| id.clone())
+            .collect();
+        // Remove oldest completed tasks first.
+        for id in completed {
+            if tasks.len() <= MAX_TASKS {
+                break;
+            }
+            tasks.remove(&id);
+        }
+    }
+
     pub fn drops_dir(&self) -> PathBuf {
         self.workspace.join(".velocity").join("drops")
     }
@@ -321,6 +355,16 @@ impl DroneCore {
 
     pub fn handle_pair(&self, peer_id: &str, name: &str) -> serde_json::Value {
         let mut peers = self.paired_peers.lock_safe();
+        // Enforce size limit: evict oldest peer if at capacity.
+        if peers.len() >= MAX_PAIRED_PEERS && !peers.contains_key(peer_id) {
+            if let Some(oldest_key) = peers
+                .iter()
+                .min_by_key(|(_, v)| v.get("paired_at").and_then(|t| t.as_u64()).unwrap_or(0))
+                .map(|(k, _)| k.clone())
+            {
+                peers.remove(&oldest_key);
+            }
+        }
         peers.insert(
             peer_id.to_string(),
             serde_json::json!({
@@ -374,6 +418,20 @@ impl DroneCore {
         );
 
         let mut transfers = self.transfers.lock_safe();
+        // Enforce transfer limit: evict completed transfers if at capacity.
+        if transfers.len() >= MAX_TRANSFERS {
+            let completed: Vec<String> = transfers
+                .iter()
+                .filter(|(_, t)| t.complete)
+                .map(|(id, _)| id.clone())
+                .collect();
+            for id in completed {
+                transfers.remove(&id);
+                if transfers.len() < MAX_TRANSFERS {
+                    break;
+                }
+            }
+        }
         transfers.insert(transfer_id.to_string(), transfer);
 
         serde_json::json!({
@@ -532,6 +590,9 @@ impl DroneCore {
             tasks.insert(task_id.clone(), Arc::clone(&task_arc));
         }
 
+        // Clean up old completed tasks to prevent unbounded growth.
+        self.cleanup_completed_tasks();
+
         // Execute in a background thread.
         let task_clone = Arc::clone(&task_arc);
         let workspace = self.workspace.clone();
@@ -567,7 +628,38 @@ impl DroneCore {
 
 // ── Deployment Instructions ──
 
+/// Commands allowed in deployment instructions (shell-injection mitigation).
+/// Only these executables may be invoked via `run <cmd>` in deploy scripts.
+const DEPLOY_CMD_ALLOWLIST: &[&str] = &[
+    "echo", "cat", "ls", "dir", "cp", "copy", "mv", "move", "mkdir", "md",
+    "chmod", "icacls", "type", "head", "tail", "wc", "find", "grep",
+    "cargo", "rustc", "python", "python3", "node", "npm", "npx",
+    "git", "curl", "wget", "tar", "unzip", "zip", "gzip",
+    "docker", "systemctl", "service",
+    "true", "false", "test", "date", "whoami", "hostname", "pwd",
+];
+
+/// Check whether a command line starts with an allowlisted executable.
+fn is_command_allowed(cmd: &str) -> bool {
+    let executable = cmd
+        .split_whitespace()
+        .next()
+        .unwrap_or("")
+        .rsplit('/')
+        .next()
+        .unwrap_or("")
+        .rsplit('\\')
+        .next()
+        .unwrap_or("")
+        .to_lowercase();
+    DEPLOY_CMD_ALLOWLIST
+        .iter()
+        .any(|allowed| executable == *allowed)
+}
+
 /// Execute deployment instructions line by line.
+/// Commands in `run <cmd>` lines are checked against an allowlist to
+/// prevent shell injection from untrusted file-transfer metadata.
 pub fn execute_deploy_instructions(
     instructions: &str,
     file_path: &str,
@@ -583,6 +675,10 @@ pub fn execute_deploy_instructions(
 
         if let Some(cmd) = line.strip_prefix("run ") {
             let cmd = cmd.replace("{file}", file_path);
+            if !is_command_allowed(&cmd) {
+                output.push(format!("[run] BLOCKED (not in allowlist): {cmd}"));
+                continue;
+            }
             output.push(format!("[run] {cmd}"));
             let result = std::process::Command::new(if cfg!(windows) { "cmd" } else { "sh" })
                 .arg(if cfg!(windows) { "/C" } else { "-c" })

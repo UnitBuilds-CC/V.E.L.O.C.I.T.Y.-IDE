@@ -93,7 +93,6 @@ impl Tab {
 }
 
 #[derive(Clone, Debug, PartialEq)]
-#[allow(dead_code)]
 pub enum TabKind {
     Editor {
         path: Option<PathBuf>,
@@ -174,6 +173,7 @@ pub struct Command {
     pub modes: &'static [crate::editor::theme::WorkspaceProfile],
 }
 
+#[derive(Default)]
 pub struct CommandPalette {
     pub open: bool,
     pub query: String,
@@ -184,6 +184,7 @@ pub struct CommandPalette {
 }
 
 /// Ctrl+P quick-open switcher: fuzzy-search workspace files and jump to them.
+#[derive(Default)]
 pub struct QuickOpen {
     pub open: bool,
     pub query: String,
@@ -204,6 +205,7 @@ pub struct QuickOpen {
 
 /// Ctrl+Tab most-recently-used tab switcher: hold Ctrl and tap Tab to cycle
 /// open tabs in recency order; release Ctrl to commit.
+#[derive(Default)]
 pub struct MruSwitcher {
     pub open: bool,
     /// Index into `order` of the currently highlighted tab.
@@ -259,7 +261,6 @@ impl DesktopAutomationEvidenceState {
     }
 }
 
-#[allow(dead_code)] // Constructed by wa.rs for future desktop automation panel
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DesktopAutomationMissionSummary {
     pub task_count: usize,
@@ -269,7 +270,6 @@ pub struct DesktopAutomationMissionSummary {
     pub state_labels: Vec<String>,
 }
 
-#[allow(dead_code)] // Constructed by wa.rs for future desktop automation panel
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DesktopAutomationSelectedTaskStatus {
     pub state_label: &'static str,
@@ -281,7 +281,6 @@ pub struct DesktopAutomationSelectedTaskStatus {
     pub has_operator_notes: bool,
 }
 
-#[allow(dead_code)] // Fields used by DesktopAutomationSelectedTaskCues display
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DesktopAutomationSelectedTaskCues {
     pub artifact_lines: Vec<String>,

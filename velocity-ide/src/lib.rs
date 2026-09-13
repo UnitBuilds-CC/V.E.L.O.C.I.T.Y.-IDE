@@ -1,3 +1,13 @@
+//! V.E.L.O.C.I.T.Y.-IDE — NDA-accelerated inference runtime library.
+//!
+//! This crate provides the core infrastructure for the Velocity IDE:
+//! a Rust-to-NDA compiler with JIT sandbox, transformer model inference
+//! (FP32/FP16/GPU), BPE tokenizer, site-map triple store with Merkle
+//! verification, provider usage management, credential guarding,
+//! structured logging, and a wiki engine.
+//!
+//! Re-exports modules so that binaries in `src/bin/` can use `velocity_ide::*`.
+
 // V.E.L.O.C.I.T.Y.-IDE — library facade
 // Re-exports modules so that binaries in src/bin/ can use `velocity_ide::*`.
 
@@ -45,6 +55,19 @@ pub fn banner() -> String {
         "V.E.L.O.C.I.T.Y.-IDE v{} ({}-{})",
         VERSION, TARGET_OS, TARGET_ARCH
     )
+}
+
+// ─── Shared Hashing Utility ─────────────────────────────────────────────────
+
+/// Compute a deterministic u64 hash from a string using SHA-256.
+///
+/// The first 8 bytes of the SHA-256 digest are interpreted as a little-endian
+/// `u64`. This is used across all crates for AST triple subject/object hashes
+/// and file-identity hashing.
+pub fn hash_str(s: &str) -> u64 {
+    use sha2::{Digest, Sha256};
+    let d = Sha256::new().chain_update(s.as_bytes()).finalize();
+    u64::from_le_bytes(d[..8].try_into().unwrap())
 }
 
 // ─── Module Inventory ─────────────────────────────────────────────────────────

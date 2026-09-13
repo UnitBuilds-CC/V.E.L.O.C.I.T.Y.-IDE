@@ -232,7 +232,7 @@ pub fn shader_category_distribution(reg: &ShaderRegistry) -> ShaderCategoryDistr
     if other > 0 {
         categories.push(("other".to_string(), other));
     }
-    categories.sort_by(|a, b| b.1.cmp(&a.1));
+    categories.sort_by_key(|a| std::cmp::Reverse(a.1));
 
     ShaderCategoryDistribution {
         activation_count: activation,

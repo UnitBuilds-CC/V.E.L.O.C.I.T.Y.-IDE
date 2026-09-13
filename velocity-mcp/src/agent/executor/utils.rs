@@ -1,5 +1,5 @@
 use super::super::models::*;
-use super::super::nda::hash_str;
+use velocity_ide::hash_str;
 use crate::usage::{CloudflareAccount, OpenRouterAccount, UsageTracker};
 use crossbeam_channel::Sender;
 use serde_json::{json, Value};
@@ -24,8 +24,23 @@ pub fn is_quota_exhausted_error(body: &str) -> bool {
     body.contains("4006") || body.to_lowercase().contains("quota")
 }
 
+/// Estimate the number of tokens in `text` using a code-aware heuristic.
+///
+/// Pure prose averages ~4 chars/token, but code (Rust, Python, JSON) averages
+/// ~2.5–3.5 due to symbols, indentation, and short identifiers. This function
+/// blends both ratios based on the proportion of non-alphanumeric characters.
 pub fn estimate_tokens(text: &str) -> u64 {
-    (text.len() as u64).max(1) / 4
+    let len = text.len().max(1);
+    // Base: ~3.5 chars/token (mixed code+prose average).
+    let base = len as f64 / 3.5;
+    // Penalty for high-symbol content (code, JSON): up to 30% more tokens.
+    let special_count = text
+        .chars()
+        .filter(|c| !c.is_alphanumeric() && !c.is_whitespace())
+        .count();
+    let special_ratio = special_count as f64 / len as f64;
+    let adjustment = 1.0 + (special_ratio * 0.3);
+    (base * adjustment).max(1.0) as u64
 }
 
 pub fn render_prompt(messages: &[ChatMessage]) -> String {

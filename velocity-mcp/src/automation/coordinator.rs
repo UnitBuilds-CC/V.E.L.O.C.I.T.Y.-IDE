@@ -85,6 +85,8 @@ impl WorkspaceCoordinator {
                     .collect(),
                 dependencies: Vec::new(),
                 output: None,
+                priority: 0,
+                estimated_weight: 1,
             };
             let handle = spawn_live_worker(
                 WorkerAssignment {

@@ -1,0 +1,29 @@
+# Coverage thresholds for Velocity IDE.
+#
+# Enforced in CI via `cargo llvm-cov --fail-under-lines`.
+# Per-crate thresholds prevent new crates from shipping with zero coverage.
+#
+# Update these values as coverage improves — never lower them without approval.
+
+[workspace]
+# Minimum line coverage % for the entire workspace.
+fail-under-lines = 45
+
+# Per-crate minimums (crate_name = minimum_line_percent).
+# Crates not listed here inherit the workspace minimum.
+[crate]
+velocity-ide       = 50
+velocity_mcp       = 40
+velocity-browser   = 30
+drone              = 35
+
+# Files matching these glob patterns are excluded from coverage measurement.
+# (Generated code, build scripts, main entry points with only wiring.)
+[exclude]
+globs = [
+    "*/src/main.rs",
+    "*/build.rs",
+    "*/benches/**",
+    "fuzz/**",
+    "e2e/**",
+]

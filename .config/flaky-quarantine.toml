@@ -1,0 +1,27 @@
+# Flaky test quarantine list.
+#
+# Tests listed here are known to be flaky and are excluded from the main
+# CI test run. They run in a separate "quarantine" job that is allowed to
+# fail without blocking the pipeline.
+#
+# Format: Each entry is a test filter expression compatible with cargo-nextest.
+#   - "test_name" matches any test containing that substring.
+#   - "binary(test_binary) & test(test_name)" for precise matching.
+#
+# To quarantine a test:
+#   1. Add its filter expression below with a reason and date.
+#   2. Create a tracking issue.
+#   3. Fix the flakiness, then remove the entry.
+#
+# Quarantined tests are still run in the `test-quarantine` CI job so we
+# can track their pass rate and know when they're safe to un-quarantine.
+
+[[quarantined]]
+# Example (uncomment and modify when needed):
+# filter = "safety_concurrent_poison_and_recover"
+# reason = "Timing-sensitive concurrent test; fails under CI load"
+# added = "2026-09-12"
+# issue = "https://github.com/your-org/velocity-ide/issues/NNN"
+
+# ─── Active quarantines ─────────────────────────────────────────────────────
+# (none currently)

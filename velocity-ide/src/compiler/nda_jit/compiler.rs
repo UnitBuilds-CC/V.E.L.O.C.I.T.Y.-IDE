@@ -1141,10 +1141,8 @@ fn validate_single_node(node: &NdaNode, index: usize, issues: &mut Vec<String>) 
                 issues.push(format!("node[{}]: if has empty then_body", index));
             }
         }
-        NdaNode::Scope { children } => {
-            if children.is_empty() {
-                issues.push(format!("node[{}]: scope has no children", index));
-            }
+        NdaNode::Scope { children } if children.is_empty() => {
+            issues.push(format!("node[{}]: scope has no children", index));
         }
         _ => {}
     }

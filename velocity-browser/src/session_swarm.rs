@@ -267,7 +267,7 @@ mod tests {
         swarm.spawn_swarm_tab("tab2");
         swarm.set_proxy_for_all(ProxyType::Socks5("127.0.0.1:1080".to_string()));
         for s in &swarm.swarm_sessions {
-            assert!(matches!(s.proxy_resolver.proxy_type, ProxyType::Socks5(_)));
+            assert!(matches!(s.net.proxy_resolver.proxy_type, ProxyType::Socks5(_)));
         }
     }
 
@@ -277,7 +277,7 @@ mod tests {
         let session =
             swarm.spawn_with_proxy("proxy_tab", ProxyType::Http("proxy.local:8080".to_string()));
         assert!(matches!(
-            session.proxy_resolver.proxy_type,
+            session.net.proxy_resolver.proxy_type,
             ProxyType::Http(_)
         ));
     }

@@ -1,0 +1,40 @@
+# Cargo configuration for Velocity IDE
+# Optimized for build speed with sccache and platform-specific linkers
+
+# ─── sccache Integration ─────────────────────────────────────────────────────
+# Install: cargo install sccache
+# Enable:  set env RUSTC_WRAPPER=sccache before building
+# CI:      sets RUSTC_WRAPPER=sccache in workflow env
+
+# ─── Platform-Specific Linkers ────────────────────────────────────────────────
+# rust-lld (ships with rustc) is 2-5x faster than the default MSVC linker
+[target.x86_64-pc-windows-msvc]
+linker = "rust-lld.exe"
+
+[target.x86_64-unknown-linux-gnu]
+linker = "clang"
+rustflags = ["-C", "link-arg=-fuse-ld=lld", "-C", "split-debuginfo=unpacked"]
+
+[target.aarch64-apple-darwin]
+rustflags = ["-C", "split-debuginfo=unpacked"]
+
+# ─── Parallel Codegen (dev) ───────────────────────────────────────────────────
+# More codegen units = faster compiles, slightly slower runtime (dev only)
+[profile.dev]
+opt-level = 0
+codegen-units = 512
+incremental = true
+
+[profile.dev.package."*"]
+opt-level = 0
+debug = 0
+
+# Fast proc-macro compilation — proc macros don't need optimization
+[profile.dev.build-override]
+opt-level = 0
+codegen-units = 512
+
+# ─── Test Profile (faster than dev, no debug info needed) ─────────────────────
+[profile.test]
+codegen-units = 512
+incremental = true

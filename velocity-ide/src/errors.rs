@@ -870,7 +870,7 @@ pub fn summarize_errors(errors: &[VelocityError]) -> ErrorSummary {
         }
     }
     let mut by_category: Vec<(String, usize)> = cat_counts.into_iter().collect();
-    by_category.sort_by(|a, b| b.1.cmp(&a.1));
+    by_category.sort_by_key(|a| std::cmp::Reverse(a.1));
     ErrorSummary {
         total: errors.len(),
         by_category,

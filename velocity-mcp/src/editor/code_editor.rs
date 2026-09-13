@@ -24,10 +24,19 @@ pub struct EditorOptions {
     pub collapsed_lines: Vec<usize>,
     /// Whether word wrap is enabled.
     pub word_wrap: bool,
+    /// Visible line range (1-based, inclusive) for viewport-only gutter rendering.
+    /// When `None`, all lines are rendered (fallback for first frame before viewport is known).
+    pub visible_line_range: Option<(usize, usize)>,
 }
 
 pub struct CodeEditor {
     id: egui::Id,
+    /// Cached syntax-highlight tokens. Avoids re-tokenizing the entire
+    /// buffer on every frame when the content hasn't changed — the single
+    /// biggest perf win for large files (10k+ lines).
+    syntax_cache_hash: u64,
+    /// Cached highlighted spans: (text, foreground_color) per span.
+    syntax_cache_spans: Vec<(String, highlighting::Color)>,
 }
 
 impl Default for CodeEditor {
@@ -40,6 +49,8 @@ impl CodeEditor {
     pub fn new(id_source: impl std::hash::Hash + std::fmt::Debug) -> Self {
         Self {
             id: egui::Id::new(id_source),
+            syntax_cache_hash: 0,
+            syntax_cache_spans: Vec::new(),
         }
     }
 
@@ -93,30 +104,55 @@ impl CodeEditor {
             .cloned()
             .unwrap_or_else(|| SYNTAX_SET.find_syntax_plain_text().clone());
 
-        let ss = &*SYNTAX_SET;
-        let mut h = HighlightLines::new(&syntax, theme);
-        let mut layouter = |ui: &egui::Ui, string: &dyn egui::TextBuffer, wrap_width: f32| {
-            let string_str = string.as_str();
-            let mut layout_job = egui::text::LayoutJob::default();
-            for line in LinesWithEndings::from(string_str) {
+        // ── Syntax cache: only re-tokenize when content changes ────────────
+        let text_hash = {
+            // Fast FNV-1a hash of the entire text (much cheaper than syntect).
+            let mut h: u64 = 0xcbf29ce484222325;
+            for byte in text.bytes() {
+                h ^= byte as u64;
+                h = h.wrapping_mul(0x100000001b3);
+            }
+            h
+        };
+        if text_hash != self.syntax_cache_hash {
+            let ss = &*SYNTAX_SET;
+            let mut hl = HighlightLines::new(&syntax, theme);
+            let mut spans = Vec::new();
+            for line in LinesWithEndings::from(text.as_str()) {
                 let line_without_nl = if line.ends_with('\n') {
                     &line[..line.len() - 1]
                 } else {
                     line
                 };
-                let ranges = h.highlight_line(line_without_nl, ss).unwrap_or_default();
-                for (style, word) in ranges {
-                    let color = syntect_color_to_egui(style.foreground);
-                    let format = TextFormat {
-                        font_id: code_font.clone(),
-                        color,
-                        ..Default::default()
-                    };
-                    layout_job.append(word, 0.0, format);
+                let line_spans = hl.highlight_line(line_without_nl, ss).unwrap_or_default();
+                for (style, word) in line_spans {
+                    spans.push((word.to_string(), style.foreground));
                 }
                 if line.ends_with('\n') {
-                    layout_job.append("\n", 0.0, Default::default());
+                    spans.push(("\n".to_string(), highlighting::Color { r: 0, g: 0, b: 0, a: 0 }));
                 }
+            }
+            self.syntax_cache_hash = text_hash;
+            self.syntax_cache_spans = spans;
+        }
+
+        let ss = &*SYNTAX_SET;
+        let _ = ss; // syntect used above for cache refill
+        let cached_spans = &self.syntax_cache_spans;
+        let mut layouter = |ui: &egui::Ui, _string: &dyn egui::TextBuffer, wrap_width: f32| {
+            let mut layout_job = egui::text::LayoutJob::default();
+            for (word, color) in cached_spans.iter() {
+                if word == "\n" {
+                    layout_job.append("\n", 0.0, Default::default());
+                    continue;
+                }
+                let egui_color = syntect_color_to_egui(*color);
+                let format = TextFormat {
+                    font_id: code_font.clone(),
+                    color: egui_color,
+                    ..Default::default()
+                };
+                layout_job.append(word.as_str(), 0.0, format);
             }
             layout_job.wrap.max_width = wrap_width;
             ui.fonts_mut(|f| f.layout_job(layout_job))
@@ -135,7 +171,31 @@ impl CodeEditor {
         let total_rows = text.lines().count().max(1);
         let bracket_match = find_matching_bracket(text, options.cursor_offset);
         let mut gutter_job = egui::text::LayoutJob::default();
-        for i in 1..=total_rows {
+
+        // Viewport-only gutter rendering: only build entries for visible lines.
+        // For a 10k-line file with ~50 visible lines, this is a 200x reduction.
+        let (gutter_start, gutter_end) = match options.visible_line_range {
+            Some((start, end)) => (start.max(1), end.min(total_rows)),
+            None => (1, total_rows), // First frame fallback: render all
+        };
+
+        // Add invisible padding for lines above the viewport so the gutter
+        // aligns correctly with the code area in the ScrollArea.
+        if gutter_start > 1 {
+            // Each line is one "\n" in the layout job
+            let padding: String = "\n".repeat(gutter_start - 1);
+            gutter_job.append(
+                &padding,
+                0.0,
+                egui::TextFormat {
+                    font_id: code_font.clone(),
+                    color: Color32::TRANSPARENT,
+                    ..Default::default()
+                },
+            );
+        }
+
+        for i in gutter_start..=gutter_end {
             let is_locked = is_line_locked(i);
             let is_collapsed = options.collapsed_lines.contains(&(i - 1));
             let has_breakpoint = options.breakpoints.contains(&i);
@@ -292,7 +352,6 @@ fn syntect_color_to_egui(c: highlighting::Color) -> Color32 {
 }
 
 /// Render a gutter with line numbers next to a code text edit.
-#[allow(dead_code)]
 pub fn code_block_with_gutter(ui: &mut egui::Ui, text: &mut String) -> Response {
     let mut editor = CodeEditor::default();
     editor.show(

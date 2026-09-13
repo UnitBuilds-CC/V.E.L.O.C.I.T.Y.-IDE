@@ -491,7 +491,7 @@ impl VelocityApp {
                 .to_string();
             let line = self.current_cursor_line;
             let col = self.current_cursor_col;
-            if let Some(lsp) = self.lsp_manager.as_mut() {
+            if let Some(lsp) = self.lsp_state.lsp_manager.as_mut() {
                 lsp_items = lsp.completion(&ext, path, line, col, &content);
             }
         }
@@ -521,7 +521,7 @@ impl VelocityApp {
         };
         let line = self.current_cursor_line;
         let col = self.current_cursor_col;
-        let locations = match self.lsp_manager.as_mut() {
+        let locations = match self.lsp_state.lsp_manager.as_mut() {
             Some(lsp) => lsp.definition(&ext, &path, line, col, &content),
             None => Vec::new(),
         };
@@ -550,7 +550,7 @@ impl VelocityApp {
         };
         let line = self.current_cursor_line;
         let col = self.current_cursor_col;
-        let locations = match self.lsp_manager.as_mut() {
+        let locations = match self.lsp_state.lsp_manager.as_mut() {
             Some(lsp) => lsp.references(&ext, &path, line, col, &content),
             None => Vec::new(),
         };
@@ -576,7 +576,7 @@ impl VelocityApp {
         };
         let line = self.current_cursor_line;
         let col = self.current_cursor_col;
-        let hover = match self.lsp_manager.as_mut() {
+        let hover = match self.lsp_state.lsp_manager.as_mut() {
             Some(lsp) => lsp.hover(&ext, &path, line, col, &content),
             None => None,
         };

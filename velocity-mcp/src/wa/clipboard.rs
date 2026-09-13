@@ -819,6 +819,7 @@ mod tests {
         // Ends with a double-null (two zero u16 = 4 zero bytes: per-path null + terminator).
         assert_eq!(&payload[payload.len() - 4..], &[0u8, 0, 0, 0]);
         // Decode the wide list back and confirm both paths round-trip.
+        #[allow(clippy::chunks_exact_to_as_chunks)]
         let wide: Vec<u16> = payload[20..]
             .chunks_exact(2)
             .map(|c| u16::from_le_bytes([c[0], c[1]]))

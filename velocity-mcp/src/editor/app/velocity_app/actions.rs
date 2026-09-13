@@ -656,7 +656,7 @@ impl VelocityApp {
             self.push_closed_editor_path(path.clone());
             // Notify LSP server that the document is closed.
             if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
-                if let Some(lsp) = self.lsp_manager.as_mut() {
+                if let Some(lsp) = self.lsp_state.lsp_manager.as_mut() {
                     lsp.close_document(ext, &path);
                 }
             }
@@ -688,7 +688,7 @@ impl VelocityApp {
                 self.push_closed_editor_path(path.clone());
                 // Notify LSP server that the document is closed.
                 if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
-                    if let Some(lsp) = self.lsp_manager.as_mut() {
+                    if let Some(lsp) = self.lsp_state.lsp_manager.as_mut() {
                         lsp.close_document(ext, &path);
                     }
                 }
@@ -1104,7 +1104,7 @@ impl VelocityApp {
                     // Notify LSP server of the saved content (ensures server has latest).
                     if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
                         if let Some(buf) = self.buffers.get(id) {
-                            if let Some(lsp) = self.lsp_manager.as_mut() {
+                            if let Some(lsp) = self.lsp_state.lsp_manager.as_mut() {
                                 lsp.sync_document(ext, path, buf.content());
                             }
                         }
@@ -1283,7 +1283,7 @@ impl VelocityApp {
                 }
                 // Announce the file to the LSP server now that content is loaded.
                 if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
-                    if let Some(lsp) = self.lsp_manager.as_mut() {
+                    if let Some(lsp) = self.lsp_state.lsp_manager.as_mut() {
                         lsp.sync_document(ext, &path, &content);
                     }
                 }

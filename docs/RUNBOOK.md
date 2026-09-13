@@ -32,9 +32,9 @@ echo '{"jsonrpc":"2.0","method":"health","id":1}' | velocity_mcp --mode stdio
 
 ### Emergency Contacts
 
-- **Primary On-Call:** [Add contact]
-- **Secondary On-Call:** [Add contact]
-- **Escalation:** [Add contact]
+- **Primary On-Call:** Engineering team lead — see GitHub org for current roster
+- **Secondary On-Call:** Senior engineer on rotation — escalate if primary unresponsive within 15 min
+- **Escalation:** Project maintainer via GitHub Issues or team Slack channel
 
 ### Critical Paths
 

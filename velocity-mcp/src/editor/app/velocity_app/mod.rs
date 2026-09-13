@@ -4,6 +4,7 @@ pub mod editor_actions;
 pub mod gui_commands;
 pub mod overlays;
 pub mod struct_def;
+pub mod substructs;
 pub mod tier3_activity;
 pub mod tier3_common;
 pub mod tier3_coverage;
@@ -28,3 +29,4 @@ pub mod ui_render_shortcuts;
 pub mod workflows_governance;
 
 pub use struct_def::VelocityApp;
+pub use substructs::{GovernanceState, LspState, PeerCollabState, WorkflowAppState};

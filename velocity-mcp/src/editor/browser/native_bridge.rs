@@ -152,21 +152,21 @@ impl NativeBrowserBridge {
         &mut self,
         url: &str,
     ) -> Result<Vec<NdaTriple>, Box<dyn std::error::Error + Send + Sync>> {
-        self.active_session.fetch_and_load(url)
+        Ok(self.active_session.fetch_and_load(url)?)
     }
 
     pub fn click(
         &mut self,
         selector: &str,
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        self.active_session.click(selector)
+        Ok(self.active_session.click(selector)?)
     }
 
     pub fn click_ocr(
         &mut self,
         text: &str,
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        self.active_session.click_ocr_text(text)
+        Ok(self.active_session.click_ocr_text(text)?)
     }
 
     pub fn fill(
@@ -174,11 +174,11 @@ impl NativeBrowserBridge {
         selector: &str,
         text: &str,
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        self.active_session.fill(selector, text)
+        Ok(self.active_session.fill(selector, text)?)
     }
 
     pub fn eval(&mut self, expr: &str) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
-        self.active_session.eval_js(expr)
+        Ok(self.active_session.eval_js(expr)?)
     }
 
     pub fn predict_action(&self) -> Option<velocity_browser::PredictedActionTarget> {
@@ -398,7 +398,7 @@ impl NativeBrowserBridge {
     pub fn screencast_capture(&mut self) -> (u32, usize, u64) {
         let element_count = self
             .active_session
-            .dom_tree
+            .dom.dom_tree
             .as_ref()
             .map(|tree| AgenticAomTree::build_aom_nodes(tree).len())
             .unwrap_or(0);
@@ -474,7 +474,7 @@ impl NativeBrowserBridge {
         &mut self,
         expr: &str,
     ) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
-        self.active_session.eval_js(expr)
+        Ok(self.active_session.eval_js(expr)?)
     }
 
     // -- Label-based semantic actions ---------------------------------------
@@ -534,7 +534,7 @@ impl NativeBrowserBridge {
     /// agent can act on, each carrying the concrete `node_id` for actions.
     pub fn current_view(&self) -> NativeBrowserView {
         let mut elements = Vec::new();
-        if let Some(tree) = &self.active_session.dom_tree {
+        if let Some(tree) = &self.active_session.dom.dom_tree {
             for aom in AgenticAomTree::build_aom_nodes(tree) {
                 let node_id = aom
                     .id
@@ -598,7 +598,7 @@ impl NativeBrowserBridge {
     /// Extract content from a node: text, innerHTML, or an attribute.
     pub fn agent_extract(&self, node_id: usize, what: &str) -> String {
         let session = &self.active_session;
-        let Some(tree) = &session.dom_tree else {
+        let Some(tree) = &session.dom.dom_tree else {
             return String::new();
         };
         match what {
@@ -645,7 +645,7 @@ impl NativeBrowserBridge {
     /// Returns `(node_id, accessible_name, failed_constraints)` per control;
     /// an empty constraint list means the control is valid.
     pub fn validate_forms(&self) -> Vec<(usize, String, Vec<&'static str>)> {
-        let Some(tree) = &self.active_session.dom_tree else {
+        let Some(tree) = &self.active_session.dom.dom_tree else {
             return Vec::new();
         };
         let view = self.current_view();
@@ -698,7 +698,7 @@ impl NativeBrowserBridge {
     /// "where can I go from here" -- the AOM view names links but never shows
     /// their targets.
     pub fn links(&self, filter: &str) -> Vec<(usize, String, String)> {
-        let Some(tree) = &self.active_session.dom_tree else {
+        let Some(tree) = &self.active_session.dom.dom_tree else {
             return Vec::new();
         };
         let filter_lc = filter.to_lowercase();
@@ -841,7 +841,7 @@ impl NativeBrowserBridge {
     /// Suggest the next best action on the current page using the learned
     /// per-domain confidence instead of the legacy hardcoded heuristic.
     pub fn predict_learned(&self) -> Option<velocity_browser::PredictedActionTarget> {
-        let tree = self.active_session.dom_tree.as_ref()?;
+        let tree = self.active_session.dom.dom_tree.as_ref()?;
         let domain = extract_domain(&self.active_session.current_url);
         velocity_browser::ActionPredictorEngine::predict_with_confidence(
             tree,
@@ -862,13 +862,13 @@ impl NativeBrowserBridge {
         let before = self.active_session.capture_state_document();
         let selector = self
             .active_session
-            .dom_tree
+            .dom.dom_tree
             .as_ref()
             .and_then(|tree| tree.get_node(node_id))
             .and_then(|n| n.attributes.get("id"))
             .map(|id| format!("#{}", id))
             .unwrap_or_else(|| format!("node_{}", node_id));
-        if let Some(tree) = &mut self.active_session.dom_tree {
+        if let Some(tree) = &mut self.active_session.dom.dom_tree {
             if tree.get_node(node_id).is_some() {
                 let event = velocity_browser::PointerEvent {
                     event_type: "mouseenter".to_string(),
@@ -884,11 +884,11 @@ impl NativeBrowserBridge {
                 );
                 let _ = self
                     .active_session
-                    .js_vm
+                    .js.js_vm
                     .dispatch_event(tree, &selector, "mouseenter");
                 let _ = self
                     .active_session
-                    .js_vm
+                    .js.js_vm
                     .dispatch_event(tree, &selector, "mouseover");
             }
         }
@@ -913,7 +913,7 @@ impl NativeBrowserBridge {
     /// List recent network requests.
     pub fn list_network_requests(&self) -> Vec<(String, String, u16, String)> {
         self.active_session
-            .network_tracker
+            .net.network_tracker
             .requests
             .iter()
             .map(|r| {
@@ -985,7 +985,7 @@ impl NativeBrowserBridge {
 
     /// Serialize the current DOM as a structured text snapshot (not pixels).
     pub fn dom_snapshot(&self) -> String {
-        let Some(tree) = &self.active_session.dom_tree else {
+        let Some(tree) = &self.active_session.dom.dom_tree else {
             return "(no DOM loaded)".to_string();
         };
         let view = self.current_view();

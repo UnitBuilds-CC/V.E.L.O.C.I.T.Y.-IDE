@@ -33,7 +33,7 @@ fn browser_session_load_inspect_interact_and_preserve_state() {
     session.scroll(0, 240).unwrap();
     session.set_storage_item("onboarding", "complete");
 
-    let tree = session.dom_tree.as_ref().expect("loaded DOM");
+    let tree = session.dom.dom_tree.as_ref().expect("loaded DOM");
     let email = tree
         .query_selector("#email")
         .and_then(|id| tree.get_node(id))

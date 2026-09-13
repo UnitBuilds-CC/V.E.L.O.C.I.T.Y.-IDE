@@ -3,6 +3,8 @@
 //! Provides helpers for spawning V.E.L.O.C.I.T.Y. binaries and
 //! communicating with them over their native protocols.
 
+pub mod harness;
+
 use std::io::{BufRead, BufReader, Write};
 use std::process::{Child, Command, Stdio};
 use std::time::Duration;

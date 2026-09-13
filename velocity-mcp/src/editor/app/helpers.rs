@@ -1,14 +1,7 @@
 use super::types::*;
 use crate::automation::AgentTaskKind;
+pub use velocity_ide::hash_str;
 use std::path::{Path, PathBuf};
-
-pub fn hash_str(s: &str) -> u64 {
-    use sha2::{Digest, Sha256};
-    let mut h = Sha256::new();
-    h.update(s.as_bytes());
-    let d = h.finalize();
-    u64::from_le_bytes(d[..8].try_into().unwrap())
-}
 
 pub fn get_cursor_pos(text: &str, char_idx: usize) -> (usize, usize) {
     let mut line = 0;

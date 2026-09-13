@@ -11,6 +11,25 @@
 //!
 //! Workflows persist as individual JSON files under `.velocity/workflows/`, one
 //! file per workflow id, loaded/saved by [`WorkflowRegistry`].
+//!
+//! ## Module hierarchy
+//!
+//! - `mod.rs` — core workflow types and registry
+//! - `ai.rs` — AI-powered natural language workflow generation
+//! - `canvas.rs` — visual node-based workflow editor
+//! - `templates.rs` — pre-built workflow templates
+//! - `version.rs` — workflow version history and rollback
+
+pub mod ai;
+pub mod canvas;
+pub mod templates;
+pub mod version;
+
+// Re-export for backward compatibility
+pub use ai::*;
+pub use canvas::*;
+pub use templates::*;
+pub use version::*;
 
 use serde::{Deserialize, Serialize};
 use std::path::Path;

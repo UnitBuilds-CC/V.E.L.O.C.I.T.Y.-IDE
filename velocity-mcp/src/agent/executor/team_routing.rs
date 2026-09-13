@@ -85,7 +85,8 @@ fn router_completion(
                 .ok()
         }
         AiProvider::AzureOpenAi => {
-            let account = azure_accounts.first()?;
+            // Pick account by priority (.n): lower = higher priority.
+            let account = azure_accounts.iter().min_by_key(|a| a.n)?;
             let endpoint = account.endpoint.trim_end_matches('/');
             let url = format!(
                 "{}/openai/deployments/{}/chat/completions?api-version={}",
@@ -307,6 +308,7 @@ pub fn try_route_team_prompt(
         ui_tx,
         deferred_messages,
         &CoordinationBus::new(),
+        None, // Team routing uses direct dispatch, not MoA router
     );
 
     true

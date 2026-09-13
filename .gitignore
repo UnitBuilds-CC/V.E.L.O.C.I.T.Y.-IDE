@@ -18,6 +18,13 @@ target/
 # Build/test output logs (never tracked; regenerable artifacts)
 *.log
 
+# Flaky test detection history (local tracking, not committed)
+.flaky-history/
+
+# Benchmark baselines (local; CI regenerates each run)
+target/bench-baselines/
+target/bench-results/
+
 # Stray dev artifacts (ad-hoc captures, tool output & shell-redirect typos - never tracked)
 $null
 commit_msg.txt

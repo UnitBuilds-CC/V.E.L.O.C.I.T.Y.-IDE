@@ -225,7 +225,7 @@ New to Velocity IDE? Here's a walkthrough of a typical development workflow:
 4. Press `F5` to start debugging, `F9` to set breakpoints
 
 **Step 6: Commit your changes**
-1. Press `Ctrl+G` to open the Git panel
+1. Click the **Git** icon in the activity bar (or press `Ctrl+E` to toggle the sidebar, then select Git)
 2. Review modified files, stage changes with the + icon
 3. Enter a commit message and click **Commit**
 
@@ -237,18 +237,18 @@ New to Velocity IDE? Here's a walkthrough of a typical development workflow:
 
 The activity bar is the vertical icon strip on the far left. It contains 8 categories:
 
-| Icon | Label | Shortcut | Description |
-|------|-------|----------|-------------|
-| 📁 | **Files** | `Ctrl+E` | File tree, bookmarks, favorites |
-|  | **Search** | `Ctrl+Shift+F` | Text search, semantic search, code graph |
-| 🔀 | **Git** | `Ctrl+G` | Changes, branches, commits |
-| 💬 | **Chat** | `Ctrl+J` | AI chat, voice, multimodal |
-| 🔨 | **Build** | `Ctrl+B` | Build, test, deploy, debug, LSP |
-| 🤖 | **Agents** | `Ctrl+D` | Activity, roster, orchestration, memory |
-| 📖 | **Knowledge** | `Ctrl+K` | Wiki, knowledge base, snippets, NDA |
-| ️ | **Workspace** | `Ctrl+Shift+X` | Extensions, plugins, skills, team, usage |
+| Icon | Label | Description |
+|------|-------|-------------|
+| 📁 | **Files** | File tree, bookmarks, favorites |
+| 🔍 | **Search** | Text search, semantic search, code graph |
+| 🔀 | **Git** | Changes, branches, commits |
+| 💬 | **Chat** | AI chat, voice, multimodal |
+| 🔨 | **Build** | Build, test, deploy, debug, LSP |
+| 🤖 | **Agents** | Activity, roster, orchestration, memory |
+| 📖 | **Knowledge** | Wiki, knowledge base, snippets, NDA |
+| ️ | **Workspace** | Extensions, plugins, skills, team, usage |
 
-Click any icon to switch categories. The left sidebar updates to show the sub-panels for that category.
+Click any icon to switch categories. The left sidebar updates to show the sub-panels for that category. Use `Ctrl+E` to toggle the sidebar, `Ctrl+Shift+F` for search, `Ctrl+G` for go-to-line, `Ctrl+J` for chat.
 
 ### Workspace Modes
 
@@ -813,9 +813,9 @@ To connect an external AI assistant, add Velocity as an MCP server in the assist
 
 ### Available MCP Tools
 
-The server exposes 130+ tools across 4 categories:
+The server exposes 250+ tools across 5 categories:
 
-**System Tools** (15 tools):
+**System Tools** (28 tools):
 | Tool | Description |
 |------|-------------|
 | `read_file` | Read file contents |
@@ -845,12 +845,27 @@ The server exposes 130+ tools across 4 categories:
 | `gui_open_file` | Open a file in the GUI |
 | `gui_get_state` | Get current GUI state |
 | `gui_navigate_panel` | Navigate to a GUI panel |
+| `gui_quit` | Quit the GUI application |
 
-**Browser Tools** (~109 tools): `web_navigate`, `browser_create_session`, `browser_runtime_capture`, `browser_runtime_visual_capture`, and many more for headless browser automation.
+**Browser Tools** (109 tools): `web_navigate`, `browser_create_session`, `browser_runtime_capture`, `browser_runtime_visual_capture`, and many more for headless browser automation.
 
-**Windows Automation Tools**: UI automation, screenshot capture, registry access, advanced input simulation.
+**Windows Automation Tools** (86 tools): UI automation, screenshot capture, registry access, advanced input simulation.
 
-**Team Tools**: `create_expert_team`, `list_expert_teams`, `update_expert_team`, `create_skill_file`, `list_skills`.
+**Team Tools** (20 tools): `create_expert_team`, `create_skill_file`, `list_expert_teams`, `list_skills`, `update_expert_team`, `update_team_member`, `add_team_member`, `remove_team_member`, `validate_team`, `check_scope_overlaps`, `clone_expert_team`, `export_expert_team`, `import_expert_team`, `debug_routing`, `team_analytics`, `team_health_check`, `list_providers`, `create_team_quick`, `bulk_import_members`, `team_changelog`.
+
+**Drone Tools** (10 tools): Deploy and control remote drones for distributed execution, screen capture, GUI automation, and network monitoring.
+| Tool | Description |
+|------|-------------|
+| `drone_deploy` | Deploy the drone binary to a remote machine via SSH |
+| `drone_command` | Send a shell command to a drone for async execution |
+| `drone_task_status` | Check the status of a submitted drone task |
+| `drone_status` | Query drone health, identity, and capabilities |
+| `drone_screenshot` | Capture a screenshot from the remote machine |
+| `drone_type_keys` | Simulate keyboard input on the remote machine |
+| `drone_click` | Simulate a mouse click at coordinates on the remote machine |
+| `drone_network_stats` | Get network statistics from the remote machine |
+| `drone_upload` | Upload a file to the remote drone with SHA-256 verification |
+| `drone_pair` | Pair a drone with the IDE for peer protocol messaging |
 
 ### GUI Control Bridge
 
@@ -1618,10 +1633,10 @@ The Peer panel manages **direct device-to-device connections** for file transfer
 |------------|-------------|
 | File Execution | Run files and scripts |
 | Test Runner | Execute test suites |
-| Screen Capture | Capture screenshots |
-| GUI Automation | Control desktop UI |
+| Screen Capture | Capture screenshots via GDI |
+| GUI Automation | Simulate keyboard/mouse input |
 | Build System | Compile and build projects |
-| Network Monitor | Monitor network activity |
+| Network Monitor | Track connections and traffic |
 | General | General-purpose tasks |
 
 **Per-peer actions:**
@@ -1650,12 +1665,28 @@ Drones are **lightweight, portable agent endpoints** deployable on any machine �
 - E2E testing across multiple machines
 - CI/CD integration
 - Edge computing
+- Screen capture and GUI automation on remote machines
 
 **How drones work:**
-1. Deploy `velocity-drone` on the target machine
+1. Deploy `velocity-drone` on the target machine — either manually or via the `drone_deploy` MCP tool
 2. The drone starts an HTTP server on port 9191
-3. Pair the drone with your IDE via `POST /peer/pair`
-4. Send files and tasks to the drone
+3. Pair the drone with your IDE via `drone_pair` or `POST /peer/pair`
+4. Send files and tasks to the drone via MCP tools or the peer protocol
+
+**Quick start (MCP tools):**
+```
+# Deploy drone to a remote machine
+drone_deploy(host="192.168.1.100", ssh_user="admin")
+
+# Check drone health
+drone_status(drone_url="http://192.168.1.100:9191")
+
+# Run a command remotely
+drone_command(drone_url="http://192.168.1.100:9191", command="uname -a")
+
+# Capture remote screenshot
+drone_screenshot(drone_url="http://192.168.1.100:9191")
+```
 
 **Drone API endpoints:**
 | Endpoint | Method | Description |
@@ -1670,7 +1701,7 @@ Drones are **lightweight, portable agent endpoints** deployable on any machine �
 | `/peer/task` | POST | Delegate a task (shell command) |
 | `/peer/task/{id}/status` | GET | Poll task progress |
 
-**Capabilities advertised:** `file_execution`, `test_runner`, `build_system`, `general`
+**Capabilities advertised:** `file_execution`, `test_runner`, `build_system`, `screen_capture`, `gui_automation`, `network_monitor`, `general`
 
 **File transfer:** Files are uploaded in chunks with SHA-256 verification. The drone validates the checksum and stores files in `.velocity/drops/` with path traversal protection.
 

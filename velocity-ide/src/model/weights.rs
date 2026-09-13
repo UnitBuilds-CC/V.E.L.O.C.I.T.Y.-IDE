@@ -36,6 +36,7 @@ fn read_u32_le_bytes(data: &[u8], ctx: &str) -> Result<u32> {
 ///   ndim  : u32
 ///   dim_0 … dim_N : u32 each
 ///   data  : f32 × (product of dims)
+#[allow(clippy::chunks_exact_to_as_chunks)]
 pub fn load_fp32_bin(path: &Path) -> Result<Vec<f32>> {
     let data = fs::read(path).with_context(|| format!("Reading FP32 bin: {path:?}"))?;
 
@@ -346,7 +347,6 @@ pub struct ModelWeights {
     /// One entry per transformer layer
     pub layers: Vec<LayerWeights>,
     /// Optional Vulkan context
-    #[allow(dead_code)]
     pub vulkan: Option<VulkanDriver>,
 }
 
@@ -583,7 +583,6 @@ impl ModelWeights {
     }
 
     /// Total bytes consumed by NDA bitmaps across all layers.
-    #[allow(dead_code)]
     pub fn nda_bytes(&self) -> usize {
         self.layers
             .iter()

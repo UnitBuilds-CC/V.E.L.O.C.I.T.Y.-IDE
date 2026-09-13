@@ -246,7 +246,7 @@ pub fn propagate_blocked_dependents(graph: &TaskGraph, registry: &mut Orchestrat
     }
 }
 
-pub fn complete_reconcile_root(graph: &TaskGraph, registry: &mut OrchestratorRegistry) {
+pub fn complete_reconcile_root(graph: &mut TaskGraph, registry: &mut OrchestratorRegistry) {
     let Some(root_task) = graph.tasks.get(&graph.root) else {
         return;
     };
@@ -273,9 +273,13 @@ pub fn complete_reconcile_root(graph: &TaskGraph, registry: &mut OrchestratorReg
         root_task.dependencies.len()
     );
     result.status_updates.push(result.message.clone());
+    let output_text = result.message.clone();
     registry
         .statuses
         .insert(graph.root, TaskStatus::Done(result));
+    if let Some(task) = graph.tasks.get_mut(&graph.root) {
+        task.output = Some(output_text);
+    }
 }
 
 pub fn build_routed_graph(goal: &str, tasks: &[RoutedSubAgentTask]) -> TaskGraph {

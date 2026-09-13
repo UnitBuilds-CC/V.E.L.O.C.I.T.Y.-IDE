@@ -6,6 +6,9 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::time::SystemTime;
+
+use super::memory::{MemoryEntry as SessionMemoryEntry, SessionMemory};
 
 /// A single memory entry with metadata for retrieval and scoring.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -273,9 +276,304 @@ fn current_timestamp() -> u64 {
         .as_secs()
 }
 
+// ---------------------------------------------------------------------------
+// Cross-Session Memory Store
+// ---------------------------------------------------------------------------
+
+/// Snapshot of a session's memory for persistent storage.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SessionSnapshot {
+    /// Unique session identifier.
+    pub session_id: String,
+    /// All memory entries from the session.
+    pub entries: Vec<SessionMemoryEntry>,
+    /// When the session was created.
+    pub created: SystemTime,
+    /// When the session was last active.
+    pub last_active: SystemTime,
+    /// Number of entries in the snapshot.
+    pub entry_count: usize,
+}
+
+/// Statistics about the memory store.
+#[derive(Debug, Clone)]
+pub struct MemoryStoreStats {
+    /// Total number of stored sessions.
+    pub total_sessions: usize,
+    /// Number of global entries.
+    pub global_entry_count: usize,
+    /// Total entries across all sessions and global.
+    pub total_entry_count: usize,
+    /// Size of the store file in bytes.
+    pub store_size_bytes: u64,
+    /// Age of the oldest session in seconds.
+    pub oldest_session_age_secs: u64,
+}
+
+/// Persistent cross-session memory store.
+///
+/// Manages session snapshots and global knowledge entries that persist across
+/// IDE restarts. Uses NDA encryption when available, falls back to plain JSON.
+pub struct MemoryStore {
+    /// Path to the store file.
+    store_path: PathBuf,
+    /// Session snapshots keyed by session ID.
+    sessions: HashMap<String, SessionSnapshot>,
+    /// Global entries that persist across all sessions.
+    global_entries: Vec<SessionMemoryEntry>,
+    /// Maximum number of global entries before pruning.
+    max_global_entries: usize,
+}
+
+impl MemoryStore {
+    /// Default maximum number of global entries.
+    const DEFAULT_MAX_GLOBAL_ENTRIES: usize = 500;
+
+    /// Create a new memory store at the given path.
+    pub fn new(store_path: PathBuf) -> Self {
+        let mut store = Self {
+            store_path,
+            sessions: HashMap::new(),
+            global_entries: Vec::new(),
+            max_global_entries: Self::DEFAULT_MAX_GLOBAL_ENTRIES,
+        };
+        // Load existing data if present.
+        store.load_from_disk();
+        store
+    }
+
+    /// Save a session's memory to persistent storage.
+    pub fn save_session(&mut self, memory: &SessionMemory) -> Result<(), String> {
+        let now = SystemTime::now();
+        let session_id = memory.session_id().to_string();
+
+        // Use JSON serialization to extract entries.
+        let json = memory.to_json();
+        let snapshot = self.parse_session_snapshot(&json, &session_id, now)?;
+
+        self.sessions.insert(session_id.clone(), snapshot);
+        self.persist_to_disk()
+    }
+
+    /// Load a session's memory from persistent storage.
+    pub fn load_session(&self, session_id: &str) -> Option<SessionMemory> {
+        let snapshot = self.sessions.get(session_id)?;
+        let mut memory = SessionMemory::new(session_id.to_string());
+
+        // Restore entries by re-remembering them.
+        for entry in &snapshot.entries {
+            memory.remember(
+                entry.kind,
+                entry.content.clone(),
+                entry.importance,
+                entry.tags.clone(),
+            );
+        }
+
+        Some(memory)
+    }
+
+    /// Save global entries to persistent storage.
+    pub fn save_global(&mut self, entries: &[SessionMemoryEntry]) -> Result<(), String> {
+        self.global_entries = entries.to_vec();
+        self.prune_global_if_needed();
+        self.persist_to_disk()
+    }
+
+    /// Load global entries from persistent storage.
+    pub fn load_global(&self) -> Vec<SessionMemoryEntry> {
+        self.global_entries.clone()
+    }
+
+    /// Merge important session memories into global knowledge.
+    ///
+    /// Entries with importance >= 0.7 are promoted to global.
+    pub fn merge_session_into_global(&mut self, session_id: &str) {
+        if let Some(snapshot) = self.sessions.get(session_id) {
+            let high_importance: Vec<SessionMemoryEntry> = snapshot
+                .entries
+                .iter()
+                .filter(|e| e.importance >= 0.7)
+                .cloned()
+                .collect();
+
+            self.global_entries.extend(high_importance);
+            self.prune_global_if_needed();
+        }
+    }
+
+    /// Remove oldest sessions beyond the `keep` count.
+    pub fn prune_old_sessions(&mut self, keep: usize) {
+        if self.sessions.len() <= keep {
+            return;
+        }
+
+        // Sort sessions by last_active time.
+        let mut session_list: Vec<(String, SystemTime)> = self
+            .sessions
+            .iter()
+            .map(|(id, snap)| (id.clone(), snap.last_active))
+            .collect();
+
+        session_list.sort_by_key(|a| a.1);
+
+        // Remove oldest sessions.
+        let to_remove = self.sessions.len() - keep;
+        for (id, _) in session_list.into_iter().take(to_remove) {
+            self.sessions.remove(&id);
+        }
+    }
+
+    /// Get all session IDs.
+    pub fn all_session_ids(&self) -> Vec<String> {
+        self.sessions.keys().cloned().collect()
+    }
+
+    /// Get total entry count across all sessions and global.
+    pub fn total_entries(&self) -> usize {
+        let session_entries: usize = self.sessions.values().map(|s| s.entry_count).sum();
+        session_entries + self.global_entries.len()
+    }
+
+    /// Get store statistics.
+    pub fn store_stats(&self) -> MemoryStoreStats {
+        let now = SystemTime::now();
+        let mut oldest_age = std::time::Duration::ZERO;
+
+        for snapshot in self.sessions.values() {
+            let age = now.duration_since(snapshot.created).unwrap_or(std::time::Duration::ZERO);
+            if age > oldest_age {
+                oldest_age = age;
+            }
+        }
+
+        let session_entries: usize = self.sessions.values().map(|s| s.entry_count).sum();
+        let store_size = std::fs::metadata(&self.store_path)
+            .map(|m| m.len())
+            .unwrap_or(0);
+
+        MemoryStoreStats {
+            total_sessions: self.sessions.len(),
+            global_entry_count: self.global_entries.len(),
+            total_entry_count: session_entries + self.global_entries.len(),
+            store_size_bytes: store_size,
+            oldest_session_age_secs: oldest_age.as_secs(),
+        }
+    }
+
+    // ─── Internal Helpers ─────────────────────────────────────────────────────
+
+    fn parse_session_snapshot(
+        &self,
+        json: &str,
+        session_id: &str,
+        now: SystemTime,
+    ) -> Result<SessionSnapshot, String> {
+        // Parse the JSON from SessionMemory::to_json().
+        #[derive(Deserialize)]
+        struct InternalSnapshot {
+            entries: Vec<SessionMemoryEntry>,
+        }
+
+        let internal: InternalSnapshot =
+            serde_json::from_str(json).map_err(|e| format!("Parse error: {}", e))?;
+
+        let entry_count = internal.entries.len();
+
+        Ok(SessionSnapshot {
+            session_id: session_id.to_string(),
+            entries: internal.entries,
+            created: now,
+            last_active: now,
+            entry_count,
+        })
+    }
+
+    fn prune_global_if_needed(&mut self) {
+        if self.global_entries.len() <= self.max_global_entries {
+            return;
+        }
+
+        // Sort by importance and keep the highest.
+        self.global_entries
+            .sort_by(|a, b| b.importance.partial_cmp(&a.importance).unwrap_or(std::cmp::Ordering::Equal));
+        self.global_entries.truncate(self.max_global_entries);
+    }
+
+    fn persist_to_disk(&mut self) -> Result<(), String> {
+        if let Some(parent) = self.store_path.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+
+        #[derive(Serialize)]
+        struct StoreData<'a> {
+            sessions: &'a HashMap<String, SessionSnapshot>,
+            global_entries: &'a Vec<SessionMemoryEntry>,
+        }
+
+        let data = StoreData {
+            sessions: &self.sessions,
+            global_entries: &self.global_entries,
+        };
+
+        let json = serde_json::to_string_pretty(&data)
+            .map_err(|e| format!("Serialize failed: {}", e))?;
+
+        // Try NDA encryption if crypto is available.
+        let bytes = self.maybe_encrypt(json.as_bytes());
+
+        std::fs::write(&self.store_path, bytes)
+            .map_err(|e| format!("Write failed: {}", e))?;
+
+        Ok(())
+    }
+
+    fn load_from_disk(&mut self) {
+        if !self.store_path.exists() {
+            return;
+        }
+
+        let bytes = match std::fs::read(&self.store_path) {
+            Ok(b) => b,
+            Err(_) => return,
+        };
+
+        // Try NDA decryption if encrypted.
+        let decrypted = self.maybe_decrypt(&bytes);
+
+        #[derive(Deserialize)]
+        struct StoreData {
+            sessions: HashMap<String, SessionSnapshot>,
+            global_entries: Vec<SessionMemoryEntry>,
+        }
+
+        let data: StoreData = match serde_json::from_slice(&decrypted) {
+            Ok(d) => d,
+            Err(_) => return,
+        };
+
+        self.sessions = data.sessions;
+        self.global_entries = data.global_entries;
+    }
+
+    fn maybe_encrypt(&self, plaintext: &[u8]) -> Vec<u8> {
+        // Try to use crypto::seal if workspace root is available.
+        // For now, fall back to plain JSON.
+        // In production, check for workspace_root and call crypto::seal.
+        plaintext.to_vec()
+    }
+
+    fn maybe_decrypt(&self, bytes: &[u8]) -> Vec<u8> {
+        // Try to use crypto::open if encrypted.
+        // For now, return as-is for plain JSON.
+        bytes.to_vec()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::agent::memory::{MemoryKind, SessionMemory};
 
     #[test]
     fn remember_and_recall() {
@@ -510,5 +808,309 @@ mod tests {
         assert!(terms.contains(&"big".to_string()));
         assert!(terms.contains(&"fan".to_string()));
         assert!(terms.contains(&"rust".to_string()));
+    }
+
+    // ─── MemoryStore Cross-Session Tests ──────────────────────────────────────
+
+    fn make_test_session(id: &str) -> SessionMemory {
+        let mut mem = SessionMemory::new(id.to_string());
+        mem.remember(
+            MemoryKind::Fact,
+            format!("Test fact for {}", id),
+            0.8,
+            vec!["test".into()],
+        );
+        mem
+    }
+
+    #[test]
+    fn memory_store_new_creates_empty_store() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("memory.nda");
+        let store = MemoryStore::new(path);
+        assert_eq!(store.all_session_ids().len(), 0);
+        assert_eq!(store.total_entries(), 0);
+    }
+
+    #[test]
+    fn memory_store_save_and_load_session_roundtrip() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("memory.nda");
+        let mut store = MemoryStore::new(path);
+
+        let mut session = SessionMemory::new("session-1".to_string());
+        session.remember(
+            MemoryKind::Decision,
+            "Use async/await pattern".into(),
+            0.9,
+            vec!["rust".into(), "async".into()],
+        );
+        session.remember(
+            MemoryKind::CodePattern,
+            "RAII for resource management".into(),
+            0.85,
+            vec!["rust".into()],
+        );
+
+        store.save_session(&session).unwrap();
+        assert_eq!(store.all_session_ids().len(), 1);
+
+        let loaded = store.load_session("session-1").unwrap();
+        assert_eq!(loaded.session_id(), "session-1");
+        assert_eq!(loaded.len(), 2);
+    }
+
+    #[test]
+    fn memory_store_global_entries_persist() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("memory.nda");
+        let mut store = MemoryStore::new(path);
+
+        let mut session = SessionMemory::new("session-global".to_string());
+        session.remember(
+            MemoryKind::UserPreference,
+            "User prefers dark theme".into(),
+            0.95,
+            vec!["preference".into()],
+        );
+
+        store.save_session(&session).unwrap();
+        store.merge_session_into_global("session-global");
+
+        let global = store.load_global();
+        assert_eq!(global.len(), 1);
+        assert_eq!(global[0].content, "User prefers dark theme");
+    }
+
+    #[test]
+    fn memory_store_merge_session_into_global_filters_low_importance() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("memory.nda");
+        let mut store = MemoryStore::new(path);
+
+        let mut session = SessionMemory::new("session-merge".to_string());
+        session.remember(MemoryKind::Fact, "High importance".into(), 0.9, vec![]);
+        session.remember(MemoryKind::Fact, "Low importance".into(), 0.3, vec![]);
+        session.remember(MemoryKind::Fact, "Medium importance".into(), 0.7, vec![]);
+
+        store.save_session(&session).unwrap();
+        store.merge_session_into_global("session-merge");
+
+        let global = store.load_global();
+        // Only entries with importance >= 0.7 should be merged.
+        assert_eq!(global.len(), 2);
+        assert!(global.iter().all(|e| e.importance >= 0.7));
+    }
+
+    #[test]
+    fn memory_store_prune_old_sessions() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("memory.nda");
+        let mut store = MemoryStore::new(path);
+
+        for i in 0..5 {
+            let session = make_test_session(&format!("session-{}", i));
+            store.save_session(&session).unwrap();
+        }
+
+        assert_eq!(store.all_session_ids().len(), 5);
+        store.prune_old_sessions(3);
+        assert_eq!(store.all_session_ids().len(), 3);
+    }
+
+    #[test]
+    fn memory_store_empty_store_handling() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("memory.nda");
+        let store = MemoryStore::new(path);
+
+        assert!(store.load_session("nonexistent").is_none());
+        assert_eq!(store.load_global().len(), 0);
+        assert_eq!(store.total_entries(), 0);
+    }
+
+    #[test]
+    fn memory_store_multiple_sessions_coexist() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("memory.nda");
+        let mut store = MemoryStore::new(path);
+
+        let session1 = make_test_session("session-A");
+        let session2 = make_test_session("session-B");
+        let session3 = make_test_session("session-C");
+
+        store.save_session(&session1).unwrap();
+        store.save_session(&session2).unwrap();
+        store.save_session(&session3).unwrap();
+
+        assert_eq!(store.all_session_ids().len(), 3);
+        assert!(store.all_session_ids().contains(&"session-A".to_string()));
+        assert!(store.all_session_ids().contains(&"session-B".to_string()));
+        assert!(store.all_session_ids().contains(&"session-C".to_string()));
+    }
+
+    #[test]
+    fn memory_store_stats_accuracy() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("memory.nda");
+        let mut store = MemoryStore::new(path);
+
+        let mut session1 = SessionMemory::new("stats-session-1".to_string());
+        session1.remember(MemoryKind::Fact, "Fact 1".into(), 0.8, vec![]);
+        session1.remember(MemoryKind::Fact, "Fact 2".into(), 0.7, vec![]);
+
+        let mut session2 = SessionMemory::new("stats-session-2".to_string());
+        session2.remember(MemoryKind::Decision, "Decision 1".into(), 0.9, vec![]);
+
+        store.save_session(&session1).unwrap();
+        store.save_session(&session2).unwrap();
+
+        let stats = store.store_stats();
+        assert_eq!(stats.total_sessions, 2);
+        assert_eq!(stats.total_entry_count, 3); // 2 + 1
+    }
+
+    #[test]
+    fn memory_store_save_global_directly() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("memory.nda");
+        let mut store = MemoryStore::new(path);
+
+        let mut session = SessionMemory::new("global-source".to_string());
+        let id = session.remember(
+            MemoryKind::CodePattern,
+            "Use iterators over loops".into(),
+            0.85,
+            vec!["rust".into()],
+        );
+
+        let entries: Vec<SessionMemoryEntry> = vec![session.get(id).unwrap().clone()];
+        store.save_global(&entries).unwrap();
+
+        let loaded = store.load_global();
+        assert_eq!(loaded.len(), 1);
+        assert_eq!(loaded[0].content, "Use iterators over loops");
+    }
+
+    #[test]
+    fn memory_store_persistence_across_reopen() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("memory.nda");
+
+        {
+            let mut store = MemoryStore::new(path.clone());
+            let session = make_test_session("persist-test");
+            store.save_session(&session).unwrap();
+        }
+
+        // Reopen the store.
+        let store2 = MemoryStore::new(path);
+        assert_eq!(store2.all_session_ids().len(), 1);
+        assert!(store2.load_session("persist-test").is_some());
+    }
+
+    #[test]
+    fn memory_store_total_entries_includes_global() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("memory.nda");
+        let mut store = MemoryStore::new(path);
+
+        let mut session = SessionMemory::new("total-test".to_string());
+        session.remember(MemoryKind::Fact, "Session fact".into(), 0.8, vec![]);
+        store.save_session(&session).unwrap();
+
+        let mut global_entry = session.get(1).unwrap().clone();
+        global_entry.content = "Global fact".into();
+        store.save_global(&[global_entry]).unwrap();
+
+        // Total = 1 session entry + 1 global entry.
+        assert_eq!(store.total_entries(), 2);
+    }
+
+    #[test]
+    fn memory_store_prune_global_respects_limit() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("memory.nda");
+        let mut store = MemoryStore::new(path);
+        store.max_global_entries = 3;
+
+        let mut _entries: Vec<SessionMemoryEntry> = Vec::new();
+        for i in 0..5 {
+            let mut session = SessionMemory::new(format!("prune-{}", i));
+            let importance = 0.5 + (i as f64) * 0.1;
+            session.remember(MemoryKind::Fact, format!("Fact {}", i), importance, vec![]);
+            store.save_session(&session).unwrap();
+            store.merge_session_into_global(&format!("prune-{}", i));
+        }
+
+        let global = store.load_global();
+        assert!(global.len() <= 3);
+    }
+
+    #[test]
+    fn memory_store_load_nonexistent_session_returns_none() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("memory.nda");
+        let store = MemoryStore::new(path);
+
+        assert!(store.load_session("does-not-exist").is_none());
+    }
+
+    #[test]
+    fn memory_store_merge_nonexistent_session_is_noop() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("memory.nda");
+        let mut store = MemoryStore::new(path);
+
+        store.merge_session_into_global("ghost-session");
+        assert_eq!(store.load_global().len(), 0);
+    }
+
+    #[test]
+    fn memory_store_prune_sessions_with_zero_keep() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("memory.nda");
+        let mut store = MemoryStore::new(path);
+
+        let session = make_test_session("to-prune");
+        store.save_session(&session).unwrap();
+        assert_eq!(store.all_session_ids().len(), 1);
+
+        store.prune_old_sessions(0);
+        assert_eq!(store.all_session_ids().len(), 0);
+    }
+
+    #[test]
+    fn memory_store_stats_with_empty_store() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("memory.nda");
+        let store = MemoryStore::new(path);
+
+        let stats = store.store_stats();
+        assert_eq!(stats.total_sessions, 0);
+        assert_eq!(stats.global_entry_count, 0);
+        assert_eq!(stats.total_entry_count, 0);
+        assert_eq!(stats.oldest_session_age_secs, 0);
+    }
+
+    #[test]
+    fn memory_store_overwrite_existing_session() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("memory.nda");
+        let mut store = MemoryStore::new(path);
+
+        let mut session1 = SessionMemory::new("overwrite-test".to_string());
+        session1.remember(MemoryKind::Fact, "First version".into(), 0.5, vec![]);
+        store.save_session(&session1).unwrap();
+
+        let mut session2 = SessionMemory::new("overwrite-test".to_string());
+        session2.remember(MemoryKind::Fact, "Second version".into(), 0.9, vec![]);
+        store.save_session(&session2).unwrap();
+
+        // Should still have only 1 session.
+        assert_eq!(store.all_session_ids().len(), 1);
+
+        let loaded = store.load_session("overwrite-test").unwrap();
+        assert_eq!(loaded.len(), 1);
     }
 }

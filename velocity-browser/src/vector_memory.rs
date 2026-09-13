@@ -24,6 +24,9 @@ pub struct VectorMemoryNode {
     pub outcome_score: f64,
 }
 
+/// Maximum number of vector memory nodes retained before LRU eviction.
+const MAX_VECTOR_NODES: usize = 2048;
+
 #[derive(Debug, Clone, Default)]
 pub struct SiteVectorStore {
     pub nodes: Vec<VectorMemoryNode>,
@@ -54,6 +57,15 @@ impl SiteVectorStore {
         let idx = self.nodes.len();
         self.nodes.push(node);
         self.index.insert(triple_hash, idx);
+        // Evict oldest nodes if over capacity.
+        if self.nodes.len() > MAX_VECTOR_NODES {
+            let excess = self.nodes.len() - MAX_VECTOR_NODES;
+            self.nodes.drain(..excess);
+            self.index.clear();
+            for (i, node) in self.nodes.iter().enumerate() {
+                self.index.insert(node.triple_hash, i);
+            }
+        }
         self.rebuild_idf();
         id
     }
@@ -83,6 +95,15 @@ impl SiteVectorStore {
         let idx = self.nodes.len();
         self.nodes.push(node);
         self.index.insert(triple_hash, idx);
+        // Evict oldest nodes if over capacity.
+        if self.nodes.len() > MAX_VECTOR_NODES {
+            let excess = self.nodes.len() - MAX_VECTOR_NODES;
+            self.nodes.drain(..excess);
+            self.index.clear();
+            for (i, node) in self.nodes.iter().enumerate() {
+                self.index.insert(node.triple_hash, i);
+            }
+        }
         self.rebuild_idf();
         id
     }

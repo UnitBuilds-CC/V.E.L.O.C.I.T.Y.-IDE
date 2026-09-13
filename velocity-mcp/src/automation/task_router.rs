@@ -1,5 +1,6 @@
 use std::path::{Path, PathBuf};
 
+use velocity_ide::hash_str;
 use velocity_ide::site_map::SiteMap;
 
 use crate::agent::{AiProvider, ModelInfo};
@@ -467,14 +468,6 @@ fn canonicalize_scope_path(path: &Path) -> String {
         }
     }
     normalized.join("/")
-}
-
-fn hash_str(s: &str) -> u64 {
-    use sha2::{Digest, Sha256};
-    let mut h = Sha256::new();
-    h.update(s.as_bytes());
-    let d = h.finalize();
-    u64::from_le_bytes(d[..8].try_into().unwrap())
 }
 
 #[cfg(test)]

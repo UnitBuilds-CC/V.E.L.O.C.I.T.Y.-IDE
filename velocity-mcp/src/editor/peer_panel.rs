@@ -14,10 +14,10 @@ impl VelocityApp {
     /// Render the cross-device peer collaboration panel.
     pub fn render_peer_panel(&mut self, ui: &mut egui::Ui) {
         let palette = self.palette();
-        let peer_count = self.peer_manager.peers.len();
-        let online = self.peer_manager.online_peers().len();
-        let active_xfers = self.peer_manager.transfers.len();
-        let active_tasks = self.peer_manager.active_tasks().len();
+        let peer_count = self.peer_state.peer_manager.peers.len();
+        let online = self.peer_state.peer_manager.online_peers().len();
+        let active_xfers = self.peer_state.peer_manager.transfers.len();
+        let active_tasks = self.peer_state.peer_manager.active_tasks().len();
 
         Self::tier3_header(
             ui,
@@ -30,9 +30,9 @@ impl VelocityApp {
             palette.text_muted,
         );
 
-        if !self.peer_status.is_empty() {
+        if !self.peer_state.peer_status.is_empty() {
             ui.label(
-                RichText::new(&self.peer_status)
+                RichText::new(&self.peer_state.peer_status)
                     .size(9.0)
                     .color(palette.text_muted),
             );
@@ -50,10 +50,10 @@ impl VelocityApp {
                         .color(palette.accent),
                 );
 
-                let server_running = self.peer_server_running;
+                let server_running = self.peer_state.peer_server_running;
                 ui.horizontal(|ui| {
                     let status_text = if server_running {
-                        RichText::new(format!("Listening on :{}", self.peer_port))
+                        RichText::new(format!("Listening on :{}", self.peer_state.peer_port))
                             .size(9.0)
                             .color(palette.success)
                     } else {
@@ -66,8 +66,8 @@ impl VelocityApp {
                             .small_button(RichText::new("Stop").size(9.0).color(palette.error))
                             .clicked()
                         {
-                            self.peer_server_running = false;
-                            self.peer_status = "Peer server stopped".into();
+                            self.peer_state.peer_server_running = false;
+                            self.peer_state.peer_status = "Peer server stopped".into();
                         }
                     } else {
                         if ui
@@ -80,20 +80,20 @@ impl VelocityApp {
 
                     ui.label(RichText::new("Port:").size(9.0).color(palette.text_muted));
                     let port_edit = ui.add(
-                        egui::TextEdit::singleline(&mut self.peer_port_input)
+                        egui::TextEdit::singleline(&mut self.peer_state.peer_port_input)
                             .desired_width(60.0)
                             .font(egui::TextStyle::Monospace),
                     );
                     if port_edit.changed() {
                         // Sync the parsed value so Start uses the latest port.
-                        if let Ok(p) = self.peer_port_input.trim().parse::<u16>() {
-                            self.peer_port = p;
+                        if let Ok(p) = self.peer_state.peer_port_input.trim().parse::<u16>() {
+                            self.peer_state.peer_port = p;
                         }
                     }
                 });
 
                 ui.add_space(2.0);
-                if let Some(id) = &self.peer_manager.local_identity {
+                if let Some(id) = &self.peer_state.peer_manager.local_identity {
                     ui.horizontal(|ui| {
                         ui.label(RichText::new("ID:").size(9.0).color(palette.text_muted));
                         ui.label(
@@ -116,21 +116,21 @@ impl VelocityApp {
                 ui.horizontal(|ui| {
                     ui.label(RichText::new("Host:").size(9.0));
                     ui.add(
-                        egui::TextEdit::singleline(&mut self.peer_add_host)
+                        egui::TextEdit::singleline(&mut self.peer_state.peer_add_host)
                             .desired_width(120.0)
                             .hint_text("192.168.1.50")
                             .font(egui::TextStyle::Monospace),
                     );
                     ui.label(RichText::new("Port:").size(9.0));
                     ui.add(
-                        egui::TextEdit::singleline(&mut self.peer_add_port)
+                        egui::TextEdit::singleline(&mut self.peer_state.peer_add_port)
                             .desired_width(50.0)
                             .hint_text("9191")
                             .font(egui::TextStyle::Monospace),
                     );
                     ui.label(RichText::new("Name:").size(9.0));
                     ui.add(
-                        egui::TextEdit::singleline(&mut self.peer_add_name)
+                        egui::TextEdit::singleline(&mut self.peer_state.peer_add_name)
                             .desired_width(80.0)
                             .hint_text("Remote PC"),
                     );
@@ -149,7 +149,7 @@ impl VelocityApp {
                 );
 
                 let peers: Vec<crate::agent::peer_link::PeerIdentity> = self
-                    .peer_manager
+                    .peer_state.peer_manager
                     .list_peers()
                     .into_iter()
                     .cloned()
@@ -199,7 +199,7 @@ impl VelocityApp {
                     // Actions for this peer
                     ui.horizontal(|ui| {
                         if ui.small_button(RichText::new("Chat").size(8.0)).clicked() {
-                            self.peer_chat_selected = Some(peer.id.clone());
+                            self.peer_state.peer_chat_selected = Some(peer.id.clone());
                         }
                         if ui
                             .small_button(RichText::new("Health Check").size(8.0))
@@ -209,14 +209,14 @@ impl VelocityApp {
                             let port = peer.port;
                             match crate::agent::peer_server::peer_health_check(&host, port) {
                                 Ok(_) => {
-                                    self.peer_status = format!("{} is healthy", peer.name);
-                                    if let Some(p) = self.peer_manager.peers.get_mut(&peer.id) {
+                                    self.peer_state.peer_status = format!("{} is healthy", peer.name);
+                                    if let Some(p) = self.peer_state.peer_manager.peers.get_mut(&peer.id) {
                                         p.online = true;
                                     }
                                 }
                                 Err(e) => {
-                                    self.peer_status = format!("{} unreachable: {}", peer.name, e);
-                                    if let Some(p) = self.peer_manager.peers.get_mut(&peer.id) {
+                                    self.peer_state.peer_status = format!("{} unreachable: {}", peer.name, e);
+                                    if let Some(p) = self.peer_state.peer_manager.peers.get_mut(&peer.id) {
                                         p.online = false;
                                     }
                                 }
@@ -226,8 +226,8 @@ impl VelocityApp {
                             .small_button(RichText::new("Remove").size(8.0).color(palette.error))
                             .clicked()
                         {
-                            self.peer_manager.remove_peer(&peer.id);
-                            self.peer_status = format!("Removed peer {}", peer.name);
+                            self.peer_state.peer_manager.remove_peer(&peer.id);
+                            self.peer_state.peer_status = format!("Removed peer {}", peer.name);
                         }
                     });
 
@@ -243,9 +243,9 @@ impl VelocityApp {
                         .color(palette.accent),
                 );
 
-                if let Some(selected_id) = &self.peer_chat_selected {
+                if let Some(selected_id) = &self.peer_state.peer_chat_selected {
                     let selected_name = self
-                        .peer_manager
+                        .peer_state.peer_manager
                         .get_peer(selected_id)
                         .map(|p| p.name.clone())
                         .unwrap_or_else(|| selected_id.clone());
@@ -258,10 +258,10 @@ impl VelocityApp {
 
                     // Show recent messages with this peer
                     let msgs: Vec<_> = self
-                        .peer_manager
+                        .peer_state.peer_manager
                         .inbox
                         .iter()
-                        .chain(self.peer_manager.outbox.iter())
+                        .chain(self.peer_state.peer_manager.outbox.iter())
                         .filter(|m| &m.to == selected_id || &m.from == selected_id)
                         .collect();
 
@@ -284,21 +284,21 @@ impl VelocityApp {
 
                     ui.horizontal(|ui| {
                         let response = ui.add(
-                            egui::TextEdit::singleline(&mut self.peer_chat_message)
+                            egui::TextEdit::singleline(&mut self.peer_state.peer_chat_message)
                                 .desired_width(200.0)
                                 .hint_text("Type a message..."),
                         );
                         if (ui.button("Send").clicked()
                             || (response.lost_focus()
                                 && ui.input(|i| i.key_pressed(egui::Key::Enter))))
-                            && !self.peer_chat_message.is_empty()
+                            && !self.peer_state.peer_chat_message.is_empty()
                         {
-                            self.peer_manager.send_message(
+                            self.peer_state.peer_manager.send_message(
                                 selected_id,
                                 crate::agent::peer_link::PeerMessageKind::Chat,
-                                serde_json::json!({ "text": self.peer_chat_message.clone() }),
+                                serde_json::json!({ "text": self.peer_state.peer_chat_message.clone() }),
                             );
-                            self.peer_chat_message.clear();
+                            self.peer_state.peer_chat_message.clear();
                         }
                     });
                 } else {
@@ -318,7 +318,7 @@ impl VelocityApp {
                         .color(palette.accent),
                 );
 
-                let transfers: Vec<_> = self.peer_manager.transfers.values().collect();
+                let transfers: Vec<_> = self.peer_state.peer_manager.transfers.values().collect();
                 if transfers.is_empty() {
                     ui.label(
                         RichText::new("No active transfers.")
@@ -366,7 +366,7 @@ impl VelocityApp {
                         .color(palette.accent),
                 );
 
-                let tasks: Vec<_> = self.peer_manager.tasks.values().collect();
+                let tasks: Vec<_> = self.peer_state.peer_manager.tasks.values().collect();
                 if tasks.is_empty() {
                     ui.label(
                         RichText::new("No active tasks.")
@@ -408,12 +408,12 @@ impl VelocityApp {
 
     /// Start the peer API server on a background thread.
     pub fn start_peer_server(&mut self) {
-        if self.peer_server_running {
-            self.peer_status = "Peer server already running".into();
+        if self.peer_state.peer_server_running {
+            self.peer_state.peer_status = "Peer server already running".into();
             return;
         }
 
-        let port = self.peer_port;
+        let port = self.peer_state.peer_port;
         let config = PeerServerConfig {
             port,
             ..PeerServerConfig::default()
@@ -422,7 +422,7 @@ impl VelocityApp {
         let _running_flag = server.running_flag();
 
         // Clone the peer manager snapshot for the server thread.
-        let peer_snapshot = self.peer_manager.clone();
+        let peer_snapshot = self.peer_state.peer_manager.clone();
 
         let handle = std::thread::Builder::new()
             .name("peer-api-server".into())
@@ -434,28 +434,28 @@ impl VelocityApp {
 
         match handle {
             Ok(_) => {
-                self.peer_server_running = true;
-                self.peer_manager.set_listen_port(port);
-                self.peer_status = format!("Peer server started on port {}", port);
+                self.peer_state.peer_server_running = true;
+                self.peer_state.peer_manager.set_listen_port(port);
+                self.peer_state.peer_status = format!("Peer server started on port {}", port);
             }
             Err(e) => {
-                self.peer_status = format!("Failed to start peer server: {}", e);
+                self.peer_state.peer_status = format!("Failed to start peer server: {}", e);
             }
         }
     }
 
     /// Connect to a new peer using the input fields.
     fn connect_new_peer(&mut self) {
-        let host = self.peer_add_host.trim().to_string();
-        let port: u16 = self.peer_add_port.trim().parse().unwrap_or(9191);
-        let name = if self.peer_add_name.trim().is_empty() {
+        let host = self.peer_state.peer_add_host.trim().to_string();
+        let port: u16 = self.peer_state.peer_add_port.trim().parse().unwrap_or(9191);
+        let name = if self.peer_state.peer_add_name.trim().is_empty() {
             format!("peer-{}", host)
         } else {
-            self.peer_add_name.trim().to_string()
+            self.peer_state.peer_add_name.trim().to_string()
         };
 
         if host.is_empty() {
-            self.peer_status = "Host is required".into();
+            self.peer_state.peer_status = "Host is required".into();
             return;
         }
 
@@ -494,20 +494,20 @@ impl VelocityApp {
                         .and_then(|v| v.as_str())
                         .map(|s| s.to_string()),
                 };
-                self.peer_manager.add_peer(peer);
+                self.peer_state.peer_manager.add_peer(peer);
 
                 // Send a pairing request.
                 let _ = crate::agent::peer_server::request_pairing(
                     &host,
                     port,
-                    self.peer_manager
+                    self.peer_state.peer_manager
                         .local_identity
                         .as_ref()
                         .map(|id| id.name.as_str())
                         .unwrap_or("velocity"),
                 );
 
-                self.peer_status = format!("Connected to {} at {}:{}", peer_name, host, port);
+                self.peer_state.peer_status = format!("Connected to {} at {}:{}", peer_name, host, port);
             }
             Err(e) => {
                 // Add peer anyway (may come online later).
@@ -527,14 +527,14 @@ impl VelocityApp {
                     capabilities: vec![PeerCapability::General],
                     environment: None,
                 };
-                self.peer_manager.add_peer(peer);
-                self.peer_status = format!("Added {} (unreachable: {}). Will retry.", name, e);
+                self.peer_state.peer_manager.add_peer(peer);
+                self.peer_state.peer_status = format!("Added {} (unreachable: {}). Will retry.", name, e);
             }
         }
 
         // Clear input fields.
-        self.peer_add_host.clear();
-        self.peer_add_port.clear();
-        self.peer_add_name.clear();
+        self.peer_state.peer_add_host.clear();
+        self.peer_state.peer_add_port.clear();
+        self.peer_state.peer_add_name.clear();
     }
 }

@@ -170,6 +170,8 @@ mod tests {
                 scope: vec!["src/main.rs".to_string()],
                 dependencies: Vec::new(),
                 output: None,
+                priority: 0,
+                estimated_weight: 1,
             },
             task_kind: AgentTaskKind::DesktopAutomation,
             workspace_root: workspace.path().to_path_buf(),

@@ -7,8 +7,14 @@ default:
 
 # ─── Build ─────────────────────────────────────────────────────────────────
 
-# Build all crates (debug)
+# Build all crates (debug) with sccache
 build:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if command -v sccache &> /dev/null; then
+        export RUSTC_WRAPPER=sccache
+        echo "✓ Using sccache for compilation"
+    fi
     cargo build --workspace
 
 # Build all crates (release)
@@ -19,11 +25,33 @@ build-release:
 build-crate CRATE:
     cargo build -p {{CRATE}}
 
+# Build only changed crates (fast iteration)
+build-changed:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if command -v sccache &> /dev/null; then
+        export RUSTC_WRAPPER=sccache
+    fi
+    # Build only the main binaries, not the whole workspace
+    cargo build --bin velocity_ide --bin velocity_mcp --bin velocity_ide_gui --bin velocity-drone
+
 # ─── Test ──────────────────────────────────────────────────────────────────
 
 # Run all tests
 test:
     cargo test --workspace
+
+# Run all tests in parallel across crates (Windows)
+test-all:
+    powershell -ExecutionPolicy Bypass -File ./run_tests_parallel.ps1
+
+# Run velocity-mcp tests only
+test-mcp:
+    cargo test -p velocity-mcp
+
+# Run velocity-browser tests only
+test-browser:
+    cargo test -p velocity-browser
 
 # Run tests with output
 test-verbose:
@@ -33,12 +61,20 @@ test-verbose:
 test-filter FILTER:
     cargo test --workspace {{FILTER}}
 
+# Run tests for a specific crate only (fast)
+test-crate CRATE:
+    cargo test -p {{CRATE}}
+
 # Run tests with coverage
 test-coverage:
     cargo llvm-cov --workspace --lcov --output-path lcov.info
     @echo "Coverage report generated: lcov.info"
 
 # ─── Lint & Format ─────────────────────────────────────────────────────────
+
+# Check entire workspace (fast type-check without codegen)
+check-all:
+    cargo check --workspace
 
 # Check formatting
 fmt-check:
@@ -88,6 +124,16 @@ clean:
 
 # Clean and rebuild
 rebuild: clean build
+
+# Clean sccache stats
+clean-sccache:
+    #!/usr/bin/env bash
+    if command -v sccache &> /dev/null; then
+        sccache --zero-stats
+        echo "✓ sccache stats cleared"
+    else
+        echo "⚠ sccache not installed"
+    fi
 
 # ─── Documentation ─────────────────────────────────────────────────────────
 
@@ -145,13 +191,45 @@ package: release
 
 # ─── Development ───────────────────────────────────────────────────────────
 
-# Watch for changes and rebuild
+# Watch for changes and rebuild (with sccache)
 watch:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if command -v sccache &> /dev/null; then
+        export RUSTC_WRAPPER=sccache
+        echo "✓ Using sccache for watch mode"
+    fi
     cargo watch --clear -x check
+
+# Watch and run on changes (hot reload pattern)
+watch-run:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if command -v sccache &> /dev/null; then
+        export RUSTC_WRAPPER=sccache
+    fi
+    cargo watch --clear -x "run --bin velocity_ide"
+
+# Watch specific crate
+watch-crate CRATE:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if command -v sccache &> /dev/null; then
+        export RUSTC_WRAPPER=sccache
+    fi
+    cargo watch --clear -x "check -p {{CRATE}}"
 
 # Run benchmarks
 bench:
     cargo bench --workspace
+
+# Run benchmarks with regression detection (compare vs saved baseline)
+bench-check:
+    cargo bench --workspace -- --noplot
+
+# Save current benchmark results as new baseline
+bench-save-baseline:
+    cargo bench --workspace -- --noplot --save-baseline baseline
 
 # Run GUI integration tests
 test-gui:
@@ -165,6 +243,15 @@ sbom:
 # Generate flamegraph (requires cargo-flamegraph)
 flamegraph:
     cargo flamegraph --bin velocity_mcp
+
+# Show sccache statistics
+sccache-stats:
+    #!/usr/bin/env bash
+    if command -v sccache &> /dev/null; then
+        sccache --show-stats
+    else
+        echo "⚠ sccache not installed. Install with: cargo install sccache"
+    fi
 
 # ─── Database ──────────────────────────────────────────────────────────────
 

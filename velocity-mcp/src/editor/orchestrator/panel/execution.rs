@@ -248,8 +248,16 @@ impl OrchestratorPanel {
                 reconciliation_error(&self.graph, &reg.outputs, id, &outputs);
             let needs_follow_up = reconciliation_error.is_some() || requires_follow_up(&result);
             if result.success && report.ok && reconciliation_error.is_none() && !needs_follow_up {
+                let task_output_text = if result.message.trim().is_empty() {
+                    outputs.join(", ")
+                } else {
+                    result.message.clone()
+                };
                 reg.outputs.insert(id, outputs);
                 reg.statuses.insert(id, TaskStatus::Done(result));
+                if let Some(task) = self.graph.tasks.get_mut(&id) {
+                    task.output = Some(task_output_text);
+                }
             } else {
                 if let Some(error) = reconciliation_error {
                     result.success = false;
@@ -277,7 +285,7 @@ impl OrchestratorPanel {
         }
 
         propagate_blocked_dependents(&self.graph, reg);
-        complete_reconcile_root(&self.graph, reg);
+        complete_reconcile_root(&mut self.graph, reg);
 
         let ready_ids = reg.ready_ids(&self.graph);
         let weight_root = resolve_weight_root(workspace_root);

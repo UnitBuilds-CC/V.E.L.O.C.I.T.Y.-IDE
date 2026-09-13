@@ -32,7 +32,7 @@ cargo run --release --bin velocity_mcp -- --mode stdio
 ### Run Tests
 
 ```bash
-# Run all 9,200+ tests
+# Run all 9,600+ tests
 cargo test --workspace
 
 # Run with coverage
@@ -66,20 +66,20 @@ cargo llvm-cov --workspace --lcov
 - **Wiki with Rebuild Index**: Compile all .rs files to populate the wiki's name dictionary, enabling proper file/symbol classification with real names instead of hex hashes.
 - **Memory-Efficient Design**: Lazy-loaded agent memory and knowledge base (deferred until first access), bounded collections, zero per-frame allocations where possible. Idle memory ~245 MB.
 - **Workspace File Tree & Symbol History Inspector**: Browse workspace files, declarations, and inspect chronological change histories with context rationale.
-- **Wasm Sandbox JIT & Property Fuzzing**: `WasmPluginRunner` and `PropertyFuzzer` in `velocity-ide` for sandbox code validation.
+- **Wasm Sandbox JIT**: Sandboxed JIT compiler (`jit_sandbox.rs`) in `velocity-ide` for safe code validation and execution.
 - **Cross-Platform Desktop Automation**: Unified `DesktopAutomationAdapter` bridging Windows UI Automation, Linux AT-SPI, and macOS Accessibility.
 
 ### Keyboard Shortcuts
 
 | Shortcut | Action |
 |----------|--------|
-| `Ctrl+P` | Open command palette |
+| `Ctrl+P` | Quick open (file search) |
 | `Ctrl+Shift+P` | Open command palette |
 | `Ctrl+Shift+F` | Open find/replace |
 | `Ctrl+G` | Go to line |
-| `Ctrl+Shift+G` | Go to symbol |
+| `Ctrl+Shift+O` | Go to symbol |
 | `Alt+←` / `Alt+→` | Navigate back/forward |
-| `Ctrl+K` | Open quick-open (file search) |
+| `Ctrl+E` | Toggle sidebar |
 
 ---
 
@@ -92,7 +92,7 @@ Velocity-IDE/
 │   │   ├── src/
 │   │   │   ├── agent/           # 4-provider reasoning loops, dispatchers, & NDA state
 │   │   │   ├── registry/        # System, browser, & desktop tool definitions
-│   │   │   ├── editor/          # 119-module GUI system (activity bar, chat, sidebar, theme, graph, wiki)
+│   │   │   ├── editor/          # 142-module GUI system (activity bar, chat, sidebar, theme, graph, wiki)
 │   │   │   ├── automation/      # Task routing, mediator edit locks, AST watcher
 │   │   │   ├── ipc/             # Shared memory telemetry
 │   │   │   ├── orchestrator/    # Worker scheduling, worktree isolation, blueprint DAG
@@ -114,9 +114,17 @@ Velocity-IDE/
 │   │   └── Cargo.toml
 │   ├── velocity-ide/            # Compiler & Shader Pipeline
 │   │   ├── src/
-│   │   │   ├── compiler/        # Lexer, parser, JIT sandbox, Wasm runner, Fuzzer
+│   │   │   ├── compiler/        # Lexer, parser, JIT sandbox, Wasm runner
 │   │   │   ├── logging.rs       # Structured logging configuration
 │   │   │   └── site_map/        # Merkle AST graph & SiteMap database
+│   │   └── Cargo.toml
+│   ├── drone/                   # Autonomous Drone Agent
+│   │   ├── src/
+│   │   ├── tests/
+│   │   └── Cargo.toml
+│   ├── e2e/                     # End-to-End Integration Tests
+│   │   ├── src/
+│   │   ├── tests/
 │   │   └── Cargo.toml
 │   ├── docs/                    # Documentation
 │   │   ├── DEPLOYMENT.md        # Deployment guide

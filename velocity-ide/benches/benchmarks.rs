@@ -71,5 +71,74 @@ fn bench_library_info(c: &mut criterion::Criterion) {
     group.finish();
 }
 
-criterion::criterion_group!(benches, bench_nda_gemv, bench_tokenizer, bench_library_info,);
+/// Benchmark NDA parser compile() on small/medium inputs.
+fn bench_nda_parser(c: &mut criterion::Criterion) {
+    use velocity_ide::compiler::nda_parser;
+
+    let mut group = c.benchmark_group("nda_parser");
+
+    let tiny = "let x = 42;";
+    group.bench_function("compile_tiny", |b| {
+        b.iter(|| nda_parser::compile(black_box(tiny)))
+    });
+
+    let medium = (0..50)
+        .map(|i| format!("let v{} = {};", i, i * 7))
+        .collect::<Vec<_>>()
+        .join("\n");
+    group.bench_function("compile_medium", |b| {
+        b.iter(|| nda_parser::compile(black_box(&medium)))
+    });
+
+    // Adversarial: deeply nested braces (parser stress test)
+    let nested = format!("{}{}", "{".repeat(20), "}".repeat(20));
+    group.bench_function("compile_nested_20", |b| {
+        b.iter(|| nda_parser::compile(black_box(&nested)))
+    });
+
+    group.finish();
+}
+
+/// Benchmark SiteMap node insertion throughput.
+fn bench_site_map(c: &mut criterion::Criterion) {
+    use velocity_ide::site_map::{NdaNode, SiteMap};
+
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let mut sm = SiteMap::open(tmp.path(), 0).expect("open site map");
+
+    let mut group = c.benchmark_group("site_map");
+
+    group.bench_function("insert_1000_int_nodes", |b| {
+        b.iter(|| {
+            for i in 0..1000u64 {
+                let node = NdaNode::Int { value: i as i32 };
+                let _ = sm.put_node(&node);
+            }
+        })
+    });
+
+    group.bench_function("insert_1000_triple_nodes", |b| {
+        b.iter(|| {
+            for i in 0..1000u64 {
+                let node = NdaNode::Triple {
+                    subject_hash: i,
+                    predicate_id: (i % 10) as u16,
+                    object_hash: i * 3,
+                };
+                let _ = sm.put_node(&node);
+            }
+        })
+    });
+
+    group.finish();
+}
+
+criterion::criterion_group!(
+    benches,
+    bench_nda_gemv,
+    bench_tokenizer,
+    bench_library_info,
+    bench_nda_parser,
+    bench_site_map,
+);
 criterion::criterion_main!(benches);

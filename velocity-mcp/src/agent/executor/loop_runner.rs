@@ -5,14 +5,19 @@ use super::super::models::*;
 use super::super::nda::*;
 use super::super::provider::*;
 use super::super::self_improve::ImprovementEngine;
+use super::context_budget::compress_history_with_budget;
+use super::router_client::{
+    self, AssignmentRequest, AssignmentStatus, ExecutionMode, ExecutionTier,
+};
 use super::thread::{apply_headless_control_messages, run_compilation_check};
 use super::utils::{
-    build_request, compress_history, estimate_tokens, sanitize_chat_token, send_usage_update,
+    build_request, estimate_tokens, sanitize_chat_token, send_usage_update,
 };
 use crate::registry;
 use crate::safety::SafeMutex;
 use crate::usage::{
     AzureOpenAiAccount, CloudflareAccount, LocalOllamaAccount, OpenRouterAccount, UsageTracker,
+    WorkspaceRouterSettings,
 };
 use crossbeam_channel::{Receiver, Sender};
 use serde_json::{json, Value};
@@ -38,6 +43,7 @@ pub fn run_agent_reasoning_loop(
     ui_tx: &Sender<AgentToUiMessage>,
     deferred_messages: &mut Vec<UiToAgentMessage>,
     coordination_bus: &CoordinationBus,
+    router_settings: Option<&WorkspaceRouterSettings>,
 ) {
     let mut sitemap_needed = false;
     let mut loop_count: usize = 0;
@@ -136,7 +142,11 @@ pub fn run_agent_reasoning_loop(
             }
         }
 
-        let compressed_history = compress_history(message_history, current_profile.supports_tools);
+        let compressed_history = compress_history_with_budget(
+            message_history,
+            &current_model,
+            current_profile.supports_tools,
+        );
 
         let request_body = build_request(
             &current_profile,
@@ -157,6 +167,160 @@ pub fn run_agent_reasoning_loop(
             &request_body,
         );
 
+        // ─── Velocity Router MoA Dispatch ─────────────────────────────────────
+        // If the router is enabled and available, try routing through the MoA
+        // orchestrator first. If it succeeds, we handle the response and skip
+        // direct provider dispatch. If it fails, we fall through to direct.
+        let router_handled = if let Some(router_cfg) = router_settings {
+            if router_cfg.enabled && !router_cfg.api_key.trim().is_empty() {
+                // Check router health (cached after first check)
+                let router_available = router_client::is_router_available()
+                    || router_client::refresh_router_availability(&router_cfg.url);
+
+                if router_available {
+                    ui_tx
+                        .send(AgentToUiMessage::StatusUpdate(format!(
+                            "Routing through Velocity MoA (Turn {})\u{2026}",
+                            loop_count
+                        )))
+                        .ok();
+
+                    // Extract the user's prompt from message history
+                    let user_prompt = message_history
+                        .iter()
+                        .rev()
+                        .find(|m| m.role == "user")
+                        .map(|m| m.content.clone())
+                        .unwrap_or_default();
+
+                    if !user_prompt.is_empty() {
+                        // Gather workspace context: extract file paths from the prompt
+                        // and read their contents for the MoA specialists.
+                        let (file_paths, context) =
+                            gather_workspace_context(workspace_root, &user_prompt);
+
+                        let router_request = AssignmentRequest {
+                            task: user_prompt,
+                            tier: ExecutionTier::Ultimate,
+                            context: if context.is_empty() { None } else { Some(context) },
+                            file_paths,
+                            mode: ExecutionMode::Sync,
+                            max_cost_usd: None,
+                        };
+
+                        match router_client::submit_assignment(
+                            &router_cfg.url,
+                            &router_cfg.api_key,
+                            &router_request,
+                        ) {
+                            Ok(response) => {
+                                if response.status == AssignmentStatus::Completed {
+                                    if let Some(assembled) = response.assembled_output {
+                                        // Stream the assembled output to the UI
+                                        ui_tx
+                                            .send(AgentToUiMessage::OutputToken(
+                                                sanitize_chat_token(&assembled),
+                                            ))
+                                            .ok();
+
+                                        // Add to message history
+                                        message_history.push(ChatMessage {
+                                            role: "assistant".to_string(),
+                                            content: assembled.clone(),
+                                            name: None,
+                                            tool_call_id: None,
+                                            tool_calls: None,
+                                        });
+
+                                        // Log routing info if available
+                                        if let Some(plan) = &response.plan {
+                                            let subtask_count = plan.subtasks.len();
+                                            let models_used: Vec<_> = plan
+                                                .subtasks
+                                                .iter()
+                                                .map(|s| format!("{} ({})", s.model, s.domain))
+                                                .collect();
+                                            ui_tx
+                                                .send(AgentToUiMessage::StatusUpdate(format!(
+                                                    "MoA: {} sub-tasks → {}",
+                                                    subtask_count,
+                                                    models_used.join(", ")
+                                                )))
+                                                .ok();
+                                        }
+
+                                        if let Some(cost) = &response.cost {
+                                            ui_tx
+                                                .send(AgentToUiMessage::StatusUpdate(format!(
+                                                    "MoA cost: ${:.6} ({} tokens)",
+                                                    cost.total_cost_usd, cost.total_tokens
+                                                )))
+                                                .ok();
+                                        }
+
+                                        // Router handled it — skip direct dispatch
+                                        true
+                                    } else {
+                                        ui_tx
+                                            .send(AgentToUiMessage::StatusUpdate(
+                                                "MoA completed but produced no output. Falling back to direct dispatch.".to_string(),
+                                            ))
+                                            .ok();
+                                        false
+                                    }
+                                } else if response.status == AssignmentStatus::Failed {
+                                    let err = response.error.unwrap_or_else(|| "Unknown error".into());
+                                    ui_tx
+                                        .send(AgentToUiMessage::StatusUpdate(format!(
+                                            "MoA failed: {}. Falling back to direct dispatch.",
+                                            err
+                                        )))
+                                        .ok();
+                                    false
+                                } else {
+                                    ui_tx
+                                        .send(AgentToUiMessage::StatusUpdate(format!(
+                                            "MoA status: {:?}. Falling back to direct dispatch.",
+                                            response.status
+                                        )))
+                                        .ok();
+                                    false
+                                }
+                            }
+                            Err(e) => {
+                                ui_tx
+                                    .send(AgentToUiMessage::StatusUpdate(format!(
+                                        "MoA unavailable ({}). Falling back to direct dispatch.",
+                                        e
+                                    )))
+                                    .ok();
+                                router_client::mark_router_unavailable();
+                                false
+                            }
+                        }
+                    } else {
+                        false
+                    }
+                } else {
+                    false
+                }
+            } else {
+                false
+            }
+        } else {
+            false
+        };
+
+        // If the router handled the request, continue to the next iteration
+        // (tool call processing, etc.)
+        if router_handled {
+            // Skip the rest of the dispatch loop — the response is already
+            // in message_history and streamed to the UI.
+            // The loop will continue to check for tool calls, etc.
+            continue;
+        }
+
+        // ─── Direct Provider Dispatch (fallback) ──────────────────────────────
         let mut used_account: Option<&CloudflareAccount> = None;
         let mut used_or_account: Option<&OpenRouterAccount> = None;
         let ureq_response = match current_provider {
@@ -188,31 +352,31 @@ pub fn run_agent_reasoning_loop(
             AiProvider::LocalOllama => {
                 super::dispatch::execute_ollama_request(ollama_accounts, &request_body, ui_tx)
             }
-            AiProvider::Deepseek => super::dispatch::execute_deepseek_request(&request_body, ui_tx),
+            AiProvider::Deepseek => super::dispatch::execute_deepseek_request(&request_body, ui_tx, workspace_root),
             AiProvider::AlibabaQwen => {
-                super::dispatch::execute_alibaba_qwen_request(&request_body, ui_tx)
+                super::dispatch::execute_alibaba_qwen_request(&request_body, ui_tx, workspace_root)
             }
             AiProvider::AwsBedrock => {
-                super::dispatch::execute_bedrock_request(&request_body, ui_tx)
+                super::dispatch::execute_bedrock_request(&request_body, ui_tx, workspace_root)
             }
-            AiProvider::Groq => super::dispatch::execute_groq_request(&request_body, ui_tx),
-            AiProvider::Mistral => super::dispatch::execute_mistral_request(&request_body, ui_tx),
-            AiProvider::OpenAI => super::dispatch::execute_openai_request(&request_body, ui_tx),
+            AiProvider::Groq => super::dispatch::execute_groq_request(&request_body, ui_tx, workspace_root),
+            AiProvider::Mistral => super::dispatch::execute_mistral_request(&request_body, ui_tx, workspace_root),
+            AiProvider::OpenAI => super::dispatch::execute_openai_request(&request_body, ui_tx, workspace_root),
             AiProvider::GoogleVertex => {
-                super::dispatch::execute_google_request(&request_body, ui_tx)
+                super::dispatch::execute_google_request(&request_body, ui_tx, workspace_root)
             }
             AiProvider::TogetherAi => {
-                super::dispatch::execute_together_request(&request_body, ui_tx)
+                super::dispatch::execute_together_request(&request_body, ui_tx, workspace_root)
             }
             AiProvider::FireworksAi => {
-                super::dispatch::execute_fireworks_request(&request_body, ui_tx)
+                super::dispatch::execute_fireworks_request(&request_body, ui_tx, workspace_root)
             }
             AiProvider::Perplexity => {
-                super::dispatch::execute_perplexity_request(&request_body, ui_tx)
+                super::dispatch::execute_perplexity_request(&request_body, ui_tx, workspace_root)
             }
-            AiProvider::Cerebras => super::dispatch::execute_cerebras_request(&request_body, ui_tx),
+            AiProvider::Cerebras => super::dispatch::execute_cerebras_request(&request_body, ui_tx, workspace_root),
             AiProvider::Anthropic => {
-                super::dispatch::execute_anthropic_request(&request_body, ui_tx)
+                super::dispatch::execute_anthropic_request(&request_body, ui_tx, workspace_root)
             }
         };
 
@@ -1276,4 +1440,129 @@ pub fn run_agent_reasoning_loop(
         ))
         .ok();
     ui_tx.send(AgentToUiMessage::AgentFinished).ok();
+}
+
+// ─── Workspace Context Gathering for MoA Router ─────────────────────────────
+
+/// Extract file paths mentioned in the user's prompt and read their contents
+/// to provide context to the MoA specialists.
+///
+/// Returns (file_paths, context_string) where context_string includes the
+/// actual file contents so the models can analyze real code.
+fn gather_workspace_context(workspace_root: &PathBuf, prompt: &str) -> (Vec<String>, String) {
+    let mut file_paths = Vec::new();
+    let mut context_parts = Vec::new();
+
+    // Common source file extensions to look for
+    let source_extensions = [
+        ".rs", ".ts", ".tsx", ".js", ".jsx", ".py", ".go", ".java", ".c", ".cpp", ".h", ".hpp",
+        ".css", ".scss", ".html", ".vue", ".svelte", ".toml", ".json", ".yaml", ".yml", ".md",
+    ];
+
+    // Extract file paths from the prompt using simple pattern matching
+    for word in prompt.split_whitespace() {
+        let cleaned = word.trim_matches(|c: char| !c.is_alphanumeric() && c != '.' && c != '/' && c != '\\' && c != '-' && c != '_');
+        
+        // Check if it looks like a file path
+        if cleaned.contains('.') || cleaned.contains('/') || cleaned.contains('\\') {
+            let has_extension = source_extensions.iter().any(|ext| cleaned.ends_with(ext));
+            
+            if has_extension {
+                // Try to resolve the path relative to workspace root
+                let path = if std::path::Path::new(cleaned).is_absolute() {
+                    std::path::PathBuf::from(cleaned)
+                } else {
+                    workspace_root.join(cleaned)
+                };
+
+                // Read the file if it exists and is reasonably sized (< 100KB)
+                if path.exists() && path.is_file() {
+                    if let Ok(metadata) = path.metadata() {
+                        if metadata.len() < 100_000 {
+                            if let Ok(contents) = std::fs::read_to_string(&path) {
+                                let relative_path = path
+                                    .strip_prefix(workspace_root)
+                                    .unwrap_or(&path)
+                                    .to_string_lossy()
+                                    .to_string();
+                                
+                                file_paths.push(relative_path.clone());
+                                context_parts.push(format!(
+                                    "=== {} ===\n{}\n",
+                                    relative_path, contents
+                                ));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // Also gather a high-level overview of the workspace structure
+    let workspace_overview = gather_workspace_overview(workspace_root);
+    if !workspace_overview.is_empty() {
+        context_parts.insert(0, format!("=== Workspace Structure ===\n{}\n", workspace_overview));
+    }
+
+    let context = context_parts.join("\n");
+    (file_paths, context)
+}
+
+/// Gather a high-level overview of the workspace structure (top-level directories
+/// and key files) to give the MoA specialists context about the project.
+fn gather_workspace_overview(workspace_root: &PathBuf) -> String {
+    let mut overview = String::new();
+    
+    // List top-level directories
+    if let Ok(entries) = std::fs::read_dir(workspace_root) {
+        let mut dirs = Vec::new();
+        let mut files = Vec::new();
+        
+        for entry in entries.flatten() {
+            let path = entry.path();
+            let name = entry.file_name().to_string_lossy().to_string();
+            
+            // Skip hidden directories and common non-source directories
+            if name.starts_with('.') || name == "target" || name == "node_modules" || name == "dist" {
+                continue;
+            }
+            
+            if path.is_dir() {
+                dirs.push(name);
+            } else if path.is_file() {
+                // Only include key config files
+                if ["Cargo.toml", "package.json", "README.md", "Cargo.lock", "tsconfig.json"]
+                    .contains(&name.as_str())
+                {
+                    files.push(name);
+                }
+            }
+        }
+        
+        dirs.sort();
+        files.sort();
+        
+        if !dirs.is_empty() {
+            overview.push_str(&format!("Directories: {}\n", dirs.join(", ")));
+        }
+        if !files.is_empty() {
+            overview.push_str(&format!("Key files: {}\n", files.join(", ")));
+        }
+    }
+    
+    // Read Cargo.toml or package.json for project metadata
+    let cargo_toml = workspace_root.join("Cargo.toml");
+    if cargo_toml.exists() {
+        if let Ok(contents) = std::fs::read_to_string(&cargo_toml) {
+            // Extract just the [package] section
+            if let Some(start) = contents.find("[package]") {
+                if let Some(end) = contents[start..].find("\n[").map(|p| start + p) {
+                    overview.push_str(&format!("\n=== Cargo.toml [package] ===\n{}\n", &contents[start..end]));
+                }
+            }
+        }
+    }
+    
+    overview
 }

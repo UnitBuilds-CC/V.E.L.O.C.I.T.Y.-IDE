@@ -20,7 +20,6 @@ impl eframe::App for VelocityApp {
             self.last_frame_ms = last.elapsed().as_secs_f32() * 1000.0;
         }
         self.last_frame_instant = Some(frame_start);
-        self.frame_count += 1;
         // ────────────────────────────────────────────────────────────────────
 
         // ─── Process GUI control commands from external processes ───────────
@@ -35,13 +34,13 @@ impl eframe::App for VelocityApp {
         // Pick up any inline suggestion produced by the background model call.
         self.inline_suggestions.poll();
         // Drain incoming LSP diagnostics from language server stdout readers.
-        if let Some(lsp) = self.lsp_manager.as_mut() {
+        if let Some(lsp) = self.lsp_state.lsp_manager.as_mut() {
             lsp.poll_notifications();
         }
         self.update_diagnostics();
         // Sync diagnostics counts to bottom panel
-        self.bottom_panel_state.error_count = self.diagnostics.error_count();
-        self.bottom_panel_state.warning_count = self.diagnostics.warning_count();
+        self.bottom_panel_state.error_count = self.lsp_state.diagnostics.error_count();
+        self.bottom_panel_state.warning_count = self.lsp_state.diagnostics.warning_count();
         // Sync terminal output
         self.bottom_panel_state.terminal_output = self.command_output.clone();
 
@@ -133,7 +132,7 @@ impl eframe::App for VelocityApp {
                             // no need to allocate a full buffer copy.
                             if let Some(content) = self.buffers.get(active_id).map(|b| b.content())
                             {
-                                if let Some(lsp) = self.lsp_manager.as_mut() {
+                                if let Some(lsp) = self.lsp_state.lsp_manager.as_mut() {
                                     lsp.sync_document(ext, &path, content);
                                 }
                                 self.last_lsp_sync = Some(std::time::Instant::now());
@@ -1192,6 +1191,15 @@ impl eframe::App for VelocityApp {
                             });
                             ui.label(job);
                         }
+                        // Close button for the right panel
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            let close_btn = ui.small_button(egui::RichText::new(egui_phosphor::regular::X).size(10.0).color(palette.text_muted))
+                                .on_hover_text("Close panel (Ctrl+Shift+E)");
+                            if close_btn.clicked() {
+                                self.right_sidebar_visible = false;
+                                self.save_workspace_preferences();
+                            }
+                        });
                     });
                     ui.add_space(2.0);
                     ui.separator();
@@ -1405,8 +1413,8 @@ impl eframe::App for VelocityApp {
         self.cached_status_perf.clear();
         let _ = write!(
             self.cached_status_perf,
-            "{} | {}ms f{}",
-            self.status_message, self.last_frame_ms as u32, self.frame_count
+            "{} | {}ms",
+            self.status_message, self.last_frame_ms as u32
         );
         self.cached_profile_label.clear();
         let _ = write!(
@@ -1463,41 +1471,46 @@ impl eframe::App for VelocityApp {
         egui::CentralPanel::default()
             .frame(egui::Frame::new().fill(palette.bg_primary))
             .show(ui, |ui| {
-            if let Some(mut dock_state) = self.dock_state.take() {
-                let mut viewer = TabViewerImpl { app: self };
-                let mut dock_style = egui_dock::Style::from_egui(ui.style().as_ref());
-                dock_style.tab_bar.bg_fill = palette.bg_secondary;
-                dock_style.tab_bar.inner_margin = egui::Margin::symmetric(4, 2);
-                dock_style.tab_bar.hline_color = palette.border;
-                dock_style.tab.active.bg_fill = palette.bg_primary;
-                dock_style.tab.active.text_color = palette.text;
-                dock_style.tab.inactive.bg_fill = palette.bg_secondary;
-                dock_style.tab.inactive.text_color = palette.text_muted;
-                dock_style.tab.hovered.bg_fill = palette.surface_hover;
-                dock_style.separator.width = 2.0;
-                dock_style.separator.color_idle = palette.border;
-                dock_style.separator.color_hovered = palette.accent.gamma_multiply(0.3);
-                dock_style.main_surface_border_stroke = egui::Stroke::new(0.0, palette.border);
-                egui_dock::DockArea::new(&mut dock_state)
-                    .style(dock_style)
-                    .show_inside(ui, &mut viewer);
-                // Sync `active_tab` to the editor tab the user actually focused in the
-                // dock. `egui_dock` tracks focus internally, but the app only updates
-                // `active_tab` on programmatic open/close, so clicking a tab in the tab
-                // bar left it stale and editor-scoped shortcuts (Ctrl+F/Ctrl+H, save,
-                // undo) targeted the wrong buffer (or none). Restricted to editor tabs
-                // so focusing side panels keeps its existing behavior.
-                if let Some((_, focused)) = dock_state.find_active_focused() {
-                    if matches!(focused.kind, TabKind::Editor { .. }) {
-                        let focused_id = focused.id.clone();
-                        if self.active_tab.as_ref() != Some(&focused_id) {
-                            self.active_tab = Some(focused_id);
+            // Show welcome screen when no editor tabs are open, otherwise show the dock
+            let has_editor_tabs = self.tabs.iter().any(|t| matches!(t.kind, TabKind::Editor { .. }));
+            if has_editor_tabs {
+                // Show the dock with editor tabs
+                if let Some(mut dock_state) = self.dock_state.take() {
+                    let mut viewer = TabViewerImpl { app: self };
+                    let mut dock_style = egui_dock::Style::from_egui(ui.style().as_ref());
+                    dock_style.tab_bar.bg_fill = palette.bg_secondary;
+                    dock_style.tab_bar.inner_margin = egui::Margin::symmetric(4, 2);
+                    dock_style.tab_bar.hline_color = palette.border;
+                    dock_style.tab.active.bg_fill = palette.bg_primary;
+                    dock_style.tab.active.text_color = palette.text;
+                    dock_style.tab.inactive.bg_fill = palette.bg_secondary;
+                    dock_style.tab.inactive.text_color = palette.text_muted;
+                    dock_style.tab.hovered.bg_fill = palette.surface_hover;
+                    dock_style.separator.width = 2.0;
+                    dock_style.separator.color_idle = palette.border;
+                    dock_style.separator.color_hovered = palette.accent.gamma_multiply(0.3);
+                    dock_style.main_surface_border_stroke = egui::Stroke::new(0.0, palette.border);
+                    egui_dock::DockArea::new(&mut dock_state)
+                        .style(dock_style)
+                        .show_inside(ui, &mut viewer);
+                    // Sync `active_tab` to the editor tab the user actually focused in the
+                    // dock. `egui_dock` tracks focus internally, but the app only updates
+                    // `active_tab` on programmatic open/close, so clicking a tab in the tab
+                    // bar left it stale and editor-scoped shortcuts (Ctrl+F/Ctrl+H, save,
+                    // undo) targeted the wrong buffer (or none). Restricted to editor tabs
+                    // so focusing side panels keeps its existing behavior.
+                    if let Some((_, focused)) = dock_state.find_active_focused() {
+                        if matches!(focused.kind, TabKind::Editor { .. }) {
+                            let focused_id = focused.id.clone();
+                            if self.active_tab.as_ref() != Some(&focused_id) {
+                                self.active_tab = Some(focused_id);
+                            }
                         }
                     }
+                    self.dock_state = Some(dock_state);
                 }
-                self.dock_state = Some(dock_state);
-            } else if self.tabs.is_empty() {
-                // Welcome screen when no tabs are open
+            } else {
+                // Welcome screen when no editor tabs are open
                 let ws_name = self.workspace_root.file_name()
                     .and_then(|n| n.to_str())
                     .unwrap_or("Workspace")

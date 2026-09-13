@@ -499,7 +499,7 @@ impl NdaDocumentView {
                     .map(|(i, c)| {
                         let g = f.layout(
                             c.content.clone(),
-                            egui::FontId::monospace(14.0),
+                            crate::editor::theme::code_font_id(),
                             color_from_u32(c.color),
                             c.w as f32,
                         );
@@ -516,7 +516,7 @@ impl NdaDocumentView {
                     painter.rect_filled(r, egui::CornerRadius::ZERO, color);
                 }
                 Some(CommandKind::DrawText) => {
-                    let font_id = egui::FontId::monospace(14.0);
+                    let font_id = crate::editor::theme::code_font_id();
                     if let Some(galley) = galleys.get(&idx) {
                         painter.galley(min, galley.clone(), color);
                     } else {

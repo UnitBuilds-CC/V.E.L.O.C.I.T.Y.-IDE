@@ -58,6 +58,7 @@ pub mod governance;
 pub mod inline_suggestions;
 pub mod keybindings;
 pub mod knowledge_base;
+pub mod line_index;
 pub mod live_orchestration;
 pub mod lsp_client;
 pub mod minimap;
@@ -76,10 +77,6 @@ pub mod test_generator;
 pub mod triggers;
 pub mod voice_commands;
 pub mod workflow;
-pub mod workflow_ai;
-pub mod workflow_canvas;
-pub mod workflow_templates;
-pub mod workflow_version;
 
 // GUI Control Bridge — external MCP/agent control of the running IDE
 pub mod gui_control;

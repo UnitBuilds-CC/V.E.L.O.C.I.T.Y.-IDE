@@ -9,6 +9,8 @@ on:
 env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: 1
+  RUSTC_WRAPPER: sccache
+  CARGO_INCREMENTAL: 0
 
 jobs:
   # ─── Format Check ───────────────────────────────────────────────────────
@@ -32,6 +34,8 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy
+      - name: Install sccache
+        uses: mozilla-actions/sccache-action@v0.0.4
       - uses: Swatinem/rust-cache@v2
       - name: Install system dependencies
         run: |
@@ -40,34 +44,125 @@ jobs:
       - name: Clippy lint check
         run: cargo clippy --workspace --all-targets -- -D warnings
 
-  # ─── Test Suite ─────────────────────────────────────────────────────────
+  # ─── Test Suite (nextest, sharded ×4) ────────────────────────────────────
   test:
-    name: Test Suite
+    name: Tests (shard ${{ matrix.shard }}/${{ matrix.total }})
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
+        total: [4]
     steps:
       - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
+      - name: Install sccache
+        uses: mozilla-actions/sccache-action@v0.0.4
       - uses: Swatinem/rust-cache@v2
+      - uses: taiki-e/install-action@cargo-nextest
       - name: Install system dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.1-dev libudev-dev
-      - name: Run all tests
-        run: cargo test --workspace --all-features
-      - name: Generate test summary
+      - name: Run tests (nextest shard ${{ matrix.shard }}/${{ matrix.total }})
+        run: >
+          cargo nextest run
+          --workspace --all-features
+          --profile ci
+          --partition count:${{ matrix.shard }}/${{ matrix.total }}
+      - name: Upload JUnit results
         if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: junit-shard-${{ matrix.shard }}
+          path: target/nextest/ci/junit.xml
+          retention-days: 7
+
+  test-summary:
+    name: Test Summary
+    runs-on: ubuntu-latest
+    needs: test
+    if: always()
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: junit-shard-*
+          merge-multiple: true
+      - name: Publish test report
+        uses: mikepenz/action-junit-report@v4
+        with:
+          report_paths: "junit.xml"
+          check_name: "Nextest Results"
+          summary: true
+
+  # ─── Quarantined / Flaky Tests ──────────────────────────────────────────
+  test-quarantine:
+    name: Quarantined Tests (non-blocking)
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    needs: test-summary
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - uses: taiki-e/install-action@cargo-nextest
+      - name: Install system dependencies
         run: |
-          echo "## Test Results" >> $GITHUB_STEP_SUMMARY
-          echo "✅ All workspace tests passed" >> $GITHUB_STEP_SUMMARY
+          sudo apt-get update
+          sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.1-dev libudev-dev
+      - name: Run quarantined tests (if any)
+        run: |
+          # Read filter expressions from quarantine list and run them
+          # If no quarantined tests, this is a no-op
+          QUARANTINE_FILTERS=$(grep 'filter = ' .config/flaky-quarantine.toml | sed 's/.*filter = "\(.*\)"/\1/' | tr '\n' '|' || true)
+          if [ -n "$QUARANTINE_FILTERS" ]; then
+            cargo nextest run --workspace --profile ci -E "test($QUARANTINE_FILTERS)"
+          else
+            echo "No quarantined tests to run."
+          fi
+      - name: Upload quarantine JUnit
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: junit-quarantine
+          path: target/nextest/ci/junit.xml
+          retention-days: 7
+
+  # ─── Flaky Test Detection ───────────────────────────────────────────────
+  flaky-detect:
+    name: Flaky Test Detection
+    runs-on: ubuntu-latest
+    needs: test-summary
+    if: always()
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: junit-shard-*
+          merge-multiple: true
+          path: target/nextest/ci/
+      - name: Detect flaky tests
+        run: |
+          pwsh detect_flaky.ps1 -JUnitDir target/nextest/ci -HistoryDir .flaky-history
+        continue-on-error: true
+      - name: Upload flaky history
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: flaky-history
+          path: .flaky-history/
+          retention-days: 30
 
   # ─── Build Release ──────────────────────────────────────────────────────
   build-release:
     name: Release Build
     runs-on: ubuntu-latest
-    needs: [fmt, clippy, test]
+    needs: [fmt, clippy, test-summary]
     steps:
       - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
+      - name: Install sccache
+        uses: mozilla-actions/sccache-action@v0.0.4
       - uses: Swatinem/rust-cache@v2
       - name: Install system dependencies
         run: |
@@ -108,11 +203,10 @@ jobs:
       - name: Check dependency licenses and advisories
         run: cargo deny check
 
-  # ─── Coverage (Optional) ────────────────────────────────────────────────
+  # ─── Coverage (enforced thresholds) ──────────────────────────────────────
   coverage:
     name: Code Coverage
     runs-on: ubuntu-latest
-    continue-on-error: true
     steps:
       - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
@@ -124,10 +218,53 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.1-dev libudev-dev
-      - name: Generate coverage
+      - name: Generate coverage (lcov for Codecov)
         run: cargo llvm-cov --workspace --lcov --output-path lcov.info
+      - name: Enforce workspace coverage threshold
+        run: cargo llvm-cov --workspace --fail-under-lines 45
       - name: Upload coverage
         uses: codecov/codecov-action@v6
         with:
           files: lcov.info
           fail_ci_if_error: false
+      - name: Coverage trend comment (PR)
+        if: github.event_name == 'pull_request'
+        uses: zgosalvez/github-actions-report-code-coverage-change@v2
+        with:
+          coverage-files: lcov.info
+          artifact-name: code-coverage-report
+
+  # ─── Benchmark Regression Detection ─────────────────────────────────────
+  bench:
+    name: Benchmark Regression
+    runs-on: ubuntu-latest
+    # Only run on PRs to avoid noise from main-branch commits
+    if: github.event_name == 'pull_request'
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0  # Need full history for baseline comparison
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.1-dev libudev-dev
+      - name: Run benchmarks (current)
+        run: cargo bench --workspace -- --noplot --save-baseline current
+      - name: Checkout base branch and run benchmarks
+        run: |
+          git checkout ${{ github.base_ref }}
+          cargo bench --workspace -- --noplot --save-baseline base
+      - name: Compare benchmarks (Criterion built-in)
+        run: |
+          git checkout ${{ github.head_ref }}
+          cargo bench --workspace -- --noplot --baseline base --load-baseline current
+        continue-on-error: true
+      - name: Upload benchmark results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: bench-results
+          path: target/criterion/
+          retention-days: 14

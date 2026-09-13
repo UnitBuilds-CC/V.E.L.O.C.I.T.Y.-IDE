@@ -4,6 +4,7 @@
 use std::fmt;
 
 pub mod blueprint;
+pub mod load_balancer;
 pub mod reconcile;
 pub mod registry;
 pub mod scheduler;

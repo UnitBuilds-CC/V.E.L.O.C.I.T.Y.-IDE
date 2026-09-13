@@ -631,7 +631,7 @@ fn apply_presence_penalty(
     token_counts: &std::collections::HashMap<u32, usize>,
     penalty: f32,
 ) {
-    for (&tok, _) in token_counts.iter() {
+    for &tok in token_counts.keys() {
         let idx = tok as usize;
         if idx < logits.len() {
             logits[idx] -= penalty;
@@ -748,7 +748,7 @@ impl Transformer {
         // individual GEMV path via nda_gemv_gpu_or_cpu), so we skip the fused
         // pipeline and use individual GPU GEMV dispatches instead.
         //
-        // TODO(opt): Fix the fused pipeline for FP4/FP2 by either:
+        // Note(opt): The fused pipeline for FP4/FP2 needs one of:
         //   (a) Adding global_scale as a push constant to the GEMV shader, or
         //   (b) Recording a scale-multiply compute pass after each FP4 GEMV dispatch.
         // This would enable GPU-side attention for FP4 models (currently CPU-bound).
@@ -968,81 +968,89 @@ impl Transformer {
         let h = cfg.hidden_size;
 
         if let Some(ref pipeline) = self.gpu_pipeline {
-            // 1. Copy initial token embeddings to x_residual_buffer on GPU
-            let embed_src =
-                &self.weights.embed_tokens[token as usize * h..(token as usize + 1) * h];
-            // SAFETY: `embed_src` has exactly `h` elements. `pipeline.x_residual_ptr`
-            // points to a GPU buffer of at least `h` f32 elements. Non-overlapping.
-            unsafe {
-                std::ptr::copy_nonoverlapping(
-                    embed_src.as_ptr(),
-                    pipeline.x_residual_ptr as *mut f32,
+            // Attempt GPU execution; fall back to CPU on any invariant violation.
+            let gpu_result = (|| -> Option<()> {
+                let vulkan = self.weights.vulkan.as_ref()?;
+
+                // 1. Copy initial token embeddings to x_residual_buffer on GPU
+                let embed_src =
+                    &self.weights.embed_tokens[token as usize * h..(token as usize + 1) * h];
+                // SAFETY: `embed_src` has exactly `h` elements. `pipeline.x_residual_ptr`
+                // points to a GPU buffer of at least `h` f32 elements. Non-overlapping.
+                unsafe {
+                    std::ptr::copy_nonoverlapping(
+                        embed_src.as_ptr(),
+                        pipeline.x_residual_ptr as *mut f32,
+                        h,
+                    );
+                }
+
+                // 2. Build LayerGpuGemvs list
+                let layers_gpu: Vec<crate::compiler::driver::LayerGpuGemvs> = self
+                    .weights
+                    .layers
+                    .iter()
+                    .map(|l| crate::compiler::driver::LayerGpuGemvs {
+                        qkv_proj_gpu: &l.qkv_proj_gpu,
+                        gate_up_proj_gpu: &l.gate_up_proj_gpu,
+                        q_proj_gpu: &l.q_proj_gpu,
+                        k_proj_gpu: &l.k_proj_gpu,
+                        v_proj_gpu: &l.v_proj_gpu,
+                        o_proj_gpu: &l.o_proj_gpu,
+                        gate_proj_gpu: &l.gate_proj_gpu,
+                        up_proj_gpu: &l.up_proj_gpu,
+                        down_proj_gpu: &l.down_proj_gpu,
+                    })
+                    .collect();
+                let layers_gpu_refs: Vec<&crate::compiler::driver::LayerGpuGemvs> =
+                    layers_gpu.iter().collect();
+
+                // 3. Run the GPU execution pipeline
+                let attn_scale = (cfg.head_dim as f32).sqrt().recip();
+                pipeline
+                    .record_and_execute_token(
+                        vulkan,
+                        cfg.n_layers,
+                        h,
+                        cfg.ffn_size,
+                        cfg.n_heads,
+                        cfg.n_kv_heads,
+                        cfg.head_dim,
+                        cfg.max_seq_len,
+                        cfg.rope_theta,
+                        attn_scale,
+                        pos as u32,
+                        &layers_gpu_refs,
+                    )
+                    .ok()?;
+
+                // 4. Read back the final hidden state from x_residual_buffer to CPU self.scratch.x
+                // SAFETY: `pipeline.x_residual_ptr` and `self.scratch.x.as_mut_ptr()` are
+                // valid for `h` f32 elements. Non-overlapping (GPU buffer vs CPU Vec).
+                unsafe {
+                    std::ptr::copy_nonoverlapping(
+                        pipeline.x_residual_ptr as *const f32,
+                        self.scratch.x.as_mut_ptr(),
+                        h,
+                    );
+                }
+
+                // 5. Evaluate the LM Head on the CPU (in-place into pre-allocated scratch)
+                lm_head(
+                    &self.scratch.x,
+                    &self.weights.lm_head,
+                    cfg.vocab_size,
                     h,
+                    &mut self.scratch.logits,
                 );
+                Some(())
+            })();
+
+            if gpu_result.is_some() {
+                return &self.scratch.logits;
             }
-
-            // 2. Build LayerGpuGemvs list
-            let layers_gpu: Vec<crate::compiler::driver::LayerGpuGemvs> = self
-                .weights
-                .layers
-                .iter()
-                .map(|l| crate::compiler::driver::LayerGpuGemvs {
-                    qkv_proj_gpu: &l.qkv_proj_gpu,
-                    gate_up_proj_gpu: &l.gate_up_proj_gpu,
-                    q_proj_gpu: &l.q_proj_gpu,
-                    k_proj_gpu: &l.k_proj_gpu,
-                    v_proj_gpu: &l.v_proj_gpu,
-                    o_proj_gpu: &l.o_proj_gpu,
-                    gate_proj_gpu: &l.gate_proj_gpu,
-                    up_proj_gpu: &l.up_proj_gpu,
-                    down_proj_gpu: &l.down_proj_gpu,
-                })
-                .collect();
-            let layers_gpu_refs: Vec<&crate::compiler::driver::LayerGpuGemvs> =
-                layers_gpu.iter().collect();
-
-            // 3. Run the GPU execution pipeline
-            let attn_scale = (cfg.head_dim as f32).sqrt().recip();
-            pipeline
-                .record_and_execute_token(
-                    self.weights
-                        .vulkan
-                        .as_ref()
-                        .expect("gpu_pipeline requires Vulkan driver (invariant: try_build_gpu_pipeline returns None if vulkan is absent)"),
-                    cfg.n_layers,
-                    h,
-                    cfg.ffn_size,
-                    cfg.n_heads,
-                    cfg.n_kv_heads,
-                    cfg.head_dim,
-                    cfg.max_seq_len,
-                    cfg.rope_theta,
-                    attn_scale,
-                    pos as u32,
-                    &layers_gpu_refs,
-                )
-                .expect("Vulkan pipeline execution failed");
-
-            // 4. Read back the final hidden state from x_residual_buffer to CPU self.scratch.x
-            // SAFETY: `pipeline.x_residual_ptr` and `self.scratch.x.as_mut_ptr()` are
-            // valid for `h` f32 elements. Non-overlapping (GPU buffer vs CPU Vec).
-            unsafe {
-                std::ptr::copy_nonoverlapping(
-                    pipeline.x_residual_ptr as *const f32,
-                    self.scratch.x.as_mut_ptr(),
-                    h,
-                );
-            }
-
-            // 5. Evaluate the LM Head on the CPU (in-place into pre-allocated scratch)
-            lm_head(
-                &self.scratch.x,
-                &self.weights.lm_head,
-                cfg.vocab_size,
-                h,
-                &mut self.scratch.logits,
-            );
-            return &self.scratch.logits;
+            // GPU path failed — fall through to CPU execution.
+            log::warn!("GPU pipeline failed, falling back to CPU inference");
         }
 
         // 1. Copy embed tokens to scratch.x in-place (no allocation!)

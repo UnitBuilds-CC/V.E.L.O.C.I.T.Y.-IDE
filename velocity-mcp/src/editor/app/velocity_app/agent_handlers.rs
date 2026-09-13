@@ -342,7 +342,7 @@ impl VelocityApp {
         self.last_diagnostics_poll = Some(std::time::Instant::now());
 
         // Poll LSP servers for incoming diagnostics from language servers
-        if let Some(ref mut lsp) = self.lsp_manager {
+        if let Some(ref mut lsp) = self.lsp_state.lsp_manager {
             lsp.poll_notifications();
             // If LSP has diagnostics, use those (they're more accurate/real-time)
             if !lsp.diagnostics.is_empty() {
@@ -483,6 +483,11 @@ impl VelocityApp {
                             "reasoning stream opened",
                             self.current_agent_task_id,
                         );
+                        self.task_timeline.phase_change(
+                            self.current_agent_task_id,
+                            "idle",
+                            "thinking",
+                        );
                         timeline_dirty = true;
                     }
                     let _ = self.agent_ui_state.thinking.append_token(&token);
@@ -567,6 +572,11 @@ impl VelocityApp {
                             self.task_timeline
                                 .task_started("Tool execution", "agent tool run", 0);
                     }
+                    self.task_timeline.phase_change(
+                        self.current_agent_task_id,
+                        "thinking",
+                        "execution",
+                    );
                     self.task_timeline.agent_marker(
                         "Tool phase",
                         &tool_name,
@@ -615,6 +625,10 @@ impl VelocityApp {
                 AgentToUiMessage::StatusUpdate(message) => {
                     // Surface status updates into Team Studio log as well.
                     self.team_manager.push_log(format!("Status: {}", message));
+                    // Detect operator-initiated cancellation from the agent runtime.
+                    if message.contains("interrupted by operator") {
+                        self.cancel_requested = true;
+                    }
                     if message.to_lowercase().contains("model catalog") {
                         self.models_loading = false;
                         self.chat.models_loading = false;
@@ -645,8 +659,14 @@ impl VelocityApp {
                             "response completed",
                             self.current_agent_task_id,
                         );
-                        self.task_timeline
-                            .task_completed(self.current_agent_task_id, 0, 0, 0);
+                        if self.cancel_requested {
+                            self.task_timeline
+                                .task_cancelled(self.current_agent_task_id);
+                            self.cancel_requested = false;
+                        } else {
+                            self.task_timeline
+                                .task_completed(self.current_agent_task_id, 0, 0, 0);
+                        }
                         self.current_agent_task_id = 0;
                         timeline_dirty = true;
                     }
@@ -704,6 +724,24 @@ impl VelocityApp {
                 AgentToUiMessage::AccountUsage { accounts, date } => {
                     self.account_usage = accounts;
                     self.usage_date = date;
+                    // Emit a token budget update event to the timeline.
+                    let total_remaining: u32 = self
+                        .account_usage
+                        .iter()
+                        .map(|a| a.remaining)
+                        .sum();
+                    let total_limit: u32 = self
+                        .account_usage
+                        .iter()
+                        .map(|a| a.daily_limit)
+                        .sum();
+                    self.task_timeline.token_budget_update(
+                        self.current_agent_task_id,
+                        total_limit.saturating_sub(total_remaining),
+                        total_limit,
+                        0,
+                    );
+                    timeline_dirty = true;
                 }
                 AgentToUiMessage::ChatHistoryRestored(history) => {
                     for (role, content) in &history {

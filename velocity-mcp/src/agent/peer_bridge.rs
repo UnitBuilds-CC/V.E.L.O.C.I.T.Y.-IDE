@@ -34,7 +34,7 @@ impl PeerBridge {
         let mut count = 0;
 
         // Drain the inbox by taking ownership of current messages.
-        let messages: Vec<PeerMessage> = self.peer_mgr.inbox.drain(..).collect();
+        let messages: Vec<PeerMessage> = std::mem::take(&mut self.peer_mgr.inbox);
 
         for msg in &messages {
             let broadcast = match &msg.kind {

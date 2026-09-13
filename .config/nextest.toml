@@ -1,0 +1,35 @@
+[profile.ci]
+# Fail-fast on the first test binary that has a failure, but finish all tests
+# within that binary (so you see every failure in the shard).
+fail-fast = false
+
+# Number of retries before a test is considered flaky.
+# Tests that fail on retry are reported separately (see flaky-quarantine).
+retries = { backoff = "exponential", count = 2, jitter = true, delay = "1s" }
+
+# Run up to 8 test threads (tune for CI runner core count).
+test-threads = 8
+
+[profile.ci.junit]
+path = "junit.xml"
+
+# ─── Slow-test detection ─────────────────────────────────────────────────────
+# Tests exceeding this threshold get flagged in the summary so they can be
+# split into their own shard or optimized.
+[profile.slow]
+test-threads = 4
+slow-timeout = { period = "30s", terminate-after = 3 }
+
+# ─── Partitioning profiles for CI sharding ────────────────────────────────────
+# Use: cargo nextest run --profile ci-shard-N
+# These are logical groupings; the actual sharding is done via --partition in CI.
+
+[profile.fast]
+# Unit tests only — skip integration/e2e for quick feedback.
+test-threads = 8
+filter-expr = "not (test(binary(integration_test)) | test(binary(gui_integration)) | test(binary(edge_cases)))"
+
+[profile.integration]
+# Integration + e2e tests only.
+test-threads = 4
+filter-expr = "test(binary(integration_test)) | test(binary(gui_integration)) | test(binary(edge_cases)) | test(binary(e2e))"

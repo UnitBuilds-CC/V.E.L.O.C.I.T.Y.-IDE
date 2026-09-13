@@ -851,7 +851,7 @@ impl SiteMap {
     /// Return the top-N largest entries by byte size.
     pub fn largest_entries(&self, n: usize) -> Vec<&SiteMapEntry> {
         let mut entries: Vec<&SiteMapEntry> = self.index.values().collect();
-        entries.sort_unstable_by(|a, b| b.size.cmp(&a.size));
+        entries.sort_unstable_by_key(|a| std::cmp::Reverse(a.size));
         entries.truncate(n);
         entries
     }
@@ -1298,7 +1298,7 @@ impl SiteMap {
                 count,
             })
             .collect();
-        distribution.sort_by(|a, b| b.count.cmp(&a.count));
+        distribution.sort_by_key(|a| std::cmp::Reverse(a.count));
 
         TripleAnalysis {
             total_triples: total,

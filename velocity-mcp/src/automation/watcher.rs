@@ -1,14 +1,17 @@
 use crate::compiler::parser_loader::DynamicParser;
 use crate::ipc::telemetry_share::{TelemetryClient, TelemetryRequest};
-use sha2::{Digest, Sha256};
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::thread;
 use std::time::{Duration, SystemTime};
+use velocity_ide::hash_str;
 
 pub fn spawn_ast_watcher(workspace_root: PathBuf, shmem_path: PathBuf) {
     thread::spawn(move || {
-        let mut client = match TelemetryClient::open(&shmem_path) {
+        // HMAC key for IPC authentication - in production, load from secure config
+        let ipc_key = b"velocity_ipc_hmac_key_change_in_production";
+        
+        let mut client = match TelemetryClient::open(&shmem_path, ipc_key) {
             Ok(c) => c,
             Err(e) => {
                 eprintln!(
@@ -34,8 +37,24 @@ pub fn spawn_ast_watcher(workspace_root: PathBuf, shmem_path: PathBuf) {
             &mut initial_files,
             true,
         );
-        publish_ast_updates(&workspace_root, &mut client, initial_files);
 
+        // Circuit breaker: after consecutive failures, back off to avoid
+        // spamming the console with timeout errors when no telemetry
+        // consumer is connected.
+        let mut consecutive_failures: u32 = 0;
+        const BACKOFF_THRESHOLD: u32 = 3;
+        const BACKOFF_RETRY_INTERVAL: u32 = 60; // retry every 60 loop iterations (~30s)
+
+        publish_ast_updates(
+            &workspace_root,
+            &mut client,
+            initial_files,
+            &mut consecutive_failures,
+            BACKOFF_THRESHOLD,
+            BACKOFF_RETRY_INTERVAL,
+        );
+
+        let mut loop_count: u32 = 0;
         loop {
             let mut changed_files = Vec::new();
             let deleted_files = scan_directory(
@@ -45,8 +64,29 @@ pub fn spawn_ast_watcher(workspace_root: PathBuf, shmem_path: PathBuf) {
                 &mut changed_files,
                 false,
             );
-            publish_ast_deletes(&workspace_root, &mut client, deleted_files);
-            publish_ast_updates(&workspace_root, &mut client, changed_files);
+
+            // Only attempt telemetry if the circuit breaker allows it.
+            let backoff_active = consecutive_failures >= BACKOFF_THRESHOLD
+                && !loop_count.is_multiple_of(BACKOFF_RETRY_INTERVAL);
+
+            if !backoff_active {
+                publish_ast_deletes(
+                    &workspace_root,
+                    &mut client,
+                    deleted_files,
+                    &mut consecutive_failures,
+                );
+                publish_ast_updates(
+                    &workspace_root,
+                    &mut client,
+                    changed_files,
+                    &mut consecutive_failures,
+                    BACKOFF_THRESHOLD,
+                    BACKOFF_RETRY_INTERVAL,
+                );
+            }
+
+            loop_count = loop_count.wrapping_add(1);
             thread::sleep(Duration::from_millis(500));
         }
     });
@@ -56,13 +96,23 @@ fn publish_ast_deletes(
     workspace_root: &Path,
     client: &mut TelemetryClient,
     deleted_files: Vec<PathBuf>,
+    consecutive_failures: &mut u32,
 ) {
     for file in deleted_files {
         let req = TelemetryRequest::AstDelete {
             file_path: relative_path_string(&file, workspace_root),
         };
         if let Err(e) = client.send(&req) {
-            eprintln!("[watcher] Failed to stream AST delete telemetry: {}", e);
+            *consecutive_failures += 1;
+            if *consecutive_failures <= 3 {
+                eprintln!("[watcher] Failed to stream AST delete telemetry: {}", e);
+            } else if *consecutive_failures == 4 {
+                eprintln!(
+                    "[watcher] Telemetry consumer unreachable, entering backoff (will retry every ~30s)"
+                );
+            }
+        } else {
+            *consecutive_failures = 0;
         }
     }
 }
@@ -71,8 +121,17 @@ fn publish_ast_updates(
     workspace_root: &Path,
     client: &mut TelemetryClient,
     changed_files: Vec<PathBuf>,
+    consecutive_failures: &mut u32,
+    _backoff_threshold: u32,
+    _backoff_retry_interval: u32,
 ) {
     for file in changed_files {
+        // If circuit breaker is tripped, skip sending but still parse
+        // (so triples are ready when the consumer reconnects).
+        if *consecutive_failures >= 3 {
+            continue;
+        }
+
         match std::fs::read_to_string(&file) {
             Ok(content) => {
                 let rel_path = relative_path_string(&file, workspace_root);
@@ -85,7 +144,16 @@ fn publish_ast_updates(
                 };
 
                 if let Err(e) = client.send(&req) {
-                    eprintln!("[watcher] Failed to stream telemetry: {}", e);
+                    *consecutive_failures += 1;
+                    if *consecutive_failures <= 3 {
+                        eprintln!("[watcher] Failed to stream telemetry: {}", e);
+                    } else if *consecutive_failures == 4 {
+                        eprintln!(
+                            "[watcher] Telemetry consumer unreachable, entering backoff (will retry every ~30s)"
+                        );
+                    }
+                } else {
+                    *consecutive_failures = 0;
                 }
             }
             Err(err) => {
@@ -270,13 +338,6 @@ fn extract_triples_from_tree(
     }
 
     triples
-}
-
-fn hash_str(s: &str) -> u64 {
-    let mut h = Sha256::new();
-    h.update(s.as_bytes());
-    let d = h.finalize();
-    u64::from_le_bytes(d[..8].try_into().unwrap())
 }
 
 #[cfg(test)]

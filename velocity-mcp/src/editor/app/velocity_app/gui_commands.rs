@@ -36,20 +36,28 @@ impl VelocityApp {
     }
 
     /// Open a file in the editor.
+    /// Validates the path is absolute, resolves symlinks, and ensures it's
+    /// within the workspace root.
     fn cmd_open_file(&mut self, path: String) -> GuiResponse {
-        let full_path = self.workspace_root.join(&path);
-        if !full_path.exists() {
-            return GuiResponse {
-                success: false,
-                data: None,
-                error: Some(format!("File not found: {}", path)),
-            };
-        }
+        // Validate path security: must be absolute, within workspace, no symlink escapes
+        let validated_path = match crate::editor::gui_control::validate_open_path(
+            &path,
+            &self.workspace_root,
+        ) {
+            Ok(p) => p,
+            Err(e) => {
+                return GuiResponse {
+                    success: false,
+                    data: None,
+                    error: Some(e),
+                };
+            }
+        };
 
-        self.open_editor(Some(full_path));
+        self.open_editor(Some(validated_path.clone()));
         GuiResponse {
             success: true,
-            data: Some(serde_json::json!({ "opened": path })),
+            data: Some(serde_json::json!({ "opened": validated_path.display().to_string() })),
             error: None,
         }
     }

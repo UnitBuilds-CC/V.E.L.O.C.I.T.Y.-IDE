@@ -210,7 +210,7 @@ impl VelocityApp {
                     ));
                 }
                 Some(TriggerAction::RunWorkflow { workflow_id }) => {
-                    if let Some(wf) = self.workflows.get(&workflow_id).cloned() {
+                    if let Some(wf) = self.workflow_state.workflows.get(&workflow_id).cloned() {
                         let ws = self.workspace_root.clone();
                         let run = wf.execute(&ws);
                         self.triggers.mark_run(&id, now_secs());

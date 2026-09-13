@@ -15,7 +15,7 @@ impl VelocityApp {
             "Workflows",
             &format!(
                 "{} workflow(s) \u{00b7} visual builder",
-                self.workflows.len()
+                self.workflow_state.workflows.len()
             ),
             palette.accent,
             palette.text_muted,
@@ -24,9 +24,9 @@ impl VelocityApp {
         // Mode tabs: List | Visual | Templates | AI Generate
         ui.horizontal(|ui| {
             let list_btn =
-                ui.selectable_label(!self.workflow_visual_mode, RichText::new("List").size(9.0));
+                ui.selectable_label(!self.workflow_state.workflow_visual_mode, RichText::new("List").size(9.0));
             let visual_btn =
-                ui.selectable_label(self.workflow_visual_mode, RichText::new("Visual").size(9.0));
+                ui.selectable_label(self.workflow_state.workflow_visual_mode, RichText::new("Visual").size(9.0));
             let templates_btn = ui
                 .selectable_label(false, RichText::new("Templates").size(9.0))
                 .on_hover_text("Browse built-in workflow templates (coming soon)");
@@ -34,17 +34,17 @@ impl VelocityApp {
                 .selectable_label(false, RichText::new("AI Generate").size(9.0))
                 .on_hover_text("Describe a workflow and let the agent build it (coming soon)");
             if list_btn.clicked() {
-                self.workflow_visual_mode = false;
+                self.workflow_state.workflow_visual_mode = false;
             }
             if visual_btn.clicked() {
-                self.workflow_visual_mode = true;
+                self.workflow_state.workflow_visual_mode = true;
             }
             if templates_btn.clicked() { /* render templates inline below */ }
             if ai_btn.clicked() { /* render AI generate inline below */ }
         });
         ui.add_space(4.0);
 
-        if self.workflow_visual_mode {
+        if self.workflow_state.workflow_visual_mode {
             self.render_workflow_visual(ui);
             return;
         }
@@ -53,7 +53,7 @@ impl VelocityApp {
         Self::tier3_header(
             ui,
             "List Composer",
-            &format!("{} workflow(s)", self.workflows.len()),
+            &format!("{} workflow(s)", self.workflow_state.workflows.len()),
             palette.accent,
             palette.text_muted,
         );
@@ -62,7 +62,7 @@ impl VelocityApp {
         let mut create = false;
         ui.horizontal(|ui| {
             ui.add(
-                egui::TextEdit::singleline(&mut self.workflow_name_input)
+                egui::TextEdit::singleline(&mut self.workflow_state.workflow_name_input)
                     .hint_text("new workflow name\u{2026}")
                     .desired_width(ui.available_width() - 80.0),
             );
@@ -76,19 +76,19 @@ impl VelocityApp {
         let mut select: Option<String> = None;
         let mut run: Option<String> = None;
         let mut remove: Option<String> = None;
-        let selected = self.workflow_selected.clone();
+        let selected = self.workflow_state.workflow_selected.clone();
         egui::ScrollArea::vertical()
             .id_salt("workflow_list_scroll")
             .max_height(130.0)
             .show(ui, |ui| {
-                if self.workflows.is_empty() {
+                if self.workflow_state.workflows.is_empty() {
                     ui.label(
                         RichText::new("No workflows yet. Create one above.")
                             .size(9.0)
                             .color(palette.text_muted),
                     );
                 }
-                for wf in &self.workflows.workflows {
+                for wf in &self.workflow_state.workflows.workflows {
                     let is_sel = selected.as_deref() == Some(wf.id.as_str());
                     egui::Frame::new()
                         .fill(if is_sel {
@@ -146,13 +146,14 @@ impl VelocityApp {
         let mut move_up: Option<usize> = None;
         let mut move_down: Option<usize> = None;
         let mut remove_step: Option<usize> = None;
-        if let Some(sel_id) = self.workflow_selected.clone() {
+        if let Some(sel_id) = self.workflow_state.workflow_selected.clone() {
             let snapshot = self
+                .workflow_state
                 .workflows
                 .get(&sel_id)
                 .map(|w| (w.name.clone(), w.steps.clone()));
             match snapshot {
-                None => self.workflow_selected = None,
+                None => self.workflow_state.workflow_selected = None,
                 Some((wf_name, steps)) => {
                     ui.label(
                         RichText::new(format!("STEPS \u{00b7} {wf_name}"))
@@ -215,12 +216,12 @@ impl VelocityApp {
                     ui.add_space(4.0);
                     ui.horizontal(|ui| {
                         ui.add(
-                            egui::TextEdit::singleline(&mut self.workflow_step_tool_input)
+                            egui::TextEdit::singleline(&mut self.workflow_state.workflow_step_tool_input)
                                 .hint_text("tool name")
                                 .desired_width(110.0),
                         );
                         ui.add(
-                            egui::TextEdit::singleline(&mut self.workflow_step_args_input)
+                            egui::TextEdit::singleline(&mut self.workflow_state.workflow_step_args_input)
                                 .hint_text("{\"json\":\"args\"}")
                                 .desired_width(ui.available_width() - 70.0),
                         );
@@ -230,7 +231,7 @@ impl VelocityApp {
                     });
                     ui.horizontal(|ui| {
                         ui.add(
-                            egui::TextEdit::singleline(&mut self.workflow_step_prompt_input)
+                            egui::TextEdit::singleline(&mut self.workflow_state.workflow_step_prompt_input)
                                 .hint_text("agent prompt")
                                 .desired_width(ui.available_width() - 70.0),
                         );
@@ -243,7 +244,7 @@ impl VelocityApp {
         }
 
         // Run log.
-        if let Some(runrec) = &self.workflow_last_run {
+        if let Some(runrec) = &self.workflow_state.workflow_last_run {
             ui.add_space(6.0);
             let status_color = match runrec.status {
                 RunStatus::Success => palette.success,
@@ -287,39 +288,39 @@ impl VelocityApp {
         // Deferred mutations.
         let ws = self.workspace_root.clone();
         if create {
-            let name = self.workflow_name_input.trim().to_string();
+            let name = self.workflow_state.workflow_name_input.trim().to_string();
             if name.is_empty() {
                 self.toasts
                     .push(crate::editor::toast::Toast::error("Workflow needs a name"));
             } else {
                 let id = format!("wf-{}", crate::editor::triggers::now_secs());
-                self.workflows.add(Workflow::new(id.clone(), name));
-                if let Err(e) = self.workflows.save(&ws) {
+                self.workflow_state.workflows.add(Workflow::new(id.clone(), name));
+                if let Err(e) = self.workflow_state.workflows.save(&ws) {
                     Self::persist_err(&mut self.toasts, "workflows", &e);
                 }
-                self.workflow_selected = Some(id);
-                self.workflow_name_input.clear();
+                self.workflow_state.workflow_selected = Some(id);
+                self.workflow_state.workflow_name_input.clear();
             }
         }
         if let Some(id) = select {
-            self.workflow_selected = Some(id);
-            self.workflow_last_run = None;
+            self.workflow_state.workflow_selected = Some(id);
+            self.workflow_state.workflow_last_run = None;
         }
         if let Some(id) = remove {
-            if self.workflows.remove(&id) {
-                if let Err(e) = self.workflows.save(&ws) {
+            if self.workflow_state.workflows.remove(&id) {
+                if let Err(e) = self.workflow_state.workflows.save(&ws) {
                     Self::persist_err(&mut self.toasts, "workflows", &e);
                 }
-                if self.workflow_selected.as_deref() == Some(id.as_str()) {
-                    self.workflow_selected = None;
+                if self.workflow_state.workflow_selected.as_deref() == Some(id.as_str()) {
+                    self.workflow_state.workflow_selected = None;
                 }
             }
         }
         if add_tool {
-            if let Some(sel) = self.workflow_selected.clone() {
-                let name = self.workflow_step_tool_input.trim().to_string();
+            if let Some(sel) = self.workflow_state.workflow_selected.clone() {
+                let name = self.workflow_state.workflow_step_tool_input.trim().to_string();
                 if !name.is_empty() {
-                    let args_raw = self.workflow_step_args_input.trim().to_string();
+                    let args_raw = self.workflow_state.workflow_step_args_input.trim().to_string();
                     let parsed = if args_raw.is_empty() {
                         Some(serde_json::json!({}))
                     } else {
@@ -334,37 +335,37 @@ impl VelocityApp {
                         }
                     };
                     if let Some(args) = parsed {
-                        if let Some(wf) = self.workflows.get_mut(&sel) {
+                        if let Some(wf) = self.workflow_state.workflows.get_mut(&sel) {
                             wf.steps.push(WorkflowStep::Tool { name, args });
                         }
-                        if let Err(e) = self.workflows.save(&ws) {
+                        if let Err(e) = self.workflow_state.workflows.save(&ws) {
                             Self::persist_err(&mut self.toasts, "workflows", &e);
                         }
-                        self.workflow_step_tool_input.clear();
-                        self.workflow_step_args_input.clear();
+                        self.workflow_state.workflow_step_tool_input.clear();
+                        self.workflow_state.workflow_step_args_input.clear();
                     }
                 }
             }
         }
         if add_agent {
-            if let Some(sel) = self.workflow_selected.clone() {
-                let prompt = self.workflow_step_prompt_input.trim().to_string();
+            if let Some(sel) = self.workflow_state.workflow_selected.clone() {
+                let prompt = self.workflow_state.workflow_step_prompt_input.trim().to_string();
                 if !prompt.is_empty() {
-                    if let Some(wf) = self.workflows.get_mut(&sel) {
+                    if let Some(wf) = self.workflow_state.workflows.get_mut(&sel) {
                         wf.steps
                             .push(WorkflowStep::AgentTask { prompt, team: None });
                     }
-                    if let Err(e) = self.workflows.save(&ws) {
+                    if let Err(e) = self.workflow_state.workflows.save(&ws) {
                         Self::persist_err(&mut self.toasts, "workflows", &e);
                     }
-                    self.workflow_step_prompt_input.clear();
+                    self.workflow_state.workflow_step_prompt_input.clear();
                 }
             }
         }
-        if let Some(sel) = self.workflow_selected.clone() {
+        if let Some(sel) = self.workflow_state.workflow_selected.clone() {
             let mut mutated = false;
             if let Some(i) = remove_step {
-                if let Some(wf) = self.workflows.get_mut(&sel) {
+                if let Some(wf) = self.workflow_state.workflows.get_mut(&sel) {
                     if i < wf.steps.len() {
                         wf.steps.remove(i);
                         mutated = true;
@@ -372,7 +373,7 @@ impl VelocityApp {
                 }
             }
             if let Some(i) = move_up {
-                if let Some(wf) = self.workflows.get_mut(&sel) {
+                if let Some(wf) = self.workflow_state.workflows.get_mut(&sel) {
                     if i > 0 {
                         wf.steps.swap(i, i - 1);
                         mutated = true;
@@ -380,7 +381,7 @@ impl VelocityApp {
                 }
             }
             if let Some(i) = move_down {
-                if let Some(wf) = self.workflows.get_mut(&sel) {
+                if let Some(wf) = self.workflow_state.workflows.get_mut(&sel) {
                     if i + 1 < wf.steps.len() {
                         wf.steps.swap(i, i + 1);
                         mutated = true;
@@ -388,21 +389,21 @@ impl VelocityApp {
                 }
             }
             if mutated {
-                if let Err(e) = self.workflows.save(&ws) {
+                if let Err(e) = self.workflow_state.workflows.save(&ws) {
                     Self::persist_err(&mut self.toasts, "workflows", &e);
                 }
             }
         }
         if let Some(id) = run {
-            if let Some(wf) = self.workflows.get(&id).cloned() {
+            if let Some(wf) = self.workflow_state.workflows.get(&id).cloned() {
                 let runrec = wf.execute(&ws);
                 self.toasts.push(crate::editor::toast::Toast::info(format!(
                     "Workflow '{}' \u{2192} {}",
                     wf.name,
                     runrec.status.label()
                 )));
-                self.workflow_last_run = Some(runrec);
-                self.workflow_selected = Some(id);
+                self.workflow_state.workflow_last_run = Some(runrec);
+                self.workflow_state.workflow_selected = Some(id);
             }
         }
     }
@@ -415,17 +416,17 @@ impl VelocityApp {
             "Governance",
             &format!(
                 "{} rule(s) \u{00b7} {} pending \u{00b7} {} secret(s) \u{00b7} {} connector(s)",
-                self.policy.rules.len(),
-                self.approvals.len(),
-                self.secrets.len(),
-                self.connectors.len()
+                self.governance.policy.rules.len(),
+                self.governance.approvals.len(),
+                self.governance.secrets.len(),
+                self.governance.connectors.len()
             ),
             palette.accent,
             palette.text_muted,
         );
-        if !self.gov_status.is_empty() {
+        if !self.governance.gov_status.is_empty() {
             ui.label(
-                RichText::new(&self.gov_status)
+                RichText::new(&self.governance.gov_status)
                     .size(9.0)
                     .color(palette.text_muted),
             );
@@ -440,8 +441,8 @@ impl VelocityApp {
                 let mut cycle_default = false;
                 ui.horizontal(|ui| {
                     ui.label(RichText::new("Default when no rule matches:").size(9.0).color(palette.text_muted));
-                    let txt = self.policy.default_decision.label();
-                    let col = match self.policy.default_decision {
+                    let txt = self.governance.policy.default_decision.label();
+                    let col = match self.governance.policy.default_decision {
                         Decision::Allow => palette.success,
                         Decision::Deny => palette.error,
                         Decision::NeedsApproval => palette.warning,
@@ -458,8 +459,8 @@ impl VelocityApp {
                     ui.label(
                         RichText::new(format!(
                             "Budget: tokens {}, cost {}\u{00a2}",
-                            self.policy.budget.max_tokens.map(|t| t.to_string()).unwrap_or_else(|| "\u{221e}".into()),
-                            self.policy.budget.max_cost_cents.map(|c| c.to_string()).unwrap_or_else(|| "\u{221e}".into()),
+                            self.governance.policy.budget.max_tokens.map(|t| t.to_string()).unwrap_or_else(|| "\u{221e}".into()),
+                            self.governance.policy.budget.max_cost_cents.map(|c| c.to_string()).unwrap_or_else(|| "\u{221e}".into()),
                         ))
                         .size(9.0)
                         .color(palette.text_muted),
@@ -480,8 +481,8 @@ impl VelocityApp {
                     &self.workspace_root,
                     "budget_check",
                     &serde_json::json!({}),
-                    self.policy.budget.max_tokens.unwrap_or(0),
-                    self.policy.budget.max_cost_cents.unwrap_or(0),
+                    self.governance.policy.budget.max_tokens.unwrap_or(0),
+                    self.governance.policy.budget.max_cost_cents.unwrap_or(0),
                 );
                 ui.label(RichText::new(format!("Budget status: {}", budget_decision.label())).size(8.0).color(
                     match budget_decision {
@@ -493,7 +494,7 @@ impl VelocityApp {
 
                 // Rule list.
                 let mut remove_rule: Option<usize> = None;
-                for (i, rule) in self.policy.rules.iter().enumerate() {
+                for (i, rule) in self.governance.policy.rules.iter().enumerate() {
                     egui::Frame::new()
                         .fill(palette.bg_secondary)
                         .corner_radius(4.0)
@@ -522,9 +523,9 @@ impl VelocityApp {
                 // Add-rule row.
                 let mut add_rule: Option<RuleEffect> = None;
                 ui.horizontal(|ui| {
-                    ui.add(egui::TextEdit::singleline(&mut self.gov_rule_tool_input)
+                    ui.add(egui::TextEdit::singleline(&mut self.governance.gov_rule_tool_input)
                         .hint_text("tool or *").desired_width(90.0));
-                    ui.add(egui::TextEdit::singleline(&mut self.gov_rule_path_input)
+                    ui.add(egui::TextEdit::singleline(&mut self.governance.gov_rule_path_input)
                         .hint_text("path prefix (opt)").desired_width(ui.available_width() - 150.0));
                     if ui.small_button(RichText::new("+allow").size(8.0)).clicked() { add_rule = Some(RuleEffect::Allow); }
                     if ui.small_button(RichText::new("+deny").size(8.0)).clicked() { add_rule = Some(RuleEffect::Deny); }
@@ -536,11 +537,11 @@ impl VelocityApp {
                 ui.label(RichText::new("APPROVAL QUEUE").small().strong().color(palette.accent));
                 let mut approve: Option<String> = None;
                 let mut deny: Option<String> = None;
-                if self.approvals.is_empty() {
+                if self.governance.approvals.is_empty() {
                     ui.label(RichText::new("Queue empty. No pending or historical approvals.").size(9.0).color(palette.text_muted));
                 } else {
                 let pending: Vec<crate::editor::governance::ApprovalItem> =
-                    self.approvals.pending().into_iter().cloned().collect();
+                    self.governance.approvals.pending().into_iter().cloned().collect();
                 if pending.is_empty() {
                     ui.label(RichText::new("No pending approvals (all resolved).").size(9.0).color(palette.text_muted));
                 }
@@ -567,12 +568,12 @@ impl VelocityApp {
                 ui.add_space(8.0);
                 ui.label(RichText::new("SECRETS").small().strong().color(palette.accent));
                 let mut remove_secret: Option<String> = None;
-                let handles: Vec<String> = self.secrets.handles().into_iter().map(str::to_string).collect();
+                let handles: Vec<String> = self.governance.secrets.handles().into_iter().map(str::to_string).collect();
                 if handles.is_empty() {
                     ui.label(RichText::new("No secrets stored.").size(9.0).color(palette.text_muted));
                 }
                 for handle in &handles {
-                    let masked = self.secrets.masked(handle).unwrap_or_default();
+                    let masked = self.governance.secrets.masked(handle).unwrap_or_default();
                     ui.horizontal(|ui| {
                         ui.label(RichText::new(handle).size(9.0).color(palette.text));
                         ui.label(RichText::new(masked).size(8.0).color(palette.text_muted));
@@ -585,9 +586,9 @@ impl VelocityApp {
                 }
                 let mut add_secret = false;
                 ui.horizontal(|ui| {
-                    ui.add(egui::TextEdit::singleline(&mut self.gov_secret_name_input)
+                    ui.add(egui::TextEdit::singleline(&mut self.governance.gov_secret_name_input)
                         .hint_text("name").desired_width(110.0));
-                    ui.add(egui::TextEdit::singleline(&mut self.gov_secret_value_input)
+                    ui.add(egui::TextEdit::singleline(&mut self.governance.gov_secret_value_input)
                         .hint_text("value").password(true).desired_width(ui.available_width() - 70.0));
                     if ui.small_button(RichText::new("+add").size(8.0)).clicked() { add_secret = true; }
                 });
@@ -597,10 +598,10 @@ impl VelocityApp {
                 ui.label(RichText::new("CONNECTORS").small().strong().color(palette.accent));
                 let mut remove_connector: Option<String> = None;
                 let mut update_secret_connector: Option<String> = None;
-                if self.connectors.is_empty() {
+                if self.governance.connectors.is_empty() {
                     ui.label(RichText::new("No connectors configured.").size(9.0).color(palette.text_muted));
                 }
-                for c in &self.connectors.connectors {
+                for c in &self.governance.connectors.connectors {
                     egui::Frame::new().fill(palette.bg_secondary).corner_radius(4.0).inner_margin(6.0)
                         .show(ui, |ui| {
                             ui.horizontal(|ui| {
@@ -624,11 +625,11 @@ impl VelocityApp {
                 let mut add_connector = false;
                 let mut add_preset: Option<&str> = None;
                 ui.horizontal(|ui| {
-                    ui.add(egui::TextEdit::singleline(&mut self.gov_connector_id_input)
+                    ui.add(egui::TextEdit::singleline(&mut self.governance.gov_connector_id_input)
                         .hint_text("id/name").desired_width(90.0));
-                    ui.add(egui::TextEdit::singleline(&mut self.gov_connector_url_input)
+                    ui.add(egui::TextEdit::singleline(&mut self.governance.gov_connector_url_input)
                         .hint_text("https://base.url").desired_width(ui.available_width() - 190.0));
-                    ui.add(egui::TextEdit::singleline(&mut self.gov_connector_secret_input)
+                    ui.add(egui::TextEdit::singleline(&mut self.governance.gov_connector_secret_input)
                         .hint_text("secret handle (opt)").desired_width(90.0));
                     if ui.small_button(RichText::new("+add").size(8.0)).clicked() { add_connector = true; }
                 });
@@ -641,109 +642,108 @@ impl VelocityApp {
                 // ── Deferred mutations ──
                 let ws = self.workspace_root.clone();
                 if cycle_default {
-                    self.policy.default_decision = match self.policy.default_decision {
+                    self.governance.policy.default_decision = match self.governance.policy.default_decision {
                         Decision::Allow => Decision::Deny,
                         Decision::Deny => Decision::NeedsApproval,
                         Decision::NeedsApproval => Decision::Allow,
                     };
-                    if let Err(e) = self.policy.save(&ws) { Self::persist_err(&mut self.toasts, "governance policy", &e); }
+                    if let Err(e) = self.governance.policy.save(&ws) { Self::persist_err(&mut self.toasts, "governance policy", &e); }
                 }
-                if let Some(t) = set_tokens { self.policy.budget.max_tokens = t; if let Err(e) = self.policy.save(&ws) { Self::persist_err(&mut self.toasts, "governance policy", &e); } }
-                if let Some(c) = set_cost { self.policy.budget.max_cost_cents = c; if let Err(e) = self.policy.save(&ws) { Self::persist_err(&mut self.toasts, "governance policy", &e); } }
+                if let Some(t) = set_tokens { self.governance.policy.budget.max_tokens = t; if let Err(e) = self.governance.policy.save(&ws) { Self::persist_err(&mut self.toasts, "governance policy", &e); } }
+                if let Some(c) = set_cost { self.governance.policy.budget.max_cost_cents = c; if let Err(e) = self.governance.policy.save(&ws) { Self::persist_err(&mut self.toasts, "governance policy", &e); } }
                 if let Some(i) = remove_rule {
-                    if i < self.policy.rules.len() { self.policy.rules.remove(i); if let Err(e) = self.policy.save(&ws) { Self::persist_err(&mut self.toasts, "governance policy", &e); } }
+                    if i < self.governance.policy.rules.len() { self.governance.policy.rules.remove(i); if let Err(e) = self.governance.policy.save(&ws) { Self::persist_err(&mut self.toasts, "governance policy", &e); } }
                 }
                 if let Some(effect) = add_rule {
-                    let tool = self.gov_rule_tool_input.trim().to_string();
+                    let tool = self.governance.gov_rule_tool_input.trim().to_string();
                     if tool.is_empty() {
-                        self.gov_status = "Rule needs a tool name (or *).".to_string();
+                        self.governance.gov_status = "Rule needs a tool name (or *).".to_string();
                     } else {
-                        let path = self.gov_rule_path_input.trim();
-                        self.policy.rules.push(Rule {
+                        let path = self.governance.gov_rule_path_input.trim();
+                        self.governance.policy.rules.push(Rule {
                             tool, effect,
                             path_prefix: if path.is_empty() { None } else { Some(path.to_string()) },
                             domain: None,
                         });
-                        if let Err(e) = self.policy.save(&ws) { Self::persist_err(&mut self.toasts, "governance policy", &e); }
-                        self.gov_rule_tool_input.clear();
-                        self.gov_rule_path_input.clear();
-                        self.gov_status = "Rule added.".to_string();
+                        if let Err(e) = self.governance.policy.save(&ws) { Self::persist_err(&mut self.toasts, "governance policy", &e); }
+                        self.governance.gov_rule_tool_input.clear();
+                        self.governance.gov_rule_path_input.clear();
+                        self.governance.gov_status = "Rule added.".to_string();
                     }
                 }
-                if let Some(id) = approve { self.approvals.approve(&id); if let Err(e) = self.approvals.save(&ws) { Self::persist_err(&mut self.toasts, "approvals", &e); } }
-                if let Some(id) = deny { self.approvals.deny(&id); if let Err(e) = self.approvals.save(&ws) { Self::persist_err(&mut self.toasts, "approvals", &e); } }
+                if let Some(id) = approve { self.governance.approvals.approve(&id); if let Err(e) = self.governance.approvals.save(&ws) { Self::persist_err(&mut self.toasts, "approvals", &e); } }
+                if let Some(id) = deny { self.governance.approvals.deny(&id); if let Err(e) = self.governance.approvals.save(&ws) { Self::persist_err(&mut self.toasts, "approvals", &e); } }
                 if add_secret {
-                    let name = self.gov_secret_name_input.trim().to_string();
-                    let value = self.gov_secret_value_input.clone();
+                    let name = self.governance.gov_secret_name_input.trim().to_string();
+                    let value = self.governance.gov_secret_value_input.clone();
                     if name.is_empty() || value.is_empty() {
-                        self.gov_status = "Secret needs a name and value.".to_string();
-                    } else if self.secrets.set(name, value) {
-                        match self.secrets.save(&ws) {
+                        self.governance.gov_status = "Secret needs a name and value.".to_string();
+                    } else if self.governance.secrets.set(name, value) {
+                        match self.governance.secrets.save(&ws) {
                             Ok(()) => {
-                                self.gov_secret_name_input.clear();
-                                self.gov_secret_value_input.clear();
-                                self.gov_status = "Secret saved (encrypted).".to_string();
+                                self.governance.gov_secret_name_input.clear();
+                                self.governance.gov_secret_value_input.clear();
+                                self.governance.gov_status = "Secret saved (encrypted).".to_string();
                             }
-                            Err(e) => self.gov_status = format!("Secret save failed: {e}"),
+                            Err(e) => self.governance.gov_status = format!("Secret save failed: {e}"),
                         }
                     }
                 }
-                if let Some(name) = remove_secret { if self.secrets.remove(&name) { if let Err(e) = self.secrets.save(&ws) { Self::persist_err(&mut self.toasts, "secrets", &e); } } }
+                if let Some(name) = remove_secret { if self.governance.secrets.remove(&name) { if let Err(e) = self.governance.secrets.save(&ws) { Self::persist_err(&mut self.toasts, "secrets", &e); } } }
                 if add_connector {
-                    let id = self.gov_connector_id_input.trim().to_string();
-                    let url = self.gov_connector_url_input.trim().to_string();
+                    let id = self.governance.gov_connector_id_input.trim().to_string();
+                    let url = self.governance.gov_connector_url_input.trim().to_string();
                     if id.is_empty() || url.is_empty() {
-                        self.gov_status = "Connector needs an id and base URL.".to_string();
+                        self.governance.gov_status = "Connector needs an id and base URL.".to_string();
                     } else {
-                        let secret = self.gov_connector_secret_input.trim();
+                        let secret = self.governance.gov_connector_secret_input.trim();
                         let mut cfg = crate::connectors::ConnectorConfig::generic(id.clone(), id, url);
                         if !secret.is_empty() {
                             cfg.auth_secret = Some(secret.to_string());
                             cfg.auth = crate::connectors::AuthScheme::Bearer;
                         }
-                        self.connectors.add(cfg);
-                        if let Err(e) = self.connectors.save(&ws) { Self::persist_err(&mut self.toasts, "connectors", &e); }
-                        self.gov_connector_id_input.clear();
-                        self.gov_connector_url_input.clear();
-                        self.gov_connector_secret_input.clear();
-                        self.gov_status = "Connector added.".to_string();
+                        self.governance.connectors.add(cfg);
+                        if let Err(e) = self.governance.connectors.save(&ws) { Self::persist_err(&mut self.toasts, "connectors", &e); }
+                        self.governance.gov_connector_id_input.clear();
+                        self.governance.gov_connector_url_input.clear();
+                        self.governance.gov_connector_secret_input.clear();
+                        self.governance.gov_status = "Connector added.".to_string();
                     }
                 }
                 if let Some(id) = remove_connector {
-                    if self.connectors.remove(&id) { if let Err(e) = self.connectors.save(&ws) { Self::persist_err(&mut self.toasts, "connectors", &e); } }
+                    if self.governance.connectors.remove(&id) { if let Err(e) = self.governance.connectors.save(&ws) { Self::persist_err(&mut self.toasts, "connectors", &e); } }
                 }
                 if let Some(id) = update_secret_connector {
-                    let secret = self.gov_connector_secret_input.trim().to_string();
+                    let secret = self.governance.gov_connector_secret_input.trim().to_string();
                     if !secret.is_empty() {
-                        if let Some(cfg) = self.connectors.get_mut(&id) {
+                        if let Some(cfg) = self.governance.connectors.get_mut(&id) {
                             cfg.auth_secret = Some(secret);
                             cfg.auth = crate::connectors::AuthScheme::Bearer;
-                            let _ = self.connectors.save(&ws);
-                            self.gov_connector_secret_input.clear();
-                            self.gov_status = format!("Secret updated for connector '{}'.", id);
+                            let _ = self.governance.connectors.save(&ws);
+                            self.governance.gov_connector_secret_input.clear();
+                            self.governance.gov_status = format!("Secret updated for connector '{}'.", id);
                         }
                     }
                 }
                 if let Some(preset) = add_preset {
-                    let secret = self.gov_connector_secret_input.trim();
+                    let secret = self.governance.gov_connector_secret_input.trim();
                     let secret_opt = if secret.is_empty() { None } else { Some(secret.to_string()) };
                     let cfg = match preset {
                         "github" => crate::connectors::ConnectorConfig::github("github", "GitHub", secret_opt),
                         "slack" => crate::connectors::ConnectorConfig::slack("slack", "Slack", secret_opt),
                         _ => return,
                     };
-                    self.connectors.add(cfg);
-                    let _ = self.connectors.save(&ws);
-                    self.gov_connector_secret_input.clear();
-                    self.gov_status = format!("{} preset connector added.", preset);
+                    self.governance.connectors.add(cfg);
+                    let _ = self.governance.connectors.save(&ws);
+                    self.governance.gov_connector_secret_input.clear();
+                    self.governance.gov_status = format!("{} preset connector added.", preset);
                 }
             });
     }
 
     /// Render the visual workflow canvas editor.
     pub fn render_workflow_visual(&mut self, ui: &mut egui::Ui) {
-        use crate::editor::workflow_canvas::{CanvasNodeKind, NodePosition, WorkflowCanvas};
-        use crate::editor::workflow_templates;
+        use crate::editor::workflow::canvas::{CanvasNodeKind, NodePosition, WorkflowCanvas};
         let palette = self.palette();
 
         // Workflow selector + actions bar
@@ -753,34 +753,34 @@ impl VelocityApp {
                     .size(9.0)
                     .color(palette.text_muted),
             );
-            let mut selected_id = self.workflow_canvas_selected.clone();
+            let mut selected_id = self.workflow_state.workflow_canvas_selected.clone();
 
             egui::ComboBox::from_id_salt("workflow_canvas_selector")
                 .selected_text(
                     selected_id
                         .as_deref()
-                        .and_then(|id| self.workflow_canvases.get(id))
+                        .and_then(|id| self.workflow_state.workflow_canvases.get(id))
                         .map(|c| c.name.clone())
                         .unwrap_or_else(|| "Select workflow\u{2026}".into()),
                 )
                 .show_ui(ui, |ui| {
-                    for (id, canvas) in &self.workflow_canvases {
+                    for (id, canvas) in &self.workflow_state.workflow_canvases {
                         ui.selectable_value(&mut selected_id, Some(id.clone()), &canvas.name);
                     }
                 });
 
             if ui.button(RichText::new("+ New").size(9.0)).clicked() {
                 let id = format!("wf-{}", crate::editor::triggers::now_secs());
-                let name = format!("Workflow {}", self.workflow_canvases.len() + 1);
+                let name = format!("Workflow {}", self.workflow_state.workflow_canvases.len() + 1);
                 let canvas = WorkflowCanvas::new(&id, &name);
-                self.workflow_canvases.insert(id.clone(), canvas);
+                self.workflow_state.workflow_canvases.insert(id.clone(), canvas);
                 selected_id = Some(id);
             }
 
             egui::ComboBox::from_id_salt("workflow_template_selector")
                 .selected_text("From template\u{2026}")
                 .show_ui(ui, |ui| {
-                    for template in workflow_templates::all_templates() {
+                    for template in crate::editor::workflow::templates::all_templates() {
                         if ui
                             .button(format!(
                                 "{} \u{2014} {}",
@@ -790,17 +790,17 @@ impl VelocityApp {
                         {
                             let id = format!("wf-{}", crate::editor::triggers::now_secs());
                             let canvas = template.build(&id, template.name);
-                            self.workflow_canvases.insert(id.clone(), canvas);
+                            self.workflow_state.workflow_canvases.insert(id.clone(), canvas);
                             selected_id = Some(id);
                         }
                     }
                 });
 
-            self.workflow_canvas_selected = selected_id;
+            self.workflow_state.workflow_canvas_selected = selected_id;
         });
         ui.add_space(4.0);
 
-        if let Some(sel_id) = self.workflow_canvas_selected.clone() {
+        if let Some(sel_id) = self.workflow_state.workflow_canvas_selected.clone() {
             // Node palette: add-node buttons
             ui.horizontal(|ui| {
                 ui.label(
@@ -839,7 +839,7 @@ impl VelocityApp {
                 ];
                 for (label, kind) in add_buttons {
                     if ui.small_button(RichText::new(*label).size(8.0)).clicked() {
-                        if let Some(canvas) = self.workflow_canvases.get_mut(&sel_id) {
+                        if let Some(canvas) = self.workflow_state.workflow_canvases.get_mut(&sel_id) {
                             let offset = canvas.nodes.len() as f32;
                             let pos = NodePosition {
                                 x: 200.0 + offset * 40.0,
@@ -855,16 +855,16 @@ impl VelocityApp {
                         .small_button(RichText::new("Snapshot").size(8.0))
                         .clicked()
                     {
-                        if let Some(canvas) = self.workflow_canvases.get(&sel_id) {
-                            self.workflow_versions.snapshot(canvas, "Manual snapshot");
-                            let _ = self.workflow_versions.save(&self.workspace_root);
+                        if let Some(canvas) = self.workflow_state.workflow_canvases.get(&sel_id) {
+                            self.workflow_state.workflow_versions.snapshot(canvas, "Manual snapshot");
+                            let _ = self.workflow_state.workflow_versions.save(&self.workspace_root);
                         }
                     }
                     if ui
                         .small_button(RichText::new("Delete Node").size(8.0))
                         .clicked()
                     {
-                        if let Some(canvas) = self.workflow_canvases.get_mut(&sel_id) {
+                        if let Some(canvas) = self.workflow_state.workflow_canvases.get_mut(&sel_id) {
                             if let Some(selected) = canvas.selected_node() {
                                 let nid = selected.id.clone();
                                 canvas.remove_node(&nid);
@@ -877,7 +877,7 @@ impl VelocityApp {
 
             // Canvas area
             let canvas_size = egui::vec2(ui.available_width(), 350.0);
-            if let Some(canvas) = self.workflow_canvases.get_mut(&sel_id) {
+            if let Some(canvas) = self.workflow_state.workflow_canvases.get_mut(&sel_id) {
                 let _action = canvas.draw(ui, canvas_size);
             }
             ui.add_space(4.0);
@@ -889,7 +889,7 @@ impl VelocityApp {
                         .size(8.0)
                         .color(palette.text_muted),
                 );
-                if let Some(canvas) = self.workflow_canvases.get(&sel_id) {
+                if let Some(canvas) = self.workflow_state.workflow_canvases.get(&sel_id) {
                     let node_ids: Vec<_> = canvas
                         .nodes
                         .iter()
@@ -915,7 +915,7 @@ impl VelocityApp {
                     if ui.small_button(RichText::new("Link").size(8.0)).clicked()
                         && from_idx != to_idx
                     {
-                        if let Some(canvas) = self.workflow_canvases.get_mut(&sel_id) {
+                        if let Some(canvas) = self.workflow_state.workflow_canvases.get_mut(&sel_id) {
                             let from = node_ids[from_idx].0.clone();
                             let to = node_ids[to_idx].0.clone();
                             canvas.add_edge(from, "ok", to);
@@ -931,7 +931,7 @@ impl VelocityApp {
                     .button(RichText::new("\u{25b6} Run Workflow").size(10.0))
                     .clicked()
                 {
-                    if let Some(canvas) = self.workflow_canvases.get(&sel_id) {
+                    if let Some(canvas) = self.workflow_state.workflow_canvases.get(&sel_id) {
                         if let Some(wf) = canvas.to_workflow() {
                             let ws = self.workspace_root.clone();
                             let runrec = wf.execute(&ws);
@@ -940,11 +940,11 @@ impl VelocityApp {
                                 wf.name,
                                 runrec.status.label()
                             )));
-                            self.workflow_last_run = Some(runrec);
+                            self.workflow_state.workflow_last_run = Some(runrec);
                         }
                     }
                 }
-                if let Some(runrec) = &self.workflow_last_run {
+                if let Some(runrec) = &self.workflow_state.workflow_last_run {
                     use crate::editor::workflow::RunStatus;
                     let status_color = match runrec.status {
                         RunStatus::Success => palette.success,

@@ -1,16 +1,32 @@
-# Multi-stage build for Velocity IDE
+# syntax=docker/dockerfile:1.6
+# Multi-stage build for Velocity IDE with BuildKit cache mounts
+# Requires: DOCKER_BUILDKIT=1
+
 # Stage 1: Build all Rust binaries
 FROM rust:1.87-slim-bookworm AS builder
 
-# Install build dependencies
+# Install build dependencies + sccache + lld
 RUN apt-get update && apt-get install -y \
     pkg-config \
     libssl-dev \
     libudev-dev \
     libgtk-3-dev \
+    clang \
+    lld \
     && rm -rf /var/lib/apt/lists/*
 
+# Install sccache for build caching
+RUN cargo install sccache --locked
+
 WORKDIR /build
+
+# Configure cargo to use sccache and lld
+RUN mkdir -p .cargo && \
+    echo '[build]' >> .cargo/config.toml && \
+    echo 'rustc-wrapper = "/usr/local/cargo/bin/sccache"' >> .cargo/config.toml && \
+    echo '[target.x86_64-unknown-linux-gnu]' >> .cargo/config.toml && \
+    echo 'linker = "clang"' >> .cargo/config.toml && \
+    echo 'rustflags = ["-C", "link-arg=-fuse-ld=lld"]' >> .cargo/config.toml
 
 # Copy workspace manifests first for dependency caching
 COPY Cargo.toml Cargo.lock ./
@@ -29,8 +45,11 @@ RUN mkdir -p velocity-mcp/src && echo "fn main() {}" > velocity-mcp/src/main.rs 
     mkdir -p drone/src && echo "fn main() {}" > drone/src/main.rs && \
     mkdir -p e2e/src && echo "fn main() {}" > e2e/src/main.rs
 
-# Build dependencies (this layer is cached unless Cargo.toml changes)
-RUN cargo build --release
+# Build dependencies with cache mounts (this layer is cached unless Cargo.toml changes)
+RUN --mount=type=cache,target=/usr/local/cargo/registry \
+    --mount=type=cache,target=/build/target \
+    --mount=type=cache,target=/root/.cache/sccache \
+    cargo build --release
 
 # Copy actual source code
 COPY . .
@@ -38,8 +57,11 @@ COPY . .
 # Touch source files to invalidate dummy builds
 RUN find . -name "*.rs" -exec touch {} +
 
-# Build release binaries
-RUN cargo build --release --bin velocity_ide --bin velocity_mcp --bin velocity_ide_gui --bin velocity-drone
+# Build release binaries with cache mounts
+RUN --mount=type=cache,target=/usr/local/cargo/registry \
+    --mount=type=cache,target=/build/target \
+    --mount=type=cache,target=/root/.cache/sccache \
+    cargo build --release --bin velocity_ide --bin velocity_mcp --bin velocity_ide_gui --bin velocity-drone
 
 # Stage 2: Runtime image
 FROM debian:bookworm-slim

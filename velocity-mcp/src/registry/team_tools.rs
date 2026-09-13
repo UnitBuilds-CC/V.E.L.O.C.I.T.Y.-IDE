@@ -836,11 +836,7 @@ fn team_analytics(root: &Path, arguments: &Value) -> Result<String, Box<dyn Erro
         "scope_coverage": {
             "members_with_scopes": members_with_scopes,
             "members_without_scopes": members_without_scopes,
-            "coverage_percent": if member_count > 0 {
-                (members_with_scopes * 100) / member_count
-            } else {
-                0
-            },
+            "coverage_percent": (members_with_scopes * 100).checked_div(member_count).unwrap_or(0),
         },
         "members": team.members.iter().map(|m| json!({
             "id": m.id,

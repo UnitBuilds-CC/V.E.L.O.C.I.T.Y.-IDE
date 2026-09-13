@@ -558,6 +558,7 @@ mod tests {
         let r = ScopeValidator::validate(&[1.0, 2.0], &[1.0, 2.0], 0.5);
         let mut cloned = r.clone();
         cloned.similarity = -999.0;
+        assert_eq!(cloned.similarity, -999.0);
         assert!((r.similarity - 1.0).abs() < 1e-6);
     }
 

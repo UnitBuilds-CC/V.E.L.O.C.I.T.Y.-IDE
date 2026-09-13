@@ -196,7 +196,7 @@ for layer in &weights.layers {
 
 ## References
 
-- `velocity-ide/src/model/transformer.rs:732` — Original TODO
+- `velocity-ide/src/model/transformer.rs:751` — Optimization note for fused pipeline
 - `velocity-ide/src/compiler/driver/nda_gemv.rs` — Current GEMV implementation
 - `velocity-ide/src/compiler/vulkan_benchmark.rs` — Vulkan pipeline benchmarks
 - [Vulkan Push Constants Spec](https://vulkan.org/specs/push-constants)

@@ -1,3 +1,12 @@
+//! Pure-Rust browser control plane for the Velocity IDE.
+//!
+//! This crate implements a complete browser engine in pure Rust:
+//! slab-allocated DOM with mutation observers, CSS parsing and style
+//! cascading, flexbox/grid layout solvers, a JavaScript virtual machine
+//! with Wasm interpreter, HTTP/2/3 + QUIC + WebSocket + WebRTC networking,
+//! TLS fingerprint rotation, session management with cookie/storage/indexedDB,
+//! NDA triple persistence, agentic AOM trees with OCR, and site vector memory.
+
 // Structural patterns that are intentional in this codebase
 #![allow(clippy::too_many_arguments)] // Complex engine functions need many params
 #![allow(clippy::result_large_err)] // Error types carry diagnostic context
@@ -78,6 +87,7 @@ pub use parser::{
     StreamJitTokenizer,
 };
 pub use session::{BrowserSession, Cookie};
+pub use errors::{BrowserError, BrowserResult};
 pub use session_auth::{AuthReseeder, AuthTokenState};
 pub use session_cookie_store::{CookieRecord, CookieStore, SameSitePolicy};
 pub use session_history::{HistoryItem, HistoryStack};

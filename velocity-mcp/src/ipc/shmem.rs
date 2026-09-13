@@ -1,27 +1,43 @@
+use hmac::{Hmac, Mac};
 use memmap2::MmapMut;
+use sha2::Sha256;
 use std::error::Error;
 use std::fs::OpenOptions;
 use std::path::Path;
 
-// Shared Memory layout specs:
+// Shared Memory layout specs (v2 - authenticated):
 // Offset 0: State byte (0 = Idle, 1 = Host Request, 2 = Server Processing, 3 = Host Response Ready, 4 = Error)
 // Offset 1..5: Input buffer length (u32, little endian)
 // Offset 5..9: Output buffer length (u32, little endian)
-// Offset 10..4096: Input request buffer
-// Offset 4096..65536: Output response buffer (supports up to 61KB responses)
+// Offset 9..13: Sequence number (u32, little endian) - replay protection
+// Offset 13..17: Flags (u32, little endian) - bit 0 = HMAC enabled
+// Offset 17..49: HMAC-SHA256 tag (32 bytes) - message authentication
+// Offset 49..81: Reserved (32 bytes) - future use
+// Offset 81..4128: Input request buffer (4047 bytes)
+// Offset 4128..65536: Output response buffer (61408 bytes)
 
 const STATE_OFFSET: usize = 0;
 const INPUT_LEN_OFFSET: usize = 1;
 const OUTPUT_LEN_OFFSET: usize = 5;
-const INPUT_BUFFER_OFFSET: usize = 10;
-const OUTPUT_BUFFER_OFFSET: usize = 4096;
+const SEQ_OFFSET: usize = 9;
+const FLAGS_OFFSET: usize = 13;
+const HMAC_OFFSET: usize = 17;
+const RESERVED_OFFSET: usize = 49;
+/// Size of the reserved region between the HMAC tag and the input buffer.
+const RESERVED_SIZE: usize = INPUT_BUFFER_OFFSET - RESERVED_OFFSET; // 32 bytes
+const INPUT_BUFFER_OFFSET: usize = 81;
+const OUTPUT_BUFFER_OFFSET: usize = 4128;
 const TOTAL_BUFFER_SIZE: usize = 65536;
+
+const FLAG_HMAC_ENABLED: u32 = 0x1;
 
 pub const STATE_IDLE: u8 = 0;
 pub const STATE_REQ_READY: u8 = 1;
 pub const STATE_PROCESSING: u8 = 2;
 pub const STATE_RES_READY: u8 = 3;
 pub const STATE_ERROR: u8 = 4;
+
+type HmacSha256 = Hmac<Sha256>;
 
 // SAFETY: CreateEventW/SetEvent/WaitForSingleObject/CloseHandle are Windows
 // kernel32 synchronization primitives. We create events with valid parameters,
@@ -228,6 +244,240 @@ impl SharedMemoryBuffer {
         let bytes = len.to_le_bytes();
         self.mmap[OUTPUT_LEN_OFFSET..OUTPUT_LEN_OFFSET + 4].copy_from_slice(&bytes);
     }
+
+    // ─── Sequence Number (Replay Protection) ──────────────────────────────────
+
+    pub fn get_sequence(&self) -> u32 {
+        u32::from_le_bytes([
+            self.mmap[SEQ_OFFSET],
+            self.mmap[SEQ_OFFSET + 1],
+            self.mmap[SEQ_OFFSET + 2],
+            self.mmap[SEQ_OFFSET + 3],
+        ])
+    }
+
+    pub fn set_sequence(&mut self, seq: u32) {
+        let bytes = seq.to_le_bytes();
+        self.mmap[SEQ_OFFSET..SEQ_OFFSET + 4].copy_from_slice(&bytes);
+    }
+
+    // ─── Flags ────────────────────────────────────────────────────────────────
+
+    pub fn get_flags(&self) -> u32 {
+        u32::from_le_bytes([
+            self.mmap[FLAGS_OFFSET],
+            self.mmap[FLAGS_OFFSET + 1],
+            self.mmap[FLAGS_OFFSET + 2],
+            self.mmap[FLAGS_OFFSET + 3],
+        ])
+    }
+
+    pub fn set_flags(&mut self, flags: u32) {
+        let bytes = flags.to_le_bytes();
+        self.mmap[FLAGS_OFFSET..FLAGS_OFFSET + 4].copy_from_slice(&bytes);
+    }
+
+    pub fn is_hmac_enabled(&self) -> bool {
+        (self.get_flags() & FLAG_HMAC_ENABLED) != 0
+    }
+
+    // ─── HMAC (Message Authentication) ────────────────────────────────────────
+
+    pub fn get_hmac(&self) -> [u8; 32] {
+        let mut hmac = [0u8; 32];
+        hmac.copy_from_slice(&self.mmap[HMAC_OFFSET..HMAC_OFFSET + 32]);
+        hmac
+    }
+
+    pub fn set_hmac(&mut self, hmac: &[u8; 32]) {
+        self.mmap[HMAC_OFFSET..HMAC_OFFSET + 32].copy_from_slice(hmac);
+    }
+
+    pub fn clear_hmac(&mut self) {
+        self.mmap[HMAC_OFFSET..HMAC_OFFSET + 32].fill(0);
+    }
+
+    // ─── Reserved Region ────────────────────────────────────────────────────
+
+    /// Read the 32-byte reserved region (offset 49..81).
+    /// Reserved for future protocol extensions (e.g. capability flags, versioning).
+    pub fn get_reserved(&self) -> [u8; RESERVED_SIZE] {
+        let mut reserved = [0u8; RESERVED_SIZE];
+        reserved.copy_from_slice(&self.mmap[RESERVED_OFFSET..RESERVED_OFFSET + RESERVED_SIZE]);
+        reserved
+    }
+
+    /// Write to the 32-byte reserved region (offset 49..81).
+    pub fn set_reserved(&mut self, data: &[u8; RESERVED_SIZE]) {
+        self.mmap[RESERVED_OFFSET..RESERVED_OFFSET + RESERVED_SIZE].copy_from_slice(data);
+    }
+
+    /// Zero-fill the reserved region.
+    pub fn clear_reserved(&mut self) {
+        self.mmap[RESERVED_OFFSET..RESERVED_OFFSET + RESERVED_SIZE].fill(0);
+    }
+
+    /// Compute HMAC-SHA256 over sequence number + message bytes
+    fn compute_hmac(key: &[u8], seq: u32, data: &[u8]) -> Result<[u8; 32], Box<dyn Error>> {
+        let mut mac =
+            HmacSha256::new_from_slice(key).map_err(|e| -> Box<dyn Error> { format!("HMAC key error: {}", e).into() })?;
+        mac.update(&seq.to_le_bytes());
+        mac.update(data);
+        let result = mac.finalize();
+        let mut hmac = [0u8; 32];
+        hmac.copy_from_slice(&result.into_bytes());
+        Ok(hmac)
+    }
+
+    /// Verify HMAC-SHA256 tag over sequence number + message bytes
+    fn verify_hmac(key: &[u8], seq: u32, data: &[u8], expected: &[u8; 32]) -> bool {
+        if let Ok(computed) = Self::compute_hmac(key, seq, data) {
+            // Constant-time comparison
+            let mut diff = 0u8;
+            for (a, b) in computed.iter().zip(expected.iter()) {
+                diff |= a ^ b;
+            }
+            diff == 0
+        } else {
+            false
+        }
+    }
+
+    // ─── Authenticated Message API ────────────────────────────────────────────
+
+    /// Write authenticated message to input buffer with HMAC + sequence number
+    pub fn write_authenticated_input(
+        &mut self,
+        request: &str,
+        key: &[u8],
+        seq: u32,
+    ) -> Result<(), Box<dyn Error>> {
+        let bytes = request.as_bytes();
+        if bytes.len() > (OUTPUT_BUFFER_OFFSET - INPUT_BUFFER_OFFSET) {
+            return Err("Request length exceeds input buffer limit".into());
+        }
+
+        // Write sequence number
+        self.set_sequence(seq);
+
+        // Write message
+        self.set_input_len(bytes.len() as u32);
+        self.mmap[INPUT_BUFFER_OFFSET..INPUT_BUFFER_OFFSET + bytes.len()].copy_from_slice(bytes);
+
+        // Compute and write HMAC
+        let hmac = Self::compute_hmac(key, seq, bytes)?;
+        self.set_hmac(&hmac);
+
+        // Enable HMAC flag
+        self.set_flags(self.get_flags() | FLAG_HMAC_ENABLED);
+
+        Ok(())
+    }
+
+    /// Read and verify authenticated message from input buffer
+    pub fn read_authenticated_input(
+        &self,
+        key: &[u8],
+        expected_seq: Option<u32>,
+    ) -> Result<(String, u32), Box<dyn Error>> {
+        let len = self.get_input_len() as usize;
+        if len > (OUTPUT_BUFFER_OFFSET - INPUT_BUFFER_OFFSET) {
+            return Err("Input length exceeds buffer limit".into());
+        }
+
+        let seq = self.get_sequence();
+        let bytes = &self.mmap[INPUT_BUFFER_OFFSET..INPUT_BUFFER_OFFSET + len];
+        let stored_hmac = self.get_hmac();
+
+        // Verify sequence number if provided
+        if let Some(expected) = expected_seq {
+            if seq != expected {
+                return Err(format!(
+                    "Sequence number mismatch: expected {}, got {}",
+                    expected, seq
+                )
+                .into());
+            }
+        }
+
+        // Verify HMAC if enabled
+        if self.is_hmac_enabled()
+            && !Self::verify_hmac(key, seq, bytes, &stored_hmac)
+        {
+            return Err("HMAC verification failed - message authentication error".into());
+        }
+
+        let msg = String::from_utf8(bytes.to_vec())?;
+        Ok((msg, seq))
+    }
+
+    /// Write authenticated message to output buffer with HMAC + sequence number
+    pub fn write_authenticated_output(
+        &mut self,
+        response: &str,
+        key: &[u8],
+        seq: u32,
+    ) -> Result<(), Box<dyn Error>> {
+        let bytes = response.as_bytes();
+        if bytes.len() > (TOTAL_BUFFER_SIZE - OUTPUT_BUFFER_OFFSET) {
+            return Err("Response length exceeds output buffer limit".into());
+        }
+
+        // Write sequence number
+        self.set_sequence(seq);
+
+        // Write message
+        self.set_output_len(bytes.len() as u32);
+        self.mmap[OUTPUT_BUFFER_OFFSET..OUTPUT_BUFFER_OFFSET + bytes.len()].copy_from_slice(bytes);
+
+        // Compute and write HMAC
+        let hmac = Self::compute_hmac(key, seq, bytes)?;
+        self.set_hmac(&hmac);
+
+        // Enable HMAC flag
+        self.set_flags(self.get_flags() | FLAG_HMAC_ENABLED);
+
+        Ok(())
+    }
+
+    /// Read and verify authenticated message from output buffer
+    pub fn read_authenticated_output(
+        &self,
+        key: &[u8],
+        expected_seq: Option<u32>,
+    ) -> Result<(String, u32), Box<dyn Error>> {
+        let len = self.get_output_len() as usize;
+        if len > (TOTAL_BUFFER_SIZE - OUTPUT_BUFFER_OFFSET) {
+            return Err("Output length exceeds buffer limit".into());
+        }
+
+        let seq = self.get_sequence();
+        let bytes = &self.mmap[OUTPUT_BUFFER_OFFSET..OUTPUT_BUFFER_OFFSET + len];
+        let stored_hmac = self.get_hmac();
+
+        // Verify sequence number if provided
+        if let Some(expected) = expected_seq {
+            if seq != expected {
+                return Err(format!(
+                    "Sequence number mismatch: expected {}, got {}",
+                    expected, seq
+                )
+                .into());
+            }
+        }
+
+        // Verify HMAC if enabled
+        if self.is_hmac_enabled()
+            && !Self::verify_hmac(key, seq, bytes, &stored_hmac)
+        {
+            return Err("HMAC verification failed - message authentication error".into());
+        }
+
+        let msg = String::from_utf8(bytes.to_vec())?;
+        Ok((msg, seq))
+    }
+
+    // ─── Legacy Unauthenticated API (backward compatibility) ──────────────────
 
     pub fn read_input(&self) -> Result<String, Box<dyn Error>> {
         let len = self.get_input_len() as usize;

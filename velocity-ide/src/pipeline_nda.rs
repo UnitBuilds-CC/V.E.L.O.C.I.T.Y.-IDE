@@ -82,6 +82,7 @@ impl NdaHead {
 
     /// Forward pass: hidden\[896\] → logits\[VOCAB_SIZE\].
     /// Pure f32 — the head is only small, float cost is negligible.
+    #[allow(clippy::chunks_exact_to_as_chunks)]
     pub fn forward(&self, hidden: &[f32]) -> [f32; NdaOpcode::VOCAB_SIZE] {
         debug_assert_eq!(hidden.len(), Self::IN);
 
@@ -131,6 +132,7 @@ impl NdaHead {
     }
 
     /// Load weights from the binary format written by `save`.
+    #[allow(clippy::chunks_exact_to_as_chunks)]
     pub fn load(path: &Path) -> Result<Self> {
         let buf = std::fs::read(path)?;
         anyhow::ensure!(&buf[..4] == b"NDA\x01", "invalid NdaHead magic");
@@ -364,7 +366,7 @@ impl NdaGenStats {
             .enumerate()
             .filter(|(_, c)| *c > 0)
             .collect();
-        pairs.sort_by(|a, b| b.1.cmp(&a.1));
+        pairs.sort_by_key(|a| std::cmp::Reverse(a.1));
         pairs
             .into_iter()
             .take(n)

@@ -6,7 +6,7 @@
 //! basic patterns, while also supporting an LLM-powered path for complex
 //! descriptions.
 
-use super::workflow_canvas::{CanvasNodeKind, NodePosition, WorkflowCanvas};
+use super::canvas::{CanvasNodeKind, NodePosition, WorkflowCanvas};
 
 /// Result of parsing a natural language description.
 #[derive(Debug, Clone)]

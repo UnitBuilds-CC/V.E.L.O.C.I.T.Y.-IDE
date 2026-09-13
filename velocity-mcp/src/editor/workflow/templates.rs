@@ -4,7 +4,7 @@
 //! lowering the barrier to entry and demonstrating best practices.
 //! Users can customize templates after creation.
 
-use super::workflow_canvas::{CanvasNodeKind, NodePosition, WorkflowCanvas};
+use super::canvas::{CanvasNodeKind, NodePosition, WorkflowCanvas};
 
 /// A named template that can produce a [`WorkflowCanvas`].
 pub struct WorkflowTemplate {

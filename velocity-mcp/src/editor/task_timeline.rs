@@ -19,13 +19,10 @@ pub enum TaskEventType {
     Started = 0,
     Completed = 1,
     Failed = 2,
-    #[allow(dead_code)]
     Cancelled = 3,
     ToolCall = 4,
     ToolResult = 5,
-    #[allow(dead_code)]
     PhaseChange = 6,
-    #[allow(dead_code)]
     TokenBudgetUpdate = 7,
     SessionMarker = 8,
     AgentMarker = 9,
@@ -329,6 +326,54 @@ impl TaskTimelineState {
         );
     }
 
+    /// Convenience: mark a task as cancelled (updates existing event in-place)
+    pub fn task_cancelled(&mut self, task_id: u32) {
+        if task_id == 0 {
+            return;
+        }
+        for i in 0..self.count {
+            let idx = (self.head + i) % TASK_BUFFER_SIZE;
+            if self.events[idx].task_id == task_id {
+                self.events[idx].event_type = TaskEventType::Cancelled;
+                break;
+            }
+        }
+    }
+
+    /// Convenience: record a phase transition for a task
+    pub fn phase_change(&mut self, task_id: u32, from_phase: &str, to_phase: &str) {
+        self.add_event(
+            TaskEventType::PhaseChange,
+            to_phase,
+            from_phase,
+            task_id,
+            0,
+            0,
+            0,
+            0,
+        );
+    }
+
+    /// Convenience: record a token budget update
+    pub fn token_budget_update(
+        &mut self,
+        task_id: u32,
+        tokens_used: u32,
+        tokens_max: u32,
+        estimated_cost: u32,
+    ) {
+        self.add_event(
+            TaskEventType::TokenBudgetUpdate,
+            "budget",
+            "token budget updated",
+            task_id,
+            0,
+            tokens_used,
+            tokens_max,
+            estimated_cost,
+        );
+    }
+
     /// Get visible events in chronological order (newest first for UI)
     pub fn visible_events(&self) -> impl Iterator<Item = (usize, &TaskEventEntry)> {
         let count = self.count.min(TASK_BUFFER_SIZE);
@@ -355,7 +400,6 @@ impl TaskTimelineState {
         self.count
     }
 
-    #[allow(dead_code)]
     pub fn clear(&mut self) {
         self.count = 0;
         self.head = 0;

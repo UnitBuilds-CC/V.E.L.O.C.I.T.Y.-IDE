@@ -17,8 +17,14 @@ pub struct Task {
     /// Files this task should focus on, if any. Used for sandboxing and collision scope.
     pub scope: Vec<String>,
     pub dependencies: Vec<TaskId>,
-    #[allow(dead_code)]
     pub output: Option<String>,
+    /// Higher value = higher priority. Tasks with equal dependency level are
+    /// scheduled in descending priority order so urgent work jumps the queue.
+    pub priority: u32,
+    /// Estimated relative cost (1–10). Used by the scheduler for load-aware
+    /// assignment: a worker already running a weight-8 task won't be handed
+    /// another weight-8 task when a weight-2 task is available.
+    pub estimated_weight: u32,
 }
 
 /// A project plan modeled as a DAG.
@@ -29,14 +35,19 @@ pub struct TaskGraph {
 }
 
 impl TaskGraph {
-    /// Return tasks that have all dependencies satisfied by `completed`.
+    /// Return tasks that have all dependencies satisfied by `completed`,
+    /// sorted by priority (highest first) so the scheduler picks urgent
+    /// tasks before lower-priority ones in the same wave.
     pub fn ready(&self, completed: &HashSet<TaskId>) -> Vec<&Task> {
-        self.tasks
+        let mut tasks: Vec<&Task> = self
+            .tasks
             .values()
             .filter(|t| {
                 !completed.contains(&t.id) && t.dependencies.iter().all(|d| completed.contains(d))
             })
-            .collect()
+            .collect();
+        tasks.sort_by_key(|a| std::cmp::Reverse(a.priority));
+        tasks
     }
 
     /// Insert a new task and wire it under `parent` if one is provided.
@@ -58,6 +69,8 @@ impl TaskGraph {
                 scope,
                 dependencies: deps,
                 output: None,
+                priority: 0,
+                estimated_weight: 1,
             },
         );
         if let Some(parent_id) = parent {
@@ -172,6 +185,11 @@ impl TaskGraph {
     /// Find a task by ID.
     pub fn get(&self, id: TaskId) -> Option<&Task> {
         self.tasks.get(&id)
+    }
+
+    /// Estimated weight of a task (defaults to 1 if not found).
+    pub fn weight_of(&self, id: TaskId) -> u32 {
+        self.tasks.get(&id).map(|t| t.estimated_weight).unwrap_or(1)
     }
 
     /// Return all tasks that depend on the given task.

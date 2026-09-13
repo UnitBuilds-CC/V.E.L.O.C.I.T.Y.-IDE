@@ -235,25 +235,27 @@ impl StatusBar {
 
                     // ── Middle: the free-form status message, clipped to the gap
                     // between the left and right groups so a long message can no longer
-                    // run under the mode/build pills (the status-bar overlap bug). ──
+                    // run under the mode/build pills (the status-bar overlap bug). ─
                     if !status.is_empty() {
                         let x = ui.cursor().min.x + 8.0;
                         let avail = (right_left_edge - x - 8.0).max(0.0);
                         if avail > 24.0 {
-                            let text_h = 16.0;
-                            let rect = egui::Rect::from_min_size(
-                                egui::pos2(x, row_rect.center().y - text_h / 2.0),
-                                egui::vec2(avail, text_h),
+                            // Use a child UI with exact width to contain the label
+                            let mut status_ui = ui.new_child(
+                                egui::UiBuilder::new()
+                                    .max_rect(egui::Rect::from_min_size(
+                                        egui::pos2(x, row_rect.min.y),
+                                        egui::vec2(avail, row_rect.height()),
+                                    ))
+                                    .layout(egui::Layout::left_to_right(egui::Align::Center)),
                             );
-                            ui.put(
-                                rect,
-                                egui::Label::new(
-                                    egui::RichText::new(status)
-                                        .size(11.0)
-                                        .color(palette.text_muted),
-                                )
-                                .truncate(),
+                            let status_response = status_ui.label(
+                                egui::RichText::new(status)
+                                    .size(11.0)
+                                    .color(palette.text_muted),
                             );
+                            // Show full text on hover (UX polish for truncated messages)
+                            status_response.on_hover_text(status);
                         }
                     }
                 });

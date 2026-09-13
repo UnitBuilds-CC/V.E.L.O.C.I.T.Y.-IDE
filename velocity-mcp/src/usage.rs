@@ -91,13 +91,11 @@ pub struct OpenRouterAccount {
 
 #[derive(Debug, Clone)]
 pub struct AzureOpenAiAccount {
-    #[allow(dead_code)]
     pub n: u32,
     pub api_key: String,
     pub endpoint: String,
     pub deployment: String,
     pub api_version: String,
-    #[allow(dead_code)]
     pub tier: String,
     pub label: String,
 }
@@ -106,7 +104,6 @@ pub struct AzureOpenAiAccount {
 pub struct LocalOllamaAccount {
     pub host: String,
     pub default_model: String,
-    #[allow(dead_code)]
     pub label: String,
 }
 
@@ -208,6 +205,43 @@ pub struct WorkspaceProviderSettings {
     pub bedrock: WorkspaceApiKeySettings,
     #[serde(default)]
     pub anthropic: WorkspaceApiKeySettings,
+    /// Velocity Router settings for MoA orchestration.
+    #[serde(default)]
+    pub velocity_router: WorkspaceRouterSettings,
+}
+
+/// Settings for the Velocity Router (MoA orchestration service).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WorkspaceRouterSettings {
+    /// Router URL (default: http://localhost:8787).
+    #[serde(default = "default_router_url")]
+    pub url: String,
+    /// API key for authenticating with the router.
+    #[serde(default)]
+    pub api_key: String,
+    /// Whether to route chat through the router (MoA mode).
+    #[serde(default)]
+    pub enabled: bool,
+}
+
+fn default_router_url() -> String {
+    "http://localhost:8787".to_string()
+}
+
+impl Default for WorkspaceRouterSettings {
+    fn default() -> Self {
+        Self {
+            url: default_router_url(),
+            api_key: String::new(),
+            enabled: false,
+        }
+    }
+}
+
+impl WorkspaceRouterSettings {
+    pub fn is_configured(&self) -> bool {
+        !self.api_key.trim().is_empty()
+    }
 }
 
 impl WorkspaceCloudflareSettings {
@@ -800,6 +834,7 @@ pub fn load_azure_accounts_from_env() -> Vec<AzureOpenAiAccount> {
             });
         }
     }
+    accounts.sort_by_key(|a| a.n);
     accounts
 }
 

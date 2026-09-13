@@ -14,6 +14,8 @@ struct HttpRequest {
     method: String,
     path: String,
     body: Vec<u8>,
+    /// Value of the `Authorization` header, if present.
+    auth_header: Option<String>,
 }
 
 /// Maximum request body size (16 MB). Prevents memory exhaustion from
@@ -37,6 +39,7 @@ fn parse_request(reader: &mut BufReader<&mut dyn IoRead>) -> Option<HttpRequest>
 
     // Read headers.
     let mut content_length: usize = 0;
+    let mut auth_header: Option<String> = None;
     loop {
         let mut line = String::new();
         if reader.read_line(&mut line).ok()? == 0 {
@@ -46,11 +49,14 @@ fn parse_request(reader: &mut BufReader<&mut dyn IoRead>) -> Option<HttpRequest>
         if trimmed.is_empty() {
             break;
         }
-        if let Some(val) = trimmed.to_lowercase().strip_prefix("content-length:") {
+        let lower = trimmed.to_lowercase();
+        if let Some(val) = lower.strip_prefix("content-length:") {
             content_length = val.trim().parse().unwrap_or(0);
             if content_length > MAX_BODY_SIZE {
                 return None; // Reject oversized requests early.
             }
+        } else if let Some(val) = lower.strip_prefix("authorization:") {
+            auth_header = Some(val.trim().to_string());
         }
     }
 
@@ -60,7 +66,7 @@ fn parse_request(reader: &mut BufReader<&mut dyn IoRead>) -> Option<HttpRequest>
         reader.read_exact(&mut body).ok()?;
     }
 
-    Some(HttpRequest { method, path, body })
+    Some(HttpRequest { method, path, body, auth_header })
 }
 
 /// Write an HTTP response.
@@ -79,8 +85,36 @@ fn write_response(stream: &mut dyn IoWrite, status: u16, body: &str) {
     stream.flush().ok();
 }
 
+/// Constant-time string comparison to prevent timing attacks on auth tokens.
+fn constant_time_eq(a: &str, b: &str) -> bool {
+    let a_bytes = a.as_bytes();
+    let b_bytes = b.as_bytes();
+    if a_bytes.len() != b_bytes.len() {
+        // Still do a dummy comparison to avoid leaking length via timing.
+        let _ = a_bytes.iter().zip(b_bytes.iter()).fold(0u8, |acc, (&x, &y)| acc | (x ^ y));
+        return false;
+    }
+    a_bytes.iter().zip(b_bytes.iter()).fold(0u8, |acc, (&x, &y)| acc | (x ^ y)) == 0
+}
+
 /// Route a request to the appropriate handler.
-fn route_request(core: &DroneCore, req: &HttpRequest) -> (u16, String) {
+/// If `required_token` is `Some`, all endpoints except `/peer/health` require
+/// a matching `Authorization: Bearer <token>` header.
+fn route_request(core: &DroneCore, req: &HttpRequest, required_token: Option<&str>) -> (u16, String) {
+    // ── Auth gate (health is always public) ──
+    if let Some(token) = required_token {
+        if req.path != "/peer/health" {
+            let authorized = req
+                .auth_header
+                .as_deref()
+                .map(|h| h.strip_prefix("Bearer ").is_some_and(|t| constant_time_eq(t, token)))
+                .unwrap_or(false);
+            if !authorized {
+                return (401, r#"{"error":"Unauthorized — missing or invalid Bearer token"}"#.into());
+            }
+        }
+    }
+
     match (req.method.as_str(), req.path.as_str()) {
         // ── GET endpoints ──
         ("GET", "/peer/health") => {
@@ -179,13 +213,18 @@ fn route_request(core: &DroneCore, req: &HttpRequest) -> (u16, String) {
 pub struct DroneServer {
     core: Arc<DroneCore>,
     addr: String,
+    /// Shared-secret token for authenticating requests.  When `None`, auth is
+    /// disabled (development mode).  Set via `DRONE_AUTH_TOKEN` env var.
+    auth_token: Option<String>,
 }
 
 impl DroneServer {
     pub fn new(core: DroneCore, host: &str, port: u16) -> Self {
+        let auth_token = std::env::var("DRONE_AUTH_TOKEN").ok().filter(|t| !t.is_empty());
         Self {
             core: Arc::new(core),
             addr: format!("{host}:{port}"),
+            auth_token,
         }
     }
 
@@ -207,18 +246,24 @@ impl DroneServer {
             "  Capabilities: {}",
             self.core.identity.capabilities.join(", ")
         );
+        if self.auth_token.is_some() {
+            println!("  Auth:         Shared-secret token enabled");
+        } else {
+            println!("  Auth:         DISABLED (set DRONE_AUTH_TOKEN to enable)");
+        }
         println!("Press Ctrl+C to stop.");
 
         for stream in listener.incoming() {
             match stream {
                 Ok(mut stream) => {
                     let core = Arc::clone(&self.core);
+                    let auth_token = self.auth_token.clone();
                     std::thread::Builder::new()
                         .name("drone-req".into())
                         .spawn(move || {
                             let mut reader = BufReader::new(&mut stream as &mut dyn IoRead);
                             if let Some(req) = parse_request(&mut reader) {
-                                let (status, body) = route_request(&core, &req);
+                                let (status, body) = route_request(&core, &req, auth_token.as_deref());
                                 write_response(&mut stream as &mut dyn IoWrite, status, &body);
                             }
                         })
@@ -343,8 +388,9 @@ mod tests {
             method: "GET".into(),
             path: "/peer/health".into(),
             body: vec![],
+            auth_header: None,
         };
-        let (status, body) = route_request(&core, &req);
+        let (status, body) = route_request(&core, &req, None);
         assert_eq!(status, 200);
         let json: serde_json::Value = serde_json::from_str(&body).unwrap();
         assert_eq!(json["status"], "ok");
@@ -362,8 +408,9 @@ mod tests {
             method: "GET".into(),
             path: "/peer/identity".into(),
             body: vec![],
+            auth_header: None,
         };
-        let (status, body) = route_request(&core, &req);
+        let (status, body) = route_request(&core, &req, None);
         assert_eq!(status, 200);
         let json: serde_json::Value = serde_json::from_str(&body).unwrap();
         assert_eq!(json["name"], "IdTest");
@@ -381,8 +428,9 @@ mod tests {
             method: "POST".into(),
             path: "/peer/pair".into(),
             body: br#"{"peer_id":"p1","name":"Test"}"#.to_vec(),
+            auth_header: None,
         };
-        let (status, body) = route_request(&core, &req);
+        let (status, body) = route_request(&core, &req, None);
         assert_eq!(status, 200);
         let json: serde_json::Value = serde_json::from_str(&body).unwrap();
         assert!(json["accepted"].as_bool().unwrap());
@@ -399,8 +447,9 @@ mod tests {
             method: "GET".into(),
             path: "/nonexistent".into(),
             body: vec![],
+            auth_header: None,
         };
-        let (status, _) = route_request(&core, &req);
+        let (status, _) = route_request(&core, &req, None);
         assert_eq!(status, 404);
     }
 
@@ -415,8 +464,9 @@ mod tests {
             method: "GET".into(),
             path: "/peer/task/nonexistent/status".into(),
             body: vec![],
+            auth_header: None,
         };
-        let (status, body) = route_request(&core, &req);
+        let (status, body) = route_request(&core, &req, None);
         assert_eq!(status, 404);
         let json: serde_json::Value = serde_json::from_str(&body).unwrap();
         assert!(json["error"].as_str().unwrap().contains("Unknown"));
@@ -553,5 +603,110 @@ mod tests {
         assert_eq!(status, 200);
         let json: serde_json::Value = serde_json::from_str(&body).unwrap();
         assert_eq!(json["status"], "ok");
+    }
+
+    // ── Auth tests ──
+
+    #[test]
+    fn route_auth_required_without_token() {
+        let ws = std::env::temp_dir().join(format!("route_auth1_{}", crate::core::now_secs()));
+        std::fs::create_dir_all(&ws).unwrap();
+        let identity = crate::core::DroneIdentity::new("AuthTest", 9191);
+        let core = DroneCore::new(identity, ws);
+
+        let req = HttpRequest {
+            method: "GET".into(),
+            path: "/peer/identity".into(),
+            body: vec![],
+            auth_header: None,
+        };
+        // With a required token, identity should be 401 without auth.
+        let (status, body) = route_request(&core, &req, Some("secret123"));
+        assert_eq!(status, 401);
+        let json: serde_json::Value = serde_json::from_str(&body).unwrap();
+        assert!(json["error"].as_str().unwrap().contains("Unauthorized"));
+    }
+
+    #[test]
+    fn route_auth_health_always_public() {
+        let ws = std::env::temp_dir().join(format!("route_auth2_{}", crate::core::now_secs()));
+        std::fs::create_dir_all(&ws).unwrap();
+        let identity = crate::core::DroneIdentity::new("AuthPub", 9191);
+        let core = DroneCore::new(identity, ws);
+
+        let req = HttpRequest {
+            method: "GET".into(),
+            path: "/peer/health".into(),
+            body: vec![],
+            auth_header: None,
+        };
+        // Health should work even with auth required and no token.
+        let (status, _) = route_request(&core, &req, Some("secret123"));
+        assert_eq!(status, 200);
+    }
+
+    #[test]
+    fn route_auth_valid_token() {
+        let ws = std::env::temp_dir().join(format!("route_auth3_{}", crate::core::now_secs()));
+        std::fs::create_dir_all(&ws).unwrap();
+        let identity = crate::core::DroneIdentity::new("AuthOk", 9191);
+        let core = DroneCore::new(identity, ws);
+
+        let req = HttpRequest {
+            method: "GET".into(),
+            path: "/peer/identity".into(),
+            body: vec![],
+            auth_header: Some("Bearer secret123".into()),
+        };
+        let (status, _) = route_request(&core, &req, Some("secret123"));
+        assert_eq!(status, 200);
+    }
+
+    #[test]
+    fn route_auth_wrong_token() {
+        let ws = std::env::temp_dir().join(format!("route_auth4_{}", crate::core::now_secs()));
+        std::fs::create_dir_all(&ws).unwrap();
+        let identity = crate::core::DroneIdentity::new("AuthBad", 9191);
+        let core = DroneCore::new(identity, ws);
+
+        let req = HttpRequest {
+            method: "GET".into(),
+            path: "/peer/identity".into(),
+            body: vec![],
+            auth_header: Some("Bearer wrong_token".into()),
+        };
+        let (status, _) = route_request(&core, &req, Some("secret123"));
+        assert_eq!(status, 401);
+    }
+
+    // ── Command allowlist tests ──
+
+    fn test_ws() -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!("drone_deploy_test_{}", crate::core::now_secs()));
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn deploy_blocked_command() {
+        let ws = test_ws();
+        let output = crate::core::execute_deploy_instructions(
+            "run rm -rf /",
+            "/tmp/f.txt",
+            &ws,
+        );
+        assert!(output.contains("BLOCKED"));
+    }
+
+    #[test]
+    fn deploy_allowed_echo() {
+        let ws = test_ws();
+        let output = crate::core::execute_deploy_instructions(
+            "run echo hello",
+            "/tmp/f.txt",
+            &ws,
+        );
+        assert!(output.contains("[run] echo hello"));
+        assert!(!output.contains("BLOCKED"));
     }
 }

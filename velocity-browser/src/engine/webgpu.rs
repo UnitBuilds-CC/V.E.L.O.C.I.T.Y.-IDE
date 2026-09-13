@@ -738,6 +738,7 @@ impl WebGpuComputeEngine {
         {
             // Simple triangle fill: fill texture with a gradient based on vertex data
             let pattern_byte = vertex_data.first().copied().unwrap_or(128);
+            #[allow(clippy::chunks_exact_to_as_chunks)]
             for pixel in tex.data.chunks_exact_mut(4) {
                 pixel[0] = pattern_byte; // R
                 pixel[1] = pattern_byte.wrapping_add(64); // G

@@ -34,6 +34,9 @@ pub struct ChatPanelState {
     pub attachments: Vec<crate::editor::multimodal::Attachment>,
     /// Path entry for attaching a file to the next turn.
     pub attach_input: String,
+    /// Set when the user clicks "Clear"; consumed by the render loop to also
+    /// reset the task timeline.
+    pub clear_timeline: bool,
 }
 
 impl Default for ChatPanelState {
@@ -54,6 +57,7 @@ impl Default for ChatPanelState {
             provider: crate::agent::AiProvider::CloudflareWorkersAi,
             attachments: Vec::new(),
             attach_input: String::new(),
+            clear_timeline: false,
         }
     }
 }
@@ -208,6 +212,7 @@ fn render_header(
                 .clicked()
             {
                 state.messages.clear();
+                state.clear_timeline = true;
                 let _ = agent_tx.send(UiToAgentMessage::ClearHistory);
             }
             if state.agent_active
@@ -544,7 +549,7 @@ fn render_markdown(ui: &mut egui::Ui, text: &str, palette: IdePalette) {
                             ui.horizontal_wrapped(|ui| {
                                 ui.add(
                                     egui::TextEdit::multiline(&mut code)
-                                        .font(egui::FontId::monospace(12.5))
+                                        .font(crate::editor::theme::code_font_id())
                                         .code_editor()
                                         .desired_width(f32::INFINITY)
                                         .text_color(palette.text)

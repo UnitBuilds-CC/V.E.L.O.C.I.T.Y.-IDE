@@ -107,7 +107,7 @@ pub struct EditorBuffer {
     /// 0 = unchanged, 1 = added, 2 = modified, 3 = deletion just above this line.
     /// Cached; recomputed only when `content` changes (see `refresh_diff_marks`).
     pub diff_marks: Vec<u8>,
-    /// Hash of `content` when `diff_marks` was last computed (cache key).
+    /// Hash of content when `diff_marks` was last computed (cache key).
     diff_marks_hash: u64,
     /// Undo/redo history for this buffer.
     pub undo_stack: UndoStack,
@@ -125,6 +125,17 @@ pub struct EditorBuffer {
     line_index: Option<LineIndex>,
     /// Line window for virtual scrolling in large files.
     pub line_window: Option<LineWindow>,
+    /// Dirty flag set by mutation methods. Avoids hashing the entire buffer
+    /// content every frame to detect changes — `pre_frame_snapshot()` checks
+    /// this flag instead of calling `fnv1a(&self.content)`.
+    content_dirty: bool,
+    /// Monotonic generation counter. Incremented on every content mutation.
+    /// Used by `LineIndex` to check staleness in O(1) instead of re-hashing.
+    generation: u64,
+    /// FNV-1a hash of `content` — maintained incrementally in `mark_mutated()`.
+    content_hash: u64,
+    /// FNV-1a hash of `saved_content` — updated in `mark_saved()` / `load_text()`.
+    saved_content_hash: u64,
 }
 
 impl EditorBuffer {
@@ -151,17 +162,28 @@ impl EditorBuffer {
             } else {
                 None
             },
+            content_dirty: false,
+            generation: 1,
+            content_hash: h,
+            saved_content_hash: h, // content == saved_content at construction
         }
     }
 
+    /// Mark content as mutated. Bumps the generation counter (invalidates any
+    /// cached `LineIndex`) and sets the dirty flag for `pre_frame_snapshot()`.
+    fn mark_mutated(&mut self) {
+        self.generation = self.generation.wrapping_add(1);
+        self.content_dirty = true;
+        self.content_hash = fnv1a(&self.content);
+    }
+
     /// Call once per frame *before* the TextEdit renders. If content changed
-    /// since last frame, push the previous state onto the undo stack.
+    /// since last frame (detected via the dirty flag, not a full content hash),
+    /// push the previous state onto the undo stack.
     pub fn pre_frame_snapshot(&mut self) {
-        let h = fnv1a(&self.content);
-        if h != self.last_frame_hash {
-            // Content changed since last frame — the old hash's content was
-            // already pushed or this is first divergence. We push now.
+        if self.content_dirty {
             self.undo_stack.push(&self.content, 0);
+            self.content_dirty = false;
         }
     }
 
@@ -174,6 +196,7 @@ impl EditorBuffer {
     pub fn undo(&mut self) -> Option<usize> {
         let op = self.undo_stack.undo(&self.content, 0)?;
         self.content = op.before;
+        self.mark_mutated();
         self.last_frame_hash = fnv1a(&self.content);
         Some(op.cursor_after)
     }
@@ -182,6 +205,7 @@ impl EditorBuffer {
     pub fn redo(&mut self) -> Option<usize> {
         let op = self.undo_stack.redo(&self.content, 0)?;
         self.content = op.before;
+        self.mark_mutated();
         self.last_frame_hash = fnv1a(&self.content);
         Some(op.cursor_after)
     }
@@ -195,6 +219,7 @@ impl EditorBuffer {
 
     pub fn update_content(&mut self, content: String) {
         self.content = content;
+        self.mark_mutated();
     }
 
     pub fn content(&self) -> &str {
@@ -202,23 +227,48 @@ impl EditorBuffer {
     }
 
     pub fn content_mut(&mut self) -> &mut String {
+        self.mark_mutated();
         &mut self.content
+    }
+
+    /// Returns `&mut String` **without** marking the buffer dirty.
+    ///
+    /// Use this when handing a mutable reference to egui's `TextEdit` and then
+    /// checking `response.changed()` to decide whether the content was actually
+    /// modified.  The old `content_mut()` unconditionally called `mark_mutated()`
+    /// which rebuilt the `LineIndex` and invalidated every downstream cache on
+    /// every frame — even when the user was not typing.
+    pub fn content_mut_lazy(&mut self) -> &mut String {
+        &mut self.content
+    }
+
+    /// Explicitly mark the buffer as mutated (bump generation, set dirty flag).
+    /// Call this after using `content_mut_lazy()` when you detect that the
+    /// content actually changed (e.g. `response.changed()` from egui).
+    pub fn mark_mutated_pub(&mut self) {
+        self.mark_mutated();
     }
 
     /// Load text from disk (or an authoritative source); marks the buffer clean.
     pub fn load_text(&mut self, text: &str) {
         self.content = text.to_string();
         self.saved_content = self.content.clone();
+        let h = fnv1a(&self.content);
+        self.content_hash = h;
+        self.saved_content_hash = h;
+        self.mark_mutated();
     }
 
     /// True when the in-memory content differs from the last saved/loaded state.
+    /// Uses O(1) hash comparison instead of O(n) string equality.
     pub fn is_dirty(&self) -> bool {
-        self.content != self.saved_content
+        self.content_hash != self.saved_content_hash
     }
 
     /// Mark the current content as the saved baseline (call after a successful write).
     pub fn mark_saved(&mut self) {
         self.saved_content = self.content.clone();
+        self.saved_content_hash = self.content_hash;
     }
 
     pub fn save(&mut self) -> std::io::Result<()> {
@@ -226,6 +276,7 @@ impl EditorBuffer {
             std::fs::write(path, &self.content)?;
         }
         self.saved_content = self.content.clone();
+        self.saved_content_hash = self.content_hash;
         Ok(())
     }
 
@@ -240,14 +291,15 @@ impl EditorBuffer {
         self.diff_marks_hash = h;
     }
 
-    /// Get or build the cached line index. Rebuilds only when content changes.
+    /// Get or build the cached line index. Rebuilds only when content changes
+    /// (checked via O(1) generation counter, not a full content hash).
     pub fn line_index(&mut self) -> &LineIndex {
         let needs_rebuild = match &self.line_index {
             None => true,
-            Some(idx) => !idx.is_valid(&self.content),
+            Some(idx) => idx.generation != self.generation,
         };
         if needs_rebuild {
-            self.line_index = Some(LineIndex::build(&self.content));
+            self.line_index = Some(LineIndex::build(&self.content, self.generation));
         }
         self.line_index.as_ref().unwrap()
     }
@@ -262,10 +314,10 @@ impl EditorBuffer {
         // Build index if needed (separate statement to end mutable borrow)
         let needs_rebuild = match &self.line_index {
             None => true,
-            Some(idx) => !idx.is_valid(&self.content),
+            Some(idx) => idx.generation != self.generation,
         };
         if needs_rebuild {
-            self.line_index = Some(LineIndex::build(&self.content));
+            self.line_index = Some(LineIndex::build(&self.content, self.generation));
         }
         let content_len = self.content.len();
         let idx = self.line_index.as_ref().unwrap();
@@ -439,13 +491,15 @@ pub const LARGE_FILE_THRESHOLD: usize = 10_000; // lines
 pub struct LineIndex {
     /// Byte offset of each line start within the content.
     line_starts: Vec<u64>,
-    /// Hash of content when the index was built.
-    content_hash: u64,
+    /// Generation counter of the buffer when this index was built.
+    /// Compared against `EditorBuffer::generation` for O(1) staleness check
+    /// instead of re-hashing the entire content.
+    pub generation: u64,
 }
 
 impl LineIndex {
     /// Build a line index from content. O(n) but only done once per edit.
-    pub fn build(content: &str) -> Self {
+    pub fn build(content: &str, generation: u64) -> Self {
         let mut starts = vec![0u64];
         for (i, b) in content.bytes().enumerate() {
             if b == b'\n' {
@@ -454,13 +508,8 @@ impl LineIndex {
         }
         Self {
             line_starts: starts,
-            content_hash: fnv1a(content),
+            generation,
         }
-    }
-
-    /// Check if the index is still valid for the given content.
-    pub fn is_valid(&self, content: &str) -> bool {
-        self.content_hash == fnv1a(content)
     }
 
     /// Total number of lines.
@@ -609,7 +658,7 @@ mod tests {
     #[test]
     fn line_index_build_and_query() {
         let content = "hello\nworld\nfoo";
-        let idx = LineIndex::build(content);
+        let idx = LineIndex::build(content, 1);
         assert_eq!(idx.line_count(), 3);
         assert_eq!(idx.line_content(0, content), Some("hello"));
         assert_eq!(idx.line_content(1, content), Some("world"));
@@ -620,7 +669,7 @@ mod tests {
     #[test]
     fn line_index_byte_to_line_col() {
         let content = "ab\ncd\nef";
-        let idx = LineIndex::build(content);
+        let idx = LineIndex::build(content, 1);
         assert_eq!(idx.byte_to_line_col(0), (0, 0)); // 'a'
         assert_eq!(idx.byte_to_line_col(1), (0, 1)); // 'b'
         assert_eq!(idx.byte_to_line_col(3), (1, 0)); // 'c'
@@ -630,7 +679,7 @@ mod tests {
     #[test]
     fn line_index_line_col_to_byte() {
         let content = "ab\ncd\nef";
-        let idx = LineIndex::build(content);
+        let idx = LineIndex::build(content, 1);
         assert_eq!(idx.line_col_to_byte(0, 0), 0);
         assert_eq!(idx.line_col_to_byte(1, 0), 3);
         assert_eq!(idx.line_col_to_byte(2, 1), 7);

@@ -1,16 +1,6 @@
 use super::models::*;
 use serde_json::Value;
-
-pub fn hash_str(s: &str) -> u64 {
-    use sha2::{Digest, Sha256};
-    let mut h = Sha256::new();
-    h.update(s.as_bytes());
-    let d = h.finalize();
-    // SHA-256 always yields 32 bytes, so the first 8 are guaranteed present.
-    let mut bytes = [0u8; 8];
-    bytes.copy_from_slice(&d[..8]);
-    u64::from_le_bytes(bytes)
-}
+pub use velocity_ide::hash_str;
 
 pub fn pack_ndav(filename: &str, payload: &[u8]) -> Vec<u8> {
     let mut buf = Vec::new();

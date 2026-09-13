@@ -7,7 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+> Versions v2.0.0 through v2.4.0 shipped as pre-release zips (`velocity-v2.4.0-win-x64.zip`).
+> Cargo crate versions remain at `1.0.0` until the next formal semver release.
+
 ### Added
+- **Drone Bridge Integration**: 10 new MCP tools for deploying and controlling remote drones. `drone_deploy` pushes the drone binary via SSH/SCP and starts it. `drone_command`/`drone_task_status` for async remote execution. `drone_screenshot`/`drone_type_keys`/`drone_click` for remote GUI automation. `drone_upload` with chunked transfer and SHA-256 verification. `drone_pair` for peer protocol integration. Wired into the tool dispatch chain alongside system, browser, WA, and team tools.
+- **MoA Router Integration**: New `velocity-router` crate for multi-model orchestration. IDE bridges via `router_client.rs` — POST `/v1/assignments` with health check caching, graceful fallback to direct provider dispatch. Router timeout raised to 300s for MoA workflows.
+- **GUI Control Bridge**: MCP tools for remote IDE control (`gui_open_file`, `gui_get_state`, `gui_navigate_panel`, `gui_quit`) via cross-process control bridge on port 19821.
 - **Wiki Rebuild Index**: Toolbar button to compile all .rs files and populate the wiki's name dictionary (520 files · 15,574 symbols). Fixed triple extraction in `seed_from_source()` to register file paths and function names as strings, enabling proper file/symbol classification.
 - **Ctrl+P Quick-Open**: Ctrl+P now opens the command palette (alias for Ctrl+Shift+P). Updated status bar, Navigate menu, and layouts menu labels to reflect the new binding.
 - **Lazy-Load Memory Optimization**: Agent memory and knowledge base now defer disk I/O until first panel access, saving ~23 MB at idle. Scales with agent count — each agent's memory file is loaded only when needed.
@@ -16,7 +22,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Full sub-panel implementations**: 19 sub-panels with real data bindings — file tree with filter, bookmarks, favorites, code graph, git changes with staged/unstaged summary, branches, commits, chat with model selector and thinking toggle, multimodal attachments, build controls, agent roster, mission metrics, wiki, NDA documents, plugin registry, skills with search, usage dashboard
 - **Theme overhaul**: Modernized 5 color palettes (Midnight, Daylight, Operator, Mission, High Contrast) with HSL-based IdePalette system, green accent (#22C55E) for Midnight
 - **GUI extraction**: Created `velocity-ide-gui` crate as standalone GUI launcher, separating UI from MCP server backend
-- **Comprehensive test suite**: Expanded to 9,000+ tests across all crates
+- **Comprehensive test suite**: Expanded to 9,600+ tests across all crates
 - **Provider failover tests**: 38 contract tests for serde, routing, and persistence
 - **NDA compiler tests**: 29 new tests for tokenizer and JIT compiler
 - **Orchestrator tests**: 13 orchestrator + 8 decompose contract tests
@@ -35,6 +41,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **justfile**: Task runner with build, test, lint, release, security, Docker, and benchmark tasks
 - **FP4/FP2 optimization plan**: Detailed implementation spec for GPU fused pipeline
 - **Platform README**: Multi-repo overview (IDE, router, website)
+- **USER_GUIDE.md**: Comprehensive end-user guide (2,320 lines) covering all IDE features — activity bar, 4 modes, 60+ shortcuts, MCP tools, wiki, NDA, drone, providers, settings, troubleshooting. Verified against source with 94-claim audit.
+- **Unsafe block documentation**: All unsafe blocks annotated with SAFETY comments; lint enforced in CI
+- **Signed installer**: Windows installer signed with code signing certificate
 
 ### Changed
 - **CI tool installs**: Replaced `cargo install` with `taiki-e/install-action` pre-built binaries for cargo-audit, cargo-deny, and cargo-llvm-cov — saves ~6 min per CI run
@@ -44,9 +53,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Error handling**: Eliminated unsafe `unwrap()` patterns in production code paths
 - **Dependencies**: Removed `once_cell` crate — replaced with `std::sync::LazyLock` (Rust 1.80+). Loosened exact version pins for `ash`, `gpu-allocator`, `tempfile` to semver ranges
 - **Build system**: Fixed `build_release.ps1` to include `velocity-ide-gui` and remove stale `run_nda` reference. Added `rust-toolchain.toml` (MSRV 1.87). Updated Justfile with `gui` and `run` targets
-- **Clippy compliance**: Fixed all 49 warnings across workspace (zero warnings remaining)
+- **Clippy compliance**: Zero warnings on `cargo clippy --workspace --all-targets -D warnings` across all 5 crates (velocity-browser, velocity-ide, velocity-ide-gui, velocity_mcp, velocity-router). 46 lint fixes in test/bench targets including Copy-type clones, unused variables, range checks, and type simplifications.
 - **Code quality**: Removed deprecated Python code (archive/agent/, scratch/ directories)
-- **README**: Added Quick Start section, fixed directory structure
+- **README**: Added Quick Start section, fixed directory structure, corrected test count (9,800+), editor module count (142), added drone/ and e2e/ crates, removed phantom WasmPluginRunner/PropertyFuzzer references, fixed keyboard shortcuts
+- **USER_GUIDE accuracy**: 94-claim audit — corrected tool counts (system 28, browser 109, WA 86, team 20 = 243 total), removed phantom drone capabilities (Screen Capture, GUI Automation, Network Monitor), fixed activity bar shortcuts (removed non-existent keybindings), added missing gui_quit tool
 - **Rustdoc**: Fixed all unresolved link warnings in doc comments
 
 ### Fixed
@@ -74,7 +84,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Build
 - Release build optimized: `strip = true`, `lto = "thin"`, `opt-level = "s"`, `codegen-units = 16`, `panic = "abort"`
-- All 9,000+ tests passing (zero failures)
+- All 9,600+ tests passing (zero failures)
 - CI now includes: fmt, clippy, test, build, audit, deny, coverage, SBOM generation
 
 ## [1.0.0] - 2026-08-18
@@ -86,7 +96,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Clippy compliance**: Zero clippy lints under `-D warnings`
 - **GUI code review fixes**: Fixed corrupted Unicode em-dash in Mission Control tabs, relocated orphaned comment, extracted shared `fetch_panel_data_value()` function, removed duplicated `run_build` from `FetchPanelData`
 - **E2E test improvements**: Added graceful skip for `run_nda` binary tests when not built
-- **FP4 GPU pipeline documentation**: Added TODO for fused pipeline FP4/FP2 global_scale optimization
+- **FP4 GPU pipeline documentation**: Added optimization note for fused pipeline FP4/FP2 global_scale (see `docs/FP4_FP2_OPTIMIZATION.md`)
 
 ### Changed
 - Standardized all crate versions to `1.0.0`

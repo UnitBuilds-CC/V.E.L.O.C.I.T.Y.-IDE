@@ -276,6 +276,12 @@ fn subkey(master: &[u8; MASTER_KEY_LEN], label: &[u8]) -> [u8; 32] {
 
 // --- At-rest codec choke point -----------------------------------------------
 
+/// Fill `buf` with cryptographically secure random bytes.
+/// Returns `true` on success, `false` if no RNG is available.
+pub fn fill_random(buf: &mut [u8]) -> bool {
+    os::random(buf)
+}
+
 /// Seal `plaintext` for the artifact class `label`, returning an AES-256-GCM
 /// `NDA1` envelope. Returns `None` if no key material or randomness is
 /// available (callers fall back to writing plaintext to avoid data loss).

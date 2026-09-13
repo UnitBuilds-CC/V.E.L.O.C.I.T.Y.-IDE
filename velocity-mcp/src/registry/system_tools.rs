@@ -726,28 +726,36 @@ pub fn handle_system_tool(
         // ── GUI Control Bridge ─────────────────────────────────────────────
         "gui_open_file" => {
             let path = arguments["path"].as_str().ok_or("path is required")?;
+            let token = crate::editor::gui_control::load_token(root)
+                .ok_or("GUI control token not found. Is the IDE running?")?;
             let cmd = crate::editor::gui_control::GuiCommand::OpenFile {
                 path: path.to_string(),
             };
-            let resp = crate::editor::gui_control::send_command(&cmd)?;
+            let resp = crate::editor::gui_control::send_command(&cmd, &token)?;
             serde_json::to_string(&resp)?
         }
         "gui_get_state" => {
+            let token = crate::editor::gui_control::load_token(root)
+                .ok_or("GUI control token not found. Is the IDE running?")?;
             let cmd = crate::editor::gui_control::GuiCommand::GetState {};
-            let resp = crate::editor::gui_control::send_command(&cmd)?;
+            let resp = crate::editor::gui_control::send_command(&cmd, &token)?;
             serde_json::to_string(&resp)?
         }
         "gui_navigate_panel" => {
             let panel = arguments["panel"].as_str().ok_or("panel is required")?;
+            let token = crate::editor::gui_control::load_token(root)
+                .ok_or("GUI control token not found. Is the IDE running?")?;
             let cmd = crate::editor::gui_control::GuiCommand::NavigatePanel {
                 panel: panel.to_string(),
             };
-            let resp = crate::editor::gui_control::send_command(&cmd)?;
+            let resp = crate::editor::gui_control::send_command(&cmd, &token)?;
             serde_json::to_string(&resp)?
         }
         "gui_quit" => {
+            let token = crate::editor::gui_control::load_token(root)
+                .ok_or("GUI control token not found. Is the IDE running?")?;
             let cmd = crate::editor::gui_control::GuiCommand::Quit {};
-            let resp = crate::editor::gui_control::send_command(&cmd)?;
+            let resp = crate::editor::gui_control::send_command(&cmd, &token)?;
             serde_json::to_string(&resp)?
         }
 
@@ -872,10 +880,7 @@ fn execute_csharp_mcp_tool(tool_name: &str, arguments: &Value) -> Result<String,
             .stdout(Stdio::piped())
             .spawn()?;
         *daemon_guard = Some(SidecarDaemon { child });
-    } else {
-        let daemon = daemon_guard
-            .as_mut()
-            .expect("daemon_guard is Some in else branch");
+    } else if let Some(daemon) = daemon_guard.as_mut() {
         if let Ok(Some(_status)) = daemon.child.try_wait() {
             let child = Command::new(exe_path)
                 .stdin(Stdio::piped())
@@ -887,7 +892,7 @@ fn execute_csharp_mcp_tool(tool_name: &str, arguments: &Value) -> Result<String,
 
     let daemon = daemon_guard
         .as_mut()
-        .expect("daemon_guard is Some after initialization");
+        .ok_or("failed to initialize sidecar daemon")?;
 
     let request = json!({
         "jsonrpc": "2.0",

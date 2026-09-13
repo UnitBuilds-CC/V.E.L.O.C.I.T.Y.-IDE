@@ -312,7 +312,7 @@ pub fn jit_cache_memory_estimate() -> JitCacheMemoryReport {
     let mut total_programs = 0;
     let mut total_nodes = 0;
     let mut estimated_bytes = 0u64;
-    for (hash, program) in cache.iter() {
+    for program in cache.values() {
         total_programs += 1;
         total_nodes += program.nodes_compiled;
         // Rough estimate: each compiled node uses ~256 bytes of executable memory
@@ -1052,6 +1052,8 @@ mod tests {
         let mut cloned = c.clone();
         cloned.total_nodes = 999;
         cloned.max_depth = 0;
+        assert_eq!(cloned.total_nodes, 999);
+        assert_eq!(cloned.max_depth, 0);
         assert_eq!(c.total_nodes, 10);
         assert_eq!(c.max_depth, 4);
     }

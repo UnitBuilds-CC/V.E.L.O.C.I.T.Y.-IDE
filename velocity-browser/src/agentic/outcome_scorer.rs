@@ -153,6 +153,9 @@ impl ScoringWeights {
     }
 }
 
+/// Maximum number of success rate entries before eviction.
+const MAX_SUCCESS_RATES: usize = 1000;
+
 /// The outcome scorer: computes scores and maintains a history for learning.
 pub struct OutcomeScorer {
     /// History of outcomes keyed by (page_domain, action_kind, target_role)
@@ -226,11 +229,32 @@ impl OutcomeScorer {
         entry.0 += outcome.score;
         entry.1 += 1;
 
+        // Evict lowest-count entries if the map grows too large.
+        if self.success_rates.len() > MAX_SUCCESS_RATES {
+            self.evict_low_count_entries();
+        }
+
         self.history.push(outcome);
 
         // Ring buffer: drop oldest when over capacity
         if self.history.len() > self.max_history {
             self.history.remove(0);
+        }
+    }
+
+    /// Evict entries with the lowest observation counts to cap memory usage.
+    fn evict_low_count_entries(&mut self) {
+        let target = MAX_SUCCESS_RATES * 3 / 4; // evict down to 75% capacity
+        let mut entries: Vec<(String, u32)> = self
+            .success_rates
+            .iter()
+            .map(|(k, (_, count))| (k.clone(), *count))
+            .collect();
+        entries.sort_by_key(|(_, count)| *count);
+
+        let to_remove = entries.len().saturating_sub(target);
+        for (key, _) in entries.into_iter().take(to_remove) {
+            self.success_rates.remove(&key);
         }
     }
 

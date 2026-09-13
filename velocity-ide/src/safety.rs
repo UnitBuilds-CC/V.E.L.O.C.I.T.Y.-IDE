@@ -31,7 +31,7 @@ pub trait SafeMutex<T> {
     /// Try to acquire the lock without blocking.
     ///
     /// Returns `None` if the lock is currently held by another thread.
-    #[allow(dead_code)]
+    /// Recovers from mutex poisoning instead of panicking.
     fn try_lock_safe(&self) -> Option<MutexGuard<'_, T>>;
 }
 
@@ -72,7 +72,6 @@ impl<T> SafeMutex<T> for Arc<Mutex<T>> {
 }
 
 /// Extension trait for `RwLock<T>` providing poisoning-tolerant locking.
-#[allow(dead_code)]
 pub trait SafeRwLock<T> {
     /// Acquire read access, recovering from poisoning if necessary.
     fn read_safe(&self) -> RwLockReadGuard<'_, T>;
@@ -257,11 +256,7 @@ impl LockMetrics {
     /// Average hold time in microseconds (0 if no acquisitions).
     pub fn avg_hold_time_us(&self) -> u64 {
         let acq = self.acquisitions();
-        if acq == 0 {
-            0
-        } else {
-            self.total_hold_time_us() / acq
-        }
+        self.total_hold_time_us().checked_div(acq).unwrap_or(0)
     }
 
     /// Reset all counters to zero.
@@ -420,26 +415,17 @@ impl<T> TimedMutex<T> for Mutex<T> {
         let spin = Duration::from_micros(100);
 
         loop {
-            match self.try_lock() {
-                Ok(guard) => {
-                    GLOBAL_LOCK_METRICS.record_acquire();
-                    return Some(guard);
-                }
-                Err(std::sync::TryLockError::Poisoned(poisoned)) => {
-                    GLOBAL_LOCK_METRICS.record_acquire();
-                    GLOBAL_LOCK_METRICS.record_poison_recovery();
-                    eprintln!("[WARN] Mutex poisoning recovered (timed lock).");
-                    return Some(poisoned.into_inner());
-                }
-                Err(std::sync::TryLockError::WouldBlock) => {
-                    GLOBAL_LOCK_METRICS.record_contention();
-                    if Instant::now() >= deadline {
-                        GLOBAL_LOCK_METRICS.record_timeout();
-                        return None;
-                    }
-                    std::thread::sleep(spin);
-                }
+            // Use try_lock_safe for poisoning-tolerant non-blocking attempt.
+            if let Some(guard) = self.try_lock_safe() {
+                GLOBAL_LOCK_METRICS.record_acquire();
+                return Some(guard);
             }
+            GLOBAL_LOCK_METRICS.record_contention();
+            if Instant::now() >= deadline {
+                GLOBAL_LOCK_METRICS.record_timeout();
+                return None;
+            }
+            std::thread::sleep(spin);
         }
     }
 }

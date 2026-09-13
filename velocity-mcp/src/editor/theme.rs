@@ -575,12 +575,16 @@ pub fn apply_theme(ctx: &egui::Context, appearance: AppearanceSettings) {
     ctx.set_global_style(style);
 }
 
-#[allow(dead_code)]
+/// Default code font ID (monospace, scaled by the default `code_scale`).
+/// Convenience wrapper for rendering code that should use the theme's code font
+/// without needing an [`AppearanceSettings`] instance.
 pub fn code_font_id() -> FontId {
     AppearanceSettings::default().code_font_id()
 }
 
-#[allow(dead_code)]
+/// Default UI font ID (proportional, scaled by the default `ui_scale`).
+/// Convenience wrapper for rendering UI text that should use the theme's body
+/// font without needing an [`AppearanceSettings`] instance.
 pub fn ui_font_id() -> FontId {
     AppearanceSettings::default().ui_font_id()
 }

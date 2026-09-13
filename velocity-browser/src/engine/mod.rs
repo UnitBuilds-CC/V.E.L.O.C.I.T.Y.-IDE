@@ -5,6 +5,7 @@ pub mod captcha;
 pub mod captcha_solver;
 pub mod crypto;
 pub mod files;
+pub mod frame_scheduler;
 pub mod geolocation;
 pub mod gpu_compositor;
 pub mod interstitial;
@@ -14,6 +15,7 @@ pub mod pdf_extractor;
 pub mod profile;
 pub mod push_notifications;
 pub mod rasterizer;
+pub mod render_metrics;
 pub mod sandbox;
 pub mod service_worker;
 pub mod shadow_dom;
@@ -35,6 +37,7 @@ pub use captcha::{
 pub use captcha_solver::{CaptchaSolverEngine, CaptchaType};
 pub use crypto::WebCryptoEngine;
 pub use files::{DownloadStreamArtifact, FileChooserEvent, FileManager};
+pub use frame_scheduler::{DirtyRectMerger, FrameScheduler, RenderPriority, RenderTask};
 pub use geolocation::{Geocoordinates, GeolocationProvider};
 pub use gpu_compositor::{GpuLayer, GpuTileCompositor};
 pub use interstitial::{InterstitialClassifier, InterstitialKind};
@@ -49,6 +52,9 @@ pub use push_notifications::{
     NotificationRecord, PushEvent, PushNotificationManager, PushSubscription,
 };
 pub use rasterizer::{PixelBuffer, SoftwareRasterizer};
+pub use render_metrics::{
+    FrameBudget, FrameBudgetStatus, RenderMetrics, RenderPerformanceHistogram, RenderTimer,
+};
 pub use sandbox::{SandboxCapabilities, SandboxViolation, TabSandbox, ViolationCategory};
 pub use service_worker::{
     BackgroundSyncRegistration, CacheStorageEngine, CacheStrategy, CachedResponse,

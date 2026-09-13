@@ -567,7 +567,7 @@ pub fn fetch_deepseek_models(api_key: &str) -> Result<Vec<ModelInfo>, String> {
 
 pub fn fetch_alibaba_models(api_key: &str) -> Result<Vec<ModelInfo>, String> {
     fetch_openai_compatible_models(
-        "https://dashscope.aliyuncs.com/compatible-mode",
+        "https://dashscope-intl.aliyuncs.com/compatible-mode",
         api_key,
         "Alibaba Qwen",
     )

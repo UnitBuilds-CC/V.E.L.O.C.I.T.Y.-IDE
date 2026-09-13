@@ -40,7 +40,9 @@ pub struct GpuTileCompositor {
     pub viewport_height: usize,
     pub tile_size: usize,
     frame_count: u64,
-    frame_buffer: Vec<u8>,
+    /// Lazily allocated on first `composite_frame()` call to avoid wasting
+    /// ~8.3 MB for viewports that are never composited (e.g. headless tests).
+    frame_buffer: Option<Vec<u8>>,
     dirty_rects: Vec<(usize, usize, usize, usize)>,
 }
 
@@ -54,15 +56,23 @@ impl GpuTileCompositor {
     pub fn new() -> Self {
         let viewport_width = 1920;
         let viewport_height = 1080;
-        let frame_buffer_size = viewport_width * viewport_height * 4;
         Self {
             active_layers: Vec::new(),
             viewport_width,
             viewport_height,
             tile_size: 256,
             frame_count: 0,
-            frame_buffer: vec![0u8; frame_buffer_size],
+            frame_buffer: None, // allocated lazily on first composite_frame()
             dirty_rects: Vec::new(),
+        }
+    }
+
+    /// Ensure the frame buffer is allocated for the current viewport size.
+    /// Called lazily so headless/never-composited sessions don't waste ~8.3 MB.
+    fn ensure_frame_buffer(&mut self) {
+        if self.frame_buffer.is_none() {
+            let size = self.viewport_width * self.viewport_height * 4;
+            self.frame_buffer = Some(vec![0u8; size]);
         }
     }
 
@@ -183,7 +193,7 @@ impl GpuTileCompositor {
     }
 
     /// Composite a single tile by blending visible layers.
-    pub fn composite_tile(&mut self, tile_x: usize, tile_y: usize) -> Vec<u8> {
+    pub fn composite_tile(&self, tile_x: usize, tile_y: usize) -> Vec<u8> {
         let tile_pixels = self.tile_size * self.tile_size * 4;
         let mut tile_buffer = vec![0u8; tile_pixels];
 
@@ -243,8 +253,32 @@ impl GpuTileCompositor {
     /// Composite all visible layers into the frame buffer. Returns the number
     /// of tiles rendered.
     pub fn composite_frame(&mut self) -> usize {
+        self.ensure_frame_buffer();
         let (tiles_x, tiles_y) = self.tile_count();
         let mut tiles_rendered = 0;
+
+        // Collect tile data first, then write into frame buffer to avoid
+        // overlapping mutable borrows of self.
+        let write_tile_to_fb = |fb: &mut [u8], tile_data: &[u8],
+                                 start_x: usize, start_y: usize,
+                                 tile_size: usize, viewport_width: usize,
+                                 viewport_height: usize| {
+            for y in 0..tile_size {
+                for x in 0..tile_size {
+                    let fb_x = start_x + x;
+                    let fb_y = start_y + y;
+                    if fb_x >= viewport_width || fb_y >= viewport_height {
+                        continue;
+                    }
+                    let fb_idx = (fb_y * viewport_width + fb_x) * 4;
+                    let tile_idx = (y * tile_size + x) * 4;
+                    if fb_idx + 3 < fb.len() && tile_idx + 3 < tile_data.len() {
+                        fb[fb_idx..fb_idx + 4]
+                            .copy_from_slice(&tile_data[tile_idx..tile_idx + 4]);
+                    }
+                }
+            }
+        };
 
         // If there are dirty rects, only composite those tiles
         if !self.dirty_rects.is_empty() {
@@ -252,61 +286,31 @@ impl GpuTileCompositor {
             self.dirty_rects.clear();
 
             for &(_, _, _, _) in &dirty_rects_clone {
-                // For simplicity, re-composite all tiles when any dirty rect exists
                 for ty in 0..tiles_y {
                     for tx in 0..tiles_x {
                         let tile_data = self.composite_tile(tx, ty);
                         let start_x = tx * self.tile_size;
                         let start_y = ty * self.tile_size;
-
-                        for y in 0..self.tile_size {
-                            for x in 0..self.tile_size {
-                                let fb_x = start_x + x;
-                                let fb_y = start_y + y;
-                                if fb_x >= self.viewport_width || fb_y >= self.viewport_height {
-                                    continue;
-                                }
-
-                                let fb_idx = (fb_y * self.viewport_width + fb_x) * 4;
-                                let tile_idx = (y * self.tile_size + x) * 4;
-                                if fb_idx + 3 < self.frame_buffer.len()
-                                    && tile_idx + 3 < tile_data.len()
-                                {
-                                    self.frame_buffer[fb_idx..fb_idx + 4]
-                                        .copy_from_slice(&tile_data[tile_idx..tile_idx + 4]);
-                                }
-                            }
-                        }
+                        let fb = self.frame_buffer.as_mut().unwrap();
+                        write_tile_to_fb(
+                            fb, &tile_data, start_x, start_y,
+                            self.tile_size, self.viewport_width, self.viewport_height,
+                        );
                         tiles_rendered += 1;
                     }
                 }
             }
         } else {
-            // No dirty rects, composite all tiles
             for ty in 0..tiles_y {
                 for tx in 0..tiles_x {
                     let tile_data = self.composite_tile(tx, ty);
                     let start_x = tx * self.tile_size;
                     let start_y = ty * self.tile_size;
-
-                    for y in 0..self.tile_size {
-                        for x in 0..self.tile_size {
-                            let fb_x = start_x + x;
-                            let fb_y = start_y + y;
-                            if fb_x >= self.viewport_width || fb_y >= self.viewport_height {
-                                continue;
-                            }
-
-                            let fb_idx = (fb_y * self.viewport_width + fb_x) * 4;
-                            let tile_idx = (y * self.tile_size + x) * 4;
-                            if fb_idx + 3 < self.frame_buffer.len()
-                                && tile_idx + 3 < tile_data.len()
-                            {
-                                self.frame_buffer[fb_idx..fb_idx + 4]
-                                    .copy_from_slice(&tile_data[tile_idx..tile_idx + 4]);
-                            }
-                        }
-                    }
+                    let fb = self.frame_buffer.as_mut().unwrap();
+                    write_tile_to_fb(
+                        fb, &tile_data, start_x, start_y,
+                        self.tile_size, self.viewport_width, self.viewport_height,
+                    );
                     tiles_rendered += 1;
                 }
             }
@@ -325,20 +329,21 @@ impl GpuTileCompositor {
         if x >= self.viewport_width || y >= self.viewport_height {
             return (0, 0, 0, 0);
         }
+        let Some(fb) = &self.frame_buffer else {
+            return (0, 0, 0, 0);
+        };
         let idx = (y * self.viewport_width + x) * 4;
-        if idx + 3 >= self.frame_buffer.len() {
+        if idx + 3 >= fb.len() {
             return (0, 0, 0, 0);
         }
-        (
-            self.frame_buffer[idx],
-            self.frame_buffer[idx + 1],
-            self.frame_buffer[idx + 2],
-            self.frame_buffer[idx + 3],
-        )
+        (fb[idx], fb[idx + 1], fb[idx + 2], fb[idx + 3])
     }
 
     /// Read a tile from the frame buffer.
     pub fn read_tile(&self, tile_x: usize, tile_y: usize) -> Vec<u8> {
+        let Some(fb) = &self.frame_buffer else {
+            return Vec::new();
+        };
         let start_x = tile_x * self.tile_size;
         let start_y = tile_y * self.tile_size;
         let end_x = (start_x + self.tile_size).min(self.viewport_width);
@@ -348,8 +353,8 @@ impl GpuTileCompositor {
         for y in start_y..end_y {
             for x in start_x..end_x {
                 let idx = (y * self.viewport_width + x) * 4;
-                if idx + 3 < self.frame_buffer.len() {
-                    tile_data.extend_from_slice(&self.frame_buffer[idx..idx + 4]);
+                if idx + 3 < fb.len() {
+                    tile_data.extend_from_slice(&fb[idx..idx + 4]);
                 }
             }
         }
@@ -372,11 +377,12 @@ mod tests {
     use super::*;
 
     #[test]
+    #[allow(clippy::chunks_exact_to_as_chunks)]
     fn create_and_composite_layers() {
         let mut compositor = GpuTileCompositor::new();
         compositor.viewport_width = 64;
         compositor.viewport_height = 64;
-        compositor.frame_buffer = vec![0u8; 64 * 64 * 4];
+        compositor.frame_buffer = Some(vec![0u8; 64 * 64 * 4]);
 
         let layer1 = compositor.create_layer(64, 64);
         let mut pixels = vec![0u8; 64 * 64 * 4];
@@ -399,11 +405,12 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::chunks_exact_to_as_chunks)]
     fn alpha_blending() {
         let mut compositor = GpuTileCompositor::new();
         compositor.viewport_width = 32;
         compositor.viewport_height = 32;
-        compositor.frame_buffer = vec![0u8; 32 * 32 * 4];
+        compositor.frame_buffer = Some(vec![0u8; 32 * 32 * 4]);
 
         let layer1 = compositor.create_layer(32, 32);
         let mut pixels1 = vec![0u8; 32 * 32 * 4];
@@ -440,7 +447,7 @@ mod tests {
         let mut compositor = GpuTileCompositor::new();
         compositor.viewport_width = 64;
         compositor.viewport_height = 64;
-        compositor.frame_buffer = vec![0u8; 64 * 64 * 4];
+        compositor.frame_buffer = Some(vec![0u8; 64 * 64 * 4]);
 
         let layer = compositor.create_layer(64, 64);
         compositor.composite_frame();
@@ -507,7 +514,7 @@ mod tests {
         let mut c = GpuTileCompositor::new();
         c.viewport_width = 32;
         c.viewport_height = 32;
-        c.frame_buffer = vec![0u8; 32 * 32 * 4];
+        c.frame_buffer = Some(vec![0u8; 32 * 32 * 4]);
         assert_eq!(c.frame_count(), 0);
         c.composite_frame();
         assert_eq!(c.frame_count(), 1);
@@ -548,11 +555,12 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::chunks_exact_to_as_chunks)]
     fn invisible_layer_not_composited() {
         let mut c = GpuTileCompositor::new();
         c.viewport_width = 32;
         c.viewport_height = 32;
-        c.frame_buffer = vec![0u8; 32 * 32 * 4];
+        c.frame_buffer = Some(vec![0u8; 32 * 32 * 4]);
         let l = c.create_layer(32, 32);
         let mut pixels = vec![0u8; 32 * 32 * 4];
         for p in pixels.chunks_exact_mut(4) {
@@ -572,7 +580,7 @@ mod tests {
         let mut c = GpuTileCompositor::new();
         c.viewport_width = 32;
         c.viewport_height = 32;
-        c.frame_buffer = vec![0u8; 32 * 32 * 4];
+        c.frame_buffer = Some(vec![0u8; 32 * 32 * 4]);
         c.tile_size = 32;
         let tile = c.read_tile(0, 0);
         assert_eq!(tile.len(), 32 * 32 * 4);
@@ -583,7 +591,7 @@ mod tests {
         let mut c = GpuTileCompositor::new();
         c.viewport_width = 32;
         c.viewport_height = 32;
-        c.frame_buffer = vec![0u8; 32 * 32 * 4];
+        c.frame_buffer = Some(vec![0u8; 32 * 32 * 4]);
         let l = c.create_layer(32, 32);
         assert!(c.active_layers[0].dirty);
         c.composite_frame();

@@ -237,16 +237,16 @@ fn retry_blocked_tasks_requeues_follow_up_blocks_only() {
 
 #[test]
 fn reconcile_root_completes_after_successful_children() {
-    let graph = build_routed_graph("goal", &[]);
+    let mut graph = build_routed_graph("goal", &[]);
     let mut registry = OrchestratorRegistry::new(&graph);
     registry.statuses.insert(TaskId(1), TaskStatus::Pending);
-    complete_reconcile_root(&graph, &mut registry);
+    complete_reconcile_root(&mut graph, &mut registry);
     assert!(matches!(
         registry.statuses.get(&TaskId(1)),
         Some(TaskStatus::Pending)
     ));
 
-    let graph = build_routed_graph(
+    let mut graph = build_routed_graph(
         "goal",
         &[RoutedSubAgentTask {
             task_id: "task-1".to_string(),
@@ -271,7 +271,7 @@ fn reconcile_root_completes_after_successful_children() {
         TaskStatus::Done(WorkerResult::new(graph.tasks.get(&TaskId(2)).unwrap())),
     );
 
-    complete_reconcile_root(&graph, &mut registry);
+    complete_reconcile_root(&mut graph, &mut registry);
 
     assert!(matches!(
         registry.statuses.get(&TaskId(1)),

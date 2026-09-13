@@ -110,13 +110,30 @@ impl TabSandbox {
         msg
     }
 
+    /// Check whether `host` matches an allowed domain exactly or is a proper
+    /// subdomain of it. `"example.com"` allows `"example.com"` and
+    /// `"api.example.com"` but NOT `"evil-example.com.attacker.net"`.
+    fn domain_matches(host: &str, allowed: &str) -> bool {
+        let host = host.trim().trim_end_matches('.').to_ascii_lowercase();
+        let allowed = allowed.trim().trim_end_matches('.').to_ascii_lowercase();
+        if allowed.is_empty() {
+            return false;
+        }
+        // Exact match
+        if host == allowed {
+            return true;
+        }
+        // Proper subdomain suffix: host must end with ".allowed"
+        host.ends_with(&format!(".{}", allowed))
+    }
+
     pub fn check_network_access(&mut self, host: &str) -> Result<(), String> {
         if self.capabilities.allow_network_hosts.is_empty()
             || self
                 .capabilities
                 .allow_network_hosts
                 .iter()
-                .any(|allowed| host.contains(allowed))
+                .any(|allowed| Self::domain_matches(host, allowed))
         {
             Ok(())
         } else {
@@ -270,11 +287,35 @@ impl ContentSecurityPolicy {
                 }
             } else if src == "'unsafe-inline'" || src == "'unsafe-eval'" || src == "'none'" {
                 continue;
-            } else if src == "*" || url.contains(src) {
+            } else if src == "*" || Self::csp_source_matches(src, url) {
                 return true;
             }
         }
         false
+    }
+
+    /// Check whether a CSP source (e.g. `"https://cdn.example.com"`) matches
+    /// a URL. The source origin must match exactly or the URL host must be a
+    /// proper subdomain of the source host.
+    fn csp_source_matches(source: &str, url: &str) -> bool {
+        /// Extract the host portion a URL-like string: skip scheme, take up to `/` or `:`.
+        fn extract_host(s: &str) -> Option<String> {
+            let after_scheme = s.split("://").nth(1)?;
+            let host_port = after_scheme.split('/').next()?;
+            let host = host_port.split(':').next()?;
+            if host.is_empty() {
+                None
+            } else {
+                Some(host.to_ascii_lowercase())
+            }
+        }
+        match (extract_host(source), extract_host(url)) {
+            (Some(src_host), Some(url_host)) => {
+                // Exact host match or proper subdomain
+                url_host == src_host || url_host.ends_with(&format!(".{}", src_host))
+            }
+            _ => false,
+        }
     }
 
     /// Check if a script load is allowed.
@@ -583,6 +624,33 @@ mod tests {
         assert!(sb.check_network_access("a.com").is_ok());
         assert!(sb.check_network_access("b.com").is_ok());
         assert!(sb.check_network_access("c.com").is_err());
+    }
+
+    #[test]
+    fn test_domain_match_blocks_subdomain_spoofing() {
+        // "evil-example.com.attacker.net" must NOT pass allowlist ["example.com"]
+        let caps = SandboxCapabilities::strict_isolation()
+            .with_network_allowlist(vec!["example.com".into()]);
+        let mut sb = TabSandbox::new("spoof1", caps);
+        // Exact match allowed
+        assert!(sb.check_network_access("example.com").is_ok());
+        // Subdomain allowed
+        assert!(sb.check_network_access("api.example.com").is_ok());
+        // Suffix-spoofed domain blocked
+        assert!(sb.check_network_access("evil-example.com.attacker.net").is_err());
+        // Similar-looking but different domain blocked
+        assert!(sb.check_network_access("notexample.com").is_err());
+        assert!(sb.check_network_access("example.com.evil.net").is_err());
+    }
+
+    #[test]
+    fn test_domain_match_case_insensitive() {
+        let caps = SandboxCapabilities::strict_isolation()
+            .with_network_allowlist(vec!["Example.COM".into()]);
+        let mut sb = TabSandbox::new("ci1", caps);
+        assert!(sb.check_network_access("EXAMPLE.com").is_ok());
+        assert!(sb.check_network_access("api.Example.com").is_ok());
+        assert!(sb.check_network_access("other.com").is_err());
     }
 
     #[test]

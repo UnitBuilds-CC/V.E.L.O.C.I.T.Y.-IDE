@@ -23,6 +23,7 @@ use crate::usage::{
 };
 
 use super::super::types::*;
+use super::substructs::{GovernanceState, LspState, PeerCollabState, WorkflowAppState};
 use crate::agent::AiProvider;
 use crate::editor::theme::{apply_theme, AppearanceSettings, IdePalette, WorkspaceProfile};
 
@@ -332,16 +333,19 @@ pub struct VelocityApp {
     pub terminal_rx: Option<std::sync::mpsc::Receiver<String>>,
     pub terminal_input: String,
     pub current_agent_task_id: u32,
+    /// Set when the user requests task cancellation (Interrupt/Stop). Checked in
+    /// `handle_agent_messages` to emit a `Cancelled` timeline event instead of
+    /// `Completed` when the agent finishes.
+    pub cancel_requested: bool,
 
     pub chat_history: String,
 
     // â”€â”€â”€ IDE Feature Integration State â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     /// Code completion popup state.
     pub completion_state: crate::editor::completion::CompletionState,
-    /// LSP client manager.
-    pub lsp_manager: Option<crate::editor::lsp_client::LspManager>,
-    /// Aggregated diagnostics from LSP.
-    pub diagnostics: crate::editor::diagnostics::DiagnosticsState,
+    /// LSP client manager and diagnostics state.
+    /// Groups lsp_manager and diagnostics into a focused sub-struct.
+    pub lsp_state: LspState,
     /// Interactive terminal emulator state.
     pub terminal_state: crate::editor::terminal::TerminalState,
     /// Whether the terminal shell process has been spawned.
@@ -414,79 +418,17 @@ pub struct VelocityApp {
     pub trigger_interval_input: String,
     /// Draft agent prompt for a new trigger in the Triggers panel.
     pub trigger_prompt_input: String,
-    /// Workflow composer registry shown in the Workflows panel.
-    pub workflows: crate::editor::workflow::WorkflowRegistry,
-    /// Draft workflow name in the Workflows panel create box.
-    pub workflow_name_input: String,
-    /// Id of the workflow currently open in the step editor.
-    pub workflow_selected: Option<String>,
-    /// Draft step: tool name in the Workflows panel add-step row.
-    pub workflow_step_tool_input: String,
-    /// Draft step: tool JSON args in the Workflows panel add-step row.
-    pub workflow_step_args_input: String,
-    /// Draft step: agent prompt in the Workflows panel add-step row.
-    pub workflow_step_prompt_input: String,
-    /// Last workflow run result rendered in the Workflows panel run log.
-    pub workflow_last_run: Option<crate::editor::workflow::WorkflowRun>,
-    /// Visual canvas instances keyed by workflow id.
-    pub workflow_canvases:
-        std::collections::HashMap<String, crate::editor::workflow_canvas::WorkflowCanvas>,
-    /// Id of the workflow currently open in the visual canvas editor.
-    pub workflow_canvas_selected: Option<String>,
-    /// Whether the visual canvas editor is active (vs list composer).
-    pub workflow_visual_mode: bool,
-    /// AI generation prompt input for natural language workflow creation.
-    pub workflow_ai_prompt: String,
-    /// Version history registry for workflows.
-    pub workflow_versions: crate::editor::workflow_version::VersionRegistry,
-    /// Governance policy engine edited in the Governance panel.
-    pub policy: crate::editor::governance::PolicyEngine,
-    /// Approval queue shown in the Governance panel.
-    pub approvals: crate::editor::governance::ApprovalQueue,
-    /// Secret store (handles only, masked) shown in the Governance panel.
-    pub secrets: crate::security::secrets::SecretStore,
-    /// Connector registry shown/edited in the Governance panel.
-    pub connectors: crate::connectors::ConnectorRegistry,
-    /// Draft rule tool name in the Governance policy editor.
-    pub gov_rule_tool_input: String,
-    /// Draft rule path prefix in the Governance policy editor.
-    pub gov_rule_path_input: String,
-    /// Draft new secret name in the Governance secrets section.
-    pub gov_secret_name_input: String,
-    /// Draft new secret value in the Governance secrets section.
-    pub gov_secret_value_input: String,
-    /// Draft connector id in the Governance connectors section.
-    pub gov_connector_id_input: String,
-    /// Draft connector base URL in the Governance connectors section.
-    pub gov_connector_url_input: String,
-    /// Draft connector secret handle in the Governance connectors section.
-    pub gov_connector_secret_input: String,
-    /// Transient status line shown at the top of the Governance panel.
-    pub gov_status: String,
+    /// Workflow composer state (registry + UI draft fields + canvas + versions).
+    /// Groups ~12 workflow-related fields into a focused sub-struct.
+    pub workflow_state: WorkflowAppState,
+    /// Governance policy engine, approval queue, secrets, connectors.
+    /// Groups ~12 governance-related fields into a focused sub-struct.
+    pub governance: GovernanceState,
 
-    // â”€â”€â”€ Cross-device Peer Collaboration â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-    /// Peer manager for cross-device agent collaboration.
-    pub peer_manager: crate::agent::peer_link::PeerManager,
-    /// Whether the peer API server is currently running.
-    pub peer_server_running: bool,
-    /// Port configured for the peer API server.
-    pub peer_port: u16,
-    /// Text buffer for the port field in the peer panel UI (u16 can't be
-    /// bound directly to a TextEdit, so we keep a String mirror and parse
-    /// it back when the server is started).
-    pub peer_port_input: String,
-    /// Draft peer host for adding a new peer connection.
-    pub peer_add_host: String,
-    /// Draft peer port for adding a new peer connection.
-    pub peer_add_port: String,
-    /// Draft peer name for adding a new peer connection.
-    pub peer_add_name: String,
-    /// Draft chat message for peer-to-peer messaging.
-    pub peer_chat_message: String,
-    /// Selected peer ID for the chat panel.
-    pub peer_chat_selected: Option<String>,
-    /// Transient status line for the peer panel.
-    pub peer_status: String,
+    // â"€â"€â"€ Cross-device Peer Collaboration â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
+    /// Cross-device peer collaboration state (manager + UI draft fields).
+    /// Groups ~10 peer-related fields into a focused sub-struct.
+    pub peer_state: PeerCollabState,
 
     // â”€â”€â”€ Remaining Module State â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     /// Multimodal attachments for chat.
@@ -517,13 +459,11 @@ pub struct VelocityApp {
     pub persistent_memory: crate::agent::memory_store::PersistentMemory,
 
     // ─── Performance Profiling ──────────────────────────────────────────────
-    /// Frame counter for profiling.
-    pub frame_count: u64,
     /// Last frame's duration in milliseconds (for display).
     pub last_frame_ms: f32,
     /// When the last frame started (for computing delta).
     pub last_frame_instant: Option<Instant>,
-    /// Cached status-bar perf label (e.g., "Ready | 13ms f42"). Updated each frame
+    /// Cached status-bar perf label (e.g., "Ready | 13ms"). Updated each frame
     /// but reuses the same String buffer — avoids 2 format!() allocations per frame.
     pub cached_status_perf: String,
     /// Cached profile label (e.g., "⚡ Coder").
@@ -1183,6 +1123,7 @@ impl VelocityApp {
                 provider: crate::agent::AiProvider::CloudflareWorkersAi,
                 attachments: Vec::new(),
                 attach_input: String::new(),
+                clear_timeline: false,
             },
             mediator,
             graph_view: crate::editor::graph_view::MerkleGraphView::new(),
@@ -1191,10 +1132,10 @@ impl VelocityApp {
             terminal_rx: None,
             terminal_input: String::new(),
             current_agent_task_id: 0,
+            cancel_requested: false,
             // IDE Feature Integration
             completion_state: crate::editor::completion::CompletionState::default(),
-            lsp_manager: None,
-            diagnostics: crate::editor::diagnostics::DiagnosticsState::default(),
+            lsp_state: LspState::default(),
             terminal_state: crate::editor::terminal::TerminalState::new(80, 24),
             terminal_spawned: false,
             dap_client: None,
@@ -1232,50 +1173,10 @@ impl VelocityApp {
             trigger_name_input: String::new(),
             trigger_interval_input: String::new(),
             trigger_prompt_input: String::new(),
-            workflows: crate::editor::workflow::WorkflowRegistry::load(&workspace_root),
-            workflow_name_input: String::new(),
-            workflow_selected: None,
-            workflow_step_tool_input: String::new(),
-            workflow_step_args_input: String::new(),
-            workflow_step_prompt_input: String::new(),
-            workflow_last_run: None,
-            workflow_canvases: std::collections::HashMap::new(),
-            workflow_canvas_selected: None,
-            workflow_visual_mode: false,
-            workflow_ai_prompt: String::new(),
-            workflow_versions: crate::editor::workflow_version::VersionRegistry::load(
-                &workspace_root,
-            ),
-            policy: crate::editor::governance::PolicyEngine::load(&workspace_root),
-            approvals: crate::editor::governance::ApprovalQueue::load(&workspace_root),
-            secrets: crate::security::secrets::SecretStore::load(&workspace_root),
-            connectors: crate::connectors::ConnectorRegistry::load(&workspace_root),
-            gov_rule_tool_input: String::new(),
-            gov_rule_path_input: String::new(),
-            gov_secret_name_input: String::new(),
-            gov_secret_value_input: String::new(),
-            gov_connector_id_input: String::new(),
-            gov_connector_url_input: String::new(),
-            gov_connector_secret_input: String::new(),
-            gov_status: String::new(),
+            workflow_state: WorkflowAppState::new(&workspace_root),
+            governance: GovernanceState::new(&workspace_root),
             // Cross-device peer collaboration
-            peer_manager: {
-                let mut mgr = crate::agent::peer_link::PeerManager::new();
-                let hostname = std::env::var("COMPUTERNAME")
-                    .or_else(|_| std::env::var("HOSTNAME"))
-                    .unwrap_or_else(|_| "velocity-instance".to_string());
-                mgr.init(&workspace_root, &hostname);
-                mgr
-            },
-            peer_server_running: false,
-            peer_port: 9191,
-            peer_port_input: "9191".into(),
-            peer_add_host: String::new(),
-            peer_add_port: String::new(),
-            peer_add_name: String::new(),
-            peer_chat_message: String::new(),
-            peer_chat_selected: None,
-            peer_status: String::new(),
+            peer_state: PeerCollabState::new(&workspace_root),
             // Remaining Module State
             multimodal_attachments: Vec::new(),
             continuation_ledger: None,
@@ -1294,7 +1195,6 @@ impl VelocityApp {
             conflict_resolver: crate::agent::conflict_resolution::ConflictResolver::new(),
             collaboration: crate::agent::collaboration::CollaborationManager::new(),
             // Performance profiling
-            frame_count: 0,
             last_frame_ms: 0.0,
             last_frame_instant: None,
             cached_status_perf: String::new(),
@@ -1309,13 +1209,16 @@ impl VelocityApp {
             gui_control_handle: None,
         };
         // Start the GUI control listener (TCP for external MCP/agent control)
-        let (cmd_rx, shutdown) = crate::editor::gui_control::start_listener(cc.egui_ctx.clone());
+        let auth_token = crate::editor::gui_control::load_or_generate_token(&workspace_root);
+        let (cmd_rx, shutdown) = crate::editor::gui_control::start_listener(cc.egui_ctx.clone(), auth_token);
         app.gui_cmd_rx = Some(cmd_rx);
         app.gui_control_handle = Some(crate::editor::gui_control::GuiControlHandle { shutdown });
-        app.open_editor(None);
+        // Don't create an untitled editor by default — show the welcome screen instead.
+        // Users can open files or create new files via Ctrl+O / Ctrl+N.
         app.apply_workspace_profile(app.appearance.profile);
         app.restore_workspace_preferences();
         app.apply_appearance(&cc.egui_ctx);
+        app.task_timeline.clear();
         app.task_timeline
             .session_marker("IDE session ready", "agentic workspace initialized");
         let _ = app.persist_mission_activity();
@@ -1326,9 +1229,7 @@ impl VelocityApp {
         });
         app.save_workspace_preferences();
         // Initialize LSP manager (auto-detect language servers)
-        app.lsp_manager = Some(crate::editor::lsp_client::LspManager::auto_detect(
-            &app.workspace_root,
-        ));
+        app.lsp_state = LspState::new(&app.workspace_root);
         // Initialize git state
         app.git_state.refresh(&app.workspace_root);
         // Start OS-level file watcher for instant external change detection
@@ -1341,5 +1242,232 @@ impl VelocityApp {
         app.snippet_collection =
             crate::editor::snippets::SnippetCollection::load_from_file(&snippets_path);
         app
+    }
+
+    /// Create a minimal VelocityApp instance for testing purposes.
+    /// All fields are initialized with sensible defaults — no disk I/O, no network,
+    /// no egui context required. Tests can override specific fields after construction.
+    #[cfg(test)]
+    pub fn test_stub() -> Self {
+        let workspace_root = std::env::temp_dir().join("velocity_test_stub");
+        let _ = std::fs::create_dir_all(&workspace_root);
+        let (agent_tx, _) = crossbeam_channel::unbounded();
+        let (_, agent_rx) = crossbeam_channel::unbounded();
+        let (tree_tx, tree_rx) = crossbeam_channel::unbounded();
+        let (file_io_tx, file_io_rx) = crossbeam_channel::unbounded();
+        let mediator = std::sync::Arc::new(crate::automation::mediator::MediatorArena::new());
+
+        let mut tab_counter = 0u64;
+        let chat = Tab {
+            id: TabId::next(&mut tab_counter),
+            kind: TabKind::Chat,
+        };
+        let output = Tab {
+            id: TabId::next(&mut tab_counter),
+            kind: TabKind::Output,
+        };
+        let tabs = vec![chat.clone(), output.clone()];
+
+        Self {
+            agent_tx: agent_tx.clone(),
+            agent_rx,
+            workspace_root: workspace_root.clone(),
+            tabs: tabs.clone(),
+            active_tab: Some(chat.id.clone()),
+            buffers: HashMap::new(),
+            dock_state: Some(DockState::new(tabs)),
+            chat_history: String::new(),
+            command_output: String::new(),
+            command_palette: CommandPalette::default(),
+            show_shortcuts: false,
+            quick_open: QuickOpen::default(),
+            mru: MruSwitcher::default(),
+            closed_editor_paths: Vec::new(),
+            goto_line_open: false,
+            goto_line_input: String::new(),
+            goto_line_just_opened: false,
+            goto_symbol_open: false,
+            goto_symbol_query: String::new(),
+            goto_symbol_selected: 0,
+            goto_symbol_just_opened: false,
+            goto_symbol_entries: Vec::new(),
+            workspace_symbols: Vec::new(),
+            goto_symbol_last_query: String::new(),
+            goto_symbol_filtered: Vec::new(),
+            goto_symbol_scroll_to_selected: false,
+            nav_back: Vec::new(),
+            nav_forward: Vec::new(),
+            cached_site_map: None,
+            cached_site_map_at: None,
+            cached_relation_symbol: None,
+            cached_callers: Vec::new(),
+            cached_deps: Vec::new(),
+            last_diagnostics_poll: None,
+            last_external_check: None,
+            last_lsp_sync: None,
+            status_message: String::new(),
+            appearance: AppearanceSettings::default(),
+            last_applied_appearance: None,
+            use_unified_header: true,
+            provider_settings: WorkspaceProviderSettings::default(),
+            left_sidebar_visible: true,
+            left_sidebar_width: 240.0,
+            left_sidebar_tab: 0,
+            activity_bar_selection: 0,
+            activity_sub_panel: [0; 8],
+            right_sidebar_visible: false,
+            right_sidebar_width: 280.0,
+            mode_layouts: HashMap::new(),
+            tab_counter,
+            expert_teams: Vec::new(),
+            active_team_index: 0,
+            selected_member_id: None,
+            team_gallery_expanded: None,
+            team_builder_chat: Default::default(),
+            team_name_input: String::new(),
+            team_description_input: String::new(),
+            team_agent_name_input: String::new(),
+            team_agent_role_input: String::new(),
+            team_agent_scope_input: String::new(),
+            team_agent_instructions_input: String::new(),
+            team_agent_target_index: None,
+            team_manager: crate::editor::app::team_manager::TeamManager::new(agent_tx),
+            agent_ui_state: AgentUiState::default(),
+            task_timeline: TTState::default(),
+            smart_sidebar: SmartSidebarState::default(),
+            right_changes_collapsed: false,
+            right_symbol_collapsed: false,
+            bottom_panel_state: BottomPanelState::default(),
+            favorite_files: Vec::new(),
+            bookmarks: Vec::new(),
+            recording_active: false,
+            recordings: Vec::new(),
+            projects: vec![workspace_root.clone()],
+            show_add_project_ui: false,
+            new_project_path_input: String::new(),
+            workspace_switcher_open: false,
+            workspace_switcher_selected: 0,
+            workspace_switcher_just_opened: false,
+            agent_active: false,
+            pending_approvals: Vec::new(),
+            auto_approve: false,
+            available_models: Vec::new(),
+            selected_model: String::new(),
+            thinking_enabled: false,
+            thinking_supported: false,
+            tools_supported: false,
+            models_loading: false,
+            provider: AiProvider::CloudflareWorkersAi,
+            pending_open_path: None,
+            pending_save_as_path: None,
+            pending_close_tab: None,
+            show_full_diff: false,
+            build_errors_count: 0,
+            account_usage: Vec::new(),
+            usage_date: String::new(),
+            gpu_name: String::new(),
+            search_query: String::new(),
+            search_hits: Vec::new(),
+            search_hit_cache: Vec::new(),
+            search_count_label: String::new(),
+            replace_query: String::new(),
+            search_pending_since: None,
+            pending_cursor_line: None,
+            current_cursor_line: 0,
+            current_cursor_col: 0,
+            references_open: false,
+            references_results: Vec::new(),
+            references_selected: 0,
+            file_tree: None,
+            last_tree_update: std::time::Instant::now(),
+            last_tree_mtime: None,
+            file_tree_rx: tree_rx,
+            file_tree_tx: tree_tx,
+            tree_build_in_flight: false,
+            file_io_rx,
+            file_io_tx,
+            pending_file_loads: std::collections::HashSet::new(),
+            preview_disk_cache: None,
+            toasts: Default::default(),
+            orchestrator: OrchestratorPanel::new(),
+            mission_control: MissionControlState::new(),
+            next_intervention_id: 1,
+            chat: ChatPanelState::default(),
+            mediator,
+            graph_view: crate::editor::graph_view::MerkleGraphView::new(),
+            wiki_view: crate::editor::wiki_view::WikiView::new(),
+            nda_docs: std::collections::HashMap::new(),
+            terminal_rx: None,
+            terminal_input: String::new(),
+            current_agent_task_id: 0,
+            cancel_requested: false,
+            completion_state: Default::default(),
+            lsp_state: LspState::default(),
+            terminal_state: crate::editor::terminal::TerminalState::new(80, 24),
+            terminal_spawned: false,
+            dap_client: None,
+            keybindings_config: Default::default(),
+            git_state: Default::default(),
+            file_watcher: None,
+            extension_registry: Default::default(),
+            minimap_config: Default::default(),
+            snippet_collection: Default::default(),
+            snippet_search_query: String::new(),
+            file_tree_filter: String::new(),
+            skill_filter: String::new(),
+            show_minimap: true,
+            show_breadcrumbs: true,
+            word_wrap: false,
+            browse_state: Default::default(),
+            checkpoint_manager: crate::editor::checkpoint::CheckpointManager::new(&workspace_root),
+            agent_memory: crate::editor::agent_memory::AgentMemoryManager::new(&workspace_root),
+            agent_memory_loaded: false,
+            live_orchestration: crate::editor::live_orchestration::LiveOrchestrationState::new(),
+            precomp_cache: crate::editor::speculative_precomp::PrecomputationCache::new(),
+            semantic_index: None,
+            semantic_search_active: false,
+            inline_suggestions: Default::default(),
+            test_generator: Default::default(),
+            deploy_pipeline: None,
+            voice_input: crate::editor::voice_commands::VoiceInputState::new(),
+            knowledge_base: crate::editor::knowledge_base::KnowledgeBase::new(),
+            knowledge_base_loaded: false,
+            knowledge_query: String::new(),
+            knowledge_ingest_input: String::new(),
+            knowledge_results: Vec::new(),
+            triggers: Default::default(),
+            trigger_name_input: String::new(),
+            trigger_interval_input: String::new(),
+            trigger_prompt_input: String::new(),
+            workflow_state: WorkflowAppState::default(),
+            governance: GovernanceState::default(),
+            peer_state: PeerCollabState::default(),
+            multimodal_attachments: Vec::new(),
+            continuation_ledger: None,
+            plugin_registry: crate::editor::plugin_registry::PluginRegistry::new(&workspace_root),
+            skill_files: Vec::new(),
+            target_entries: Vec::new(),
+            audit_findings: Vec::new(),
+            persistent_memory: crate::agent::memory_store::PersistentMemory::open(&workspace_root),
+            improvement_engine: {
+                let mem = crate::agent::memory_store::PersistentMemory::open(&workspace_root);
+                crate::agent::self_improve::ImprovementEngine::new(&mem)
+            },
+            shared_memory: crate::agent::shared_memory::SharedMemoryStore::new(),
+            background_agents: crate::agent::background_agents::BackgroundAgentRegistry::new(),
+            conflict_resolver: crate::agent::conflict_resolution::ConflictResolver::new(),
+            collaboration: crate::agent::collaboration::CollaborationManager::new(),
+            last_frame_ms: 0.0,
+            last_frame_instant: None,
+            cached_status_perf: String::new(),
+            cached_profile_label: String::new(),
+            cached_changes_header_right: String::new(),
+            cached_changes_header_down: String::new(),
+            cached_diff_stat: String::new(),
+            cached_sym_header_right: String::new(),
+            cached_sym_header_down: String::new(),
+            gui_cmd_rx: None,
+            gui_control_handle: None,
+        }
     }
 }

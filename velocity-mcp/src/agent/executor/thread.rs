@@ -2,6 +2,7 @@ use super::super::coordination::CoordinationBus;
 use super::super::models::*;
 use super::super::nda::*;
 use super::super::provider::*;
+use super::dispatch::resolve_api_key;
 use super::loop_runner::run_agent_reasoning_loop;
 use super::team_routing::try_route_team_prompt;
 use super::utils::{build_inline_tool_docs, send_usage_update};
@@ -28,30 +29,19 @@ fn load_runtime_accounts(
     )
 }
 
-/// Resolve an API key by checking workspace settings first, then falling back
-/// to the environment variable. This lets users configure keys in the IDE
-/// settings UI without needing to set env vars.
-fn resolve_api_key(workspace_root: &PathBuf, settings_field: &str, env_var: &str) -> String {
-    // Try workspace settings first
-    let settings_path = workspace_root
-        .join(".velocity")
-        .join("workspace-preferences.json");
-    if let Ok(contents) = std::fs::read_to_string(&settings_path) {
-        if let Ok(json) = serde_json::from_str::<serde_json::Value>(&contents) {
-            if let Some(key) = json
-                .get("provider_settings")
-                .and_then(|ps| ps.get(settings_field))
-                .and_then(|s| s.get("api_key"))
-                .and_then(|k| k.as_str())
-            {
-                if !key.trim().is_empty() {
-                    return key.to_string();
+/// Load Velocity Router settings from workspace preferences.
+fn load_router_settings(workspace_root: &PathBuf) -> WorkspaceRouterSettings {
+    let prefs_path = workspace_root.join(".velocity").join("workspace-preferences.json");
+    if let Ok(content) = std::fs::read_to_string(&prefs_path) {
+        if let Ok(prefs) = serde_json::from_str::<serde_json::Value>(&content) {
+            if let Some(router) = prefs.get("provider_settings").and_then(|p| p.get("velocity_router")) {
+                if let Ok(settings) = serde_json::from_value::<WorkspaceRouterSettings>(router.clone()) {
+                    return settings;
                 }
             }
         }
     }
-    // Fall back to env var
-    std::env::var(env_var).unwrap_or_default()
+    WorkspaceRouterSettings::default()
 }
 
 fn initial_provider_from_env() -> AiProvider {
@@ -296,6 +286,17 @@ pub fn run_agent_thread(
     let coordination_bus = CoordinationBus::new();
     coordination_bus.report_progress("primary", 0.0, "initialized");
 
+    // Phase 6: Velocity Router MoA settings
+    let router_settings = load_router_settings(&workspace_root);
+    if router_settings.enabled {
+        ui_tx
+            .send(AgentToUiMessage::StatusUpdate(format!(
+                "Velocity MoA routing enabled (router: {}).",
+                router_settings.url
+            )))
+            .ok();
+    }
+
     while let Ok(msg) = ui_rx.recv() {
         process_ui_message(
             msg,
@@ -316,6 +317,7 @@ pub fn run_agent_thread(
             &ui_tx,
             &mut deferred_messages,
             &coordination_bus,
+            &router_settings,
         );
 
         while !deferred_messages.is_empty() {
@@ -339,6 +341,7 @@ pub fn run_agent_thread(
                 &ui_tx,
                 &mut deferred_messages,
                 &coordination_bus,
+                &router_settings,
             );
         }
     }
@@ -363,6 +366,7 @@ fn process_ui_message(
     ui_tx: &Sender<AgentToUiMessage>,
     deferred_messages: &mut Vec<UiToAgentMessage>,
     coordination_bus: &CoordinationBus,
+    router_settings: &WorkspaceRouterSettings,
 ) {
     match msg {
         UiToAgentMessage::RefreshModels => {
@@ -657,6 +661,7 @@ fn process_ui_message(
                 ui_tx,
                 deferred_messages,
                 coordination_bus,
+                Some(router_settings),
             );
         }
         UiToAgentMessage::ReloadTeams => {

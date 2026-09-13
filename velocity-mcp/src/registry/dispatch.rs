@@ -2,6 +2,7 @@ use super::browser_tools::handle_browser_tool;
 use super::system_tools::handle_system_tool;
 use super::team_tools::handle_team_tool;
 use super::wa_tools::handle_wa_tool;
+use crate::agent::drone_bridge::handle_drone_tool;
 use crate::errors::ToolError;
 use serde_json::Value;
 use std::error::Error;
@@ -40,6 +41,10 @@ pub fn call_tool_in_workspace(
     }
 
     if let Some(result) = handle_wa_tool(&root, name, arguments)? {
+        return Ok(result);
+    }
+
+    if let Some(result) = handle_drone_tool(&root, name, arguments)? {
         return Ok(result);
     }
 

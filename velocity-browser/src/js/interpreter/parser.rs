@@ -484,7 +484,7 @@ impl Parser {
                 && matches!(self.peek(), Token::Ident(_))
             {
                 let Token::Ident(n) = self.advance() else {
-                    unreachable!()
+                    return Err("expected identifier after get/set".into());
                 };
                 kind = if method_name == "get" {
                     ClassMemberKind::Getter
@@ -1175,7 +1175,7 @@ impl Parser {
             }
             Token::Ident(_) => {
                 let Token::Ident(name) = self.advance() else {
-                    unreachable!()
+                    return Err("expected identifier".into());
                 };
                 // Arrow function: x => expr  or (x, y) => expr
                 if self.at(&Token::Arrow) {

@@ -158,7 +158,7 @@ impl VelocityApp {
             ));
             return;
         };
-        let symbols = match self.lsp_manager.as_mut() {
+        let symbols = match self.lsp_state.lsp_manager.as_mut() {
             Some(lsp) => lsp.document_symbols(&ext, &path, &content),
             None => Vec::new(),
         };

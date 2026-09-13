@@ -11,6 +11,7 @@
 use std::collections::HashMap;
 use std::io::{Read, Write};
 
+use crate::errors::BrowserError;
 use crate::net::inflate;
 use crate::net::tls::{NativeTlsStream, ProxyResolver};
 use crate::session_cookie_store::{CookieRecord, CookieStore, SameSitePolicy};
@@ -71,7 +72,7 @@ impl HttpClient {
     pub fn get(
         &mut self,
         url: &str,
-    ) -> Result<HttpResponse, Box<dyn std::error::Error + Send + Sync>> {
+    ) -> Result<HttpResponse, BrowserError> {
         let mut current = url.to_string();
         for _ in 0..=MAX_REDIRECTS {
             let (scheme, host, port, path) = parse_url(&current)?;
@@ -86,7 +87,7 @@ impl HttpClient {
             }
             return Ok(response);
         }
-        Err("too many redirects".into())
+        Err(BrowserError::TooManyRedirects)
     }
 
     /// Build the raw HTTP/1.1 GET request line + headers for `host`/`path`.
@@ -126,7 +127,7 @@ impl HttpClient {
         url: &str,
         body: &str,
         content_type: &str,
-    ) -> Result<HttpResponse, Box<dyn std::error::Error + Send + Sync>> {
+    ) -> Result<HttpResponse, BrowserError> {
         let mut current_url = url.to_string();
         let mut current_body = body.to_string();
         let current_ct = content_type.to_string();
@@ -158,7 +159,7 @@ impl HttpClient {
             }
             return Ok(response);
         }
-        Err("too many redirects".into())
+        Err(BrowserError::TooManyRedirects)
     }
 
     fn build_post_request(
@@ -189,7 +190,7 @@ impl HttpClient {
         host: &str,
         port: u16,
         request: &str,
-    ) -> Result<Vec<u8>, Box<dyn std::error::Error + Send + Sync>> {
+    ) -> Result<Vec<u8>, BrowserError> {
         let mut buffer = Vec::new();
         if scheme == "https" {
             let mut tls = NativeTlsStream::connect_via(&self.proxy, host, port)?;
@@ -211,7 +212,7 @@ impl HttpClient {
         host: &str,
         port: u16,
         path: &str,
-    ) -> Result<Vec<u8>, Box<dyn std::error::Error + Send + Sync>> {
+    ) -> Result<Vec<u8>, BrowserError> {
         let req = self.build_request(scheme, host, path);
         self.send_raw_request(scheme, host, port, &req)
     }
@@ -222,8 +223,9 @@ impl HttpClient {
         raw: &[u8],
         scheme: &str,
         host: &str,
-    ) -> Result<HttpResponse, Box<dyn std::error::Error + Send + Sync>> {
-        let (head, body) = split_head_body(raw).ok_or("malformed HTTP response")?;
+    ) -> Result<HttpResponse, BrowserError> {
+        let (head, body) = split_head_body(raw)
+            .ok_or_else(|| BrowserError::MalformedResponse("missing header/body separator".into()))?;
         let (status_code, headers, raw_set_cookies) = parse_status_and_headers(head);
 
         // Parse and store cookies with full attributes
@@ -286,7 +288,7 @@ impl HttpClient {
 
 /// Split `scheme://host:port/path` into components. Missing pieces default to
 /// `http`, port 80 (or 443 for https), and `/`.
-fn parse_url(url: &str) -> Result<(String, String, u16, String), &'static str> {
+fn parse_url(url: &str) -> Result<(String, String, u16, String), BrowserError> {
     let s = url.trim();
     let (scheme, rest) = if let Some(r) = s.strip_prefix("http://") {
         ("http", r)
@@ -302,7 +304,11 @@ fn parse_url(url: &str) -> Result<(String, String, u16, String), &'static str> {
     };
 
     let (host, port) = match host_port.split_once(':') {
-        Some((h, p)) => (h.to_string(), p.parse::<u16>().unwrap_or(80)),
+        Some((h, p)) => (
+            h.to_string(),
+            p.parse::<u16>()
+                .map_err(|_| BrowserError::InvalidUrl(format!("bad port in '{}'", url)))?,
+        ),
         None => (
             host_port.to_string(),
             if scheme == "https" { 443 } else { 80 },
@@ -404,22 +410,23 @@ fn parse_set_cookie_full(raw: &str, request_host: &str) -> ParsedSetCookie {
 }
 
 /// Decode a `Transfer-Encoding: chunked` body.
-fn dechunk(data: &[u8]) -> Result<Vec<u8>, String> {
+fn dechunk(data: &[u8]) -> Result<Vec<u8>, BrowserError> {
     let mut out = Vec::new();
     let mut i = 0;
     loop {
         let line_end = find_subslice(&data[i..], b"\r\n")
             .map(|p| p + i)
-            .ok_or("chunk size line not terminated")?;
+            .ok_or_else(|| BrowserError::MalformedResponse("chunk size line not terminated".into()))?;
         let size_line = String::from_utf8_lossy(&data[i..line_end]);
         let size_hex = size_line.split(';').next().unwrap_or("").trim();
-        let size = usize::from_str_radix(size_hex, 16).map_err(|_| "invalid chunk size")?;
+        let size = usize::from_str_radix(size_hex, 16)
+            .map_err(|_| BrowserError::MalformedResponse("invalid chunk size".into()))?;
         i = line_end + 2;
         if size == 0 {
             break;
         }
         if i + size > data.len() {
-            return Err("chunk exceeds available data".to_string());
+            return Err(BrowserError::MalformedResponse("chunk exceeds available data".into()));
         }
         out.extend_from_slice(&data[i..i + size]);
         i += size;

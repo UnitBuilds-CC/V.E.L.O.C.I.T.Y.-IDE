@@ -1,5 +1,4 @@
 // sandbox/mod.rs — Executing NDA opcode trees with nda_int kernels
-#![allow(dead_code, unused)]
 pub mod jit_sandbox;
 pub mod scope_validator;
 
@@ -45,7 +44,7 @@ impl SandboxResult {
             .iter()
             .map(|(k, &v)| (k.as_str(), v))
             .collect();
-        pairs.sort_by(|a, b| b.1.cmp(&a.1));
+        pairs.sort_by_key(|a| std::cmp::Reverse(a.1));
         pairs.into_iter().take(n).collect()
     }
 
@@ -116,7 +115,7 @@ impl SandboxResult {
             .iter()
             .map(|(k, &v)| (k.clone(), v))
             .collect();
-        sorted_kinds.sort_by(|a, b| b.1.cmp(&a.1));
+        sorted_kinds.sort_by_key(|a| std::cmp::Reverse(a.1));
         SandboxExecutionProfile {
             total_nodes: self.executed_nodes,
             unique_kinds: self.kind_counts.len(),
@@ -493,6 +492,89 @@ impl NdaSandbox {
                 }
             }
         }
+    }
+
+    /// Execute nodes and project the final hidden state through an LM head
+    /// matrix to produce i32 vocabulary logits suitable for token sampling.
+    ///
+    /// This is the NDA-native equivalent of the FP32 `lm_head` + `sample_token`
+    /// pipeline: the hidden state stays in NDA format until the very last step,
+    /// where `lm_head_nda_to_i32` converts it directly to integer logits.
+    pub fn run_to_logits(
+        nodes: &[NdaNode],
+        conditioning_vec: &[f32],
+        site_map: &SiteMap,
+        lm_head_matrix: &NdaMatrix,
+    ) -> Result<Vec<i32>, String> {
+        let result = Self::run(nodes, conditioning_vec, site_map);
+        if let Some(err) = &result.error {
+            return Err(err.clone());
+        }
+        // Re-execute to recover the NDA hidden state (output_vec is f32).
+        // We build a fresh execution state and run the nodes to get the NdaVec.
+        let current_vec = NdaVec::from_f32_slice(conditioning_vec);
+        let registry = crate::compiler::nda_jit::VarRegistry::new();
+        for node in nodes {
+            crate::compiler::nda_jit::pre_register_variables(node, &registry);
+        }
+        let total_slots = registry.total_slots();
+        let mut state = ExecutionState {
+            current_vec,
+            registry,
+            variables: vec![None; total_slots],
+            executed_nodes: 0,
+            matrix_count: 0,
+            norm_count: 0,
+            loop_count: 0,
+            output_log: Vec::new(),
+            kind_counts: HashMap::new(),
+            loop_iterations: 0,
+        };
+        state
+            .execute_sequence(nodes, site_map)
+            .map_err(|e| format!("NDA execution error: {e}"))?;
+        let logits = crate::nda_int::lm_head_nda_to_i32(lm_head_matrix, &state.current_vec);
+        Ok(logits)
+    }
+
+    /// Execute nodes and project the final hidden state through a GEMV matrix
+    /// to produce i32 logits via `nda_gemv_nda_to_i32`.
+    ///
+    /// This is the integer-output path: the hidden state stays in NDA format
+    /// throughout execution and is converted to i32 logits as the final step.
+    pub fn run_to_gemv_i32(
+        nodes: &[NdaNode],
+        conditioning_vec: &[f32],
+        site_map: &SiteMap,
+        gemv_matrix: &NdaMatrix,
+    ) -> Result<Vec<i32>, String> {
+        let result = Self::run(nodes, conditioning_vec, site_map);
+        if let Some(err) = &result.error {
+            return Err(err.clone());
+        }
+        let current_vec = NdaVec::from_f32_slice(conditioning_vec);
+        let registry = crate::compiler::nda_jit::VarRegistry::new();
+        for node in nodes {
+            crate::compiler::nda_jit::pre_register_variables(node, &registry);
+        }
+        let total_slots = registry.total_slots();
+        let mut state = ExecutionState {
+            current_vec,
+            registry,
+            variables: vec![None; total_slots],
+            executed_nodes: 0,
+            matrix_count: 0,
+            norm_count: 0,
+            loop_count: 0,
+            output_log: Vec::new(),
+            kind_counts: HashMap::new(),
+            loop_iterations: 0,
+        };
+        state
+            .execute_sequence(nodes, site_map)
+            .map_err(|e| format!("NDA execution error: {e}"))?;
+        let logits = crate::nda_int::nda_gemv_nda_to_i32(gemv_matrix, &state.current_vec);
+        Ok(logits)
     }
 
     /// Execute multiple node sequences in batch and return a structured report.
@@ -2136,6 +2218,7 @@ mod tests {
         };
         let mut cloned = summary.clone();
         cloned.executed_nodes = 999;
+        assert_eq!(cloned.executed_nodes, 999);
         assert_eq!(summary.executed_nodes, 10);
     }
 
@@ -2517,6 +2600,9 @@ mod tests {
         cloned.success = false;
         cloned.has_error = true;
         cloned.loop_iterations = 999;
+        assert!(!cloned.success);
+        assert!(cloned.has_error);
+        assert_eq!(cloned.loop_iterations, 999);
         assert!(s.success);
         assert!(!s.has_error);
         assert_eq!(s.loop_iterations, 50);

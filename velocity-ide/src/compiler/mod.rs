@@ -5,3 +5,6 @@ pub mod nda_lexer;
 pub mod nda_parser;
 pub mod rust_to_nda;
 pub mod shaders;
+
+#[cfg(test)]
+mod proptest_nda;

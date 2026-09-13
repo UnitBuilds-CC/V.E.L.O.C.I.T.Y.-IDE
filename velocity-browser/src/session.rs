@@ -13,6 +13,7 @@ use crate::engine::{
     StealthHumanBehavior, TabSandbox, TraceCollector, VelocityCodecsEngine, WebAudioEngine,
     WebCryptoEngine, WebGLContext, WebGpuComputeEngine,
 };
+use crate::errors::BrowserError;
 use crate::js::{
     JsEventLoopScheduler, JsVirtualMachine, PointerEvent, SyntheticEventDispatcher,
     WasmInterpreter, WasmSimdPipeline, WebWorkerPool,
@@ -53,56 +54,118 @@ pub struct Cookie {
     pub secure: bool,
 }
 
+// ---------------------------------------------------------------------------
+// Sub-structs that decompose BrowserSession into cohesive groups.
+// ---------------------------------------------------------------------------
+
+/// DOM tree, slab arena, shadow hosts, frames, and canvases.
+pub struct SessionDom {
+    pub dom_tree: Option<DomTree>,
+    pub slab_tree: SlabDomTree,
+    pub shadow_hosts: Vec<ShadowHost>,
+    pub frames: Vec<FrameTarget>,
+    pub canvases: Vec<CanvasElement>,
+    pub custom_elements: CustomElementRegistry,
+    pub mutation_observer: NativeMutationObserver,
+    pub mutation_batcher: MutationBatcher,
+}
+
+impl SessionDom {
+    fn new() -> Self {
+        Self {
+            dom_tree: None,
+            slab_tree: SlabDomTree::new(1024),
+            shadow_hosts: Vec::new(),
+            frames: Vec::new(),
+            canvases: Vec::new(),
+            custom_elements: CustomElementRegistry::new(),
+            mutation_observer: NativeMutationObserver::new(),
+            mutation_batcher: MutationBatcher::new(),
+        }
+    }
+}
+
+/// JavaScript virtual machine, event-loop scheduler, WASM, and workers.
+pub struct SessionJs {
+    pub js_vm: JsVirtualMachine,
+    pub js_scheduler: JsEventLoopScheduler,
+    pub wasm_engine: WasmInterpreter,
+    pub wasm_simd: WasmSimdPipeline,
+    pub worker_pool: WebWorkerPool,
+}
+
+impl SessionJs {
+    fn new() -> Self {
+        Self {
+            js_vm: JsVirtualMachine::new(),
+            js_scheduler: JsEventLoopScheduler::new(),
+            wasm_engine: WasmInterpreter::new(1),
+            wasm_simd: WasmSimdPipeline::new(),
+            worker_pool: WebWorkerPool::new(),
+        }
+    }
+}
+
+/// HTTP client, network tracker, proxy resolver, TLS fingerprinting, QUIC.
+pub struct SessionNet {
+    pub http_client: HttpClient,
+    pub network_tracker: NetworkTracker,
+    pub proxy_resolver: ProxyResolver,
+    pub tls_rotator: TlsFingerprintRotator,
+    pub quic_transport: Option<QuicConnection>,
+}
+
+impl SessionNet {
+    fn new() -> Self {
+        Self {
+            http_client: HttpClient::new(),
+            network_tracker: NetworkTracker::new(),
+            proxy_resolver: ProxyResolver::direct(),
+            tls_rotator: TlsFingerprintRotator::velocity_native(),
+            quic_transport: None,
+        }
+    }
+}
+
 pub struct BrowserSession {
     pub session_id: String,
     pub current_url: String,
     pub page_title: String,
-    pub dom_tree: Option<DomTree>,
-    pub slab_tree: SlabDomTree,
     pub tab_sandbox: TabSandbox,
     pub history_stack: HistoryStack,
+    // -- DOM sub-struct -------------------------------------------------------
+    pub dom: SessionDom,
+    // -- JS sub-struct --------------------------------------------------------
+    pub js: SessionJs,
+    // -- Network sub-struct ---------------------------------------------------
+    pub net: SessionNet,
+    // -- Remaining engine fields (kept inline, accessed less frequently) ------
     pub webgl_context: WebGLContext,
     pub webgpu_context: WebGpuComputeEngine,
     pub push_notifications: PushNotificationManager,
-    pub worker_pool: WebWorkerPool,
     pub storage_quota: StorageQuotaManager,
-    pub custom_elements: CustomElementRegistry,
     pub payment_engine: PaymentRequestEngine,
     pub geolocation_provider: GeolocationProvider,
     pub bluetooth_transport: WebBluetoothTransport,
     pub audio_engine: WebAudioEngine,
-    pub tls_rotator: TlsFingerprintRotator,
     pub ocr_engine: VelocityOcrEngine,
-    pub quic_transport: Option<QuicConnection>,
     pub codecs_engine: VelocityCodecsEngine,
     pub font_shaper: FontShaperEngine,
     pub gpu_compositor: GpuTileCompositor,
     pub parallel_layout: ParallelLayoutEngine,
-    pub wasm_simd: WasmSimdPipeline,
-    pub http_client: HttpClient,
-    pub network_tracker: NetworkTracker,
     pub file_manager: FileManager,
     pub device_profile: DeviceProfile,
     pub trace_collector: TraceCollector,
-    pub mutation_observer: NativeMutationObserver,
-    pub mutation_batcher: MutationBatcher,
     pub storage_broadcaster: StorageEventBroadcaster,
     pub indexed_db: IndexedDbStorage,
     pub cookie_store: CookieStore,
     pub service_worker: Option<ServiceWorkerManager>,
-    pub proxy_resolver: ProxyResolver,
     pub inspector_server: InspectorServer,
-    pub wasm_engine: WasmInterpreter,
     pub cascader: StyleCascader,
-    pub js_vm: JsVirtualMachine,
-    pub js_scheduler: JsEventLoopScheduler,
     pub cookies: Vec<Cookie>,
     pub storage: HashMap<String, String>,
     pub local_storage: HashMap<String, String>,
     pub session_storage: HashMap<String, String>,
-    pub shadow_hosts: Vec<ShadowHost>,
-    pub frames: Vec<FrameTarget>,
-    pub canvases: Vec<CanvasElement>,
     /// Node currently holding keyboard focus — target of `agent_press`.
     pub focused_node: Option<usize>,
     /// Horizontal scroll offset of the viewport in document coordinates.
@@ -121,52 +184,37 @@ impl BrowserSession {
             session_id: session_id.clone(),
             current_url: String::new(),
             page_title: "Untitled Page".to_string(),
-            dom_tree: None,
-            slab_tree: SlabDomTree::new(1024),
             tab_sandbox: TabSandbox::new(&session_id, SandboxCapabilities::strict_isolation()),
             history_stack: HistoryStack::new("about:blank"),
+            dom: SessionDom::new(),
+            js: SessionJs::new(),
+            net: SessionNet::new(),
             webgl_context: WebGLContext::new(800, 600),
             webgpu_context: WebGpuComputeEngine::new(),
             push_notifications: PushNotificationManager::new(),
-            worker_pool: WebWorkerPool::new(),
             storage_quota: StorageQuotaManager::new(50 * 1024 * 1024),
-            custom_elements: CustomElementRegistry::new(),
             payment_engine: PaymentRequestEngine::new("Default Merchant"),
             geolocation_provider: GeolocationProvider::mock_sf(),
             bluetooth_transport: WebBluetoothTransport::new(),
             audio_engine: WebAudioEngine::new(44100),
-            tls_rotator: TlsFingerprintRotator::velocity_native(),
             ocr_engine: VelocityOcrEngine::new(),
-            quic_transport: None,
             codecs_engine: VelocityCodecsEngine::new("h264_opus"),
             font_shaper: FontShaperEngine::new("Roboto"),
             gpu_compositor: GpuTileCompositor::new(),
             parallel_layout: ParallelLayoutEngine::new(4),
-            wasm_simd: WasmSimdPipeline::new(),
-            http_client: HttpClient::new(),
-            network_tracker: NetworkTracker::new(),
             file_manager: FileManager::new(),
             device_profile: DeviceProfile::velocity_native(),
             trace_collector: TraceCollector::new(),
-            mutation_observer: NativeMutationObserver::new(),
-            mutation_batcher: MutationBatcher::new(),
             storage_broadcaster: StorageEventBroadcaster::new(),
             indexed_db: IndexedDbStorage::new(&format!("db_{}", session_id)),
             cookie_store: CookieStore::new(),
             service_worker: None,
-            proxy_resolver: ProxyResolver::direct(),
             inspector_server: InspectorServer::new(9222),
-            wasm_engine: WasmInterpreter::new(1),
             cascader: StyleCascader::new(),
-            js_vm: JsVirtualMachine::new(),
-            js_scheduler: JsEventLoopScheduler::new(),
             cookies: Vec::new(),
             storage: HashMap::new(),
             local_storage: HashMap::new(),
             session_storage: HashMap::new(),
-            shadow_hosts: Vec::new(),
-            frames: Vec::new(),
-            canvases: Vec::new(),
             focused_node: None,
             scroll_x: 0.0,
             scroll_y: 0.0,
@@ -179,15 +227,15 @@ impl BrowserSession {
     /// Configure a proxy for all HTTP/HTTPS connections in this session.
     /// Updates both the session-level resolver and the embedded HTTP client.
     pub fn set_proxy(&mut self, resolver: ProxyResolver) {
-        self.proxy_resolver = ProxyResolver {
+        self.net.proxy_resolver = ProxyResolver {
             proxy_type: resolver.proxy_type.clone(),
         };
-        self.http_client.proxy = resolver;
+        self.net.http_client.proxy = resolver;
     }
 
     /// Predict next optimal action target using local feature vectors
     pub fn predict_action(&self) -> Option<PredictedActionTarget> {
-        if let Some(tree) = &self.dom_tree {
+        if let Some(tree) = &self.dom.dom_tree {
             return ActionPredictorEngine::predict_next_action(tree);
         }
         None
@@ -203,7 +251,7 @@ impl BrowserSession {
     pub fn click_ocr_text(
         &mut self,
         target_text: &str,
-    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    ) -> Result<(), BrowserError> {
         let ocr_boxes = self.perform_ocr_scan();
         if let Some(target_box) = ocr_boxes.iter().find(|b| b.text.contains(target_text)) {
             let trajectory = StealthHumanBehavior::generate_bezier_trajectory(
@@ -221,33 +269,32 @@ impl BrowserSession {
             );
             return Ok(());
         }
-        Err(format!(
-            "VelocityOCR: Target text '{}' not found in pixel buffer",
+        Err(BrowserError::OcrTargetNotFound(format!(
+            "Target text '{}' not found in pixel buffer",
             target_text
-        )
-        .into())
+        )))
     }
 
     /// Fetch HTML over native HTTP transport client and parse into DOM tree
     pub fn fetch_and_load(
         &mut self,
         url: &str,
-    ) -> Result<Vec<NdaTriple>, Box<dyn std::error::Error + Send + Sync>> {
+    ) -> Result<Vec<NdaTriple>, BrowserError> {
         log::info!("fetch_and_load: GET {}", url);
         if let Err(e) = self.tab_sandbox.check_network_access(url) {
             log::warn!("fetch_and_load: network access denied for {}: {}", url, e);
-            return Err(e.into());
+            return Err(BrowserError::SandboxViolation(e));
         }
-        let resp = self.http_client.get(url).map_err(|e| {
+        let resp = self.net.http_client.get(url).map_err(|e| {
             log::error!("fetch_and_load: HTTP GET {} failed: {}", url, e);
-            e
+            BrowserError::NetworkError(e.to_string())
         })?;
         log::info!(
             "fetch_and_load: {} returned status {}",
             url,
             resp.status_code
         );
-        self.network_tracker
+        self.net.network_tracker
             .record_request(url, "GET", resp.status_code, "document");
         Ok(self.load_html(url, &resp.body))
     }
@@ -271,7 +318,7 @@ impl BrowserSession {
         // so listings can show where each URL led.
         let cur = self.history_stack.current_index;
         self.history_stack.items[cur].title = self.page_title.clone();
-        self.dom_tree = Some(tree);
+        self.dom.dom_tree = Some(tree);
 
         // Execute <script> tags automatically
         self.execute_scripts();
@@ -283,15 +330,15 @@ impl BrowserSession {
 
     /// Execute all <script> tags in the current DOM tree.
     fn execute_scripts(&mut self) {
-        if self.dom_tree.is_none() {
+        if self.dom.dom_tree.is_none() {
             return;
         }
-        let tree = self.dom_tree.as_mut().unwrap();
+        let tree = self.dom.dom_tree.as_mut().unwrap();
         crate::js::script_runner::execute_page_scripts_full(
             tree,
-            &mut self.js_vm,
-            &mut self.js_scheduler,
-            &mut self.http_client,
+            &mut self.js.js_vm,
+            &mut self.js.js_scheduler,
+            &mut self.net.http_client,
             &mut self.trace_collector,
             &self.current_url,
         );
@@ -301,21 +348,21 @@ impl BrowserSession {
     pub fn eval_js(
         &mut self,
         expr: &str,
-    ) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
-        if self.dom_tree.is_none() {
-            return Err("No DOM tree loaded in session".into());
+    ) -> Result<String, BrowserError> {
+        if self.dom.dom_tree.is_none() {
+            return Err(BrowserError::NoDomLoaded);
         }
 
         // Try web API interception first (timers, fetch, storage, etc.)
-        let timer_seq = self.js_scheduler.seq;
+        let timer_seq = self.js.js_scheduler.seq;
         if let Some(api_result) =
             crate::js::web_apis::eval_web_api(expr, &self.current_url, timer_seq)
         {
             return self.apply_web_api_result(api_result);
         }
 
-        let tree = self.dom_tree.as_mut().unwrap();
-        let res = self.js_vm.eval_statement(tree, expr)?;
+        let tree = self.dom.dom_tree.as_mut().unwrap();
+        let res = self.js.js_vm.eval_statement(tree, expr)?;
         self.trace_collector
             .record_console("info", &format!("Evaluated JS: '{}'", expr));
 
@@ -329,20 +376,20 @@ impl BrowserSession {
     fn apply_web_api_result(
         &mut self,
         result: crate::js::web_apis::WebApiResult,
-    ) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
+    ) -> Result<String, BrowserError> {
         // Handle pending timer
         if let Some((script, delay, is_interval)) = result.pending_timer {
             let id = if is_interval {
-                self.js_scheduler.schedule_interval(&script, delay)
+                self.js.js_scheduler.schedule_interval(&script, delay)
             } else {
-                self.js_scheduler.schedule_timer(&script, delay)
+                self.js.js_scheduler.schedule_timer(&script, delay)
             };
             return Ok(format!("{}", id));
         }
 
         // Handle cancel timer
         if let Some(id) = result.cancel_timer_id {
-            self.js_scheduler.cancel_timer(id);
+            self.js.js_scheduler.cancel_timer(id);
             return Ok("undefined".to_string());
         }
 
@@ -351,12 +398,12 @@ impl BrowserSession {
             let resp = if method == "POST" {
                 let ct = content_type.as_deref().unwrap_or("application/json");
                 let body_str = body.as_deref().unwrap_or("");
-                self.http_client.post(&url, body_str, ct)
+                self.net.http_client.post(&url, body_str, ct)
             } else {
-                self.http_client.get(&url)
+                self.net.http_client.get(&url)
             };
-            let r = resp?;
-            self.network_tracker
+            let r = resp.map_err(|e| BrowserError::NetworkError(e.to_string()))?;
+            self.net.network_tracker
                 .record_request(&url, &method, r.status_code, "fetch");
             let fetch_resp = crate::js::web_apis::build_fetch_response(r.status_code, &r.body);
             return Ok(format!("{:?}", fetch_resp));
@@ -419,12 +466,12 @@ impl BrowserSession {
 
     /// Drain the event loop: execute pending timers/microtasks up to tick_limit.
     pub fn drain_event_loop(&mut self) {
-        let tick_limit = self.js_scheduler.tick_limit;
+        let tick_limit = self.js.js_scheduler.tick_limit;
         let mut ticks = 0;
-        while ticks < tick_limit && self.js_scheduler.has_pending_tasks() {
-            if let Some(task) = self.js_scheduler.pop_next_task() {
-                if let Some(tree) = &mut self.dom_tree {
-                    let _ = self.js_vm.eval_statement(tree, &task.script);
+        while ticks < tick_limit && self.js.js_scheduler.has_pending_tasks() {
+            if let Some(task) = self.js.js_scheduler.pop_next_task() {
+                if let Some(tree) = &mut self.dom.dom_tree {
+                    let _ = self.js.js_vm.eval_statement(tree, &task.script);
                 }
                 ticks += 1;
             } else {
@@ -437,8 +484,8 @@ impl BrowserSession {
     pub fn click(
         &mut self,
         selector: &str,
-    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        if let Some(tree) = &mut self.dom_tree {
+    ) -> Result<(), BrowserError> {
+        if let Some(tree) = &mut self.dom.dom_tree {
             let file_event = self.file_manager.handle_file_input_click(tree, selector);
             if file_event.is_some() {
                 self.trace_collector
@@ -460,7 +507,7 @@ impl BrowserSession {
                 };
                 let _ =
                     SyntheticEventDispatcher::dispatch_pointer_event_static(tree, node_id, event);
-                self.mutation_observer
+                self.dom.mutation_observer
                     .observe_attribute_change(node_id, "click");
                 self.trace_collector.record_mutation(
                     selector,
@@ -471,7 +518,7 @@ impl BrowserSession {
             }
             return self.click_ocr_text(selector);
         }
-        Err("No DOM tree loaded in session".into())
+        Err(BrowserError::NoDomLoaded)
     }
 
     /// Native CSS selector form input filling
@@ -479,8 +526,8 @@ impl BrowserSession {
         &mut self,
         selector: &str,
         text: &str,
-    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        if let Some(tree) = &mut self.dom_tree {
+    ) -> Result<(), BrowserError> {
+        if let Some(tree) = &mut self.dom.dom_tree {
             let target_id = {
                 let matches = CssMatcher::find_matches(&tree.nodes, selector);
                 matches.first().map(|n| n.id)
@@ -491,8 +538,8 @@ impl BrowserSession {
                     let jitter = StealthHumanBehavior::compute_typing_jitter(text.len());
                     node.attributes
                         .insert("value".to_string(), text.to_string());
-                    let _ = self.js_vm.dispatch_event(tree, selector, "input");
-                    self.mutation_observer.observe_attribute_change(id, "value");
+                    let _ = self.js.js_vm.dispatch_event(tree, selector, "input");
+                    self.dom.mutation_observer.observe_attribute_change(id, "value");
                     self.trace_collector.record_mutation(
                         selector,
                         "attribute_changed",
@@ -501,9 +548,9 @@ impl BrowserSession {
                     return Ok(());
                 }
             }
-            return Err(format!("Element with selector '{}' not found", selector).into());
+            return Err(BrowserError::SelectorNotFound(selector.to_string()));
         }
-        Err("No DOM tree loaded in session".into())
+        Err(BrowserError::NoDomLoaded)
     }
 
     pub fn set_storage_item(&mut self, key: &str, value: &str) {
@@ -520,17 +567,18 @@ impl BrowserSession {
         &mut self,
         selector: &str,
         file_path: &str,
-    ) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
+    ) -> Result<String, BrowserError> {
         if let Err(e) = self.tab_sandbox.check_file_access(file_path) {
-            return Err(e.into());
+            return Err(BrowserError::SandboxViolation(e));
         }
-        if let Some(tree) = &mut self.dom_tree {
-            let res = self.file_manager.attach_file(tree, selector, file_path)?;
+        if let Some(tree) = &mut self.dom.dom_tree {
+            let res = self.file_manager.attach_file(tree, selector, file_path)
+                .map_err(|e| BrowserError::NetworkError(e.to_string()))?;
             self.trace_collector
                 .record_mutation(selector, "file_attached", file_path);
             return Ok(res);
         }
-        Err("No DOM tree loaded in session".into())
+        Err(BrowserError::NoDomLoaded)
     }
 
     /// Scroll the viewport by a pixel delta. Offsets are clamped at the
@@ -540,7 +588,7 @@ impl BrowserSession {
         &mut self,
         delta_x: i32,
         delta_y: i32,
-    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    ) -> Result<(), BrowserError> {
         self.scroll_x = (self.scroll_x + delta_x as f32).max(0.0);
         self.scroll_y = (self.scroll_y + delta_y as f32).max(0.0);
         self.trace_collector.record_console(
@@ -553,13 +601,13 @@ impl BrowserSession {
     pub fn hover(
         &mut self,
         selector: &str,
-    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    ) -> Result<(), BrowserError> {
         self.trace_collector
             .record_console("info", &format!("Hovered native selector '{}'", selector));
         Ok(())
     }
 
-    pub fn press_key(&mut self, key: &str) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    pub fn press_key(&mut self, key: &str) -> Result<(), BrowserError> {
         self.trace_collector
             .record_console("info", &format!("Pressed key '{}'", key));
         Ok(())
@@ -574,7 +622,7 @@ impl BrowserSession {
     /// Build the CSS selector that best identifies a node for JS event
     /// dispatch: prefer its `id` attribute, else fall back to its tag name.
     fn selector_for_node(&self, node_id: usize) -> Option<String> {
-        let tree = self.dom_tree.as_ref()?;
+        let tree = self.dom.dom_tree.as_ref()?;
         let node = tree.get_node(node_id)?;
         if let Some(id) = node.attributes.get("id") {
             if !id.is_empty() {
@@ -591,7 +639,7 @@ impl BrowserSession {
     pub fn agent_click(&mut self, node_id: usize) -> AgentActionResult {
         let before = self.capture_state_document();
         let selector = self.selector_for_node(node_id);
-        let dispatched = if let Some(tree) = &mut self.dom_tree {
+        let dispatched = if let Some(tree) = &mut self.dom.dom_tree {
             if tree.get_node(node_id).is_some() {
                 let event = PointerEvent {
                     event_type: "click".to_string(),
@@ -605,9 +653,9 @@ impl BrowserSession {
                 let _ =
                     SyntheticEventDispatcher::dispatch_pointer_event_static(tree, node_id, event);
                 if let Some(sel) = &selector {
-                    let _ = self.js_vm.dispatch_event(tree, sel, "click");
+                    let _ = self.js.js_vm.dispatch_event(tree, sel, "click");
                 }
-                self.mutation_observer
+                self.dom.mutation_observer
                     .observe_attribute_change(node_id, "click");
                 true
             } else {
@@ -621,7 +669,7 @@ impl BrowserSession {
         // a navigable target, perform a full fetch-and-load.
         if dispatched {
             let href = self
-                .dom_tree
+                .dom.dom_tree
                 .as_ref()
                 .and_then(|tree| tree.get_node(node_id))
                 .filter(|node| node.tag_name == "a")
@@ -648,7 +696,7 @@ impl BrowserSession {
     pub fn agent_type(&mut self, node_id: usize, text: &str) -> AgentActionResult {
         let before = self.capture_state_document();
         let selector = self.selector_for_node(node_id);
-        let ok = if let Some(tree) = &mut self.dom_tree {
+        let ok = if let Some(tree) = &mut self.dom.dom_tree {
             let found = if let Some(node) = tree.get_node_mut(node_id) {
                 node.attributes
                     .insert("value".to_string(), text.to_string());
@@ -658,9 +706,9 @@ impl BrowserSession {
             };
             if found {
                 if let Some(sel) = &selector {
-                    let _ = self.js_vm.dispatch_event(tree, sel, "input");
+                    let _ = self.js.js_vm.dispatch_event(tree, sel, "input");
                 }
-                self.mutation_observer
+                self.dom.mutation_observer
                     .observe_attribute_change(node_id, "value");
             }
             found
@@ -681,7 +729,7 @@ impl BrowserSession {
     pub fn agent_select(&mut self, node_id: usize, value: &str) -> AgentActionResult {
         let before = self.capture_state_document();
         let selector = self.selector_for_node(node_id);
-        let ok = if let Some(tree) = &mut self.dom_tree {
+        let ok = if let Some(tree) = &mut self.dom.dom_tree {
             let found = if let Some(node) = tree.get_node_mut(node_id) {
                 node.attributes
                     .insert("value".to_string(), value.to_string());
@@ -691,9 +739,9 @@ impl BrowserSession {
             };
             if found {
                 if let Some(sel) = &selector {
-                    let _ = self.js_vm.dispatch_event(tree, sel, "change");
+                    let _ = self.js.js_vm.dispatch_event(tree, sel, "change");
                 }
-                self.mutation_observer
+                self.dom.mutation_observer
                     .observe_attribute_change(node_id, "value");
             }
             found
@@ -718,12 +766,12 @@ impl BrowserSession {
         let selector = self.selector_for_node(node_id);
 
         // Fire JS submit event
-        if let Some(tree) = &mut self.dom_tree {
+        if let Some(tree) = &mut self.dom.dom_tree {
             if tree.get_node(node_id).is_some() {
                 if let Some(sel) = &selector {
-                    let _ = self.js_vm.dispatch_event(tree, sel, "submit");
+                    let _ = self.js.js_vm.dispatch_event(tree, sel, "submit");
                 }
-                self.mutation_observer
+                self.dom.mutation_observer
                     .observe_attribute_change(node_id, "submit");
             }
         }
@@ -733,13 +781,13 @@ impl BrowserSession {
             self.collect_form_submission(node_id)
         {
             if method.eq_ignore_ascii_case("post") {
-                match self.http_client.post(
+                match self.net.http_client.post(
                     &action_url,
                     &encoded_body,
                     "application/x-www-form-urlencoded",
                 ) {
                     Ok(resp) => {
-                        self.network_tracker.record_request(
+                        self.net.network_tracker.record_request(
                             &action_url,
                             "POST",
                             resp.status_code,
@@ -797,7 +845,7 @@ impl BrowserSession {
                 NdaDelta::default(),
             );
         };
-        let target = self.dom_tree.as_ref().and_then(|tree| {
+        let target = self.dom.dom_tree.as_ref().and_then(|tree| {
             let layout_engine = LayoutEngine2D::new(self.cascader.clone());
             layout_engine
                 .build_layout_tree(tree)
@@ -906,7 +954,7 @@ impl BrowserSession {
     /// whitespace collapsed. This is the raw material `remember` feeds into
     /// vector memory so pages can be recalled semantically later.
     pub fn page_text(&self) -> String {
-        let Some(tree) = self.dom_tree.as_ref() else {
+        let Some(tree) = self.dom.dom_tree.as_ref() else {
             return String::new();
         };
         let mut buf = String::new();
@@ -979,7 +1027,7 @@ impl BrowserSession {
     /// Structure costs the agent almost nothing and disambiguates a page far
     /// better than flat text.
     pub fn page_markdown(&self) -> String {
-        let Some(tree) = self.dom_tree.as_ref() else {
+        let Some(tree) = self.dom.dom_tree.as_ref() else {
             return String::new();
         };
         let mut out = String::new();
@@ -1001,7 +1049,7 @@ impl BrowserSession {
     /// `<body>`, and drops containers whose class/id look like chrome
     /// (sidebar, cookie banner, ...). The cheapest way to read an article.
     pub fn page_content_markdown(&self) -> String {
-        let Some(tree) = self.dom_tree.as_ref() else {
+        let Some(tree) = self.dom.dom_tree.as_ref() else {
             return String::new();
         };
         let root = ["main", "article", "body"]
@@ -1173,7 +1221,7 @@ impl BrowserSession {
     /// Every table on the page rendered as markdown rows — the densest
     /// faithful encoding of tabular data for an agent.
     pub fn page_tables_text(&self) -> String {
-        let Some(tree) = self.dom_tree.as_ref() else {
+        let Some(tree) = self.dom.dom_tree.as_ref() else {
             return String::new();
         };
         let mut out = String::new();
@@ -1250,7 +1298,7 @@ impl BrowserSession {
     /// One-screen structural digest: title, element counts and the heading
     /// outline. Enough to decide whether a page is worth reading in full.
     pub fn page_summary_text(&self) -> String {
-        let Some(tree) = self.dom_tree.as_ref() else {
+        let Some(tree) = self.dom.dom_tree.as_ref() else {
             return String::new();
         };
         let (mut links, mut forms, mut images, mut interactive, mut tables) =
@@ -1308,7 +1356,7 @@ impl BrowserSession {
     /// (case-insensitive) name matches beat substring matches; among equal
     /// ranks the more actionable node wins. `role_ok` filters candidate roles.
     fn resolve_node_by_name(&self, query: &str, role_ok: fn(&str) -> bool) -> Option<usize> {
-        let tree = self.dom_tree.as_ref()?;
+        let tree = self.dom.dom_tree.as_ref()?;
         let needle = query.trim().to_lowercase();
         if needle.is_empty() {
             return None;
@@ -1380,7 +1428,7 @@ impl BrowserSession {
         };
         let before = self.capture_state_document();
         let selector = self.selector_for_node(node_id);
-        if let Some(tree) = &mut self.dom_tree {
+        if let Some(tree) = &mut self.dom.dom_tree {
             if let Some(node) = tree.get_node_mut(node_id) {
                 if state {
                     node.attributes
@@ -1390,9 +1438,9 @@ impl BrowserSession {
                 }
             }
             if let Some(sel) = &selector {
-                let _ = self.js_vm.dispatch_event(tree, sel, "change");
+                let _ = self.js.js_vm.dispatch_event(tree, sel, "change");
             }
-            self.mutation_observer
+            self.dom.mutation_observer
                 .observe_attribute_change(node_id, "checked");
         }
         let after = self.capture_state_document();
@@ -1408,7 +1456,7 @@ impl BrowserSession {
     /// `name [role] = value` line per fillable/checkable control, checkables
     /// shown as checked/unchecked. The read-only sibling of the fill actions.
     pub fn agent_read_form(&self) -> String {
-        let Some(tree) = &self.dom_tree else {
+        let Some(tree) = &self.dom.dom_tree else {
             return String::new();
         };
         let aom_nodes = AgenticAomTree::build_aom_nodes(tree);
@@ -1450,7 +1498,7 @@ impl BrowserSession {
     pub fn agent_focus(&mut self, node_id: usize) -> AgentActionResult {
         let before = self.capture_state_document();
         let exists = self
-            .dom_tree
+            .dom.dom_tree
             .as_ref()
             .and_then(|t| t.get_node(node_id))
             .is_some();
@@ -1458,19 +1506,19 @@ impl BrowserSession {
             let old = self.focused_node.take();
             if let (Some(old_id), Some(sel)) = (old, old.and_then(|id| self.selector_for_node(id)))
             {
-                if let Some(tree) = &mut self.dom_tree {
-                    let _ = self.js_vm.dispatch_event(tree, &sel, "blur");
+                if let Some(tree) = &mut self.dom.dom_tree {
+                    let _ = self.js.js_vm.dispatch_event(tree, &sel, "blur");
                 }
-                self.mutation_observer
+                self.dom.mutation_observer
                     .observe_attribute_change(old_id, "blur");
             }
             self.focused_node = Some(node_id);
             if let Some(sel) = self.selector_for_node(node_id) {
-                if let Some(tree) = &mut self.dom_tree {
-                    let _ = self.js_vm.dispatch_event(tree, &sel, "focus");
+                if let Some(tree) = &mut self.dom.dom_tree {
+                    let _ = self.js.js_vm.dispatch_event(tree, &sel, "focus");
                 }
             }
-            self.mutation_observer
+            self.dom.mutation_observer
                 .observe_attribute_change(node_id, "focus");
         }
         let after = self.capture_state_document();
@@ -1505,8 +1553,8 @@ impl BrowserSession {
         };
         let before = self.capture_state_document();
         let selector = self.selector_for_node(node_id);
-        if let (Some(tree), Some(sel)) = (&mut self.dom_tree, &selector) {
-            let _ = self.js_vm.dispatch_event(tree, sel, "keydown");
+        if let (Some(tree), Some(sel)) = (&mut self.dom.dom_tree, &selector) {
+            let _ = self.js.js_vm.dispatch_event(tree, sel, "keydown");
         }
 
         let status = match key {
@@ -1520,7 +1568,7 @@ impl BrowserSession {
             }
             "Tab" => {
                 // Advance to the next focusable node by DOM order, wrapping.
-                let next = self.dom_tree.as_ref().map(|tree| {
+                let next = self.dom.dom_tree.as_ref().map(|tree| {
                     let mut focusables: Vec<usize> = AgenticAomTree::build_aom_nodes(tree)
                         .iter()
                         .filter(|n| Self::is_focusable_role(&n.role))
@@ -1545,15 +1593,15 @@ impl BrowserSession {
                 // Single visible characters type into the focused control.
                 let mut chars = key.chars();
                 if let (Some(ch), None) = (chars.next(), chars.next()) {
-                    if let Some(tree) = &mut self.dom_tree {
+                    if let Some(tree) = &mut self.dom.dom_tree {
                         if let Some(node) = tree.get_node_mut(node_id) {
                             let value = node.attributes.entry("value".to_string()).or_default();
                             value.push(ch);
                         }
                         if let Some(sel) = &selector {
-                            let _ = self.js_vm.dispatch_event(tree, sel, "input");
+                            let _ = self.js.js_vm.dispatch_event(tree, sel, "input");
                         }
-                        self.mutation_observer
+                        self.dom.mutation_observer
                             .observe_attribute_change(node_id, "value");
                     }
                 }
@@ -1561,8 +1609,8 @@ impl BrowserSession {
             }
         };
 
-        if let (Some(tree), Some(sel)) = (&mut self.dom_tree, &selector) {
-            let _ = self.js_vm.dispatch_event(tree, sel, "keyup");
+        if let (Some(tree), Some(sel)) = (&mut self.dom.dom_tree, &selector) {
+            let _ = self.js.js_vm.dispatch_event(tree, sel, "keyup");
         }
         let after = self.capture_state_document();
         AgentActionResult::new(status, diff(&before, &after))
@@ -1582,7 +1630,7 @@ impl BrowserSession {
         // under whitespace text nodes or <optgroup>): exact text/value match
         // beats substring.
         let needle = option.trim().to_lowercase();
-        let chosen = self.dom_tree.as_ref().and_then(|tree| {
+        let chosen = self.dom.dom_tree.as_ref().and_then(|tree| {
             let select = tree.get_node(select_id)?;
             let mut best: Option<(u8, usize, String)> = None;
             let mut stack: Vec<usize> = select.children.clone();
@@ -1631,7 +1679,7 @@ impl BrowserSession {
 
         let before = self.capture_state_document();
         let selector = self.selector_for_node(select_id);
-        if let Some(tree) = &mut self.dom_tree {
+        if let Some(tree) = &mut self.dom.dom_tree {
             // Clear selection from every option under the select, then mark
             // the chosen one.
             let mut stack = tree
@@ -1655,9 +1703,9 @@ impl BrowserSession {
                 node.attributes.insert("value".to_string(), value.clone());
             }
             if let Some(sel) = &selector {
-                let _ = self.js_vm.dispatch_event(tree, sel, "change");
+                let _ = self.js.js_vm.dispatch_event(tree, sel, "change");
             }
-            self.mutation_observer
+            self.dom.mutation_observer
                 .observe_attribute_change(select_id, "value");
         }
         let after = self.capture_state_document();
@@ -1704,7 +1752,7 @@ impl BrowserSession {
 
     /// Walk up the DOM from `node_id` to find the enclosing `<form>` element.
     fn find_enclosing_form(&self, node_id: usize) -> Option<usize> {
-        let tree = self.dom_tree.as_ref()?;
+        let tree = self.dom.dom_tree.as_ref()?;
         let mut current = node_id;
         loop {
             let node = tree.get_node(current)?;
@@ -1718,7 +1766,7 @@ impl BrowserSession {
     /// Collect form submission parameters: returns (method, action_url, url-encoded body).
     fn collect_form_submission(&self, node_id: usize) -> Option<(String, String, String)> {
         let form_id = self.find_enclosing_form(node_id)?;
-        let tree = self.dom_tree.as_ref()?;
+        let tree = self.dom.dom_tree.as_ref()?;
         let form_node = tree.get_node(form_id)?;
         let method = form_node
             .attributes
@@ -1765,7 +1813,7 @@ impl BrowserSession {
             .extend(self.trace_collector.export_traces_nda());
         encoder
             .triples
-            .extend(self.mutation_observer.export_mutations_nda());
+            .extend(self.dom.mutation_observer.export_mutations_nda());
         encoder
             .triples
             .extend(self.storage_broadcaster.export_events_nda());
@@ -1803,7 +1851,7 @@ impl BrowserSession {
                 .handle_agent_inspection(&self.session_id),
         );
 
-        if let Some(tree) = &self.dom_tree {
+        if let Some(tree) = &self.dom.dom_tree {
             if let Some(c_type) = CaptchaSolverEngine::detect_challenge(tree) {
                 encoder
                     .triples
@@ -1820,13 +1868,13 @@ impl BrowserSession {
             .extend(self.ocr_engine.export_ocr_nda(&self.session_id, &ocr_boxes));
 
         // Add unmanaged slab node triples
-        for slot in &self.slab_tree.arena.slots {
+        for slot in &self.dom.slab_tree.arena.slots {
             let slot_str = format!("slab_slot_{}", slot.slot_id);
             encoder.encode_fact(&self.session_id, 210, &slot_str);
         }
 
         // Add native Agentic AOM and 2D Layout Bounding Box triples
-        if let Some(tree) = &self.dom_tree {
+        if let Some(tree) = &self.dom.dom_tree {
             let aom_nodes = AgenticAomTree::build_aom_nodes(tree);
             for t in AgenticAomTree::to_nda_triples(&aom_nodes) {
                 encoder.triples.push(t);
@@ -1861,17 +1909,17 @@ impl BrowserSession {
         encoder
             .triples
             .extend(ShadowFrameExtractor::extract_shadow_hosts_nda(
-                &self.shadow_hosts,
+                &self.dom.shadow_hosts,
             ));
         encoder
             .triples
-            .extend(ShadowFrameExtractor::extract_frames_nda(&self.frames));
+            .extend(ShadowFrameExtractor::extract_frames_nda(&self.dom.frames));
         encoder
             .triples
-            .extend(CanvasExtractor::extract_canvases_nda(&self.canvases));
+            .extend(CanvasExtractor::extract_canvases_nda(&self.dom.canvases));
         encoder
             .triples
-            .extend(self.network_tracker.export_triples_nda());
+            .extend(self.net.network_tracker.export_triples_nda());
 
         encoder.triples
     }
@@ -1910,7 +1958,7 @@ impl BrowserSession {
             doc.push_str(k, SESSION_STORAGE, v);
         }
 
-        if let Some(tree) = &self.dom_tree {
+        if let Some(tree) = &self.dom.dom_tree {
             // Readable AOM: roles/names/values survive as recoverable strings.
             let aom_nodes = AgenticAomTree::build_aom_nodes(tree);
             doc.merge(&AgenticAomTree::to_nda_document(&aom_nodes));
@@ -2010,7 +2058,7 @@ impl BrowserSession {
         }
 
         // Canvas contents as readable literals (drawn text/shapes/images).
-        doc.merge(&CanvasExtractor::extract_canvases_document(&self.canvases));
+        doc.merge(&CanvasExtractor::extract_canvases_document(&self.dom.canvases));
 
         // Session-level keyboard focus is a fact the agent can diff on.
         if let Some(id) = self.focused_node {
@@ -2094,7 +2142,7 @@ mod agent_action_tests {
 
     fn node_id_by_tag(session: &BrowserSession, tag: &str) -> usize {
         session
-            .dom_tree
+            .dom.dom_tree
             .as_ref()
             .unwrap()
             .nodes
@@ -2134,7 +2182,7 @@ mod agent_action_tests {
         let button_id = node_id_by_tag(&session, "button");
 
         // A real click listener toggles aria-expanded via the native DOM bridge.
-        session.js_vm.add_event_listener(
+        session.js.js_vm.add_event_listener(
             "#b",
             "click",
             "document.getElementById('b').setAttribute('aria-expanded','true')",
@@ -2267,7 +2315,7 @@ mod agent_action_tests {
         let result = session.agent_check_by_label("Subscribe", true);
         assert!(result.status.contains("checked"), "got {}", result.status);
         let checked = session
-            .dom_tree
+            .dom.dom_tree
             .as_ref()
             .unwrap()
             .get_node(checkbox_id)
@@ -2279,7 +2327,7 @@ mod agent_action_tests {
         let result = session.agent_check_by_label("Subscribe", false);
         assert!(result.status.contains("unchecked"), "got {}", result.status);
         let checked = session
-            .dom_tree
+            .dom.dom_tree
             .as_ref()
             .unwrap()
             .get_node(checkbox_id)
@@ -2351,7 +2399,7 @@ mod agent_action_tests {
             result.status
         );
         let value = session
-            .dom_tree
+            .dom.dom_tree
             .as_ref()
             .unwrap()
             .get_node(input_id)
@@ -2428,7 +2476,7 @@ mod agent_action_tests {
             result.status
         );
         let value = session
-            .dom_tree
+            .dom.dom_tree
             .as_ref()
             .unwrap()
             .get_node(select_id)
@@ -2451,7 +2499,7 @@ mod agent_action_tests {
              </select>",
         );
         session.agent_select_by_label("Country", "pt");
-        let tree = session.dom_tree.as_ref().unwrap();
+        let tree = session.dom.dom_tree.as_ref().unwrap();
         let selected: Vec<String> = tree
             .nodes
             .iter()
@@ -2485,7 +2533,7 @@ mod agent_action_tests {
         // Shrink the viewport so only the first paragraph starts in view.
         session.viewport_height = 10.0;
         let second_p = session
-            .dom_tree
+            .dom.dom_tree
             .as_ref()
             .unwrap()
             .nodes

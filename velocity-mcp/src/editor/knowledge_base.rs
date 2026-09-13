@@ -62,6 +62,9 @@ struct PersistStore {
     chunks: Vec<PersistChunk>,
 }
 
+/// Maximum number of knowledge base chunks retained before eviction.
+const MAX_CHUNKS: usize = 4096;
+
 /// The workspace knowledge base.
 #[derive(Debug, Clone, Default)]
 pub struct KnowledgeBase {
@@ -93,6 +96,11 @@ impl KnowledgeBase {
                 magnitude: 0.0,
             });
             added += 1;
+        }
+        // Evict oldest chunks if over capacity.
+        if self.chunks.len() > MAX_CHUNKS {
+            let excess = self.chunks.len() - MAX_CHUNKS;
+            self.chunks.drain(..excess);
         }
         self.rebuild();
         added
