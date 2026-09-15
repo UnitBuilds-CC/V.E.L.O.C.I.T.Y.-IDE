@@ -679,6 +679,40 @@ pub fn handle_system_tool(
                 "results": hits
             }))?
         }
+        // ── Workspace Indexing ──────────────────────────────────────────────
+        "index_workspace" => {
+            let target = if let Some(rel) = arguments["path"].as_str() {
+                resolve_workspace_path(root, rel, false)?
+            } else {
+                root.to_path_buf()
+            };
+            let sitemap_dir = root.join(".velocity").join("site_map");
+            let weight_root =
+                velocity_ide::site_map::SiteMap::read_persisted_weight_root(&sitemap_dir)
+                    .unwrap_or(0);
+            let mut sm = velocity_ide::site_map::SiteMap::open(&sitemap_dir, weight_root)
+                .map_err(|e| format!("Failed to open site map: {e}"))?;
+            let reports =
+                velocity_ide::compiler::rust_to_nda::RustToNda::compile_directory(&target, &mut sm)
+                    .map_err(|e| format!("Indexing failed: {e}"))?;
+            let files_indexed = reports.len();
+            let total_functions: usize = reports.iter().map(|r| r.functions).sum();
+            let total_nodes: usize = reports.iter().map(|r| r.nodes_stored).sum();
+            let total_calls: usize = reports.iter().map(|r| r.call_graph.len()).sum();
+            let elapsed_ms: u128 = reports.iter().map(|r| r.elapsed_ms).sum();
+            // Drop the site map to flush the dictionary to disk before returning.
+            drop(sm);
+            serde_json::to_string(&json!({
+                "success": true,
+                "target": target.display().to_string(),
+                "filesIndexed": files_indexed,
+                "totalFunctions": total_functions,
+                "totalNodes": total_nodes,
+                "totalCallEdges": total_calls,
+                "elapsedMs": elapsed_ms,
+                "sitemapDir": sitemap_dir.display().to_string()
+            }))?
+        }
         // ── Workflows ───────────────────────────────────────────────────────
         "workflow_run" => {
             let id = arguments["id"].as_str().ok_or("id is required")?;

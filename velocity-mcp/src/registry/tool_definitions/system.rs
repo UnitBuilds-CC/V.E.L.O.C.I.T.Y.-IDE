@@ -249,6 +249,18 @@ pub fn get_system_tools() -> Vec<Tool> {
                 "required": ["query"]
             }),
         },
+        // ── Workspace Indexing ───────────────────────────────────────────────
+        Tool {
+            name: "index_workspace".to_string(),
+            description: "Index the workspace by compiling all Rust source files into the site map (NDA triples). This populates the symbol graph, enables the wiki, and gives the IDE semantic understanding of the codebase. Must be run at least once before graph/wiki panels return data. Safe to re-run — updates incrementally.".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "path": { "type": "string", "description": "Optional workspace-relative subdirectory to limit indexing. Omit to index the entire workspace." }
+                },
+                "required": []
+            }),
+        },
         // ── Workflows ───────────────────────────────────────────────────────
         Tool {
             name: "workflow_run".to_string(),
