@@ -12,6 +12,7 @@ pub mod chaos;
 pub mod key_rotation;
 pub mod policy;
 pub mod rate_limit;
+pub mod sandbox;
 pub mod sanitize;
 pub mod secrets;
 pub mod threat_model;

@@ -29,19 +29,9 @@ fn load_runtime_accounts(
     )
 }
 
-/// Load Velocity Router settings from workspace preferences.
+/// Load Velocity Router settings from the dedicated provider-settings file.
 fn load_router_settings(workspace_root: &PathBuf) -> WorkspaceRouterSettings {
-    let prefs_path = workspace_root.join(".velocity").join("workspace-preferences.json");
-    if let Ok(content) = std::fs::read_to_string(&prefs_path) {
-        if let Ok(prefs) = serde_json::from_str::<serde_json::Value>(&content) {
-            if let Some(router) = prefs.get("provider_settings").and_then(|p| p.get("velocity_router")) {
-                if let Ok(settings) = serde_json::from_value::<WorkspaceRouterSettings>(router.clone()) {
-                    return settings;
-                }
-            }
-        }
-    }
-    WorkspaceRouterSettings::default()
+    load_workspace_provider_settings(workspace_root).velocity_router
 }
 
 fn initial_provider_from_env() -> AiProvider {

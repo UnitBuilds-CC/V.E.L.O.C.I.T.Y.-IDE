@@ -119,30 +119,11 @@ pub fn load_or_generate_token(workspace_root: &std::path::Path) -> String {
     generate_and_persist_token(workspace_root)
 }
 
-/// Generate a random hex-encoded token using the OS RNG.
+/// Generate a random hex-encoded token using the OS cryptographic RNG.
 fn random_hex_token(bytes: usize) -> String {
-    // Use a simple approach that doesn't require additional dependencies.
-    // We use the system time + process id as entropy source, then hash it.
-    use std::collections::hash_map::DefaultHasher;
-    use std::hash::{Hash, Hasher};
-    use std::time::SystemTime;
-
-    let mut token_bytes = Vec::with_capacity(bytes);
-    let seed = SystemTime::now()
-        .duration_since(SystemTime::UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_nanos();
-    let pid = std::process::id() as u64;
-
-    for i in 0..bytes {
-        let mut hasher = DefaultHasher::new();
-        seed.hash(&mut hasher);
-        pid.hash(&mut hasher);
-        (i as u64).hash(&mut hasher);
-        let h = hasher.finish();
-        token_bytes.push((h & 0xFF) as u8);
-    }
-    token_bytes.iter().map(|b| format!("{:02x}", b)).collect()
+    let mut buf = vec![0u8; bytes];
+    getrandom::fill(&mut buf).expect("cryptographic RNG unavailable");
+    buf.iter().map(|b| format!("{:02x}", b)).collect()
 }
 
 /// Validate that a path is safe to open:

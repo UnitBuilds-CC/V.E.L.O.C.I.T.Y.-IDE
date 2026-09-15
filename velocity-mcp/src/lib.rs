@@ -38,3 +38,4 @@ pub mod shutdown;
 pub mod telemetry;
 pub mod usage;
 pub mod wa;
+pub mod wasm_runtime;
