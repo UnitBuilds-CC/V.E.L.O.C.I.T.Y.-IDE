@@ -261,6 +261,53 @@ pub fn get_system_tools() -> Vec<Tool> {
                 "required": []
             }),
         },
+        // ── Custom Tool Management ───────────────────────────────────────────
+        Tool {
+            name: "tool_register".to_string(),
+            description: "Register a new custom tool backed by a shell command. The tool becomes immediately available for invocation without restarting the MCP server. Use {{param}} placeholders in the command to substitute argument values at call time. Custom tools are persisted to .velocity/custom_tools.json and survive restarts.".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "name":        { "type": "string",  "description": "Unique tool name (must not collide with built-in tools)." },
+                    "description": { "type": "string",  "description": "Human-readable description shown in tools/list." },
+                    "command":     { "type": "string",  "description": "Shell command to execute. Use {{param}} for argument substitution." },
+                    "parameters":  { "type": "object",  "description": "JSON Schema properties object for the tool's input parameters (optional)." }
+                },
+                "required": ["name", "description", "command"]
+            }),
+        },
+        Tool {
+            name: "tool_unregister".to_string(),
+            description: "Remove a previously registered custom tool. The tool is removed from the active list and from disk persistence.".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "name": { "type": "string", "description": "Name of the custom tool to remove." }
+                },
+                "required": ["name"]
+            }),
+        },
+        Tool {
+            name: "tool_list_custom".to_string(),
+            description: "List all dynamically registered custom tools with their names, descriptions, and input schemas.".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {},
+                "required": []
+            }),
+        },
+        // ── Audit & Observability ──────────────────────────────────────────
+        Tool {
+            name: "audit_status".to_string(),
+            description: "Show the tool execution audit log status: total entries recorded, active sessions, and the most recent tool calls with their outcomes and durations. Useful for verifying that all tool invocations are being tracked.".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "limit": { "type": "integer", "description": "Max recent entries to return (default 10, max 100)." }
+                },
+                "required": []
+            }),
+        },
         // ── Workflows ───────────────────────────────────────────────────────
         Tool {
             name: "workflow_run".to_string(),

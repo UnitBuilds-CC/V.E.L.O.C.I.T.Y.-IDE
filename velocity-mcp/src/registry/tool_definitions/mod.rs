@@ -12,5 +12,8 @@ pub fn get_tools() -> Vec<Tool> {
     tools.extend(wa::get_wa_tools());
     tools.extend(team::get_team_tools());
     tools.extend(drone::get_drone_tools());
+    // Include dynamically registered custom tools.
+    let root = std::env::current_dir().unwrap_or_default();
+    tools.extend(super::custom_tools::list_tools(&root));
     tools
 }

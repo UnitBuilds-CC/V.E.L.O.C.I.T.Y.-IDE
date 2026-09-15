@@ -713,6 +713,71 @@ pub fn handle_system_tool(
                 "sitemapDir": sitemap_dir.display().to_string()
             }))?
         }
+        // ── Custom Tool Management ──────────────────────────────────────────
+        "tool_register" => {
+            let name = arguments["name"].as_str().ok_or("name is required")?;
+            let description = arguments["description"]
+                .as_str()
+                .ok_or("description is required")?;
+            let command = arguments["command"]
+                .as_str()
+                .ok_or("command is required")?;
+            let parameters = arguments["parameters"]
+                .as_object()
+                .cloned()
+                .unwrap_or_default();
+            let input_schema = serde_json::json!({
+                "type": "object",
+                "properties": parameters,
+                "required": parameters.keys().collect::<Vec<_>>()
+            });
+            let tool = super::custom_tools::CustomTool {
+                name: name.to_string(),
+                description: description.to_string(),
+                command: command.to_string(),
+                input_schema,
+            };
+            super::custom_tools::register_tool(root, tool)
+                .map_err(|e| e.to_string())?
+        }
+        "tool_unregister" => {
+            let name = arguments["name"].as_str().ok_or("name is required")?;
+            super::custom_tools::unregister_tool(root, name)
+                .map_err(|e| e.to_string())?
+        }
+        "tool_list_custom" => {
+            let tools = super::custom_tools::list_tools(root);
+            serde_json::to_string(&json!({
+                "count": tools.len(),
+                "tools": tools.iter().map(|t| json!({
+                    "name": t.name,
+                    "description": t.description,
+                    "inputSchema": t.input_schema
+                })).collect::<Vec<_>>()
+            }))?
+        }
+        // ── Audit & Observability ──────────────────────────────────────────
+        "audit_status" => {
+            let limit = arguments["limit"].as_u64().unwrap_or(10).min(100) as usize;
+            let registry = crate::security::audit::tool_audit_registry();
+            let all = registry.aggregate_all();
+            let total = all.len();
+            let sessions = registry.session_count();
+            let recent: Vec<_> = all.iter().take(limit).map(|e| {
+                json!({
+                    "seq": e.sequence,
+                    "tool": e.tool_name,
+                    "duration_us": e.duration_us,
+                    "outcome": format!("{:?}", e.outcome),
+                    "timestamp_ms": e.timestamp_ms
+                })
+            }).collect();
+            serde_json::to_string(&json!({
+                "totalEntries": total,
+                "activeSessions": sessions,
+                "recent": recent
+            }))?
+        }
         // ── Workflows ───────────────────────────────────────────────────────
         "workflow_run" => {
             let id = arguments["id"].as_str().ok_or("id is required")?;

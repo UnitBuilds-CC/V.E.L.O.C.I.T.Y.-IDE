@@ -1,4 +1,5 @@
 pub mod browser_tools;
+pub mod custom_tools;
 pub mod dispatch;
 pub mod lazy;
 pub mod parsers;
