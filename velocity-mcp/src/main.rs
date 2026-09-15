@@ -88,6 +88,7 @@ fn main() {
     let mut mode = "stdio";
     let mut buffer_path = "nmcp_buffer.bin";
     let mut tokenize_prompt = None;
+    let mut workspace_path: Option<String> = None;
 
     let mut i = 1;
     while i < args.len() {
@@ -107,6 +108,15 @@ fn main() {
                     i += 2;
                 } else {
                     eprintln!("Error: --buffer-path requires an argument");
+                    process::exit(1);
+                }
+            }
+            "--workspace" => {
+                if i + 1 < args.len() {
+                    workspace_path = Some(args[i + 1].clone());
+                    i += 2;
+                } else {
+                    eprintln!("Error: --workspace requires a directory path argument");
                     process::exit(1);
                 }
             }
@@ -133,6 +143,26 @@ fn main() {
                 process::exit(1);
             }
         }
+    }
+
+    // If a workspace path was specified, change to that directory so all
+    // workspace-relative tools (read_file, write_file, grep_search, etc.)
+    // operate on the correct project.
+    if let Some(ref ws) = workspace_path {
+        let ws_path = std::path::Path::new(ws);
+        if !ws_path.exists() {
+            eprintln!("Error: workspace path does not exist: {}", ws);
+            process::exit(1);
+        }
+        if !ws_path.is_dir() {
+            eprintln!("Error: workspace path is not a directory: {}", ws);
+            process::exit(1);
+        }
+        if let Err(e) = env::set_current_dir(ws_path) {
+            eprintln!("Error: failed to set workspace to {}: {}", ws, e);
+            process::exit(1);
+        }
+        eprintln!("Workspace set to: {}", ws_path.display());
     }
 
     if let Some(prompt) = tokenize_prompt {
@@ -174,6 +204,7 @@ fn print_help() {
     println!();
     println!("Options:");
     println!("  --mode <stdio|shmem>        Protocol mode. stdio (JSON-RPC) or shmem (Shared Memory binary).");
+    println!("  --workspace <path>           Set the workspace root directory. All file tools operate relative to this path.");
     println!("  --buffer-path <path>        Path to mapped buffer file. Only used in shmem mode.");
     println!("  --tokenize <prompt>         Run the NDA-embedded tokenizer demonstration on the text prompt");
     println!("  --check                     Run `cargo check` and exit with a summary");
