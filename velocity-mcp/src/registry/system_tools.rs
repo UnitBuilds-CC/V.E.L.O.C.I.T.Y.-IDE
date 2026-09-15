@@ -445,13 +445,13 @@ pub fn handle_system_tool(
             let cmd_str = arguments["command"].as_str().ok_or("command is required")?;
 
             let (shell, arg) = if cfg!(target_os = "windows") {
-                ("cmd", "/C")
+                ("powershell", "-NoProfile -Command")
             } else {
                 ("sh", "-c")
             };
 
             let output = Command::new(shell)
-                .arg(arg)
+                .args(arg.split_whitespace())
                 .arg(cmd_str)
                 .current_dir(root)
                 .output()?;
