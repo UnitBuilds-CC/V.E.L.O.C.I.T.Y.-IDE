@@ -598,3 +598,88 @@ fn run_child_with_timeout_captures_quick_child() {
     let out = crate::registry::system_tools::run_child_with_timeout(child).unwrap();
     assert!(out.contains("sidecar-ok"), "got: {out}");
 }
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Bug #13: dispatch records must resolve outcome immediately (not stay Pending)
+// ═══════════════════════════════════════════════════════════════════════════
+
+/// A successful tool call must be recorded with outcome="success", not the
+/// old behavior of writing "pending" forever.
+#[test]
+fn dispatch_records_success_outcome() {
+    let (_temp, root) = setup_root();
+    call_tool_in_workspace(
+        &root,
+        "write_file",
+        &json!({"relativeFilePath": "hello.txt", "content": "hi"}),
+    )
+    .unwrap();
+
+    let hist =
+        call_tool_in_workspace(&root, "event_history", &json!({"limit": 5})).unwrap();
+    let v: serde_json::Value = serde_json::from_str(&hist).unwrap();
+    let events = v["events"].as_array().unwrap();
+    assert!(
+        events.iter().any(|e| e["outcome"] == "success"),
+        "Expected at least one success event, got: {hist}"
+    );
+}
+
+/// A failed tool call must be recorded with outcome="failure" and a
+/// non-empty failure_reason so the decision trail is useful.
+#[test]
+fn dispatch_records_failure_with_reason() {
+    let (_temp, root) = setup_root();
+    // read_file on a missing path will fail.
+    let _ = call_tool_in_workspace(
+        &root,
+        "read_file",
+        &json!({"relativeFilePath": "nonexistent_9x3.txt"}),
+    );
+
+    let hist =
+        call_tool_in_workspace(&root, "event_history", &json!({"outcome": "failure", "limit": 5}))
+            .unwrap();
+    let v: serde_json::Value = serde_json::from_str(&hist).unwrap();
+    let events = v["events"].as_array().unwrap();
+    let failure = events
+        .iter()
+        .find(|e| e["tool"] == "read_file")
+        .unwrap_or_else(|| panic!("Expected read_file failure event in: {hist}"));
+    assert_eq!(failure["outcome"], "failure");
+    assert!(
+        failure["failure_reason"].as_str().map_or(false, |s| !s.is_empty()),
+        "failure_reason should be populated: {failure}"
+    );
+}
+
+/// No automatic dispatch event should linger as "pending" — that status is
+/// reserved for manual `event_record` entries the agent will resolve later.
+#[test]
+fn dispatch_no_auto_pending_events() {
+    let (_temp, root) = setup_root();
+    call_tool_in_workspace(
+        &root,
+        "write_file",
+        &json!({"relativeFilePath": "abc.txt", "content": "data"}),
+    )
+    .unwrap();
+    let _ = call_tool_in_workspace(
+        &root,
+        "read_file",
+        &json!({"relativeFilePath": "missing_xyz.txt"}),
+    );
+
+    let hist =
+        call_tool_in_workspace(&root, "event_history", &json!({"outcome": "pending", "limit": 10}))
+            .unwrap();
+    let v: serde_json::Value = serde_json::from_str(&hist).unwrap();
+    let events = v["events"].as_array().unwrap();
+    // No write_file or read_file should appear as "pending".
+    for e in events {
+        assert!(
+            e["tool"] != "write_file" && e["tool"] != "read_file",
+            "Automatic dispatch event left pending: {e:?}"
+        );
+    }
+}

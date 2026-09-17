@@ -115,7 +115,9 @@ impl EventStore {
         self.dir.join("events.jsonl")
     }
 
-    /// Append a new event.  Returns the assigned sequence number.
+    /// Append a new event with an as-yet-undetermined outcome.  Returns the
+    /// assigned sequence number.  Used by the manual `event_record` tool, where
+    /// the agent declares the change up front and marks the outcome later.
     pub fn record(
         &self,
         tool_name: &str,
@@ -124,6 +126,37 @@ impl EventStore {
         merkle_root_after: Option<String>,
         context: Option<String>,
         affected_files: Vec<String>,
+    ) -> Result<u64, String> {
+        self.record_with_outcome(
+            tool_name,
+            description,
+            merkle_root_before,
+            merkle_root_after,
+            context,
+            affected_files,
+            EventOutcome::Pending,
+            None,
+        )
+    }
+
+    /// Append a new event whose outcome is already known.
+    ///
+    /// Automatic dispatch recording must use this: the tool call has already
+    /// succeeded or failed by the time we record it, so writing `Pending` and
+    /// following up with [`mark_outcome`](Self::mark_outcome) would rewrite the
+    /// whole log for every call — and, historically, never did the second
+    /// step, leaving the entire decision trail unresolvable.
+    #[allow(clippy::too_many_arguments)]
+    pub fn record_with_outcome(
+        &self,
+        tool_name: &str,
+        description: &str,
+        merkle_root_before: Option<String>,
+        merkle_root_after: Option<String>,
+        context: Option<String>,
+        affected_files: Vec<String>,
+        outcome: EventOutcome,
+        failure_reason: Option<String>,
     ) -> Result<u64, String> {
         let events = self.load_all()?;
         let next_seq = events.last().map(|e| e.sequence + 1).unwrap_or(1);
@@ -141,8 +174,8 @@ impl EventStore {
             merkle_root_before,
             merkle_root_after,
             context,
-            outcome: EventOutcome::Pending,
-            failure_reason: None,
+            outcome,
+            failure_reason,
             affected_files,
             metadata: None,
         };

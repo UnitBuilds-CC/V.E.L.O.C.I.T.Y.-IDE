@@ -58,20 +58,15 @@ pub fn call_tool_in_workspace(
             // arguments so agents cannot forget to declare their changes.
             // Useless events (grep, list_dir) can be pruned later; the
             // important ones (write, delete, index, edit) are always kept.
-            {
-                let ctx = arguments["context"].as_str();
-                let affected = extract_affected_files(name, arguments);
-                let description = build_event_description(name, arguments);
-                let store = event_store::EventStore::open(&root);
-                let _ = store.record(
-                    name,
-                    &description,
-                    merkle_before.map(|r| format!("{:016x}", r)),
-                    merkle_after.map(|r| format!("{:016x}", r)),
-                    ctx.map(|s| s.to_string()),
-                    affected,
-                );
-            }
+            record_dispatch_event(
+                &root,
+                name,
+                arguments,
+                merkle_before,
+                merkle_after,
+                event_store::EventOutcome::Success,
+                None,
+            );
             // Flush audit log after site-map-mutating tools.
             if is_sitemap_tool(name) {
                 let _ = audit::flush_all_sessions_to_dir(&root.join(".velocity"));
@@ -94,13 +89,73 @@ pub fn call_tool_in_workspace(
                 Err(e) => ToolAuditOutcome::Error(e.to_string()),
             };
             audit::record_tool_call("stdio", name, start, outcome);
+            let merkle_after = read_sitemap_merkle_root(&root);
+            match &custom_result {
+                Ok(_) => record_dispatch_event(
+                    &root,
+                    name,
+                    arguments,
+                    merkle_before,
+                    merkle_after,
+                    event_store::EventOutcome::Success,
+                    None,
+                ),
+                Err(e) => record_dispatch_event(
+                    &root,
+                    name,
+                    arguments,
+                    merkle_before,
+                    merkle_after,
+                    event_store::EventOutcome::Failure,
+                    Some(e.to_string()),
+                ),
+            }
             custom_result
         }
         Err(e) => {
             audit::record_tool_call("stdio", name, start, ToolAuditOutcome::Error(e.to_string()));
+            // Failed calls belong in the decision trail too: an agent that only
+            // sees successes will repeat experiments that already broke.
+            let merkle_after = read_sitemap_merkle_root(&root);
+            record_dispatch_event(
+                &root,
+                name,
+                arguments,
+                merkle_before,
+                merkle_after,
+                event_store::EventOutcome::Failure,
+                Some(e.to_string()),
+            );
             Err(e.to_string().into())
         }
     }
+}
+
+/// Append an automatic dispatch event to the codebase event store, resolving
+/// its outcome in the same write.
+fn record_dispatch_event(
+    root: &Path,
+    name: &str,
+    arguments: &Value,
+    merkle_before: Option<u64>,
+    merkle_after: Option<u64>,
+    outcome: event_store::EventOutcome,
+    failure_reason: Option<String>,
+) {
+    let ctx = arguments["context"].as_str();
+    let affected = extract_affected_files(name, arguments);
+    let description = build_event_description(name, arguments);
+    let store = event_store::EventStore::open(root);
+    let _ = store.record_with_outcome(
+        name,
+        &description,
+        merkle_before.map(|r| format!("{:016x}", r)),
+        merkle_after.map(|r| format!("{:016x}", r)),
+        ctx.map(|s| s.to_string()),
+        affected,
+        outcome,
+        failure_reason,
+    );
 }
 
 /// Try all built-in tool handlers. Returns `Ok(None)` if no handler recognizes
