@@ -551,13 +551,13 @@ pub fn get_wa_tools() -> Vec<Tool> {
         // ─── Event Subscription Tools ───────────────────────────────────────────
         Tool {
             name: "wa_event_subscribe".to_string(),
-            description: "Subscribe to Windows UI Automation events (window opened, element changed, structure changed).".to_string(),
+            description: "Block and capture Windows UI Automation events by polling: window_opened, window_closed, element_focus and structure_changed are supported; element_value_changed is not capturable by the polled listener and is rejected.".to_string(),
             input_schema: json!({
                 "type": "object",
                 "properties": {
-                    "eventKind": { "type": "string", "enum": ["window_opened", "window_closed", "element_focus", "element_value_changed", "structure_changed"], "description": "Type of UIA event." },
+                    "eventKind": { "type": "string", "enum": ["window_opened", "window_closed", "element_focus", "structure_changed", "element_value_changed"], "description": "Type of UIA event to capture. The four polled kinds are capturable; element_value_changed returns an explicit error." },
                     "processId": { "type": "integer", "description": "Optional PID filter." },
-                    "timeoutMs": { "type": "integer", "description": "Listen duration in ms. Default 5000." }
+                    "timeoutMs": { "type": "integer", "description": "Listen duration in ms. Default 5000, capped by the script budget." }
                 },
                 "required": ["eventKind"]
             }),

@@ -4,9 +4,6 @@
 //! (dark mode, DPI, network, display), and querying system state for
 //! automation workflows that need to configure the OS environment.
 
-use std::io::Write;
-use std::process::{Command, Stdio};
-
 // ─── Registry Model ──────────────────────────────────────────────────────────
 
 /// Registry hive (root key).
@@ -664,31 +661,7 @@ ConvertTo-Json @{{ success = $true; volume = {vol} }} -Compress
 // ─── Runtime Helpers ─────────────────────────────────────────────────────────
 
 fn run_ps_script(script: &str) -> Result<String, String> {
-    let mut child = Command::new("powershell")
-        .args([
-            "-NoProfile",
-            "-NonInteractive",
-            "-ExecutionPolicy",
-            "Bypass",
-            "-Command",
-            "-",
-        ])
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .map_err(|e| format!("failed to spawn powershell: {e}"))?;
-    if let Some(mut stdin) = child.stdin.take() {
-        stdin
-            .write_all(script.as_bytes())
-            .map_err(|e| format!("stdin write: {e}"))?;
-    }
-    let output = child.wait_with_output().map_err(|e| format!("wait: {e}"))?;
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(format!("PowerShell error: {}", stderr.trim()));
-    }
-    Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+    crate::wa::ps::run_ps_script(script)
 }
 
 fn parse_read_result(json: &str, hive: RegistryHive, path: &str, name: &str) -> RegistryOpResult {

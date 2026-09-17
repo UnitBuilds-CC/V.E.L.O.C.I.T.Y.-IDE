@@ -725,6 +725,9 @@ pub fn handle_wa_tool(
                 "success": true,
                 "total": state.total_count,
                 "current_index": state.current_index,
+                // False means Windows did not publish which desktop is active, so
+                // `current_index` above is a placeholder, not a measurement.
+                "current_desktop_known": state.current_desktop_known,
                 "desktops": desktops,
             }))
             .map_err(|err| {
@@ -736,6 +739,7 @@ pub fn handle_wa_tool(
             let mut mgr = crate::wa::virtual_desktop::VirtualDesktopManager::new();
             let state = mgr.enumerate();
             let current_index = state.current_index;
+            let current_desktop_known = state.current_desktop_known;
             let desktop_index = mgr.desktop_for_window(hwnd);
             let on_current = mgr.is_window_on_current_desktop(hwnd);
             serde_json::to_string(&serde_json::json!({
@@ -743,6 +747,7 @@ pub fn handle_wa_tool(
                 "hwnd": hwnd,
                 "desktop_index": desktop_index,
                 "current_index": current_index,
+                "current_desktop_known": current_desktop_known,
                 "is_on_current_desktop": on_current,
             }))
             .map_err(|err| {
@@ -1259,13 +1264,19 @@ pub fn handle_wa_tool(
                 .as_str()
                 .ok_or("eventKind is required")?;
             let timeout_ms = arguments["timeoutMs"].as_u64().unwrap_or(5000);
-            let kind = match event_kind {
-                "window_opened" => crate::wa::events::UiaEventKind::WindowEvent { is_open: true },
-                "window_closed" => crate::wa::events::UiaEventKind::WindowEvent { is_open: false },
-                "element_focus" => crate::wa::events::UiaEventKind::FocusChanged,
-                "structure_changed" => crate::wa::events::UiaEventKind::StructureChanged,
-                _ => crate::wa::events::UiaEventKind::FocusChanged,
-            };
+            let kind =
+                crate::wa::events::UiaEventKind::from_api_str(event_kind).ok_or_else(|| {
+                    format!(
+                        "unknown eventKind '{event_kind}' (expected window_opened, window_closed, element_focus, structure_changed, element_value_changed)"
+                    )
+                })?;
+            // Subscribe to exactly what the polled listener can observe rather
+            // than always polling focus changes behind the caller's back (bug #15).
+            let label = kind.poller_label().ok_or_else(|| {
+                format!(
+                    "eventKind '{event_kind}' is not capturable by the polled UIA listener; supported kinds are window_opened, window_closed, element_focus, structure_changed"
+                )
+            })?;
             let subscription = crate::wa::events::EventSubscription {
                 event_kinds: vec![kind],
                 process_filter: arguments["processId"].as_u64().map(|v| v as u32),
@@ -1273,21 +1284,40 @@ pub fn handle_wa_tool(
                 ..Default::default()
             };
             let mut listener = crate::wa::events::EventListener::new();
-            let result = listener.listen(&subscription);
-            let captured = result.events.len();
+            let listen = listener.listen(&subscription);
+            let captured = listen.events.len();
+            let timed_out = listen.timed_out;
+            let hit_event_limit = listen.hit_event_limit;
+            let warnings = listen.errors;
             // Persist captured events into the process-global buffer so a later
             // `wa_event_poll` can retrieve them; subscribe alone is fire-and-forget.
             let buffered = {
                 let mut buffer = lock_event_buffer()?;
-                for event in result.events {
+                for event in listen.events {
                     buffer.push(event);
                 }
                 buffer.len()
             };
-            format!(
-                "{{\"subscribed\":true,\"event_kind\":\"{}\",\"events_captured\":{captured},\"buffered_total\":{buffered}}}",
-                event_kind
-            )
+            // A budget-killed or unparseable listener also yields zero events, so
+            // report the failure instead of a clean-looking `subscribed:true`.
+            if captured == 0 && !warnings.is_empty() {
+                return Err(Box::<dyn Error>::from(format!(
+                    "wa_event_subscribe('{event_kind}') captured nothing: {}",
+                    warnings.join("; ")
+                )));
+            }
+            serde_json::to_string(&serde_json::json!({
+                "success": true,
+                "subscribed": true,
+                "event_kind": event_kind,
+                "captured_kind": label,
+                "events_captured": captured,
+                "buffered_total": buffered,
+                "timed_out": timed_out,
+                "hit_event_limit": hit_event_limit,
+                "warnings": warnings,
+            }))
+            .map_err(|err| Box::<dyn Error>::from(format!("serialise event subscription: {err}")))?
         }
         "wa_event_poll" => {
             let max_events = arguments["maxEvents"].as_u64().unwrap_or(20) as usize;
@@ -2632,6 +2662,50 @@ mod tests {
         let temp = tempfile::tempdir().unwrap();
         let args = serde_json::json!({ "action": "minimize" });
         assert!(handle_wa_tool(temp.path(), "wa_window_action", &args).is_err());
+    }
+
+    // `wa_event_subscribe` used to map every unrecognised/unsupported eventKind
+    // onto a focus poll and answer `subscribed:true` (bug #15). It must reject
+    // kinds the polled listener cannot observe instead of pretending.
+    #[test]
+    fn event_subscribe_rejects_uncapturable_kind() {
+        let temp = tempfile::tempdir().unwrap();
+        let args = serde_json::json!({ "eventKind": "element_value_changed", "timeoutMs": 100 });
+        let err = handle_wa_tool(temp.path(), "wa_event_subscribe", &args)
+            .expect_err("uncapturable kind must be rejected");
+        assert!(err.to_string().contains("not capturable"), "got: {err}");
+    }
+
+    #[test]
+    fn event_subscribe_rejects_unknown_kind() {
+        let temp = tempfile::tempdir().unwrap();
+        let args = serde_json::json!({ "eventKind": "vibes", "timeoutMs": 100 });
+        let err = handle_wa_tool(temp.path(), "wa_event_subscribe", &args)
+            .expect_err("unknown kind must be rejected");
+        assert!(err.to_string().contains("unknown eventKind"), "got: {err}");
+    }
+
+    #[test]
+    fn event_subscribe_requires_event_kind() {
+        let temp = tempfile::tempdir().unwrap();
+        let args = serde_json::json!({ "timeoutMs": 100 });
+        assert!(handle_wa_tool(temp.path(), "wa_event_subscribe", &args).is_err());
+    }
+
+    /// Real UIA run: a short focus subscription must report the kind it actually
+    /// polled, and any listener failure must surface rather than be swallowed.
+    #[test]
+    #[cfg(target_os = "windows")]
+    fn event_subscribe_reports_what_it_polled() {
+        let temp = tempfile::tempdir().unwrap();
+        let args = serde_json::json!({ "eventKind": "element_focus", "timeoutMs": 400 });
+        let out = handle_wa_tool(temp.path(), "wa_event_subscribe", &args)
+            .expect("listener should report honestly, not error silently")
+            .expect("tool should produce output");
+        let parsed: serde_json::Value = serde_json::from_str(&out).expect("valid JSON");
+        assert_eq!(parsed["captured_kind"], "focus_changed", "got: {out}");
+        assert!(parsed["warnings"].is_array(), "got: {out}");
+        assert!(parsed["events_captured"].is_number(), "got: {out}");
     }
 
     // `wa_window_tile` must actually run the tiling path and report a real result shape

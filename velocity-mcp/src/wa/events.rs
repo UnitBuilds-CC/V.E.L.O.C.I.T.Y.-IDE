@@ -5,8 +5,6 @@
 //! changes, focus changes, and automation events via PowerShell wrappers.
 
 use std::collections::VecDeque;
-use std::io::Write;
-use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
 // ─── Event Types ─────────────────────────────────────────────────────────────
@@ -28,6 +26,35 @@ pub enum UiaEventKind {
     MenuEvent { is_open: bool },
     /// A tooltip appeared.
     ToolTipEvent,
+}
+
+impl UiaEventKind {
+    /// Parse the API-facing `eventKind` argument.
+    pub fn from_api_str(raw: &str) -> Option<UiaEventKind> {
+        Some(match raw {
+            "window_opened" => UiaEventKind::WindowEvent { is_open: true },
+            "window_closed" => UiaEventKind::WindowEvent { is_open: false },
+            "element_focus" => UiaEventKind::FocusChanged,
+            "structure_changed" => UiaEventKind::StructureChanged,
+            "element_value_changed" => UiaEventKind::PropertyChanged {
+                property_name: "Value".to_string(),
+            },
+            _ => return None,
+        })
+    }
+
+    /// The label the polled listener emits for this kind, or `None` when the
+    /// poller cannot observe it at all (property/menu/tooltip changes need real
+    /// UIA event handlers on an STA message loop).
+    pub fn poller_label(&self) -> Option<&'static str> {
+        match self {
+            UiaEventKind::FocusChanged => Some("focus_changed"),
+            UiaEventKind::StructureChanged => Some("structure_changed"),
+            UiaEventKind::WindowEvent { is_open: true } => Some("window_opened"),
+            UiaEventKind::WindowEvent { is_open: false } => Some("window_closed"),
+            _ => None,
+        }
+    }
 }
 
 /// A captured UI event with context.
@@ -190,7 +217,13 @@ impl EventListener {
         self.active = true;
         let start = Instant::now();
         let script = build_event_listener_script(subscription);
-        let result = run_ps_script(&script);
+        // The script polls until its own deadline, so grant it that duration
+        // plus slack; without a budget a stalled UIA COM call inside the poll
+        // loop wedged the whole MCP server (bug #14).
+        let result = crate::wa::ps::run_ps_script_budget(
+            &script,
+            subscription.duration + crate::wa::ps::SLACK,
+        );
         self.active = false;
         let elapsed = start.elapsed();
         match result {
@@ -219,7 +252,25 @@ impl Default for EventListener {
 
 // ─── PowerShell Scripts ──────────────────────────────────────────────────────
 
+/// Render a Rust bool as a PowerShell literal.
+fn ps_bool(value: bool) -> &'static str {
+    if value {
+        "$true"
+    } else {
+        "$false"
+    }
+}
+
 /// Build a PowerShell script that subscribes to UIAutomation events.
+///
+/// The poller only observes what it can read without an STA message loop: the
+/// focused element and the set of top-level windows. It therefore polls
+/// exactly the kinds the subscription asked for, so the reported `eventKind`
+/// always matches what was actually captured (bug #15).
+///
+/// Note `events = $events.ToArray()`: wrapping a `Generic.List` in `@()` throws
+/// "Argument types do not match" on Windows PowerShell 5.1, which used to kill
+/// the whole script on its final line (bug #17).
 pub fn build_event_listener_script(subscription: &EventSubscription) -> String {
     let duration_ms = subscription.duration.as_millis();
     let max_events = subscription.max_events;
@@ -232,6 +283,34 @@ pub fn build_event_listener_script(subscription: &EventSubscription) -> String {
         .as_deref()
         .map(|w| format!("$windowFilter = '{}'", w.replace('\'', "''")))
         .unwrap_or_else(|| "$windowFilter = $null".to_string());
+    let want_focus = subscription
+        .event_kinds
+        .iter()
+        .any(|k| matches!(k, UiaEventKind::FocusChanged));
+    let want_window = subscription
+        .event_kinds
+        .iter()
+        .any(|k| matches!(k, UiaEventKind::WindowEvent { .. }));
+    let want_structure = subscription
+        .event_kinds
+        .iter()
+        .any(|k| matches!(k, UiaEventKind::StructureChanged));
+    let want_tree_diff = want_structure || want_window;
+    // Rendered as PowerShell literals so the script never depends on bare-word
+    // coercion. A top-level-window delta is reported as a window event when the
+    // caller asked for one, otherwise as a generic structure change.
+    let want_focus = ps_bool(want_focus);
+    let want_tree_diff = ps_bool(want_tree_diff);
+    let open_label = if want_window {
+        "window_opened"
+    } else {
+        "structure_changed"
+    };
+    let close_label = if want_window {
+        "window_closed"
+    } else {
+        "structure_changed"
+    };
 
     format!(
         r#"
@@ -241,42 +320,94 @@ Add-Type -AssemblyName UIAutomationClient, UIAutomationTypes
 {window_filter}
 $events = New-Object System.Collections.Generic.List[object]
 $maxEvents = {max_events}
-$deadline = [Environment]::TickCount64 + {duration_ms}
+$__sw = [System.Diagnostics.Stopwatch]::StartNew()
+$__deadlineMs = {duration_ms}
 $root = [System.Windows.Automation.AutomationElement]::RootElement
+$wantFocus = {want_focus}
+$wantTreeDiff = {want_tree_diff}
+$openLabel = '{open_label}'
+$closeLabel = '{close_label}'
+$trueCondition = [System.Windows.Automation.Condition]::TrueCondition
+$childScope = [System.Windows.Automation.TreeScope]::Children
 
-# Focus change tracking via polling (event handlers require STA thread)
+function Get-WaTopLevelIds {{
+    param($scopeRoot)
+    @(($scopeRoot.FindAll($childScope, $trueCondition)) | ForEach-Object {{
+        if ($null -ne $windowFilter -and $_.Current.Name -notlike "*$windowFilter*") {{ return }}
+        "$($_.Current.AutomationId)|$($_.Current.ProcessId)|$($_.Current.Name)"
+    }})
+}}
+
+$baselineIds = @()
+if ($wantTreeDiff) {{ $baselineIds = Get-WaTopLevelIds $root }}
+
+# Focus change tracking via polling (event handlers require an STA thread)
 $lastFocusId = $null
-while ([Environment]::TickCount64 -lt $deadline -and $events.Count -lt $maxEvents) {{
-    try {{
-        $focused = [System.Windows.Automation.AutomationElement]::FocusedElement
-        if ($null -ne $focused) {{
-            $currentId = $focused.Current.AutomationId
-            $currentName = $focused.Current.Name
-            $currentPid = $focused.Current.ProcessId
-            if ($null -ne $targetPid -and $currentPid -ne $targetPid) {{
-                Start-Sleep -Milliseconds 50
-                continue
+while ($__sw.Elapsed.TotalMilliseconds -lt $__deadlineMs -and $events.Count -lt $maxEvents) {{
+    if ($wantFocus) {{
+        try {{
+            $focused = [System.Windows.Automation.AutomationElement]::FocusedElement
+            if ($null -ne $focused) {{
+                $currentId = $focused.Current.AutomationId
+                $currentName = $focused.Current.Name
+                $currentPid = $focused.Current.ProcessId
+                $windowOk = $true
+                if ($null -ne $windowFilter) {{
+                    $procTitle = ''
+                    try {{ $procTitle = (Get-Process -Id $currentPid -ErrorAction SilentlyContinue).MainWindowTitle }} catch {{}}
+                    $windowOk = ($currentName -like "*$windowFilter*") -or ($procTitle -like "*$windowFilter*")
+                }}
+                if (($null -eq $targetPid -or $currentPid -eq $targetPid) -and $windowOk) {{
+                    if ($currentId -ne $lastFocusId) {{
+                        $events.Add([PSCustomObject]@{{
+                            kind = "focus_changed"
+                            timestamp_ms = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
+                            source_automation_id = $currentId
+                            source_name = $currentName
+                            source_control_type = $focused.Current.ControlType.ProgrammaticName
+                            process_id = $currentPid
+                        }}) | Out-Null
+                        $lastFocusId = $currentId
+                    }}
+                }}
             }}
-            if ($currentId -ne $lastFocusId -or ($null -eq $lastFocusId -and $null -ne $currentId)) {{
+        }} catch {{}}
+    }}
+    if ($wantTreeDiff) {{
+        try {{
+            $currentIds = Get-WaTopLevelIds $root
+            foreach ($a in @($currentIds | Where-Object {{ $baselineIds -notcontains $_ }})) {{
+                $parts = $a -split '\|', 3
                 $events.Add([PSCustomObject]@{{
-                    kind = "focus_changed"
+                    kind = $openLabel
                     timestamp_ms = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
-                    source_automation_id = $currentId
-                    source_name = $currentName
-                    source_control_type = $focused.Current.ControlType.ProgrammaticName
-                    process_id = $currentPid
+                    source_automation_id = $parts[0]
+                    source_name = $parts[2]
+                    source_control_type = 'Window'
+                    process_id = [int]$parts[1]
                 }}) | Out-Null
-                $lastFocusId = $currentId
             }}
-        }}
-    }} catch {{}}
+            foreach ($r in @($baselineIds | Where-Object {{ $currentIds -notcontains $_ }})) {{
+                $parts = $r -split '\|', 3
+                $events.Add([PSCustomObject]@{{
+                    kind = $closeLabel
+                    timestamp_ms = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
+                    source_automation_id = $parts[0]
+                    source_name = $parts[2]
+                    source_control_type = 'Window'
+                    process_id = [int]$parts[1]
+                }}) | Out-Null
+            }}
+            $baselineIds = $currentIds
+        }} catch {{}}
+    }}
     Start-Sleep -Milliseconds 50
 }}
 
 $result = @{{
-    events = @($events)
+    events = $events.ToArray()
     event_count = $events.Count
-    timed_out = ([Environment]::TickCount64 -ge $deadline)
+    timed_out = ($__sw.Elapsed.TotalMilliseconds -ge $__deadlineMs)
     hit_limit = ($events.Count -ge $maxEvents)
 }}
 ConvertTo-Json $result -Compress -Depth 4
@@ -296,8 +427,9 @@ $events = @()
 $root = [System.Windows.Automation.AutomationElement]::RootElement
 $baseline = $root.FindAll([System.Windows.Automation.TreeScope]::Children, [System.Windows.Automation.Condition]::TrueCondition)
 $baselineIds = @($baseline | ForEach-Object {{ $_.Current.AutomationId + "|" + $_.Current.ProcessId }})
-$deadline = [Environment]::TickCount64 + {duration_ms}
-while ([Environment]::TickCount64 -lt $deadline) {{
+$__sw = [System.Diagnostics.Stopwatch]::StartNew()
+$__deadlineMs = {duration_ms}
+while ($__sw.Elapsed.TotalMilliseconds -lt $__deadlineMs) {{
     Start-Sleep -Milliseconds 200
     $current = $root.FindAll([System.Windows.Automation.TreeScope]::Children, [System.Windows.Automation.Condition]::TrueCondition)
     $currentIds = @($current | ForEach-Object {{ $_.Current.AutomationId + "|" + $_.Current.ProcessId }})
@@ -314,34 +446,6 @@ while ([Environment]::TickCount64 -lt $deadline) {{
 ConvertTo-Json @($events) -Compress -Depth 3
 "#
     )
-}
-
-fn run_ps_script(script: &str) -> Result<String, String> {
-    let mut child = Command::new("powershell")
-        .args([
-            "-NoProfile",
-            "-NonInteractive",
-            "-ExecutionPolicy",
-            "Bypass",
-            "-Command",
-            "-",
-        ])
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .map_err(|e| format!("failed to spawn powershell: {e}"))?;
-    if let Some(mut stdin) = child.stdin.take() {
-        stdin
-            .write_all(script.as_bytes())
-            .map_err(|e| format!("stdin write: {e}"))?;
-    }
-    let output = child.wait_with_output().map_err(|e| format!("wait: {e}"))?;
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(format!("PowerShell error: {}", stderr.trim()));
-    }
-    Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
 }
 
 fn parse_event_listen_result(json: &str, elapsed: Duration) -> EventListenResult {
@@ -370,8 +474,19 @@ fn parse_event_listen_result(json: &str, elapsed: Duration) -> EventListenResult
                 .map(|e| {
                     let kind = match e.kind.as_deref() {
                         Some("focus_changed") => UiaEventKind::FocusChanged,
-                        Some("structure_changed") => UiaEventKind::StructureChanged,
-                        _ => UiaEventKind::FocusChanged,
+                        Some("structure_changed")
+                        | Some("structure_added")
+                        | Some("structure_removed") => UiaEventKind::StructureChanged,
+                        Some("window_opened") => UiaEventKind::WindowEvent { is_open: true },
+                        Some("window_closed") => UiaEventKind::WindowEvent { is_open: false },
+                        // Keep unrecognised labels distinguishable instead of
+                        // relabelling them as a focus change.
+                        Some(other) => UiaEventKind::AutomationEvent {
+                            event_name: other.to_string(),
+                        },
+                        None => UiaEventKind::AutomationEvent {
+                            event_name: "unknown".to_string(),
+                        },
                     };
                     UiaEvent {
                         kind,
@@ -477,6 +592,143 @@ mod tests {
         assert!(script.contains("4242"));
         assert!(script.contains("Notepad"));
         assert!(script.contains("FocusedElement"));
+    }
+
+    /// A focus-only subscription must not pay for (or emit) window diffs.
+    #[test]
+    fn focus_only_subscription_skips_tree_diff() {
+        let sub = EventSubscription {
+            event_kinds: vec![UiaEventKind::FocusChanged],
+            ..Default::default()
+        };
+        let script = build_event_listener_script(&sub);
+        assert!(script.contains("$wantFocus = $true"), "{script}");
+        assert!(script.contains("$wantTreeDiff = $false"), "{script}");
+    }
+
+    #[test]
+    fn window_subscription_diffs_top_level_windows() {
+        let sub = EventSubscription {
+            event_kinds: vec![UiaEventKind::WindowEvent { is_open: true }],
+            ..Default::default()
+        };
+        let script = build_event_listener_script(&sub);
+        assert!(script.contains("$wantFocus = $false"), "{script}");
+        assert!(script.contains("$wantTreeDiff = $true"), "{script}");
+        assert!(script.contains("$openLabel = 'window_opened'"), "{script}");
+        assert!(script.contains("$closeLabel = 'window_closed'"), "{script}");
+        assert!(script.contains("Get-WaTopLevelIds"), "{script}");
+    }
+
+    /// Structure-only subscriptions get the generic label, not a window claim.
+    #[test]
+    fn structure_subscription_labels_structure() {
+        let sub = EventSubscription {
+            event_kinds: vec![UiaEventKind::StructureChanged],
+            ..Default::default()
+        };
+        let script = build_event_listener_script(&sub);
+        assert!(script.contains("$wantFocus = $false"), "{script}");
+        assert!(
+            script.contains("$openLabel = 'structure_changed'"),
+            "{script}"
+        );
+    }
+
+    /// The script polls on a monotonic clock and can therefore never spin past
+    /// its deadline on a platform where `TickCount64` is missing (bug #16).
+    #[test]
+    fn listener_script_uses_stopwatch_clock() {
+        let script = build_event_listener_script(&EventSubscription::default());
+        assert!(script.contains("[System.Diagnostics.Stopwatch]::StartNew()"));
+        assert!(!script.contains("TickCount64"));
+        assert!(script.contains("ConvertTo-Json $result -Compress -Depth 4"));
+    }
+
+    #[test]
+    fn api_event_kinds_round_trip() {
+        for raw in [
+            "window_opened",
+            "window_closed",
+            "element_focus",
+            "structure_changed",
+        ] {
+            let kind = UiaEventKind::from_api_str(raw).expect("supported kind");
+            assert_eq!(kind.poller_label().unwrap().to_string(), {
+                match raw {
+                    "element_focus" => "focus_changed".to_string(),
+                    other => other.to_string(),
+                }
+            });
+        }
+        assert!(UiaEventKind::from_api_str("nonsense").is_none());
+        // Property changes need a real UIA event handler; the poller cannot see
+        // them, so they must be rejected instead of silently captured as focus.
+        assert!(UiaEventKind::from_api_str("element_value_changed")
+            .unwrap()
+            .poller_label()
+            .is_none());
+    }
+
+    #[test]
+    fn parse_maps_window_and_unknown_kinds() {
+        let json = r#"{"events":[
+            {"kind":"window_opened","timestamp_ms":5,"source_name":"Untitled - Notepad","process_id":7},
+            {"kind":"window_closed","timestamp_ms":6,"source_name":"Settings","process_id":8},
+            {"kind":"structure_added","timestamp_ms":7,"source_name":"Taskbar","process_id":9},
+            {"kind":"toast_shown","timestamp_ms":8,"source_name":"X","process_id":10}
+        ],"event_count":4,"timed_out":true,"hit_limit":false}"#;
+        let result = parse_event_listen_result(json, Duration::from_millis(8));
+        assert_eq!(result.events.len(), 4);
+        assert_eq!(
+            result.events[0].kind,
+            UiaEventKind::WindowEvent { is_open: true }
+        );
+        assert_eq!(
+            result.events[1].kind,
+            UiaEventKind::WindowEvent { is_open: false }
+        );
+        assert_eq!(result.events[2].kind, UiaEventKind::StructureChanged);
+        assert_eq!(
+            result.events[3].kind,
+            UiaEventKind::AutomationEvent {
+                event_name: "toast_shown".to_string()
+            }
+        );
+        assert!(result.errors.is_empty(), "got: {:?}", result.errors);
+        assert!(result.timed_out);
+    }
+
+    /// Unparseable script output must surface as an error the caller can see,
+    /// not as an empty-but-successful listen (bug #15).
+    #[test]
+    fn parse_failure_reports_error() {
+        let result = parse_event_listen_result("not json", Duration::from_millis(1));
+        assert!(result.events.is_empty());
+        assert!(result.errors[0].starts_with("parse error:"));
+    }
+
+    /// End-to-end: the generated script must actually execute and print JSON.
+    /// The substring assertions above cannot catch a PowerShell runtime error,
+    /// and bugs #16, #17 and #19 were all exactly that — the script parsed, died
+    /// or went missing at run time, and the tool answered “0 events”.
+    #[test]
+    #[cfg(target_os = "windows")]
+    fn generated_listener_script_runs_end_to_end() {
+        let sub = EventSubscription {
+            event_kinds: vec![UiaEventKind::FocusChanged, UiaEventKind::StructureChanged],
+            duration: Duration::from_millis(300),
+            ..Default::default()
+        };
+        let script = build_event_listener_script(&sub);
+        let out = crate::wa::ps::run_ps_script(&script)
+            .expect("listener script must run without a PowerShell error");
+        let parsed: serde_json::Value =
+            serde_json::from_str(&out).unwrap_or_else(|e| panic!("not JSON ({e}): [{out}]"));
+        assert!(parsed["events"].is_array(), "got: {parsed}");
+        assert!(parsed["event_count"].is_number(), "got: {parsed}");
+        assert!(parsed["timed_out"].is_boolean(), "got: {parsed}");
+        assert!(parsed["hit_limit"].is_boolean(), "got: {parsed}");
     }
 
     #[test]

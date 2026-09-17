@@ -4,9 +4,6 @@
 //! Windows virtual desktops via the IVirtualDesktopManager COM interface
 //! through PowerShell.
 
-use std::io::Write;
-use std::process::{Command, Stdio};
-
 // ─── Virtual Desktop Model ───────────────────────────────────────────────────
 
 /// A Windows virtual desktop.
@@ -31,6 +28,11 @@ pub struct VirtualDesktopState {
     pub current_index: u32,
     pub total_count: u32,
     pub supports_named_desktops: bool,
+    /// Whether the desktop flagged as current was positively identified.
+    /// Windows keeps `CurrentVirtualDesktop` only in some sessions, so
+    /// `current_index` alone can be a placeholder rather than a measurement
+    /// (bug #21).
+    pub current_desktop_known: bool,
 }
 
 impl VirtualDesktopState {
@@ -111,7 +113,8 @@ impl VirtualDesktopManager {
                 }
             }
         }
-        // Fallback: single desktop
+        // Fallback: single desktop. Nothing was measured, so the current desktop
+        // is only "known" where there is genuinely just one by construction.
         self.cached_state = Some(VirtualDesktopState {
             desktops: vec![VirtualDesktop {
                 id: "default".to_string(),
@@ -123,6 +126,7 @@ impl VirtualDesktopManager {
             current_index: 0,
             total_count: 1,
             supports_named_desktops: cfg!(target_os = "windows"),
+            current_desktop_known: !cfg!(target_os = "windows"),
         });
         self.cached_state.as_ref().unwrap()
     }
@@ -207,6 +211,12 @@ pub fn build_enumerate_desktops_script() -> String {
 $regPath = "HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\VirtualDesktops"
 $desktopsPath = "$regPath\Desktops"
 $currentId = (Get-ItemProperty -Path $regPath -Name "CurrentVirtualDesktop" -ErrorAction SilentlyContinue).CurrentVirtualDesktop
+$currentClean = $null
+if ($null -ne $currentId) {
+    # The value is a GUID in Windows mixed-endian byte order: stringifying the raw
+    # bytes never equals the key name, so convert through [Guid] (bug #21).
+    try { $currentClean = ([System.Guid]$currentId).ToString("N").ToUpperInvariant() } catch { $currentClean = $null }
+}
 
 $desktops = @()
 $idx = 0
@@ -216,10 +226,9 @@ if (Test-Path $desktopsPath) {
         $id = $key.PSChildName
         $name = (Get-ItemProperty -Path $key.PSPath -Name "Name" -ErrorAction SilentlyContinue).Name
         $isCurrent = $false
-        if ($null -ne $currentId) {
-            $currentHex = [BitConverter]::ToString($currentId).Replace("-","")
-            $idClean = $id.Replace("{","").Replace("}","").Replace("-","")
-            if ($currentHex -eq $idClean) { $isCurrent = $true }
+        if ($null -ne $currentClean) {
+            $idClean = $id.Replace("{","").Replace("}","").Replace("-","").ToUpperInvariant()
+            if ($currentClean -eq $idClean) { $isCurrent = $true }
         }
         $desktops += @{
             id = $id
@@ -233,10 +242,12 @@ if (Test-Path $desktopsPath) {
 if ($desktops.Count -eq 0) {
     $desktops += @{ id = "default"; name = "Desktop 1"; index = 0; is_current = $true }
 }
+$matched = @($desktops | Where-Object { $_.is_current }).Count
 $result = @{
     desktops = $desktops
     current_index = ($desktops | Where-Object { $_.is_current } | Select-Object -First 1).index
     total_count = $desktops.Count
+    current_desktop_known = ($matched -eq 1)
 }
 ConvertTo-Json $result -Compress -Depth 3
 "#
@@ -444,31 +455,7 @@ Write-Output (ConvertTo-Json @{{ success = $true; hwnd = {hwnd}; pinned = $false
 // ─── Runtime Helpers ─────────────────────────────────────────────────────────
 
 fn run_ps_script(script: &str) -> Result<String, String> {
-    let mut child = Command::new("powershell")
-        .args([
-            "-NoProfile",
-            "-NonInteractive",
-            "-ExecutionPolicy",
-            "Bypass",
-            "-Command",
-            "-",
-        ])
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .map_err(|e| format!("failed to spawn powershell: {e}"))?;
-    if let Some(mut stdin) = child.stdin.take() {
-        stdin
-            .write_all(script.as_bytes())
-            .map_err(|e| format!("stdin write: {e}"))?;
-    }
-    let output = child.wait_with_output().map_err(|e| format!("wait: {e}"))?;
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(format!("PowerShell error: {}", stderr.trim()));
-    }
-    Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+    crate::wa::ps::run_ps_script(script)
 }
 
 fn parse_enumerate_result(json: &str) -> Option<VirtualDesktopState> {
@@ -484,6 +471,7 @@ fn parse_enumerate_result(json: &str) -> Option<VirtualDesktopState> {
         desktops: Option<Vec<PsDesktop>>,
         current_index: Option<u32>,
         total_count: Option<u32>,
+        current_desktop_known: Option<bool>,
     }
     let r: PsResult = serde_json::from_str(json).ok()?;
     let desktops: Vec<VirtualDesktop> = r
@@ -498,11 +486,18 @@ fn parse_enumerate_result(json: &str) -> Option<VirtualDesktopState> {
         })
         .collect();
     let total = r.total_count.unwrap_or(desktops.len() as u32);
-    let current_index = r.current_index.unwrap_or(0);
+    // A missing current desktop must stay missing: defaulting it to index 0
+    // reported a measurement that was never taken (bug #21).
+    let current_known = r.current_desktop_known.unwrap_or(false);
+    let current_index = match r.current_index {
+        Some(index) => index,
+        None => 0,
+    };
     Some(VirtualDesktopState {
         desktops,
         current_index,
         total_count: total,
+        current_desktop_known: current_known,
         supports_named_desktops: true,
     })
 }
@@ -513,13 +508,44 @@ fn parse_enumerate_result(json: &str) -> Option<VirtualDesktopState> {
 mod tests {
     use super::*;
 
+    /// Enumeration must return a coherent state. The desktop count is a property
+    /// of the machine, not of this code, so it is bounded rather than pinned:
+    /// bug #19 used to hide the real script output behind the single-desktop
+    /// fallback, and this test only ever passed against that fallback.
     #[test]
-    fn default_manager_enumerates_single_desktop() {
+    fn enumerate_returns_coherent_state() {
         let mut mgr = VirtualDesktopManager::new();
-        let state = mgr.enumerate();
-        assert_eq!(state.total_count, 1);
-        assert_eq!(state.current_index, 0);
-        assert!(state.current().unwrap().is_current);
+        let state = mgr.enumerate().clone();
+        assert!(state.total_count >= 1, "got: {state:?}");
+        assert_eq!(
+            state.total_count as usize,
+            state.desktops.len(),
+            "got: {state:?}"
+        );
+        assert!(
+            (state.current_index as usize) < state.desktops.len(),
+            "got: {state:?}"
+        );
+        if state.current_desktop_known {
+            assert!(state.current().is_some(), "got: {state:?}");
+        }
+        assert!(mgr.state().is_some(), "enumerate() must populate the cache");
+    }
+
+    /// Bug #21: the current desktop is only optional where the registry does not
+    /// publish it, and the parser must not invent index 0 in that case.
+    #[test]
+    fn parse_keeps_unknown_current_desktop_flagged() {
+        let json = r#"{"desktops":[{"id":"{A}","index":0,"is_current":false},{"id":"{B}","index":1,"is_current":false}],"total_count":2,"current_desktop_known":false}"#;
+        let state = parse_enumerate_result(json).expect("parses");
+        assert!(!state.current_desktop_known);
+        assert!(state.current().is_none());
+        assert_eq!(state.total_count, 2);
+
+        let json = r#"{"desktops":[{"id":"{A}","index":0,"is_current":true}],"current_index":0,"total_count":1,"current_desktop_known":true}"#;
+        let state = parse_enumerate_result(json).expect("parses");
+        assert!(state.current_desktop_known);
+        assert_eq!(state.current().unwrap().index, 0);
     }
 
     #[test]
@@ -544,6 +570,7 @@ mod tests {
             current_index: 0,
             total_count: 2,
             supports_named_desktops: true,
+            current_desktop_known: true,
         };
         assert_eq!(state.by_name("personal").unwrap().index, 1);
         assert_eq!(state.by_index(0).unwrap().name.as_deref(), Some("Work"));

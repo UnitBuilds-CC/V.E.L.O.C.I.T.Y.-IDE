@@ -180,7 +180,9 @@ Add-WaNode $target 0 $maxDepth $maxChildren
     window_title = ($target.Current.Name)
     process_id = ($target.Current.ProcessId)
     focus_node_id = $focusNodeId
-    nodes = @($nodeList)
+    # `.ToArray()` rather than array-wrapping the list in `@()`: the latter
+    # throws "Argument types do not match" on Windows PowerShell 5.1 (bug #17).
+    nodes = $nodeList.ToArray()
 } | ConvertTo-Json -Depth 6 -Compress
 "#
 }
@@ -431,14 +433,14 @@ function Test-WaCondition($conditionName, $observedValue, $expectedValue) {
     }
 }
 
-$startedAt = [Environment]::TickCount64
+$startedSw = [System.Diagnostics.Stopwatch]::StartNew()
 $windowTitle = ''
 $processId = $null
 $observedValue = $null
 $satisfied = $false
 $detail = ''
 
-while (([Environment]::TickCount64 - $startedAt) -le $timeoutMs) {
+while ($startedSw.Elapsed.TotalMilliseconds -le $timeoutMs) {
     $targetWindow = Get-WaTargetWindow
     if ($null -ne $targetWindow) {
         $windowTitle = $targetWindow.Current.Name
@@ -461,7 +463,7 @@ while (([Environment]::TickCount64 - $startedAt) -le $timeoutMs) {
     Start-Sleep -Milliseconds $pollMs
 }
 
-$elapsed = [Math]::Max(0, ([Environment]::TickCount64 - $startedAt))
+$elapsed = [Math]::Max(0, [int]$startedSw.Elapsed.TotalMilliseconds)
 if (-not $satisfied -and [string]::IsNullOrWhiteSpace($detail)) {
     $detail = 'timeout elapsed without satisfying condition'
 }

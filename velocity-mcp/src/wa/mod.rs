@@ -10,6 +10,7 @@ pub mod notifications;
 pub mod ocr;
 pub mod platform;
 pub mod process_mgmt;
+pub mod ps;
 pub mod recording;
 pub mod recovery;
 pub mod registry;

@@ -615,8 +615,7 @@ fn dispatch_records_success_outcome() {
     )
     .unwrap();
 
-    let hist =
-        call_tool_in_workspace(&root, "event_history", &json!({"limit": 5})).unwrap();
+    let hist = call_tool_in_workspace(&root, "event_history", &json!({"limit": 5})).unwrap();
     let v: serde_json::Value = serde_json::from_str(&hist).unwrap();
     let events = v["events"].as_array().unwrap();
     assert!(
@@ -637,9 +636,12 @@ fn dispatch_records_failure_with_reason() {
         &json!({"relativeFilePath": "nonexistent_9x3.txt"}),
     );
 
-    let hist =
-        call_tool_in_workspace(&root, "event_history", &json!({"outcome": "failure", "limit": 5}))
-            .unwrap();
+    let hist = call_tool_in_workspace(
+        &root,
+        "event_history",
+        &json!({"outcome": "failure", "limit": 5}),
+    )
+    .unwrap();
     let v: serde_json::Value = serde_json::from_str(&hist).unwrap();
     let events = v["events"].as_array().unwrap();
     let failure = events
@@ -648,7 +650,9 @@ fn dispatch_records_failure_with_reason() {
         .unwrap_or_else(|| panic!("Expected read_file failure event in: {hist}"));
     assert_eq!(failure["outcome"], "failure");
     assert!(
-        failure["failure_reason"].as_str().map_or(false, |s| !s.is_empty()),
+        failure["failure_reason"]
+            .as_str()
+            .map_or(false, |s| !s.is_empty()),
         "failure_reason should be populated: {failure}"
     );
 }
@@ -670,9 +674,12 @@ fn dispatch_no_auto_pending_events() {
         &json!({"relativeFilePath": "missing_xyz.txt"}),
     );
 
-    let hist =
-        call_tool_in_workspace(&root, "event_history", &json!({"outcome": "pending", "limit": 10}))
-            .unwrap();
+    let hist = call_tool_in_workspace(
+        &root,
+        "event_history",
+        &json!({"outcome": "pending", "limit": 10}),
+    )
+    .unwrap();
     let v: serde_json::Value = serde_json::from_str(&hist).unwrap();
     let events = v["events"].as_array().unwrap();
     // No write_file or read_file should appear as "pending".

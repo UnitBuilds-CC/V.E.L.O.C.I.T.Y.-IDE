@@ -6,9 +6,7 @@
 //! browser and native app interactions (e.g., download→open, copy→paste,
 //! upload via file dialog).
 
-use std::io::Write;
 use std::path::PathBuf;
-use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
 // ─── Bridge Model ────────────────────────────────────────────────────────────
@@ -410,9 +408,9 @@ if ($null -eq $el) {{
             } => {
                 let deadline_ms = timeout.as_millis() as u64;
                 let script = format!(
-                    "$deadline = [Environment]::TickCount64 + {deadline_ms}; \
+                    "$__sw = [System.Diagnostics.Stopwatch]::StartNew(); $__deadlineMs = {deadline_ms}; \
                      $found = $false; \
-                     while ([Environment]::TickCount64 -lt $deadline) {{ \
+                     while ($__sw.Elapsed.TotalMilliseconds -lt $__deadlineMs) {{ \
                          $w = Get-Process | Where-Object {{ $_.MainWindowTitle -like '*{title}*' }}; \
                          if ($null -ne $w) {{ $found = $true; break }}; \
                          Start-Sleep -Milliseconds 200 \
@@ -441,9 +439,9 @@ if ($null -eq $el) {{
             CrossContextCondition::ClipboardContains { text, timeout } => {
                 let script = format!(
                     "Add-Type -AssemblyName System.Windows.Forms; \
-                     $deadline = [Environment]::TickCount64 + {timeout_ms}; \
+                     $__sw = [System.Diagnostics.Stopwatch]::StartNew(); $__deadlineMs = {timeout_ms}; \
                      $found = $false; \
-                     while ([Environment]::TickCount64 -lt $deadline) {{ \
+                     while ($__sw.Elapsed.TotalMilliseconds -lt $__deadlineMs) {{ \
                          $clip = [System.Windows.Forms.Clipboard]::GetText(); \
                          if ($clip -like '*{text}*') {{ $found = $true; break }}; \
                          Start-Sleep -Milliseconds 200 \
@@ -459,9 +457,9 @@ if ($null -eq $el) {{
             }
             CrossContextCondition::ProcessStarts { name, timeout } => {
                 let script = format!(
-                    "$deadline = [Environment]::TickCount64 + {timeout_ms}; \
+                    "$__sw = [System.Diagnostics.Stopwatch]::StartNew(); $__deadlineMs = {timeout_ms}; \
                      $found = $false; \
-                     while ([Environment]::TickCount64 -lt $deadline) {{ \
+                     while ($__sw.Elapsed.TotalMilliseconds -lt $__deadlineMs) {{ \
                          $p = Get-Process -Name '{name}' -ErrorAction SilentlyContinue; \
                          if ($null -ne $p) {{ $found = $true; break }}; \
                          Start-Sleep -Milliseconds 200 \
@@ -580,9 +578,10 @@ pub fn build_wait_for_file_script(path: &PathBuf, timeout_ms: u64) -> String {
     format!(
         r#"
 $path = '{path_str}'
-$deadline = [Environment]::TickCount64 + {timeout_ms}
+$__sw = [System.Diagnostics.Stopwatch]::StartNew()
+$__deadlineMs = {timeout_ms}
 $found = $false
-while ([Environment]::TickCount64 -lt $deadline) {{
+while ($__sw.Elapsed.TotalMilliseconds -lt $__deadlineMs) {{
     if (Test-Path $path) {{
         $file = Get-Item $path
         # Wait for file to stop growing (download complete)
@@ -640,31 +639,7 @@ if ($direction -eq 'copy') {{
 }
 
 fn run_ps_script(script: &str) -> Result<String, String> {
-    let mut child = Command::new("powershell")
-        .args([
-            "-NoProfile",
-            "-NonInteractive",
-            "-ExecutionPolicy",
-            "Bypass",
-            "-Command",
-            "-",
-        ])
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .map_err(|e| format!("failed to spawn powershell: {e}"))?;
-    if let Some(mut stdin) = child.stdin.take() {
-        stdin
-            .write_all(script.as_bytes())
-            .map_err(|e| format!("stdin write: {e}"))?;
-    }
-    let output = child.wait_with_output().map_err(|e| format!("wait: {e}"))?;
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(format!("PowerShell error: {}", stderr.trim()));
-    }
-    Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+    crate::wa::ps::run_ps_script(script)
 }
 
 // ─── Tests ───────────────────────────────────────────────────────────────────

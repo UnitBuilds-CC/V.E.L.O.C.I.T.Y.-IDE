@@ -191,6 +191,7 @@ fn wa_virtual_desktop_script_generation() {
         current_index: 0,
         total_count: 2,
         supports_named_desktops: true,
+        current_desktop_known: true,
     };
     assert_eq!(state.by_name("personal").unwrap().index, 1);
     assert_eq!(state.by_index(0).unwrap().name.as_deref(), Some("Work"));

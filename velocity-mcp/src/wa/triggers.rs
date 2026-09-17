@@ -468,10 +468,11 @@ pub fn build_window_appears_script(title_contains: &str, timeout_ms: u64) -> Str
         r#"
 Add-Type -AssemblyName UIAutomationClient, UIAutomationTypes
 $target = '{escaped}'
-$deadline = [Environment]::TickCount64 + {timeout_ms}
+$__sw = [System.Diagnostics.Stopwatch]::StartNew()
+$__deadlineMs = {timeout_ms}
 $found = $false
 $windowTitle = ""
-while ([Environment]::TickCount64 -lt $deadline) {{
+while ($__sw.Elapsed.TotalMilliseconds -lt $__deadlineMs) {{
     $root = [System.Windows.Automation.AutomationElement]::RootElement
     $windows = $root.FindAll([System.Windows.Automation.TreeScope]::Children, [System.Windows.Automation.Condition]::TrueCondition)
     foreach ($w in $windows) {{

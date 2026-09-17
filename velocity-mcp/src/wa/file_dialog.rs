@@ -4,9 +4,7 @@
 //! and file system operations that bridge between the automation layer and
 //! the Windows Explorer shell dialogs.
 
-use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
 use std::time::Duration;
 
 // ─── Dialog Types ────────────────────────────────────────────────────────────
@@ -299,10 +297,11 @@ Add-Type -AssemblyName UIAutomationClient, UIAutomationTypes
 {pid_clause}
 $timeout = {timeout_ms}
 $titlePattern = '{title_filter}'
-$deadline = [Environment]::TickCount64 + $timeout
+$__sw = [System.Diagnostics.Stopwatch]::StartNew()
+$__deadlineMs = $timeout
 $dialog = $null
 
-while ([Environment]::TickCount64 -lt $deadline) {{
+while ($__sw.Elapsed.TotalMilliseconds -lt $__deadlineMs) {{
     $root = [System.Windows.Automation.AutomationElement]::RootElement
     $windows = $root.FindAll([System.Windows.Automation.TreeScope]::Children, [System.Windows.Automation.Condition]::TrueCondition)
     foreach ($w in $windows) {{
@@ -372,33 +371,9 @@ Write-Output '{{"found":false}}'
 }
 
 fn run_ps_script(script: &str) -> Result<String, String> {
-    let mut child = Command::new("powershell")
-        .args([
-            "-NoProfile",
-            "-NonInteractive",
-            "-ExecutionPolicy",
-            "Bypass",
-            "-Command",
-            "-",
-        ])
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .map_err(|e| format!("failed to spawn powershell: {e}"))?;
-    // Write the script, then close stdin (drop the pipe) so `powershell -Command -`
-    // receives EOF and executes instead of blocking forever waiting for more input.
-    if let Some(mut stdin) = child.stdin.take() {
-        stdin
-            .write_all(script.as_bytes())
-            .map_err(|e| format!("stdin write: {e}"))?;
-    }
-    let output = child.wait_with_output().map_err(|e| format!("wait: {e}"))?;
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(format!("PowerShell error: {}", stderr.trim()));
-    }
-    Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+    // The shared helper writes the script then drops stdin, so
+    // `powershell -Command -` receives EOF and executes rather than blocking.
+    crate::wa::ps::run_ps_script(script)
 }
 
 fn parse_dialog_info(json: &str) -> Option<FileDialogInfo> {
