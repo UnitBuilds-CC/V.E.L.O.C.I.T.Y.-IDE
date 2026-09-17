@@ -140,14 +140,19 @@ impl StatusBar {
                     }
 
                     // ── Right group: provider/model + command palette, laid out
-                    // right-to-left inside a reserved child that spans the row. Using a
-                    // child (instead of `with_layout` on the shared cursor) lets us learn
-                    // where the group begins so the middle status message can be clipped
-                    // to the gap and never overprint the left pills. ──
+                    // right-to-left inside a reserved child that spans only the space
+                    // *after* the left group (mode/build/branch/position). Clamping the
+                    // child's left edge to the left group's end means a narrow window
+                    // clips the right pills instead of overprinting them onto "Code" /
+                    // "✓ build" (the footer overlap bug).
                     let row_rect = ui.max_rect();
+                    let left_end = ui.cursor().min.x;
                     let mut right = ui.new_child(
                         egui::UiBuilder::new()
-                            .max_rect(row_rect)
+                            .max_rect(egui::Rect::from_min_max(
+                                egui::pos2(left_end, row_rect.min.y),
+                                row_rect.max,
+                            ))
                             .layout(egui::Layout::right_to_left(egui::Align::Center)),
                     );
                     right.spacing_mut().item_spacing.x = 4.0;
@@ -249,10 +254,13 @@ impl StatusBar {
                                     ))
                                     .layout(egui::Layout::left_to_right(egui::Align::Center)),
                             );
-                            let status_response = status_ui.label(
-                                egui::RichText::new(status)
-                                    .size(11.0)
-                                    .color(palette.text_muted),
+                            let status_response = status_ui.add(
+                                egui::Label::new(
+                                    egui::RichText::new(status)
+                                        .size(11.0)
+                                        .color(palette.text_muted),
+                                )
+                                .wrap_mode(egui::TextWrapMode::Truncate),
                             );
                             // Show full text on hover (UX polish for truncated messages)
                             status_response.on_hover_text(status);
