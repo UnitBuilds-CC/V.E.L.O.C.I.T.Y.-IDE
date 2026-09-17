@@ -237,11 +237,8 @@ impl ExpertTeam {
 
     /// Remove a member by id. Returns the removed member, or `None` if not found.
     pub fn remove_member(&mut self, member_id: &str) -> Option<ExpertMember> {
-        if let Some(pos) = self.members.iter().position(|m| m.id == member_id) {
-            Some(self.members.remove(pos))
-        } else {
-            None
-        }
+        let pos = self.find_member_index(member_id)?;
+        Some(self.members.remove(pos))
     }
 
     /// Apply a partial update to a member identified by `member_id`.
@@ -251,12 +248,32 @@ impl ExpertTeam {
         member_id: &str,
         update: &MemberUpdate,
     ) -> Result<Vec<&'static str>, String> {
-        let member = self
-            .members
-            .iter_mut()
-            .find(|m| m.id == member_id)
+        let idx = self
+            .find_member_index(member_id)
             .ok_or_else(|| format!("member '{}' not found", member_id))?;
-        Ok(update.apply(member))
+        Ok(update.apply(&mut self.members[idx]))
+    }
+
+    /// Resolve a member by exact id, then case-insensitive name, then
+    /// slugified name.  Users routinely pass display names like "Scribe" or
+    /// slugs like "scribe" instead of the internal `member_qwen-smoke-team_2`
+    /// id, and both should Just Work.
+    fn find_member_index(&self, needle: &str) -> Option<usize> {
+        if let Some(i) = self.members.iter().position(|m| m.id == needle) {
+            return Some(i);
+        }
+        let lower = needle.to_lowercase();
+        if let Some(i) = self.members.iter().position(|m| m.name.to_lowercase() == lower) {
+            return Some(i);
+        }
+        if let Some(i) = self
+            .members
+            .iter()
+            .position(|m| slugify(&m.name) == lower)
+        {
+            return Some(i);
+        }
+        None
     }
 }
 

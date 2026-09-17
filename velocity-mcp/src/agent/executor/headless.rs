@@ -185,6 +185,7 @@ pub fn run_headless_subagent(request: HeadlessSubAgentRequest) -> HeadlessSubAge
         &mut Vec::new(),
         &CoordinationBus::new(),
         None, // Headless sub-agents use direct dispatch, not MoA router
+        request.max_turns,
     );
 
     drop(agent_event_tx);

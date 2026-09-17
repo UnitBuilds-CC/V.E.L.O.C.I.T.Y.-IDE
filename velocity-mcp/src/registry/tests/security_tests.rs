@@ -167,15 +167,26 @@ fn run_command_executes_in_correct_workspace() {
     // Create a marker file in workspace 1
     fs::write(root1.join("marker.txt"), "here").unwrap();
 
-    // Run `ls` in workspace 1 — should see marker.txt
+    // Use a shell-agnostic listing command. `run_command` shells out to
+    // PowerShell on Windows and `sh -c` elsewhere, so the command has to
+    // work in both. `dir` alone is fine: PowerShell aliases it to
+    // `Get-ChildItem` (whose default table output includes the file name),
+    // and coreutils `dir` on Unix prints names too. `dir /b` used to be
+    // here but PowerShell rejects `/b` because it isn't a `Get-ChildItem`
+    // parameter — the test was silently failing on Windows.
     let output1 =
-        call_tool_in_workspace(&root1, "run_command", &json!({"command": "dir /b"})).unwrap();
-    assert!(output1.contains("marker.txt"));
+        call_tool_in_workspace(&root1, "run_command", &json!({"command": "dir"})).unwrap();
+    assert!(
+        output1.contains("marker.txt"),
+        "expected workspace 1 listing to contain marker.txt, got: {output1}"
+    );
 
-    // Run `ls` in workspace 2 — should NOT see marker.txt
     let output2 =
-        call_tool_in_workspace(&root2, "run_command", &json!({"command": "dir /b"})).unwrap();
-    assert!(!output2.contains("marker.txt"));
+        call_tool_in_workspace(&root2, "run_command", &json!({"command": "dir"})).unwrap();
+    assert!(
+        !output2.contains("marker.txt"),
+        "workspace 2 must not see workspace 1's marker.txt, got: {output2}"
+    );
 }
 
 // ═══════════════════════════════════════════════════════════════════════════

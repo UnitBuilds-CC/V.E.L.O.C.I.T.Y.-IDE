@@ -811,6 +811,58 @@ impl<'a> TabViewerImpl<'a> {
                     );
                 });
         };
+        // Provider row variant that additionally exposes a pay-per-token plan
+        // (currently only Alibaba DashScope "Token Plan"). Renders the standard
+        // API-key and Label fields, then a checkbox + optional second key field.
+        let api_key_provider_row_with_token_plan =
+            |ui: &mut egui::Ui,
+             name: &str,
+             settings: &mut crate::usage::WorkspaceApiKeySettings,
+             hint: &str,
+             token_hint: &str| {
+                egui::CollapsingHeader::new(provider_header(name, settings.is_configured()))
+                    .default_open(false)
+                    .show(ui, |ui| {
+                        ui.horizontal(|ui| {
+                            provider_badge(ui, settings.is_configured());
+                        });
+                        text_row(ui, "API key", &mut settings.api_key, hint, true);
+                        text_row(
+                            ui,
+                            "Label",
+                            &mut settings.label,
+                            &format!("{}-Default", name),
+                            false,
+                        );
+                        ui.add_space(4.0);
+                        ui.separator();
+                        ui.add_space(2.0);
+                        ui.label(
+                            egui::RichText::new("Pay-per-token plan")
+                                .small()
+                                .strong()
+                                .color(palette.accent),
+                        );
+                        ui.checkbox(
+                            &mut settings.use_token_plan,
+                            "Use Token Plan API key (takes precedence when enabled)",
+                        );
+                        text_row(
+                            ui,
+                            "Token plan API key",
+                            &mut settings.token_plan_api_key,
+                            token_hint,
+                            true,
+                        );
+                        text_row(
+                            ui,
+                            "Token plan base URL",
+                            &mut settings.token_plan_base_url,
+                            "https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode (default when empty)",
+                            false,
+                        );
+                    });
+            };
 
         egui::Frame::new()
             .inner_margin(egui::Margin::same(12))
@@ -1306,11 +1358,12 @@ impl<'a> TabViewerImpl<'a> {
                             &mut self.app.provider_settings.mistral,
                             "Mistral API key",
                         );
-                        api_key_provider_row(
+                        api_key_provider_row_with_token_plan(
                             ui,
                             "Alibaba Qwen",
                             &mut self.app.provider_settings.alibaba,
                             "DashScope API key",
+                            "DashScope Token Plan key (sk-sp-...)",
                         );
                         api_key_provider_row(
                             ui,

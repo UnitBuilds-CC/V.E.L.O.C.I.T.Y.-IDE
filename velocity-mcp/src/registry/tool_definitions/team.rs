@@ -299,5 +299,32 @@ pub fn get_team_tools() -> Vec<Tool> {
                 "required": ["team_id"]
             }),
         },
+        // ── Team Execution Tools ────────────────────────────────────────
+        Tool {
+            name: "team_dispatch".to_string(),
+            description: "Dispatch a task to the best-matching team member for autonomous execution. Routes the task using file-scope matching, keyword scoring, or fallback to team lead. Builds a persona prompt from the member's role, skills, and workflow instructions, then executes via a headless sub-agent using the member's configured AI provider and model. Returns the routing decision, transcript, and status updates. This is the bridge between team organization and autonomous execution.".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "team_id": { "type": "string", "description": "Team id, slug, or name." },
+                    "task": { "type": "string", "description": "The task description to execute." },
+                    "files": { "type": "array", "items": { "type": "string" }, "description": "Optional file paths for scope-based routing and pre-indexing." }
+                },
+                "required": ["team_id", "task"]
+            }),
+        },
+        // ── Wiki Generation Tools ──────────────────────────────────────
+        Tool {
+            name: "generate_wiki".to_string(),
+            description: "Generate a project wiki from the workspace site map with indexed analysis, PageRank reading order, and content caching. Supports markdown, HTML, and GitHub Pages export formats. Uses deterministic pre-indexing (zero LLM calls) for symbol/import extraction, with optional LLM-powered detail generation. Incremental updates skip unchanged files via content-keyed cache.".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "output_dir": { "type": "string", "description": "Output directory for wiki files (relative to workspace root or absolute). Default: 'wiki'." },
+                    "format": { "type": "string", "enum": ["markdown", "html", "github-pages"], "description": "Export format. Default: 'markdown'." },
+                    "use_index": { "type": "boolean", "description": "Enable pre-indexing phase for symbol/import extraction. Default: true." }
+                }
+            }),
+        },
     ]
 }

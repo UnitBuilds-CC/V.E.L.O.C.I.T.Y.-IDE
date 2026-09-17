@@ -44,10 +44,11 @@ pub fn run_agent_reasoning_loop(
     deferred_messages: &mut Vec<UiToAgentMessage>,
     coordination_bus: &CoordinationBus,
     router_settings: Option<&WorkspaceRouterSettings>,
+    max_loops_override: Option<usize>,
 ) {
     let mut sitemap_needed = false;
     let mut loop_count: usize = 0;
-    let max_loops: usize = 15;
+    let max_loops: usize = max_loops_override.unwrap_or(15);
     let mut current_provider = provider;
     let mut current_model = model.to_string();
     let mut current_profile = profile.clone();

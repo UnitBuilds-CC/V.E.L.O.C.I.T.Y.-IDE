@@ -103,13 +103,16 @@ fn persists_weight_root_to_nda_metadata() {
     sm.flush().unwrap();
 
     let metadata = fs::read_to_string(dir.path().join("metadata.nda")).unwrap();
-    assert!(metadata.contains("metadata version 2"));
-    assert!(metadata.contains("field_count 1"));
+    assert!(metadata.contains("metadata version 3"));
+    assert!(metadata.contains("field_count 2"));
     assert!(metadata.contains("field\tweight_root\t000000001234abcd"));
+    assert!(metadata.contains("field\troot\t"));
     assert_eq!(
         SiteMap::read_persisted_weight_root(dir.path()),
         Some(0x1234_ABCD)
     );
+    // Root should also be persisted (non-zero for non-empty site map, zero for empty).
+    assert_eq!(SiteMap::read_persisted_root(dir.path()), Some(0));
 }
 
 #[test]

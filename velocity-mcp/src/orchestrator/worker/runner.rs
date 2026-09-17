@@ -203,6 +203,7 @@ pub fn execute_live_task(
             cancel_rx: Some(cancel_rx.clone()),
             progress: Some(progress.clone()),
             scoped_files: assignment.scoped_files.clone(),
+            max_turns: None,
         });
         last_status_updates = subagent.status_updates.clone();
         last_transcript = subagent.transcript.clone();

@@ -403,6 +403,7 @@ impl InlineSuggestionEngine {
                 cancel_rx: None,
                 progress: None,
                 scoped_files: Some(vec![file_path]),
+                max_turns: None,
             };
             let result = crate::agent::run_headless_subagent(req);
             let completion = sanitize_completion(&result.transcript, max_chars, allow_multiline);

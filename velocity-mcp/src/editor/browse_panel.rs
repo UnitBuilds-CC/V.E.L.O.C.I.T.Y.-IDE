@@ -141,6 +141,7 @@ impl BrowseState {
             cancel_rx: None,
             progress: Some(progress),
             scoped_files: None,
+            max_turns: None,
         };
 
         std::thread::spawn(move || {

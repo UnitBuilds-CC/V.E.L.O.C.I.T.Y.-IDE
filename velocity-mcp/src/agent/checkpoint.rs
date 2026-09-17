@@ -14,8 +14,10 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use serde::{Deserialize, Serialize};
+
 /// Information about a single checkpoint.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CheckpointInfo {
     /// Sequential checkpoint ID.
     pub id: usize,
@@ -30,6 +32,10 @@ pub struct CheckpointInfo {
 }
 
 /// Manages git-based workspace checkpoints for agent operations.
+///
+/// State is persisted to `.velocity/checkpoints.json` so `agent_checkpoint_list`
+/// called from a different MCP request (a fresh manager instance) still sees
+/// checkpoints created earlier in the session.
 pub struct CheckpointManager {
     /// Workspace root (must be a git repository).
     workspace_root: PathBuf,
@@ -42,14 +48,55 @@ pub struct CheckpointManager {
 }
 
 impl CheckpointManager {
-    /// Create a new checkpoint manager for the given workspace.
+    /// Create a new checkpoint manager for the given workspace, loading any
+    /// previously-persisted checkpoints from `.velocity/checkpoints.json`.
     pub fn new(workspace_root: &Path) -> Self {
         let enabled = workspace_root.join(".git").exists();
-        Self {
+        let mut mgr = Self {
             workspace_root: workspace_root.to_path_buf(),
             checkpoints: Vec::new(),
             next_id: 1,
             enabled,
+        };
+        mgr.load();
+        mgr
+    }
+
+    fn persistence_path(&self) -> PathBuf {
+        self.workspace_root
+            .join(".velocity")
+            .join("checkpoints.json")
+    }
+
+    /// Reload persisted checkpoints from disk, ignoring any errors (missing
+    /// file, malformed JSON).  Called once from `new()`.
+    fn load(&mut self) {
+        let path = self.persistence_path();
+        let Ok(raw) = std::fs::read_to_string(&path) else {
+            return;
+        };
+        let entries: Vec<CheckpointInfo> = match serde_json::from_str(&raw) {
+            Ok(v) => v,
+            Err(e) => {
+                log::warn!("checkpoint: could not parse {}: {}", path.display(), e);
+                return;
+            }
+        };
+        self.next_id = entries.iter().map(|c| c.id + 1).max().unwrap_or(1);
+        self.checkpoints = entries;
+    }
+
+    /// Persist the current checkpoint list to disk.  Best-effort.
+    fn save(&self) {
+        let path = self.persistence_path();
+        if let Some(parent) = path.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        match serde_json::to_string_pretty(&self.checkpoints) {
+            Ok(payload) => {
+                let _ = std::fs::write(&path, payload);
+            }
+            Err(e) => log::warn!("checkpoint: failed to serialize state: {}", e),
         }
     }
 
@@ -80,6 +127,7 @@ impl CheckpointManager {
             dirty_files,
         });
 
+        self.save();
         Some(id)
     }
 
@@ -147,6 +195,7 @@ impl CheckpointManager {
         // them automatically. We only need to clear our own tracking.
         self.checkpoints.clear();
         self.next_id = 1;
+        self.save();
     }
 
     // ─── Internal helpers ────────────────────────────────────────────────────
@@ -366,5 +415,44 @@ mod tests {
         assert!(debug.contains("42"));
         assert!(debug.contains("before edit"));
         assert!(debug.contains("abc123"));
+    }
+
+    /// Regression guard: a fresh manager must see checkpoints persisted by an
+    /// earlier instance, otherwise `agent_checkpoint_list` is always empty
+    /// across MCP requests.
+    #[test]
+    fn checkpoint_persists_across_manager_instances() {
+        let base = std::env::temp_dir().join(format!(
+            "velocity_cp_persist_{}",
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&base).unwrap();
+        // Fake a `.git` so the manager considers checkpointing enabled.
+        std::fs::create_dir_all(base.join(".git")).unwrap();
+
+        // Seed the persistence file directly: the load path is what we're
+        // testing, not the git-stash side-effect of `checkpoint()`.
+        let persisted = serde_json::to_string(&vec![CheckpointInfo {
+            id: 7,
+            label: "before refactor".to_string(),
+            git_ref: "deadbeef".to_string(),
+            created_at: 123,
+            dirty_files: 3,
+        }])
+        .unwrap();
+        std::fs::create_dir_all(base.join(".velocity")).unwrap();
+        std::fs::write(base.join(".velocity").join("checkpoints.json"), persisted).unwrap();
+
+        let mgr = CheckpointManager::new(&base);
+        assert_eq!(mgr.count(), 1, "fresh manager should load persisted");
+        assert_eq!(mgr.list()[0].id, 7);
+        assert_eq!(mgr.list()[0].label, "before refactor");
+        // next_id must be > 7 so a subsequent checkpoint doesn't collide.
+        assert!(mgr.next_id > 7);
+
+        let _ = std::fs::remove_dir_all(&base);
     }
 }

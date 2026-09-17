@@ -309,6 +309,7 @@ pub fn try_route_team_prompt(
         deferred_messages,
         &CoordinationBus::new(),
         None, // Team routing uses direct dispatch, not MoA router
+        None, // default max_loops
     );
 
     true

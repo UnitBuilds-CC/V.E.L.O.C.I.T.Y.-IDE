@@ -78,11 +78,13 @@ pub fn export_markdown_reported(
     for (module, pages) in &modules {
         let module_slug = slugify_module(module);
         let module_dir = dir.join("files").join(&module_slug);
-        fs::create_dir_all(&module_dir)?;
+        fs::create_dir_all(&module_dir)
+            .with_context(|| format!("creating module dir {}", module_dir.display()))?;
         for page in pages {
             let path = module_dir.join(format!("{}.md", page.slug));
             let md = render_page_markdown(page, model);
-            fs::write(&path, &md)?;
+            fs::write(&path, &md)
+                .with_context(|| format!("writing wiki page {}", path.display()))?;
             total_bytes += md.len();
             count += 1;
         }
@@ -91,7 +93,8 @@ pub fn export_markdown_reported(
     for page in &model.symbol_pages {
         let path = dir.join("symbols").join(format!("{}.md", page.slug));
         let md = render_page_markdown(page, model);
-        fs::write(&path, &md)?;
+        fs::write(&path, &md)
+            .with_context(|| format!("writing symbol page {}", path.display()))?;
         total_bytes += md.len();
         count += 1;
     }
@@ -144,10 +147,12 @@ pub fn export_markdown(model: &WikiModel, dir: &Path) -> Result<usize> {
     for (module, pages) in &modules {
         let module_slug = slugify_module(module);
         let module_dir = dir.join("files").join(&module_slug);
-        fs::create_dir_all(&module_dir)?;
+        fs::create_dir_all(&module_dir)
+            .with_context(|| format!("creating module dir {}", module_dir.display()))?;
         for page in pages {
             let path = module_dir.join(format!("{}.md", page.slug));
-            fs::write(&path, render_page_markdown(page, model))?;
+            fs::write(&path, render_page_markdown(page, model))
+                .with_context(|| format!("writing wiki page {}", path.display()))?;
             count += 1;
         }
     }
@@ -272,7 +277,7 @@ pub fn render_page_markdown(page: &WikiPage, model: &WikiModel) -> String {
 
     if let Some(detail) = page.detail.as_deref() {
         out.push_str("## Details\n\n");
-        out.push_str(detail.trim_end());
+        out.push_str(&auto_link(detail.trim_end(), model));
         out.push_str("\n\n");
     }
 
@@ -409,7 +414,8 @@ fn group_by_module(pages: &[WikiPage]) -> BTreeMap<String, Vec<&WikiPage>> {
 }
 
 pub fn slugify_module(name: &str) -> String {
-    name.chars()
+    let slug = name
+        .chars()
         .map(|c| {
             if c.is_ascii_alphanumeric() {
                 c.to_ascii_lowercase()
@@ -419,7 +425,15 @@ pub fn slugify_module(name: &str) -> String {
         })
         .collect::<String>()
         .trim_matches('-')
-        .to_string()
+        .to_string();
+    if slug.is_empty() {
+        return "root".to_string();
+    }
+    // A module directory named CON/AUX/NUL/... is illegal on Windows.
+    if crate::wiki::generate::is_windows_reserved_name(&slug) {
+        return format!("{slug}-mod");
+    }
+    slug
 }
 
 /// Build a relative Markdown link to a target page if one exists, otherwise
@@ -452,6 +466,411 @@ fn find_page<'a>(model: &'a WikiModel, title: &str) -> Option<&'a WikiPage> {
         .iter()
         .find(|p| p.title == title)
         .or_else(|| model.symbol_pages.iter().find(|p| p.title == title))
+}
+
+// ─── Auto Cross-Linking ────────────────────────────────────────────────────
+
+/// Process text and auto-link backticked symbols and file paths.
+///
+/// - Backticked identifiers like `FooBar` that match a symbol page become links
+/// - Backticked paths like `src/foo.rs` that match a file page become links
+/// - Other backticked text is left as-is
+pub fn auto_link(text: &str, model: &WikiModel) -> String {
+    let mut result = String::with_capacity(text.len());
+    let mut chars = text.chars().peekable();
+
+    while let Some(ch) = chars.next() {
+        if ch == '`' {
+            // Collect backtick-delimited content
+            let mut backtick_content = String::new();
+            let mut found_close = false;
+            for inner_ch in chars.by_ref() {
+                if inner_ch == '`' {
+                    found_close = true;
+                    break;
+                }
+                backtick_content.push(inner_ch);
+            }
+
+            if found_close && !backtick_content.is_empty() {
+                // Try to find a matching page
+                if let Some(link) = try_auto_link(&backtick_content, model) {
+                    result.push_str(&link);
+                } else {
+                    // No match — keep as inline code
+                    result.push('`');
+                    result.push_str(&backtick_content);
+                    result.push('`');
+                }
+            } else {
+                // Unclosed backtick — just emit what we have
+                result.push('`');
+                result.push_str(&backtick_content);
+            }
+        } else {
+            result.push(ch);
+        }
+    }
+
+    result
+}
+
+/// Try to create a wiki link for the given backtick content.
+fn try_auto_link(content: &str, model: &WikiModel) -> Option<String> {
+    // Skip if it looks like code (contains operators, etc.)
+    if content.contains("fn ") || content.contains("let ") || content.contains("mut ")
+        || content.contains("->") || content.contains("=>") || content.contains('|')
+    {
+        return None;
+    }
+
+    // Try exact match as file page
+    if let Some(page) = model.file_pages.iter().find(|p| p.title == content) {
+        let module = page.title.split('/').next().unwrap_or("root");
+        let module = if module.contains('.') || module.is_empty() {
+            "root"
+        } else {
+            module
+        };
+        let link = format!(
+            "[`{}`](../files/{}/{}.md)",
+            content,
+            slugify_module(module),
+            page.slug
+        );
+        return Some(link);
+    }
+
+    // Try exact match as symbol page
+    if let Some(page) = model.symbol_pages.iter().find(|p| p.title == content) {
+        let link = format!("[`{}`](../symbols/{}.md)", content, page.slug);
+        return Some(link);
+    }
+
+    // Try case-insensitive match for symbols
+    let content_lower = content.to_lowercase();
+    if let Some(page) = model
+        .symbol_pages
+        .iter()
+        .find(|p| p.title.to_lowercase() == content_lower)
+    {
+        let link = format!("[`{}`](../symbols/{}.md)", content, page.slug);
+        return Some(link);
+    }
+
+    None
+}
+
+// ─── Reading Guide ──────────────────────────────────────────────────────────
+
+/// Render a reading guide page that suggests an order for reading the wiki.
+/// Uses PageRank scores to determine importance.
+pub fn render_reading_guide(model: &WikiModel, scores: &super::pagerank::PageRankScores) -> String {
+    let mut out = String::new();
+    
+    out.push_str("# Reading Guide\n\n");
+    out.push_str("_A suggested order for reading through the wiki, based on code importance._\n\n");
+    out.push_str(&generated_header(model));
+    out.push('\n');
+    
+    // Get top files by PageRank score
+    let file_titles: Vec<&str> = model.file_pages.iter().map(|p| p.title.as_str()).collect();
+    let reading_order = scores.reading_order(&file_titles);
+    
+    if reading_order.is_empty() {
+        out.push_str("_No files to display in reading order._\n");
+        return out;
+    }
+    
+    out.push_str("## Start Here\n\n");
+    out.push_str("These are the most important files to understand the codebase:\n\n");
+    
+    let top_count = (reading_order.len() / 10).max(3).min(10);
+    for (i, title) in reading_order.iter().take(top_count).enumerate() {
+        if let Some(page) = model.file_pages.iter().find(|p| p.title == *title) {
+            let _score = scores.get(title);
+            let module = title.split('/').next().unwrap_or("root");
+            let module = if module.contains('.') || module.is_empty() { "root" } else { module };
+            let link = format!("files/{}/{}.md", slugify_module(module), page.slug);
+            
+            out.push_str(&format!(
+                "{}. **[{}]({})** — {}\n",
+                i + 1,
+                title,
+                link,
+                page.summary
+            ));
+            
+            // Show why this is important
+            let defines_count = page.relationships
+                .iter()
+                .find(|(l, _)| l == "Defines")
+                .map(|(_, t)| t.len())
+                .unwrap_or(0);
+            let called_by_count = page.called_by.len();
+            
+            if defines_count > 0 || called_by_count > 0 {
+                out.push_str(&format!(
+                    "   _{} symbol(s) defined, referenced by {} file(s)_\n",
+                    defines_count, called_by_count
+                ));
+            }
+            out.push('\n');
+        }
+    }
+    
+    // Full reading order
+    out.push_str("## Complete Reading Order\n\n");
+    out.push_str("Full list of files in suggested reading order:\n\n");
+    
+    for (i, title) in reading_order.iter().enumerate() {
+        if let Some(page) = model.file_pages.iter().find(|p| p.title == *title) {
+            let module = title.split('/').next().unwrap_or("root");
+            let module = if module.contains('.') || module.is_empty() { "root" } else { module };
+            let link = format!("files/{}/{}.md", slugify_module(module), page.slug);
+            out.push_str(&format!("{}. [{}]({})\n", i + 1, title, link));
+        }
+    }
+    
+    out
+}
+
+// ─── GitHub Pages Export ────────────────────────────────────────────────────
+
+/// Export the wiki as a GitHub Pages-ready static site.
+/// Creates an index.html with docsify loader and .nojekyll file.
+pub fn export_github_pages(model: &WikiModel, dir: &Path) -> Result<usize> {
+    // First export as regular markdown
+    let count = export_markdown(model, dir)?;
+    
+    // Create docsify index.html
+    let index_html = render_docsify_index(model);
+    fs::write(dir.join("index.html"), index_html)?;
+    
+    // Create .nojekyll to disable Jekyll processing
+    fs::write(dir.join(".nojekyll"), "")?;
+    
+    // Create _sidebar.md for docsify navigation
+    let sidebar = render_docsify_sidebar(model);
+    fs::write(dir.join("_sidebar.md"), sidebar)?;
+    
+    // Create _coverpage.md for docsify
+    let coverpage = render_docsify_coverpage(model);
+    fs::write(dir.join("_coverpage.md"), coverpage)?;
+    
+    Ok(count + 4) // markdown files + index.html + .nojekyll + _sidebar.md + _coverpage.md
+}
+
+/// Render the docsify index.html loader.
+fn render_docsify_index(model: &WikiModel) -> String {
+    format!(
+        r#"<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>{} Wiki</title>
+    <meta name="description" content="Auto-generated wiki for {}">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="stylesheet" href="//cdn.jsdelivr.net/npm/docsify@4/lib/themes/vue.css">
+    <style>
+        :root {{
+            --theme-color: #29688e;
+        }}
+        body {{
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Oxygen, Ubuntu, sans-serif;
+        }}
+        .markdown-section code {{
+            background-color: #f5f5f5;
+            border-radius: 3px;
+            padding: 0.2em 0.4em;
+        }}
+        .markdown-section pre {{
+            background-color: #f5f5f5;
+            border-radius: 6px;
+            padding: 1em;
+        }}
+    </style>
+</head>
+<body>
+    <div id="app"></div>
+    <script>
+        window.$docsify = {{
+            name: '{} Wiki',
+            repo: '',
+            loadSidebar: true,
+            coverpage: true,
+            onlyCover: false,
+            maxLevel: 3,
+            subMaxLevel: 2,
+            auto2top: true,
+            search: {{
+                paths: 'auto',
+                placeholder: 'Search wiki...',
+                noData: 'No results found',
+            }},
+        }}
+    </script>
+    <script src="//cdn.jsdelivr.net/npm/docsify@4"></script>
+    <script src="//cdn.jsdelivr.net/npm/docsify@4/lib/plugins/search.min.js"></script>
+    <script src="//cdn.jsdelivr.net/npm/mermaid/dist/mermaid.min.js"></script>
+    <script>
+        mermaid.initialize({{ startOnLoad: true }});
+        window.$docsify.plugins = [].concat(function(hook) {{
+            hook.doneEach(function() {{
+                mermaid.run({{ querySelector: '.markdown-section pre code.language-mermaid' }});
+            }});
+        }}, window.$docsify.plugins);
+    </script>
+</body>
+</html>"#,
+        model.stats_summary,
+        model.stats_summary,
+        model.stats_summary
+    )
+}
+
+/// Render the docsify sidebar navigation.
+fn render_docsify_sidebar(model: &WikiModel) -> String {
+    let mut out = String::new();
+    
+    out.push_str("- **Home**\n");
+    out.push_str("  - [Overview](index.md)\n");
+    out.push_str("  - [Symbol Index](symbol_index.md)\n");
+    out.push_str("  - [Dependency Graph](graph.md)\n\n");
+    
+    if !model.file_pages.is_empty() {
+        out.push_str("- **Files**\n");
+        let modules = group_by_module(&model.file_pages);
+        for (module, pages) in &modules {
+            let module_slug = slugify_module(module);
+            out.push_str(&format!("  - {}\n", module));
+            for page in pages.iter().take(10) {
+                out.push_str(&format!(
+                    "    - [{}](files/{}/{}.md)\n",
+                    page.title.split('/').last().unwrap_or(&page.title),
+                    module_slug,
+                    page.slug
+                ));
+            }
+            if pages.len() > 10 {
+                out.push_str(&format!("    - _... and {} more_\n", pages.len() - 10));
+            }
+        }
+        out.push('\n');
+    }
+    
+    if !model.symbol_pages.is_empty() {
+        out.push_str("- **Symbols**\n");
+        for page in model.symbol_pages.iter().take(20) {
+            out.push_str(&format!("  - [{}](symbols/{}.md)\n", page.title, page.slug));
+        }
+        if model.symbol_pages.len() > 20 {
+            out.push_str(&format!("  - _... and {} more_\n", model.symbol_pages.len() - 20));
+        }
+    }
+    
+    out
+}
+
+/// Render the docsify cover page.
+fn render_docsify_coverpage(model: &WikiModel) -> String {
+    let mut out = String::new();
+    
+    out.push_str("# Project Wiki\n\n");
+    out.push_str(&format!(
+        "> Auto-generated documentation for {}\n\n",
+        model.stats_summary
+    ));
+    out.push_str(&format!(
+        "- **{}** file pages\n",
+        model.file_pages.len()
+    ));
+    out.push_str(&format!(
+        "- **{}** symbol pages\n",
+        model.symbol_pages.len()
+    ));
+    out.push_str(&format!(
+        "- **{}** total pages\n\n",
+        model.total_pages()
+    ));
+    out.push_str("[Get Started](index.md)\n\n");
+    out.push_str(&format!("_Generated at {}_\n", model.generated_at));
+    
+    out
+}
+
+// ─── Coverage Reporting ─────────────────────────────────────────────────────
+
+/// Coverage statistics for wiki generation.
+#[derive(Clone, Debug, Default, serde::Serialize)]
+pub struct CoverageReport {
+    /// Total files found in workspace
+    pub total_files: usize,
+    /// Files that were indexed
+    pub indexed_files: usize,
+    /// Files that have wiki pages
+    pub documented_files: usize,
+    /// Files excluded (too large, generated, etc.)
+    pub excluded_files: usize,
+    /// Files that were too large to index
+    pub oversized_files: usize,
+    /// Percentage coverage (0.0 to 100.0)
+    pub coverage_percent: f64,
+    /// List of excluded file paths
+    pub excluded_paths: Vec<String>,
+}
+
+impl CoverageReport {
+    /// Generate a coverage report by comparing wiki pages to workspace files.
+    pub fn generate(model: &WikiModel, workspace_files: &[&str], excluded: &[&str]) -> Self {
+        let total_files = workspace_files.len();
+        let documented_files = model.file_pages.len();
+        let excluded_files = excluded.len();
+        let indexed_files = documented_files;
+        
+        let coverage_percent = if total_files > 0 {
+            (documented_files as f64 / total_files as f64) * 100.0
+        } else {
+            0.0
+        };
+        
+        CoverageReport {
+            total_files,
+            indexed_files,
+            documented_files,
+            excluded_files,
+            oversized_files: 0,
+            coverage_percent,
+            excluded_paths: excluded.iter().map(|s| s.to_string()).collect(),
+        }
+    }
+    
+    /// Render the coverage report as markdown.
+    pub fn render_markdown(&self) -> String {
+        let mut out = String::new();
+        
+        out.push_str("## Coverage Report\n\n");
+        out.push_str(&format!("**{:.1}%** of workspace files are documented.\n\n", self.coverage_percent));
+        
+        out.push_str("| Metric | Count |\n");
+        out.push_str("|--------|-------|\n");
+        out.push_str(&format!("| Total files | {} |\n", self.total_files));
+        out.push_str(&format!("| Documented | {} |\n", self.documented_files));
+        out.push_str(&format!("| Excluded | {} |\n", self.excluded_files));
+        out.push_str(&format!("| Oversized | {} |\n\n", self.oversized_files));
+        
+        if !self.excluded_paths.is_empty() {
+            out.push_str("### Excluded Files\n\n");
+            for path in self.excluded_paths.iter().take(20) {
+                out.push_str(&format!("- `{}`\n", path));
+            }
+            if self.excluded_paths.len() > 20 {
+                out.push_str(&format!("\n_... and {} more_\n", self.excluded_paths.len() - 20));
+            }
+        }
+        
+        out
+    }
 }
 
 #[cfg(test)]
@@ -735,6 +1154,18 @@ mod tests {
         export_markdown(&model, dir.path()).unwrap();
         // Files should be under files/src/
         assert!(dir.path().join("files").join("src").exists());
+    }
+
+    #[test]
+    fn slugify_module_defuses_reserved_names_and_empties() {
+        assert_eq!(slugify_module("con"), "con-mod");
+        assert_eq!(slugify_module("NUL"), "nul-mod");
+        assert_eq!(slugify_module("com3"), "com3-mod");
+        // Pure separators collapse to the root bucket, never an empty dir.
+        assert_eq!(slugify_module("---"), "root");
+        assert_eq!(slugify_module(""), "root");
+        // Ordinary module names are unaffected.
+        assert_eq!(slugify_module("velocity-mcp"), "velocity-mcp");
     }
 
     #[test]
@@ -1329,13 +1760,15 @@ mod tests {
 
     #[test]
     fn slugify_module_empty_string() {
-        assert_eq!(slugify_module(""), "");
+        // Empty module names must land in the "root" bucket, never an empty
+        // dir component (which would write straight into files/).
+        assert_eq!(slugify_module(""), "root");
     }
-
+    
     #[test]
     fn slugify_module_all_special_chars() {
         let result = slugify_module("!!!@@@");
-        assert_eq!(result, "");
+        assert_eq!(result, "root");
     }
 
     #[test]

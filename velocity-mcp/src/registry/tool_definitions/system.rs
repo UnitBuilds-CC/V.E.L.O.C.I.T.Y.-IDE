@@ -56,12 +56,13 @@ pub fn get_system_tools() -> Vec<Tool> {
         },
         Tool {
             name: "write_file".to_string(),
-            description: "Write or overwrite a file with specific content in the workspace. Creates folders if they do not exist.".to_string(),
+            description: "Write or overwrite a file with specific content in the workspace. Creates folders if they do not exist. Include 'context' to record *why* this change is being made — the reason is persisted in the codebase event log so future agents can understand the decision.".to_string(),
             input_schema: json!({
                 "type": "object",
                 "properties": {
                     "relativeFilePath": { "type": "string", "description": "Path relative to workspace root (e.g. \"scripts/bootstrap.sh\")" },
-                    "content": { "type": "string", "description": "The text content to write to the file." }
+                    "content": { "type": "string", "description": "The text content to write to the file." },
+                    "context": { "type": "string", "description": "Why this file is being written (requirement, design decision, bug fix). Recorded in the codebase event log for future reference." }
                 },
                 "required": ["relativeFilePath", "content"]
             }),
@@ -120,11 +121,12 @@ pub fn get_system_tools() -> Vec<Tool> {
         },
         Tool {
             name: "delete_file".to_string(),
-            description: "Delete a file in the workspace.".to_string(),
+            description: "Delete a file in the workspace. Include 'context' to record *why* this file is being removed — the reason is persisted in the codebase event log.".to_string(),
             input_schema: json!({
                 "type": "object",
                 "properties": {
-                    "relativeFilePath": { "type": "string", "description": "Path relative to workspace root (e.g. \"temp.txt\")" }
+                    "relativeFilePath": { "type": "string", "description": "Path relative to workspace root (e.g. \"temp.txt\")" },
+                    "context": { "type": "string", "description": "Why this file is being deleted. Recorded in the codebase event log." }
                 },
                 "required": ["relativeFilePath"]
             }),
@@ -252,11 +254,12 @@ pub fn get_system_tools() -> Vec<Tool> {
         // ── Workspace Indexing ───────────────────────────────────────────────
         Tool {
             name: "index_workspace".to_string(),
-            description: "Index the workspace by compiling all Rust source files into the site map (NDA triples). This populates the symbol graph, enables the wiki, and gives the IDE semantic understanding of the codebase. Must be run at least once before graph/wiki panels return data. Safe to re-run — updates incrementally.".to_string(),
+            description: "Index the workspace by compiling all Rust source files into the site map (NDA triples). This populates the symbol graph, enables the wiki, and gives the IDE semantic understanding of the codebase. Must be run at least once before graph/wiki panels return data. Safe to re-run — updates incrementally. Include 'context' to record *why* indexing is being triggered.".to_string(),
             input_schema: json!({
                 "type": "object",
                 "properties": {
-                    "path": { "type": "string", "description": "Optional workspace-relative subdirectory to limit indexing. Omit to index the entire workspace." }
+                    "path": { "type": "string", "description": "Optional workspace-relative subdirectory to limit indexing. Omit to index the entire workspace." },
+                    "context": { "type": "string", "description": "Why indexing is being triggered (e.g. 'after major refactor', 'initial workspace setup'). Recorded in the codebase event log." }
                 },
                 "required": []
             }),
@@ -306,6 +309,83 @@ pub fn get_system_tools() -> Vec<Tool> {
                     "limit": { "type": "integer", "description": "Max recent entries to return (default 10, max 100)." }
                 },
                 "required": []
+            }),
+        },
+        // ── Codebase Event Store ──────────────────────────────────────────
+        Tool {
+            name: "event_record".to_string(),
+            description: "Record a codebase event linking an agent action to a site map state change. Captures *why* a change was made (context), what files were affected, and the Merkle root before/after. Events are persisted to .velocity/events/events.jsonl for long-term codebase history.".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "description": { "type": "string", "description": "What changed (e.g. 'Added OAuth2 token validation to auth module')." },
+                    "context": { "type": "string", "description": "Why this change was made (agent reasoning, requirements, motivation)." },
+                    "tool_name": { "type": "string", "description": "Tool that triggered the change (auto-filled if called from dispatch)." },
+                    "affected_files": { "type": "array", "items": { "type": "string" }, "description": "Relative paths of files modified." },
+                    "merkle_root_before": { "type": "string", "description": "Site map Merkle root before the change (hex, 16 chars)." },
+                    "merkle_root_after": { "type": "string", "description": "Site map Merkle root after the change (hex, 16 chars)." }
+                },
+                "required": ["description"]
+            }),
+        },
+        Tool {
+            name: "event_history".to_string(),
+            description: "Query the codebase event history. Returns events newest-first with optional filters for file path and outcome (success/failure/revert/pending). Shows the full decision trail including failed attempts and reverts.".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "file": { "type": "string", "description": "Filter events to those affecting a specific file (substring match)." },
+                    "outcome": { "type": "string", "description": "Filter by outcome: success, failure, revert, pending." },
+                    "limit": { "type": "integer", "description": "Max events to return (default 20, max 200)." }
+                },
+                "required": []
+            }),
+        },
+        Tool {
+            name: "event_context".to_string(),
+            description: "Get full detail for a single codebase event by sequence number. Includes agent context, Merkle roots, affected files, and failure reason.".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "sequence": { "type": "integer", "description": "Event sequence number." }
+                },
+                "required": ["sequence"]
+            }),
+        },
+        Tool {
+            name: "event_mark_outcome".to_string(),
+            description: "Update the outcome of a previously recorded codebase event. Use this to mark a change as success, failure (with reason), or revert. This enables tracking which approaches worked and which didn't, so future agents don't repeat failed experiments.".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "sequence": { "type": "integer", "description": "Event sequence number to update." },
+                    "outcome": { "type": "string", "description": "New outcome: success, failure, revert, or pending." },
+                    "failure_reason": { "type": "string", "description": "If outcome is failure, explain why (e.g. 'Race condition in concurrent auth flows')." }
+                },
+                "required": ["sequence", "outcome"]
+            }),
+        },
+        Tool {
+            name: "event_timeline".to_string(),
+            description: "Show a chronological timeline of all codebase events with state transitions (Merkle root changes). Shows the codebase's evolution over time — what changed, when, why, and with what outcome. Newest first.".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "limit": { "type": "integer", "description": "Max events to return (default 50, max 500)." }
+                },
+                "required": []
+            }),
+        },
+        Tool {
+            name: "event_attach_context".to_string(),
+            description: "Attach agent reasoning (the *why*) to an existing codebase event. Use this after a change to record why it was made — the requirement, the motivation, the design decision. This context is what makes the event store valuable for future agents reviewing the codebase.".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "sequence": { "type": "integer", "description": "Event sequence number to attach context to." },
+                    "context": { "type": "string", "description": "The reasoning behind the change (requirement, motivation, design decision)." }
+                },
+                "required": ["sequence", "context"]
             }),
         },
         // ── Workflows ───────────────────────────────────────────────────────

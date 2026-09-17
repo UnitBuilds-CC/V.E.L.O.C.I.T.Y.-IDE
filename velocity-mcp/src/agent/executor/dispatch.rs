@@ -10,19 +10,37 @@ use std::time::Duration;
 
 /// Resolve an API key by checking provider-settings.json first (where the
 /// Settings UI saves keys), then falling back to the environment variable.
+/// Provider settings are stored at the user-level config directory
+/// (`%APPDATA%/Velocity/`), not per-workspace, for security.
+///
+/// When a provider supports a pay-per-token plan (e.g. Alibaba DashScope
+/// Token Plan), the token-plan key is preferred when `use_token_plan` is true.
 pub(crate) fn resolve_api_key(workspace_root: &PathBuf, settings_field: &str, env_var: &str) -> String {
-    let settings_path = workspace_root
-        .join(".velocity")
-        .join("provider-settings.json");
+    let settings_path = crate::usage::provider_settings_path(workspace_root);
     if let Ok(contents) = std::fs::read_to_string(&settings_path) {
-        if let Ok(json) = serde_json::from_str::<serde_json::Value>(&contents) {
-            if let Some(key) = json
-                .get(settings_field)
-                .and_then(|s| s.get("api_key"))
-                .and_then(|k| k.as_str())
-            {
-                if !key.trim().is_empty() {
-                    return key.to_string();
+        // Strip UTF-8 BOM if present (Windows editors often insert it)
+        let stripped = contents.strip_prefix('\u{feff}').unwrap_or(&contents);
+        if let Ok(json) = serde_json::from_str::<serde_json::Value>(stripped) {
+            if let Some(section) = json.get(settings_field) {
+                // Prefer token-plan key when the switch is on and the key is set.
+                let use_token = section
+                    .get("use_token_plan")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false);
+                if use_token {
+                    if let Some(tk) = section
+                        .get("token_plan_api_key")
+                        .and_then(|k| k.as_str())
+                    {
+                        if !tk.trim().is_empty() {
+                            return tk.to_string();
+                        }
+                    }
+                }
+                if let Some(key) = section.get("api_key").and_then(|k| k.as_str()) {
+                    if !key.trim().is_empty() {
+                        return key.to_string();
+                    }
                 }
             }
         }
@@ -424,13 +442,18 @@ pub fn execute_deepseek_request(
 
 /// Alibaba Cloud Qwen (DashScope) — OpenAI-compatible endpoint.
 /// API docs: https://www.alibabacloud.com/help/en/model-studio/
+///
+/// When the caller's provider-settings has `alibaba.use_token_plan = true`
+/// and a non-empty `token_plan_api_key`, dispatch is routed to the Token Plan
+/// base URL instead of the standard DashScope compatible-mode endpoint.
 pub fn execute_alibaba_qwen_request(
     request_body: &Value,
     ui_tx: &Sender<AgentToUiMessage>,
     workspace_root: &PathBuf,
 ) -> Option<ureq::Response> {
+    let api_url = alibaba_chat_completions_url(workspace_root);
     execute_openai_compatible_request(
-        "https://dashscope-intl.aliyuncs.com/compatible-mode/v1/chat/completions",
+        &api_url,
         "alibaba",
         "DASHSCOPE_API_KEY",
         request_body,
@@ -438,6 +461,73 @@ pub fn execute_alibaba_qwen_request(
         "Alibaba Qwen",
         workspace_root,
     )
+}
+
+/// Default base URL for the Alibaba Qwen Token Plan (pay-per-token) endpoint,
+/// Singapore region. Callers can override via provider-settings
+/// `alibaba.token_plan_base_url`.
+///
+/// Stored WITHOUT the trailing `/v1` (matches the convention used by
+/// `fetch_openai_compatible_models` which appends `/v1/models`).
+pub const ALIBABA_TOKEN_PLAN_DEFAULT_BASE_URL: &str =
+    "https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode";
+
+/// Standard DashScope international compatible-mode base URL (Coding Plan or
+/// workspace keys), also without `/v1`.
+pub const ALIBABA_DASHSCOPE_INTL_BASE_URL: &str =
+    "https://dashscope-intl.aliyuncs.com/compatible-mode";
+
+/// Returns the full `/v1/chat/completions` URL to use for the caller's
+/// currently active Alibaba plan. Reads provider-settings.json for the
+/// `use_token_plan` flag and optional `token_plan_base_url` override.
+pub fn alibaba_chat_completions_url(workspace_root: &PathBuf) -> String {
+    format!("{}/v1/chat/completions", alibaba_base_url(workspace_root))
+}
+
+/// Returns the base URL (WITHOUT the trailing `/v1`) for Alibaba Qwen
+/// dispatch, honouring the token-plan switch. Any trailing `/v1` in a user
+/// override is normalised away so downstream URL joins stay consistent.
+pub fn alibaba_base_url(workspace_root: &PathBuf) -> String {
+    let settings_path = crate::usage::provider_settings_path(workspace_root);
+    if let Ok(contents) = std::fs::read_to_string(&settings_path) {
+        let stripped = contents.strip_prefix('\u{feff}').unwrap_or(&contents);
+        if let Ok(json) = serde_json::from_str::<serde_json::Value>(stripped) {
+            if let Some(section) = json.get("alibaba") {
+                let use_token = section
+                    .get("use_token_plan")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false);
+                let tp_key_set = section
+                    .get("token_plan_api_key")
+                    .and_then(|k| k.as_str())
+                    .map(|s| !s.trim().is_empty())
+                    .unwrap_or(false);
+                if use_token && tp_key_set {
+                    let override_url = section
+                        .get("token_plan_base_url")
+                        .and_then(|v| v.as_str())
+                        .map(normalise_alibaba_base)
+                        .filter(|s| !s.is_empty());
+                    if let Some(u) = override_url {
+                        return u;
+                    }
+                    return ALIBABA_TOKEN_PLAN_DEFAULT_BASE_URL.to_string();
+                }
+            }
+        }
+    }
+    ALIBABA_DASHSCOPE_INTL_BASE_URL.to_string()
+}
+
+/// Trim trailing slashes and a trailing `/v1` so callers can uniformly
+/// append `/v1/...` themselves.
+fn normalise_alibaba_base(raw: &str) -> String {
+    let mut s = raw.trim().trim_end_matches('/').to_string();
+    if s.ends_with("/v1") {
+        s.truncate(s.len() - 3);
+        s = s.trim_end_matches('/').to_string();
+    }
+    s
 }
 
 /// Groq — OpenAI-compatible endpoint for LPU inference.
@@ -864,6 +954,17 @@ mod tests {
     use crate::agent::executor::utils::{build_request, estimate_tokens, is_quota_exhausted_error};
     use crate::agent::models::{ApiStyle, ModelInfo};
 
+    /// Global lock serialising tests that mutate `VELOCITY_CONFIG_DIR` (or any
+    /// other process-wide env var) so parallel test threads cannot observe a
+    /// half-set environment from a sibling test.
+    fn env_lock() -> std::sync::MutexGuard<'static, ()> {
+        static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+        match LOCK.lock() {
+            Ok(g) => g,
+            Err(poisoned) => poisoned.into_inner(),
+        }
+    }
+
     // ── ollama_chat_url ──────────────────────────────────────────────
 
     #[test]
@@ -910,75 +1011,228 @@ mod tests {
 
     #[test]
     fn resolve_api_key_reads_from_provider_settings_json() {
+        let _lock = env_lock();
         let dir = tempfile::tempdir().unwrap();
-        let velocity_dir = dir.path().join(".velocity");
-        std::fs::create_dir_all(&velocity_dir).unwrap();
+        std::env::set_var("VELOCITY_CONFIG_DIR", dir.path().to_str().unwrap());
         let settings = json!({
             "anthropic": {
                 "api_key": "sk-ant-from-file"
             }
         });
-        std::fs::write(velocity_dir.join("provider-settings.json"), settings.to_string()).unwrap();
+        std::fs::write(dir.path().join("provider-settings.json"), settings.to_string()).unwrap();
 
-        let root = dir.path().to_path_buf();
+        let root = tempfile::tempdir().unwrap().path().to_path_buf();
         let key = resolve_api_key(&root, "anthropic", "NONEXISTENT_ENV_VAR_FOR_TEST");
         assert_eq!(key, "sk-ant-from-file");
+        std::env::remove_var("VELOCITY_CONFIG_DIR");
     }
 
     #[test]
     fn resolve_api_key_falls_back_to_env_var() {
+        let _lock = env_lock();
         let dir = tempfile::tempdir().unwrap();
+        std::env::set_var("VELOCITY_CONFIG_DIR", dir.path().to_str().unwrap());
         // No provider-settings.json → must fall through to env var.
-        let root = dir.path().to_path_buf();
+        let root = tempfile::tempdir().unwrap().path().to_path_buf();
         std::env::set_var("VELOCITY_TEST_RESOLVE_KEY", "sk-from-env");
         let key = resolve_api_key(&root, "anthropic", "VELOCITY_TEST_RESOLVE_KEY");
         assert_eq!(key, "sk-from-env");
         std::env::remove_var("VELOCITY_TEST_RESOLVE_KEY");
+        std::env::remove_var("VELOCITY_CONFIG_DIR");
     }
 
     #[test]
     fn resolve_api_key_returns_empty_when_nothing_configured() {
+        let _lock = env_lock();
         let dir = tempfile::tempdir().unwrap();
-        let root = dir.path().to_path_buf();
+        std::env::set_var("VELOCITY_CONFIG_DIR", dir.path().to_str().unwrap());
+        let root = tempfile::tempdir().unwrap().path().to_path_buf();
         let key = resolve_api_key(&root, "nonexistent_provider", "VELOCITY_NONEXISTENT_ENV_VAR_XYZ");
         assert_eq!(key, "");
+        std::env::remove_var("VELOCITY_CONFIG_DIR");
     }
 
     #[test]
     fn resolve_api_key_ignores_empty_key_in_settings() {
+        let _lock = env_lock();
         let dir = tempfile::tempdir().unwrap();
-        let velocity_dir = dir.path().join(".velocity");
-        std::fs::create_dir_all(&velocity_dir).unwrap();
+        std::env::set_var("VELOCITY_CONFIG_DIR", dir.path().to_str().unwrap());
         let settings = json!({
             "openai": {
                 "api_key": "   "
             }
         });
-        std::fs::write(velocity_dir.join("provider-settings.json"), settings.to_string()).unwrap();
+        std::fs::write(dir.path().join("provider-settings.json"), settings.to_string()).unwrap();
 
-        let root = dir.path().to_path_buf();
+        let root = tempfile::tempdir().unwrap().path().to_path_buf();
         // Whitespace-only key should be treated as empty → fall back to env.
         let key = resolve_api_key(&root, "openai", "VELOCITY_NONEXISTENT_ENV_VAR_XYZ");
         assert_eq!(key, "");
+        std::env::remove_var("VELOCITY_CONFIG_DIR");
     }
 
     #[test]
     fn resolve_api_key_prefers_file_over_env() {
+        let _lock = env_lock();
         let dir = tempfile::tempdir().unwrap();
-        let velocity_dir = dir.path().join(".velocity");
-        std::fs::create_dir_all(&velocity_dir).unwrap();
+        std::env::set_var("VELOCITY_CONFIG_DIR", dir.path().to_str().unwrap());
         let settings = json!({
             "groq": {
                 "api_key": "sk-from-file"
             }
         });
-        std::fs::write(velocity_dir.join("provider-settings.json"), settings.to_string()).unwrap();
+        std::fs::write(dir.path().join("provider-settings.json"), settings.to_string()).unwrap();
 
         std::env::set_var("VELOCITY_TEST_GROQ_KEY", "sk-from-env");
-        let root = dir.path().to_path_buf();
+        let root = tempfile::tempdir().unwrap().path().to_path_buf();
         let key = resolve_api_key(&root, "groq", "VELOCITY_TEST_GROQ_KEY");
         assert_eq!(key, "sk-from-file");
         std::env::remove_var("VELOCITY_TEST_GROQ_KEY");
+        std::env::remove_var("VELOCITY_CONFIG_DIR");
+    }
+
+    #[test]
+    fn resolve_api_key_prefers_token_plan_when_enabled() {
+        let _lock = env_lock();
+        let dir = tempfile::tempdir().unwrap();
+        std::env::set_var("VELOCITY_CONFIG_DIR", dir.path().to_str().unwrap());
+        let settings = json!({
+            "alibaba": {
+                "api_key": "sk-ws-default",
+                "token_plan_api_key": "sk-sp-tokenplan",
+                "use_token_plan": true
+            }
+        });
+        std::fs::write(dir.path().join("provider-settings.json"), settings.to_string()).unwrap();
+        let root = tempfile::tempdir().unwrap().path().to_path_buf();
+        let key = resolve_api_key(&root, "alibaba", "DASHSCOPE_NONEXISTENT_ENV_XYZ");
+        assert_eq!(key, "sk-sp-tokenplan");
+        std::env::remove_var("VELOCITY_CONFIG_DIR");
+    }
+
+    #[test]
+    fn resolve_api_key_uses_default_when_token_plan_disabled() {
+        let _lock = env_lock();
+        let dir = tempfile::tempdir().unwrap();
+        std::env::set_var("VELOCITY_CONFIG_DIR", dir.path().to_str().unwrap());
+        let settings = json!({
+            "alibaba": {
+                "api_key": "sk-ws-default",
+                "token_plan_api_key": "sk-sp-tokenplan",
+                "use_token_plan": false
+            }
+        });
+        std::fs::write(dir.path().join("provider-settings.json"), settings.to_string()).unwrap();
+        let root = tempfile::tempdir().unwrap().path().to_path_buf();
+        let key = resolve_api_key(&root, "alibaba", "DASHSCOPE_NONEXISTENT_ENV_XYZ");
+        assert_eq!(key, "sk-ws-default");
+        std::env::remove_var("VELOCITY_CONFIG_DIR");
+    }
+
+    #[test]
+    fn resolve_api_key_token_plan_falls_back_when_key_empty() {
+        let _lock = env_lock();
+        let dir = tempfile::tempdir().unwrap();
+        std::env::set_var("VELOCITY_CONFIG_DIR", dir.path().to_str().unwrap());
+        let settings = json!({
+            "alibaba": {
+                "api_key": "sk-ws-default",
+                "token_plan_api_key": "",
+                "use_token_plan": true
+            }
+        });
+        std::fs::write(dir.path().join("provider-settings.json"), settings.to_string()).unwrap();
+        let root = tempfile::tempdir().unwrap().path().to_path_buf();
+        // Token plan enabled but no key → fall through to normal api_key.
+        let key = resolve_api_key(&root, "alibaba", "DASHSCOPE_NONEXISTENT_ENV_XYZ");
+        assert_eq!(key, "sk-ws-default");
+        std::env::remove_var("VELOCITY_CONFIG_DIR");
+    }
+
+    // ── alibaba_base_url / chat URL routing ──────────────────
+
+    #[test]
+    fn alibaba_base_url_defaults_to_dashscope_intl_when_token_plan_off() {
+        let _lock = env_lock();
+        let dir = tempfile::tempdir().unwrap();
+        std::env::set_var("VELOCITY_CONFIG_DIR", dir.path().to_str().unwrap());
+        let settings = json!({
+            "alibaba": { "api_key": "sk-ws-..." }
+        });
+        std::fs::write(dir.path().join("provider-settings.json"), settings.to_string()).unwrap();
+        let root = tempfile::tempdir().unwrap().path().to_path_buf();
+        assert_eq!(alibaba_base_url(&root), ALIBABA_DASHSCOPE_INTL_BASE_URL);
+        assert_eq!(
+            alibaba_chat_completions_url(&root),
+            "https://dashscope-intl.aliyuncs.com/compatible-mode/v1/chat/completions"
+        );
+        std::env::remove_var("VELOCITY_CONFIG_DIR");
+    }
+
+    #[test]
+    fn alibaba_base_url_switches_to_token_plan_when_enabled() {
+        let _lock = env_lock();
+        let dir = tempfile::tempdir().unwrap();
+        std::env::set_var("VELOCITY_CONFIG_DIR", dir.path().to_str().unwrap());
+        let settings = json!({
+            "alibaba": {
+                "api_key": "sk-ws-...",
+                "token_plan_api_key": "sk-sp-...",
+                "use_token_plan": true
+            }
+        });
+        std::fs::write(dir.path().join("provider-settings.json"), settings.to_string()).unwrap();
+        let root = tempfile::tempdir().unwrap().path().to_path_buf();
+        assert_eq!(alibaba_base_url(&root), ALIBABA_TOKEN_PLAN_DEFAULT_BASE_URL);
+        assert_eq!(
+            alibaba_chat_completions_url(&root),
+            "https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1/chat/completions"
+        );
+        std::env::remove_var("VELOCITY_CONFIG_DIR");
+    }
+
+    #[test]
+    fn alibaba_base_url_respects_user_override_and_strips_trailing_v1() {
+        let _lock = env_lock();
+        let dir = tempfile::tempdir().unwrap();
+        std::env::set_var("VELOCITY_CONFIG_DIR", dir.path().to_str().unwrap());
+        let settings = json!({
+            "alibaba": {
+                "api_key": "sk-ws-...",
+                "token_plan_api_key": "sk-sp-...",
+                "use_token_plan": true,
+                "token_plan_base_url": "https://token-plan.eu-central-1.maas.aliyuncs.com/compatible-mode/v1/"
+            }
+        });
+        std::fs::write(dir.path().join("provider-settings.json"), settings.to_string()).unwrap();
+        let root = tempfile::tempdir().unwrap().path().to_path_buf();
+        assert_eq!(
+            alibaba_base_url(&root),
+            "https://token-plan.eu-central-1.maas.aliyuncs.com/compatible-mode"
+        );
+        assert_eq!(
+            alibaba_chat_completions_url(&root),
+            "https://token-plan.eu-central-1.maas.aliyuncs.com/compatible-mode/v1/chat/completions"
+        );
+        std::env::remove_var("VELOCITY_CONFIG_DIR");
+    }
+
+    #[test]
+    fn alibaba_token_plan_disabled_uses_dashscope_even_with_tp_key_present() {
+        let _lock = env_lock();
+        let dir = tempfile::tempdir().unwrap();
+        std::env::set_var("VELOCITY_CONFIG_DIR", dir.path().to_str().unwrap());
+        let settings = json!({
+            "alibaba": {
+                "api_key": "sk-ws-...",
+                "token_plan_api_key": "sk-sp-...",
+                "use_token_plan": false
+            }
+        });
+        std::fs::write(dir.path().join("provider-settings.json"), settings.to_string()).unwrap();
+        let root = tempfile::tempdir().unwrap().path().to_path_buf();
+        assert_eq!(alibaba_base_url(&root), ALIBABA_DASHSCOPE_INTL_BASE_URL);
+        std::env::remove_var("VELOCITY_CONFIG_DIR");
     }
 
     // ── build_anthropic_body ─────────────────────────────────────────

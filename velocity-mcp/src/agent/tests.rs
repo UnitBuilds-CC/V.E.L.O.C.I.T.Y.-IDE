@@ -535,7 +535,10 @@ fn test_fallback_provider_resolution() {
         "tencent/hy3:free"
     );
     assert_eq!(default_provider_model(AiProvider::AzureOpenAi), "gpt-4o");
-    assert_eq!(default_provider_model(AiProvider::LocalOllama), "llama3.2");
+    assert_eq!(
+        default_provider_model(AiProvider::LocalOllama),
+        "qwen2.5-coder:0.5b"
+    );
 }
 
 #[test]

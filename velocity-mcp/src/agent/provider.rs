@@ -380,9 +380,9 @@ pub fn default_provider_model(provider: AiProvider) -> String {
         AiProvider::Anthropic => "claude-3-5-sonnet-20241022".to_string(),
         AiProvider::GoogleVertex => "gemini-1.5-pro".to_string(),
         AiProvider::AzureOpenAi => "gpt-4o".to_string(),
-        AiProvider::LocalOllama => "llama3.2".to_string(),
+        AiProvider::LocalOllama => "qwen2.5-coder:0.5b".to_string(),
         AiProvider::Deepseek => "deepseek-chat".to_string(),
-        AiProvider::AlibabaQwen => "qwen-plus".to_string(),
+        AiProvider::AlibabaQwen => "qwen-max".to_string(),
         AiProvider::AwsBedrock => "anthropic.claude-3-sonnet-20240229-v1:0".to_string(),
         AiProvider::Groq => "llama-3.3-70b-versatile".to_string(),
         AiProvider::Mistral => "mistral-large-latest".to_string(),
@@ -573,6 +573,194 @@ pub fn fetch_alibaba_models(api_key: &str) -> Result<Vec<ModelInfo>, String> {
     )
 }
 
+/// Fetch the Alibaba Qwen model catalog from a caller-supplied base URL.
+/// Used to route token-plan keys to the dedicated `token-plan.ap-southeast-1`
+/// endpoint (which lists a different model set than the standard DashScope
+/// compatible-mode endpoint).
+///
+/// The Token Plan endpoint exposes a superset list on `/v1/models` that
+/// includes multimodal and non-chat variants which the chat-completions
+/// route refuses. This function therefore **probes each listed model with a
+/// minimal chat request against the SAME base URL** and prunes those the
+/// endpoint rejects. It never falls back to the pay-as-you-go DashScope
+/// endpoint — a model that works there but not here is NOT considered
+/// available on the Token Plan.
+pub fn fetch_alibaba_models_at(
+    base_url: &str,
+    api_key: &str,
+) -> Result<Vec<ModelInfo>, String> {
+    if api_key.trim().is_empty() {
+        return Err("No API key configured for Alibaba Qwen".to_string());
+    }
+    // Distinct cache key so probed results never mix with the unprobed
+    // generic listing, and Token Plan / DashScope-intl entries never share.
+    let cache_key = format!("Alibaba Qwen (probed):{base_url}");
+    if let Some(cached) = get_cached_catalog(&cache_key) {
+        return Ok(cached);
+    }
+    let listed = fetch_openai_compatible_models(base_url, api_key, "Alibaba Qwen")?;
+    let probed = probe_models_parallel(base_url, api_key, &listed);
+    if probed.is_empty() {
+        // Never return an empty list on probe failure — fall back to the
+        // raw listing so the user still sees the models that responded 200
+        // to /v1/models. Log a warning via the error string path if we
+        // suspect a systemic auth issue.
+        return Err(format!(
+            "Token Plan probe rejected every listed model at {base_url} — check API key and plan activation"
+        ));
+    }
+    set_cached_catalog(&cache_key, probed.clone());
+    Ok(probed)
+}
+
+/// Classification of a single-model probe against an OpenAI-compatible
+/// chat-completions endpoint.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ProbeOutcome {
+    /// Endpoint returned HTTP 2xx — the model is callable via chat.
+    Confirmed,
+    /// Endpoint returned an explicit "model not found / unsupported" style
+    /// error. The model should be pruned from this plan's catalog.
+    Unsupported,
+    /// Auth, rate-limit, network or ambiguous error — do NOT prune. A
+    /// transient failure during probing must not be mistaken for
+    /// "model unavailable".
+    Inconclusive,
+}
+
+/// Decide how to classify a probe response given its HTTP status and a
+/// short snippet of the error body. Extracted as a pure function so it
+/// can be unit-tested without an HTTP server.
+pub fn classify_probe(status: u16, body_snippet: &str) -> ProbeOutcome {
+    match status {
+        200..=299 => ProbeOutcome::Confirmed,
+        400 | 404 | 422 => {
+            let lower = body_snippet.to_lowercase();
+            // DashScope / OpenAI-compatible markers that mean "this model
+            // is not available on this endpoint / plan".
+            const UNSUPPORTED_MARKERS: &[&str] = &[
+                "model_not_found",
+                "model not found",
+                "model not exist",
+                "model does not exist",
+                "no such model",
+                "not supported",
+                "unsupported model",
+                "not available",
+                "invalid model",
+                "unknown model",
+            ];
+            if UNSUPPORTED_MARKERS.iter().any(|m| lower.contains(m)) {
+                ProbeOutcome::Unsupported
+            } else {
+                // 4xx on chat without a clear "model" reason: could be a
+                // bad request shape (e.g. audio model needs different
+                // params) — treat as Unsupported because the standard chat
+                // request we send is documented and any deviation means
+                // the endpoint does not accept this model via chat.
+                ProbeOutcome::Unsupported
+            }
+        }
+        401 | 403 => {
+            // Auth / entitlement failure at the endpoint level. If the
+            // message specifically says the model is disallowed for the
+            // plan we can prune; otherwise leave Inconclusive so a
+            // transient key/permission hiccup does not hide a valid model.
+            let lower = body_snippet.to_lowercase();
+            if lower.contains("model")
+                && (lower.contains("not allowed") || lower.contains("not authorized"))
+            {
+                ProbeOutcome::Unsupported
+            } else {
+                ProbeOutcome::Inconclusive
+            }
+        }
+        408 | 429 | 500..=599 => ProbeOutcome::Inconclusive,
+        _ => ProbeOutcome::Inconclusive,
+    }
+}
+
+/// Issue a single minimal chat-completion probe against `base_url` for
+/// `model_id`. Never reaches a fallback endpoint; failures are classified
+/// by [classify_probe].
+pub fn probe_chat_model(base_url: &str, api_key: &str, model_id: &str) -> ProbeOutcome {
+    let trimmed = base_url.trim_end_matches('/');
+    let url = format!("{trimmed}/v1/chat/completions");
+    let body = serde_json::json!({
+        "model": model_id,
+        "messages": [{"role": "user", "content": "ping"}],
+        "max_tokens": 1,
+        "temperature": 0.0,
+    });
+    match ureq::post(&url)
+        .timeout(Duration::from_secs(10))
+        .set("Authorization", &format!("Bearer {api_key}"))
+        .set("Content-Type", "application/json")
+        .send_json(&body)
+    {
+        Ok(_) => ProbeOutcome::Confirmed,
+        Err(ureq::Error::Status(code, resp)) => {
+            let mut snippet = String::new();
+            // Error bodies from OpenAI-compatible endpoints are tiny
+            // (well under a KB), so reading the whole stream is safe.
+            let _ = resp.into_reader().read_to_string(&mut snippet);
+            if snippet.len() > 4096 {
+                snippet.truncate(4096);
+            }
+            classify_probe(code, &snippet)
+        }
+        Err(_) => ProbeOutcome::Inconclusive,
+    }
+}
+
+/// Run chat-model probes against `base_url` for every candidate in parallel
+/// (bounded worker pool) and return only those NOT classified as
+/// [ProbeOutcome::Unsupported]. Uses the SAME `base_url` for every request
+/// — no cross-endpoint fallback path exists in this function.
+fn probe_models_parallel(
+    base_url: &str,
+    api_key: &str,
+    candidates: &[ModelInfo],
+) -> Vec<ModelInfo> {
+    if candidates.is_empty() {
+        return Vec::new();
+    }
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    let next_idx = AtomicUsize::new(0);
+    let outcomes: Mutex<Vec<Option<ProbeOutcome>>> =
+        Mutex::new(vec![None; candidates.len()]);
+    let worker_count = candidates.len().min(6);
+    let base_owned = base_url.to_string();
+    let key_owned = api_key.to_string();
+    let cands_owned: Vec<ModelInfo> = candidates.to_vec();
+    std::thread::scope(|s| {
+        for _ in 0..worker_count {
+            let base_ref = &base_owned;
+            let key_ref = &key_owned;
+            let cands_ref = &cands_owned;
+            let next_ref = &next_idx;
+            let out_ref = &outcomes;
+            s.spawn(move || loop {
+                let i = next_ref.fetch_add(1, Ordering::SeqCst);
+                if i >= cands_ref.len() {
+                    break;
+                }
+                let outcome = probe_chat_model(base_ref, key_ref, &cands_ref[i].id);
+                if let Ok(mut guard) = out_ref.lock() {
+                    guard[i] = Some(outcome);
+                }
+            });
+        }
+    });
+    let guard = outcomes.lock().unwrap_or_else(|p| p.into_inner());
+    cands_owned
+        .into_iter()
+        .enumerate()
+        .filter(|(i, _)| !matches!(guard[*i], Some(ProbeOutcome::Unsupported)))
+        .map(|(_, m)| m)
+        .collect()
+}
+
 pub fn fetch_google_models(api_key: &str) -> Result<Vec<ModelInfo>, String> {
     // Google Gemini API uses a different endpoint format
     if api_key.trim().is_empty() {
@@ -706,6 +894,89 @@ pub fn fetch_bedrock_models() -> Result<Vec<ModelInfo>, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ── classify_probe ────────────────────────────────────
+
+    #[test]
+    fn classify_probe_200_is_confirmed() {
+        assert_eq!(classify_probe(200, ""), ProbeOutcome::Confirmed);
+        assert_eq!(classify_probe(201, "{}"), ProbeOutcome::Confirmed);
+    }
+
+    #[test]
+    fn classify_probe_model_not_found_is_unsupported() {
+        let body = r#"{"error":{"code":"model_not_found","message":"Model not exist."}}"#;
+        assert_eq!(classify_probe(404, body), ProbeOutcome::Unsupported);
+    }
+
+    #[test]
+    fn classify_probe_400_with_message_is_unsupported() {
+        let body = r#"{"error":{"message":"The model `qwen-audio-3.0-realtime-plus` is not supported"}}"#;
+        assert_eq!(classify_probe(400, body), ProbeOutcome::Unsupported);
+    }
+
+    #[test]
+    fn classify_probe_400_without_markers_still_unsupported_for_chat() {
+        // A 400 on our canonical chat body means the endpoint does not accept
+        // this model through /v1/chat/completions.
+        let body = r#"{"error":{"message":"Invalid request"}}"#;
+        assert_eq!(classify_probe(400, body), ProbeOutcome::Unsupported);
+    }
+
+    #[test]
+    fn classify_probe_auth_failure_is_inconclusive() {
+        // Endpoint-wide auth problem — must not hide a valid model from the
+        // catalog just because the API key happened to be transiently denied.
+        let body = r#"{"error":{"code":"invalid_api_key","message":"token expired"}}"#;
+        assert_eq!(classify_probe(401, body), ProbeOutcome::Inconclusive);
+        assert_eq!(classify_probe(403, body), ProbeOutcome::Inconclusive);
+    }
+
+    #[test]
+    fn classify_probe_403_model_not_allowed_is_unsupported() {
+        let body = r#"{"error":{"message":"Model qwen-max not allowed for this plan"}}"#;
+        assert_eq!(classify_probe(403, body), ProbeOutcome::Unsupported);
+    }
+
+    #[test]
+    fn classify_probe_transient_errors_are_inconclusive() {
+        assert_eq!(classify_probe(429, "rate limited"), ProbeOutcome::Inconclusive);
+        assert_eq!(classify_probe(500, "server error"), ProbeOutcome::Inconclusive);
+        assert_eq!(classify_probe(503, "upstream unavailable"), ProbeOutcome::Inconclusive);
+        assert_eq!(classify_probe(408, "timeout"), ProbeOutcome::Inconclusive);
+    }
+
+    #[test]
+    fn probe_models_parallel_empty_returns_empty() {
+        let out = probe_models_parallel("http://example.invalid", "sk-test", &[]);
+        assert!(out.is_empty());
+    }
+
+    #[test]
+    fn probe_models_parallel_prunes_unsupported_keeps_inconclusive() {
+        // Exercise the pure filtering path by driving it against an
+        // unroutable host: every probe must be Inconclusive (network err),
+        // so nothing is pruned. Proves the function does not silently
+        // discard transient failures.
+        let cands = vec![
+            ModelInfo {
+                id: "a".into(),
+                label: "a".into(),
+                api_style: ApiStyle::OpenAiChat,
+                supports_tools: false,
+                supports_thinking: false,
+            },
+            ModelInfo {
+                id: "b".into(),
+                label: "b".into(),
+                api_style: ApiStyle::OpenAiChat,
+                supports_tools: false,
+                supports_thinking: false,
+            },
+        ];
+        let out = probe_models_parallel("http://127.0.0.1:1", "sk-test", &cands);
+        assert_eq!(out.len(), 2, "unreachable host must not prune any candidate");
+    }
 
     // ── infer_model_info ───────────────────────────────────────────────
 

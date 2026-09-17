@@ -3,6 +3,7 @@ use super::super::models::*;
 use super::super::nda::*;
 use super::super::provider::*;
 use super::dispatch::resolve_api_key;
+use super::dispatch::{alibaba_base_url, ALIBABA_DASHSCOPE_INTL_BASE_URL};
 use super::loop_runner::run_agent_reasoning_loop;
 use super::team_routing::try_route_team_prompt;
 use super::utils::{build_inline_tool_docs, send_usage_update};
@@ -114,7 +115,14 @@ fn fetch_models_for_provider(
         }
         AiProvider::AlibabaQwen => {
             let key = resolve_api_key(workspace_root, "alibaba", "DASHSCOPE_API_KEY");
-            fetch_alibaba_models(&key)
+            // Route the catalog fetch to whichever base URL matches the caller's
+            // active plan (Token Plan vs. Coding Plan / DashScope international).
+            let base = alibaba_base_url(workspace_root);
+            if base == ALIBABA_DASHSCOPE_INTL_BASE_URL {
+                fetch_alibaba_models(&key)
+            } else {
+                fetch_alibaba_models_at(&base, &key)
+            }
         }
         AiProvider::GoogleVertex => {
             let key = resolve_api_key(workspace_root, "google", "GOOGLE_API_KEY");
@@ -652,6 +660,7 @@ fn process_ui_message(
                 deferred_messages,
                 coordination_bus,
                 Some(router_settings),
+                None, // default max_loops
             );
         }
         UiToAgentMessage::ReloadTeams => {

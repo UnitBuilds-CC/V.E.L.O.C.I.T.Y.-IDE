@@ -124,6 +124,7 @@ impl TeamBuilderChat {
             cancel_rx: None,
             progress: Some(progress),
             scoped_files: None,
+            max_turns: None,
         };
 
         // Spawn the headless sub-agent on a background thread.

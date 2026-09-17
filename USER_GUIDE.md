@@ -1760,10 +1760,13 @@ When agents write files, `scan_file_content()` automatically checks for patterns
 .velocity/
 ├── nda.key              # Master key (DPAPI-sealed)
 ├── secrets.nda          # Encrypted secret store
-├── provider-settings.json  # Provider credentials (workspace-local)
 ├── oauth2_state.json    # OAuth2 tokens (encrypted)
 └── connectors.json      # Connector configs (secrets as handles only)
 ```
+
+> **Note:** Provider credentials (API keys) are stored at the **user level**
+> (`%APPDATA%/Velocity/provider-settings.json` on Windows), not per-workspace.
+> This prevents API keys from ending up in cloud-synced directories.
 
 ---
 
@@ -2245,9 +2248,10 @@ cargo clean
 - Check that `.velocity/knowledge/store.json` exists and is not empty
 
 **Provider settings not saving:**
-- Ensure the `.velocity/` directory exists and is writable
-- Check that `.velocity/provider-settings.json` is not read-only
-- On Windows, verify that Windows Defender or antivirus is not blocking writes to `.velocity/`
+- Provider credentials are stored at `%APPDATA%/Velocity/provider-settings.json` (Windows)
+- Ensure the `%APPDATA%/Velocity/` directory exists and is writable
+- Check that `provider-settings.json` is not read-only
+- On Windows, verify that Windows Defender or antivirus is not blocking writes
 
 **NDA document appears blank in browser viewer:**
 - Ensure the document is in **Portable** mode, not **Sealed** (sealed documents require the workspace key)
@@ -2283,7 +2287,7 @@ cargo clean
 |----------|----------|
 | `.velocity/site_map/` | Semantic code index (Merkle-verified) |
 | `.velocity/workspace-preferences.json` | UI settings, open tabs, provider/model selection |
-| `.velocity/provider-settings.json` | Provider API keys and credentials |
+| `%APPDATA%/Velocity/provider-settings.json` | Provider API keys and credentials (user-level, not per-workspace) |
 | `.velocity/nda.key` | Workspace encryption master key (DPAPI-sealed) |
 | `.velocity/secrets.nda` | Encrypted secret store |
 | `.velocity/connectors.json` | External service connector configs |

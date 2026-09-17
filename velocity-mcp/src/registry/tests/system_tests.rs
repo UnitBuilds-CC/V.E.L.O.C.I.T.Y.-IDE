@@ -50,8 +50,16 @@ fn command_runs_in_explicit_workspace() {
     let root = temp.path().join("project");
     fs::create_dir_all(&root).unwrap();
 
-    let output = call_tool_in_workspace(&root, "run_command", &json!({"command": "cd"})).unwrap();
-    assert!(output.to_lowercase().contains("project"));
+    // `pwd` works cross-shell: PowerShell aliases it to `Get-Location`
+    // (whose ToString renders the full path), and `sh -c pwd` prints the
+    // working directory on Unix. The previous version used `cd`, which is
+    // a no-op with no stdout in PowerShell, so the assertion never fired
+    // on Windows.
+    let output = call_tool_in_workspace(&root, "run_command", &json!({"command": "pwd"})).unwrap();
+    assert!(
+        output.to_lowercase().contains("project"),
+        "expected current-directory output to include the workspace name, got: {output}"
+    );
 }
 
 #[test]

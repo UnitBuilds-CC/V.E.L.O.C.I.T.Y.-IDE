@@ -290,8 +290,13 @@ pub fn seed_from_source(source_path: &Path, site_map: &mut SiteMap) -> Result<Se
 
     // Register file path and function names as strings, then store triples
     // so the wiki can classify entities as files vs symbols.
+    // Strip the Windows extended-length path prefix (\\?\) from canonicalized
+    // paths so the dictionary stores clean, portable path strings.
     let file_path_str = source_path.display().to_string();
-    let file_hash = site_map.register_string(&file_path_str)?;
+    let file_path_str = file_path_str
+        .strip_prefix("\\\\?\\")
+        .unwrap_or(&file_path_str);
+    let file_hash = site_map.register_string(file_path_str)?;
     let fn_names: Vec<String> = compiler.functions.keys().cloned().collect();
     for name in &fn_names {
         site_map.register_string(name)?;
@@ -321,7 +326,7 @@ pub fn seed_from_source(source_path: &Path, site_map: &mut SiteMap) -> Result<Se
         }
     }
     if !triples.is_empty() {
-        site_map.put_file_snapshot(&file_path_str, &triples)?;
+        site_map.put_file_snapshot(file_path_str, &triples)?;
     }
 
     // Build resolved call graph and count resolved edges.

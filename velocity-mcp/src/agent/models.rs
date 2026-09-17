@@ -115,6 +115,8 @@ pub struct HeadlessSubAgentRequest {
     pub progress: Option<Arc<Mutex<HeadlessSubAgentProgress>>>,
     /// Optional list of files to pre-index for speculative pre-computation.
     pub scoped_files: Option<Vec<PathBuf>>,
+    /// Maximum reasoning turns. None = use default (15).
+    pub max_turns: Option<usize>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -213,6 +215,35 @@ impl AiProvider {
         }
     }
 
+    /// Parse a provider from the display label produced by [`AiProvider::label`]
+    /// (e.g. when restoring workspace preferences). Falls back to slug parsing
+    /// so older or machine-formatted values still resolve. Every `label()`
+    /// arm must have a mirror here — the preferences round-trip used to cover
+    /// only 4 of the 16 providers, silently reverting the rest on restart.
+    pub fn from_label(value: &str) -> Option<AiProvider> {
+        let v = value.trim();
+        let exact = match v {
+            "Cloudflare Workers AI" => Some(AiProvider::CloudflareWorkersAi),
+            "OpenRouter" => Some(AiProvider::OpenRouter),
+            "Azure OpenAI" => Some(AiProvider::AzureOpenAi),
+            "Local Ollama" => Some(AiProvider::LocalOllama),
+            "OpenAI Direct" => Some(AiProvider::OpenAI),
+            "Anthropic Claude" => Some(AiProvider::Anthropic),
+            "Google Vertex AI" => Some(AiProvider::GoogleVertex),
+            "Deepseek" => Some(AiProvider::Deepseek),
+            "Alibaba Qwen" => Some(AiProvider::AlibabaQwen),
+            "AWS Bedrock" => Some(AiProvider::AwsBedrock),
+            "Groq" => Some(AiProvider::Groq),
+            "Mistral AI" => Some(AiProvider::Mistral),
+            "Together AI" => Some(AiProvider::TogetherAi),
+            "Fireworks AI" => Some(AiProvider::FireworksAi),
+            "Perplexity" => Some(AiProvider::Perplexity),
+            "Cerebras" => Some(AiProvider::Cerebras),
+            _ => None,
+        };
+        exact.or_else(|| Self::from_slug(v))
+    }
+
     /// Parse a provider from a slug or common alias. Case-insensitive.
     pub fn from_slug(value: &str) -> Option<AiProvider> {
         match value.trim().to_lowercase().as_str() {
@@ -270,6 +301,42 @@ mod tests {
         assert_eq!(AiProvider::AwsBedrock.label(), "AWS Bedrock");
         assert_eq!(AiProvider::Groq.label(), "Groq");
         assert_eq!(AiProvider::Mistral.label(), "Mistral AI");
+    }
+
+    #[test]
+    fn every_provider_label_round_trips_through_from_label() {
+        // Bug #9 regression: workspace preferences used to restore only 4 of
+        // the 16 provider labels, silently reverting the rest on restart.
+        let all = [
+            AiProvider::CloudflareWorkersAi,
+            AiProvider::OpenRouter,
+            AiProvider::AzureOpenAi,
+            AiProvider::LocalOllama,
+            AiProvider::OpenAI,
+            AiProvider::Anthropic,
+            AiProvider::GoogleVertex,
+            AiProvider::Deepseek,
+            AiProvider::AlibabaQwen,
+            AiProvider::AwsBedrock,
+            AiProvider::Groq,
+            AiProvider::Mistral,
+            AiProvider::TogetherAi,
+            AiProvider::FireworksAi,
+            AiProvider::Perplexity,
+            AiProvider::Cerebras,
+        ];
+        for p in all {
+            assert_eq!(
+                AiProvider::from_label(p.label()),
+                Some(p),
+                "label {:?} failed to round-trip",
+                p.label()
+            );
+        }
+        // Slug fallback + whitespace tolerance for legacy files.
+        assert_eq!(AiProvider::from_label("  alibaba  "), Some(AiProvider::AlibabaQwen));
+        assert_eq!(AiProvider::from_label("NoSuchProvider"), None);
+        assert_eq!(AiProvider::from_label(""), None);
     }
 
     #[test]

@@ -1,6 +1,7 @@
 pub mod browser_tools;
 pub mod custom_tools;
 pub mod dispatch;
+pub mod event_store;
 pub mod lazy;
 pub mod parsers;
 pub mod system_tools;

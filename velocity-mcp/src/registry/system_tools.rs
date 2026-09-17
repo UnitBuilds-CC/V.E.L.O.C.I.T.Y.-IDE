@@ -778,6 +778,19 @@ pub fn handle_system_tool(
                 "recent": recent
             }))?
         }
+        // ── Codebase Event Store ─────────────────────────────────────────
+        "event_record" => super::event_store::handle_event_record(root, arguments)
+            .map_err(|e| -> Box<dyn Error> { e.into() })?,
+        "event_history" => super::event_store::handle_event_history(root, arguments)
+            .map_err(|e| -> Box<dyn Error> { e.into() })?,
+        "event_context" => super::event_store::handle_event_context(root, arguments)
+            .map_err(|e| -> Box<dyn Error> { e.into() })?,
+        "event_mark_outcome" => super::event_store::handle_event_mark_outcome(root, arguments)
+            .map_err(|e| -> Box<dyn Error> { e.into() })?,
+        "event_timeline" => super::event_store::handle_event_timeline(root, arguments)
+            .map_err(|e| -> Box<dyn Error> { e.into() })?,
+        "event_attach_context" => super::event_store::handle_event_attach_context(root, arguments)
+            .map_err(|e| -> Box<dyn Error> { e.into() })?,
         // ── Workflows ───────────────────────────────────────────────────────
         "workflow_run" => {
             let id = arguments["id"].as_str().ok_or("id is required")?;

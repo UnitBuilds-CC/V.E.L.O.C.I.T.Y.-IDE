@@ -110,6 +110,11 @@ impl SiteMap {
         Self::read_weight_root(base_dir)
     }
 
+    /// Read the persisted Merkle root from metadata.nda or metadata.json.
+    pub fn read_persisted_root(base_dir: &Path) -> Option<u64> {
+        Self::read_root_nda(base_dir).or_else(|| Self::read_root_json(base_dir))
+    }
+
     fn read_weight_root(base_dir: &Path) -> Option<u64> {
         Self::read_weight_root_nda(base_dir).or_else(|| Self::read_weight_root_json(base_dir))
     }
@@ -123,7 +128,7 @@ impl SiteMap {
             .map(str::trim)
             .unwrap_or("");
 
-        if header == "metadata version 2" {
+        if header == "metadata version 2" || header == "metadata version 3" {
             for line in lines {
                 let line = line.trim();
                 if line.is_empty() || line.starts_with('#') || line.starts_with("field_count ") {
@@ -151,6 +156,26 @@ impl SiteMap {
         let raw = fs::read_to_string(metadata_path).ok()?;
         let value: serde_json::Value = serde_json::from_str(&raw).ok()?;
         let hex = value.get("weight_root")?.as_str()?;
+        u64::from_str_radix(hex.trim_start_matches("0x"), 16).ok()
+    }
+
+fn read_root_nda(base_dir: &Path) -> Option<u64> {
+        let metadata_path = base_dir.join("metadata.nda");
+        let raw = fs::read_to_string(metadata_path).ok()?;
+        for line in raw.lines() {
+            let line = line.trim();
+            if let Some(rest) = line.strip_prefix("field\troot\t") {
+                return u64::from_str_radix(rest.trim_start_matches("0x"), 16).ok();
+            }
+        }
+        None
+    }
+
+fn read_root_json(base_dir: &Path) -> Option<u64> {
+        let metadata_path = base_dir.join("metadata.json");
+        let raw = fs::read_to_string(metadata_path).ok()?;
+        let value: serde_json::Value = serde_json::from_str(&raw).ok()?;
+        let hex = value.get("root")?.as_str()?;
         u64::from_str_radix(hex.trim_start_matches("0x"), 16).ok()
     }
 
@@ -529,15 +554,16 @@ impl SiteMap {
         fs::write(
             self.base.join("metadata.nda"),
             format!(
-                "metadata version 2\nfield_count 1\nfield\tweight_root\t{:016x}\n",
-                self.weight_root
+                "metadata version 3\nfield_count 2\nfield\tweight_root\t{:016x}\nfield\troot\t{:016x}\n",
+                self.weight_root, self.root
             ),
         )?;
         fs::write(
             self.base.join("metadata.json"),
-            serde_json::to_string_pretty(
-                &serde_json::json!({ "weight_root": format!("{:016x}", self.weight_root) }),
-            )?,
+            serde_json::to_string_pretty(&serde_json::json!({
+                "weight_root": format!("{:016x}", self.weight_root),
+                "root": format!("{:016x}", self.root),
+            }))?,
         )?;
         Ok(())
     }

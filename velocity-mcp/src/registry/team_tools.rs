@@ -9,7 +9,8 @@ use crate::editor::expert_team::{
     ValidationSeverity,
 };
 use crate::editor::skill_file::{list_skill_files, save_skill_file, SkillFile};
-use crate::editor::team_router::debug_routing;
+use crate::editor::team_router::{debug_routing, route_member};
+use crate::usage::load_workspace_provider_settings;
 
 /// Collect a JSON string array into owned `String`s, ignoring non-string entries.
 fn string_array(value: &Value) -> Vec<String> {
@@ -105,6 +106,8 @@ pub fn handle_team_tool(
         "create_team_quick" => create_team_quick(root, arguments)?,
         "bulk_import_members" => bulk_import_members(root, arguments)?,
         "team_changelog" => team_changelog(root, arguments)?,
+        "team_dispatch" => team_dispatch(root, arguments)?,
+        "generate_wiki" => generate_wiki(root, arguments)?,
         _ => return Ok(None),
     };
     Ok(Some(result))
@@ -1187,4 +1190,477 @@ fn md5_hash(data: &[u8]) -> u128 {
         hash = hash.rotate_left((i % 16) as u32);
     }
     hash
+}
+
+/// Determine which providers have credentials configured in the workspace.
+/// Returns a list of (provider, is_configured) pairs in priority order.
+pub(crate) fn configured_providers(root: &Path) -> Vec<(AiProvider, bool)> {
+    let settings = load_workspace_provider_settings(root);
+    vec![
+        (AiProvider::AlibabaQwen, settings.alibaba.is_configured()),
+        (AiProvider::Deepseek, settings.deepseek.is_configured()),
+        (AiProvider::OpenRouter, settings.openrouter.is_configured()),
+        (AiProvider::OpenAI, settings.openai.is_configured()),
+        (AiProvider::Anthropic, settings.anthropic.is_configured()),
+        (AiProvider::GoogleVertex, settings.google.is_configured()),
+        (AiProvider::Groq, settings.groq.is_configured()),
+        (AiProvider::Mistral, settings.mistral.is_configured()),
+        (AiProvider::TogetherAi, settings.together.is_configured()),
+        (AiProvider::FireworksAi, settings.fireworks.is_configured()),
+        (AiProvider::Perplexity, settings.perplexity.is_configured()),
+        (AiProvider::Cerebras, settings.cerebras.is_configured()),
+        (AiProvider::AzureOpenAi, settings.azure_openai.is_configured()),
+        (
+            AiProvider::CloudflareWorkersAi,
+            !settings.cloudflare.api_token.trim().is_empty(),
+        ),
+        (
+            AiProvider::LocalOllama,
+            !settings.ollama.host.trim().is_empty(),
+        ),
+    ]
+}
+
+/// Get the first configured provider as the workspace default.
+/// Falls back to LocalOllama (local, no API key needed) rather than
+/// Cloudflare when nothing is configured.
+fn default_configured_provider(root: &Path) -> AiProvider {
+    configured_providers(root)
+        .into_iter()
+        .find(|(_, configured)| *configured)
+        .map(|(provider, _)| provider)
+        .unwrap_or(AiProvider::LocalOllama)
+}
+
+/// Returns alternative models to try for a given provider when the primary model fails.
+/// Ordered by likelihood of success (free/cheap first, then larger models).
+fn fallback_models_for(provider: AiProvider, primary: &str) -> Vec<String> {
+    let mut models = Vec::new();
+    match provider {
+        AiProvider::AlibabaQwen => {
+            for m in &[
+                "qwen-plus",
+                "qwen-turbo",
+                "qwen-max-latest",
+                "qwen3.8-flash",
+                "qwen3.8-max-0902",
+                "deepseek-v3",
+                "deepseek-r1",
+                "glm-5.3",
+                "kimi-k3",
+            ] {
+                if *m != primary {
+                    models.push(m.to_string());
+                }
+            }
+        }
+        AiProvider::OpenRouter => {
+            for m in &["tencent/hy3:free", "google/gemini-2.0-flash-exp:free", "meta-llama/llama-3.3-70b-instruct:free"] {
+                if *m != primary { models.push(m.to_string()); }
+            }
+        }
+        AiProvider::CloudflareWorkersAi => {
+            for m in &["@cf/qwen/qwen2.5-coder-7b-instruct", "@cf/meta/llama-3.3-70b-instruct-fp8-fast"] {
+                if *m != primary { models.push(m.to_string()); }
+            }
+        }
+        AiProvider::LocalOllama => {
+            for m in &["qwen2.5-coder:1.5b", "qwen2.5-coder:7b", "llama3.2:1b", "llama3.2:3b", "phi3:mini"] {
+                if *m != primary { models.push(m.to_string()); }
+            }
+        }
+        _ => {} // Other providers: no model fallback, just move to next provider
+    }
+    models
+}
+
+/// Check if an error means the provider itself is unavailable (no accounts/keys)
+/// vs a model-specific failure (quota, rate limit, model unavailable).
+pub(crate) fn is_provider_unavailable(status_updates: &[String], transcript: &str) -> bool {
+    transcript.contains("No Cloudflare accounts")
+        || transcript.contains("No OpenRouter accounts")
+        || transcript.contains("No Alibaba")
+        || status_updates.iter().any(|s| s.contains("No ") && s.contains("accounts configured"))
+        || status_updates.iter().any(|s| s.contains("missing"))
+}
+
+/// Build a fallback chain for a member, ordered by likelihood of success:
+/// 1. Member's provider — only if it's configured in the workspace
+/// 2. Workspace default (first configured provider)
+/// 3. Member's fallback_provider — if different and configured
+/// 4. Other configured workspace providers
+/// 5. Member's original provider (even if unconfigured — last resort)
+/// 6. LocalOllama as final fallback (might be running locally)
+pub(crate) fn build_fallback_chain(member: &ExpertMember, root: &Path) -> Vec<(AiProvider, String)> {
+    let mut chain = Vec::new();
+    let configured = configured_providers(root);
+
+    // Helper: check if a provider is configured in this workspace
+    let is_configured = |p: AiProvider| -> bool {
+        configured.iter().any(|(prov, yes)| *prov == p && *yes)
+    };
+
+    let member_provider_configured = is_configured(member.provider);
+
+    // 1. Member's own provider — only first if actually configured
+    if member_provider_configured {
+        let default_model = crate::agent::provider::default_provider_model(member.provider);
+        let (_, model) = member.resolve_effective_provider_and_model(
+            default_configured_provider(root),
+            &default_model,
+        );
+        chain.push((member.provider, model));
+    }
+
+    // 2. Workspace default configured provider (if different from member's)
+    let workspace_default = default_configured_provider(root);
+    if workspace_default != member.provider || !member_provider_configured {
+        let model = crate::agent::provider::default_provider_model(workspace_default);
+        chain.push((workspace_default, model));
+    }
+
+    // 3. Member's explicit fallback_provider — if configured and not already in chain
+    if let Some(fallback) = member.fallback_provider {
+        if fallback != member.provider
+            && fallback != workspace_default
+            && is_configured(fallback)
+        {
+            let model = crate::agent::provider::default_provider_model(fallback);
+            chain.push((fallback, model));
+        }
+    }
+
+    // 4. Other configured workspace providers not yet in chain
+    for (provider, is_yes) in &configured {
+        if *is_yes
+            && *provider != member.provider
+            && *provider != workspace_default
+            && member.fallback_provider != Some(*provider)
+            && !chain.iter().any(|(p, _)| *p == *provider)
+        {
+            let model = crate::agent::provider::default_provider_model(*provider);
+            chain.push((*provider, model));
+        }
+    }
+
+    // 5. Member's original provider as last resort (even if unconfigured)
+    if !member_provider_configured && !chain.iter().any(|(p, _)| *p == member.provider) {
+        let default_model = crate::agent::provider::default_provider_model(member.provider);
+        let (_, model) = member.resolve_effective_provider_and_model(
+            workspace_default,
+            &default_model,
+        );
+        chain.push((member.provider, model));
+    }
+
+    // 6. LocalOllama as final fallback (might be running even if not in settings)
+    if !chain.iter().any(|(p, _)| *p == AiProvider::LocalOllama) {
+        let model = crate::agent::provider::default_provider_model(AiProvider::LocalOllama);
+        chain.push((AiProvider::LocalOllama, model));
+    }
+
+    chain
+}
+
+/// Dispatch a task to the best-matching team member, executing it via a
+/// headless sub-agent using the member's configured provider and model.
+///
+/// This is the bridge between the team organizational layer and the
+/// execution layer: it routes the task, builds a persona prompt, and
+/// runs the agent autonomously. If the primary provider fails, it
+/// falls back through the member's fallback_provider and other
+/// configured workspace providers.
+fn team_dispatch(root: &Path, arguments: &Value) -> Result<String, Box<dyn Error>> {
+    let team_ref = arguments["team_id"]
+        .as_str()
+        .or_else(|| arguments["team"].as_str())
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .ok_or("'team_id' is required")?;
+
+    let task = arguments["task"]
+        .as_str()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .ok_or("'task' is required")?;
+
+    let files = string_array(&arguments["files"]);
+
+    // Resolve the team
+    let teams = load_expert_teams(root);
+    let lower = team_ref.to_lowercase();
+    let slug = slugify(team_ref);
+    let team = teams
+        .iter()
+        .find(|t| {
+            t.id.to_lowercase() == lower || t.slug() == slug || t.name.to_lowercase() == lower
+        })
+        .ok_or_else(|| format!("team '{}' not found", team_ref))?;
+
+    // Route to the best member
+    let routed = route_member(team, task, &files, None)
+        .ok_or("routing failed: team has no members")?;
+
+    let member = team
+        .members
+        .iter()
+        .find(|m| m.id == routed.member_id)
+        .ok_or_else(|| format!("routed member '{}' not found", routed.member_id))?;
+
+    // Build surgical prompt with pre-injected file context
+    let mut prompt = String::new();
+
+    // ── Identity ───────────────────────────────────────────────────
+    prompt.push_str(&format!(
+        "You are {}, {} on the {} team.\n",
+        member.name, member.role, team.name
+    ));
+    if !member.skills.is_empty() {
+        prompt.push_str(&format!("Expertise: {}\n", member.skills.join(", ")));
+    }
+
+    // ── Pre-injected file context ──────────────────────────────────
+    // Read target files now so the agent doesn't waste turns exploring.
+    let mut file_contexts = Vec::new();
+    for file in &files {
+        let full_path = root.join(file);
+        match std::fs::read_to_string(&full_path) {
+            Ok(contents) => {
+                // Truncate very large files to keep prompt manageable
+                let truncated = if contents.len() > 12_000 {
+                    format!("{}\n... [truncated, {} bytes total]", &contents[..12_000], contents.len())
+                } else {
+                    contents
+                };
+                file_contexts.push(format!("### {}\n```\n{}\n```", file, truncated));
+            }
+            Err(e) => {
+                file_contexts.push(format!("### {}\n[Could not read: {}]", file, e));
+            }
+        }
+    }
+
+    // ── Task framing ───────────────────────────────────────────────
+    prompt.push_str(&format!("\n## Task\n{}\n", task));
+
+    if !file_contexts.is_empty() {
+        prompt.push_str("\n## Target Files (pre-loaded)\n");
+        for ctx in &file_contexts {
+            prompt.push_str(ctx);
+            prompt.push('\n');
+        }
+    }
+
+    // ── Scope boundaries ───────────────────────────────────────────
+    prompt.push_str("\n## Constraints\n");
+    prompt.push_str("- ONLY work on the specified files and task above.\n");
+    prompt.push_str("- Do NOT explore unrelated files, run cargo commands, or check workspace structure unless the task explicitly requires it.\n");
+    prompt.push_str("- Do NOT create checkpoints, record events, or use meta-tools unless the task explicitly requires it.\n");
+    prompt.push_str("- Do NOT go on tangents or explore beyond the stated scope.\n");
+    prompt.push_str("- If you need to read a file not provided above, read ONLY the specific file relevant to the task.\n");
+
+    // ── Output format ──────────────────────────────────────────────
+    prompt.push_str("\n## Required Output Format\n");
+    prompt.push_str("Produce a structured report:\n");
+    prompt.push_str("1. **Summary** — 1-2 sentence overview of what you found/did\n");
+    prompt.push_str("2. **Findings** — Specific, actionable items with file:line references\n");
+    prompt.push_str("3. **Recommendations** — Prioritized next steps\n");
+    prompt.push_str("\nBe concise. No preamble, no exploration narrative, just results.\n");
+
+    // ── Routing metadata ───────────────────────────────────────────
+    prompt.push_str(&format!("\n(Routing: {} → {} via: {})\n",
+        team.name, member.name, routed.reason
+    ));
+    if !member.workflow_instructions.is_empty() {
+        prompt.push_str(&format!("(Team instructions: {})\n", member.workflow_instructions));
+    }
+
+    // Build fallback chain and execute with failover
+    let fallback_chain = build_fallback_chain(member, root);
+    let scoped_files = if files.is_empty() {
+        None
+    } else {
+        Some(files.iter().map(|f| root.join(f)).collect())
+    };
+
+    let mut all_status_updates = Vec::new();
+    let mut final_transcript = String::new();
+    let mut used_provider = fallback_chain.first().map(|(p, _)| *p).unwrap_or(AiProvider::CloudflareWorkersAi);
+    let mut used_model = fallback_chain.first().map(|(_, m)| m.clone()).unwrap_or_default();
+    let mut attempt_log = Vec::new();
+    let dispatch_start = std::time::Instant::now();
+    const MAX_DISPATCH_TIME: std::time::Duration = std::time::Duration::from_secs(90);
+
+    for (provider, model) in &fallback_chain {
+        // Check overall timeout
+        if dispatch_start.elapsed() > MAX_DISPATCH_TIME {
+            log::warn!("team_dispatch: overall timeout (90s) exceeded, stopping fallback attempts");
+            final_transcript.push_str("\n\n[Dispatch timeout: no model succeeded within 90 seconds]");
+            break;
+        }
+
+        // Try the primary model first, then fallback models for this provider (max 3 attempts per provider)
+        let mut models_to_try = vec![model.clone()];
+        let fallback = fallback_models_for(*provider, model);
+        models_to_try.extend(fallback.into_iter().take(2)); // Limit to 3 total attempts per provider
+
+        let mut provider_succeeded = false;
+
+        for try_model in &models_to_try {
+            let result = crate::agent::run_headless_subagent(crate::agent::HeadlessSubAgentRequest {
+                workspace_root: root.to_path_buf(),
+                provider: *provider,
+                model: try_model.clone(),
+                thinking: false,
+                prompt: prompt.clone(),
+                cancel_rx: None,
+                progress: None,
+                scoped_files: scoped_files.clone(),
+                max_turns: Some(8),
+            });
+
+            all_status_updates.extend(result.status_updates.clone());
+            used_provider = *provider;
+            used_model = try_model.clone();
+
+            // Check if the attempt succeeded
+            let has_error = result.transcript.contains("Error:")
+                || result.transcript.contains("exhausted or failed")
+                || is_provider_unavailable(&result.status_updates, &result.transcript);
+
+            attempt_log.push(json!({
+                "provider": provider.slug(),
+                "model": try_model,
+                "succeeded": !has_error,
+                "status_count": result.status_updates.len(),
+            }));
+
+            if !has_error {
+                final_transcript = result.transcript;
+                provider_succeeded = true;
+                break;
+            }
+
+            final_transcript = result.transcript;
+
+            // If the provider itself is unavailable (no keys/accounts),
+            // don't try other models — move to next provider immediately.
+            if is_provider_unavailable(&result.status_updates, &final_transcript) {
+                log::warn!(
+                    "team_dispatch: {} unavailable (no keys/accounts), skipping to next provider",
+                    provider.slug()
+                );
+                break;
+            }
+
+            // Model-specific failure (403/400/quota) — try next model on same provider
+            log::warn!(
+                "team_dispatch: {} / {} failed, trying next model on same provider",
+                provider.slug(),
+                try_model
+            );
+        }
+
+        if provider_succeeded {
+            break;
+        }
+    }
+
+    // Build response
+    let response = json!({
+        "team": team.name,
+        "team_id": team.id,
+        "routed_to": {
+            "member_id": member.id,
+            "member_name": member.name,
+            "role": member.role,
+            "reason": routed.reason,
+        },
+        "provider": used_provider.slug(),
+        "model": used_model,
+        "fallback_attempts": attempt_log,
+        "status_updates": all_status_updates,
+        "transcript": final_transcript,
+    });
+
+    Ok(serde_json::to_string_pretty(&response)?)
+}
+
+/// Generate a wiki from the workspace site map with optional index/cache enrichment.
+fn generate_wiki(root: &Path, arguments: &Value) -> Result<String, Box<dyn Error>> {
+    use velocity_ide::site_map::SiteMap;
+    use velocity_ide::wiki;
+
+    let output_dir = arguments["output_dir"]
+        .as_str()
+        .unwrap_or("wiki")
+        .trim()
+        .to_string();
+    let format = arguments["format"].as_str().unwrap_or("markdown").trim();
+    let use_index = arguments["use_index"].as_bool().unwrap_or(true);
+
+    // Resolve output path relative to workspace root
+    let out_path = if std::path::Path::new(&output_dir).is_absolute() {
+        std::path::PathBuf::from(&output_dir)
+    } else {
+        root.join(&output_dir)
+    };
+
+    // Load or create site map.  `index_workspace` writes to
+    // `.velocity/site_map/` while `SiteMap::open` expects the directory that
+    // directly contains `index.json`/`kv/`/`nodes/`/`programs/`.  Using the
+    // `.velocity/` root here silently produced an empty wiki (0 KV, 0 nodes)
+    // even after a successful indexing run — see MCP batch3 regression.
+    let velocity_dir = root.join(".velocity");
+    std::fs::create_dir_all(&velocity_dir)?;
+    let site_map_dir = velocity_dir.join("site_map");
+    std::fs::create_dir_all(&site_map_dir)?;
+    let sm = SiteMap::open(&site_map_dir, 0).unwrap_or_else(|_| {
+        // If opening fails, still try to build wiki from workspace index alone
+        SiteMap::open(&site_map_dir, 0).expect("failed to open site map")
+    });
+
+    // Build wiki model
+    let mut result = if use_index {
+        wiki::build_wiki_enhanced(&sm, root)
+    } else {
+        let model = wiki::build_wiki(&sm);
+        wiki::EnhancedWikiResult {
+            model,
+            pagerank: None,
+            cache_stats: None,
+            files_indexed: 0,
+            pages_regenerated: 0,
+            pages_from_cache: 0,
+            elapsed_us: 0,
+        }
+    };
+
+    // Enrich with structural details from index
+    if use_index {
+        let indices = wiki::index_workspace(root);
+        wiki::enrich_with_structural_details(&mut result.model, &indices);
+    }
+
+    // Export in requested format
+    let pages_written = match format {
+        "html" => wiki::export_html(&result.model, &out_path)?,
+        "github-pages" | "gh-pages" => wiki::export_github_pages(&result.model, &out_path)?,
+        _ => wiki::export_markdown(&result.model, &out_path)?,
+    };
+
+    let response = serde_json::json!({
+        "status": "success",
+        "output_dir": out_path.display().to_string(),
+        "format": format,
+        "pages_written": pages_written,
+        "files_indexed": result.files_indexed,
+        "file_pages": result.model.file_count(),
+        "symbol_pages": result.model.symbol_count(),
+        "elapsed_ms": result.elapsed_us / 1000,
+        "cache_hits": result.pages_from_cache,
+        "cache_misses": result.pages_regenerated,
+    });
+
+    Ok(serde_json::to_string_pretty(&response)?)
 }

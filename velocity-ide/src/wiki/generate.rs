@@ -43,7 +43,7 @@ pub struct WikiPage {
 }
 
 /// The complete generated wiki.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize)]
 pub struct WikiModel {
     pub generated_at: String,
     pub stats_summary: String,
@@ -669,8 +669,43 @@ fn slugify(name: &str) -> String {
     if slug.is_empty() {
         "page".to_string()
     } else {
-        slug
+        sanitize_fs_slug(&slug)
     }
+}
+
+/// True when `s` collides with a Win32 device name (CON, PRN, AUX, NUL,
+/// COM0-9, LPT0-9). Windows rejects such names regardless of extension,
+/// producing ERROR_INVALID_NAME (os error 123) on create/write.
+pub(crate) fn is_windows_reserved_name(s: &str) -> bool {
+    let stem = s.split('.').next().unwrap_or(s).to_ascii_lowercase();
+    matches!(stem.as_str(), "con" | "prn" | "aux" | "nul")
+        || (stem.len() == 4
+            && (stem.starts_with("com") || stem.starts_with("lpt"))
+            && stem.as_bytes()[3].is_ascii_digit())
+}
+
+/// Final pass over a slug before it becomes a file name: strip trailing
+/// dots/spaces (Windows silently trims them, desyncing links), defuse
+/// reserved device names, and cap the length so `{slug}.md` inside a module
+/// directory stays well under MAX_PATH.
+fn sanitize_fs_slug(slug: &str) -> String {
+    let mut slug = slug.trim_end_matches(['.', ' ']).to_string();
+    if slug.is_empty() {
+        return "page".to_string();
+    }
+    if is_windows_reserved_name(&slug) {
+        slug.push_str("-page");
+    }
+    if slug.len() > 120 {
+        use std::hash::{Hash, Hasher};
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        slug.hash(&mut hasher);
+        let mut head: String = slug.chars().take(100).collect();
+        head.push('-');
+        head.push_str(&format!("{:016x}", hasher.finish()));
+        slug = head.trim_end_matches('-').to_string();
+    }
+    slug
 }
 
 /// Build the full wiki model from the live triples in `sm`.
@@ -824,6 +859,553 @@ pub fn build_wiki(sm: &SiteMap) -> WikiModel {
         overview,
         file_pages,
         symbol_pages,
+    }
+}
+
+// ─── Enhanced Wiki Building with Index, Cache, and PageRank ────────────────
+
+/// Result of an enhanced wiki build with diagnostics.
+#[derive(Clone, Debug, Serialize)]
+pub struct EnhancedWikiResult {
+    /// The generated wiki model
+    pub model: WikiModel,
+    /// PageRank scores (if computed)
+    pub pagerank: Option<super::pagerank::PageRankScores>,
+    /// Cache statistics (if cache was used)
+    pub cache_stats: Option<super::cache::CacheStats>,
+    /// Number of files indexed
+    pub files_indexed: usize,
+    /// Number of pages that were regenerated vs cached
+    pub pages_regenerated: usize,
+    /// Number of pages loaded from cache
+    pub pages_from_cache: usize,
+    /// Total elapsed time in microseconds
+    pub elapsed_us: u64,
+}
+
+/// Build an enhanced wiki using pre-indexed data, caching, and PageRank.
+///
+/// This is the main entry point for the upgraded wiki pipeline:
+/// 1. Index workspace files (deterministic, zero LLM calls)
+/// 2. Check cache for unchanged files
+/// 3. Build wiki model enriched with index data
+/// 4. Compute PageRank scores for reading guide
+/// 5. Return enriched model with diagnostics
+pub fn build_wiki_enhanced(
+    sm: &SiteMap,
+    workspace_root: &std::path::Path,
+) -> EnhancedWikiResult {
+    use std::time::Instant;
+    let start = Instant::now();
+
+    // Phase 1: Index workspace files
+    let file_indices = super::index::index_workspace(workspace_root);
+    let files_indexed = file_indices.len();
+
+    // Phase 2: Build base wiki model from site map
+    let mut model = build_wiki(sm);
+
+    // Phase 3: Enrich file pages with index data
+    let index_map: HashMap<String, &super::index::FileIndex> = file_indices
+        .iter()
+        .map(|idx| (idx.path.to_string_lossy().to_string(), idx))
+        .collect();
+
+    for page in &mut model.file_pages {
+        if let Some(idx) = index_map.get(&page.title) {
+            // Enrich summary with index data
+            let sym_count = idx.symbols.len();
+            let import_count = idx.imports.len();
+            if sym_count > 0 || import_count > 0 {
+                page.summary = format!(
+                    "Defines {} symbol(s), {} import(s). {} lines.",
+                    sym_count,
+                    import_count,
+                    idx.line_count
+                );
+            }
+
+            // Add module doc as detail if available
+            if page.detail.is_none() {
+                if let Some(doc) = &idx.module_doc {
+                    page.detail = Some(doc.clone());
+                }
+            }
+
+            // Add "Imports" relationship from index data
+            if !idx.imports.is_empty() {
+                let import_targets: Vec<String> = idx
+                    .imports
+                    .iter()
+                    .take(20)
+                    .map(|imp| imp.path.clone())
+                    .collect();
+                if !import_targets.is_empty() {
+                    page.relationships
+                        .push(("Imports".to_string(), import_targets));
+                }
+            }
+        }
+    }
+
+    // Phase 4: Compute PageRank scores
+    let pagerank = super::pagerank::compute_wiki_pagerank(
+        &model.file_pages,
+        &model.symbol_pages,
+    );
+
+    // Phase 5: Update overview with PageRank info
+    let top_nodes = pagerank.top_n(5);
+    if !top_nodes.is_empty() {
+        let top_names: Vec<String> = top_nodes
+            .iter()
+            .map(|(name, _)| (*name).to_string())
+            .collect();
+        model.overview.relationships.push((
+            "Key Entry Points".to_string(),
+            top_names,
+        ));
+    }
+
+    let elapsed = start.elapsed().as_micros() as u64;
+
+    EnhancedWikiResult {
+        model,
+        pagerank: Some(pagerank),
+        cache_stats: None,
+        files_indexed,
+        pages_regenerated: files_indexed,
+        pages_from_cache: 0,
+        elapsed_us: elapsed,
+    }
+}
+
+/// Build wiki with incremental caching — skip pages whose source hasn't changed.
+///
+/// Uses a [`WikiCache`] to store generated details. On subsequent runs,
+/// only files whose content hash has changed are regenerated.
+pub fn build_wiki_incremental(
+    sm: &SiteMap,
+    workspace_root: &std::path::Path,
+    cache: &mut super::cache::WikiCache,
+) -> EnhancedWikiResult {
+    use std::time::Instant;
+    let start = Instant::now();
+
+    // Phase 1: Index workspace files
+    let file_indices = super::index::index_workspace(workspace_root);
+    let files_indexed = file_indices.len();
+
+    // Phase 2: Build base wiki model
+    let mut model = build_wiki(sm);
+
+    let mut pages_regenerated = 0usize;
+    let mut pages_from_cache = 0usize;
+
+    // Phase 3: Enrich pages, using cache where possible
+    let index_map: HashMap<String, &super::index::FileIndex> = file_indices
+        .iter()
+        .map(|idx| (idx.path.to_string_lossy().to_string(), idx))
+        .collect();
+
+    for page in &mut model.file_pages {
+        if let Some(idx) = index_map.get(&page.title) {
+            // Enrich summary
+            let sym_count = idx.symbols.len();
+            let import_count = idx.imports.len();
+            if sym_count > 0 || import_count > 0 {
+                page.summary = format!(
+                    "Defines {} symbol(s), {} import(s). {} lines.",
+                    sym_count,
+                    import_count,
+                    idx.line_count
+                );
+            }
+
+            // Try cache first for detail
+            if let Some(cached_detail) = cache.get(&page.title, &idx.content_hash) {
+                page.detail = Some(cached_detail);
+                pages_from_cache += 1;
+            } else {
+                // Not cached — use module doc if available
+                if let Some(doc) = &idx.module_doc {
+                    page.detail = Some(doc.clone());
+                    cache.put(
+                        &page.title,
+                        &idx.content_hash,
+                        doc.clone(),
+                        idx.estimated_tokens(),
+                        doc.len() / 4,
+                    );
+                }
+                pages_regenerated += 1;
+            }
+
+            // Add imports relationship
+            if !idx.imports.is_empty() {
+                let import_targets: Vec<String> = idx
+                    .imports
+                    .iter()
+                    .take(20)
+                    .map(|imp| imp.path.clone())
+                    .collect();
+                if !import_targets.is_empty() {
+                    page.relationships
+                        .push(("Imports".to_string(), import_targets));
+                }
+            }
+        }
+    }
+
+    // Phase 4: Prune cache entries for files that no longer exist
+    let existing_files: Vec<&str> = index_map.keys().map(|s| s.as_str()).collect();
+    cache.prune_missing(&existing_files);
+
+    // Phase 5: Compute PageRank
+    let pagerank = super::pagerank::compute_wiki_pagerank(
+        &model.file_pages,
+        &model.symbol_pages,
+    );
+
+    // Update overview
+    let top_nodes = pagerank.top_n(5);
+    if !top_nodes.is_empty() {
+        let top_names: Vec<String> = top_nodes
+            .iter()
+            .map(|(name, _)| (*name).to_string())
+            .collect();
+        model.overview.relationships.push((
+            "Key Entry Points".to_string(),
+            top_names,
+        ));
+    }
+
+    let elapsed = start.elapsed().as_micros() as u64;
+    let cache_stats = cache.stats().clone();
+
+    EnhancedWikiResult {
+        model,
+        pagerank: Some(pagerank),
+        cache_stats: Some(cache_stats),
+        files_indexed,
+        pages_regenerated,
+        pages_from_cache,
+        elapsed_us: elapsed,
+    }
+}
+
+// ─── LLM Detail Generation ────────────────────────────────────────────────
+
+/// A callback type for generating LLM-powered wiki details.
+/// Takes a compact summary string and returns a rich description.
+pub type DetailGenerator = Box<dyn Fn(&str) -> Option<String>>;
+
+/// Generate rich detail for wiki pages using an LLM detail generator.
+///
+/// For each file page that lacks detail, calls the generator with the
+/// compact index summary. Pages whose detail is already cached or present
+/// are skipped.
+///
+/// Returns the number of pages that received new detail.
+pub fn enrich_with_details(model: &mut WikiModel, generator: &DetailGenerator) -> usize {
+    let mut enriched = 0;
+    let file_count = model.file_pages.len();
+    let symbol_count = model.symbol_pages.len();
+
+    for page in &mut model.file_pages {
+        if page.detail.is_some() {
+            continue;
+        }
+        // Build a compact prompt from the page data
+        let prompt = build_detail_prompt(page, file_count, symbol_count);
+        if let Some(detail) = generator(&prompt) {
+            page.detail = Some(detail);
+            enriched += 1;
+        }
+    }
+
+    enriched
+}
+
+/// Generate detail using only structural index data (no LLM needed).
+///
+/// This is the zero-cost fallback that produces useful detail from
+/// the file index alone.
+pub fn enrich_with_structural_details(
+    model: &mut WikiModel,
+    indices: &[super::index::FileIndex],
+) {
+    let index_map: HashMap<String, &super::index::FileIndex> = indices
+        .iter()
+        .map(|idx| (idx.path.to_string_lossy().to_string(), idx))
+        .collect();
+
+    for page in &mut model.file_pages {
+        if page.detail.is_some() {
+            continue;
+        }
+        if let Some(idx) = index_map.get(&page.title) {
+            page.detail = Some(generate_structural_detail(idx));
+        }
+    }
+
+    // Also enrich symbol pages
+    for page in &mut model.symbol_pages {
+        if page.detail.is_some() {
+            continue;
+        }
+        // Find the symbol in any index
+        for idx in indices {
+            if let Some(sym) = idx.symbols.iter().find(|s| s.name == page.title) {
+                let mut detail = String::new();
+                detail.push_str(&format!("**{}** — {}\n\n", sym.name, sym.kind.label()));
+                if let Some(doc) = &sym.doc_comment {
+                    detail.push_str(doc);
+                    detail.push('\n');
+                }
+                if !sym.parameters.is_empty() {
+                    detail.push_str("\nParameters:\n");
+                    for (name, typ) in &sym.parameters {
+                        if typ.is_empty() {
+                            detail.push_str(&format!("- `{}`\n", name));
+                        } else {
+                            detail.push_str(&format!("- `{}`: `{}`\n", name, typ));
+                        }
+                    }
+                }
+                if let Some(ret) = &sym.return_type {
+                    detail.push_str(&format!("\nReturns: `{}`\n", ret));
+                }
+                detail.push_str(&format!("\nDefined in: `{}`\n", idx.path.display()));
+                page.detail = Some(detail);
+                break;
+            }
+        }
+    }
+}
+
+/// Build a prompt for LLM detail generation from page data.
+fn build_detail_prompt(page: &WikiPage, file_count: usize, symbol_count: usize) -> String {
+    let mut prompt = String::new();
+    prompt.push_str(&format!("File: {}\n", page.title));
+    prompt.push_str(&format!("Summary: {}\n", page.summary));
+
+    if !page.relationships.is_empty() {
+        prompt.push_str("\nRelationships:\n");
+        for (label, targets) in &page.relationships {
+            prompt.push_str(&format!("  {} {} -> ", targets.len(), label));
+            for target in targets.iter().take(10) {
+                prompt.push_str(&format!("{}, ", target));
+            }
+            prompt.push('\n');
+        }
+    }
+
+    if !page.called_by.is_empty() {
+        prompt.push_str(&format!(
+            "\nCalled by {} files/symbols\n",
+            page.called_by.len()
+        ));
+    }
+
+    // Add context about what the wiki knows
+    prompt.push_str(&format!(
+        "\nThis file is one of {} file pages in a wiki with {} symbol pages.",
+        file_count, symbol_count
+    ));
+
+    prompt.push_str("\n\nGenerate a brief architectural description of this file's role.");
+    prompt
+}
+
+/// Generate a structural detail string from a file index.
+fn generate_structural_detail(idx: &super::index::FileIndex) -> String {
+    let mut detail = String::new();
+
+    detail.push_str(&format!(
+        "**{}** — {} source file ({} lines, {} bytes)\n\n",
+        idx.path.display(),
+        format!("{:?}", idx.language),
+        idx.line_count,
+        idx.size_bytes
+    ));
+
+    if let Some(doc) = &idx.module_doc {
+        detail.push_str(&format!("{}\n\n", doc));
+    }
+
+    if !idx.symbols.is_empty() {
+        detail.push_str(&format!("### {} Symbols Defined\n\n", idx.symbols.len()));
+        for sym in idx.symbols.iter().take(15) {
+            let params = if sym.parameters.is_empty() {
+                String::new()
+            } else {
+                let ps: Vec<String> = sym
+                    .parameters
+                    .iter()
+                    .map(|(n, t)| {
+                        if t.is_empty() {
+                            n.clone()
+                        } else {
+                            format!("{}: {}", n, t)
+                        }
+                    })
+                    .collect();
+                format!("({})", ps.join(", "))
+            };
+            detail.push_str(&format!("- **{}** {}\n", sym.name, params));
+            if let Some(doc) = &sym.doc_comment {
+                let short = if doc.len() > 100 { &doc[..97] } else { doc };
+                detail.push_str(&format!("  _{}_\n", short));
+            }
+        }
+        if idx.symbols.len() > 15 {
+            detail.push_str(&format!("\n_... and {} more_\n", idx.symbols.len() - 15));
+        }
+        detail.push('\n');
+    }
+
+    if !idx.imports.is_empty() {
+        detail.push_str(&format!("### {} Imports\n\n", idx.imports.len()));
+        for imp in idx.imports.iter().take(10) {
+            if imp.items.is_empty() {
+                detail.push_str(&format!("- `{}`\n", imp.path));
+            } else {
+                detail.push_str(&format!(
+                    "- `{}`: {{{}}}",
+                    imp.path,
+                    imp.items.join(", ")
+                ));
+                detail.push('\n');
+            }
+        }
+        if idx.imports.len() > 10 {
+            detail.push_str(&format!("\n_... and {} more_\n", idx.imports.len() - 10));
+        }
+    }
+
+    detail
+}
+
+// ─── Sitemap Integration ──────────────────────────────────────────────────
+
+/// Cross-reference wiki pages with site map data.
+///
+/// Returns a report showing wiki coverage vs sitemap data.
+pub fn sitemap_coverage_report(model: &WikiModel, sm: &SiteMap) -> SitemapCoverageReport {
+    let triples = sm.find_live_triples(None, None, None);
+    let stats = sm.stats();
+
+    // Count unique subjects that are file-like
+    let mut sitemap_files: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let mut sitemap_symbols: std::collections::HashSet<String> = std::collections::HashSet::new();
+
+    for triple in &triples {
+        let name = resolve_name(sm, triple.subject_hash);
+        if looks_like_path(&name) {
+            sitemap_files.insert(name);
+        } else {
+            sitemap_symbols.insert(name);
+        }
+    }
+
+    let wiki_file_titles: std::collections::HashSet<String> =
+        model.file_pages.iter().map(|p| p.title.clone()).collect();
+    let wiki_symbol_titles: std::collections::HashSet<String> =
+        model.symbol_pages.iter().map(|p| p.title.clone()).collect();
+
+    let files_covered = wiki_file_titles
+        .iter()
+        .filter(|t| sitemap_files.contains(*t))
+        .count();
+    let symbols_covered = wiki_symbol_titles
+        .iter()
+        .filter(|t| sitemap_symbols.contains(*t))
+        .count();
+
+    let wiki_only_files: Vec<String> = wiki_file_titles
+        .difference(&sitemap_files)
+        .cloned()
+        .collect();
+    let wiki_only_symbols: Vec<String> = wiki_symbol_titles
+        .difference(&sitemap_symbols)
+        .cloned()
+        .collect();
+
+    SitemapCoverageReport {
+        sitemap_file_count: sitemap_files.len(),
+        sitemap_symbol_count: sitemap_symbols.len(),
+        sitemap_triple_count: triples.len(),
+        wiki_file_count: model.file_pages.len(),
+        wiki_symbol_count: model.symbol_pages.len(),
+        files_covered,
+        symbols_covered,
+        file_coverage_percent: if sitemap_files.is_empty() {
+            0.0
+        } else {
+            (files_covered as f64 / sitemap_files.len() as f64) * 100.0
+        },
+        symbol_coverage_percent: if sitemap_symbols.is_empty() {
+            0.0
+        } else {
+            (symbols_covered as f64 / sitemap_symbols.len() as f64) * 100.0
+        },
+        wiki_only_files,
+        wiki_only_symbols,
+        stats_summary: stats.to_string(),
+    }
+}
+
+/// Report on how well the wiki covers the site map.
+#[derive(Clone, Debug, Serialize)]
+pub struct SitemapCoverageReport {
+    pub sitemap_file_count: usize,
+    pub sitemap_symbol_count: usize,
+    pub sitemap_triple_count: usize,
+    pub wiki_file_count: usize,
+    pub wiki_symbol_count: usize,
+    pub files_covered: usize,
+    pub symbols_covered: usize,
+    pub file_coverage_percent: f64,
+    pub symbol_coverage_percent: f64,
+    pub wiki_only_files: Vec<String>,
+    pub wiki_only_symbols: Vec<String>,
+    pub stats_summary: String,
+}
+
+impl SitemapCoverageReport {
+    /// Render as markdown.
+    pub fn render_markdown(&self) -> String {
+        let mut out = String::new();
+        out.push_str("## Sitemap Coverage\n\n");
+        out.push_str(&format!(
+            "**{:.1}%** file coverage, **{:.1}%** symbol coverage\n\n",
+            self.file_coverage_percent, self.symbol_coverage_percent
+        ));
+        out.push_str("| Metric | Sitemap | Wiki | Covered |\n");
+        out.push_str("|--------|---------|------|----------|\n");
+        out.push_str(&format!(
+            "| Files | {} | {} | {} |\n",
+            self.sitemap_file_count, self.wiki_file_count, self.files_covered
+        ));
+        out.push_str(&format!(
+            "| Symbols | {} | {} | {} |\n",
+            self.sitemap_symbol_count, self.wiki_symbol_count, self.symbols_covered
+        ));
+        out.push_str(&format!("| Triples | {} | - | - |\n\n", self.sitemap_triple_count));
+
+        if !self.wiki_only_files.is_empty() {
+            out.push_str(&format!(
+                "**{} wiki-only files** (not in sitemap):\n",
+                self.wiki_only_files.len()
+            ));
+            for f in self.wiki_only_files.iter().take(10) {
+                out.push_str(&format!("- `{}`\n", f));
+            }
+            out.push('\n');
+        }
+
+        out
     }
 }
 
@@ -1313,6 +1895,34 @@ mod inline_tests {
     fn slugify_all_special_becomes_page() {
         assert_eq!(slugify("!!!"), "page");
         assert_eq!(slugify("@@@"), "page");
+    }
+
+    #[test]
+    fn slugify_defuses_windows_reserved_device_names() {
+        // CON/PRN/AUX/NUL/COMn/LPTn are illegal as file names on Windows
+        // regardless of extension (os error 123).
+        assert_eq!(slugify("con"), "con-page");
+        assert_eq!(slugify("AUX"), "aux-page");
+        assert_eq!(slugify("nul"), "nul-page");
+        assert_eq!(slugify("COM1"), "com1-page");
+        assert_eq!(slugify("lpt9"), "lpt9-page");
+        // Similar-but-legal names must be untouched.
+        assert_eq!(slugify("config"), "config");
+        assert_eq!(slugify("console"), "console");
+        assert_eq!(slugify("com1x"), "com1x");
+        assert_eq!(slugify("compute"), "compute");
+    }
+
+    #[test]
+    fn slugify_caps_very_long_names_for_max_path() {
+        let long = "a".repeat(300);
+        let slug = slugify(&long);
+        assert!(slug.len() <= 120, "slug too long: {}", slug.len());
+        // Distinct long names sharing a 100-char prefix must not collide.
+        let mut other = "a".repeat(100);
+        other.push_str(&"b".repeat(200));
+        assert_eq!(slug.chars().take(100).collect::<String>(), other[..100]);
+        assert_ne!(slug, slugify(&other));
     }
 
     #[test]

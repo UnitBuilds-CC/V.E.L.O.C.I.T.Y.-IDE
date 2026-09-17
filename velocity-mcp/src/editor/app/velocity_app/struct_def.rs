@@ -512,13 +512,10 @@ impl VelocityApp {
     }
 
     fn parse_provider_label(label: &str) -> Option<AiProvider> {
-        match label {
-            "Cloudflare Workers AI" => Some(AiProvider::CloudflareWorkersAi),
-            "OpenRouter" => Some(AiProvider::OpenRouter),
-            "Azure OpenAI" => Some(AiProvider::AzureOpenAi),
-            "Local Ollama" => Some(AiProvider::LocalOllama),
-            _ => None,
-        }
+        // Full label round-trip (with slug fallback) — previously only 4 of
+        // the 16 providers restored, silently reverting e.g. "Alibaba Qwen"
+        // to the default on every restart.
+        AiProvider::from_label(label)
     }
 
     fn load_workspace_preferences(workspace_root: &Path) -> Option<WorkspacePreferences> {

@@ -219,23 +219,43 @@ fn run_step(
                 Err(e) => (StepOutcome::Failed, e.to_string()),
             }
         }
-        WorkflowStep::AgentTask { prompt, team: _ } => {
+        WorkflowStep::AgentTask { prompt, team } => {
+            let (provider, model) = agent_route(workspace_root, team.as_deref());
             let request = crate::agent::HeadlessSubAgentRequest {
                 workspace_root: workspace_root.to_path_buf(),
-                provider: crate::agent::AiProvider::CloudflareWorkersAi,
-                model: crate::agent::provider::default_provider_model(
-                    crate::agent::AiProvider::CloudflareWorkersAi,
-                ),
+                provider,
+                model: model.clone(),
                 thinking: false,
                 prompt: prompt.clone(),
                 cancel_rx: None,
                 progress: None,
                 scoped_files: None,
+                max_turns: None,
             };
             let result = crate::agent::run_headless_subagent(request);
+            // Same success predicate team_dispatch uses: a transcript that only
+            // contains provider/agent errors is a failed step, not a silent Ok.
+            let failed = result.transcript.trim().is_empty()
+                || result.transcript.contains("Error:")
+                || result.transcript.contains("exhausted or failed")
+                || crate::registry::team_tools::is_provider_unavailable(
+                    &result.status_updates,
+                    &result.transcript,
+                );
+            let outcome = if failed {
+                StepOutcome::Failed
+            } else {
+                StepOutcome::Ok
+            };
+            let excerpt = transcript_snippet(&result.transcript, 600);
             (
-                StepOutcome::Ok,
-                format!("{} status update(s)", result.status_updates.len()),
+                outcome,
+                format!(
+                    "{} → {} | {} status update(s) | {excerpt}",
+                    provider.slug(),
+                    model,
+                    result.status_updates.len()
+                ),
             )
         }
         WorkflowStep::Connector { id, req: _ } => (
@@ -260,6 +280,80 @@ fn run_step(
                 "condition failed: no prior step".to_string(),
             ),
         },
+    }
+}
+
+/// Resolve the provider + model for an `AgentTask` step so workflow agents
+/// honour workspace configuration instead of a hardcoded provider:
+/// 1. `team` given and found → first member's fallback chain head (same
+///    routing `team_dispatch` uses, including pinned model ids).
+/// 2. Otherwise → the provider + model the user selected in the IDE
+///    (`.velocity/workspace-preferences.json`).
+/// 3. Otherwise → first *configured* provider in the workspace with its
+///    default model.
+/// 4. Last resort → Cloudflare Workers AI default (legacy behaviour).
+fn agent_route(root: &Path, team: Option<&str>) -> (crate::agent::AiProvider, String) {
+    use crate::agent::provider::default_provider_model;
+    use crate::agent::AiProvider;
+    if let Some(name) = team {
+        let lower = name.to_lowercase();
+        let found = crate::editor::expert_team::load_expert_teams(root)
+            .into_iter()
+            .find(|t| {
+                t.name.to_lowercase() == lower
+                    || t.id.to_lowercase() == lower
+                    || t.slug().to_lowercase() == lower
+            });
+        if let Some(t) = found {
+            if let Some(member) = t.members.first() {
+                if let Some(route) =
+                    crate::registry::team_tools::build_fallback_chain(member, root)
+                        .into_iter()
+                        .next()
+                {
+                    return route;
+                }
+                return (member.provider, member.model_id.clone());
+            }
+        }
+    }
+    if let Some((provider, model)) = workspace_selected_route(root) {
+        return (provider, model);
+    }
+    if let Some((provider, _)) = crate::registry::team_tools::configured_providers(root)
+        .into_iter()
+        .find(|(_, ok)| *ok)
+    {
+        return (provider, default_provider_model(provider));
+    }
+    (
+        AiProvider::CloudflareWorkersAi,
+        default_provider_model(AiProvider::CloudflareWorkersAi),
+    )
+}
+
+/// The provider + model the user picked in the IDE, as persisted by
+/// `save_workspace_preferences`. Empty/invalid values fall through.
+fn workspace_selected_route(root: &Path) -> Option<(crate::agent::AiProvider, String)> {
+    let raw = std::fs::read_to_string(root.join(".velocity").join("workspace-preferences.json"))
+        .ok()?;
+    let json: serde_json::Value = serde_json::from_str(raw.trim_start_matches('\u{feff}')).ok()?;
+    let provider = crate::agent::AiProvider::from_label(json["provider"].as_str()?)?;
+    let model = json["selected_model"].as_str()?.trim();
+    if model.is_empty() {
+        return None;
+    }
+    Some((provider, model.to_string()))
+}
+
+/// First `max_chars` of the transcript, flattened to one line for step logs.
+fn transcript_snippet(transcript: &str, max_chars: usize) -> String {
+    let flat = transcript.trim().replace('\n', " ⏎ ");
+    if flat.chars().count() <= max_chars {
+        flat
+    } else {
+        let head: String = flat.chars().take(max_chars).collect();
+        format!("{head}…")
     }
 }
 
@@ -477,5 +571,55 @@ mod tests {
         assert_eq!(reloaded.len(), 1);
         assert!(reloaded.get("drop").is_none());
         assert!(reloaded.get("keep").is_some());
+    }
+
+    #[test]
+    fn agent_task_uses_workspace_routing_not_hardcoded_provider() {
+        // Bug #8 regression: an unknown (or absent) team must resolve via the
+        // workspace's configured providers, and both paths must agree.
+        let tmp = tempfile::tempdir().unwrap();
+        let none = agent_route(tmp.path(), None);
+        let unknown = agent_route(tmp.path(), Some("no-such-team"));
+        assert_eq!(none.0, unknown.0);
+        assert_eq!(none.1, unknown.1);
+        assert!(!none.1.is_empty());
+        // The chosen provider must actually be configured in this workspace
+        // (or be the explicit last-resort Cloudflare).
+        let configured = crate::registry::team_tools::configured_providers(tmp.path());
+        let is_cloudflare_last_resort =
+            none.0 == crate::agent::AiProvider::CloudflareWorkersAi
+                && !configured.iter().any(|(_, ok)| *ok);
+        assert!(
+            configured.iter().any(|(p, ok)| *ok && *p == none.0)
+                || is_cloudflare_last_resort
+        );
+    }
+
+    #[test]
+    fn agent_task_prefers_ide_selected_provider_and_model() {
+        // Bug #8/#9 regression: with no team, the route must be exactly what
+        // the user selected in the IDE — even when the preferences file has
+        // a Windows-style UTF-8 BOM.
+        let tmp = tempfile::tempdir().unwrap();
+        let vel = tmp.path().join(".velocity");
+        std::fs::create_dir_all(&vel).unwrap();
+        std::fs::write(
+            vel.join("workspace-preferences.json"),
+            format!("\u{feff}{{\"provider\":\"Alibaba Qwen\",\"selected_model\":\"qwen3.8-flash\"}}"),
+        )
+        .unwrap();
+        let (provider, model) = agent_route(tmp.path(), None);
+        assert_eq!(provider, crate::agent::AiProvider::AlibabaQwen);
+        assert_eq!(model, "qwen3.8-flash");
+    }
+
+    #[test]
+    fn transcript_snippet_flattens_and_caps() {
+        assert_eq!(transcript_snippet("a\nb", 10), "a ⏎ b");
+        assert_eq!(transcript_snippet("  padded  ", 10), "padded");
+        let long = "x".repeat(50);
+        let s = transcript_snippet(&long, 10);
+        assert_eq!(s.chars().count(), 11); // 10 chars + ellipsis
+        assert!(s.ends_with('…'));
     }
 }

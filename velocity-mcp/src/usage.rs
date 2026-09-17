@@ -163,11 +163,34 @@ pub struct WorkspaceApiKeySettings {
     pub api_key: String,
     #[serde(default)]
     pub label: String,
+    /// Optional alternate key for providers that support a pay-per-token plan
+    /// (e.g. Alibaba DashScope Token Plan). Empty means "not configured".
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub token_plan_api_key: String,
+    /// Optional override for the base URL used when `use_token_plan` is true.
+    /// Falls back to the provider's default token-plan endpoint when empty.
+    /// Example: `https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1`.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub token_plan_base_url: String,
+    /// When true and `token_plan_api_key` is set, dispatch prefers the token-plan
+    /// key over `api_key`. Ignored by providers without multi-plan support.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub use_token_plan: bool,
 }
 
 impl WorkspaceApiKeySettings {
     pub fn is_configured(&self) -> bool {
-        !self.api_key.trim().is_empty()
+        !self.api_key.trim().is_empty() || !self.token_plan_api_key.trim().is_empty()
+    }
+
+    /// Return the API key that dispatch should use, honouring the token-plan
+    /// switch when a token-plan key is present.
+    pub fn active_key(&self) -> &str {
+        if self.use_token_plan && !self.token_plan_api_key.trim().is_empty() {
+            self.token_plan_api_key.trim()
+        } else {
+            self.api_key.trim()
+        }
     }
 }
 
@@ -628,17 +651,59 @@ impl UsageTracker {
     }
 }
 
-pub fn provider_settings_path(workspace_root: &Path) -> PathBuf {
-    workspace_root
-        .join(".velocity")
-        .join("provider-settings.json")
+/// Returns the path where provider credentials settings are stored.
+///
+/// Provider secrets (API keys, tokens) are stored at the **user level**
+/// (`%APPDATA%/Velocity/provider-settings.json`) rather than per-workspace.
+/// This prevents API keys from ending up in cloud-synced workspace directories
+/// (OneDrive, Dropbox, etc.), which would be a security risk.
+pub fn provider_settings_path(_workspace_root: &Path) -> PathBuf {
+    user_config_dir().join("provider-settings.json")
+}
+
+/// Returns the user-level configuration directory for Velocity.
+///
+/// - Windows: `%APPDATA%/Velocity` (e.g. `C:\Users\<user>\AppData\Roaming\Velocity`)
+/// - macOS:   `$HOME/Library/Application Support/Velocity`
+/// - Linux:   `$XDG_CONFIG_HOME/velocity` or `$HOME/.config/velocity`
+///
+/// This directory stores sensitive credentials (provider API keys) and
+/// user-level preferences that should NOT be synced with workspaces.
+pub fn user_config_dir() -> PathBuf {
+    // Allow override for testing (tests set this to a temp directory)
+    if let Ok(dir) = std::env::var("VELOCITY_CONFIG_DIR") {
+        return PathBuf::from(dir);
+    }
+
+    // Try the standard OS config directories first
+    #[cfg(target_os = "windows")]
+    {
+        if let Ok(appdata) = std::env::var("APPDATA") {
+            return PathBuf::from(appdata).join("Velocity");
+        }
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        if let Ok(xdg) = std::env::var("XDG_CONFIG_HOME") {
+            return PathBuf::from(xdg).join("velocity");
+        }
+        if let Ok(home) = std::env::var("HOME") {
+            return PathBuf::from(home).join(".config").join("velocity");
+        }
+    }
+    // Fallback: should almost never happen
+    PathBuf::from(".velocity")
 }
 
 pub fn load_workspace_provider_settings(workspace_root: &Path) -> WorkspaceProviderSettings {
     let path = provider_settings_path(workspace_root);
     std::fs::read_to_string(path)
         .ok()
-        .and_then(|raw| serde_json::from_str::<WorkspaceProviderSettings>(&raw).ok())
+        .and_then(|raw| {
+            // Strip UTF-8 BOM if present (Windows editors often insert it)
+            let stripped = raw.strip_prefix('\u{feff}').unwrap_or(&raw);
+            serde_json::from_str::<WorkspaceProviderSettings>(stripped).ok()
+        })
         .unwrap_or_default()
 }
 

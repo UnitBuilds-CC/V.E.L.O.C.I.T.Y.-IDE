@@ -500,6 +500,23 @@ impl ToolAuditRegistry {
         let mut sessions = self.sessions.write().unwrap_or_else(|p| p.into_inner());
         sessions.clear();
     }
+
+    /// Flush all session audit logs to JSON files in the given directory.
+    /// Each session is written to `<dir>/audit_<session_id>.json`.
+    /// Returns the total number of entries flushed.
+    pub fn flush_all_to_dir(&self, dir: &std::path::Path) -> Result<usize, String> {
+        std::fs::create_dir_all(dir)
+            .map_err(|e| format!("Failed to create audit dir {}: {}", dir.display(), e))?;
+        let sessions = self.sessions.read().unwrap_or_else(|p| p.into_inner());
+        let mut total = 0;
+        for (id, log) in sessions.iter() {
+            if !log.is_empty() {
+                let path = dir.join(format!("audit_{}.json", id));
+                total += log.flush_to_file(&path.display().to_string())?;
+            }
+        }
+        Ok(total)
+    }
 }
 
 impl Default for ToolAuditRegistry {
@@ -527,6 +544,33 @@ pub fn record_tool_call(
 ) {
     let log = tool_audit_registry().get_or_create(session_id);
     log.record(tool_name, start, outcome);
+}
+
+/// Record a tool call with full context including Merkle root tracking.
+pub fn record_tool_call_full(
+    session_id: &str,
+    tool_name: &str,
+    start: Instant,
+    outcome: ToolAuditOutcome,
+    merkle_root: Option<String>,
+) {
+    let log = tool_audit_registry().get_or_create(session_id);
+    log.record_full(
+        tool_name,
+        start,
+        outcome,
+        Some("stdio".to_string()),
+        None,
+        None,
+        merkle_root,
+        Some(session_id.to_string()),
+    );
+}
+
+/// Flush all session audit logs to JSON files in the given directory.
+/// Returns the total number of entries flushed.
+pub fn flush_all_sessions_to_dir(dir: &std::path::Path) -> Result<usize, String> {
+    tool_audit_registry().flush_all_to_dir(dir)
 }
 
 #[cfg(test)]
