@@ -73,8 +73,25 @@ fn write_script_file(script: &str) -> Result<PathBuf, String> {
 /// deadline expiry the child (and its tree) is killed and the error says so,
 /// so callers get an honest failure instead of a hang or empty "success".
 pub fn run_ps_script_budget(script: &str, budget: Duration) -> Result<String, String> {
+    run_ps_script_env(script, budget, &[])
+}
+
+/// Run a PowerShell script with per-call environment variables.
+///
+/// Several UIA generators take their parameters through `$env:` rather than
+/// arguments. They used to spawn `powershell` themselves because this helper
+/// had no way to pass them, which meant they also kept the pre-bug-#19
+/// `-Command -` input mode (multi-line scripts were discarded statement by
+/// statement) and an unbounded `wait_with_output()`. Routing them through here
+/// gives them the `-File` execution and the deadline as well.
+pub fn run_ps_script_env(
+    script: &str,
+    budget: Duration,
+    envs: &[(&str, &str)],
+) -> Result<String, String> {
     let script_path = write_script_file(script)?;
-    let spawned = Command::new("powershell")
+    let mut command = Command::new("powershell");
+    command
         .args([
             "-NoProfile",
             "-NonInteractive",
@@ -85,8 +102,11 @@ pub fn run_ps_script_budget(script: &str, budget: Duration) -> Result<String, St
         .arg(&script_path)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn();
+        .stderr(Stdio::piped());
+    for (key, value) in envs {
+        command.env(key, value);
+    }
+    let spawned = command.spawn();
     let child = match spawned {
         Ok(child) => child,
         Err(e) => {

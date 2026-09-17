@@ -102,6 +102,60 @@ pub struct WindowDesktopProbe {
 
 // ─── Virtual Desktop Manager ─────────────────────────────────────────────────
 
+/// Say concretely what an operation would do to the person at the keyboard.
+///
+/// Kept separate from [`session_guard::refusal`] so the gate's wording stays
+/// uniform while each caller describes its own effect.
+fn session_change_effect(op: &VDesktopOperation) -> String {
+    match op {
+        VDesktopOperation::SwitchTo(idx) => format!(
+            "it sends the Ctrl+Win+Arrow shell hotkey to move you off the desktop you are looking at onto desktop {idx}"
+        ),
+        VDesktopOperation::SwitchToNamed(name) => {
+            format!("it sends the Ctrl+Win+Arrow shell hotkey to move you onto the desktop named '{name}'")
+        }
+        VDesktopOperation::Create { name } => match name {
+            Some(n) => format!(
+                "it adds a new desktop named '{n}' and moves you onto it, hiding the windows on the one you are using"
+            ),
+            None => "it adds a new desktop and moves you onto it, hiding the windows on the one you are using"
+                .to_string(),
+        },
+        VDesktopOperation::Remove(idx) => {
+            format!("it closes desktop {idx} and relocates every window open on it, possibly the ones you are working in")
+        }
+        VDesktopOperation::MoveWindow {
+            hwnd,
+            desktop_index,
+        } => format!(
+            "it moves window {hwnd:#x} onto desktop {desktop_index}, so it disappears from the desktop you are looking at"
+        ),
+        VDesktopOperation::PinWindow(_) | VDesktopOperation::UnpinWindow(_) => {
+            "it changes which desktops the window is visible on".to_string()
+        }
+    }
+}
+
+/// What a refusal looks like from this module.
+///
+/// Separated from [`VirtualDesktopManager::apply`] so the gate can be asserted
+/// without building - let alone running - a script that would move a real
+/// session (bug #40).
+fn session_refusal(
+    op: &VDesktopOperation,
+    cached: &Option<VirtualDesktopState>,
+) -> VDesktopOpResult {
+    VDesktopOpResult {
+        success: false,
+        operation: format!("{op:?}"),
+        detail: super::session_guard::refusal(
+            "virtual desktop operation",
+            &session_change_effect(op),
+        ),
+        new_state: cached.clone(),
+    }
+}
+
 /// Manages virtual desktop operations via COM/PowerShell.
 pub struct VirtualDesktopManager {
     /// Cached state (refreshed on enumerate).
@@ -148,6 +202,12 @@ impl VirtualDesktopManager {
     }
 
     /// Apply an operation.
+    ///
+    /// Every operation here rearranges the *interactive session* rather than a
+    /// target the caller named: switching walks the desktop you are looking at,
+    /// and creating one at the rightmost desktop is what a stray Ctrl+Win+Right
+    /// does, which is how an unattended sweep ends up moving the user's own
+    /// window set out of sight (bug #40). Refuse unless the operator opted in.
     pub fn apply(&mut self, op: &VDesktopOperation) -> VDesktopOpResult {
         if !cfg!(target_os = "windows") {
             return VDesktopOpResult {
@@ -156,6 +216,9 @@ impl VirtualDesktopManager {
                 detail: "Virtual desktop operations require Windows 10/11".to_string(),
                 new_state: self.cached_state.clone(),
             };
+        }
+        if !super::session_guard::consent_given() {
+            return session_refusal(op, &self.cached_state);
         }
         let script = match op {
             VDesktopOperation::SwitchTo(idx) => build_switch_desktop_script(*idx),
@@ -255,6 +318,17 @@ impl VirtualDesktopManager {
 
     /// Move `hwnd` to the desktop at `desktop_index`, verifying the result.
     pub fn move_window(&mut self, hwnd: u64, desktop_index: u32) -> VDesktopOpResult {
+        if !super::session_guard::consent_given() {
+            // Also reachable directly, not only through `apply`, so it gates for
+            // itself rather than trusting its caller.
+            return session_refusal(
+                &VDesktopOperation::MoveWindow {
+                    hwnd,
+                    desktop_index,
+                },
+                &self.cached_state,
+            );
+        }
         self.enumerate();
         let target_id = match self
             .cached_state
@@ -804,6 +878,107 @@ fn parse_enumerate_result(json: &str) -> Option<VirtualDesktopState> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ─── Bug #40: the session-change gate ────────────────────────────────────
+    //
+    // These assert the refusal *value* rather than calling `apply`, because
+    // calling `apply` with the gate broken would really send the Ctrl+Win+Arrow
+    // hotkey and move the person reading this output to another desktop.
+
+    /// Every operation has to explain itself concretely; a vague refusal is
+    /// barely a refusal. Exhaustive list so a new variant shows up here.
+    #[test]
+    fn every_operation_names_its_effect_on_the_session() {
+        let cases = [
+            (VDesktopOperation::SwitchTo(1), "desktop 1"),
+            (
+                VDesktopOperation::SwitchToNamed("Work".into()),
+                "named 'Work'",
+            ),
+            (
+                VDesktopOperation::Create { name: None },
+                "adds a new desktop",
+            ),
+            (
+                VDesktopOperation::Create {
+                    name: Some("Scratch".into()),
+                },
+                "named 'Scratch'",
+            ),
+            (VDesktopOperation::Remove(2), "closes desktop 2"),
+            (
+                VDesktopOperation::MoveWindow {
+                    hwnd: 0x1234,
+                    desktop_index: 1,
+                },
+                "0x1234",
+            ),
+            (VDesktopOperation::PinWindow(1), "which desktops the window"),
+        ];
+        for (op, expected) in cases {
+            let effect = session_change_effect(&op);
+            assert!(
+                effect.contains(expected),
+                "{op:?} explains itself as {effect:?}, which does not mention {expected:?}"
+            );
+            assert!(effect.starts_with("it "), "{op:?} -> {effect:?}");
+        }
+    }
+
+    #[test]
+    fn a_refusal_keeps_the_last_known_state_and_claims_nothing() {
+        let known = VirtualDesktopState {
+            desktops: vec![VirtualDesktop {
+                id: "first".into(),
+                name: Some("Desktop 1".into()),
+                index: 0,
+                is_current: true,
+                window_count: None,
+            }],
+            current_index: 0,
+            total_count: 1,
+            supports_named_desktops: true,
+            current_desktop_known: true,
+        };
+        let refused = session_refusal(&VDesktopOperation::Create { name: None }, &Some(known));
+        assert!(!refused.success);
+        assert_eq!(refused.operation, "Create { name: None }");
+        assert!(
+            refused
+                .detail
+                .contains(super::super::session_guard::ALLOW_ENV),
+            "{}",
+            refused.detail
+        );
+        for lie in ["verified", "succeeded", "switched"] {
+            assert!(!refused.detail.contains(lie), "{}", refused.detail);
+        }
+        let echoed = refused
+            .new_state
+            .expect("the refusal reports the state it still has");
+        assert_eq!(echoed.total_count, 1);
+        assert_eq!(echoed.current_index, 0);
+    }
+
+    /// The guarantee that `wa_virtual_desktop_list` cannot move your session is
+    /// structural rather than a code-review promise. The shared prelude defines
+    /// the hotkey helper for every script in this module, so the assertion is on
+    /// the enumeration *body*: it must never call the injection at all.
+    #[test]
+    fn the_enumeration_body_never_calls_the_shell_hotkey() {
+        let script = build_enumerate_desktops_script();
+        assert!(
+            script.starts_with(VD_PRELUDE),
+            "enumeration no longer starts from the shared prelude, so this test is checking the wrong span"
+        );
+        let body = &script[VD_PRELUDE.len()..];
+        for injection in ["keybd_event", "Send-VdHotkey", "mouse_event"] {
+            assert!(
+                !body.contains(injection),
+                "enumeration must not synthesise input, but its body uses {injection}: {body}"
+            );
+        }
+    }
 
     /// Enumeration must return a coherent state. The desktop count is a property
     /// of the machine, not of this code, so it is bounded rather than pinned:

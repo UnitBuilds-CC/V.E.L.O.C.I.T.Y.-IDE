@@ -79,6 +79,26 @@ pub enum WindowOperation {
     SetOpacity(u8),
 }
 
+/// Bug #40 gate for the one window operation that moves the *user*.
+///
+/// Bringing a window to the foreground looks like a harmless focus change, but
+/// `SetForegroundWindow` on a window that lives on another virtual desktop asks
+/// the shell to switch you onto that desktop. The caller named a handle, yet
+/// the effect lands on whichever workspace they were not looking at. Every
+/// other operation here acts on the named handle in place, so it passes.
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
+fn foreground_guard(hwnd: u64, op: &WindowOperation) -> Result<(), String> {
+    if !matches!(op, WindowOperation::BringToFront) {
+        return Ok(());
+    }
+    super::session_guard::guard(
+        "bring_to_front",
+        &format!(
+            "it asks the shell to make window {hwnd:#x} foreground, which moves you onto the desktop that owns that window"
+        ),
+    )
+}
+
 /// Result of a window operation.
 #[derive(Debug, Clone)]
 pub struct WindowOpResult {
@@ -147,6 +167,15 @@ impl WindowManager {
     pub fn apply_operation(hwnd: u64, op: &WindowOperation) -> WindowOpResult {
         #[cfg(target_os = "windows")]
         {
+            if let Err(refused) = foreground_guard(hwnd, op) {
+                return WindowOpResult {
+                    success: false,
+                    hwnd,
+                    operation: format!("{op:?}"),
+                    detail: refused,
+                    new_rect: None,
+                };
+            }
             apply_operation_native(hwnd, op)
         }
         #[cfg(not(target_os = "windows"))]
@@ -480,8 +509,48 @@ mod native {
             success,
             hwnd: hwnd_val,
             operation: op_name,
-            detail: "executed via native Win32 API".to_string(),
+            detail: describe_outcome(hwnd_val, success, new_rect),
             new_rect,
+        }
+    }
+
+    /// Say what the Win32 call actually achieved.
+    ///
+    /// Bug #39: this was the constant `"executed via native Win32 API"` even when
+    /// `success` was false, so `wa_window_action` against hwnd 0 answered
+    /// `{"success":false, "detail":"executed via native Win32 API"}` - the two
+    /// fields contradict each other and the caller cannot tell which to believe.
+    /// The description is now derived from the outcome, and cross-checks the
+    /// handle with `IsWindow` so "not a window" reads differently from
+    /// "a real window that refused the operation".
+    pub(super) fn describe_outcome(
+        hwnd_val: u64,
+        success: bool,
+        new_rect: Option<WindowRect>,
+    ) -> String {
+        let hwnd = HWND(hwnd_val as *mut _);
+        match (success, new_rect) {
+            (true, Some(rect)) => format!(
+                "win32 call succeeded; window now at ({},{}) {}x{}",
+                rect.x, rect.y, rect.width, rect.height
+            ),
+            (true, None) => "win32 call succeeded but the window reports no rect".to_string(),
+            (false, Some(rect)) => format!(
+                "win32 call reported failure; the window is still a live handle at ({},{}) {}x{}",
+                rect.x, rect.y, rect.width, rect.height
+            ),
+            (false, None) => {
+                // SAFETY: IsWindow accepts an arbitrary handle and only reports
+                // whether the current process could use it; it never dereferences.
+                let live = unsafe { IsWindow(hwnd).as_bool() };
+                if live {
+                    format!(
+                        "win32 call reported failure for hwnd {hwnd_val}, which is a live window"
+                    )
+                } else {
+                    format!("refused: hwnd {hwnd_val} is not a window in this session")
+                }
+            }
         }
     }
 }
@@ -494,6 +563,37 @@ use native::{apply_operation_native, enumerate_windows_native};
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Bug #40: only the operation that can move the *user* is gated.
+    /// `SetForegroundWindow` on a window living on another virtual desktop asks
+    /// the shell to switch desktops, so "just focus it" is not a neutral act;
+    /// operations that act on the named handle in place must stay available.
+    #[test]
+    fn only_bringing_a_window_forward_needs_consent() {
+        if crate::wa::session_guard::consent_given() {
+            return;
+        }
+        for op in [
+            WindowOperation::Minimize,
+            WindowOperation::Maximize,
+            WindowOperation::Restore,
+            WindowOperation::Move { x: 10, y: 20 },
+            WindowOperation::SendToBack,
+            WindowOperation::SetTopMost(true),
+        ] {
+            assert!(
+                foreground_guard(0x10, &op).is_ok(),
+                "{op:?} acts on a handle the caller named and must not be gated"
+            );
+        }
+        let err = foreground_guard(0x10, &WindowOperation::BringToFront)
+            .expect_err("foregrounding can pull the user onto another desktop");
+        assert!(err.contains(crate::wa::session_guard::ALLOW_ENV), "{err}");
+        assert!(
+            err.contains("0x10"),
+            "the refusal should name the window: {err}"
+        );
+    }
 
     #[test]
     fn tile_layout_computes_grid() {
@@ -721,5 +821,80 @@ mod tests {
         let result = WindowManager::apply_operation(1, &WindowOperation::Minimize);
         assert!(!result.success);
         assert!(result.operation.contains("Minimize"));
+    }
+
+    // Bug #39: `detail` was the constant "executed via native Win32 API" whatever
+    // happened, so a failed call still told the caller the operation had run.
+    // The description is now derived from the outcome.
+    #[cfg(target_os = "windows")]
+    mod outcome_reporting {
+        use super::super::native::describe_outcome;
+        use super::super::{WindowManager, WindowOperation, WindowRect};
+
+        fn rect() -> WindowRect {
+            WindowRect {
+                x: 40,
+                y: 50,
+                width: 800,
+                height: 600,
+            }
+        }
+
+        #[test]
+        fn failure_never_claims_execution() {
+            let cases = [
+                describe_outcome(0, false, None),
+                describe_outcome(0, false, Some(rect())),
+            ];
+            for detail in cases {
+                assert!(
+                    !detail.contains("executed"),
+                    "detail contradicts success=false: {detail}"
+                );
+            }
+        }
+
+        #[test]
+        fn success_reports_the_resulting_geometry() {
+            let detail = describe_outcome(0, true, Some(rect()));
+            assert!(detail.contains("succeeded"), "{detail}");
+            assert!(detail.contains("40,50"), "{detail}");
+            assert!(detail.contains("800x600"), "{detail}");
+        }
+
+        #[test]
+        fn bogus_handle_is_named_as_not_a_window() {
+            // hwnd 1 is not a window anyone owns, so the honest answer is that the
+            // handle was refused rather than that something was attempted.
+            let detail = describe_outcome(1, false, None);
+            assert!(detail.starts_with("refused:"), "{detail}");
+            assert!(detail.contains("not a window"), "{detail}");
+        }
+
+        #[test]
+        fn real_window_is_recognised_as_live() {
+            // The desktop window always exists and IsWindow only reads state, so
+            // this exercises the "live window that refused the operation" branch
+            // without touching the user's desktop.
+            //
+            // SAFETY: `GetDesktopWindow` is an infallible shell accessor that
+            // returns a live HWND; the handle is only passed to `IsWindow` and
+            // never dereferenced.
+            let hwnd = unsafe { windows::Win32::UI::WindowsAndMessaging::GetDesktopWindow() };
+            let detail = describe_outcome(hwnd.0 as u64, false, None);
+            assert!(detail.contains("live window"), "{detail}");
+            assert!(!detail.starts_with("refused:"), "{detail}");
+        }
+
+        #[test]
+        fn applied_operation_on_dead_handle_is_honest_end_to_end() {
+            let result = WindowManager::apply_operation(1, &WindowOperation::Move { x: 5, y: 5 });
+            assert!(!result.success);
+            assert!(
+                !result.detail.contains("executed"),
+                "detail contradicts success=false: {}",
+                result.detail
+            );
+        }
     }
 }

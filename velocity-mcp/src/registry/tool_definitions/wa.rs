@@ -1,6 +1,12 @@
 use crate::registry::types::Tool;
 use serde_json::json;
 
+/// Bug #40: appended to every tool that drives the interactive session instead
+/// of a target the caller names. A caller should learn about the opt-in from
+/// `tools/list`, before it disrupts whoever is sitting at the keyboard - not
+/// from the side effect of the call that first tried.
+const SESSION_GATE_NOTE: &str = "Opt-in only: it changes the session of whoever is at the keyboard (switches or creates virtual desktops, or injects keystrokes into the focused window) rather than acting on a target you name, so it is refused unless the server runs with VELOCITY_WA_ALLOW_SESSION_CHANGE=1.";
+
 pub fn get_wa_tools() -> Vec<Tool> {
     vec![
         Tool {
@@ -368,7 +374,7 @@ pub fn get_wa_tools() -> Vec<Tool> {
         },
         Tool {
             name: "wa_window_action".to_string(),
-            description: "Perform a window operation (move, resize, minimize, maximize, close, focus, topmost).".to_string(),
+            description: format!("Perform a window operation (move, resize, minimize, maximize, close, focus, topmost). 'focus' asks the shell for the foreground, which can move you onto the desktop owning that window: {SESSION_GATE_NOTE}"),
             input_schema: json!({
                 "type": "object",
                 "properties": {
@@ -394,7 +400,7 @@ pub fn get_wa_tools() -> Vec<Tool> {
         },
         Tool {
             name: "wa_virtual_desktop_switch".to_string(),
-            description: "Switch to a virtual desktop by index or name.".to_string(),
+            description: format!("Switch to a virtual desktop by index or name. {SESSION_GATE_NOTE}"),
             input_schema: json!({
                 "type": "object",
                 "properties": {
@@ -430,7 +436,7 @@ pub fn get_wa_tools() -> Vec<Tool> {
         },
         Tool {
             name: "wa_notifications_dismiss".to_string(),
-            description: "Dismiss visible Windows notifications, optionally filtered by pattern.".to_string(),
+            description: format!("Dismiss visible Windows notifications, optionally filtered by pattern. {SESSION_GATE_NOTE}"),
             input_schema: json!({
                 "type": "object",
                 "properties": {
@@ -620,7 +626,7 @@ pub fn get_wa_tools() -> Vec<Tool> {
         // ─── Virtual Desktop Extended Tools ─────────────────────────────────────
         Tool {
             name: "wa_vdesktop_create".to_string(),
-            description: "Create a new Windows virtual desktop.".to_string(),
+            description: format!("Create a new Windows virtual desktop. {SESSION_GATE_NOTE}"),
             input_schema: json!({
                 "type": "object",
                 "properties": {
@@ -630,7 +636,7 @@ pub fn get_wa_tools() -> Vec<Tool> {
         },
         Tool {
             name: "wa_vdesktop_remove".to_string(),
-            description: "Remove a Windows virtual desktop by index.".to_string(),
+            description: format!("Remove a Windows virtual desktop by index. {SESSION_GATE_NOTE}"),
             input_schema: json!({
                 "type": "object",
                 "properties": {
@@ -641,7 +647,7 @@ pub fn get_wa_tools() -> Vec<Tool> {
         },
         Tool {
             name: "wa_vdesktop_move_window".to_string(),
-            description: "Move a window to a different virtual desktop.".to_string(),
+            description: format!("Move a window to a different virtual desktop. {SESSION_GATE_NOTE}"),
             input_schema: json!({
                 "type": "object",
                 "properties": {
@@ -964,7 +970,7 @@ pub fn get_wa_tools() -> Vec<Tool> {
         },
         Tool {
             name: "wa_tray_click".to_string(),
-            description: "Click a system tray icon identified by its tooltip text.".to_string(),
+            description: format!("Click a system tray icon identified by its tooltip text. {SESSION_GATE_NOTE}"),
             input_schema: json!({
                 "type": "object",
                 "properties": {
@@ -1021,7 +1027,7 @@ pub fn get_wa_tools() -> Vec<Tool> {
         // ─── Input Injection ──────────────────────────────────────────────────
         Tool {
             name: "wa_input_sequence".to_string(),
-            description: "Build and atomically inject a sequence of low-level mouse and keyboard events via native SendInput.".to_string(),
+            description: format!("Build and atomically inject a sequence of low-level mouse and keyboard events via native SendInput. {SESSION_GATE_NOTE}"),
             input_schema: json!({
                 "type": "object",
                 "properties": {
@@ -1266,5 +1272,41 @@ mod tests {
             path_desc.contains("default") && path_desc.contains("png"),
             "the fallback format must be documented: {path_desc}"
         );
+    }
+
+    /// Bug #40: an opt-in that is only discoverable by triggering the side
+    /// effect is no opt-in at all. Every tool that enforces the session gate has
+    /// to advertise it in `tools/list`, and the read-only tools must not imply
+    /// they are gated when they are not.
+    #[test]
+    fn session_affecting_tools_advertise_the_opt_in_they_enforce() {
+        for name in [
+            "wa_virtual_desktop_switch",
+            "wa_vdesktop_create",
+            "wa_vdesktop_remove",
+            "wa_vdesktop_move_window",
+            "wa_input_sequence",
+            "wa_tray_click",
+            "wa_notifications_dismiss",
+            "wa_window_action",
+        ] {
+            let desc = description_of(name);
+            assert!(
+                desc.contains(crate::wa::session_guard::ALLOW_ENV),
+                "{name} enforces the session gate but never advertises it: {desc}"
+            );
+        }
+        for readable in [
+            "wa_virtual_desktop_list",
+            "wa_vdesktop_window_info",
+            "wa_tray_list",
+            "wa_notifications_list",
+            "wa_screenshot",
+        ] {
+            assert!(
+                !description_of(readable).contains(crate::wa::session_guard::ALLOW_ENV),
+                "{readable} measures the session without changing it, so it must not read as gated"
+            );
+        }
     }
 }

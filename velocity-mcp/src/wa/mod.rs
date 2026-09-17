@@ -17,6 +17,7 @@ pub mod registry;
 pub mod runtime;
 pub mod screenshot;
 pub mod selector;
+pub mod session_guard;
 pub mod storage;
 pub mod triggers;
 pub mod uia_ffi;

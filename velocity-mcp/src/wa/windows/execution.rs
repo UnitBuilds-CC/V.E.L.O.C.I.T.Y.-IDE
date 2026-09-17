@@ -3,9 +3,34 @@ use super::reports::*;
 use super::scripts::*;
 use crate::wa::{WaWindowsActionReport, WaWindowsCaptureReport, WaWindowsWaitReport};
 use std::error::Error;
-use std::io::{Error as IoError, ErrorKind, Write};
+use std::io::{Error as IoError, ErrorKind};
 use std::path::Path;
-use std::process::{Command, Stdio};
+use std::time::Duration;
+
+/// Budget for a UIA capture: the walk is bounded by the tree it is given, not
+/// by a caller-supplied deadline, so it gets the default script budget.
+const CAPTURE_BUDGET: Duration = crate::wa::ps::DEFAULT_BUDGET;
+
+/// Budget for an action: one element lookup plus one pattern call.
+const ACTION_BUDGET: Duration = crate::wa::ps::DEFAULT_BUDGET;
+
+/// These three calls used to spawn `powershell` inline with `-Command -` and
+/// pipe a multi-line script into stdin. Windows PowerShell 5.1 consumes piped
+/// command input statement by statement, so the here-strings behind
+/// `Add-Type @"..."` were discarded while the process still exited 0 printing
+/// nothing - which `serde_json` then reported as
+/// "EOF while parsing a value at line 1 column 0" (bug #33). They now go
+/// through the shared `-File` runner, which also bounds them with a deadline
+/// the old unbounded `wait_with_output()` never had.
+fn run_uia_script(
+    label: &str,
+    script: &str,
+    budget: Duration,
+    envs: &[(&str, &str)],
+) -> Result<String, Box<dyn Error>> {
+    crate::wa::ps::run_ps_script_env(script, budget, envs)
+        .map_err(|err| IoError::other(format!("{label}: {err}")).into())
+}
 
 pub fn capture_windows_snapshot_report(
     root: &Path,
@@ -25,51 +50,30 @@ pub fn capture_windows_snapshot_report(
         .into());
     }
 
-    let mut child = Command::new("powershell")
-        .args([
-            "-NoProfile",
-            "-NonInteractive",
-            "-ExecutionPolicy",
-            "Bypass",
-            "-Command",
-            "-",
-        ])
-        .env("WA_CAPTURE_MAX_DEPTH", max_depth.to_string())
-        .env("WA_CAPTURE_MAX_CHILDREN", max_children_per_node.to_string())
-        .env(
-            "WA_CAPTURE_PROCESS_ID",
-            process_id
-                .map(|value| value.to_string())
-                .unwrap_or_default(),
-        )
-        .env(
-            "WA_CAPTURE_WINDOW_NAME_CONTAINS",
-            window_name_contains.unwrap_or_default(),
-        )
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()?;
+    let stdout = run_uia_script(
+        "Windows UIAutomation capture failed",
+        build_capture_script(),
+        CAPTURE_BUDGET,
+        &[
+            ("WA_CAPTURE_MAX_DEPTH", &max_depth.to_string()),
+            (
+                "WA_CAPTURE_MAX_CHILDREN",
+                &max_children_per_node.to_string(),
+            ),
+            (
+                "WA_CAPTURE_PROCESS_ID",
+                &process_id
+                    .map(|value| value.to_string())
+                    .unwrap_or_default(),
+            ),
+            (
+                "WA_CAPTURE_WINDOW_NAME_CONTAINS",
+                window_name_contains.unwrap_or_default(),
+            ),
+        ],
+    )?;
 
-    if let Some(mut stdin) = child.stdin.take() {
-        stdin.write_all(build_capture_script().as_bytes())?;
-    }
-
-    let output = child.wait_with_output()?;
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        let detail = if stderr.trim().is_empty() {
-            stdout.trim().to_string()
-        } else {
-            stderr.trim().to_string()
-        };
-        return Err(
-            IoError::other(format!("Windows UIAutomation capture failed: {detail}")).into(),
-        );
-    }
-
-    let payload = parse_capture_payload(&String::from_utf8_lossy(&output.stdout))?;
+    let payload = parse_capture_payload(&stdout)?;
     save_windows_capture_payload(root, session_id, snapshot_name, title_override, payload)
 }
 
@@ -107,50 +111,25 @@ pub fn execute_windows_action_report(
         .strip_prefix("windows://uia/process/")
         .and_then(|value| value.parse::<u32>().ok());
 
-    let mut child = Command::new("powershell")
-        .args([
-            "-NoProfile",
-            "-NonInteractive",
-            "-ExecutionPolicy",
-            "Bypass",
-            "-Command",
-            "-",
-        ])
-        .env(
-            "WA_ACTION_PROCESS_ID",
-            process_id
-                .map(|value| value.to_string())
-                .unwrap_or_default(),
-        )
-        .env("WA_ACTION_WINDOW_NAME_CONTAINS", snapshot.title.clone())
-        .env("WA_ACTION_NODE_ID", plan.matched.id.clone())
-        .env("WA_ACTION_NAME", action)
-        .env("WA_ACTION_VALUE", input_value.unwrap_or_default())
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()?;
+    let stdout = run_uia_script(
+        "Windows UIAutomation action execution failed",
+        build_action_script(),
+        ACTION_BUDGET,
+        &[
+            (
+                "WA_ACTION_PROCESS_ID",
+                &process_id
+                    .map(|value| value.to_string())
+                    .unwrap_or_default(),
+            ),
+            ("WA_ACTION_WINDOW_NAME_CONTAINS", &snapshot.title),
+            ("WA_ACTION_NODE_ID", &plan.matched.id),
+            ("WA_ACTION_NAME", action),
+            ("WA_ACTION_VALUE", input_value.unwrap_or_default()),
+        ],
+    )?;
 
-    if let Some(mut stdin) = child.stdin.take() {
-        stdin.write_all(build_action_script().as_bytes())?;
-    }
-
-    let output = child.wait_with_output()?;
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        let detail = if stderr.trim().is_empty() {
-            stdout.trim().to_string()
-        } else {
-            stderr.trim().to_string()
-        };
-        return Err(IoError::other(format!(
-            "Windows UIAutomation action execution failed: {detail}"
-        ))
-        .into());
-    }
-
-    let payload = parse_action_payload(&String::from_utf8_lossy(&output.stdout))?;
+    let payload = parse_action_payload(&stdout)?;
     build_action_report_from_payload(
         root,
         session_id,
@@ -192,49 +171,32 @@ pub fn wait_for_windows_condition_report(
         .strip_prefix("windows://uia/process/")
         .and_then(|value| value.parse::<u32>().ok());
 
-    let mut child = Command::new("powershell")
-        .args([
-            "-NoProfile",
-            "-NonInteractive",
-            "-ExecutionPolicy",
-            "Bypass",
-            "-Command",
-            "-",
-        ])
-        .env(
-            "WA_WAIT_PROCESS_ID",
-            process_id
-                .map(|value| value.to_string())
-                .unwrap_or_default(),
-        )
-        .env("WA_WAIT_WINDOW_NAME_CONTAINS", snapshot.title.clone())
-        .env("WA_WAIT_NODE_ID", resolve.matched.id.clone())
-        .env("WA_WAIT_CONDITION", condition)
-        .env("WA_WAIT_EXPECTED_VALUE", expected_value.unwrap_or_default())
-        .env("WA_WAIT_TIMEOUT_MS", timeout_ms.to_string())
-        .env("WA_WAIT_POLL_MS", poll_interval_ms.to_string())
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()?;
+    // The wait script polls until its own WA_WAIT_TIMEOUT_MS deadline, so the
+    // process budget has to sit above that or a healthy long wait gets killed.
+    let wait_budget = Duration::from_millis(timeout_ms) + crate::wa::ps::SLACK;
+    let node_id_text = resolve.matched.id.clone();
+    let title_text = snapshot.title.clone();
+    let process_id_text = process_id
+        .map(|value| value.to_string())
+        .unwrap_or_default();
+    let timeout_text = timeout_ms.to_string();
+    let poll_text = poll_interval_ms.to_string();
+    let stdout = run_uia_script(
+        "Windows UIAutomation wait failed",
+        build_wait_script(),
+        wait_budget,
+        &[
+            ("WA_WAIT_PROCESS_ID", &process_id_text),
+            ("WA_WAIT_WINDOW_NAME_CONTAINS", &title_text),
+            ("WA_WAIT_NODE_ID", &node_id_text),
+            ("WA_WAIT_CONDITION", condition),
+            ("WA_WAIT_EXPECTED_VALUE", expected_value.unwrap_or_default()),
+            ("WA_WAIT_TIMEOUT_MS", &timeout_text),
+            ("WA_WAIT_POLL_MS", &poll_text),
+        ],
+    )?;
 
-    if let Some(mut stdin) = child.stdin.take() {
-        stdin.write_all(build_wait_script().as_bytes())?;
-    }
-
-    let output = child.wait_with_output()?;
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        let detail = if stderr.trim().is_empty() {
-            stdout.trim().to_string()
-        } else {
-            stderr.trim().to_string()
-        };
-        return Err(IoError::other(format!("Windows UIAutomation wait failed: {detail}")).into());
-    }
-
-    let payload = parse_wait_payload(&String::from_utf8_lossy(&output.stdout))?;
+    let payload = parse_wait_payload(&stdout)?;
     build_wait_report_from_payload(
         root,
         session_id,

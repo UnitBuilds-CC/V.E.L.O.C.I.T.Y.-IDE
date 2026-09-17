@@ -407,8 +407,35 @@ pub struct InputExecutionResult {
     pub detail: String,
 }
 
+/// Bug #40 gate for raw input injection.
+///
+/// An [`InputSequence`] carries no target window: `keybd_event`/`SendInput`
+/// land in whatever the person at the machine happens to have focused, and a
+/// sequence can contain the shell hotkeys that move or create virtual desktops.
+/// Nothing here is addressable by the caller, so the whole family is opt-in.
+fn injection_guard(sequence: &InputSequence) -> Result<(), String> {
+    super::session_guard::guard(
+        "input sequence",
+        &format!(
+            "it injects {} mouse/keyboard event(s) into whichever window you currently have focused",
+            sequence.events.len()
+        ),
+    )
+}
+
+fn session_refusal(refused: String) -> InputExecutionResult {
+    InputExecutionResult {
+        success: false,
+        events_sent: 0,
+        detail: refused,
+    }
+}
+
 /// Execute an input sequence by running the generated PowerShell script.
 pub fn execute_sequence(sequence: &InputSequence) -> InputExecutionResult {
+    if let Err(refused) = injection_guard(sequence) {
+        return session_refusal(refused);
+    }
     // T3d: Prefer native SendInput on Windows (no PowerShell overhead)
     #[cfg(target_os = "windows")]
     {
@@ -431,6 +458,9 @@ pub fn execute_sequence(sequence: &InputSequence) -> InputExecutionResult {
 /// native `SendInput` path. This keeps the script builder honest and gives
 /// callers an escape hatch when native injection is blocked.
 pub fn execute_sequence_script(sequence: &InputSequence) -> InputExecutionResult {
+    if let Err(refused) = injection_guard(sequence) {
+        return session_refusal(refused);
+    }
     let script = build_input_sequence_script(sequence);
     let expected = sequence.events.len();
     match run_ps_script(&script) {
@@ -455,6 +485,9 @@ pub fn execute_sequence_script(sequence: &InputSequence) -> InputExecutionResult
 /// Uses user32.dll SendInput for mouse and keyboard injection.
 #[cfg(target_os = "windows")]
 pub fn execute_sequence_native(sequence: &InputSequence) -> InputExecutionResult {
+    if let Err(refused) = injection_guard(sequence) {
+        return session_refusal(refused);
+    }
     let mut events_sent = 0usize;
 
     for event in &sequence.events {
@@ -627,6 +660,32 @@ fn run_ps_script(script: &str) -> Result<String, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ─── Bug #40: raw injection is opt-in ─────────────────────────────────
+    //
+    // `execute_sequence*` are deliberately not called from here: with the gate
+    // broken, the test itself would type into whichever window the operator has
+    // focused. The halves that decide and that shape the refusal are asserted
+    // instead.
+    #[test]
+    fn the_injection_gate_cites_the_switch() {
+        if crate::wa::session_guard::consent_given() {
+            return; // the process opted in, so the gate is legitimately open
+        }
+        let sequence = InputSequence {
+            events: vec![
+                InputEvent::KeyPress { vk_code: 0x41 },
+                InputEvent::KeyPress { vk_code: 0x42 },
+            ],
+            label: "assert-only".into(),
+        };
+        let err = injection_guard(&sequence).expect_err("unconsented injection must be blocked");
+        assert!(err.contains(crate::wa::session_guard::ALLOW_ENV), "{err}");
+        assert!(err.contains("2 mouse/keyboard event(s)"), "{err}");
+        let refused = session_refusal(err);
+        assert!(!refused.success);
+        assert_eq!(refused.events_sent, 0, "a refusal sent nothing");
+    }
 
     #[test]
     fn vk_code_lookup() {

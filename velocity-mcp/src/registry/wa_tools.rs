@@ -80,12 +80,32 @@ pub fn handle_wa_tool(
                     Box::<dyn Error>::from(format!("serialise WA snapshot save summary: {err}"))
                 })?
             } else {
+                // Bug #35: a node saved without `actions` can never be targeted by
+                // wa_plan_action / wa_execute_windows_action, because `actions` is
+                // `serde(default)` and the action gate is exact. Warn while saving
+                // instead of letting the caller hit a bare "no match" later.
+                let actionless = report
+                    .snapshot
+                    .nodes
+                    .iter()
+                    .filter(|node| node.actions.is_empty())
+                    .count();
+                let warning = if actionless == 0 {
+                    String::new()
+                } else {
+                    format!(
+                        "\nWarning: {} of {} node(s) advertise no actions, so wa_plan_action cannot target them. Give them nodes[].actions, or capture with wa_capture_windows_snapshot.",
+                        actionless,
+                        report.snapshot.nodes.len()
+                    )
+                };
                 format!(
-                    "Saved WA snapshot '{}' for session '{}'\nNodes: {}\nSnapshot NDA: {}",
+                    "Saved WA snapshot '{}' for session '{}'\nNodes: {}\nSnapshot NDA: {}{}",
                     report.snapshot.snapshot_name,
                     report.snapshot.session_id,
                     report.snapshot.nodes.len(),
                     report.snapshot_nda_path,
+                    warning,
                 )
             }
         }
@@ -1574,10 +1594,9 @@ pub fn handle_wa_tool(
                     "no monitors could be enumerated, so tile bounds cannot be computed",
                 ));
             }
-            let monitor = match mm.get(monitor_index) {
-                Some(m) => Some((m.work_area.width, m.work_area.height)),
-                None => None,
-            };
+            let monitor = mm
+                .get(monitor_index)
+                .map(|m| (m.work_area.width, m.work_area.height));
             let (mw, mh) = match monitor {
                 Some(dims) => dims,
                 None => {
@@ -2898,6 +2917,159 @@ mod tests {
         }
     }
 
+    // Bug #35: `wa_save_snapshot` accepts nodes with no `actions` (the field is
+    // `serde(default)`) while the action gate in `resolve_selector` is exact, so a
+    // hand-written snapshot resolved fine under `wa_resolve_selector` yet failed
+    // `wa_plan_action` with a message identical to "the node is not in the
+    // snapshot". Saving now warns, and the failure names the near miss.
+    fn seed_b35_snapshot(temp: &std::path::Path) {
+        handle_wa_tool(
+            temp,
+            "wa_create_session",
+            &serde_json::json!({ "sessionId": "b35" }),
+        )
+        .expect("session creation should succeed");
+        let out = handle_wa_tool(
+            temp,
+            "wa_save_snapshot",
+            &serde_json::json!({
+                "sessionId": "b35",
+                "snapshotName": "hand-written",
+                "url": "windows://uia/process/0",
+                "title": "Bug 35",
+                "nodes": [
+                    { "id": "submit", "role": "button", "name": "Submit" },
+                    {
+                        "id": "email",
+                        "role": "edit",
+                        "name": "Email",
+                        "actions": ["focus", "type"]
+                    },
+                ]
+            }),
+        )
+        .expect("snapshot save should succeed")
+        .expect("tool should produce output");
+        assert!(
+            out.contains("1 of 2 node(s) advertise no actions"),
+            "save did not warn about the untargetable node: {out}"
+        );
+    }
+
+    #[test]
+    fn plan_action_names_a_node_that_advertises_no_actions() {
+        let temp = tempfile::tempdir().unwrap();
+        seed_b35_snapshot(temp.path());
+        let err = handle_wa_tool(
+            temp.path(),
+            "wa_plan_action",
+            &serde_json::json!({
+                "sessionId": "b35",
+                "snapshotName": "hand-written",
+                "action": "click",
+                "nodeId": "submit"
+            }),
+        )
+        .expect_err("a node with no actions cannot be clicked");
+        let msg = err.to_string();
+        assert!(msg.contains("do not advertise 'click'"), "got: {msg}");
+        assert!(msg.contains("'submit'"), "got: {msg}");
+        assert!(msg.contains("no actions at all"), "got: {msg}");
+        assert!(
+            msg.contains("wa_capture_windows_snapshot"),
+            "error should offer a way out: {msg}"
+        );
+    }
+
+    #[test]
+    fn plan_action_lists_the_verbs_a_near_miss_node_does_advertise() {
+        let temp = tempfile::tempdir().unwrap();
+        seed_b35_snapshot(temp.path());
+        let err = handle_wa_tool(
+            temp.path(),
+            "wa_plan_action",
+            &serde_json::json!({
+                "sessionId": "b35",
+                "snapshotName": "hand-written",
+                "action": "click",
+                "nodeId": "email"
+            }),
+        )
+        .expect_err("a textbox that only takes focus/type cannot be clicked");
+        let msg = err.to_string();
+        assert!(
+            msg.contains("'email' [edit] advertises focus, type"),
+            "got: {msg}"
+        );
+    }
+
+    #[test]
+    fn plan_action_distinguishes_an_absent_node_from_an_unusable_one() {
+        let temp = tempfile::tempdir().unwrap();
+        seed_b35_snapshot(temp.path());
+        let err = handle_wa_tool(
+            temp.path(),
+            "wa_plan_action",
+            &serde_json::json!({
+                "sessionId": "b35",
+                "snapshotName": "hand-written",
+                "action": "click",
+                "nodeId": "ghost"
+            }),
+        )
+        .expect_err("no such node");
+        let msg = err.to_string();
+        assert!(
+            msg.contains("none matching the given nodeId/role/name"),
+            "got: {msg}"
+        );
+        assert!(
+            msg.contains("2 node(s)"),
+            "should report the snapshot size: {msg}"
+        );
+    }
+
+    #[test]
+    fn selector_resolution_still_matches_the_node_the_action_gate_rejects() {
+        // The asymmetry that made bug #35 confusing: this call succeeds for the
+        // very node `wa_plan_action` refuses.
+        let temp = tempfile::tempdir().unwrap();
+        seed_b35_snapshot(temp.path());
+        let out = handle_wa_tool(
+            temp.path(),
+            "wa_resolve_selector",
+            &serde_json::json!({
+                "sessionId": "b35",
+                "snapshotName": "hand-written",
+                "nodeId": "submit"
+            }),
+        )
+        .expect("id-only lookup must succeed")
+        .expect("tool should produce output");
+        assert!(out.contains("Matched node: submit"), "got: {out}");
+    }
+
+    #[test]
+    fn plan_action_succeeds_when_the_verb_is_advertised() {
+        let temp = tempfile::tempdir().unwrap();
+        seed_b35_snapshot(temp.path());
+        let out = handle_wa_tool(
+            temp.path(),
+            "wa_plan_action",
+            &serde_json::json!({
+                "sessionId": "b35",
+                "snapshotName": "hand-written",
+                "action": "type",
+                "nodeId": "email",
+                "value": "agent@example.com"
+            }),
+        )
+        .expect("a node advertising 'type' must be plannable")
+        .expect("tool should produce output");
+        assert!(out.contains("Planned WA action 'type'"), "got: {out}");
+        assert!(out.contains("supports:type"), "got: {out}");
+    }
+
     // `wa_registry_read` must perform a real read (returning a structured result with a
     // `success` flag) rather than the old `script_ready` stub. A bogus key is absent on
     // any machine, so this is deterministic and side-effect free.
@@ -2977,11 +3149,13 @@ mod tests {
         assert!(parsed["full_text"].is_string());
     }
 
-    // `wa_notifications_dismiss` must perform a real dismissal pass (returning a structured
-    // result) rather than the old `script_ready` stub. With no matching notifications the
-    // dismissed count is zero, but the PowerShell pass still runs for real.
+    // `wa_notifications_dismiss` must return a structured result rather than the
+    // old `script_ready` stub. Since bug #40 it also refuses unless the operator
+    // opted in, so "the PowerShell pass really ran" is only checkable with
+    // consent; without consent the contract being verified here is that the
+    // caller gets an honest refusal rather than a stub or a false success.
     #[test]
-    fn notifications_dismiss_executes_for_real() {
+    fn notifications_dismiss_returns_a_structured_result_not_a_stub() {
         let temp = tempfile::tempdir().unwrap();
         let args = serde_json::json!({});
         let out = handle_wa_tool(temp.path(), "wa_notifications_dismiss", &args)
@@ -2993,5 +3167,92 @@ mod tests {
         assert_eq!(parsed["pattern"], "*");
         assert!(parsed["success"].is_boolean());
         assert!(parsed["notifications_remaining"].is_number());
+        if !crate::wa::session_guard::consent_given() {
+            assert_eq!(
+                parsed["success"],
+                serde_json::json!(false),
+                "dismissing someone else's toasts is opt-in: {out}"
+            );
+            assert!(
+                out.contains(crate::wa::session_guard::ALLOW_ENV),
+                "the refusal must name the switch: {out}"
+            );
+        }
+    }
+
+    // ─── Bug #40: session-affecting tools are opt-in ───────────────────────
+    //
+    // These ran against the operator's own interactive session: the virtual
+    // desktop switcher synthesises Ctrl+Win+Arrow, which at the rightmost
+    // desktop creates a new one and moves the user onto it. Each helper is a
+    // no-op once consent exists, so a consented machine never sees a real
+    // injection from a unit test.
+    fn refuses_without_consent(tool: &str, args: serde_json::Value) {
+        if crate::wa::session_guard::consent_given() {
+            return;
+        }
+        let temp = tempfile::tempdir().unwrap();
+        let out = handle_wa_tool(temp.path(), tool, &args)
+            .unwrap_or_else(|err| panic!("{tool} must refuse with a result, not error: {err}"))
+            .unwrap_or_else(|| panic!("{tool} must produce output"));
+        assert!(out.contains("\"success\":false"), "{tool} -> {out}");
+        assert!(
+            out.contains(crate::wa::session_guard::ALLOW_ENV),
+            "{tool} refused without naming the switch: {out}"
+        );
+    }
+
+    #[test]
+    fn virtual_desktop_tools_refuse_without_consent() {
+        refuses_without_consent(
+            "wa_virtual_desktop_switch",
+            serde_json::json!({ "index": 7 }),
+        );
+        refuses_without_consent("wa_vdesktop_create", serde_json::json!({ "name": "sweep" }));
+        refuses_without_consent("wa_vdesktop_remove", serde_json::json!({ "index": 7 }));
+        refuses_without_consent(
+            "wa_vdesktop_move_window",
+            serde_json::json!({ "hwnd": 1, "targetIndex": 7 }),
+        );
+    }
+
+    #[test]
+    fn input_injection_refuses_without_consent() {
+        refuses_without_consent("wa_input_sequence", serde_json::json!({ "steps": [] }));
+        refuses_without_consent(
+            "wa_input_sequence",
+            serde_json::json!({ "steps": [{ "op": "wait", "ms": 1 }], "viaScript": true }),
+        );
+    }
+
+    #[test]
+    fn tray_and_toast_tools_refuse_without_consent() {
+        refuses_without_consent(
+            "wa_tray_click",
+            serde_json::json!({ "tooltip": "No Such Tray Icon Exists" }),
+        );
+        refuses_without_consent(
+            "wa_notifications_dismiss",
+            serde_json::json!({ "pattern": "No Such App" }),
+        );
+    }
+
+    /// Listing and probing stay available: the gate is on mutation, and a
+    /// refusal that also blocked measurement would leave the caller unable to
+    /// work out what is there before opting in.
+    #[test]
+    fn read_only_desktop_tools_stay_open() {
+        let temp = tempfile::tempdir().unwrap();
+        let out = handle_wa_tool(
+            temp.path(),
+            "wa_virtual_desktop_list",
+            &serde_json::json!({}),
+        )
+        .expect("listing is read-only and must dispatch");
+        let out = out.expect("listing produces output");
+        assert!(
+            !out.contains(crate::wa::session_guard::ALLOW_ENV),
+            "a read-only tool must not be gated: {out}"
+        );
     }
 }

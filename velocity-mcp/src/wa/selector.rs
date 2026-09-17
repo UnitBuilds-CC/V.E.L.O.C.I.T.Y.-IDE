@@ -450,6 +450,77 @@ pub fn resolve_xpath(
 
 // ── Original API ─────────────────────────────────────────────────────
 
+/// Would this node satisfy every selector constraint *except* the action gate?
+///
+/// Mirrors [`score_node`]'s id/role/name rules so "present but unusable" can be
+/// told apart from "absent".
+fn identity_matches(
+    node: &WaNode,
+    node_id: Option<&str>,
+    role: Option<&str>,
+    name: Option<&str>,
+) -> bool {
+    node_id.is_none_or(|expected| node.id.eq_ignore_ascii_case(expected))
+        && role.is_none_or(|expected| node.role.eq_ignore_ascii_case(expected))
+        && name.is_none_or(|expected| contains_case_insensitive(&node.name, expected))
+}
+
+/// Explain an empty selector result.
+///
+/// Bug #35: the message used to stop at "no WA node matched selector", which is
+/// indistinguishable from "the node is not in the snapshot" even when the node
+/// *is* there and simply does not advertise the requested verb. `wa_save_snapshot`
+/// accepts nodes whose `actions` list is omitted entirely (`serde(default)`), so a
+/// hand-written snapshot produced nodes that `wa_resolve_selector` happily matched
+/// but that `wa_plan_action` and `wa_execute_windows_action` rejected with a dead
+/// end. The explanation now names the closest node and what it can actually do.
+fn no_match_explanation(
+    action: Option<&str>,
+    node_id: Option<&str>,
+    role: Option<&str>,
+    name: Option<&str>,
+    nodes: &[WaNode],
+) -> String {
+    let Some(requested) = action else {
+        return format!(
+            " - the snapshot holds {} node(s), none matching the given nodeId/role/name",
+            nodes.len()
+        );
+    };
+    let near: Vec<&WaNode> = nodes
+        .iter()
+        .filter(|node| identity_matches(node, node_id, role, name))
+        .take(3)
+        .collect();
+    if near.is_empty() {
+        return format!(
+            " - the snapshot holds {} node(s), none matching the given nodeId/role/name",
+            nodes.len()
+        );
+    }
+    let mut message = format!(
+        " - {} node(s) match the selector but do not advertise '{requested}':",
+        near.len()
+    );
+    for node in &near {
+        let advertised = if node.actions.is_empty() {
+            "no actions at all".to_string()
+        } else {
+            node.actions.join(", ")
+        };
+        message.push_str(&format!(
+            " '{}' [{}] advertises {advertised};",
+            node.id, node.role
+        ));
+    }
+    if near.iter().any(|node| node.actions.is_empty()) {
+        message.push_str(
+            " - set nodes[].actions when saving, or capture with wa_capture_windows_snapshot",
+        );
+    }
+    message
+}
+
 pub fn resolve_selector(
     root: &Path,
     session_id: &str,
@@ -473,8 +544,9 @@ pub fn resolve_selector(
         IoError::new(
             ErrorKind::NotFound,
             format!(
-                "no WA node matched selector for session '{session_id}' snapshot '{}'",
-                resolved_snapshot_name
+                "no WA node matched selector for session '{session_id}' snapshot '{}'{}",
+                resolved_snapshot_name,
+                no_match_explanation(action, node_id, role, name, &snapshot.nodes)
             ),
         )
     })?;

@@ -285,6 +285,20 @@ impl BridgeExecutor {
         &self,
         action: &DesktopAction,
     ) -> (String, bool, String, Option<String>) {
+        // Bug #40: four of these actions carry no target at all - `SendKeys`
+        // lands in whichever window the person at the machine has focused,
+        // which is how an unrelated browser flow ends up typing into their
+        // editor. The rest address a named window or element, so they pass.
+        if let Some(effect) = blind_injection_effect(action) {
+            let name = format!("{action:?}")
+                .split_whitespace()
+                .next()
+                .unwrap_or("DesktopAction")
+                .to_string();
+            if let Err(refused) = super::session_guard::guard(&name, effect) {
+                return ("desktop".into(), false, refused, None);
+            }
+        }
         match action {
             DesktopAction::OpenFile { path } => {
                 let script = build_open_file_script(path);
@@ -618,6 +632,26 @@ ConvertTo-Json $result -Compress
     )
 }
 
+/// The session-level effect of the `DesktopAction`s that inject keystrokes
+/// without naming a window, or `None` for the addressable ones.
+fn blind_injection_effect(action: &DesktopAction) -> Option<&'static str> {
+    match action {
+        DesktopAction::TypeText { .. } => {
+            Some("it types the requested text into whichever window you currently have focused")
+        }
+        DesktopAction::HandleFileDialog { .. } => Some(
+            "it sends a path plus Enter to whichever window you currently have focused, assuming it is a file dialog",
+        ),
+        DesktopAction::CopyToClipboard => Some(
+            "it sends Ctrl+C to whichever window you currently have focused and returns what that copies, which may be text you selected",
+        ),
+        DesktopAction::PasteFromClipboard => Some(
+            "it sends Ctrl+V into whichever window you currently have focused, editing your document instead of the flow that asked",
+        ),
+        _ => None,
+    }
+}
+
 /// Build a script for clipboard-based data transfer.
 pub fn build_clipboard_transfer_script(direction: &str, wait_ms: u64) -> String {
     format!(
@@ -647,6 +681,50 @@ fn run_ps_script(script: &str) -> Result<String, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Bug #40: the four actions that `SendKeys` at whatever happens to be
+    /// focused are gated; the ones that address a named window, file, or element
+    /// are not, because the caller can say who is affected.
+    #[test]
+    fn blind_injection_is_gated_and_addressable_actions_are_not() {
+        let gated = [
+            DesktopAction::TypeText { text: "hi".into() },
+            DesktopAction::HandleFileDialog {
+                path: PathBuf::from("C:/x"),
+            },
+            DesktopAction::CopyToClipboard,
+            DesktopAction::PasteFromClipboard,
+        ];
+        for action in gated {
+            let effect = blind_injection_effect(&action).unwrap_or_else(|| {
+                panic!("{action:?} injects into the focused window, so gate it")
+            });
+            assert!(effect.contains("focused"), "{action:?} -> {effect}");
+            if crate::wa::session_guard::consent_given() {
+                continue;
+            }
+            let err = crate::wa::session_guard::guard("desktop action", effect)
+                .expect_err("unconsented injection must be blocked");
+            assert!(err.contains(crate::wa::session_guard::ALLOW_ENV), "{err}");
+        }
+        for addressable in [
+            DesktopAction::OpenFile {
+                path: PathBuf::from("C:/x"),
+            },
+            DesktopAction::FocusWindow {
+                title_contains: "Untitled".into(),
+            },
+            DesktopAction::ClickElement {
+                name: "OK".into(),
+                role: None,
+            },
+        ] {
+            assert!(
+                blind_injection_effect(&addressable).is_none(),
+                "{addressable:?} names its target"
+            );
+        }
+    }
 
     #[test]
     fn workflow_construction() {

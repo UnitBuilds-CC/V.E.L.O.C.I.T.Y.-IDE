@@ -1,5 +1,6 @@
 use std::error::Error;
 use std::fs;
+use std::io::{Error as IoError, ErrorKind};
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -175,7 +176,14 @@ pub fn load_session(root: &Path, session_id: &str) -> Result<WaSession, Box<dyn 
         return crate::wa::nda::deserialize_session_nda(&read_nda_text(&nda_path)?);
     }
     let legacy_path = session_json_legacy_path(root, session_id)?;
-    let content = fs::read_to_string(legacy_path)?;
+    if !legacy_path.exists() {
+        return Err(missing_artifact_error(
+            "WA session",
+            session_id,
+            &[&nda_path, &legacy_path],
+        ));
+    }
+    let content = fs::read_to_string(&legacy_path)?;
     Ok(serde_json::from_str(&content)?)
 }
 
@@ -189,14 +197,112 @@ pub fn load_snapshot(
         return crate::wa::nda::deserialize_snapshot_nda(&read_nda_text(&nda_path)?);
     }
     let legacy_path = snapshot_json_legacy_path(root, session_id, snapshot_name)?;
-    let content = fs::read_to_string(legacy_path)?;
+    if !legacy_path.exists() {
+        return Err(missing_artifact_error(
+            "WA snapshot",
+            &format!("{session_id}/{snapshot_name}"),
+            &[&nda_path, &legacy_path],
+        ));
+    }
+    let content = fs::read_to_string(&legacy_path)?;
     Ok(serde_json::from_str(&content)?)
+}
+
+/// Build the error for a WA artifact that is simply not there.
+///
+/// Bug #34: `wa_read_snapshot` for a snapshot that was never saved surfaced the
+/// bare `fs` message "The system cannot find the file specified. (os error 2)"
+/// with no session, no snapshot name, no clue which of the two on-disk forms was
+/// probed, and nothing about what does exist. An agent reading that cannot tell
+/// "wrong name" from "capture never happened", so it retries the same call. The
+/// names of the sibling artifacts in the same directory are listed for exactly
+/// that reason.
+fn missing_artifact_error(kind: &str, identity: &str, probed: &[&Path]) -> Box<dyn Error> {
+    let mut message = format!("no {kind} named '{identity}'");
+    if let Some(dir) = probed.first().and_then(|path| path.parent()) {
+        match sibling_artifact_names(dir) {
+            Ok(names) if names.is_empty() => {
+                message.push_str(&format!(
+                    "; {} is empty, so nothing has been stored here yet",
+                    relative_path_parent_label(dir)
+                ));
+            }
+            Ok(names) => {
+                let shown = names.len().min(12);
+                message.push_str(&format!(
+                    "; {} contains {shown} other artifact(s): {}",
+                    relative_path_parent_label(dir),
+                    names
+                        .iter()
+                        .take(12)
+                        .cloned()
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                ));
+                if names.len() > shown {
+                    message.push_str(&format!(", (+{} more)", names.len() - shown));
+                }
+            }
+            Err(_) => {
+                message.push_str("; the artifact directory could not be read");
+            }
+        }
+    }
+    message.push_str("; probed ");
+    message.push_str(
+        &probed
+            .iter()
+            .map(|path| relative_path_parent_label(path).to_string())
+            .collect::<Vec<_>>()
+            .join(" and "),
+    );
+    IoError::new(ErrorKind::NotFound, message).into()
+}
+
+/// Existing artifact names in a WA directory, minus the extension the caller
+/// would already have to guess at.
+fn sibling_artifact_names(dir: &Path) -> Result<Vec<String>, Box<dyn Error>> {
+    let mut names = fs::read_dir(dir)?
+        .filter_map(|entry| {
+            let path = entry.ok()?.path();
+            let extension = path.extension()?.to_str()?.to_string();
+            if !matches!(extension.as_str(), "nda" | "json") {
+                return None;
+            }
+            path.file_stem()
+                .map(|stem| stem.to_string_lossy().into_owned())
+        })
+        .collect::<Vec<_>>();
+    names.sort();
+    names.dedup();
+    Ok(names)
+}
+
+/// Display form for a path: relative to its workspace when that can be worked
+/// out, otherwise absolute. Errors must never fail because a path is awkward.
+fn relative_path_parent_label(path: &Path) -> String {
+    let text = path.to_string_lossy().replace('\\', "/");
+    match text.rfind(".velocity/") {
+        Some(index) => text[index..].to_string(),
+        None => text,
+    }
 }
 
 pub fn load_script(path: &Path) -> Result<WaScript, Box<dyn Error>> {
     let nda_path = script_nda_path_from_read_path(path);
     if nda_path.exists() {
         return crate::wa::nda::deserialize_script_nda(&read_nda_text(&nda_path)?);
+    }
+    if !path.exists() {
+        return Err(IoError::new(
+            ErrorKind::NotFound,
+            format!(
+                "no WA script at '{}': neither it nor its '.wa.nda' form ('{}') exists",
+                relative_path_parent_label(path),
+                relative_path_parent_label(&nda_path)
+            ),
+        )
+        .into());
     }
     let content = fs::read_to_string(path)?;
     Ok(serde_json::from_str(&content)?)
@@ -210,7 +316,14 @@ pub fn load_script_by_name(root: &Path, name: &str) -> Result<WaScript, Box<dyn 
         return crate::wa::nda::deserialize_script_nda(&read_nda_text(&nda_path)?);
     }
     let legacy_path = script_json_legacy_path(root, name)?;
-    let content = fs::read_to_string(legacy_path)?;
+    if !legacy_path.exists() {
+        return Err(missing_artifact_error(
+            "WA script",
+            name,
+            &[&nda_path, &legacy_path],
+        ));
+    }
+    let content = fs::read_to_string(&legacy_path)?;
     Ok(serde_json::from_str(&content)?)
 }
 

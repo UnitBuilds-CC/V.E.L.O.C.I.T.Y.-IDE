@@ -135,6 +135,12 @@ impl NotificationManager {
                 notifications_remaining: 0,
             };
         }
+        if !super::session_guard::consent_given() {
+            return session_refusal(
+                "interact",
+                "it clicks or closes a toast in the notification area of the session you are looking at",
+            );
+        }
         let script = match action {
             NotificationAction::Click => format!(
                 r#"Add-Type -AssemblyName UIAutomationClient
@@ -203,6 +209,12 @@ if ($null -ne $w) {{
                 notifications_remaining: 0,
             };
         }
+        if !super::session_guard::consent_given() {
+            return session_refusal(
+                "dismiss_all",
+                "it closes every toast currently shown in your notification area",
+            );
+        }
         let script = build_dismiss_notifications_script(None);
         match run_ps_script(&script) {
             Ok(json) => NotificationResult {
@@ -232,6 +244,12 @@ if ($null -ne $w) {{
                 detail: "Notification dismissal requires Windows".into(),
                 notifications_remaining: 0,
             };
+        }
+        if !super::session_guard::consent_given() {
+            return session_refusal(
+                "dismiss",
+                "it closes toasts in your notification area - without a pattern, every one of them",
+            );
         }
         let effective = match pattern {
             None | Some("") | Some("*") => None,
@@ -322,33 +340,122 @@ ConvertTo-Json @{ uac_visible = ($null -ne $uac) } -Compress"#;
                 notifications_remaining: 0,
             };
         }
+        if !super::session_guard::consent_given() {
+            return session_refusal(
+                "tray_click",
+                &format!(
+                    "it presses whichever tray icon matches {tooltip:?}, launching or toggling a program in your session"
+                ),
+            );
+        }
         let script = format!(
             r#"Add-Type -AssemblyName UIAutomationClient
 $root = [System.Windows.Automation.AutomationElement]::RootElement
+$name = '{}'
 $tray = $root.FindFirst([System.Windows.Automation.TreeScope]::Descendants,
     (New-Object System.Windows.Automation.PropertyCondition(
-        [System.Windows.Automation.AutomationElement]::NameProperty, '{}')))
+        [System.Windows.Automation.AutomationElement]::NameProperty, $name)))
 if ($null -ne $tray) {{
-    $pattern = $tray.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern)
-    $pattern.Invoke()
-    ConvertTo-Json @{{ success = $true }} -Compress
-}} else {{ ConvertTo-Json @{{ success = $false }} -Compress }}"#,
+    try {{
+        $pattern = $tray.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern)
+        $pattern.Invoke()
+        ConvertTo-Json @{{ success = $true; reason = 'invoked' }} -Compress
+    }} catch {{
+        ConvertTo-Json @{{ success = $false; reason = "icon found but not invokable: $($_.Exception.Message)" }} -Compress
+    }}
+}} else {{ ConvertTo-Json @{{ success = $false; reason = "no tray element named $name" }} -Compress }}"#,
             tooltip.replace('\'', "''")
         );
+        let action_name = format!("tray_{:?}", action).to_lowercase();
         match run_ps_script(&script) {
-            Ok(json) => NotificationResult {
-                success: json.contains("\"success\":true") || json.contains("\"success\": true"),
-                action: format!("tray_{:?}", action).to_lowercase(),
-                detail: format!("clicked tray icon: {}", tooltip),
-                notifications_remaining: 0,
-            },
+            // Bug #38: `detail` used to read "clicked tray icon: <tooltip>"
+            // whenever the script ran cleanly - including the branch where
+            // UIAutomation found no such icon and `success` was false. The two
+            // fields contradicted each other, so a caller trusting `detail`
+            // would believe an action had been taken on the user's tray. The
+            // script now reports a reason and `detail` is derived from the
+            // verdict rather than asserted alongside it.
+            Ok(json) => {
+                let (success, reason) = tray_verdict(&json);
+                NotificationResult {
+                    success,
+                    action: action_name,
+                    detail: if success {
+                        format!("{reason} for tray icon {tooltip:?}")
+                    } else {
+                        format!("did not act: {reason}")
+                    },
+                    notifications_remaining: 0,
+                }
+            }
             Err(e) => NotificationResult {
                 success: false,
-                action: "tray_click".into(),
-                detail: e,
+                action: action_name,
+                detail: format!("did not act: {e}"),
                 notifications_remaining: 0,
             },
         }
+    }
+}
+
+/// Bug #40: the shape every notification and tray refusal takes.
+///
+/// These paths press buttons in *someone's* shell - a toast they can see, or
+/// whichever tray icon matches a label - rather than a handle the caller
+/// resolved, so an agent can silently rearrange the desktop of whoever is at
+/// the keyboard. They are opt-in via
+/// [`session_guard`](super::session_guard).
+///
+/// `notifications_remaining` is 0 because nothing was read or closed, not
+/// because the area was measured empty; the detail says so explicitly rather
+/// than leaving the number to be misread as a measurement.
+fn session_refusal(action: &str, effect: &str) -> NotificationResult {
+    NotificationResult {
+        success: false,
+        action: action.into(),
+        detail: format!(
+            "{} Nothing was read or closed.",
+            super::session_guard::refusal(action, effect)
+        ),
+        notifications_remaining: 0,
+    }
+}
+
+/// Read the tray-click verdict out of the PowerShell script's JSON.
+///
+/// Separated from [`NotificationManager::click_tray_icon`] so the success/detail
+/// consistency contract (bug #38) is unit-testable: the real function needs a
+/// live system tray, but the bug was purely in how the script's output was
+/// interpreted.
+///
+/// Anything that is not an explicit `"success":true` is a failure, including
+/// output that cannot be parsed at all - PowerShell exits 0 on warnings, so an
+/// unrecognisable response must never be read as "the icon was clicked".
+fn tray_verdict(json: &str) -> (bool, String) {
+    let trimmed = json.trim();
+    if trimmed.is_empty() {
+        return (false, "the tray script printed nothing".to_string());
+    }
+    match serde_json::from_str::<serde_json::Value>(trimmed) {
+        Ok(parsed) => {
+            let success = parsed
+                .get("success")
+                .and_then(serde_json::Value::as_bool)
+                .unwrap_or(false);
+            let reason = parsed
+                .get("reason")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("the script reported no reason")
+                .to_string();
+            (success, reason)
+        }
+        Err(_) => (
+            false,
+            format!(
+                "tray script returned unreadable output: {:?}",
+                trimmed.chars().take(160).collect::<String>()
+            ),
+        ),
     }
 }
 
@@ -536,6 +643,33 @@ fn parse_tray_icons_result(json: &str) -> Vec<TrayIcon> {
 mod tests {
     use super::*;
 
+    /// Bug #40: the notification and tray paths act on the operator's own shell,
+    /// so a refusal must be shaped like a refusal - no implied measurement of
+    /// what is left in the notification area, and no wording that reads as "the
+    /// toast was closed".
+    #[test]
+    fn notification_refusals_claim_nothing_was_closed() {
+        for action in ["interact", "dismiss", "dismiss_all", "tray_click"] {
+            let refused = session_refusal(action, "it closes toasts you can see");
+            assert!(!refused.success, "{action} must refuse");
+            assert_eq!(refused.action, action);
+            assert_eq!(refused.notifications_remaining, 0, "{action}");
+            assert!(
+                refused.detail.contains(crate::wa::session_guard::ALLOW_ENV),
+                "{}",
+                refused.detail
+            );
+            assert!(
+                refused.detail.contains("Nothing was read or closed."),
+                "{}",
+                refused.detail
+            );
+            for lie in ["dismissed 1", "executed via PowerShell", "succeeded"] {
+                assert!(!refused.detail.contains(lie), "{}", refused.detail);
+            }
+        }
+    }
+
     #[test]
     fn detect_script_searches_core_window() {
         let script = build_detect_notifications_script();
@@ -570,5 +704,63 @@ mod tests {
         let config = NotificationWatchConfig::default();
         assert_eq!(config.duration, Duration::from_secs(30));
         assert!(config.capture_content);
+    }
+
+    // Bug #38: `detail` claimed "clicked tray icon" on every clean script exit,
+    // including the branches where UIAutomation found nothing to click. The
+    // verdict now comes from the script's own `success`/`reason` fields.
+    #[test]
+    fn tray_verdict_reports_missing_icon_as_failure() {
+        let (success, reason) =
+            tray_verdict(r#"{"success":false,"reason":"no tray element named Ghost"}"#);
+        assert!(!success);
+        assert_eq!(reason, "no tray element named Ghost");
+    }
+
+    #[test]
+    fn tray_verdict_reports_not_invokable_as_failure() {
+        let (success, reason) = tray_verdict(
+            r#"{"success":false,"reason":"icon found but not invokable: pattern unsupported"}"#,
+        );
+        assert!(!success);
+        assert_eq!(reason, "icon found but not invokable: pattern unsupported");
+    }
+
+    #[test]
+    fn tray_verdict_reports_invocation_as_success() {
+        let (success, reason) = tray_verdict(r#"{ "success": true, "reason": "invoked" }"#);
+        assert!(success);
+        assert_eq!(reason, "invoked");
+    }
+
+    #[test]
+    fn tray_verdict_names_output_without_a_reason() {
+        let (success, reason) = tray_verdict(r#"{"success":false}"#);
+        assert!(!success);
+        assert_eq!(reason, "the script reported no reason");
+    }
+
+    #[test]
+    fn tray_verdict_treats_unparseable_output_as_failure() {
+        // PowerShell can emit a warning line, or nothing at all, while still
+        // exiting 0. Neither may be read as "the icon was clicked".
+        let (success, reason) = tray_verdict("WARNING: something happened");
+        assert!(!success);
+        assert!(reason.contains("unreadable output"), "{reason}");
+        assert!(
+            reason.contains("WARNING"),
+            "should quote what came back: {reason}"
+        );
+
+        let (empty_success, empty_reason) = tray_verdict("   ");
+        assert!(!empty_success);
+        assert_eq!(empty_reason, "the tray script printed nothing");
+    }
+
+    #[test]
+    fn tray_verdict_requires_a_boolean_success_field() {
+        // `success: "true"` is not `success: true`; a string must not pass.
+        let (success, _) = tray_verdict(r#"{"success":"true","reason":"invoked"}"#);
+        assert!(!success);
     }
 }
