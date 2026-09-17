@@ -665,9 +665,12 @@ impl NdaPortableDoc {
         }
         let mut header_root = [0u8; 32];
         header_root.copy_from_slice(&bytes[8..40]);
-        let triple_count = u32::from_le_bytes(bytes[40..44].try_into().map_err(|_| "invalid slice")?) as usize;
-        let command_count = u16::from_le_bytes(bytes[44..46].try_into().map_err(|_| "invalid slice")?) as usize;
-        let pool_offset = u16::from_le_bytes(bytes[46..48].try_into().map_err(|_| "invalid slice")?) as usize;
+        let triple_count =
+            u32::from_le_bytes(bytes[40..44].try_into().map_err(|_| "invalid slice")?) as usize;
+        let command_count =
+            u16::from_le_bytes(bytes[44..46].try_into().map_err(|_| "invalid slice")?) as usize;
+        let pool_offset =
+            u16::from_le_bytes(bytes[46..48].try_into().map_err(|_| "invalid slice")?) as usize;
         if pool_offset > bytes.len() {
             return Err("string pool offset out of bounds");
         }
@@ -678,7 +681,11 @@ impl NdaPortableDoc {
             if start + 2 > pool.len() {
                 return Err("string offset out of bounds");
             }
-            let len = u16::from_le_bytes(pool[start..start + 2].try_into().map_err(|_| "invalid slice")?) as usize;
+            let len = u16::from_le_bytes(
+                pool[start..start + 2]
+                    .try_into()
+                    .map_err(|_| "invalid slice")?,
+            ) as usize;
             let s = start + 2;
             if s + len > pool.len() {
                 return Err("string length out of bounds");
@@ -692,9 +699,21 @@ impl NdaPortableDoc {
             if off + 12 > bytes.len() {
                 return Err("triples block truncated");
             }
-            let s = u32::from_le_bytes(bytes[off..off + 4].try_into().map_err(|_| "invalid slice")?);
-            let p = u32::from_le_bytes(bytes[off + 4..off + 8].try_into().map_err(|_| "invalid slice")?);
-            let o = u32::from_le_bytes(bytes[off + 8..off + 12].try_into().map_err(|_| "invalid slice")?);
+            let s = u32::from_le_bytes(
+                bytes[off..off + 4]
+                    .try_into()
+                    .map_err(|_| "invalid slice")?,
+            );
+            let p = u32::from_le_bytes(
+                bytes[off + 4..off + 8]
+                    .try_into()
+                    .map_err(|_| "invalid slice")?,
+            );
+            let o = u32::from_le_bytes(
+                bytes[off + 8..off + 12]
+                    .try_into()
+                    .map_err(|_| "invalid slice")?,
+            );
             triples.push((read_string(s)?, read_string(p)?, read_string(o)?));
             off += 12;
         }
@@ -705,12 +724,36 @@ impl NdaPortableDoc {
                 return Err("commands block truncated");
             }
             let kind = bytes[off];
-            let color = u32::from_le_bytes(bytes[off + 1..off + 5].try_into().map_err(|_| "invalid slice")?);
-            let x = u16::from_le_bytes(bytes[off + 5..off + 7].try_into().map_err(|_| "invalid slice")?);
-            let y = u16::from_le_bytes(bytes[off + 7..off + 9].try_into().map_err(|_| "invalid slice")?);
-            let w = u16::from_le_bytes(bytes[off + 9..off + 11].try_into().map_err(|_| "invalid slice")?);
-            let h = u16::from_le_bytes(bytes[off + 11..off + 13].try_into().map_err(|_| "invalid slice")?);
-            let content_off = u32::from_le_bytes(bytes[off + 13..off + 17].try_into().map_err(|_| "invalid slice")?);
+            let color = u32::from_le_bytes(
+                bytes[off + 1..off + 5]
+                    .try_into()
+                    .map_err(|_| "invalid slice")?,
+            );
+            let x = u16::from_le_bytes(
+                bytes[off + 5..off + 7]
+                    .try_into()
+                    .map_err(|_| "invalid slice")?,
+            );
+            let y = u16::from_le_bytes(
+                bytes[off + 7..off + 9]
+                    .try_into()
+                    .map_err(|_| "invalid slice")?,
+            );
+            let w = u16::from_le_bytes(
+                bytes[off + 9..off + 11]
+                    .try_into()
+                    .map_err(|_| "invalid slice")?,
+            );
+            let h = u16::from_le_bytes(
+                bytes[off + 11..off + 13]
+                    .try_into()
+                    .map_err(|_| "invalid slice")?,
+            );
+            let content_off = u32::from_le_bytes(
+                bytes[off + 13..off + 17]
+                    .try_into()
+                    .map_err(|_| "invalid slice")?,
+            );
             commands.push(DisplayCommand {
                 kind,
                 color,

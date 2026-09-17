@@ -4,9 +4,9 @@
 // It depends on velocity_mcp for the agent system, automation,
 // orchestrator, IPC, and all backend infrastructure.
 
+use clap::Parser;
 use eframe::egui;
 use std::process;
-use clap::Parser;
 
 use velocity_ide::hash_str;
 use velocity_ide::site_map::{NdaNode, SiteMap, VcTriple};
@@ -17,7 +17,10 @@ use velocity_mcp::ipc;
 // ─── CLI ───────────────────────────────────────────────────────────────────
 
 #[derive(clap::Parser)]
-#[command(name = "velocity_ide_gui", about = "V.E.L.O.C.I.T.Y. IDE — Native Workspace Editor")]
+#[command(
+    name = "velocity_ide_gui",
+    about = "V.E.L.O.C.I.T.Y. IDE — Native Workspace Editor"
+)]
 struct Cli {
     /// Open this directory as the workspace root
     #[arg(long)]
@@ -151,7 +154,9 @@ fn spawn_telemetry_server(
     mediator: std::sync::Arc<automation::MediatorArena>,
 ) {
     std::thread::spawn(move || {
-        if let Ok(mut server) = ipc::telemetry_share::TelemetryServer::open(&shmem_path, b"velocity_telemetry_v1") {
+        if let Ok(mut server) =
+            ipc::telemetry_share::TelemetryServer::open(&shmem_path, b"velocity_telemetry_v1")
+        {
             println!("[server] Telemetry Server listening on shared memory segment.");
             let _ = server.listen(|req| match req {
                 ipc::telemetry_share::TelemetryRequest::AstUpdate { file_path, triples } => {
@@ -163,12 +168,7 @@ fn spawn_telemetry_server(
                 ipc::telemetry_share::TelemetryRequest::PresenceUpdate {
                     cursor_line,
                     cursor_col: _,
-                } => handle_presence_update(
-                    &mediator,
-                    &site_map,
-                    &presence_file_path,
-                    cursor_line,
-                ),
+                } => handle_presence_update(&mediator, &site_map, &presence_file_path, cursor_line),
             });
         }
     });
@@ -190,9 +190,15 @@ fn handle_ast_update(
         match sm.lock() {
             Ok(mut guard) => match persist_ast_update(&mut guard, file_path, triples) {
                 Ok(()) => None,
-                Err(err) => Some(format!("Failed to persist AST update for {}: {}", file_path, err)),
+                Err(err) => Some(format!(
+                    "Failed to persist AST update for {}: {}",
+                    file_path, err
+                )),
             },
-            Err(err) => Some(format!("Failed to lock SiteMap for AST update {}: {}", file_path, err)),
+            Err(err) => Some(format!(
+                "Failed to lock SiteMap for AST update {}: {}",
+                file_path, err
+            )),
         }
     } else {
         Some("SiteMap unavailable; AST update was not persisted".to_string())
@@ -221,9 +227,15 @@ fn handle_ast_delete(
         match sm.lock() {
             Ok(mut guard) => match remove_ast_update(&mut guard, file_path) {
                 Ok(()) => None,
-                Err(err) => Some(format!("Failed to remove AST update for {}: {}", file_path, err)),
+                Err(err) => Some(format!(
+                    "Failed to remove AST update for {}: {}",
+                    file_path, err
+                )),
             },
-            Err(err) => Some(format!("Failed to lock SiteMap for AST delete {}: {}", file_path, err)),
+            Err(err) => Some(format!(
+                "Failed to lock SiteMap for AST delete {}: {}",
+                file_path, err
+            )),
         }
     } else {
         Some("SiteMap unavailable; AST delete was not persisted".to_string())
@@ -257,9 +269,12 @@ fn handle_presence_update(
     mediator.release_locks_for_agent(&agent_id);
     if let Some(sm) = site_map {
         if let Ok(guard) = sm.lock() {
-            if let Err(conflict) =
-                mediator.acquire_lock(presence_file_path.to_path_buf(), line_range, agent_id, &guard)
-            {
+            if let Err(conflict) = mediator.acquire_lock(
+                presence_file_path.to_path_buf(),
+                line_range,
+                agent_id,
+                &guard,
+            ) {
                 let warning_msg = mediator.resolve_conflict(&conflict);
                 println!("[mediator] Conflict detected! {}", warning_msg);
                 warning = Some(warning_msg);
@@ -380,14 +395,12 @@ fn main() {
         .map(std::sync::Arc::new)
         .ok();
 
-    spawn_telemetry_server(
-        shmem_path,
-        presence_file_path,
-        site_map,
-        mediator.clone(),
-    );
+    spawn_telemetry_server(shmem_path, presence_file_path, site_map, mediator.clone());
 
-    automation::spawn_ast_watcher(workspace_root.clone(), dot_velocity.join("telemetry_shmem.bin"));
+    automation::spawn_ast_watcher(
+        workspace_root.clone(),
+        dot_velocity.join("telemetry_shmem.bin"),
+    );
 
     let workspace_root_agent = workspace_root.clone();
     std::thread::spawn(move || {
@@ -520,11 +533,11 @@ mod tests {
 
     #[test]
     fn cli_parser_workspace() {
-        let cli = <Cli as clap::Parser>::parse_from([
-            "velocity_ide_gui",
-            "--workspace",
-            "/tmp/my_ws",
-        ]);
-        assert_eq!(cli.workspace.unwrap(), std::path::PathBuf::from("/tmp/my_ws"));
+        let cli =
+            <Cli as clap::Parser>::parse_from(["velocity_ide_gui", "--workspace", "/tmp/my_ws"]);
+        assert_eq!(
+            cli.workspace.unwrap(),
+            std::path::PathBuf::from("/tmp/my_ws")
+        );
     }
 }

@@ -149,7 +149,10 @@ impl GenerationReport {
             }
         }
         if let Some(executed) = self.sandbox_executed {
-            println!("  Sandbox:    {}", if executed { "executed" } else { "skipped" });
+            println!(
+                "  Sandbox:    {}",
+                if executed { "executed" } else { "skipped" }
+            );
         }
         if let Some(panicked) = self.sandbox_panicked {
             if panicked {
@@ -186,7 +189,10 @@ pub fn load_accounts() -> Vec<CloudflareAccount> {
     if !accounts.is_empty() {
         let scrubbed = credential_guard::scrub_sensitive_env_vars();
         if !scrubbed.is_empty() {
-            log::debug!("Scrubbed {} sensitive env vars from process", scrubbed.len());
+            log::debug!(
+                "Scrubbed {} sensitive env vars from process",
+                scrubbed.len()
+            );
         }
     }
     accounts
@@ -227,7 +233,9 @@ pub fn call_kimi(messages: &[Message], accounts: &[CloudflareAccount]) -> Result
         let mut line = String::new();
 
         while let Ok(bytes_read) = reader.read_line(&mut line) {
-            if bytes_read == 0 { break; }
+            if bytes_read == 0 {
+                break;
+            }
             let cleaned = line.trim();
             if cleaned.is_empty() || cleaned == "data: [DONE]" {
                 line.clear();
@@ -278,7 +286,9 @@ pub fn resolve_config(arch: &str) -> Result<model::config::ModelConfig> {
 
 pub fn resolve_model_dir(model: &Option<PathBuf>) -> Result<PathBuf> {
     if let Some(ref d) = model {
-        if d.exists() { return Ok(d.clone()); }
+        if d.exists() {
+            return Ok(d.clone());
+        }
         anyhow::bail!("--model directory does not exist: {d:?}");
     }
     let candidates = [
@@ -296,7 +306,9 @@ pub fn resolve_model_dir(model: &Option<PathBuf>) -> Result<PathBuf> {
 
 pub fn resolve_tokenizer(tokenizer: &Option<PathBuf>, model_dir: &Path) -> Result<PathBuf> {
     if let Some(ref t) = tokenizer {
-        if t.exists() { return Ok(t.clone()); }
+        if t.exists() {
+            return Ok(t.clone());
+        }
         anyhow::bail!("--tokenizer file does not exist: {t:?}");
     }
     let candidates: Vec<PathBuf> = vec![
@@ -330,8 +342,14 @@ pub fn run_generate(args: GenerateArgs) -> Result<()> {
     };
 
     let messages = vec![
-        Message { role: "system".to_string(), content: "You are Kimi, a helpful AI coding assistant.".to_string() },
-        Message { role: "user".to_string(), content: prompt_text },
+        Message {
+            role: "system".to_string(),
+            content: "You are Kimi, a helpful AI coding assistant.".to_string(),
+        },
+        Message {
+            role: "user".to_string(),
+            content: prompt_text,
+        },
     ];
 
     let t_gen = Instant::now();
@@ -349,7 +367,10 @@ pub fn run_generate_zero(args: GenerateArgs, json: bool) -> Result<()> {
     let model_dir = resolve_model_dir(&args.model)?;
     let tokenizer_path = resolve_tokenizer(&args.tokenizer, &model_dir)?;
 
-    eprintln!("[zero-float] Loading model: arch={}, model={:?}", args.arch, model_dir);
+    eprintln!(
+        "[zero-float] Loading model: arch={}, model={:?}",
+        args.arch, model_dir
+    );
     let weights = ModelWeights::load(&model_dir, &cfg)?;
     let mut model = ZeroTransformer::new(cfg.clone(), weights);
     let tok = tokenizer::Tokenizer::from_file(&tokenizer_path)?;
@@ -373,14 +394,24 @@ pub fn run_generate_zero(args: GenerateArgs, json: bool) -> Result<()> {
     let tok_per_s = generated.len() as f64 / elapsed_s.max(1e-6) as f64;
 
     let report = GenerationReport {
-        mode: "Zero-Float".into(), tokens_generated: generated.len(),
-        elapsed_ms, tokens_per_second: tok_per_s,
-        site_map_hits: 0, site_map_misses: 0,
-        merkle_valid: None, force_terminated: None,
-        sandbox_executed: None, sandbox_panicked: None,
-        scope_passed: None, stored_in_site_map: None,
+        mode: "Zero-Float".into(),
+        tokens_generated: generated.len(),
+        elapsed_ms,
+        tokens_per_second: tok_per_s,
+        site_map_hits: 0,
+        site_map_misses: 0,
+        merkle_valid: None,
+        force_terminated: None,
+        sandbox_executed: None,
+        sandbox_panicked: None,
+        scope_passed: None,
+        stored_in_site_map: None,
     };
-    if json { println!("{}", serde_json::to_string_pretty(&report)?); } else { report.display(); }
+    if json {
+        println!("{}", serde_json::to_string_pretty(&report)?);
+    } else {
+        report.display();
+    }
     Ok(())
 }
 
@@ -392,7 +423,10 @@ pub fn run_generate_local(args: GenerateArgs, json: bool) -> Result<()> {
     let model_dir = resolve_model_dir(&args.model)?;
     let tokenizer_path = resolve_tokenizer(&args.tokenizer, &model_dir)?;
 
-    eprintln!("[local] Loading model: arch={}, model={:?}", args.arch, model_dir);
+    eprintln!(
+        "[local] Loading model: arch={}, model={:?}",
+        args.arch, model_dir
+    );
     let weights = ModelWeights::load(&model_dir, &cfg)?;
     let mut model = Transformer::new(cfg.clone(), weights);
     let tok = tokenizer::Tokenizer::from_file(&tokenizer_path)?;
@@ -403,15 +437,25 @@ pub fn run_generate_local(args: GenerateArgs, json: bool) -> Result<()> {
 
     let t_gen = Instant::now();
     let mut generated = Vec::new();
-    let temperature = if args.temperature > 0.0 { args.temperature } else { 0.6 };
+    let temperature = if args.temperature > 0.0 {
+        args.temperature
+    } else {
+        0.6
+    };
     let top_p = if args.top_p > 0.0 { args.top_p } else { 0.9 };
 
-    model.generate(&prompt_tokens, args.max_tokens, temperature, top_p, |tok_id| {
-        let piece = tok.decode_token(tok_id);
-        print!("{}", piece);
-        std::io::stdout().flush().ok();
-        generated.push(tok_id);
-    });
+    model.generate(
+        &prompt_tokens,
+        args.max_tokens,
+        temperature,
+        top_p,
+        |tok_id| {
+            let piece = tok.decode_token(tok_id);
+            print!("{}", piece);
+            std::io::stdout().flush().ok();
+            generated.push(tok_id);
+        },
+    );
 
     let elapsed = t_gen.elapsed();
     let elapsed_s = elapsed.as_secs_f32();
@@ -419,14 +463,24 @@ pub fn run_generate_local(args: GenerateArgs, json: bool) -> Result<()> {
     let tok_per_s = generated.len() as f64 / elapsed_s.max(1e-6) as f64;
 
     let report = GenerationReport {
-        mode: "Local FP32".into(), tokens_generated: generated.len(),
-        elapsed_ms, tokens_per_second: tok_per_s,
-        site_map_hits: 0, site_map_misses: 0,
-        merkle_valid: None, force_terminated: None,
-        sandbox_executed: None, sandbox_panicked: None,
-        scope_passed: None, stored_in_site_map: None,
+        mode: "Local FP32".into(),
+        tokens_generated: generated.len(),
+        elapsed_ms,
+        tokens_per_second: tok_per_s,
+        site_map_hits: 0,
+        site_map_misses: 0,
+        merkle_valid: None,
+        force_terminated: None,
+        sandbox_executed: None,
+        sandbox_panicked: None,
+        scope_passed: None,
+        stored_in_site_map: None,
     };
-    if json { println!("{}", serde_json::to_string_pretty(&report)?); } else { report.display(); }
+    if json {
+        println!("{}", serde_json::to_string_pretty(&report)?);
+    } else {
+        report.display();
+    }
     Ok(())
 }
 
@@ -443,7 +497,14 @@ pub fn run_generate_zero_nda(args: GenerateArgs, mode: pipeline_nda::PipelineMod
         anyhow::bail!("Either --prompt or --prompt-file must be provided");
     };
 
-    pipeline_bridge::run_dual_path(&model_dir, &tokenizer_path, &prompt_text, mode, args.max_tokens, cfg)
+    pipeline_bridge::run_dual_path(
+        &model_dir,
+        &tokenizer_path,
+        &prompt_text,
+        mode,
+        args.max_tokens,
+        cfg,
+    )
 }
 
 /// Dispatch generate command based on args.
@@ -482,100 +543,655 @@ mod tests {
 
     fn default_generate_args() -> GenerateArgs {
         GenerateArgs {
-            model: None, tokenizer: None,
-            prompt: Some("Hello world".into()), prompt_file: None,
-            max_tokens: 512, temperature: 0.7, top_p: 0.9,
-            zero_float: false, arch: "bitnet3b".into(),
-            mode: "text".into(), site_map: None,
+            model: None,
+            tokenizer: None,
+            prompt: Some("Hello world".into()),
+            prompt_file: None,
+            max_tokens: 512,
+            temperature: 0.7,
+            top_p: 0.9,
+            zero_float: false,
+            arch: "bitnet3b".into(),
+            mode: "text".into(),
+            site_map: None,
         }
     }
 
-    #[test] fn generate_valid_defaults() { assert!(validate_generate_args(&default_generate_args()).is_empty()); }
-    #[test] fn generate_zero_max_tokens() { let mut a = default_generate_args(); a.max_tokens = 0; assert_eq!(validate_generate_args(&a).len(), 1); }
-    #[test] fn generate_max_tokens_over_100k() { let mut a = default_generate_args(); a.max_tokens = 100_001; assert!(validate_generate_args(&a)[0].contains("100,000")); }
-    #[test] fn generate_max_tokens_exactly_100k() { let mut a = default_generate_args(); a.max_tokens = 100_000; assert!(validate_generate_args(&a).is_empty()); }
-    #[test] fn generate_negative_temperature() { let mut a = default_generate_args(); a.temperature = -0.1; assert!(validate_generate_args(&a)[0].contains("temperature")); }
-    #[test] fn generate_temperature_over_5() { let mut a = default_generate_args(); a.temperature = 5.1; assert!(validate_generate_args(&a)[0].contains("5.0")); }
-    #[test] fn generate_temperature_boundary_values() { let mut a = default_generate_args(); a.temperature = 0.0; assert!(validate_generate_args(&a).is_empty()); a.temperature = 5.0; assert!(validate_generate_args(&a).is_empty()); }
-    #[test] fn generate_top_p_below_zero() { let mut a = default_generate_args(); a.top_p = -0.1; assert!(validate_generate_args(&a)[0].contains("top-p")); }
-    #[test] fn generate_top_p_above_one() { let mut a = default_generate_args(); a.top_p = 1.1; assert!(validate_generate_args(&a)[0].contains("top-p")); }
-    #[test] fn generate_top_p_boundary_values() { let mut a = default_generate_args(); a.top_p = 0.0; assert!(validate_generate_args(&a).is_empty()); a.top_p = 1.0; assert!(validate_generate_args(&a).is_empty()); }
-    #[test] fn generate_unknown_arch() { let mut a = default_generate_args(); a.arch = "llama3".into(); assert!(validate_generate_args(&a)[0].contains("llama3")); }
-    #[test] fn generate_all_valid_archs() { for arch in &["bitnet3b","bitnet","qwen05","qwen"] { let mut a = default_generate_args(); a.arch = arch.to_string(); assert!(validate_generate_args(&a).is_empty()); } }
-    #[test] fn generate_unknown_mode() { let mut a = default_generate_args(); a.mode = "binary".into(); assert!(validate_generate_args(&a)[0].contains("Unknown --mode")); }
-    #[test] fn generate_all_valid_modes() { for mode in &["text","nda","auto"] { let mut a = default_generate_args(); a.mode = mode.to_string(); assert!(validate_generate_args(&a).is_empty()); } }
-    #[test] fn generate_no_prompt_no_file() { let mut a = default_generate_args(); a.prompt = None; a.prompt_file = None; assert!(validate_generate_args(&a)[0].contains("--prompt")); }
-    #[test] fn generate_prompt_file_only() { let mut a = default_generate_args(); a.prompt = None; a.prompt_file = Some(PathBuf::from("prompt.txt")); assert!(validate_generate_args(&a).is_empty()); }
-    #[test] fn generate_multiple_issues_stack() { let mut a = default_generate_args(); a.max_tokens = 0; a.temperature = -1.0; a.top_p = 2.0; a.arch = "unknown".into(); a.mode = "bad".into(); a.prompt = None; a.prompt_file = None; assert_eq!(validate_generate_args(&a).len(), 6); }
-    #[test] fn generate_max_tokens_exactly_one() { let mut a = default_generate_args(); a.max_tokens = 1; assert!(validate_generate_args(&a).is_empty()); }
-    #[test] fn generate_both_prompt_and_prompt_file() { let mut a = default_generate_args(); a.prompt = Some("hello".into()); a.prompt_file = Some(PathBuf::from("p.txt")); assert!(validate_generate_args(&a).is_empty()); }
-    #[test] fn generate_nan_temperature_passes() { let mut a = default_generate_args(); a.temperature = f32::NAN; assert!(validate_generate_args(&a).iter().all(|i| !i.contains("temperature"))); }
-    #[test] fn generate_infinity_temperature_rejected() { let mut a = default_generate_args(); a.temperature = f32::INFINITY; assert!(validate_generate_args(&a).iter().any(|i| i.contains("temperature"))); }
-    #[test] fn generate_neg_infinity_temperature_rejected() { let mut a = default_generate_args(); a.temperature = f32::NEG_INFINITY; assert!(validate_generate_args(&a).iter().any(|i| i.contains("temperature"))); }
-    #[test] fn generate_top_p_nan_passes() { let mut a = default_generate_args(); a.top_p = f32::NAN; assert!(validate_generate_args(&a).iter().all(|i| !i.contains("top-p"))); }
-    #[test] fn generate_max_tokens_two() { let mut a = default_generate_args(); a.max_tokens = 2; assert!(validate_generate_args(&a).is_empty()); }
-    #[test] fn generate_max_tokens_99999() { let mut a = default_generate_args(); a.max_tokens = 99_999; assert!(validate_generate_args(&a).is_empty()); }
-    #[test] fn generate_empty_arch_string() { let mut a = default_generate_args(); a.arch = String::new(); assert!(validate_generate_args(&a).iter().any(|i| i.contains("Unknown --arch"))); }
-    #[test] fn generate_empty_mode_string() { let mut a = default_generate_args(); a.mode = String::new(); assert!(validate_generate_args(&a).iter().any(|i| i.contains("Unknown --mode"))); }
+    #[test]
+    fn generate_valid_defaults() {
+        assert!(validate_generate_args(&default_generate_args()).is_empty());
+    }
+    #[test]
+    fn generate_zero_max_tokens() {
+        let mut a = default_generate_args();
+        a.max_tokens = 0;
+        assert_eq!(validate_generate_args(&a).len(), 1);
+    }
+    #[test]
+    fn generate_max_tokens_over_100k() {
+        let mut a = default_generate_args();
+        a.max_tokens = 100_001;
+        assert!(validate_generate_args(&a)[0].contains("100,000"));
+    }
+    #[test]
+    fn generate_max_tokens_exactly_100k() {
+        let mut a = default_generate_args();
+        a.max_tokens = 100_000;
+        assert!(validate_generate_args(&a).is_empty());
+    }
+    #[test]
+    fn generate_negative_temperature() {
+        let mut a = default_generate_args();
+        a.temperature = -0.1;
+        assert!(validate_generate_args(&a)[0].contains("temperature"));
+    }
+    #[test]
+    fn generate_temperature_over_5() {
+        let mut a = default_generate_args();
+        a.temperature = 5.1;
+        assert!(validate_generate_args(&a)[0].contains("5.0"));
+    }
+    #[test]
+    fn generate_temperature_boundary_values() {
+        let mut a = default_generate_args();
+        a.temperature = 0.0;
+        assert!(validate_generate_args(&a).is_empty());
+        a.temperature = 5.0;
+        assert!(validate_generate_args(&a).is_empty());
+    }
+    #[test]
+    fn generate_top_p_below_zero() {
+        let mut a = default_generate_args();
+        a.top_p = -0.1;
+        assert!(validate_generate_args(&a)[0].contains("top-p"));
+    }
+    #[test]
+    fn generate_top_p_above_one() {
+        let mut a = default_generate_args();
+        a.top_p = 1.1;
+        assert!(validate_generate_args(&a)[0].contains("top-p"));
+    }
+    #[test]
+    fn generate_top_p_boundary_values() {
+        let mut a = default_generate_args();
+        a.top_p = 0.0;
+        assert!(validate_generate_args(&a).is_empty());
+        a.top_p = 1.0;
+        assert!(validate_generate_args(&a).is_empty());
+    }
+    #[test]
+    fn generate_unknown_arch() {
+        let mut a = default_generate_args();
+        a.arch = "llama3".into();
+        assert!(validate_generate_args(&a)[0].contains("llama3"));
+    }
+    #[test]
+    fn generate_all_valid_archs() {
+        for arch in &["bitnet3b", "bitnet", "qwen05", "qwen"] {
+            let mut a = default_generate_args();
+            a.arch = arch.to_string();
+            assert!(validate_generate_args(&a).is_empty());
+        }
+    }
+    #[test]
+    fn generate_unknown_mode() {
+        let mut a = default_generate_args();
+        a.mode = "binary".into();
+        assert!(validate_generate_args(&a)[0].contains("Unknown --mode"));
+    }
+    #[test]
+    fn generate_all_valid_modes() {
+        for mode in &["text", "nda", "auto"] {
+            let mut a = default_generate_args();
+            a.mode = mode.to_string();
+            assert!(validate_generate_args(&a).is_empty());
+        }
+    }
+    #[test]
+    fn generate_no_prompt_no_file() {
+        let mut a = default_generate_args();
+        a.prompt = None;
+        a.prompt_file = None;
+        assert!(validate_generate_args(&a)[0].contains("--prompt"));
+    }
+    #[test]
+    fn generate_prompt_file_only() {
+        let mut a = default_generate_args();
+        a.prompt = None;
+        a.prompt_file = Some(PathBuf::from("prompt.txt"));
+        assert!(validate_generate_args(&a).is_empty());
+    }
+    #[test]
+    fn generate_multiple_issues_stack() {
+        let mut a = default_generate_args();
+        a.max_tokens = 0;
+        a.temperature = -1.0;
+        a.top_p = 2.0;
+        a.arch = "unknown".into();
+        a.mode = "bad".into();
+        a.prompt = None;
+        a.prompt_file = None;
+        assert_eq!(validate_generate_args(&a).len(), 6);
+    }
+    #[test]
+    fn generate_max_tokens_exactly_one() {
+        let mut a = default_generate_args();
+        a.max_tokens = 1;
+        assert!(validate_generate_args(&a).is_empty());
+    }
+    #[test]
+    fn generate_both_prompt_and_prompt_file() {
+        let mut a = default_generate_args();
+        a.prompt = Some("hello".into());
+        a.prompt_file = Some(PathBuf::from("p.txt"));
+        assert!(validate_generate_args(&a).is_empty());
+    }
+    #[test]
+    fn generate_nan_temperature_passes() {
+        let mut a = default_generate_args();
+        a.temperature = f32::NAN;
+        assert!(validate_generate_args(&a)
+            .iter()
+            .all(|i| !i.contains("temperature")));
+    }
+    #[test]
+    fn generate_infinity_temperature_rejected() {
+        let mut a = default_generate_args();
+        a.temperature = f32::INFINITY;
+        assert!(validate_generate_args(&a)
+            .iter()
+            .any(|i| i.contains("temperature")));
+    }
+    #[test]
+    fn generate_neg_infinity_temperature_rejected() {
+        let mut a = default_generate_args();
+        a.temperature = f32::NEG_INFINITY;
+        assert!(validate_generate_args(&a)
+            .iter()
+            .any(|i| i.contains("temperature")));
+    }
+    #[test]
+    fn generate_top_p_nan_passes() {
+        let mut a = default_generate_args();
+        a.top_p = f32::NAN;
+        assert!(validate_generate_args(&a)
+            .iter()
+            .all(|i| !i.contains("top-p")));
+    }
+    #[test]
+    fn generate_max_tokens_two() {
+        let mut a = default_generate_args();
+        a.max_tokens = 2;
+        assert!(validate_generate_args(&a).is_empty());
+    }
+    #[test]
+    fn generate_max_tokens_99999() {
+        let mut a = default_generate_args();
+        a.max_tokens = 99_999;
+        assert!(validate_generate_args(&a).is_empty());
+    }
+    #[test]
+    fn generate_empty_arch_string() {
+        let mut a = default_generate_args();
+        a.arch = String::new();
+        assert!(validate_generate_args(&a)
+            .iter()
+            .any(|i| i.contains("Unknown --arch")));
+    }
+    #[test]
+    fn generate_empty_mode_string() {
+        let mut a = default_generate_args();
+        a.mode = String::new();
+        assert!(validate_generate_args(&a)
+            .iter()
+            .any(|i| i.contains("Unknown --mode")));
+    }
 
     // resolve_config tests
-    #[test] fn resolve_config_qwen05() { assert_eq!(resolve_config("qwen05").unwrap().n_layers, 24); }
-    #[test] fn resolve_config_qwen_alias() { assert_eq!(resolve_config("qwen").unwrap().n_layers, 24); }
-    #[test] fn resolve_config_bitnet3b() { assert_eq!(resolve_config("bitnet3b").unwrap().n_layers, 26); }
-    #[test] fn resolve_config_bitnet_alias() { assert_eq!(resolve_config("bitnet").unwrap().n_layers, 26); }
-    #[test] fn resolve_config_unknown_arch() { assert!(resolve_config("llama3").is_err()); }
-    #[test] fn resolve_config_qwen_and_bitnet_differ() { let q = resolve_config("qwen05").unwrap(); let b = resolve_config("bitnet3b").unwrap(); assert_ne!(q.n_layers, b.n_layers); }
-    #[test] fn resolve_config_empty_string() { assert!(resolve_config("").is_err()); }
-    #[test] fn resolve_config_case_sensitive() { assert!(resolve_config("Bitnet3b").is_err()); }
-    #[test] fn resolve_config_qwen_hidden_size() { assert_eq!(resolve_config("qwen05").unwrap().hidden_size, 896); }
-    #[test] fn resolve_config_bitnet_hidden_size() { assert_eq!(resolve_config("bitnet3b").unwrap().hidden_size, 3200); }
-    #[test] fn resolve_config_qwen_vocab_size() { assert_eq!(resolve_config("qwen05").unwrap().vocab_size, 151936); }
-    #[test] fn resolve_config_bitnet_vocab_size() { assert_eq!(resolve_config("bitnet3b").unwrap().vocab_size, 32000); }
-    #[test] fn resolve_config_qwen_n_heads() { assert!(resolve_config("qwen05").unwrap().n_heads > 0); }
-    #[test] fn resolve_config_bitnet_n_heads() { assert!(resolve_config("bitnet3b").unwrap().n_heads > 0); }
-    #[test] fn resolve_config_qwen_max_seq_len() { assert!(resolve_config("qwen05").unwrap().max_seq_len > 0); }
+    #[test]
+    fn resolve_config_qwen05() {
+        assert_eq!(resolve_config("qwen05").unwrap().n_layers, 24);
+    }
+    #[test]
+    fn resolve_config_qwen_alias() {
+        assert_eq!(resolve_config("qwen").unwrap().n_layers, 24);
+    }
+    #[test]
+    fn resolve_config_bitnet3b() {
+        assert_eq!(resolve_config("bitnet3b").unwrap().n_layers, 26);
+    }
+    #[test]
+    fn resolve_config_bitnet_alias() {
+        assert_eq!(resolve_config("bitnet").unwrap().n_layers, 26);
+    }
+    #[test]
+    fn resolve_config_unknown_arch() {
+        assert!(resolve_config("llama3").is_err());
+    }
+    #[test]
+    fn resolve_config_qwen_and_bitnet_differ() {
+        let q = resolve_config("qwen05").unwrap();
+        let b = resolve_config("bitnet3b").unwrap();
+        assert_ne!(q.n_layers, b.n_layers);
+    }
+    #[test]
+    fn resolve_config_empty_string() {
+        assert!(resolve_config("").is_err());
+    }
+    #[test]
+    fn resolve_config_case_sensitive() {
+        assert!(resolve_config("Bitnet3b").is_err());
+    }
+    #[test]
+    fn resolve_config_qwen_hidden_size() {
+        assert_eq!(resolve_config("qwen05").unwrap().hidden_size, 896);
+    }
+    #[test]
+    fn resolve_config_bitnet_hidden_size() {
+        assert_eq!(resolve_config("bitnet3b").unwrap().hidden_size, 3200);
+    }
+    #[test]
+    fn resolve_config_qwen_vocab_size() {
+        assert_eq!(resolve_config("qwen05").unwrap().vocab_size, 151936);
+    }
+    #[test]
+    fn resolve_config_bitnet_vocab_size() {
+        assert_eq!(resolve_config("bitnet3b").unwrap().vocab_size, 32000);
+    }
+    #[test]
+    fn resolve_config_qwen_n_heads() {
+        assert!(resolve_config("qwen05").unwrap().n_heads > 0);
+    }
+    #[test]
+    fn resolve_config_bitnet_n_heads() {
+        assert!(resolve_config("bitnet3b").unwrap().n_heads > 0);
+    }
+    #[test]
+    fn resolve_config_qwen_max_seq_len() {
+        assert!(resolve_config("qwen05").unwrap().max_seq_len > 0);
+    }
 
     // resolve_model_dir tests
-    #[test] fn resolve_model_dir_nonexistent() { assert!(resolve_model_dir(&Some(PathBuf::from("/nonexistent/path/xyz"))).is_err()); }
-    #[test] fn resolve_model_dir_existing_temp() { let tmp = std::env::temp_dir().join("velocity_test_model_dir"); std::fs::create_dir_all(&tmp).ok(); assert!(resolve_model_dir(&Some(tmp.clone())).is_ok()); std::fs::remove_dir(&tmp).ok(); }
-    #[test] fn resolve_model_dir_none_errors() { assert!(resolve_model_dir(&None).is_err()); }
-    #[test] fn resolve_model_dir_clone() { let tmp = std::env::temp_dir().join("velocity_test_model_dir_207"); std::fs::create_dir_all(&tmp).ok(); let r = resolve_model_dir(&Some(tmp.clone())).unwrap(); assert_eq!(r, tmp); std::fs::remove_dir(&tmp).ok(); }
+    #[test]
+    fn resolve_model_dir_nonexistent() {
+        assert!(resolve_model_dir(&Some(PathBuf::from("/nonexistent/path/xyz"))).is_err());
+    }
+    #[test]
+    fn resolve_model_dir_existing_temp() {
+        let tmp = std::env::temp_dir().join("velocity_test_model_dir");
+        std::fs::create_dir_all(&tmp).ok();
+        assert!(resolve_model_dir(&Some(tmp.clone())).is_ok());
+        std::fs::remove_dir(&tmp).ok();
+    }
+    #[test]
+    fn resolve_model_dir_none_errors() {
+        assert!(resolve_model_dir(&None).is_err());
+    }
+    #[test]
+    fn resolve_model_dir_clone() {
+        let tmp = std::env::temp_dir().join("velocity_test_model_dir_207");
+        std::fs::create_dir_all(&tmp).ok();
+        let r = resolve_model_dir(&Some(tmp.clone())).unwrap();
+        assert_eq!(r, tmp);
+        std::fs::remove_dir(&tmp).ok();
+    }
 
     // resolve_tokenizer tests
-    #[test] fn resolve_tokenizer_nonexistent() { assert!(resolve_tokenizer(&Some(PathBuf::from("/nonexistent/tokenizer.json")), Path::new("/tmp")).is_err()); }
-    #[test] fn resolve_tokenizer_existing() { let tmp = std::env::temp_dir().join("velocity_test_tokenizer.json"); std::fs::write(&tmp, "{}").ok(); assert!(resolve_tokenizer(&Some(tmp.clone()), Path::new("/tmp")).is_ok()); std::fs::remove_file(&tmp).ok(); }
-    #[test] fn resolve_tokenizer_none_falls_through() { let tmp = std::env::temp_dir().join("velocity_test_no_tok_207"); std::fs::create_dir_all(&tmp).ok(); assert!(resolve_tokenizer(&None, &tmp).is_err()); std::fs::remove_dir(&tmp).ok(); }
-    #[test] fn resolve_tokenizer_finds_in_model_dir() { let tmp = std::env::temp_dir().join("velocity_test_tok_discover_207"); std::fs::create_dir_all(&tmp).ok(); let tp = tmp.join("tokenizer.json"); std::fs::write(&tp, "{}").ok(); assert!(resolve_tokenizer(&None, &tmp).is_ok()); std::fs::remove_file(&tp).ok(); std::fs::remove_dir(&tmp).ok(); }
+    #[test]
+    fn resolve_tokenizer_nonexistent() {
+        assert!(resolve_tokenizer(
+            &Some(PathBuf::from("/nonexistent/tokenizer.json")),
+            Path::new("/tmp")
+        )
+        .is_err());
+    }
+    #[test]
+    fn resolve_tokenizer_existing() {
+        let tmp = std::env::temp_dir().join("velocity_test_tokenizer.json");
+        std::fs::write(&tmp, "{}").ok();
+        assert!(resolve_tokenizer(&Some(tmp.clone()), Path::new("/tmp")).is_ok());
+        std::fs::remove_file(&tmp).ok();
+    }
+    #[test]
+    fn resolve_tokenizer_none_falls_through() {
+        let tmp = std::env::temp_dir().join("velocity_test_no_tok_207");
+        std::fs::create_dir_all(&tmp).ok();
+        assert!(resolve_tokenizer(&None, &tmp).is_err());
+        std::fs::remove_dir(&tmp).ok();
+    }
+    #[test]
+    fn resolve_tokenizer_finds_in_model_dir() {
+        let tmp = std::env::temp_dir().join("velocity_test_tok_discover_207");
+        std::fs::create_dir_all(&tmp).ok();
+        let tp = tmp.join("tokenizer.json");
+        std::fs::write(&tp, "{}").ok();
+        assert!(resolve_tokenizer(&None, &tmp).is_ok());
+        std::fs::remove_file(&tp).ok();
+        std::fs::remove_dir(&tmp).ok();
+    }
 
     // Message tests
-    #[test] fn message_roundtrip() { let m = Message { role: "user".into(), content: "Hello, world!".into() }; let j = serde_json::to_string(&m).unwrap(); let p: Message = serde_json::from_str(&j).unwrap(); assert_eq!(p.role, "user"); assert_eq!(p.content, "Hello, world!"); }
-    #[test] fn message_from_json() { let m: Message = serde_json::from_str(r#"{"role":"assistant","content":"Hi"}"#).unwrap(); assert_eq!(m.role, "assistant"); }
-    #[test] fn message_empty_content() { let m = Message { role: "system".into(), content: String::new() }; let j = serde_json::to_string(&m).unwrap(); let p: Message = serde_json::from_str(&j).unwrap(); assert_eq!(p.content, ""); }
-    #[test] fn message_unicode() { let m = Message { role: "user".into(), content: "Hello 世界 🌍".into() }; let j = serde_json::to_string(&m).unwrap(); let p: Message = serde_json::from_str(&j).unwrap(); assert_eq!(p.content, "Hello 世界 🌍"); }
-    #[test] fn message_missing_role_fails() { assert!(serde_json::from_str::<Message>(r#"{"content":"hello"}"#).is_err()); }
-    #[test] fn message_missing_content_fails() { assert!(serde_json::from_str::<Message>(r#"{"role":"user"}"#).is_err()); }
-    #[test] fn message_extra_fields_ignored() { let m: Message = serde_json::from_str(r#"{"role":"user","content":"hi","extra":42}"#).unwrap(); assert_eq!(m.content, "hi"); }
-    #[test] fn message_long_content() { let lc = "x".repeat(100_000); let m = Message { role: "user".into(), content: lc.clone() }; let j = serde_json::to_string(&m).unwrap(); let p: Message = serde_json::from_str(&j).unwrap(); assert_eq!(p.content.len(), 100_000); }
-    #[test] fn message_special_chars() { let m = Message { role: "user".into(), content: "line1\nline2\t\"quotes\" \\ backslash".into() }; let j = serde_json::to_string(&m).unwrap(); let p: Message = serde_json::from_str(&j).unwrap(); assert_eq!(p.content, m.content); }
-    #[test] fn message_null_bytes() { let m = Message { role: "user".into(), content: "before\0after".into() }; let j = serde_json::to_string(&m).unwrap(); let p: Message = serde_json::from_str(&j).unwrap(); assert_eq!(p.content, "before\0after"); }
+    #[test]
+    fn message_roundtrip() {
+        let m = Message {
+            role: "user".into(),
+            content: "Hello, world!".into(),
+        };
+        let j = serde_json::to_string(&m).unwrap();
+        let p: Message = serde_json::from_str(&j).unwrap();
+        assert_eq!(p.role, "user");
+        assert_eq!(p.content, "Hello, world!");
+    }
+    #[test]
+    fn message_from_json() {
+        let m: Message = serde_json::from_str(r#"{"role":"assistant","content":"Hi"}"#).unwrap();
+        assert_eq!(m.role, "assistant");
+    }
+    #[test]
+    fn message_empty_content() {
+        let m = Message {
+            role: "system".into(),
+            content: String::new(),
+        };
+        let j = serde_json::to_string(&m).unwrap();
+        let p: Message = serde_json::from_str(&j).unwrap();
+        assert_eq!(p.content, "");
+    }
+    #[test]
+    fn message_unicode() {
+        let m = Message {
+            role: "user".into(),
+            content: "Hello 世界 🌍".into(),
+        };
+        let j = serde_json::to_string(&m).unwrap();
+        let p: Message = serde_json::from_str(&j).unwrap();
+        assert_eq!(p.content, "Hello 世界 🌍");
+    }
+    #[test]
+    fn message_missing_role_fails() {
+        assert!(serde_json::from_str::<Message>(r#"{"content":"hello"}"#).is_err());
+    }
+    #[test]
+    fn message_missing_content_fails() {
+        assert!(serde_json::from_str::<Message>(r#"{"role":"user"}"#).is_err());
+    }
+    #[test]
+    fn message_extra_fields_ignored() {
+        let m: Message =
+            serde_json::from_str(r#"{"role":"user","content":"hi","extra":42}"#).unwrap();
+        assert_eq!(m.content, "hi");
+    }
+    #[test]
+    fn message_long_content() {
+        let lc = "x".repeat(100_000);
+        let m = Message {
+            role: "user".into(),
+            content: lc.clone(),
+        };
+        let j = serde_json::to_string(&m).unwrap();
+        let p: Message = serde_json::from_str(&j).unwrap();
+        assert_eq!(p.content.len(), 100_000);
+    }
+    #[test]
+    fn message_special_chars() {
+        let m = Message {
+            role: "user".into(),
+            content: "line1\nline2\t\"quotes\" \\ backslash".into(),
+        };
+        let j = serde_json::to_string(&m).unwrap();
+        let p: Message = serde_json::from_str(&j).unwrap();
+        assert_eq!(p.content, m.content);
+    }
+    #[test]
+    fn message_null_bytes() {
+        let m = Message {
+            role: "user".into(),
+            content: "before\0after".into(),
+        };
+        let j = serde_json::to_string(&m).unwrap();
+        let p: Message = serde_json::from_str(&j).unwrap();
+        assert_eq!(p.content, "before\0after");
+    }
 
     // GenerationReport tests
-    #[test] fn report_serializes_minimal() { let r = GenerationReport { mode: "text".into(), tokens_generated: 100, elapsed_ms: 500, tokens_per_second: 200.0, site_map_hits: 0, site_map_misses: 0, merkle_valid: None, force_terminated: None, sandbox_executed: None, sandbox_panicked: None, scope_passed: None, stored_in_site_map: None }; let j = serde_json::to_string(&r).unwrap(); let p: serde_json::Value = serde_json::from_str(&j).unwrap(); assert_eq!(p["mode"], "text"); assert!(p["merkle_valid"].is_null()); }
-    #[test] fn report_serializes_full() { let r = GenerationReport { mode: "nda".into(), tokens_generated: 256, elapsed_ms: 1200, tokens_per_second: 213.33, site_map_hits: 42, site_map_misses: 8, merkle_valid: Some(true), force_terminated: Some(false), sandbox_executed: Some(true), sandbox_panicked: Some(false), scope_passed: Some(true), stored_in_site_map: Some(true) }; let j = serde_json::to_string(&r).unwrap(); let p: serde_json::Value = serde_json::from_str(&j).unwrap(); assert_eq!(p["site_map_hits"], 42); }
-    #[test] fn report_hit_rate() { let r = GenerationReport { mode: "nda".into(), tokens_generated: 100, elapsed_ms: 500, tokens_per_second: 200.0, site_map_hits: 75, site_map_misses: 25, merkle_valid: None, force_terminated: None, sandbox_executed: None, sandbox_panicked: None, scope_passed: None, stored_in_site_map: None }; let t = r.site_map_hits + r.site_map_misses; assert!(((r.site_map_hits as f64 / t as f64 * 100.0) - 75.0).abs() < 0.01); }
-    #[test] fn report_all_optional_null() { let r = GenerationReport { mode: "text".into(), tokens_generated: 10, elapsed_ms: 100, tokens_per_second: 100.0, site_map_hits: 0, site_map_misses: 0, merkle_valid: None, force_terminated: None, sandbox_executed: None, sandbox_panicked: None, scope_passed: None, stored_in_site_map: None }; let j = serde_json::to_string(&r).unwrap(); let p: serde_json::Value = serde_json::from_str(&j).unwrap(); for k in &["merkle_valid","force_terminated","sandbox_executed","sandbox_panicked","scope_passed","stored_in_site_map"] { assert!(p[k].is_null()); } }
-    #[test] fn report_display_no_panic() { let r = GenerationReport { mode: "text".into(), tokens_generated: 10, elapsed_ms: 100, tokens_per_second: 100.0, site_map_hits: 0, site_map_misses: 0, merkle_valid: None, force_terminated: None, sandbox_executed: None, sandbox_panicked: None, scope_passed: None, stored_in_site_map: None }; r.display(); }
-    #[test] fn report_display_all_fields() { let r = GenerationReport { mode: "nda".into(), tokens_generated: 500, elapsed_ms: 2500, tokens_per_second: 200.0, site_map_hits: 80, site_map_misses: 20, merkle_valid: Some(true), force_terminated: Some(true), sandbox_executed: Some(true), sandbox_panicked: Some(true), scope_passed: Some(false), stored_in_site_map: Some(true) }; r.display(); }
-    #[test] fn report_json_all_keys() { let r = GenerationReport { mode: "t".into(), tokens_generated: 1, elapsed_ms: 1, tokens_per_second: 1.0, site_map_hits: 0, site_map_misses: 0, merkle_valid: None, force_terminated: None, sandbox_executed: None, sandbox_panicked: None, scope_passed: None, stored_in_site_map: None }; let j = serde_json::to_string(&r).unwrap(); let p: serde_json::Value = serde_json::from_str(&j).unwrap(); assert_eq!(p.as_object().unwrap().len(), 12); }
-    #[test] fn report_zero_tokens() { let r = GenerationReport { mode: "text".into(), tokens_generated: 0, elapsed_ms: 1000, tokens_per_second: 0.0, site_map_hits: 0, site_map_misses: 0, merkle_valid: None, force_terminated: None, sandbox_executed: None, sandbox_panicked: None, scope_passed: None, stored_in_site_map: None }; let j = serde_json::to_string(&r).unwrap(); let p: serde_json::Value = serde_json::from_str(&j).unwrap(); assert_eq!(p["tokens_per_second"], 0.0); }
-    #[test] fn report_elapsed_zero() { let r = GenerationReport { mode: "text".into(), tokens_generated: 10, elapsed_ms: 0, tokens_per_second: 0.0, site_map_hits: 0, site_map_misses: 0, merkle_valid: None, force_terminated: None, sandbox_executed: None, sandbox_panicked: None, scope_passed: None, stored_in_site_map: None }; let j = serde_json::to_string(&r).unwrap(); let p: serde_json::Value = serde_json::from_str(&j).unwrap(); assert_eq!(p["elapsed_ms"], 0); }
-    #[test] fn report_mode_empty() { let r = GenerationReport { mode: "".into(), tokens_generated: 0, elapsed_ms: 0, tokens_per_second: 0.0, site_map_hits: 0, site_map_misses: 0, merkle_valid: None, force_terminated: None, sandbox_executed: None, sandbox_panicked: None, scope_passed: None, stored_in_site_map: None }; r.display(); }
+    #[test]
+    fn report_serializes_minimal() {
+        let r = GenerationReport {
+            mode: "text".into(),
+            tokens_generated: 100,
+            elapsed_ms: 500,
+            tokens_per_second: 200.0,
+            site_map_hits: 0,
+            site_map_misses: 0,
+            merkle_valid: None,
+            force_terminated: None,
+            sandbox_executed: None,
+            sandbox_panicked: None,
+            scope_passed: None,
+            stored_in_site_map: None,
+        };
+        let j = serde_json::to_string(&r).unwrap();
+        let p: serde_json::Value = serde_json::from_str(&j).unwrap();
+        assert_eq!(p["mode"], "text");
+        assert!(p["merkle_valid"].is_null());
+    }
+    #[test]
+    fn report_serializes_full() {
+        let r = GenerationReport {
+            mode: "nda".into(),
+            tokens_generated: 256,
+            elapsed_ms: 1200,
+            tokens_per_second: 213.33,
+            site_map_hits: 42,
+            site_map_misses: 8,
+            merkle_valid: Some(true),
+            force_terminated: Some(false),
+            sandbox_executed: Some(true),
+            sandbox_panicked: Some(false),
+            scope_passed: Some(true),
+            stored_in_site_map: Some(true),
+        };
+        let j = serde_json::to_string(&r).unwrap();
+        let p: serde_json::Value = serde_json::from_str(&j).unwrap();
+        assert_eq!(p["site_map_hits"], 42);
+    }
+    #[test]
+    fn report_hit_rate() {
+        let r = GenerationReport {
+            mode: "nda".into(),
+            tokens_generated: 100,
+            elapsed_ms: 500,
+            tokens_per_second: 200.0,
+            site_map_hits: 75,
+            site_map_misses: 25,
+            merkle_valid: None,
+            force_terminated: None,
+            sandbox_executed: None,
+            sandbox_panicked: None,
+            scope_passed: None,
+            stored_in_site_map: None,
+        };
+        let t = r.site_map_hits + r.site_map_misses;
+        assert!(((r.site_map_hits as f64 / t as f64 * 100.0) - 75.0).abs() < 0.01);
+    }
+    #[test]
+    fn report_all_optional_null() {
+        let r = GenerationReport {
+            mode: "text".into(),
+            tokens_generated: 10,
+            elapsed_ms: 100,
+            tokens_per_second: 100.0,
+            site_map_hits: 0,
+            site_map_misses: 0,
+            merkle_valid: None,
+            force_terminated: None,
+            sandbox_executed: None,
+            sandbox_panicked: None,
+            scope_passed: None,
+            stored_in_site_map: None,
+        };
+        let j = serde_json::to_string(&r).unwrap();
+        let p: serde_json::Value = serde_json::from_str(&j).unwrap();
+        for k in &[
+            "merkle_valid",
+            "force_terminated",
+            "sandbox_executed",
+            "sandbox_panicked",
+            "scope_passed",
+            "stored_in_site_map",
+        ] {
+            assert!(p[k].is_null());
+        }
+    }
+    #[test]
+    fn report_display_no_panic() {
+        let r = GenerationReport {
+            mode: "text".into(),
+            tokens_generated: 10,
+            elapsed_ms: 100,
+            tokens_per_second: 100.0,
+            site_map_hits: 0,
+            site_map_misses: 0,
+            merkle_valid: None,
+            force_terminated: None,
+            sandbox_executed: None,
+            sandbox_panicked: None,
+            scope_passed: None,
+            stored_in_site_map: None,
+        };
+        r.display();
+    }
+    #[test]
+    fn report_display_all_fields() {
+        let r = GenerationReport {
+            mode: "nda".into(),
+            tokens_generated: 500,
+            elapsed_ms: 2500,
+            tokens_per_second: 200.0,
+            site_map_hits: 80,
+            site_map_misses: 20,
+            merkle_valid: Some(true),
+            force_terminated: Some(true),
+            sandbox_executed: Some(true),
+            sandbox_panicked: Some(true),
+            scope_passed: Some(false),
+            stored_in_site_map: Some(true),
+        };
+        r.display();
+    }
+    #[test]
+    fn report_json_all_keys() {
+        let r = GenerationReport {
+            mode: "t".into(),
+            tokens_generated: 1,
+            elapsed_ms: 1,
+            tokens_per_second: 1.0,
+            site_map_hits: 0,
+            site_map_misses: 0,
+            merkle_valid: None,
+            force_terminated: None,
+            sandbox_executed: None,
+            sandbox_panicked: None,
+            scope_passed: None,
+            stored_in_site_map: None,
+        };
+        let j = serde_json::to_string(&r).unwrap();
+        let p: serde_json::Value = serde_json::from_str(&j).unwrap();
+        assert_eq!(p.as_object().unwrap().len(), 12);
+    }
+    #[test]
+    fn report_zero_tokens() {
+        let r = GenerationReport {
+            mode: "text".into(),
+            tokens_generated: 0,
+            elapsed_ms: 1000,
+            tokens_per_second: 0.0,
+            site_map_hits: 0,
+            site_map_misses: 0,
+            merkle_valid: None,
+            force_terminated: None,
+            sandbox_executed: None,
+            sandbox_panicked: None,
+            scope_passed: None,
+            stored_in_site_map: None,
+        };
+        let j = serde_json::to_string(&r).unwrap();
+        let p: serde_json::Value = serde_json::from_str(&j).unwrap();
+        assert_eq!(p["tokens_per_second"], 0.0);
+    }
+    #[test]
+    fn report_elapsed_zero() {
+        let r = GenerationReport {
+            mode: "text".into(),
+            tokens_generated: 10,
+            elapsed_ms: 0,
+            tokens_per_second: 0.0,
+            site_map_hits: 0,
+            site_map_misses: 0,
+            merkle_valid: None,
+            force_terminated: None,
+            sandbox_executed: None,
+            sandbox_panicked: None,
+            scope_passed: None,
+            stored_in_site_map: None,
+        };
+        let j = serde_json::to_string(&r).unwrap();
+        let p: serde_json::Value = serde_json::from_str(&j).unwrap();
+        assert_eq!(p["elapsed_ms"], 0);
+    }
+    #[test]
+    fn report_mode_empty() {
+        let r = GenerationReport {
+            mode: "".into(),
+            tokens_generated: 0,
+            elapsed_ms: 0,
+            tokens_per_second: 0.0,
+            site_map_hits: 0,
+            site_map_misses: 0,
+            merkle_valid: None,
+            force_terminated: None,
+            sandbox_executed: None,
+            sandbox_panicked: None,
+            scope_passed: None,
+            stored_in_site_map: None,
+        };
+        r.display();
+    }
 
     // CloudflareAccount
-    #[test] fn cloudflare_account_fields() { let a = CloudflareAccount { id: "id123".into(), token: "tok".into() }; assert_eq!(a.id, "id123"); }
+    #[test]
+    fn cloudflare_account_fields() {
+        let a = CloudflareAccount {
+            id: "id123".into(),
+            token: "tok".into(),
+        };
+        assert_eq!(a.id, "id123");
+    }
 
     // Cross-validation
-    #[test] fn cross_max_tokens_check() { let mut g = default_generate_args(); g.max_tokens = 0; assert!(validate_generate_args(&g).iter().any(|i| i.contains("max-tokens"))); }
-    #[test] fn cross_mode_check() { let mut g = default_generate_args(); g.mode = "invalid".into(); assert!(validate_generate_args(&g).iter().any(|i| i.contains("mode"))); }
-    #[test] fn cross_prompt_check() { let mut g = default_generate_args(); g.prompt = None; g.prompt_file = None; assert!(validate_generate_args(&g).iter().any(|i| i.contains("prompt"))); }
+    #[test]
+    fn cross_max_tokens_check() {
+        let mut g = default_generate_args();
+        g.max_tokens = 0;
+        assert!(validate_generate_args(&g)
+            .iter()
+            .any(|i| i.contains("max-tokens")));
+    }
+    #[test]
+    fn cross_mode_check() {
+        let mut g = default_generate_args();
+        g.mode = "invalid".into();
+        assert!(validate_generate_args(&g)
+            .iter()
+            .any(|i| i.contains("mode")));
+    }
+    #[test]
+    fn cross_prompt_check() {
+        let mut g = default_generate_args();
+        g.prompt = None;
+        g.prompt_file = None;
+        assert!(validate_generate_args(&g)
+            .iter()
+            .any(|i| i.contains("prompt")));
+    }
 }

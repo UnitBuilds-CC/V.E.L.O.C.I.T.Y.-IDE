@@ -34,13 +34,20 @@ mod e2e_tests {
 
         // All indices should have non-empty content hash
         for idx in &indices {
-            assert!(!idx.content_hash.is_empty(), "empty hash for {:?}", idx.path);
+            assert!(
+                !idx.content_hash.is_empty(),
+                "empty hash for {:?}",
+                idx.path
+            );
             assert!(idx.size_bytes > 0);
             assert!(idx.line_count > 0);
         }
 
         // Sample compact_summary is much smaller than source bytes
-        let sample = indices.iter().find(|i| i.size_bytes > 500).expect("no samples");
+        let sample = indices
+            .iter()
+            .find(|i| i.size_bytes > 500)
+            .expect("no samples");
         let compact = sample.compact_summary();
         let ratio = compact.len() as f64 / sample.size_bytes as f64;
         println!(
@@ -51,7 +58,11 @@ mod e2e_tests {
             compact.len()
         );
         // Compact summary should be at most 25% of source (much less = 85%+ savings)
-        assert!(ratio < 0.25, "compact summary not much smaller (ratio {})", ratio);
+        assert!(
+            ratio < 0.25,
+            "compact summary not much smaller (ratio {})",
+            ratio
+        );
     }
 
     #[test]
@@ -89,7 +100,10 @@ mod e2e_tests {
             kind: WikiPageKind::Overview,
             title: "Overview".to_string(),
             slug: "index".to_string(),
-            summary: format!("Test overview against real sitemap with {} triples.", sm.stats().total_entries),
+            summary: format!(
+                "Test overview against real sitemap with {} triples.",
+                sm.stats().total_entries
+            ),
             relationships: vec![("Files".to_string(), vec!["src/main.rs".to_string()])],
             called_by: vec![],
             detail: None,
@@ -99,11 +113,15 @@ mod e2e_tests {
             title: "src/main.rs".to_string(),
             slug: "src-main-rs".to_string(),
             summary: "Defines 2 symbols.".to_string(),
-            relationships: vec![("Defines".to_string(), vec!["main".to_string(), "run".to_string()])],
+            relationships: vec![(
+                "Defines".to_string(),
+                vec!["main".to_string(), "run".to_string()],
+            )],
             called_by: vec![],
             detail: Some("Uses `main` and refers to `src/util.rs`.".to_string()),
         };
-        file.relationships.push(("Imports".to_string(), vec!["src/util.rs".to_string()]));
+        file.relationships
+            .push(("Imports".to_string(), vec!["src/util.rs".to_string()]));
         let sym_main = WikiPage {
             kind: WikiPageKind::Symbol,
             title: "main".to_string(),
@@ -139,7 +157,11 @@ mod e2e_tests {
         assert!(md_dir.join("graph.md").exists());
         let index_md = fs::read_to_string(md_dir.join("index.md")).unwrap();
         assert!(index_md.contains("Project Wiki"));
-        println!("Markdown export: {} pages to {}", md_count, md_dir.display());
+        println!(
+            "Markdown export: {} pages to {}",
+            md_count,
+            md_dir.display()
+        );
 
         // HTML export
         let html_dir = temp_out("html");
@@ -151,7 +173,11 @@ mod e2e_tests {
         let index_html = fs::read_to_string(html_dir.join("index.html")).unwrap();
         assert!(index_html.contains("<!DOCTYPE html>"));
         assert!(index_html.contains("Overview"));
-        println!("HTML export: {} pages to {}", html_count, html_dir.display());
+        println!(
+            "HTML export: {} pages to {}",
+            html_count,
+            html_dir.display()
+        );
 
         // GitHub Pages export
         let gh_dir = temp_out("ghp");
@@ -163,13 +189,30 @@ mod e2e_tests {
         assert!(gh_dir.join("_coverpage.md").exists());
         let cover = fs::read_to_string(gh_dir.join("_coverpage.md")).unwrap();
         assert!(cover.contains("Project Wiki"));
-        println!("GitHub Pages export: {} files to {}", gh_count, gh_dir.display());
+        println!(
+            "GitHub Pages export: {} files to {}",
+            gh_count,
+            gh_dir.display()
+        );
 
         // Cross-linking: verify auto-link converts backticked symbols to links
-        let linked = wiki::markdown::auto_link("Uses `main` and `src/main.rs` and `unknown`.", &model);
-        assert!(linked.contains("[`main`](../symbols/main.md)"), "expected main link: {}", linked);
-        assert!(linked.contains("[`src/main.rs`](../files/src/src-main-rs.md)"), "expected file link: {}", linked);
-        assert!(linked.contains("`unknown`"), "unknown should stay as inline code: {}", linked);
+        let linked =
+            wiki::markdown::auto_link("Uses `main` and `src/main.rs` and `unknown`.", &model);
+        assert!(
+            linked.contains("[`main`](../symbols/main.md)"),
+            "expected main link: {}",
+            linked
+        );
+        assert!(
+            linked.contains("[`src/main.rs`](../files/src/src-main-rs.md)"),
+            "expected file link: {}",
+            linked
+        );
+        assert!(
+            linked.contains("`unknown`"),
+            "unknown should stay as inline code: {}",
+            linked
+        );
 
         // Clean up
         let _ = fs::remove_dir_all(&md_dir);

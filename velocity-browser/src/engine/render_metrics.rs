@@ -82,17 +82,20 @@ impl RenderMetrics {
         // Update current frame timings
         self.frame_render_time_us.store(frame_us, Ordering::Relaxed);
         self.dom_layout_time_us.store(layout_us, Ordering::Relaxed);
-        self.paint_composite_time_us.store(paint_us, Ordering::Relaxed);
+        self.paint_composite_time_us
+            .store(paint_us, Ordering::Relaxed);
 
         // Calculate budget percentage (frame_time / 16.67ms * 100)
         let budget_pct = ((frame_us as f64) / (TARGET_FRAME_BUDGET_MS * 1000.0) * 100.0) as u32;
-        self.frame_budget_percent.store(budget_pct.min(10000), Ordering::Relaxed);
+        self.frame_budget_percent
+            .store(budget_pct.min(10000), Ordering::Relaxed);
 
         // Update frame count
         self.frame_count.fetch_add(1, Ordering::Relaxed);
 
         // Update total time for averaging
-        self.total_frame_time_us.fetch_add(frame_us, Ordering::Relaxed);
+        self.total_frame_time_us
+            .fetch_add(frame_us, Ordering::Relaxed);
 
         // Update min (using CAS loop for atomicity)
         let mut current_min = self.min_frame_time_us.load(Ordering::Relaxed);
@@ -738,10 +741,10 @@ mod tests {
     #[test]
     fn test_histogram_total_count() {
         let hist = RenderPerformanceHistogram::new();
-        hist.record(Duration::from_millis(5));   // great
-        hist.record(Duration::from_millis(10));  // good
-        hist.record(Duration::from_millis(20));  // acceptable
-        hist.record(Duration::from_millis(50));  // dropped
+        hist.record(Duration::from_millis(5)); // great
+        hist.record(Duration::from_millis(10)); // good
+        hist.record(Duration::from_millis(20)); // acceptable
+        hist.record(Duration::from_millis(50)); // dropped
         assert_eq!(hist.total_count(), 4);
     }
 
@@ -757,16 +760,16 @@ mod tests {
     #[test]
     fn test_histogram_percentages() {
         let hist = RenderPerformanceHistogram::new();
-        hist.record(Duration::from_millis(5));   // great
-        hist.record(Duration::from_millis(5));   // great
-        hist.record(Duration::from_millis(10));  // good
-        hist.record(Duration::from_millis(20));  // acceptable
+        hist.record(Duration::from_millis(5)); // great
+        hist.record(Duration::from_millis(5)); // great
+        hist.record(Duration::from_millis(10)); // good
+        hist.record(Duration::from_millis(20)); // acceptable
 
         let (great, good, acceptable, dropped) = hist.percentages();
-        assert!((great - 50.0).abs() < 0.1);     // 2/4 = 50%
-        assert!((good - 25.0).abs() < 0.1);      // 1/4 = 25%
+        assert!((great - 50.0).abs() < 0.1); // 2/4 = 50%
+        assert!((good - 25.0).abs() < 0.1); // 1/4 = 25%
         assert!((acceptable - 25.0).abs() < 0.1); // 1/4 = 25%
-        assert!((dropped - 0.0).abs() < 0.1);    // 0/4 = 0%
+        assert!((dropped - 0.0).abs() < 0.1); // 0/4 = 0%
     }
 
     #[test]

@@ -86,7 +86,11 @@ impl std::fmt::Display for CacheStats {
         write!(
             f,
             "QueryCache: {} entries | hits={} misses={} evictions={} hit_rate={:.1}%",
-            self.entries, self.hits, self.misses, self.evictions, self.hit_rate * 100.0
+            self.entries,
+            self.hits,
+            self.misses,
+            self.evictions,
+            self.hit_rate * 100.0
         )
     }
 }
@@ -659,11 +663,7 @@ mod tests {
         updater.mark_dirty(1, vec![(11, 2, 21)]); // same file, appended
 
         assert_eq!(updater.pending_count(), 1); // still one dirty file
-        let total_triples: usize = updater
-            .pending_triples
-            .values()
-            .map(|v| v.len())
-            .sum();
+        let total_triples: usize = updater.pending_triples.values().map(|v| v.len()).sum();
         assert_eq!(total_triples, 2);
     }
 

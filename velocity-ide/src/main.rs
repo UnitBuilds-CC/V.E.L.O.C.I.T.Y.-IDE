@@ -96,7 +96,9 @@ fn main() -> anyhow::Result<()> {
         Command::Chat(args) => {
             let issues = commands::chat::validate_chat_args(&args);
             if !issues.is_empty() {
-                for issue in &issues { eprintln!("Error: {}", issue); }
+                for issue in &issues {
+                    eprintln!("Error: {}", issue);
+                }
                 anyhow::bail!("Invalid chat arguments ({} issue(s))", issues.len());
             }
             commands::chat::run_chat(args)
@@ -104,7 +106,9 @@ fn main() -> anyhow::Result<()> {
         Command::Seed(args) => {
             let issues = commands::seed::validate_seed_args(&args);
             if !issues.is_empty() {
-                for issue in &issues { eprintln!("Error: {}", issue); }
+                for issue in &issues {
+                    eprintln!("Error: {}", issue);
+                }
                 anyhow::bail!("Invalid seed arguments ({} issue(s))", issues.len());
             }
             commands::seed::run_seed(args)
@@ -112,7 +116,9 @@ fn main() -> anyhow::Result<()> {
         Command::Generate(args) => {
             let issues = commands::generate::validate_generate_args(&args);
             if !issues.is_empty() {
-                for issue in &issues { eprintln!("Error: {}", issue); }
+                for issue in &issues {
+                    eprintln!("Error: {}", issue);
+                }
                 anyhow::bail!("Invalid generate arguments ({} issue(s))", issues.len());
             }
             commands::generate::dispatch_generate(args, cli.json)
@@ -124,7 +130,11 @@ fn main() -> anyhow::Result<()> {
             if let Ok(driver) = compiler::driver::VulkanDriver::init() {
                 if let Ok((contig_us, ndakv_us)) = driver.run_attn_benchmarks() {
                     println!("  Float32 Attention: {:.2} us", contig_us);
-                    println!("  NDA-KV Attention : {:.2} us ({:.1}x speedup)", ndakv_us, contig_us / ndakv_us);
+                    println!(
+                        "  NDA-KV Attention : {:.2} us ({:.1}x speedup)",
+                        ndakv_us,
+                        contig_us / ndakv_us
+                    );
                 } else {
                     println!("  [FAIL] Failed to run GPU attention benchmarks.");
                 }

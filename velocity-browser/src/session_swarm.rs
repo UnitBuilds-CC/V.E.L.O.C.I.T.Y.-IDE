@@ -267,7 +267,10 @@ mod tests {
         swarm.spawn_swarm_tab("tab2");
         swarm.set_proxy_for_all(ProxyType::Socks5("127.0.0.1:1080".to_string()));
         for s in &swarm.swarm_sessions {
-            assert!(matches!(s.net.proxy_resolver.proxy_type, ProxyType::Socks5(_)));
+            assert!(matches!(
+                s.net.proxy_resolver.proxy_type,
+                ProxyType::Socks5(_)
+            ));
         }
     }
 

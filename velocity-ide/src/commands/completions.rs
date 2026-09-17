@@ -17,7 +17,10 @@ pub fn run_completions(args: CompletionsArgs, cmd: &mut clap::Command) -> Result
         "zsh" => Shell::Zsh,
         "fish" => Shell::Fish,
         "powershell" | "pwsh" => Shell::PowerShell,
-        other => anyhow::bail!("Unknown shell: '{}'. Supported: bash, zsh, fish, powershell", other),
+        other => anyhow::bail!(
+            "Unknown shell: '{}'. Supported: bash, zsh, fish, powershell",
+            other
+        ),
     };
 
     generate(shell, cmd, "velocity_ide", &mut std::io::stdout());
@@ -35,30 +38,41 @@ mod tests {
 
     #[test]
     fn completions_unknown_shell_errors() {
-        let args = CompletionsArgs { shell: "unknown_shell_xyz".into() };
+        let args = CompletionsArgs {
+            shell: "unknown_shell_xyz".into(),
+        };
         let mut cmd = test_cmd();
         let result = run_completions(args, &mut cmd);
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("unknown_shell_xyz"));
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("unknown_shell_xyz"));
     }
 
     #[test]
     fn completions_shell_name_case_insensitive() {
-        let args = CompletionsArgs { shell: "Bash".into() };
+        let args = CompletionsArgs {
+            shell: "Bash".into(),
+        };
         let mut cmd = test_cmd();
         assert!(run_completions(args, &mut cmd).is_ok());
     }
 
     #[test]
     fn completions_pwsh_alias() {
-        let args = CompletionsArgs { shell: "pwsh".into() };
+        let args = CompletionsArgs {
+            shell: "pwsh".into(),
+        };
         let mut cmd = test_cmd();
         assert!(run_completions(args, &mut cmd).is_ok());
     }
 
     #[test]
     fn completions_powershell_full() {
-        let args = CompletionsArgs { shell: "PowerShell".into() };
+        let args = CompletionsArgs {
+            shell: "PowerShell".into(),
+        };
         let mut cmd = test_cmd();
         assert!(run_completions(args, &mut cmd).is_ok());
     }

@@ -33,13 +33,32 @@ pub struct TestOutcome {
 /// A single declarative step inside an [`E2EScenario`].
 #[derive(Debug, Clone)]
 pub enum ScenarioStep {
-    CreateFile { path: String, content: String },
-    OpenFile { path: String },
-    EditFile { path: String, line: usize, content: String },
-    RunAgent { prompt: String },
-    VerifyFile { path: String, contains: String },
-    DeleteFile { path: String },
-    WaitFor { condition: String, timeout_ms: u64 },
+    CreateFile {
+        path: String,
+        content: String,
+    },
+    OpenFile {
+        path: String,
+    },
+    EditFile {
+        path: String,
+        line: usize,
+        content: String,
+    },
+    RunAgent {
+        prompt: String,
+    },
+    VerifyFile {
+        path: String,
+        contains: String,
+    },
+    DeleteFile {
+        path: String,
+    },
+    WaitFor {
+        condition: String,
+        timeout_ms: u64,
+    },
 }
 
 /// A named, descriptive collection of [`ScenarioStep`]s.
@@ -151,8 +170,7 @@ impl TestHarness {
                     fs::create_dir_all(parent)
                         .map_err(|e| format!("create dirs for {}: {}", path, e))?;
                 }
-                fs::write(&full, content)
-                    .map_err(|e| format!("write {}: {}", path, e))
+                fs::write(&full, content).map_err(|e| format!("write {}: {}", path, e))
             }
             ScenarioStep::OpenFile { path } => {
                 let full = self.workspace_root.join(path);
@@ -160,11 +178,14 @@ impl TestHarness {
                     return Err(format!("open {}: file does not exist", path));
                 }
                 // Reading validates that the file is accessible.
-                fs::read_to_string(&full)
-                    .map_err(|e| format!("read {}: {}", path, e))?;
+                fs::read_to_string(&full).map_err(|e| format!("read {}: {}", path, e))?;
                 Ok(())
             }
-            ScenarioStep::EditFile { path, line, content } => {
+            ScenarioStep::EditFile {
+                path,
+                line,
+                content,
+            } => {
                 let full = self.workspace_root.join(path);
                 let mut text = fs::read_to_string(&full)
                     .map_err(|e| format!("read for edit {}: {}", path, e))?;
@@ -179,8 +200,7 @@ impl TestHarness {
                 if !text.ends_with('\n') {
                     text.push('\n');
                 }
-                fs::write(&full, text)
-                    .map_err(|e| format!("write edited {}: {}", path, e))
+                fs::write(&full, text).map_err(|e| format!("write edited {}: {}", path, e))
             }
             ScenarioStep::RunAgent { prompt } => {
                 // In the harness layer we record the prompt but do not spawn a
@@ -207,8 +227,7 @@ impl TestHarness {
             ScenarioStep::DeleteFile { path } => {
                 let full = self.workspace_root.join(path);
                 if full.exists() {
-                    fs::remove_file(&full)
-                        .map_err(|e| format!("delete {}: {}", path, e))?;
+                    fs::remove_file(&full).map_err(|e| format!("delete {}: {}", path, e))?;
                 }
                 Ok(())
             }

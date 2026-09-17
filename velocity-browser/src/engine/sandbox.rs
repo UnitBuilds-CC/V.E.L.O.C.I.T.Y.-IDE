@@ -637,7 +637,9 @@ mod tests {
         // Subdomain allowed
         assert!(sb.check_network_access("api.example.com").is_ok());
         // Suffix-spoofed domain blocked
-        assert!(sb.check_network_access("evil-example.com.attacker.net").is_err());
+        assert!(sb
+            .check_network_access("evil-example.com.attacker.net")
+            .is_err());
         // Similar-looking but different domain blocked
         assert!(sb.check_network_access("notexample.com").is_err());
         assert!(sb.check_network_access("example.com.evil.net").is_err());

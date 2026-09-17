@@ -159,7 +159,7 @@ impl SiteMap {
         u64::from_str_radix(hex.trim_start_matches("0x"), 16).ok()
     }
 
-fn read_root_nda(base_dir: &Path) -> Option<u64> {
+    fn read_root_nda(base_dir: &Path) -> Option<u64> {
         let metadata_path = base_dir.join("metadata.nda");
         let raw = fs::read_to_string(metadata_path).ok()?;
         for line in raw.lines() {
@@ -171,7 +171,7 @@ fn read_root_nda(base_dir: &Path) -> Option<u64> {
         None
     }
 
-fn read_root_json(base_dir: &Path) -> Option<u64> {
+    fn read_root_json(base_dir: &Path) -> Option<u64> {
         let metadata_path = base_dir.join("metadata.json");
         let raw = fs::read_to_string(metadata_path).ok()?;
         let value: serde_json::Value = serde_json::from_str(&raw).ok()?;

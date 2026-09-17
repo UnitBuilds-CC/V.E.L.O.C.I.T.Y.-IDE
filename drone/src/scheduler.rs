@@ -138,12 +138,7 @@ impl DroneScheduler {
     }
 
     /// Submit a new task and return its unique ID.
-    pub fn submit_task(
-        &mut self,
-        kind: DroneTaskKind,
-        payload: String,
-        priority: u32,
-    ) -> u64 {
+    pub fn submit_task(&mut self, kind: DroneTaskKind, payload: String, priority: u32) -> u64 {
         let id = self.next_id;
         self.next_id += 1;
         self.tasks.push(DroneTask::new(id, kind, payload, priority));
@@ -171,11 +166,7 @@ impl DroneScheduler {
             .collect();
 
         // Sort by descending priority; ties keep original order (stable sort).
-        pending_indices.sort_by(|&a, &b| {
-            self.tasks[b]
-                .priority
-                .cmp(&self.tasks[a].priority)
-        });
+        pending_indices.sort_by(|&a, &b| self.tasks[b].priority.cmp(&self.tasks[a].priority));
 
         let to_start = pending_indices.into_iter().take(slots);
         let mut started_ids = Vec::new();

@@ -30,13 +30,19 @@ impl NdaTriple {
             return Err("Buffer too small for NDA triple");
         }
         let subject_hash = u64::from_le_bytes(
-            bytes[0..8].try_into().map_err(|_| "invalid slice for u64")?
+            bytes[0..8]
+                .try_into()
+                .map_err(|_| "invalid slice for u64")?,
         );
         let predicate_id = u16::from_le_bytes(
-            bytes[8..10].try_into().map_err(|_| "invalid slice for u16")?
+            bytes[8..10]
+                .try_into()
+                .map_err(|_| "invalid slice for u16")?,
         );
         let object_hash = u64::from_le_bytes(
-            bytes[10..18].try_into().map_err(|_| "invalid slice for u64")?
+            bytes[10..18]
+                .try_into()
+                .map_err(|_| "invalid slice for u64")?,
         );
         Ok(Self {
             subject_hash,
@@ -256,7 +262,9 @@ impl NdaDocument {
                 return Err("unexpected end of NDA stream (u32)");
             }
             let v = u32::from_le_bytes(
-                stream[*pos..*pos + 4].try_into().map_err(|_| "invalid slice for u32")?
+                stream[*pos..*pos + 4]
+                    .try_into()
+                    .map_err(|_| "invalid slice for u32")?,
             );
             *pos += 4;
             Ok(v)
@@ -285,7 +293,9 @@ impl NdaDocument {
                 return Err("unexpected end of NDA stream (predicate)");
             }
             let predicate = u16::from_le_bytes(
-                stream[pos..pos + 2].try_into().map_err(|_| "invalid slice for u16")?
+                stream[pos..pos + 2]
+                    .try_into()
+                    .map_err(|_| "invalid slice for u16")?,
             );
             pos += 2;
             if pos + 1 > stream.len() {
@@ -300,7 +310,9 @@ impl NdaDocument {
                         return Err("unexpected end of NDA stream (int payload)");
                     }
                     let n = i64::from_le_bytes(
-                        stream[pos..pos + 8].try_into().map_err(|_| "invalid slice for i64")?
+                        stream[pos..pos + 8]
+                            .try_into()
+                            .map_err(|_| "invalid slice for i64")?,
                     );
                     pos += 8;
                     NdaObject::Int(n)
@@ -396,7 +408,9 @@ impl NdaDocument {
             return Err("bad NDA magic");
         }
         let flags = u32::from_le_bytes(
-            bytes[4..8].try_into().map_err(|_| "invalid slice for flags")?
+            bytes[4..8]
+                .try_into()
+                .map_err(|_| "invalid slice for flags")?,
         );
         if flags & NDA_FLAG_ENCRYPTED == 0 {
             return Err("NDA envelope is not encrypted");
@@ -407,7 +421,9 @@ impl NdaDocument {
         let mut root = [0u8; 32];
         root.copy_from_slice(&bytes[8..40]);
         let fact_count = u32::from_le_bytes(
-            bytes[40..44].try_into().map_err(|_| "invalid slice for fact_count")?
+            bytes[40..44]
+                .try_into()
+                .map_err(|_| "invalid slice for fact_count")?,
         );
         let mut nonce = [0u8; 12];
         nonce.copy_from_slice(&bytes[44..NDA_HEADER_LEN]);

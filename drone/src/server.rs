@@ -66,7 +66,12 @@ fn parse_request(reader: &mut BufReader<&mut dyn IoRead>) -> Option<HttpRequest>
         reader.read_exact(&mut body).ok()?;
     }
 
-    Some(HttpRequest { method, path, body, auth_header })
+    Some(HttpRequest {
+        method,
+        path,
+        body,
+        auth_header,
+    })
 }
 
 /// Write an HTTP response.
@@ -91,26 +96,43 @@ fn constant_time_eq(a: &str, b: &str) -> bool {
     let b_bytes = b.as_bytes();
     if a_bytes.len() != b_bytes.len() {
         // Still do a dummy comparison to avoid leaking length via timing.
-        let _ = a_bytes.iter().zip(b_bytes.iter()).fold(0u8, |acc, (&x, &y)| acc | (x ^ y));
+        let _ = a_bytes
+            .iter()
+            .zip(b_bytes.iter())
+            .fold(0u8, |acc, (&x, &y)| acc | (x ^ y));
         return false;
     }
-    a_bytes.iter().zip(b_bytes.iter()).fold(0u8, |acc, (&x, &y)| acc | (x ^ y)) == 0
+    a_bytes
+        .iter()
+        .zip(b_bytes.iter())
+        .fold(0u8, |acc, (&x, &y)| acc | (x ^ y))
+        == 0
 }
 
 /// Route a request to the appropriate handler.
 /// If `required_token` is `Some`, all endpoints except `/peer/health` require
 /// a matching `Authorization: Bearer <token>` header.
-fn route_request(core: &DroneCore, req: &HttpRequest, required_token: Option<&str>) -> (u16, String) {
+fn route_request(
+    core: &DroneCore,
+    req: &HttpRequest,
+    required_token: Option<&str>,
+) -> (u16, String) {
     // ── Auth gate (health is always public) ──
     if let Some(token) = required_token {
         if req.path != "/peer/health" {
             let authorized = req
                 .auth_header
                 .as_deref()
-                .map(|h| h.strip_prefix("Bearer ").is_some_and(|t| constant_time_eq(t, token)))
+                .map(|h| {
+                    h.strip_prefix("Bearer ")
+                        .is_some_and(|t| constant_time_eq(t, token))
+                })
                 .unwrap_or(false);
             if !authorized {
-                return (401, r#"{"error":"Unauthorized — missing or invalid Bearer token"}"#.into());
+                return (
+                    401,
+                    r#"{"error":"Unauthorized — missing or invalid Bearer token"}"#.into(),
+                );
             }
         }
     }
@@ -220,7 +242,9 @@ pub struct DroneServer {
 
 impl DroneServer {
     pub fn new(core: DroneCore, host: &str, port: u16) -> Self {
-        let auth_token = std::env::var("DRONE_AUTH_TOKEN").ok().filter(|t| !t.is_empty());
+        let auth_token = std::env::var("DRONE_AUTH_TOKEN")
+            .ok()
+            .filter(|t| !t.is_empty());
         Self {
             core: Arc::new(core),
             addr: format!("{host}:{port}"),
@@ -263,7 +287,8 @@ impl DroneServer {
                         .spawn(move || {
                             let mut reader = BufReader::new(&mut stream as &mut dyn IoRead);
                             if let Some(req) = parse_request(&mut reader) {
-                                let (status, body) = route_request(&core, &req, auth_token.as_deref());
+                                let (status, body) =
+                                    route_request(&core, &req, auth_token.as_deref());
                                 write_response(&mut stream as &mut dyn IoWrite, status, &body);
                             }
                         })
@@ -682,7 +707,8 @@ mod tests {
     // ── Command allowlist tests ──
 
     fn test_ws() -> std::path::PathBuf {
-        let dir = std::env::temp_dir().join(format!("drone_deploy_test_{}", crate::core::now_secs()));
+        let dir =
+            std::env::temp_dir().join(format!("drone_deploy_test_{}", crate::core::now_secs()));
         std::fs::create_dir_all(&dir).unwrap();
         dir
     }
@@ -690,22 +716,14 @@ mod tests {
     #[test]
     fn deploy_blocked_command() {
         let ws = test_ws();
-        let output = crate::core::execute_deploy_instructions(
-            "run rm -rf /",
-            "/tmp/f.txt",
-            &ws,
-        );
+        let output = crate::core::execute_deploy_instructions("run rm -rf /", "/tmp/f.txt", &ws);
         assert!(output.contains("BLOCKED"));
     }
 
     #[test]
     fn deploy_allowed_echo() {
         let ws = test_ws();
-        let output = crate::core::execute_deploy_instructions(
-            "run echo hello",
-            "/tmp/f.txt",
-            &ws,
-        );
+        let output = crate::core::execute_deploy_instructions("run echo hello", "/tmp/f.txt", &ws);
         assert!(output.contains("[run] echo hello"));
         assert!(!output.contains("BLOCKED"));
     }

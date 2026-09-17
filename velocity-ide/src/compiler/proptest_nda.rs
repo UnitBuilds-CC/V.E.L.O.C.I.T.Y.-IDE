@@ -7,8 +7,8 @@
 //! Run: `cargo test --workspace proptest_nda`
 //! Or with nextest: `cargo nextest run --workspace proptest_nda`
 
-use proptest::prelude::*;
 use crate::compiler::nda_parser;
+use proptest::prelude::*;
 
 // ─── Strategy: arbitrary NDA-like source text ──────────────────────────────
 

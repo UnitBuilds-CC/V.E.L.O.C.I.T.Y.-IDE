@@ -64,6 +64,7 @@ pub use dom::{
     SlotProjectionEngine, UnmanagedSlabArena, SLAB_NODE_DIRTY, SLAB_NODE_VISIBLE,
 };
 pub use engine::*;
+pub use errors::{BrowserError, BrowserResult};
 pub use js::{
     JsEventListener, JsEventLoopScheduler, JsRtcPeerConnection, JsValue, JsVirtualMachine,
     PointerEvent, ScheduledTask, SyntheticEventDispatcher, TaskKind, WasmInterpreter,
@@ -87,7 +88,6 @@ pub use parser::{
     StreamJitTokenizer,
 };
 pub use session::{BrowserSession, Cookie};
-pub use errors::{BrowserError, BrowserResult};
 pub use session_auth::{AuthReseeder, AuthTokenState};
 pub use session_cookie_store::{CookieRecord, CookieStore, SameSitePolicy};
 pub use session_history::{HistoryItem, HistoryStack};

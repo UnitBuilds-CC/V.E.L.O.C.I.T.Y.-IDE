@@ -123,10 +123,7 @@ impl QueryEngine {
     /// Add a single symbol to both the name index and the file index.
     pub fn index_symbol(&mut self, symbol: IndexedSymbol) {
         let key = symbol.name.to_lowercase();
-        self.index
-            .entry(key)
-            .or_default()
-            .push(symbol.clone());
+        self.index.entry(key).or_default().push(symbol.clone());
 
         let file_entry = self
             .file_index
@@ -148,10 +145,7 @@ impl QueryEngine {
         let now = Instant::now();
         for symbol in &symbols {
             let key = symbol.name.to_lowercase();
-            self.index
-                .entry(key)
-                .or_default()
-                .push(symbol.clone());
+            self.index.entry(key).or_default().push(symbol.clone());
             self.total_symbols += 1;
         }
         self.file_index.insert(
@@ -187,7 +181,9 @@ impl QueryEngine {
     /// Return all symbols whose name matches `name` exactly (case-insensitive).
     pub fn find_symbol(&self, name: &str) -> Vec<&IndexedSymbol> {
         let key = name.to_lowercase();
-        self.index.get(&key).map_or_else(Vec::new, |v| v.iter().collect())
+        self.index
+            .get(&key)
+            .map_or_else(Vec::new, |v| v.iter().collect())
     }
 
     /// Fuzzy search across all indexed symbols.
@@ -240,11 +236,7 @@ impl QueryEngine {
         let mut refs = Vec::new();
         for symbols in self.index.values() {
             for sym in symbols {
-                if sym
-                    .dependencies
-                    .iter()
-                    .any(|d| d.to_lowercase() == target)
-                {
+                if sym.dependencies.iter().any(|d| d.to_lowercase() == target) {
                     refs.push(sym);
                 }
             }
@@ -381,7 +373,11 @@ mod tests {
     #[test]
     fn test_file_symbols_accessor() {
         let mut engine = QueryEngine::new();
-        engine.index_file(7, "main.rs", vec![make_sym("main", SymbolKind::Function, 7, "main.rs")]);
+        engine.index_file(
+            7,
+            "main.rs",
+            vec![make_sym("main", SymbolKind::Function, 7, "main.rs")],
+        );
         let fs = engine.file_symbols(7).expect("should exist");
         assert_eq!(fs.file_path, "main.rs");
         assert_eq!(fs.symbols.len(), 1);
@@ -415,8 +411,16 @@ mod tests {
     #[test]
     fn test_remove_file_preserves_other_files() {
         let mut engine = QueryEngine::new();
-        engine.index_file(1, "keep.rs", vec![make_sym("a", SymbolKind::Function, 1, "keep.rs")]);
-        engine.index_file(2, "drop.rs", vec![make_sym("b", SymbolKind::Function, 2, "drop.rs")]);
+        engine.index_file(
+            1,
+            "keep.rs",
+            vec![make_sym("a", SymbolKind::Function, 1, "keep.rs")],
+        );
+        engine.index_file(
+            2,
+            "drop.rs",
+            vec![make_sym("b", SymbolKind::Function, 2, "drop.rs")],
+        );
         engine.remove_file(2);
         assert_eq!(engine.find_symbol("a").len(), 1);
         assert!(engine.find_symbol("b").is_empty());
@@ -464,7 +468,12 @@ mod tests {
     fn test_search_max_results_respected() {
         let mut engine = QueryEngine::new();
         for i in 0..20 {
-            engine.index_symbol(make_sym(&format!("sym_{i}"), SymbolKind::Function, 1, "a.rs"));
+            engine.index_symbol(make_sym(
+                &format!("sym_{i}"),
+                SymbolKind::Function,
+                1,
+                "a.rs",
+            ));
         }
         let results = engine.search("sym", 5);
         assert_eq!(results.len(), 5);
@@ -582,11 +591,7 @@ mod tests {
                 make_sym("S1", SymbolKind::Struct, 1, "a.rs"),
             ],
         );
-        engine.index_file(
-            2,
-            "b.rs",
-            vec![make_sym("E1", SymbolKind::Enum, 2, "b.rs")],
-        );
+        engine.index_file(2, "b.rs", vec![make_sym("E1", SymbolKind::Enum, 2, "b.rs")]);
         let s = engine.stats();
         assert_eq!(s.total_symbols, 4);
         assert_eq!(s.total_files, 2);
@@ -664,8 +669,20 @@ mod tests {
     fn test_find_references_multiple_dependents() {
         let mut engine = QueryEngine::new();
         engine.index_symbol(make_sym("Base", SymbolKind::Struct, 1, "a.rs"));
-        engine.index_symbol(make_sym_with_deps("user_a", SymbolKind::Function, 1, "a.rs", vec!["Base"]));
-        engine.index_symbol(make_sym_with_deps("user_b", SymbolKind::Function, 2, "b.rs", vec!["Base", "Other"]));
+        engine.index_symbol(make_sym_with_deps(
+            "user_a",
+            SymbolKind::Function,
+            1,
+            "a.rs",
+            vec!["Base"],
+        ));
+        engine.index_symbol(make_sym_with_deps(
+            "user_b",
+            SymbolKind::Function,
+            2,
+            "b.rs",
+            vec!["Base", "Other"],
+        ));
         let refs = engine.find_references("Base");
         assert_eq!(refs.len(), 2);
     }

@@ -127,8 +127,7 @@ impl FrameScheduler {
                 // Union dirty rects.
                 existing.dirty_rect = union_rects(existing.dirty_rect, task.dirty_rect);
                 // Take the larger cost estimate (conservative).
-                existing.estimated_cost_us =
-                    existing.estimated_cost_us.max(task.estimated_cost_us);
+                existing.estimated_cost_us = existing.estimated_cost_us.max(task.estimated_cost_us);
             } else {
                 seen.insert(task.id, collapsed.len());
                 collapsed.push(task);
@@ -421,7 +420,7 @@ mod tests {
     fn critical_tasks_always_get_through() {
         // Budget = 10 ms = 10_000 us.  Make critical tasks small so they fit.
         let mut s = FrameScheduler::new(100); // 10 ms budget
-        // Fill with 9 critical tasks of 1000 us each = 9000 us.
+                                              // Fill with 9 critical tasks of 1000 us each = 9000 us.
         for i in 0..9 {
             s.schedule_render(task(i, RenderPriority::Critical, 1000));
         }
@@ -679,7 +678,7 @@ mod tests {
     #[test]
     fn dedup_then_schedule_flow() {
         let mut s = FrameScheduler::new(100); // 10_000 us budget
-        // Queue duplicates.
+                                              // Queue duplicates.
         s.schedule_render(task_rect(
             1,
             RenderPriority::Normal,

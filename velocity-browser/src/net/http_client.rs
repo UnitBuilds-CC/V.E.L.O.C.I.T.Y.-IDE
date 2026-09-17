@@ -69,10 +69,7 @@ impl HttpClient {
     }
 
     /// Perform a GET, following redirects up to [`MAX_REDIRECTS`].
-    pub fn get(
-        &mut self,
-        url: &str,
-    ) -> Result<HttpResponse, BrowserError> {
+    pub fn get(&mut self, url: &str) -> Result<HttpResponse, BrowserError> {
         let mut current = url.to_string();
         for _ in 0..=MAX_REDIRECTS {
             let (scheme, host, port, path) = parse_url(&current)?;
@@ -224,8 +221,9 @@ impl HttpClient {
         scheme: &str,
         host: &str,
     ) -> Result<HttpResponse, BrowserError> {
-        let (head, body) = split_head_body(raw)
-            .ok_or_else(|| BrowserError::MalformedResponse("missing header/body separator".into()))?;
+        let (head, body) = split_head_body(raw).ok_or_else(|| {
+            BrowserError::MalformedResponse("missing header/body separator".into())
+        })?;
         let (status_code, headers, raw_set_cookies) = parse_status_and_headers(head);
 
         // Parse and store cookies with full attributes
@@ -416,7 +414,9 @@ fn dechunk(data: &[u8]) -> Result<Vec<u8>, BrowserError> {
     loop {
         let line_end = find_subslice(&data[i..], b"\r\n")
             .map(|p| p + i)
-            .ok_or_else(|| BrowserError::MalformedResponse("chunk size line not terminated".into()))?;
+            .ok_or_else(|| {
+                BrowserError::MalformedResponse("chunk size line not terminated".into())
+            })?;
         let size_line = String::from_utf8_lossy(&data[i..line_end]);
         let size_hex = size_line.split(';').next().unwrap_or("").trim();
         let size = usize::from_str_radix(size_hex, 16)
@@ -426,7 +426,9 @@ fn dechunk(data: &[u8]) -> Result<Vec<u8>, BrowserError> {
             break;
         }
         if i + size > data.len() {
-            return Err(BrowserError::MalformedResponse("chunk exceeds available data".into()));
+            return Err(BrowserError::MalformedResponse(
+                "chunk exceeds available data".into(),
+            ));
         }
         out.extend_from_slice(&data[i..i + size]);
         i += size;

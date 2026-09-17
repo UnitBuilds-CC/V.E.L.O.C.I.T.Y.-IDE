@@ -145,13 +145,7 @@ fn windows_working_set_bytes() -> u64 {
     let mut counters = unsafe { mem::zeroed::<PROCESS_MEMORY_COUNTERS>() };
     counters.cb = mem::size_of::<PROCESS_MEMORY_COUNTERS>() as u32;
     // SAFETY: counters is a valid, properly-initialized PROCESS_MEMORY_COUNTERS pointer.
-    let ok = unsafe {
-        K32GetProcessMemoryInfo(
-            GetCurrentProcess(),
-            &mut counters,
-            counters.cb,
-        )
-    };
+    let ok = unsafe { K32GetProcessMemoryInfo(GetCurrentProcess(), &mut counters, counters.cb) };
     if ok != 0 {
         counters.WorkingSetSize as u64
     } else {
@@ -185,9 +179,7 @@ fn classify_health(memory_usage_bytes: u64) -> HealthStatus {
 /// `tasks_completed` should be supplied by the caller (typically the scheduler)
 /// to reflect the drone's throughput since boot.
 pub fn check_health_with(tasks_completed: u64) -> DroneHealth {
-    let uptime = Instant::now()
-        .duration_since(boot_instant())
-        .as_secs();
+    let uptime = Instant::now().duration_since(boot_instant()).as_secs();
     let memory = current_memory_bytes();
     let status = classify_health(memory);
 

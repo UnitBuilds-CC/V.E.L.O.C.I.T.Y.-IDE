@@ -36,7 +36,8 @@ pub trait ScreenCapture: Send + Sync {
     /// Capture the primary display.
     fn capture_primary(&self) -> Result<Screenshot, String>;
     /// Capture a specific region.
-    fn capture_region(&self, x: u32, y: u32, width: u32, height: u32) -> Result<Screenshot, String>;
+    fn capture_region(&self, x: u32, y: u32, width: u32, height: u32)
+        -> Result<Screenshot, String>;
     /// List available displays.
     fn list_displays(&self) -> Result<Vec<DisplayInfo>, String>;
 }
@@ -197,7 +198,13 @@ mod windows_impl {
             })
         }
 
-        fn capture_region(&self, _x: u32, _y: u32, width: u32, height: u32) -> Result<Screenshot, String> {
+        fn capture_region(
+            &self,
+            _x: u32,
+            _y: u32,
+            width: u32,
+            height: u32,
+        ) -> Result<Screenshot, String> {
             Ok(Screenshot {
                 png_data: Vec::new(),
                 width,
@@ -302,7 +309,10 @@ mod windows_impl {
                         winapi::um::winuser::SetCursorPos(x, y);
                         winapi::um::winuser::mouse_event(
                             winapi::um::winuser::MOUSEEVENTF_WHEEL,
-                            0, 0, delta as u32, 0,
+                            0,
+                            0,
+                            delta as u32,
+                            0,
                         );
                     }
                     Ok(())
@@ -379,7 +389,11 @@ mod windows_impl {
                         let mut input: INPUT = std::mem::zeroed();
                         input.type_ = INPUT_KEYBOARD;
                         *input.u.ki_mut() = KEYBDINPUT {
-                            wVk: vk, wScan: 0, dwFlags: 0, time: 0, dwExtraInfo: 0,
+                            wVk: vk,
+                            wScan: 0,
+                            dwFlags: 0,
+                            time: 0,
+                            dwExtraInfo: 0,
                         };
                         inputs.push(input);
                     }
@@ -394,14 +408,22 @@ mod windows_impl {
                         let mut down: INPUT = std::mem::zeroed();
                         down.type_ = INPUT_KEYBOARD;
                         *down.u.ki_mut() = KEYBDINPUT {
-                            wVk: vk, wScan: 0, dwFlags: 0, time: 0, dwExtraInfo: 0,
+                            wVk: vk,
+                            wScan: 0,
+                            dwFlags: 0,
+                            time: 0,
+                            dwExtraInfo: 0,
                         };
                         inputs.push(down);
 
                         let mut up: INPUT = std::mem::zeroed();
                         up.type_ = INPUT_KEYBOARD;
                         *up.u.ki_mut() = KEYBDINPUT {
-                            wVk: vk, wScan: 0, dwFlags: KEYEVENTF_KEYUP, time: 0, dwExtraInfo: 0,
+                            wVk: vk,
+                            wScan: 0,
+                            dwFlags: KEYEVENTF_KEYUP,
+                            time: 0,
+                            dwExtraInfo: 0,
                         };
                         inputs.push(up);
                     }
@@ -417,7 +439,11 @@ mod windows_impl {
                         let mut input: INPUT = std::mem::zeroed();
                         input.type_ = INPUT_KEYBOARD;
                         *input.u.ki_mut() = KEYBDINPUT {
-                            wVk: vk, wScan: 0, dwFlags: KEYEVENTF_KEYUP, time: 0, dwExtraInfo: 0,
+                            wVk: vk,
+                            wScan: 0,
+                            dwFlags: KEYEVENTF_KEYUP,
+                            time: 0,
+                            dwExtraInfo: 0,
                         };
                         inputs.push(input);
                     }
@@ -427,7 +453,11 @@ mod windows_impl {
             if !inputs.is_empty() {
                 // SAFETY: Win32 SendInput FFI — inputs vec contains valid initialized INPUT structs.
                 unsafe {
-                    SendInput(inputs.len() as u32, inputs.as_mut_ptr(), std::mem::size_of::<INPUT>() as i32);
+                    SendInput(
+                        inputs.len() as u32,
+                        inputs.as_mut_ptr(),
+                        std::mem::size_of::<INPUT>() as i32,
+                    );
                 }
             }
             Ok(())
@@ -492,7 +522,9 @@ mod windows_impl {
 
             let delta = if let Some((ref prev, prev_time)) = *last {
                 NetworkDelta {
-                    bytes_received_delta: current.bytes_received.saturating_sub(prev.bytes_received),
+                    bytes_received_delta: current
+                        .bytes_received
+                        .saturating_sub(prev.bytes_received),
                     bytes_sent_delta: current.bytes_sent.saturating_sub(prev.bytes_sent),
                     duration_secs: current.timestamp.saturating_sub(prev_time),
                 }
@@ -500,10 +532,13 @@ mod windows_impl {
                 NetworkDelta::default()
             };
 
-            *last = Some((current, SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_secs()));
+            *last = Some((
+                current,
+                SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_secs(),
+            ));
 
             Ok(delta)
         }
@@ -591,7 +626,9 @@ mod tests {
 
     #[test]
     fn test_input_action_serialization() {
-        let action = InputAction::TypeText { text: "hello".into() };
+        let action = InputAction::TypeText {
+            text: "hello".into(),
+        };
         let json = serde_json::to_string(&action).unwrap();
         assert!(json.contains("TypeText"));
         assert!(json.contains("hello"));

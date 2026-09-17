@@ -259,10 +259,13 @@ impl GpuTileCompositor {
 
         // Collect tile data first, then write into frame buffer to avoid
         // overlapping mutable borrows of self.
-        let write_tile_to_fb = |fb: &mut [u8], tile_data: &[u8],
-                                 start_x: usize, start_y: usize,
-                                 tile_size: usize, viewport_width: usize,
-                                 viewport_height: usize| {
+        let write_tile_to_fb = |fb: &mut [u8],
+                                tile_data: &[u8],
+                                start_x: usize,
+                                start_y: usize,
+                                tile_size: usize,
+                                viewport_width: usize,
+                                viewport_height: usize| {
             for y in 0..tile_size {
                 for x in 0..tile_size {
                     let fb_x = start_x + x;
@@ -273,8 +276,7 @@ impl GpuTileCompositor {
                     let fb_idx = (fb_y * viewport_width + fb_x) * 4;
                     let tile_idx = (y * tile_size + x) * 4;
                     if fb_idx + 3 < fb.len() && tile_idx + 3 < tile_data.len() {
-                        fb[fb_idx..fb_idx + 4]
-                            .copy_from_slice(&tile_data[tile_idx..tile_idx + 4]);
+                        fb[fb_idx..fb_idx + 4].copy_from_slice(&tile_data[tile_idx..tile_idx + 4]);
                     }
                 }
             }
@@ -293,8 +295,13 @@ impl GpuTileCompositor {
                         let start_y = ty * self.tile_size;
                         let fb = self.frame_buffer.as_mut().unwrap();
                         write_tile_to_fb(
-                            fb, &tile_data, start_x, start_y,
-                            self.tile_size, self.viewport_width, self.viewport_height,
+                            fb,
+                            &tile_data,
+                            start_x,
+                            start_y,
+                            self.tile_size,
+                            self.viewport_width,
+                            self.viewport_height,
                         );
                         tiles_rendered += 1;
                     }
@@ -308,8 +315,13 @@ impl GpuTileCompositor {
                     let start_y = ty * self.tile_size;
                     let fb = self.frame_buffer.as_mut().unwrap();
                     write_tile_to_fb(
-                        fb, &tile_data, start_x, start_y,
-                        self.tile_size, self.viewport_width, self.viewport_height,
+                        fb,
+                        &tile_data,
+                        start_x,
+                        start_y,
+                        self.tile_size,
+                        self.viewport_width,
+                        self.viewport_height,
                     );
                     tiles_rendered += 1;
                 }

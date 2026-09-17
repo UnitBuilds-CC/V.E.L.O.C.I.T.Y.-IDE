@@ -277,23 +277,31 @@ mod tests {
     fn chat_neg_infinity_temperature_rejected() {
         let mut args = default_chat_args();
         args.temperature = f32::NEG_INFINITY;
-        assert!(validate_chat_args(&args).iter().any(|i| i.contains("temperature")));
+        assert!(validate_chat_args(&args)
+            .iter()
+            .any(|i| i.contains("temperature")));
     }
 
     #[test]
     fn chat_temperature_exactly_zero_valid() {
         let mut args = default_chat_args();
         args.temperature = 0.0;
-        assert!(validate_chat_args(&args).iter().all(|i| !i.contains("temperature")));
+        assert!(validate_chat_args(&args)
+            .iter()
+            .all(|i| !i.contains("temperature")));
     }
 
     #[test]
     fn chat_top_p_boundaries() {
         let mut args = default_chat_args();
         args.top_p = 0.0;
-        assert!(validate_chat_args(&args).iter().all(|i| !i.contains("top-p")));
+        assert!(validate_chat_args(&args)
+            .iter()
+            .all(|i| !i.contains("top-p")));
         args.top_p = 1.0;
-        assert!(validate_chat_args(&args).iter().all(|i| !i.contains("top-p")));
+        assert!(validate_chat_args(&args)
+            .iter()
+            .all(|i| !i.contains("top-p")));
     }
 
     #[test]
