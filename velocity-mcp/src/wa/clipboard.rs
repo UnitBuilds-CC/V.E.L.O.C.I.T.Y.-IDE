@@ -7,6 +7,27 @@
 use std::path::PathBuf;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
+/// Bug #40: the clipboard belongs to the operator, not to the caller.
+///
+/// There is no `clipboardId` argument: a write lands in the one clipboard every
+/// window on the session shares, so a test sweep silently destroyed whatever
+/// the person at the machine had copied. Reads are unaffected - observing the
+/// clipboard changes nothing - but every mutation goes through this gate.
+fn guard_effect(action: &str, effect: &str) -> Result<(), String> {
+    super::session_guard::effect_guard(action, effect)
+}
+
+/// The refusal shaped like every other clipboard answer: `success: false`, and
+/// the reason verbatim.
+fn refused_result(operation: &str, refused: String) -> ClipboardOpResult {
+    ClipboardOpResult {
+        success: false,
+        operation: operation.into(),
+        detail: refused,
+        sequence_number: None,
+    }
+}
+
 // ─── Clipboard Content Model ─────────────────────────────────────────────────
 
 /// Content types available on the clipboard.
@@ -122,6 +143,9 @@ impl ClipboardManager {
 
     /// Write text to clipboard.
     pub fn write_text(text: &str) -> ClipboardOpResult {
+        if let Err(refused) = guard_effect("clipboard write", "it replaces what you have copied") {
+            return refused_result("write_text", refused);
+        }
         #[cfg(target_os = "windows")]
         {
             write_text_native(text)
@@ -140,6 +164,11 @@ impl ClipboardManager {
     /// Write HTML to clipboard as real CF_HTML (also sets a plain-text fallback
     /// so non-HTML-aware targets still paste something sensible).
     pub fn write_html(html: &str, plain_fallback: Option<&str>) -> ClipboardOpResult {
+        if let Err(refused) =
+            guard_effect("clipboard html write", "it replaces what you have copied")
+        {
+            return refused_result("write_html", refused);
+        }
         #[cfg(target_os = "windows")]
         {
             write_html_native(html, plain_fallback)
@@ -158,6 +187,12 @@ impl ClipboardManager {
 
     /// Write file list to clipboard (for paste operations).
     pub fn write_files(paths: &[PathBuf]) -> ClipboardOpResult {
+        if let Err(refused) = guard_effect(
+            "clipboard file write",
+            "it replaces what you have copied with a list of files",
+        ) {
+            return refused_result("write_files", refused);
+        }
         #[cfg(target_os = "windows")]
         {
             write_files_native(paths)
@@ -175,6 +210,12 @@ impl ClipboardManager {
 
     /// Clear the clipboard.
     pub fn clear() -> ClipboardOpResult {
+        if let Err(refused) = guard_effect(
+            "clipboard clear",
+            "it empties the clipboard, destroying whatever you had copied",
+        ) {
+            return refused_result("clear", refused);
+        }
         #[cfg(target_os = "windows")]
         {
             clear_clipboard_native()
@@ -677,7 +718,7 @@ mod tests {
     /// extraction failure.
     #[cfg(target_os = "windows")]
     #[test]
-    #[ignore = "touches the live system clipboard; run manually"]
+    #[ignore = "touches the live system clipboard; run manually with VELOCITY_WA_ALLOW_SESSION_EFFECT=1"]
     fn hdrop_live_round_trip_extracts_written_files() {
         let dir = tempfile::tempdir().unwrap();
         let a = dir.path().join("alpha.txt");

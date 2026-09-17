@@ -532,18 +532,30 @@ impl CheckpointManager {
                 restored += 1;
             }
         }
-        // Restore clipboard if we have a snapshot
+        // Restore clipboard if we have a snapshot.
+        //
+        // Bug #40: the clipboard is session-wide state, so the consent gate can
+        // refuse this write. Discarding the result used to leave the report
+        // claiming a clean restore while the operator's clipboard stayed
+        // clobbered - the same lie as bug #38, one layer down.
+        let mut clipboard_note = "nothing to restore".to_string();
         if let Some(ref text) = cp.clipboard_snapshot {
-            let _ = crate::wa::clipboard::ClipboardManager::write_text(text);
+            let write = crate::wa::clipboard::ClipboardManager::write_text(text);
+            clipboard_note = if write.success {
+                "clipboard restored".to_string()
+            } else {
+                write.detail
+            };
         }
         CheckpointResult {
             success: restored > 0 || cp.window_states.is_empty(),
             checkpoint_id: id.to_string(),
             detail: format!(
-                "Restored {}/{} windows from checkpoint '{}'",
+                "Restored {}/{} windows from checkpoint '{}'; {}",
                 restored,
                 cp.window_states.len(),
-                cp.label
+                cp.label,
+                clipboard_note
             ),
         }
     }

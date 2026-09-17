@@ -403,17 +403,31 @@ pub fn handle_wa_tool(
         // ─── Process Management ───────────────────────────────────────────────────
         "wa_process_launch" => {
             let exe = arguments["exePath"].as_str().ok_or("exePath is required")?;
-            let config = crate::wa::process_mgmt::LaunchConfig::new(exe);
-            let result = crate::wa::process_mgmt::ProcessManager::launch(&config);
-            format!(
-                "{{\"success\":{},\"pid\":{},\"detail\":\"{}\"}}",
-                result.success,
-                result
-                    .pid
-                    .map(|p| p.to_string())
-                    .unwrap_or_else(|| "null".to_string()),
-                result.detail.replace('"', "\\\"")
-            )
+            // Bug #40: launching is not an action on a target the caller named.
+            // The new process appears on whichever desktop the operator is
+            // looking at and takes the foreground, which is how a sweep ended
+            // up covering the screen in notepad windows. Internal launches that
+            // back an already-addressable action (the UIA PowerShell fallback)
+            // call `ProcessManager::launch` directly; a *tool* whose whole
+            // purpose is "start this program" must consent first.
+            if let Err(refused) = crate::wa::session_guard::effect_guard(
+                "process launch",
+                "it starts a new program on your desktop and gives it the foreground",
+            ) {
+                refused_json(&refused)
+            } else {
+                let config = crate::wa::process_mgmt::LaunchConfig::new(exe);
+                let result = crate::wa::process_mgmt::ProcessManager::launch(&config);
+                format!(
+                    "{{\"success\":{},\"pid\":{},\"detail\":\"{}\"}}",
+                    result.success,
+                    result
+                        .pid
+                        .map(|p| p.to_string())
+                        .unwrap_or_else(|| "null".to_string()),
+                    result.detail.replace('"', "\\\"")
+                )
+            }
         }
         "wa_process_terminate" => {
             let pid = arguments["pid"].as_u64().ok_or("pid is required")? as u32;
@@ -1658,23 +1672,30 @@ pub fn handle_wa_tool(
         "wa_browser_navigate" => {
             let url = arguments["url"].as_str().ok_or("url is required")?;
             let browser = arguments["browser"].as_str().unwrap_or("edge");
-            let exe = match browser {
-                "chrome" => "chrome",
-                "firefox" => "firefox",
-                _ => "msedge",
-            };
-            let config = crate::wa::process_mgmt::LaunchConfig::new(exe).arg(url);
-            let result = crate::wa::process_mgmt::ProcessManager::launch(&config);
-            format!(
-                "{{\"success\":{},\"browser\":\"{}\",\"url\":\"{}\",\"pid\":{}}}",
-                result.success,
-                browser,
-                url,
-                result
-                    .pid
-                    .map(|p| p.to_string())
-                    .unwrap_or_else(|| "null".to_string())
-            )
+            if let Err(refused) = crate::wa::session_guard::effect_guard(
+                "browser navigation",
+                "it opens a browser window on your desktop and gives it the foreground",
+            ) {
+                refused_json(&refused)
+            } else {
+                let exe = match browser {
+                    "chrome" => "chrome",
+                    "firefox" => "firefox",
+                    _ => "msedge",
+                };
+                let config = crate::wa::process_mgmt::LaunchConfig::new(exe).arg(url);
+                let result = crate::wa::process_mgmt::ProcessManager::launch(&config);
+                format!(
+                    "{{\"success\":{},\"browser\":\"{}\",\"url\":\"{}\",\"pid\":{}}}",
+                    result.success,
+                    browser,
+                    url,
+                    result
+                        .pid
+                        .map(|p| p.to_string())
+                        .unwrap_or_else(|| "null".to_string())
+                )
+            }
         }
         "wa_browser_screenshot" => {
             let output_path = arguments["outputPath"]
@@ -2243,6 +2264,15 @@ pub fn handle_wa_tool(
     };
 
     Ok(Some(result))
+}
+
+/// A consent refusal as the payload every `wa_*` tool already answers with.
+///
+/// Bug #40: in-band rather than an error, so the caller sees the same
+/// `{"success":false,"detail":...}` shape it gets from a genuine failure and
+/// dispatch (bug #42) records the refusal as the failure it is.
+fn refused_json(reason: &str) -> String {
+    serde_json::json!({ "success": false, "detail": reason }).to_string()
 }
 
 /// Serialise CSS/XPath selector matches into a uniform tool payload.
@@ -3235,6 +3265,79 @@ mod tests {
             "wa_notifications_dismiss",
             serde_json::json!({ "pattern": "No Such App" }),
         );
+    }
+
+    /// Bug #40: the milder family refuses with its *own* switch named. Getting
+    /// this wrong in either direction is invisible to the caller - a clipboard
+    /// write that demands desktop-moving consent, or a desktop switch satisfied
+    /// by a clipboard grant - so the asserted string is the point.
+    fn refuses_effect_without_consent(tool: &str, args: serde_json::Value) {
+        if crate::wa::session_guard::effect_consent_given() {
+            return;
+        }
+        let temp = tempfile::tempdir().unwrap();
+        let out = handle_wa_tool(temp.path(), tool, &args)
+            .unwrap_or_else(|err| panic!("{tool} must refuse with a result, not error: {err}"))
+            .unwrap_or_else(|| panic!("{tool} must produce output"));
+        assert!(out.contains("\"success\":false"), "{tool} -> {out}");
+        assert!(
+            out.contains(crate::wa::session_guard::EFFECT_ENV),
+            "{tool} refused without naming its own switch: {out}"
+        );
+        assert!(
+            !out.contains(crate::wa::session_guard::ALLOW_ENV),
+            "{tool} asked for the broader consent than it enforces: {out}"
+        );
+    }
+
+    #[test]
+    fn session_effect_tools_refuse_without_consent() {
+        // A path that cannot resolve, so even a broken gate starts nothing that
+        // could reach the operator's desktop. The clipboard probes carry a
+        // recognisable marker for the same reason: if the gate ever stops
+        // refusing, the worst a test can do is leave this string behind.
+        refuses_effect_without_consent(
+            "wa_process_launch",
+            serde_json::json!({ "exePath": "__velocity_gate_probe_does_not_exist__.exe" }),
+        );
+        refuses_effect_without_consent(
+            "wa_browser_navigate",
+            serde_json::json!({ "url": "about:blank", "browser": "chrome" }),
+        );
+        refuses_effect_without_consent(
+            "wa_clipboard_write",
+            serde_json::json!({ "text": "velocity-session-gate-probe" }),
+        );
+        refuses_effect_without_consent(
+            "wa_clipboard_write",
+            serde_json::json!({ "html": "<b>velocity-session-gate-probe</b>" }),
+        );
+        refuses_effect_without_consent("wa_clipboard_clear", serde_json::json!({}));
+    }
+
+    /// The gate lives in the manager, not only in the dispatch arm, so a caller
+    /// that reaches for `ClipboardManager::write_*` directly is covered too.
+    #[test]
+    fn clipboard_mutations_are_gated_at_the_manager() {
+        if crate::wa::session_guard::effect_consent_given() {
+            return;
+        }
+        for result in [
+            crate::wa::clipboard::ClipboardManager::write_text("gate probe"),
+            crate::wa::clipboard::ClipboardManager::write_html("<b>gate probe</b>", None),
+            crate::wa::clipboard::ClipboardManager::write_files(&[std::path::PathBuf::from(
+                "gate-probe-a.txt",
+            )]),
+            crate::wa::clipboard::ClipboardManager::clear(),
+        ] {
+            assert!(!result.success, "{} wrote anyway", result.operation);
+            assert!(
+                result.detail.contains(crate::wa::session_guard::EFFECT_ENV),
+                "{}: {}",
+                result.operation,
+                result.detail
+            );
+        }
     }
 
     /// Listing and probing stay available: the gate is on mutation, and a

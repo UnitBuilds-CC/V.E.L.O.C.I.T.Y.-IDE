@@ -19,6 +19,12 @@
 //! whoever is sitting at the machine. Everything in this family is refused
 //! unless the operator has opted in with `VELOCITY_WA_ALLOW_SESSION_CHANGE=1`.
 //!
+//! A second, milder family covers actions that leave the desktop alone but
+//! still mutate state the operator shares with every other window: writing or
+//! emptying the clipboard, and starting a program that appears on the desktop
+//! and takes the foreground. Those need `VELOCITY_WA_ALLOW_SESSION_EFFECT=1`,
+//! and the stronger switch implies it.
+//!
 //! Read-only tools (enumerate, capture, snapshot, probe, screenshot) are *not*
 //! gated: they measure the desktop without changing it.
 
@@ -26,6 +32,11 @@
 /// argument: a tool argument could be flipped by the same call that wanted the
 /// side effect, which would make the gate decorative.
 pub const ALLOW_ENV: &str = "VELOCITY_WA_ALLOW_SESSION_CHANGE";
+
+/// Opt-in switch for the milder family: mutations of session-wide shared state
+/// that do not move the operator between desktops. Setting [`ALLOW_ENV`] also
+/// satisfies it, since that is the broader grant.
+pub const EFFECT_ENV: &str = "VELOCITY_WA_ALLOW_SESSION_EFFECT";
 
 /// Truthy values for [`ALLOW_ENV`]. Anything else - including an empty or
 /// whitespace value - means "not consented", so `VAR=` does not silently enable
@@ -49,13 +60,19 @@ pub fn consent_given() -> bool {
 /// done to the person at the keyboard. The message never claims success, and it
 /// names the switch rather than leaving the caller to guess at a retry.
 pub fn refusal(action: &str, effect: &str) -> String {
+    refusal_with(
+        action,
+        effect,
+        "It acts on the interactive session rather than on a target the caller named",
+        ALLOW_ENV,
+    )
+}
+
+fn refusal_with(action: &str, effect: &str, why: &str, env: &str) -> String {
     // Callers phrase the effect as a bare clause; normalise the sentence border
     // here so no gate site has to remember the punctuation.
     let effect = effect.trim_end_matches(['.', ';']);
-    format!(
-        "{action} was refused: {effect}. It acts on the interactive session rather than on a target \
-         the caller named, so it is opt-in only. Set {ALLOW_ENV}=1 to allow it."
-    )
+    format!("{action} was refused: {effect}. {why}, so it is opt-in only. Set {env}=1 to allow it.")
 }
 
 /// The gate itself: `Err(refusal)` when consent is missing.
@@ -67,6 +84,43 @@ pub fn guard(action: &str, effect: &str) -> Result<(), String> {
         Ok(())
     } else {
         Err(refusal(action, effect))
+    }
+}
+
+/// Pure half of [`effect_consent_given`]: the broader switch implies the milder
+/// one, and neither is implied by the other's absence.
+fn effect_consent_from(effect_raw: Option<&str>, allow_raw: Option<&str>) -> bool {
+    consent_from(effect_raw) || consent_from(allow_raw)
+}
+
+/// Whether this process may mutate session-wide shared state (clipboard,
+/// launching programs into the operator's desktop).
+///
+/// Satisfied by either switch: [`ALLOW_ENV`] is the broader grant and implies
+/// it, so an operator who has consented to session changes is not asked twice.
+pub fn effect_consent_given() -> bool {
+    effect_consent_from(
+        std::env::var(EFFECT_ENV).ok().as_deref(),
+        std::env::var(ALLOW_ENV).ok().as_deref(),
+    )
+}
+
+/// Refusal for the [`EFFECT_ENV`] family.
+pub fn effect_refusal(action: &str, effect: &str) -> String {
+    refusal_with(
+        action,
+        effect,
+        "It changes state you share with every other window rather than a target the caller named",
+        EFFECT_ENV,
+    )
+}
+
+/// The [`EFFECT_ENV`] gate: `Err(effect_refusal)` when consent is missing.
+pub fn effect_guard(action: &str, effect: &str) -> Result<(), String> {
+    if effect_consent_given() {
+        Ok(())
+    } else {
+        Err(effect_refusal(action, effect))
     }
 }
 
@@ -140,5 +194,64 @@ mod tests {
         assert!(consent_from(Some("1")));
         assert!(consent_from(Some("on")));
         assert!(!consent_from(Some("")), "an empty value is not consent");
+    }
+
+    #[test]
+    fn the_broader_switch_implies_the_milder_one() {
+        let cases = [
+            (None, None, false),
+            (Some(""), None, false),
+            (Some("0"), Some("0"), false),
+            (Some("1"), None, true),
+            (Some("true"), None, true),
+            // Consenting to session changes covers session effects; asking twice
+            // would only teach operators to set both and mean neither.
+            (None, Some("1"), true),
+            (Some("1"), Some("0"), true),
+        ];
+        for (effect, allow, expected) in cases {
+            assert_eq!(
+                effect_consent_from(effect, allow),
+                expected,
+                "EFFECT_ENV={effect:?} ALLOW_ENV={allow:?} should be {expected}"
+            );
+        }
+        // The implication runs one way only. `consent_given()` reads ALLOW_ENV
+        // and nothing else, so unlocking clipboard writes must never be enough
+        // to move the operator to another desktop.
+        assert!(
+            effect_consent_from(Some("1"), Some("0")),
+            "EFFECT_ENV=1 grants the milder family"
+        );
+        assert!(
+            !consent_from(Some("0")),
+            "EFFECT_ENV=1 with ALLOW_ENV=0 must leave the session-change gate closed"
+        );
+    }
+
+    #[test]
+    fn effect_refusal_names_its_own_switch() {
+        let message = effect_refusal("clipboard write", "it replaces what you have copied");
+        assert!(message.starts_with("clipboard write was refused"));
+        assert!(message.contains(EFFECT_ENV), "{message}");
+        assert!(!message.contains(ALLOW_ENV), "{message}");
+        assert!(!message.contains(".."), "run-on refusal: {message}");
+        // Distinct wording from the session-change family: the two switches
+        // differ, so an operator must be able to tell which one a message asks
+        // for just by reading it.
+        assert_ne!(
+            message,
+            refusal("clipboard write", "it replaces what you have copied")
+        );
+    }
+
+    #[test]
+    fn effect_guard_blocks_without_consent() {
+        if effect_consent_given() {
+            return; // opted in for the whole process; nothing to assert here
+        }
+        let err = effect_guard("process launch", "it puts a window on your desktop")
+            .expect_err("unconsented session effect must be blocked");
+        assert!(err.contains(EFFECT_ENV), "{err}");
     }
 }

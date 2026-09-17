@@ -865,10 +865,17 @@ mod tests {
             "unexpected probe: {}",
             status.method
         );
-        assert!(
-            status.detail.is_some(),
-            "a fallback verdict must explain why the handle probe failed"
-        );
+        // Only the fallback owes an explanation. A terminated child whose handle
+        // is still held elsewhere - the console host keeps one - is settled
+        // directly by its exit code, which is a positive probe rather than a
+        // failure to open one, so demanding a detail there made this test lose
+        // roughly one run in ten depending on who still had the handle open.
+        if status.method == "process_snapshot" {
+            assert!(
+                status.detail.is_some(),
+                "a fallback verdict must explain why the handle probe failed"
+            );
+        }
     }
 
     #[cfg(target_os = "windows")]

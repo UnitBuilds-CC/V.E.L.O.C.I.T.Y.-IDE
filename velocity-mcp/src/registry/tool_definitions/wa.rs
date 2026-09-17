@@ -7,6 +7,11 @@ use serde_json::json;
 /// from the side effect of the call that first tried.
 const SESSION_GATE_NOTE: &str = "Opt-in only: it changes the session of whoever is at the keyboard (switches or creates virtual desktops, or injects keystrokes into the focused window) rather than acting on a target you name, so it is refused unless the server runs with VELOCITY_WA_ALLOW_SESSION_CHANGE=1.";
 
+/// Bug #40: the milder family - tools that mutate state the operator shares
+/// with every window (the clipboard) or place a new window in front of them
+/// (starting a program), without ever moving them to another desktop.
+const SESSION_EFFECT_NOTE: &str = "Opt-in only: it acts on state you share with every other window, or puts a new window in front of you, rather than on a target you name, so it is refused unless the server runs with VELOCITY_WA_ALLOW_SESSION_EFFECT=1.";
+
 pub fn get_wa_tools() -> Vec<Tool> {
     vec![
         Tool {
@@ -301,7 +306,7 @@ pub fn get_wa_tools() -> Vec<Tool> {
         },
         Tool {
             name: "wa_clipboard_write".to_string(),
-            description: "Write content to the Windows clipboard.".to_string(),
+            description: format!("Write content to the Windows clipboard. {SESSION_EFFECT_NOTE}"),
             input_schema: json!({
                 "type": "object",
                 "properties": {
@@ -313,7 +318,7 @@ pub fn get_wa_tools() -> Vec<Tool> {
         },
         Tool {
             name: "wa_clipboard_clear".to_string(),
-            description: "Clear the Windows clipboard.".to_string(),
+            description: format!("Clear the Windows clipboard. {SESSION_EFFECT_NOTE}"),
             input_schema: json!({
                 "type": "object",
                 "properties": {}
@@ -322,7 +327,7 @@ pub fn get_wa_tools() -> Vec<Tool> {
         // ─── Process Management Tools ────────────────────────────────────────────
         Tool {
             name: "wa_process_launch".to_string(),
-            description: "Launch a Windows process with optional arguments, working directory, and elevation.".to_string(),
+            description: format!("Launch a Windows process with optional arguments, working directory, and elevation. {SESSION_EFFECT_NOTE}"),
             input_schema: json!({
                 "type": "object",
                 "properties": {
@@ -687,7 +692,7 @@ pub fn get_wa_tools() -> Vec<Tool> {
         // ─── Browser Bridge Tools ───────────────────────────────────────────────
         Tool {
             name: "wa_browser_navigate".to_string(),
-            description: "Navigate the browser bridge to a URL (launches browser if needed).".to_string(),
+            description: format!("Navigate the browser bridge to a URL (launches browser if needed). {SESSION_EFFECT_NOTE}"),
             input_schema: json!({
                 "type": "object",
                 "properties": {
@@ -1204,7 +1209,7 @@ pub fn get_wa_tools() -> Vec<Tool> {
 
 #[cfg(test)]
 mod tests {
-    use super::get_wa_tools;
+    use super::{get_wa_tools, SESSION_EFFECT_NOTE, SESSION_GATE_NOTE};
 
     fn schema_of(name: &str) -> serde_json::Value {
         get_wa_tools()
@@ -1302,11 +1307,60 @@ mod tests {
             "wa_tray_list",
             "wa_notifications_list",
             "wa_screenshot",
+            "wa_clipboard_read",
+            "wa_monitor_list",
+            "wa_window_list",
         ] {
+            let desc = description_of(readable);
             assert!(
-                !description_of(readable).contains(crate::wa::session_guard::ALLOW_ENV),
+                !desc.contains(crate::wa::session_guard::ALLOW_ENV),
+                "{readable} measures the session without changing it, so it must not read as gated"
+            );
+            assert!(
+                !desc.contains(crate::wa::session_guard::EFFECT_ENV),
                 "{readable} measures the session without changing it, so it must not read as gated"
             );
         }
+    }
+
+    /// Bug #40: the milder family has its own switch, and advertising the wrong
+    /// one would have the operator grant desktop-moving to unlock a clipboard
+    /// write - or refuse the clipboard entirely while believing they had
+    /// consented. Read-only neighbours must stay out of both lists.
+    #[test]
+    fn session_effect_tools_advertise_their_own_opt_in() {
+        for name in [
+            "wa_clipboard_write",
+            "wa_clipboard_clear",
+            "wa_process_launch",
+            "wa_browser_navigate",
+        ] {
+            let desc = description_of(name);
+            assert!(
+                desc.contains(crate::wa::session_guard::EFFECT_ENV),
+                "{name} enforces the session-effect gate but never advertises it: {desc}"
+            );
+            assert!(
+                !desc.contains(crate::wa::session_guard::ALLOW_ENV),
+                "{name} must not ask for the broader desktop-moving consent: {desc}"
+            );
+        }
+    }
+
+    /// The two switch names differ by one word, so a typo would silently make
+    /// one family ungated while its description still looked right.
+    #[test]
+    fn the_two_opt_in_switches_are_distinct() {
+        assert_ne!(
+            crate::wa::session_guard::ALLOW_ENV,
+            crate::wa::session_guard::EFFECT_ENV
+        );
+        assert!(SESSION_GATE_NOTE.contains(crate::wa::session_guard::ALLOW_ENV));
+        assert!(!SESSION_GATE_NOTE.contains(crate::wa::session_guard::EFFECT_ENV));
+        assert!(SESSION_EFFECT_NOTE.contains(crate::wa::session_guard::EFFECT_ENV));
+        assert!(
+            !SESSION_EFFECT_NOTE.contains(crate::wa::session_guard::ALLOW_ENV),
+            "{SESSION_EFFECT_NOTE}"
+        );
     }
 }
