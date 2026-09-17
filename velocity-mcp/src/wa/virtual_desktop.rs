@@ -84,6 +84,22 @@ pub struct VDesktopOpResult {
     pub new_state: Option<VirtualDesktopState>,
 }
 
+/// Measured answer to "which desktop is this window on?".
+#[derive(Debug, Clone)]
+pub struct WindowDesktopProbe {
+    pub hwnd: u64,
+    /// False when `hwnd` is not a live top-level window at all.
+    pub window_exists: bool,
+    /// Index into the enumerated desktop list, when Windows would say.
+    pub desktop_index: Option<u32>,
+    /// The desktop GUID Windows reported for the window, when it reported one.
+    pub desktop_id: Option<String>,
+    /// Tri-state: `None` means Windows did not answer, not "no".
+    pub on_current_desktop: Option<bool>,
+    /// Why a lookup failed, when it did.
+    pub reason: Option<String>,
+}
+
 // ─── Virtual Desktop Manager ─────────────────────────────────────────────────
 
 /// Manages virtual desktop operations via COM/PowerShell.
@@ -146,51 +162,141 @@ impl VirtualDesktopManager {
             VDesktopOperation::SwitchToNamed(name) => {
                 // Resolve name to index via enumeration then switch
                 self.enumerate();
-                let idx = self
+                match self
                     .cached_state
                     .as_ref()
                     .and_then(|s| s.by_name(name))
                     .map(|d| d.index)
-                    .unwrap_or(0);
-                build_switch_desktop_script(idx)
+                {
+                    Some(idx) => build_switch_desktop_script(idx),
+                    None => {
+                        return VDesktopOpResult {
+                            success: false,
+                            operation: format!("{op:?}"),
+                            detail: format!(
+                                "no desktop named '{name}' (this build exposes desktop names only where \
+                                 Windows stores them; retry with index)"
+                            ),
+                            new_state: self.cached_state.clone(),
+                        }
+                    }
+                }
             }
             VDesktopOperation::Create { name } => build_create_desktop_script(name.as_deref()),
             VDesktopOperation::Remove(idx) => build_remove_desktop_script(*idx),
             VDesktopOperation::MoveWindow {
                 hwnd,
                 desktop_index,
-            } => build_move_window_to_desktop_script(*hwnd, *desktop_index),
-            VDesktopOperation::PinWindow(hwnd) => build_pin_window_script(*hwnd),
-            VDesktopOperation::UnpinWindow(hwnd) => build_unpin_window_script(*hwnd),
-        };
-        match run_ps_script(&script) {
-            Ok(_) => {
-                self.enumerate();
-                VDesktopOpResult {
-                    success: true,
-                    operation: format!("{:?}", op),
-                    detail: "executed via PowerShell".to_string(),
+            } => return self.move_window(*hwnd, *desktop_index),
+            VDesktopOperation::PinWindow(_) | VDesktopOperation::UnpinWindow(_) => {
+                // Pinning needs IVirtualDesktopPinnedApps. The previous scripts set
+                // WS_EX_TOOLWINDOW, which only hides a window from Alt+Tab, so every
+                // "pinned" answer was wrong (bug #28).
+                return VDesktopOpResult {
+                    success: false,
+                    operation: format!("{op:?}"),
+                    detail:
+                        "pin/unpin is not supported: the IVirtualDesktopPinnedApps coclass is not \
+                             registered on this Windows build"
+                            .to_string(),
                     new_state: self.cached_state.clone(),
-                }
+                };
             }
-            Err(e) => VDesktopOpResult {
-                success: false,
-                operation: format!("{:?}", op),
-                detail: e,
-                new_state: self.cached_state.clone(),
-            },
+        };
+        // The script reports what it measured; trust that instead of assuming that
+        // a clean exit means the desktop actually changed (bug #29).
+        let (success, detail) = match run_ps_script(&script) {
+            Ok(json) => describe_op_json(&json),
+            Err(e) => (false, e),
+        };
+        self.enumerate();
+        VDesktopOpResult {
+            success,
+            operation: format!("{op:?}"),
+            detail,
+            new_state: self.cached_state.clone(),
         }
     }
 
-    /// Quick check: is the window on the current desktop?
-    pub fn is_window_on_current_desktop(&self, _hwnd: u64) -> bool {
-        // Default: assume yes (single desktop fallback)
-        true
+    /// Outcome of asking Windows which desktop a window lives on.
+    ///
+    /// The lookup goes through `IVirtualDesktopManager`, whose coclass is not
+    /// registered on every Windows 11 build (bug #22: the previous code ignored
+    /// `hwnd` entirely and answered "desktop 0, on the current desktop" for any
+    /// input, including `hwnd = 0`). Where the coclass is missing, the fields
+    /// stay `None` and `reason` explains what was unavailable.
+    pub fn probe_window_desktop(&self, hwnd: u64) -> WindowDesktopProbe {
+        if !cfg!(target_os = "windows") {
+            return WindowDesktopProbe {
+                hwnd,
+                window_exists: false,
+                desktop_index: None,
+                desktop_id: None,
+                on_current_desktop: None,
+                reason: Some("virtual desktop lookup requires Windows".to_string()),
+            };
+        }
+        let script = build_window_desktop_probe_script(hwnd);
+        let json = match run_ps_script(&script) {
+            Ok(json) => json,
+            Err(e) => {
+                return WindowDesktopProbe {
+                    hwnd,
+                    window_exists: false,
+                    desktop_index: None,
+                    desktop_id: None,
+                    on_current_desktop: None,
+                    reason: Some(e),
+                }
+            }
+        };
+        parse_window_desktop_probe(hwnd, &json)
     }
 
-    /// Get the desktop index a window belongs to.
-    pub fn desktop_for_window(&self, _hwnd: u64) -> Option<u32> {
-        Some(0) // fallback: always desktop 0
+    /// Move `hwnd` to the desktop at `desktop_index`, verifying the result.
+    pub fn move_window(&mut self, hwnd: u64, desktop_index: u32) -> VDesktopOpResult {
+        self.enumerate();
+        let target_id = match self
+            .cached_state
+            .as_ref()
+            .and_then(|s| s.by_index(desktop_index))
+            .map(|d| d.id.clone())
+        {
+            Some(id) => id,
+            None => {
+                return VDesktopOpResult {
+                    success: false,
+                    operation: format!(
+                        "MoveWindow {{ hwnd: {hwnd}, desktop_index: {desktop_index} }}"
+                    ),
+                    detail: format!(
+                        "no desktop at index {desktop_index} (known indices: {})",
+                        self.cached_state
+                            .as_ref()
+                            .map(|s| s
+                                .desktops
+                                .iter()
+                                .map(|d| d.index.to_string())
+                                .collect::<Vec<_>>()
+                                .join(", "))
+                            .unwrap_or_default()
+                    ),
+                    new_state: self.cached_state.clone(),
+                }
+            }
+        };
+        let script = build_move_window_to_desktop_script(hwnd, &target_id, desktop_index);
+        let detail = match run_ps_script(&script) {
+            Ok(json) => describe_op_json(&json),
+            Err(e) => (false, e),
+        };
+        self.enumerate();
+        VDesktopOpResult {
+            success: detail.0,
+            operation: format!("MoveWindow {{ hwnd: {hwnd}, desktop_index: {desktop_index} }}"),
+            detail: detail.1,
+            new_state: self.cached_state.clone(),
+        }
     }
 }
 
@@ -202,253 +308,380 @@ impl Default for VirtualDesktopManager {
 
 // ─── PowerShell Scripts ──────────────────────────────────────────────────────
 
-/// Build a PowerShell script that enumerates virtual desktops.
-/// Uses the undocumented IVirtualDesktopManager COM interface.
-pub fn build_enumerate_desktops_script() -> String {
-    r#"
-# Virtual Desktop enumeration via COM (Windows 10/11)
-# Uses registry keys as the COM interface is undocumented but registry is stable.
-$regPath = "HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\VirtualDesktops"
-$desktopsPath = "$regPath\Desktops"
-$currentId = (Get-ItemProperty -Path $regPath -Name "CurrentVirtualDesktop" -ErrorAction SilentlyContinue).CurrentVirtualDesktop
-$currentClean = $null
-if ($null -ne $currentId) {
-    # The value is a GUID in Windows mixed-endian byte order: stringifying the raw
-    # bytes never equals the key name, so convert through [Guid] (bug #21).
-    try { $currentClean = ([System.Guid]$currentId).ToString("N").ToUpperInvariant() } catch { $currentClean = $null }
+/// Shared PowerShell prelude: decode the shell's own virtual-desktop identifiers.
+///
+/// `HKCU\...\Explorer\VirtualDesktops` publishes two REG_BINARY values:
+/// `VirtualDesktopIDs` (16 bytes per desktop, in task-view order) and
+/// `CurrentVirtualDesktop` (the active one). Both are mixed-endian GUIDs, so
+/// they must go through `[Guid]` before being compared with anything.
+/// The `Desktops\{guid}` subkeys are keyed by a *different* GUID set on Windows
+/// 11 25H2, which is why the old enumeration never matched the current desktop
+/// and reported indices no other API recognised (bug #25).
+const VD_PRELUDE: &str = r#"
+$ErrorActionPreference = 'Stop'
+$vdReg = "HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\VirtualDesktops"
+
+function Format-VdGuid([byte[]]$bytes) {
+    if ($null -eq $bytes -or $bytes.Length -lt 16) { return $null }
+    $b = New-Object byte[] 16
+    [Array]::Copy($bytes, $b, 16)
+    try { return ([System.Guid]$b).ToString("B").ToUpperInvariant() } catch { return $null }
 }
 
+function Get-VdBlob([string]$name) {
+    if (-not (Test-Path $vdReg)) { return $null }
+    $item = Get-Item -Path $vdReg -ErrorAction SilentlyContinue
+    if ($null -eq $item) { return $null }
+    $v = $item.GetValue($name)
+    if ($v -is [byte[]]) { return $v }
+    return $null
+}
+
+function Get-VdDesktopIds {
+    $blob = Get-VdBlob "VirtualDesktopIDs"
+    $out = @()
+    if ($null -eq $blob) { return , $out }
+    for ($i = 0; ($i + 16) -le $blob.Length; $i += 16) {
+        $b = New-Object byte[] 16
+        [Array]::Copy($blob, $i, $b, 0, 16)
+        $g = Format-VdGuid $b
+        if ($null -ne $g) { $out += $g }
+    }
+    return , $out
+}
+
+function Get-VdCurrentId { return Format-VdGuid (Get-VdBlob "CurrentVirtualDesktop") }
+
+function Get-VdNameForId([string]$id) {
+    $p = "$vdReg\Desktops\$id"
+    if (-not (Test-Path $p)) { return $null }
+    return (Get-ItemProperty -Path $p -Name "Name" -ErrorAction SilentlyContinue).Name
+}
+
+Add-Type -MemberDefinition @'
+[DllImport("user32.dll")] public static extern void keybd_event(byte bVk, byte bScan, uint dwFlags, int dwExtraInfo);
+'@ -Name VdKeys -Namespace Velocity | Out-Null
+
+function Send-VdHotkey([int]$vk) {
+    [Velocity.VdKeys]::keybd_event(17, 0, 0, 0)
+    [Velocity.VdKeys]::keybd_event(91, 0, 0, 0)
+    [Velocity.VdKeys]::keybd_event($vk, 0, 0, 0)
+    Start-Sleep -Milliseconds 40
+    [Velocity.VdKeys]::keybd_event($vk, 0, 2, 0)
+    [Velocity.VdKeys]::keybd_event(91, 0, 2, 0)
+    [Velocity.VdKeys]::keybd_event(17, 0, 2, 0)
+}
+"#;
+
+/// Build a PowerShell script that enumerates virtual desktops.
+/// Reads the shell's ordered desktop IDs, so indices line up with what Task
+/// View shows and with the IDs the move/pin APIs expect.
+pub fn build_enumerate_desktops_script() -> String {
+    let script = String::from(VD_PRELUDE)
+        + r#"
+$ids = Get-VdDesktopIds
+$current = Get-VdCurrentId
 $desktops = @()
 $idx = 0
-if (Test-Path $desktopsPath) {
-    $keys = Get-ChildItem -Path $desktopsPath -ErrorAction SilentlyContinue
-    foreach ($key in $keys) {
-        $id = $key.PSChildName
-        $name = (Get-ItemProperty -Path $key.PSPath -Name "Name" -ErrorAction SilentlyContinue).Name
-        $isCurrent = $false
-        if ($null -ne $currentClean) {
-            $idClean = $id.Replace("{","").Replace("}","").Replace("-","").ToUpperInvariant()
-            if ($currentClean -eq $idClean) { $isCurrent = $true }
-        }
-        $desktops += @{
-            id = $id
-            name = $name
-            index = $idx
-            is_current = $isCurrent
-        }
-        $idx++
+foreach ($id in $ids) {
+    $desktops += @{
+        id = $id
+        name = (Get-VdNameForId $id)
+        index = $idx
+        is_current = ($null -ne $current -and $current -eq $id)
     }
+    $idx++
 }
-if ($desktops.Count -eq 0) {
-    $desktops += @{ id = "default"; name = "Desktop 1"; index = 0; is_current = $true }
-}
-$matched = @($desktops | Where-Object { $_.is_current }).Count
+$matched = @($desktops | Where-Object { $_.is_current })
 $result = @{
     desktops = $desktops
-    current_index = ($desktops | Where-Object { $_.is_current } | Select-Object -First 1).index
+    current_index = $(if ($matched.Count -eq 1) { $matched[0].index } else { $null })
     total_count = $desktops.Count
-    current_desktop_known = ($matched -eq 1)
+    current_desktop_known = ($matched.Count -eq 1)
+    registry_available = (Test-Path $vdReg)
 }
-ConvertTo-Json $result -Compress -Depth 3
-"#
-    .to_string()
+ConvertTo-Json $result -Compress -Depth 4
+"#;
+    script
 }
+
+/// Assemble a virtual-desktop script: shared prelude, then the body, with
+/// `@@TOKEN@@` placeholders substituted. Placeholder substitution avoids
+/// doubling every brace in a `format!` string, which is where PowerShell
+/// scripts in this file used to pick up stray `{{`.
+fn vd_script(body: &str, tokens: &[(&str, &str)]) -> String {
+    let mut script = String::from(VD_PRELUDE);
+    script.push_str(body);
+    for (token, value) in tokens {
+        script = script.replace(token, value);
+    }
+    script
+}
+
+/// `IVirtualDesktopManager` interop plus the `IsWindow` check, wrapped in C#
+/// helpers that return JSON. PowerShell 5.1 cannot pass `out`/`ref` arguments
+/// to interop methods, so the marshalling has to live on the .NET side.
+const VD_COM_INTEROP: &str = r#"
+Add-Type -TypeDefinition @"
+using System;
+using System.Runtime.InteropServices;
+
+[ComImport, Guid("A5CD92FF-29BE-454C-8D04-D82879FB3A15"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+public interface IVirtualDesktopManager {
+    [PreserveSig] int IsWindowOnCurrentVirtualDesktop(IntPtr topLevelWindow, out bool onCurrentDesktop);
+    [PreserveSig] int GetWindowDesktopId(IntPtr topLevelWindow, out Guid desktopId);
+    [PreserveSig] int MoveWindowToDesktop(IntPtr topLevelWindow, ref Guid desktopId);
+}
+
+public static class VdApi {
+    const string CoClsid = "FF72BABB-21EC-411D-9249-53D1A7B4008F";
+
+    [DllImport("user32.dll")] static extern bool IsWindow(IntPtr hWnd);
+
+    static string Esc(string s) {
+        if (s == null) return "";
+        return s.Replace("\\", "\\\\").Replace("\"", "\\\"").Replace("\r", " ").Replace("\n", " ");
+    }
+
+    static IVirtualDesktopManager Manager() {
+        return (IVirtualDesktopManager)Activator.CreateInstance(Type.GetTypeFromCLSID(new Guid(CoClsid)));
+    }
+
+    public static string Probe(long hwndValue) {
+        IntPtr hwnd = new IntPtr(hwndValue);
+        bool exists = IsWindow(hwnd);
+        if (!exists) return "{\"window_exists\":false,\"error\":\"hwnd is not a window\"}";
+        try {
+            IVirtualDesktopManager m = Manager();
+            Guid id;
+            int hrId = m.GetWindowDesktopId(hwnd, out id);
+            bool onCur;
+            int hrCur = m.IsWindowOnCurrentVirtualDesktop(hwnd, out onCur);
+            return "{\"window_exists\":true,\"hr_getid\":" + hrId
+                + ",\"desktop\":\"" + id.ToString("B").ToUpperInvariant() + "\""
+                + ",\"hr_iscurrent\":" + hrCur
+                + ",\"on_current\":" + (hrCur == 0 ? (onCur ? "true" : "false") : "null") + "}";
+        } catch (Exception e) {
+            return "{\"window_exists\":true,\"error\":\"" + Esc(e.Message) + "\"}";
+        }
+    }
+
+    public static string Move(long hwndValue, string desktopIdText) {
+        IntPtr hwnd = new IntPtr(hwndValue);
+        if (!IsWindow(hwnd)) return "{\"verified\":false,\"error\":\"hwnd is not a window\"}";
+        try {
+            IVirtualDesktopManager m = Manager();
+            Guid target = new Guid(desktopIdText);
+            int hrMove = m.MoveWindowToDesktop(hwnd, ref target);
+            Guid now;
+            int hrRead = m.GetWindowDesktopId(hwnd, out now);
+            bool ok = hrMove == 0 && hrRead == 0 && now.ToString("B").ToUpperInvariant() == target.ToString("B").ToUpperInvariant();
+            return "{\"verified\":" + (ok ? "true" : "false") + ",\"hr_move\":" + hrMove
+                + ",\"hr_read\":" + hrRead
+                + ",\"desktop\":\"" + now.ToString("B").ToUpperInvariant() + "\"}";
+        } catch (Exception e) {
+            return "{\"verified\":false,\"error\":\"" + Esc(e.Message) + "\"}";
+        }
+    }
+}
+"@
+"#;
 
 /// Build a PowerShell script to switch to a virtual desktop by index.
+/// Sends the shell's own Ctrl+Win+Arrow shortcut, then waits for
+/// `CurrentVirtualDesktop` to name the target rather than assuming the keys
+/// landed (bug #26: the old script compared a raw GUID byte string against a
+/// key name, so it always believed it was on desktop 0 and always answered
+/// success).
 pub fn build_switch_desktop_script(target_index: u32) -> String {
-    format!(
+    vd_script(
         r#"
-# Switch virtual desktop using keyboard shortcut simulation
-# Ctrl+Win+Left/Right to navigate
-Add-Type @'
-using System.Runtime.InteropServices;
-public class VDSwitch {{
-    [DllImport("user32.dll")] public static extern void keybd_event(byte bVk, byte bScan, uint dwFlags, int dwExtraInfo);
-}}
-'@
-
-$regPath = "HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\VirtualDesktops"
-$desktopsPath = "$regPath\Desktops"
-$currentIdx = 0
-$targetIdx = {target_index}
-$keys = @(Get-ChildItem -Path $desktopsPath -ErrorAction SilentlyContinue)
-$currentId = (Get-ItemProperty -Path $regPath -Name "CurrentVirtualDesktop" -ErrorAction SilentlyContinue).CurrentVirtualDesktop
-if ($null -ne $currentId) {{
-    $currentHex = [BitConverter]::ToString($currentId).Replace("-","")
-    for ($i = 0; $i -lt $keys.Count; $i++) {{
-        $idClean = $keys[$i].PSChildName.Replace("{{","").Replace("}}","").Replace("-","")
-        if ($currentHex -eq $idClean) {{ $currentIdx = $i; break }}
-    }}
-}}
-
-$diff = $targetIdx - $currentIdx
-$direction = if ($diff -gt 0) {{ 0x27 }} else {{ 0x25 }}  # Right : Left
-$steps = [Math]::Abs($diff)
-for ($i = 0; $i -lt $steps; $i++) {{
-    # Ctrl+Win+Arrow
-    [VDSwitch]::keybd_event(0x11, 0, 0, 0)  # Ctrl down
-    [VDSwitch]::keybd_event(0x5B, 0, 0, 0)  # Win down
-    [VDSwitch]::keybd_event($direction, 0, 0, 0)  # Arrow down
-    Start-Sleep -Milliseconds 30
-    [VDSwitch]::keybd_event($direction, 0, 2, 0)  # Arrow up
-    [VDSwitch]::keybd_event(0x5B, 0, 2, 0)  # Win up
-    [VDSwitch]::keybd_event(0x11, 0, 2, 0)  # Ctrl up
-    Start-Sleep -Milliseconds 200
-}}
-Write-Output (ConvertTo-Json @{{ success = $true; from = $currentIdx; to = $targetIdx; steps = $steps }} -Compress)
-"#
+$ids = Get-VdDesktopIds
+$current = Get-VdCurrentId
+$total = $ids.Count
+$targetIdx = @@TARGET@@
+if ($total -eq 0) {
+    Write-Output (ConvertTo-Json @{ success = $false; detail = "no virtual desktops are registered on this session" } -Compress)
+    exit
+}
+if ($targetIdx -ge $total) {
+    Write-Output (ConvertTo-Json @{ success = $false; detail = "desktop index $targetIdx is out of range (0..$($total - 1))" } -Compress)
+    exit
+}
+$fromIdx = -1
+for ($i = 0; $i -lt $total; $i++) { if ($ids[$i] -eq $current) { $fromIdx = $i } }
+if ($fromIdx -lt 0) {
+    Write-Output (ConvertTo-Json @{ success = $false; detail = "Windows did not report an active desktop, so the number of switches cannot be computed" } -Compress)
+    exit
+}
+if ($fromIdx -eq $targetIdx) {
+    Write-Output (ConvertTo-Json @{ success = $true; detail = "already on desktop $targetIdx of $total" } -Compress)
+    exit
+}
+$direction = if ($targetIdx -gt $fromIdx) { 0x27 } else { 0x25 }
+$steps = [Math]::Abs($targetIdx - $fromIdx)
+for ($i = 0; $i -lt $steps; $i++) {
+    Send-VdHotkey $direction
+    Start-Sleep -Milliseconds 250
+}
+$sw = [System.Diagnostics.Stopwatch]::StartNew()
+$now = Get-VdCurrentId
+while ($sw.ElapsedMilliseconds -lt 6000 -and $now -ne $ids[$targetIdx]) {
+    Start-Sleep -Milliseconds 150
+    $now = Get-VdCurrentId
+}
+$ok = ($now -eq $ids[$targetIdx])
+$detail = if ($ok) { "switched from desktop $fromIdx to $targetIdx (verified)" } else { "sent $steps switch(es) but the active desktop is still $(if ($null -eq $now) { 'unknown' } else { $now })" }
+Write-Output (ConvertTo-Json @{ success = $ok; detail = $detail; from = $fromIdx; to = $targetIdx; steps = $steps; total = $total } -Compress)
+"#,
+        &[("@@TARGET@@", &target_index.to_string()), ("@@COM@@", "")],
     )
 }
 
 /// Build a PowerShell script to create a new virtual desktop.
 pub fn build_create_desktop_script(name: Option<&str>) -> String {
-    let _name_clause = match name {
-        Some(n) => format!("; $desktop.Name = '{}'", n.replace('\'', "''")),
+    let name_token = match name {
+        Some(n) => n.replace('"', "").replace('\\', ""),
         None => String::new(),
     };
-    r#"
-# Create a new virtual desktop via COM
-Add-Type -TypeDefinition @'
-using System;
-using System.Runtime.InteropServices;
-[ComImport(Guid("FF72BABB-21EC-411D-9249-53D1A7B4008F"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
-interface IVirtualDesktopManager {
-    int GetWindowDesktopId(IntPtr topLevelWindow, out Guid desktopId);
-    int MoveWindowToDesktop(IntPtr topLevelWindow, ref Guid desktopId);
-    int CreateDesktopW(out Guid desktopId);
+    vd_script(
+        r#"
+$ids = Get-VdDesktopIds
+$before = $ids.Count
+Send-VdHotkey 0x44
+$sw = [System.Diagnostics.Stopwatch]::StartNew()
+$after = (Get-VdDesktopIds).Count
+while ($sw.ElapsedMilliseconds -lt 5000 -and $after -le $before) {
+    Start-Sleep -Milliseconds 150
+    $after = (Get-VdDesktopIds).Count
 }
-[ComImport(Guid("A501FDEC-4A09-464C-AE4E-1B6C8C377733"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
-interface IVirtualDesktopManagerInternal {
-    int GetCount();
-    int MoveViewToDesktop(IntPtr pView, IntPtr desktop);
-    int CanViewMoveDesktops(IntPtr pView, out bool canMove);
-    int GetCurrentDesktop(out IntPtr desktop);
-    int GetDesktops(out IntPtr desktops);
-    int GetAdjacentDesktop(IntPtr from, int direction, out IntPtr desktop);
-    int SwitchDesktop(IntPtr desktop);
-    int CreateDesktopW(out IntPtr desktop);
+$ok = ($after -gt $before)
+$requested = '@@NAME@@'
+$detail = "created desktop (count $before -> $after)"
+if (-not $ok) { $detail = "Ctrl+Win+D did not add a desktop (count still $before)" }
+if ($requested -ne '') {
+    $detail = $detail + "; the requested name '$requested' could not be applied: this build exposes no desktop-name API"
 }
-'@
-# Fallback: use keyboard shortcut Ctrl+Win+D
-Add-Type @'
-using System.Runtime.InteropServices;
-public class VDCreate {
-    [DllImport("user32.dll")] public static extern void keybd_event(byte bVk, byte bScan, uint dwFlags, int dwExtraInfo);
-}
-'@
-[VDCreate]::keybd_event(0x11, 0, 0, 0)
-[VDCreate]::keybd_event(0x5B, 0, 0, 0)
-[VDCreate]::keybd_event(0x44, 0, 0, 0)  # D key
-Start-Sleep -Milliseconds 50
-[VDCreate]::keybd_event(0x44, 0, 2, 0)
-[VDCreate]::keybd_event(0x5B, 0, 2, 0)
-[VDCreate]::keybd_event(0x11, 0, 2, 0)
-Write-Output (ConvertTo-Json @{ success = $true; action = "create" } -Compress)
-"#.to_string()
+Write-Output (ConvertTo-Json @{ success = $ok; detail = $detail; name_applied = $false; count_before = $before; count_after = $after } -Compress)
+"#,
+        &[("@@NAME@@", &name_token)],
+    )
 }
 
 /// Build a PowerShell script to remove a virtual desktop by index.
+/// Ctrl+Win+F4 closes the *current* desktop, so the target has to be switched
+/// to first - the old script skipped that step and reported whichever index it
+/// was handed.
 pub fn build_remove_desktop_script(target_index: u32) -> String {
-    format!(
+    vd_script(
         r#"
-# Remove virtual desktop by switching to it first, then using Ctrl+Win+F4
-Add-Type @'
-using System.Runtime.InteropServices;
-public class VDRemove {{
-    [DllImport("user32.dll")] public static extern void keybd_event(byte bVk, byte bScan, uint dwFlags, int dwExtraInfo);
-}}
-'@
-# Switch to target desktop first
-$targetIdx = {target_index}
-# Then close it with Ctrl+Win+F4
-[VDRemove]::keybd_event(0x11, 0, 0, 0)
-[VDRemove]::keybd_event(0x5B, 0, 0, 0)
-[VDRemove]::keybd_event(0x73, 0, 0, 0)  # F4 key
-Start-Sleep -Milliseconds 50
-[VDRemove]::keybd_event(0x73, 0, 2, 0)
-[VDRemove]::keybd_event(0x5B, 0, 2, 0)
-[VDRemove]::keybd_event(0x11, 0, 2, 0)
-Write-Output (ConvertTo-Json @{{ success = $true; removed_index = $targetIdx }} -Compress)
-"#
+$ids = Get-VdDesktopIds
+$total = $ids.Count
+$targetIdx = @@TARGET@@
+if ($total -le 1) {
+    Write-Output (ConvertTo-Json @{ success = $false; detail = "refusing to remove the only desktop ($total present)" } -Compress)
+    exit
+}
+if ($targetIdx -ge $total) {
+    Write-Output (ConvertTo-Json @{ success = $false; detail = "desktop index $targetIdx is out of range (0..$($total - 1))" } -Compress)
+    exit
+}
+$current = Get-VdCurrentId
+$curIdx = -1
+for ($i = 0; $i -lt $total; $i++) { if ($ids[$i] -eq $current) { $curIdx = $i } }
+if ($curIdx -ne $targetIdx) {
+    $direction = if ($targetIdx -gt $curIdx) { 0x27 } else { 0x25 }
+    $steps = [Math]::Abs($targetIdx - $curIdx)
+    for ($i = 0; $i -lt $steps; $i++) { Send-VdHotkey $direction; Start-Sleep -Milliseconds 250 }
+    $sw = [System.Diagnostics.Stopwatch]::StartNew()
+    while ($sw.ElapsedMilliseconds -lt 6000 -and (Get-VdCurrentId) -ne $ids[$targetIdx]) { Start-Sleep -Milliseconds 150 }
+    if ((Get-VdCurrentId) -ne $ids[$targetIdx]) {
+        Write-Output (ConvertTo-Json @{ success = $false; detail = "could not switch onto desktop $targetIdx before removing it" } -Compress)
+        exit
+    }
+}
+$before = (Get-VdDesktopIds).Count
+Send-VdHotkey 0x73
+$sw2 = [System.Diagnostics.Stopwatch]::StartNew()
+$after = (Get-VdDesktopIds).Count
+while ($sw2.ElapsedMilliseconds -lt 5000 -and $after -ge $before) {
+    Start-Sleep -Milliseconds 150
+    $after = (Get-VdDesktopIds).Count
+}
+$ok = ($after -lt $before)
+$detail = if ($ok) { "removed desktop $targetIdx (count $before -> $after)" } else { "Ctrl+Win+F4 did not remove desktop $targetIdx (count still $after)" }
+Write-Output (ConvertTo-Json @{ success = $ok; detail = $detail; count_before = $before; count_after = $after } -Compress)
+"#,
+        &[("@@TARGET@@", &target_index.to_string())],
     )
 }
 
-/// Build a PowerShell script to move a window to a different desktop.
-pub fn build_move_window_to_desktop_script(hwnd: u64, desktop_index: u32) -> String {
-    format!(
+/// Build a PowerShell script to move a window to a known desktop GUID.
+/// The previous version used `New-Object -ComObject VirtualDesktopManager`, a
+/// ProgID that has never been registered, so the call could not have worked
+/// (bug #22 - it only looked like it did because the runner discarded the
+/// script output entirely).
+pub fn build_move_window_to_desktop_script(
+    hwnd: u64,
+    desktop_id: &str,
+    desktop_index: u32,
+) -> String {
+    vd_script(
         r#"
-# Move window to virtual desktop via IVirtualDesktopManager COM
-Add-Type -TypeDefinition @'
-using System;
-using System.Runtime.InteropServices;
-[ComImport(Guid("A501FDEC-4A09-464C-AE4E-1B6C8C377733"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
-interface IVirtualDesktopManager {{
-    int GetWindowDesktopId(IntPtr topLevelWindow, out Guid desktopId);
-    int MoveWindowToDesktop(IntPtr topLevelWindow, ref Guid desktopId);
-}}
-'@
-$hwnd = [IntPtr]{hwnd}
-$targetIdx = {desktop_index}
-# Get desktop GUIDs from registry
-$regPath = "HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\VirtualDesktops\Desktops"
-$keys = @(Get-ChildItem -Path $regPath -ErrorAction SilentlyContinue)
-if ($targetIdx -lt $keys.Count) {{
-    $guid = [Guid]::new($keys[$targetIdx].PSChildName)
-    $mgr = New-Object -ComObject VirtualDesktopManager
-    $mgr.MoveWindowToDesktop($hwnd, [ref]$guid)
-    Write-Output (ConvertTo-Json @{{ success = $true; hwnd = $hwnd; desktop = $targetIdx }} -Compress)
-}} else {{
-    Write-Output (ConvertTo-Json @{{ success = $false; error = "invalid desktop index" }} -Compress)
-}}
-"#
+@@COM@@
+$raw = [VdApi]::Move(@@HWND@@, '@@DESKTOP@@')
+$r = $raw | ConvertFrom-Json
+$detail = if ($r.PSObject.Properties.Name -contains 'error') {
+    "move unavailable: " + $r.error
+} elseif ($r.verified) {
+    "window is on desktop @@INDEX@@ ($raw)"
+} else {
+    "move reported hr=" + $r.hr_move + " but the window is on " + $r.desktop
+}
+Write-Output (ConvertTo-Json @{ success = [bool]$r.verified; detail = $detail } -Compress)
+"#,
+        &[
+            ("@@COM@@", VD_COM_INTEROP),
+            ("@@HWND@@", &hwnd.to_string()),
+            ("@@DESKTOP@@", desktop_id),
+            ("@@INDEX@@", &desktop_index.to_string()),
+        ],
     )
 }
 
-/// Build a PowerShell script to pin a window to all desktops.
-pub fn build_pin_window_script(hwnd: u64) -> String {
-    format!(
+/// Build a PowerShell script that answers, for one window: does it exist, and
+/// which virtual desktop is it on?
+pub fn build_window_desktop_probe_script(hwnd: u64) -> String {
+    vd_script(
         r#"
-# Pin window to all desktops by setting its style to appear on all
-Add-Type @'
-using System;
-using System.Runtime.InteropServices;
-public class VDPin {{
-    [DllImport("user32.dll")] public static extern IntPtr FindWindow(string lpClassName, string lpWindowName);
-    [DllImport("user32.dll")] public static extern int GetWindowLong(IntPtr hWnd, int nIndex);
-    [DllImport("user32.dll")] public static extern int SetWindowLong(IntPtr hWnd, int nIndex, int dwNewLong);
-    public const int GWL_EXSTYLE = -20;
-    public const int WS_EX_TOOLWINDOW = 0x00000080;
-}}
-'@
-$hwnd = [IntPtr]{hwnd}
-# Mark window as visible on all desktops (toolwindow style trick)
-$exStyle = [VDPin]::GetWindowLong($hwnd, [VDPin]::GWL_EXSTYLE)
-[VDPin]::SetWindowLong($hwnd, [VDPin]::GWL_EXSTYLE, ($exStyle -bor [VDPin]::WS_EX_TOOLWINDOW))
-Write-Output (ConvertTo-Json @{{ success = $true; hwnd = {hwnd}; pinned = $true }} -Compress)
-"#
-    )
+@@COM@@
+$hwnd = [int64]@@HWND@@
+$raw = [VdApi]::Probe($hwnd) | ConvertFrom-Json
+$ids = Get-VdDesktopIds
+$current = Get-VdCurrentId
+$index = $null
+$desktopId = $null
+$reason = $null
+if ($raw.PSObject.Properties.Name -contains 'error') { $reason = $raw.error }
+if ($raw.PSObject.Properties.Name -contains 'desktop') {
+    $desktopId = $raw.desktop
+    for ($i = 0; $i -lt $ids.Count; $i++) { if ($ids[$i] -eq $desktopId) { $index = $i } }
+    if ($null -eq $index -and $null -eq $reason) {
+        $reason = "the window belongs to a desktop that is not in the registered list"
+    }
 }
-
-/// Build a PowerShell script to unpin a window from all desktops.
-pub fn build_unpin_window_script(hwnd: u64) -> String {
-    format!(
-        r#"
-# Unpin window from all desktops
-Add-Type @'
-using System;
-using System.Runtime.InteropServices;
-public class VDUnpin {{
-    [DllImport("user32.dll")] public static extern int GetWindowLong(IntPtr hWnd, int nIndex);
-    [DllImport("user32.dll")] public static extern int SetWindowLong(IntPtr hWnd, int nIndex, int dwNewLong);
-    public const int GWL_EXSTYLE = -20;
-    public const int WS_EX_TOOLWINDOW = 0x00000080;
-}}
-'@
-$hwnd = [IntPtr]{hwnd}
-$exStyle = [VDUnpin]::GetWindowLong($hwnd, [VDUnpin]::GWL_EXSTYLE)
-[VDUnpin]::SetWindowLong($hwnd, [VDUnpin]::GWL_EXSTYLE, ($exStyle -band (-bnot [VDUnpin]::WS_EX_TOOLWINDOW)))
-Write-Output (ConvertTo-Json @{{ success = $true; hwnd = {hwnd}; pinned = $false }} -Compress)
-"#
+$onCurrent = $null
+if ($raw.PSObject.Properties.Name -contains 'on_current') { $onCurrent = $raw.on_current }
+elseif ($null -ne $desktopId -and $null -ne $current) { $onCurrent = ($desktopId -eq $current) }
+Write-Output (ConvertTo-Json @{
+    window_exists = [bool]$raw.window_exists
+    desktop_index = $index
+    desktop_id = $desktopId
+    on_current_desktop = $onCurrent
+    reason = $reason
+} -Compress)
+"#,
+        &[("@@COM@@", VD_COM_INTEROP), ("@@HWND@@", &hwnd.to_string())],
     )
 }
 
@@ -456,6 +689,64 @@ Write-Output (ConvertTo-Json @{{ success = $true; hwnd = {hwnd}; pinned = $false
 
 fn run_ps_script(script: &str) -> Result<String, String> {
     crate::wa::ps::run_ps_script(script)
+}
+
+/// Interpret the `{success, detail}` verdict a virtual-desktop script printed.
+/// A clean exit is not evidence that the desktop actually changed, so each
+/// script measures the before/after state and reports it (bug #29: `apply`
+/// hard-coded `success: true` whenever PowerShell ran without error).
+fn describe_op_json(json: &str) -> (bool, String) {
+    #[derive(serde::Deserialize)]
+    struct PsOpResult {
+        success: Option<bool>,
+        detail: Option<String>,
+    }
+    match serde_json::from_str::<PsOpResult>(json) {
+        Ok(r) => (
+            r.success.unwrap_or(false),
+            r.detail
+                .unwrap_or_else(|| "the script reported no detail".to_string()),
+        ),
+        Err(_) => {
+            let snippet: String = json.chars().take(200).collect();
+            (false, format!("unexpected script output: {snippet:?}"))
+        }
+    }
+}
+
+/// Parse the per-window desktop probe into measured fields, keeping "Windows
+/// did not answer" distinct from "the window is not on that desktop".
+fn parse_window_desktop_probe(hwnd: u64, json: &str) -> WindowDesktopProbe {
+    #[derive(serde::Deserialize)]
+    struct PsProbe {
+        #[serde(default)]
+        window_exists: bool,
+        desktop_index: Option<u32>,
+        desktop_id: Option<String>,
+        on_current_desktop: Option<bool>,
+        reason: Option<String>,
+    }
+    match serde_json::from_str::<PsProbe>(json) {
+        Ok(p) => WindowDesktopProbe {
+            hwnd,
+            window_exists: p.window_exists,
+            desktop_index: p.desktop_index,
+            desktop_id: p.desktop_id,
+            on_current_desktop: p.on_current_desktop,
+            reason: p.reason,
+        },
+        Err(_) => WindowDesktopProbe {
+            hwnd,
+            window_exists: false,
+            desktop_index: None,
+            desktop_id: None,
+            on_current_desktop: None,
+            reason: Some(format!(
+                "unexpected probe output: {:?}",
+                json.chars().take(200).collect::<String>()
+            )),
+        },
+    }
 }
 
 fn parse_enumerate_result(json: &str) -> Option<VirtualDesktopState> {
@@ -474,8 +765,14 @@ fn parse_enumerate_result(json: &str) -> Option<VirtualDesktopState> {
         current_desktop_known: Option<bool>,
     }
     let r: PsResult = serde_json::from_str(json).ok()?;
-    let desktops: Vec<VirtualDesktop> = r
-        .desktops?
+    let listed = r.desktops?;
+    // An empty list means nothing was measured (the registry key was missing or
+    // held no IDs), so let the caller fall back instead of reporting a state
+    // with zero desktops.
+    if listed.is_empty() {
+        return None;
+    }
+    let desktops: Vec<VirtualDesktop> = listed
         .into_iter()
         .map(|d| VirtualDesktop {
             id: d.id.unwrap_or_default(),
@@ -588,5 +885,77 @@ mod tests {
         let script = build_switch_desktop_script(2);
         assert!(script.contains("keybd_event"));
         assert!(script.contains("targetIdx = 2"));
+    }
+
+    /// Bug #25: the ordered list comes from `VirtualDesktopIDs`, not from the
+    /// `Desktops\{guid}` subkeys, which are keyed by unrelated GUIDs.
+    #[test]
+    fn enumerate_script_reads_the_ordered_id_list() {
+        let script = build_enumerate_desktops_script();
+        assert!(script.contains("VirtualDesktopIDs"));
+        assert!(!script.contains("Get-ChildItem -Path $desktopsPath"));
+    }
+
+    /// Shape captured from a real Windows 11 25H2 session: two desktops, the
+    /// second one active.
+    #[test]
+    fn parse_reads_ordered_ids_and_the_active_index() {
+        let json = r#"{"desktops":[{"id":"{B529C4F1-6660-4E0F-A53D-AF655088D42E}","name":null,"index":0,"is_current":false},{"id":"{3E1E9F43-2B70-4E24-A5BF-2223D08242BB}","name":null,"index":1,"is_current":true}],"current_index":1,"total_count":2,"current_desktop_known":true,"registry_available":true}"#;
+        let state = parse_enumerate_result(json).expect("parses");
+        assert_eq!(state.total_count, 2);
+        assert!(state.current_desktop_known);
+        assert_eq!(state.current_index, 1);
+        assert_eq!(
+            state.current().unwrap().id,
+            "{3E1E9F43-2B70-4E24-A5BF-2223D08242BB}"
+        );
+    }
+
+    /// An empty enumeration is "nothing measured", which the caller must be
+    /// able to tell apart from a machine that genuinely has zero desktops.
+    #[test]
+    fn parse_rejects_empty_desktop_list() {
+        let json = r#"{"desktops":[],"current_index":null,"total_count":0,"current_desktop_known":false,"registry_available":false}"#;
+        assert!(parse_enumerate_result(json).is_none());
+    }
+
+    /// Bug #22: "Windows would not say" must stay null rather than becoming a
+    /// confident desktop-0 answer.
+    #[test]
+    fn probe_keeps_unanswered_lookup_null() {
+        let json = r#"{"window_exists":true,"desktop_index":null,"desktop_id":null,"on_current_desktop":null,"reason":"Retrieving the COM class factory failed: 80040154"}"#;
+        let probe = parse_window_desktop_probe(4242, json);
+        assert!(probe.window_exists);
+        assert_eq!(probe.hwnd, 4242);
+        assert!(probe.desktop_index.is_none());
+        assert!(probe.on_current_desktop.is_none());
+        assert!(probe.reason.unwrap().contains("80040154"));
+    }
+
+    #[test]
+    fn probe_reports_a_window_that_does_not_exist() {
+        let json = r#"{"window_exists":false,"desktop_index":null,"desktop_id":null,"on_current_desktop":null,"reason":"hwnd is not a window"}"#;
+        let probe = parse_window_desktop_probe(0, json);
+        assert!(!probe.window_exists);
+        assert!(probe.reason.unwrap().contains("not a window"));
+    }
+
+    /// Bug #29: a clean PowerShell exit is not a success verdict.
+    #[test]
+    fn describe_op_json_follows_the_scripts_verdict() {
+        let (ok, detail) = describe_op_json(
+            r#"{"success":false,"detail":"Ctrl+Win+F4 did not remove desktop 1"}"#,
+        );
+        assert!(!ok);
+        assert!(detail.contains("did not remove"));
+
+        let (ok, _) = describe_op_json(
+            r#"{"success":true,"detail":"switched from desktop 0 to 1 (verified)"}"#,
+        );
+        assert!(ok);
+
+        let (ok, detail) = describe_op_json("not json at all");
+        assert!(!ok);
+        assert!(detail.contains("unexpected script output"));
     }
 }

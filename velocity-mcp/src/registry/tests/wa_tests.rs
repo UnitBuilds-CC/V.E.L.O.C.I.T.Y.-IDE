@@ -154,21 +154,36 @@ fn wa_virtual_desktop_script_generation() {
     assert!(enum_script.contains("CurrentVirtualDesktop"));
 
     let switch_script = build_switch_desktop_script(2);
-    assert!(switch_script.contains("keybd_event"));
+    assert!(switch_script.contains("Send-VdHotkey"));
     assert!(switch_script.contains("targetIdx = 2"));
+    // A switch counts as done only once the shell confirms the active desktop
+    // changed (bug #26).
+    assert!(switch_script.contains("Get-VdCurrentId"));
 
     let create_script = build_create_desktop_script(Some("Work"));
-    assert!(create_script.contains("VDCreate"));
     assert!(create_script.contains("0x44")); // D key
+                                             // The requested name is no longer computed and discarded (bug #27).
+    assert!(create_script.contains("Work"));
+    assert!(create_script.contains("name_applied"));
 
     let remove_script = build_remove_desktop_script(1);
-    assert!(remove_script.contains("VDRemove"));
     assert!(remove_script.contains("0x73")); // F4 key
+                                             // Ctrl+Win+F4 closes whichever desktop is current, so the target has to be
+                                             // selected first instead of assumed.
+    assert!(remove_script.contains("could not switch onto desktop"));
 
-    let pin_script = build_pin_window_script(12345);
-    assert!(pin_script.contains("VDPin"));
-    assert!(pin_script.contains("12345"));
-    assert!(pin_script.contains("WS_EX_TOOLWINDOW"));
+    // Bug #28: "pinning" used to toggle WS_EX_TOOLWINDOW, which only hides a
+    // window from Alt+Tab.
+    let probe_script = build_window_desktop_probe_script(12345);
+    assert!(probe_script.contains("12345"));
+    assert!(probe_script.contains("window_exists"));
+    assert!(!probe_script.contains("WS_EX_TOOLWINDOW"));
+
+    let move_script =
+        build_move_window_to_desktop_script(999, "{B529C4F1-6660-4E0F-A53D-AF655088D42E}", 1);
+    assert!(move_script.contains("MoveWindowToDesktop"));
+    // The old script used a ProgID that has never existed.
+    assert!(!move_script.contains("New-Object -ComObject"));
 
     // Test manager state
     let state = VirtualDesktopState {

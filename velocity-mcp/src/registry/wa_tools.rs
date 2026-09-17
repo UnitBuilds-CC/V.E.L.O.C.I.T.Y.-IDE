@@ -737,18 +737,36 @@ pub fn handle_wa_tool(
         "wa_vdesktop_window_info" => {
             let hwnd = arguments["hwnd"].as_u64().ok_or("hwnd is required")?;
             let mut mgr = crate::wa::virtual_desktop::VirtualDesktopManager::new();
-            let state = mgr.enumerate();
-            let current_index = state.current_index;
-            let current_desktop_known = state.current_desktop_known;
-            let desktop_index = mgr.desktop_for_window(hwnd);
-            let on_current = mgr.is_window_on_current_desktop(hwnd);
+            mgr.enumerate();
+            let snapshot = mgr.state().cloned();
+            let probe = mgr.probe_window_desktop(hwnd);
+            if !probe.window_exists {
+                // An unknown window is an error, not a desktop assignment.
+                let reason = probe.reason.unwrap_or_default();
+                return Err(Box::<dyn Error>::from(format!(
+                    "no such window: hwnd {hwnd}{}",
+                    if reason.is_empty() {
+                        String::new()
+                    } else {
+                        format!(" ({reason})")
+                    }
+                )));
+            }
             serde_json::to_string(&serde_json::json!({
                 "success": true,
                 "hwnd": hwnd,
-                "desktop_index": desktop_index,
-                "current_index": current_index,
-                "current_desktop_known": current_desktop_known,
-                "is_on_current_desktop": on_current,
+                // A null here means Windows would not answer (its
+                // IVirtualDesktopManager coclass is not registered on every
+                // build), not that the window is absent from that desktop.
+                "desktop_index": probe.desktop_index,
+                "desktop_id": probe.desktop_id,
+                "is_on_current_desktop": probe.on_current_desktop,
+                "current_index": snapshot.as_ref().map(|s| s.current_index),
+                "current_desktop_known": snapshot
+                    .as_ref()
+                    .map(|s| s.current_desktop_known)
+                    .unwrap_or(false),
+                "lookup_reason": probe.reason,
             }))
             .map_err(|err| {
                 Box::<dyn Error>::from(format!("serialise virtual desktop window info: {err}"))
@@ -1572,18 +1590,26 @@ pub fn handle_wa_tool(
                 .unwrap_or("browser_screenshot.png");
             let img =
                 crate::wa::screenshot::capture(&crate::wa::screenshot::CaptureTarget::FullScreen);
-            let _ = img.save_bmp(std::path::Path::new(output_path));
-            format!(
-                "{{\"success\":{},\"path\":\"{}\",\"width\":{},\"height\":{}}}",
-                img.pixel_count() > 0,
-                output_path,
-                img.width,
-                img.height
-            )
+            // Bug #23: this defaulted to `.png` but wrote BMP bytes, and discarded
+            // the write error so a failed save still reported `success: true`
+            // whenever pixels had been captured.
+            let saved = img.save_to(std::path::Path::new(output_path));
+            serde_json::to_string(&serde_json::json!({
+                "success": saved.is_ok() && img.pixel_count() > 0,
+                "path": output_path,
+                "format": crate::wa::screenshot::image_format_for_path(std::path::Path::new(
+                    output_path,
+                )),
+                "width": img.width,
+                "height": img.height,
+                "pixel_count": img.pixel_count(),
+                "detail": saved.err().map(|e| e.to_string()),
+            }))
+            .map_err(|err| Box::<dyn Error>::from(format!("serialise screenshot result: {err}")))?
         }
         // ─── Screenshot ──────────────────────────────────────────────────────
         "wa_screenshot" => {
-            let output_path = arguments["outputPath"].as_str().unwrap_or("screenshot.bmp");
+            let output_path = arguments["outputPath"].as_str().unwrap_or("screenshot.png");
             let target = if let Some(pid) = arguments["pid"].as_u64() {
                 crate::wa::screenshot::CaptureTarget::Window(pid as u32)
             } else if let Some(region) = arguments["region"].as_object() {
@@ -1600,13 +1626,16 @@ pub fn handle_wa_tool(
                 crate::wa::screenshot::CaptureTarget::FullScreen
             };
             let img = crate::wa::screenshot::capture(&target);
-            // The capture backend persists Windows bitmaps, so report the real format
-            // rather than implying the requested extension was honoured.
-            let saved = img.save_bmp(std::path::Path::new(output_path));
+            // Encode to whatever the requested path asks for and report the format
+            // that was actually written, so a `.png` request yields PNG bytes
+            // (bug #23: `save_bmp` was the only writer and `"format"` was a literal).
+            let format =
+                crate::wa::screenshot::image_format_for_path(std::path::Path::new(output_path));
+            let saved = img.save_to(std::path::Path::new(output_path));
             serde_json::to_string(&serde_json::json!({
                 "success": saved.is_ok() && img.pixel_count() > 0,
                 "path": output_path,
-                "format": "bmp",
+                "format": format,
                 "width": img.width,
                 "height": img.height,
                 "pixel_count": img.pixel_count(),

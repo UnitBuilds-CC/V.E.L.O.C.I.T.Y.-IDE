@@ -125,6 +125,53 @@ impl Screenshot {
 
         std::fs::write(path, &data)
     }
+
+    /// Write the screenshot in the format its path asks for.
+    ///
+    /// `save_bmp` used to be the only writer, so asking for `capture.png`
+    /// produced BMP bytes behind a `.png` name (bug #23) - unreadable to
+    /// anything that trusts the extension. Pair this with
+    /// [`image_format_for_path`] so the reported format matches the bytes.
+    pub fn save_to(&self, path: &Path) -> std::io::Result<()> {
+        let format = image_format_for_path(path);
+        if format == "bmp" {
+            return self.save_bmp(path);
+        }
+        let buf = self.pixels.clone();
+        let img = image::RgbaImage::from_raw(self.width, self.height, buf).ok_or_else(|| {
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "pixel buffer does not match the reported dimensions",
+            )
+        })?;
+        let fmt = match format {
+            "jpeg" => image::ImageFormat::Jpeg,
+            "gif" => image::ImageFormat::Gif,
+            "webp" => image::ImageFormat::WebP,
+            _ => image::ImageFormat::Png,
+        };
+        image::DynamicImage::from(img)
+            .save_with_format(path, fmt)
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e.to_string()))
+    }
+}
+
+/// The encoder [`Screenshot::save_to`] will pick for `path`. An unrecognised or
+/// missing extension means PNG rather than a silent BMP, so the format a caller
+/// is told about is always the format they receive.
+pub fn image_format_for_path(path: &Path) -> &'static str {
+    match path
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(|e| e.to_ascii_lowercase())
+        .as_deref()
+    {
+        Some("bmp") => "bmp",
+        Some("jpg") | Some("jpeg") => "jpeg",
+        Some("gif") => "gif",
+        Some("webp") => "webp",
+        _ => "png",
+    }
 }
 
 // ─── Visual Diff Engine ──────────────────────────────────────────────────────
@@ -714,5 +761,71 @@ mod tests {
         let data = std::fs::read(temp.path()).unwrap();
         assert_eq!(&data[0..2], b"BM");
         assert!(data.len() > 54); // header + some pixel data
+    }
+
+    // ─── Bug #23: the extension decided nothing about the bytes ──────────────
+
+    fn scratch_path(dir: &tempfile::TempDir, name: &str) -> std::path::PathBuf {
+        dir.path().join(name)
+    }
+
+    #[test]
+    fn format_for_path_follows_the_extension() {
+        let cases = [
+            ("capture.png", "png"),
+            ("CAPTURE.PNG", "png"),
+            ("shot.jpg", "jpeg"),
+            ("shot.jpeg", "jpeg"),
+            ("shot.gif", "gif"),
+            ("shot.webp", "webp"),
+            ("shot.bmp", "bmp"),
+            // An unknown or missing extension must resolve to a format we can
+            // actually report, not to the legacy BMP.
+            ("shot.txt", "png"),
+            ("no_extension", "png"),
+        ];
+        for (name, expected) in cases {
+            assert_eq!(
+                image_format_for_path(std::path::Path::new(name)),
+                expected,
+                "wrong format chosen for {name}"
+            );
+        }
+    }
+
+    #[test]
+    fn save_to_writes_the_bytes_the_name_promises() {
+        let dir = tempfile::tempdir().unwrap();
+        let img = make_test_screenshot(4, 3, [10, 200, 30, 255]);
+
+        let png_path = scratch_path(&dir, "shot.png");
+        img.save_to(&png_path).unwrap();
+        let png = std::fs::read(&png_path).unwrap();
+        assert_eq!(&png[0..4], b"\x89PNG", ".png held non-PNG bytes");
+
+        let bmp_path = scratch_path(&dir, "shot.bmp");
+        img.save_to(&bmp_path).unwrap();
+        let bmp = std::fs::read(&bmp_path).unwrap();
+        assert_eq!(&bmp[0..2], b"BM", ".bmp held non-BMP bytes");
+
+        let jpg_path = scratch_path(&dir, "shot.jpg");
+        img.save_to(&jpg_path).unwrap();
+        let jpg = std::fs::read(&jpg_path).unwrap();
+        assert_eq!(&jpg[0..2], b"\xff\xd8", ".jpg held non-JPEG bytes");
+
+        // PNG and BMP must not be interchangeable: the regression was that every
+        // path, whatever its name, received the BMP encoder.
+        assert_ne!(png[0..2], bmp[0..2]);
+    }
+
+    #[test]
+    fn save_to_rejects_a_pixel_buffer_that_lies_about_size() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut img = make_test_screenshot(4, 3, [0, 0, 0, 255]);
+        img.pixels.truncate(img.pixels.len() - 4);
+        let err = img
+            .save_to(&scratch_path(&dir, "broken.png"))
+            .expect_err("a short buffer must not silently encode");
+        assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
     }
 }
