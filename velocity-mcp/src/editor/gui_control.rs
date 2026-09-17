@@ -13,7 +13,7 @@
 //!     │ GuiControlListener (background thread)
 //!     │ reads JSON commands, pushes to crossbeam channel
 //!     ▼
-//! VelocityApp::process_gui_commands()
+//! VelocityApp::process_gui_commands(ctx)
 //!     │ called at start of each egui frame
 //!     │ executes commands on the main thread
 //!     ▼

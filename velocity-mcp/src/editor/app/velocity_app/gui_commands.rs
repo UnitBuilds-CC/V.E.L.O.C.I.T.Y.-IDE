@@ -3,11 +3,14 @@
 
 use super::struct_def::VelocityApp;
 use crate::editor::gui_control::{GuiCommand, GuiResponse, IdeState};
+use eframe::egui;
 
 impl VelocityApp {
     /// Process any pending GUI control commands from external processes.
     /// Called at the start of each egui frame.
-    pub fn process_gui_commands(&mut self) {
+    /// `ctx` is used for viewport-level actions (e.g. closing the window on
+    /// a remote quit request).
+    pub fn process_gui_commands(&mut self, ctx: &egui::Context) {
         // Take the receiver out temporarily to satisfy the borrow checker.
         let rx = match self.gui_cmd_rx.take() {
             Some(rx) => rx,
@@ -16,7 +19,7 @@ impl VelocityApp {
 
         // Process all pending commands (non-blocking).
         while let Ok((cmd, resp_tx)) = rx.try_recv() {
-            let response = self.execute_gui_command(cmd);
+            let response = self.execute_gui_command(cmd, ctx);
             let _ = resp_tx.send(response);
         }
 
@@ -25,13 +28,13 @@ impl VelocityApp {
     }
 
     /// Execute a single GUI command and return the response.
-    fn execute_gui_command(&mut self, cmd: GuiCommand) -> GuiResponse {
+    fn execute_gui_command(&mut self, cmd: GuiCommand, ctx: &egui::Context) -> GuiResponse {
         match cmd {
             GuiCommand::OpenFile { path } => self.cmd_open_file(path),
             GuiCommand::GetState {} => self.cmd_get_state(),
             GuiCommand::NavigatePanel { panel } => self.cmd_navigate_panel(panel),
             GuiCommand::Screenshot { path } => self.cmd_screenshot(path),
-            GuiCommand::Quit {} => self.cmd_quit(),
+            GuiCommand::Quit {} => self.cmd_quit(ctx),
         }
     }
 
@@ -175,10 +178,11 @@ impl VelocityApp {
         }
     }
 
-    /// Quit the IDE.
-    fn cmd_quit(&mut self) -> GuiResponse {
-        // Signal the egui event loop to stop.
-        // The actual quit happens via the egui context.
+    /// Quit the IDE. Sends a viewport Close command through the egui
+    /// context, which drives the normal window-close flow — eframe still
+    /// calls `on_exit`, so workspace preferences are saved.
+    fn cmd_quit(&mut self, ctx: &egui::Context) -> GuiResponse {
+        ctx.send_viewport_cmd(egui::ViewportCommand::Close);
         GuiResponse {
             success: true,
             data: Some(serde_json::json!({ "quitting": true })),
