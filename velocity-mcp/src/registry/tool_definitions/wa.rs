@@ -651,16 +651,23 @@ pub fn get_wa_tools() -> Vec<Tool> {
                 "required": ["hwnd", "targetIndex"]
             }),
         },
-        // ─── Window Tiling Tool ─────────────────────────────────────────────────
+        // ─── Window Tiling Tools ──────────────────────────────────────────────
         Tool {
             name: "wa_window_tile".to_string(),
-            description: "Tile visible windows in a grid layout (2-column, 3-column, or custom).".to_string(),
+            description: "Tile an explicitly named set of windows in a grid on one monitor. `hwnds` is required: this tool will not enumerate and rearrange every window on the desktop. Handles must come from wa_window_list.".to_string(),
             input_schema: json!({
                 "type": "object",
                 "properties": {
-                    "columns": { "type": "integer", "description": "Number of columns in the tile grid. Default 2." },
-                    "monitor": { "type": "integer", "description": "Monitor index to tile on. Default 0 (primary)." }
-                }
+                    "hwnds": {
+                        "type": "array",
+                        "items": { "type": "integer", "minimum": 1 },
+                        "minItems": 1,
+                        "description": "Window handles to tile, placed left-to-right then top-to-bottom in the order given. Handles that are no longer live windows are skipped and reported in `windows_skipped`."
+                    },
+                    "columns": { "type": "integer", "minimum": 1, "description": "Number of columns in the tile grid. Defaults to a square-ish layout (ceil(sqrt(n))) and is clamped to the number of handles supplied." },
+                    "monitor": { "type": "integer", "minimum": 0, "description": "Monitor index to tile on. Default 0. An index with no monitor attached is an error; it does not fall back to the primary display. See wa_monitor_list for valid indices." }
+                },
+                "required": ["hwnds"]
             }),
         },
         Tool {
@@ -690,7 +697,7 @@ pub fn get_wa_tools() -> Vec<Tool> {
             input_schema: json!({
                 "type": "object",
                 "properties": {
-                    "outputPath": { "type": "string", "description": "Path to save the screenshot. Default 'browser_screenshot.png'." }
+                    "outputPath": { "type": "string", "description": "Path to save the screenshot; the encoded format follows the file extension (.png, .bmp, .jpg/.jpeg, .gif, .webp). Default 'browser_screenshot.png'." }
                 }
             }),
         },
@@ -868,11 +875,11 @@ pub fn get_wa_tools() -> Vec<Tool> {
         // ─── Screenshot ───────────────────────────────────────────────────────
         Tool {
             name: "wa_screenshot".to_string(),
-            description: "Capture the full screen, a single window by PID, or a screen region and persist it as a Windows bitmap.".to_string(),
+            description: "Capture the full screen, a single window by PID, or a screen region, and persist it in the format implied by the output file extension.".to_string(),
             input_schema: json!({
                 "type": "object",
                 "properties": {
-                    "outputPath": { "type": "string", "description": "Destination file path. The capture backend writes BMP data. Defaults to screenshot.bmp." },
+                    "outputPath": { "type": "string", "description": "Destination file path. The encoder follows the extension: .bmp, .jpg/.jpeg, .gif, .webp, otherwise .png (also the default for an unrecognised or missing extension). Defaults to screenshot.png. The response `format` names the encoder that actually ran." },
                     "pid": { "type": "integer", "minimum": 1, "description": "Optional process id to capture a specific window instead of the full screen." },
                     "region": {
                         "type": "object",
@@ -1185,4 +1192,79 @@ pub fn get_wa_tools() -> Vec<Tool> {
             }),
         },
     ]
+}
+
+// ─── Tests ───────────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::get_wa_tools;
+
+    fn schema_of(name: &str) -> serde_json::Value {
+        get_wa_tools()
+            .into_iter()
+            .find(|t| t.name == name)
+            .unwrap_or_else(|| panic!("{name} is no longer advertised"))
+            .input_schema
+    }
+
+    fn description_of(name: &str) -> String {
+        get_wa_tools()
+            .into_iter()
+            .find(|t| t.name == name)
+            .unwrap_or_else(|| panic!("{name} is no longer advertised"))
+            .description
+    }
+
+    // Bug #37: the handler now refuses to act unless it is given explicit
+    // handles, so the advertised schema has to demand them too - otherwise a
+    // spec-following caller is told it may tile "visible windows" and then gets
+    // a validation error back.
+    #[test]
+    fn window_tile_schema_demands_the_handles_the_handler_requires() {
+        let schema = schema_of("wa_window_tile");
+        let required = schema["required"].as_array().expect("required array");
+        assert!(
+            required.iter().any(|v| v == "hwnds"),
+            "hwnds must be required, got: {required:?}"
+        );
+        let hwnds = &schema["properties"]["hwnds"];
+        assert_eq!(hwnds["type"], "array", "got: {hwnds}");
+        assert_eq!(hwnds["items"]["type"], "integer", "got: {hwnds}");
+
+        let desc = description_of("wa_window_tile");
+        assert!(
+            !desc.contains("2-column, 3-column"),
+            "stale layout claim still advertised: {desc}"
+        );
+    }
+
+    // Bug #23: the capture backend encodes to whatever the extension asks for,
+    // so the docs must not promise a bitmap specifically, and must name every
+    // format the shared extension->encoder mapping actually supports.
+    #[test]
+    fn screenshot_schema_names_every_format_the_encoder_can_write() {
+        let desc = description_of("wa_screenshot");
+        assert!(
+            !desc.contains("as a Windows bitmap"),
+            "stale BMP-only claim still advertised: {desc}"
+        );
+        let path_desc = schema_of("wa_screenshot")["properties"]["outputPath"]["description"]
+            .as_str()
+            .expect("outputPath description")
+            .to_ascii_lowercase();
+        for ext in ["bmp", "png", "jpeg", "gif", "webp"] {
+            let probed = std::path::Path::new("x").join(format!("shot.{ext}"));
+            let encoder = crate::wa::screenshot::image_format_for_path(&probed);
+            assert_eq!(encoder, ext, "unexpected mapping for .{ext}");
+            assert!(
+                path_desc.contains(ext),
+                "encoder supports {ext} but the parameter doc never mentions it: {path_desc}"
+            );
+        }
+        assert!(
+            path_desc.contains("default") && path_desc.contains("png"),
+            "the fallback format must be documented: {path_desc}"
+        );
+    }
 }

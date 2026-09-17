@@ -29,7 +29,7 @@ pub struct WindowInfo {
     pub is_top_level: bool,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct WindowRect {
     pub x: i32,
     pub y: i32,
@@ -161,33 +161,67 @@ impl WindowManager {
         }
     }
 
-    /// Tile windows side by side on the primary monitor.
+    /// Work out the grid cell for each of `count` windows tiled across a
+    /// `monitor_width` x `monitor_height` area.
+    ///
+    /// Separated from [`WindowManager::tile_windows`] so the layout can be
+    /// asserted without moving any real window.
+    pub fn tile_rects(
+        count: usize,
+        monitor_width: u32,
+        monitor_height: u32,
+        columns: Option<u32>,
+    ) -> Vec<WindowRect> {
+        if count == 0 {
+            return Vec::new();
+        }
+        let cols = Self::tile_columns(count, columns);
+        let rows = (count as u32).div_ceil(cols);
+        let tile_w = monitor_width / cols;
+        let tile_h = monitor_height / rows;
+
+        (0..count)
+            .map(|i| WindowRect {
+                x: ((i as u32 % cols) * tile_w) as i32,
+                y: ((i as u32 / cols) * tile_h) as i32,
+                width: tile_w,
+                height: tile_h,
+            })
+            .collect()
+    }
+
+    /// Column count actually used for a tile grid: honour the caller's request,
+    /// clamped to something meaningful, or fall back to a square-ish layout.
+    fn tile_columns(count: usize, columns: Option<u32>) -> u32 {
+        let upper = count.max(1) as u32;
+        match columns {
+            Some(c) => c.clamp(1, upper),
+            None => ((count as f64).sqrt().ceil() as u32).clamp(1, upper),
+        }
+    }
+
+    /// Arrange `hwnds` in a grid across a `monitor_width` x `monitor_height` area.
+    ///
+    /// `columns` honours the caller's request (bug #37: `wa_window_tile` advertised
+    /// "2-column, 3-column, or custom" but the value was never read and the grid
+    /// was always `sqrt(n)`). `None` keeps the automatic square-ish layout.
     pub fn tile_windows(
         hwnds: &[u64],
         monitor_width: u32,
         monitor_height: u32,
+        columns: Option<u32>,
     ) -> Vec<WindowOpResult> {
-        if hwnds.is_empty() {
-            return Vec::new();
-        }
-        let cols = (hwnds.len() as f64).sqrt().ceil() as u32;
-        let rows = (hwnds.len() as u32).div_ceil(cols);
-        let tile_w = monitor_width / cols;
-        let tile_h = monitor_height / rows;
-
-        hwnds
-            .iter()
-            .enumerate()
-            .map(|(i, &hwnd)| {
-                let col = (i as u32) % cols;
-                let row = (i as u32) / cols;
+        Self::tile_rects(hwnds.len(), monitor_width, monitor_height, columns)
+            .into_iter()
+            .zip(hwnds.iter())
+            .map(|(cell, &hwnd)| {
                 Self::apply_operation(
                     hwnd,
                     &WindowOperation::MoveResize {
-                        x: (col * tile_w) as i32,
-                        y: (row * tile_h) as i32,
-                        width: tile_w,
-                        height: tile_h,
+                        x: cell.x,
+                        y: cell.y,
+                        width: cell.width,
+                        height: cell.height,
                     },
                 )
             })
@@ -464,8 +498,153 @@ mod tests {
     #[test]
     fn tile_layout_computes_grid() {
         // 4 windows should tile as 2x2
-        let results = WindowManager::tile_windows(&[1, 2, 3, 4], 1920, 1080);
+        let results = WindowManager::tile_windows(&[1, 2, 3, 4], 1920, 1080, None);
         assert_eq!(results.len(), 4);
+    }
+
+    #[test]
+    fn tile_rects_falls_back_to_a_square_grid() {
+        let cells = WindowManager::tile_rects(4, 1920, 1080, None);
+        assert_eq!(cells.len(), 4);
+        assert_eq!(
+            cells[0],
+            WindowRect {
+                x: 0,
+                y: 0,
+                width: 960,
+                height: 540
+            }
+        );
+        assert_eq!(
+            cells[1],
+            WindowRect {
+                x: 960,
+                y: 0,
+                width: 960,
+                height: 540
+            }
+        );
+        assert_eq!(
+            cells[3],
+            WindowRect {
+                x: 960,
+                y: 540,
+                width: 960,
+                height: 540
+            }
+        );
+    }
+
+    // Bug #37: the `columns` argument was advertised but never read, so asking
+    // for a 1-column stack silently produced a square grid.
+    #[test]
+    fn tile_rects_honours_an_explicit_column_count() {
+        let stacked = WindowManager::tile_rects(4, 1920, 1080, Some(1));
+        assert_eq!(stacked.len(), 4);
+        for (i, cell) in stacked.iter().enumerate() {
+            assert_eq!(cell.x, 0, "single column must not advance x: {cell:?}");
+            assert_eq!(cell.y, (i as i32) * 270, "rows must stack: {cell:?}");
+            assert_eq!((cell.width, cell.height), (1920, 270));
+        }
+
+        let three = WindowManager::tile_rects(5, 900, 600, Some(3));
+        // 3 columns -> 2 rows, so cells wrap on the fourth window.
+        assert_eq!(
+            three[2],
+            WindowRect {
+                x: 600,
+                y: 0,
+                width: 300,
+                height: 300
+            }
+        );
+        assert_eq!(
+            three[3],
+            WindowRect {
+                x: 0,
+                y: 300,
+                width: 300,
+                height: 300
+            }
+        );
+        assert_eq!(
+            three[4],
+            WindowRect {
+                x: 300,
+                y: 300,
+                width: 300,
+                height: 300
+            }
+        );
+    }
+
+    #[test]
+    fn tile_rects_clamps_nonsensical_column_requests() {
+        // More columns than windows would divide the area by zero-sized cells.
+        let cells = WindowManager::tile_rects(2, 800, 600, Some(9));
+        assert_eq!(cells.len(), 2);
+        assert_eq!(
+            cells[0],
+            WindowRect {
+                x: 0,
+                y: 0,
+                width: 400,
+                height: 600
+            }
+        );
+        assert_eq!(
+            cells[1],
+            WindowRect {
+                x: 400,
+                y: 0,
+                width: 400,
+                height: 600
+            }
+        );
+
+        assert_eq!(WindowManager::tile_rects(3, 900, 300, Some(0)).len(), 3);
+        // Column 0 would have been an infinite/zero division before the clamp.
+        let zero = WindowManager::tile_rects(3, 900, 300, Some(0));
+        assert_eq!(
+            zero[2],
+            WindowRect {
+                x: 0,
+                y: 200,
+                width: 900,
+                height: 100
+            }
+        );
+    }
+
+    #[test]
+    fn tile_rects_covers_every_window_without_shrinking() {
+        for count in [1usize, 3, 8, 12] {
+            let cells = WindowManager::tile_rects(count, 2048, 1104, None);
+            assert_eq!(cells.len(), count, "count {count}");
+            assert!(
+                cells.iter().all(|c| c.width > 0 && c.height > 0),
+                "count {count} produced a degenerate cell: {cells:?}"
+            );
+            // Every origin must stay inside the monitor.
+            assert!(
+                cells
+                    .iter()
+                    .all(|c| (c.x as u32) < 2048 && (c.y as u32) < 1104),
+                "count {count} tiled off-screen: {cells:?}"
+            );
+        }
+        assert!(WindowManager::tile_rects(0, 100, 100, Some(3)).is_empty());
+    }
+
+    #[test]
+    fn tile_windows_returns_one_result_per_handle() {
+        // Unreachable handles fail cleanly rather than panicking, and the
+        // per-window accounting still lines up with the request.
+        let results = WindowManager::tile_windows(&[1, 2], 800, 600, Some(1));
+        assert_eq!(results.len(), 2);
+        for (i, r) in results.iter().enumerate() {
+            assert_eq!(r.hwnd, (i + 1) as u64);
+        }
     }
 
     #[test]

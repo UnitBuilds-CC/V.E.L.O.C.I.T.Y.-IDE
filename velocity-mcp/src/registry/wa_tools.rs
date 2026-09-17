@@ -437,12 +437,30 @@ pub fn handle_wa_tool(
         "wa_process_kill_tree" => {
             let pid = arguments["pid"].as_u64().ok_or("pid is required")? as u32;
             let killed = crate::wa::process_mgmt::ProcessManager::kill_tree(pid);
-            format!("{{\"success\":true,\"pid\":{},\"killed\":{}}}", pid, killed)
+            // `killed` counts the target as well as its children, so zero means
+            // nothing was terminated - reporting success there was bug #32.
+            format!(
+                "{{\"success\":{},\"pid\":{},\"killed\":{},\"detail\":{}}}",
+                killed > 0,
+                pid,
+                killed,
+                if killed > 0 {
+                    "null".to_string()
+                } else {
+                    "\"no process was terminated; the pid is unknown or already gone\"".to_string()
+                }
+            )
         }
         "wa_process_running" => {
             let pid = arguments["pid"].as_u64().ok_or("pid is required")? as u32;
-            let running = crate::wa::process_mgmt::ProcessManager::is_running(pid);
-            format!("{{\"pid\":{},\"running\":{}}}", pid, running)
+            let status = crate::wa::process_mgmt::ProcessManager::status(pid);
+            serde_json::to_string(&serde_json::json!({
+                "pid": status.pid,
+                "running": status.running,
+                "method": status.method,
+                "detail": status.detail,
+            }))
+            .map_err(|err| Box::<dyn Error>::from(format!("serialise process status: {err}")))?
         }
         "wa_process_info" => {
             let pid = arguments["pid"].as_u64().ok_or("pid is required")? as u32;
@@ -1535,32 +1553,87 @@ pub fn handle_wa_tool(
         }
         // ─── Window Tiling ─────────────────────────────────────────────────────
         "wa_window_tile" => {
+            // Bug #37: this used to enumerate *every* titled window in the session
+            // and tile all of it, and an out-of-range `monitor` silently fell back
+            // to the primary display. `monitor: 99` therefore rearranged the whole
+            // desktop and still answered success. It now names its targets.
+            let requested: Vec<u64> = arguments["hwnds"]
+                .as_array()
+                .map(|arr| arr.iter().filter_map(|v| v.as_u64()).collect())
+                .unwrap_or_default();
+            if requested.is_empty() {
+                return Err(Box::<dyn Error>::from(
+                    "hwnds is required: wa_window_tile will not rearrange every window on the \
+                     desktop. Pass the handles returned by wa_window_list.",
+                ));
+            }
             let monitor_index = arguments["monitor"].as_u64().unwrap_or(0) as u32;
-            let windows = crate::wa::window_mgmt::WindowManager::enumerate_windows();
-            let hwnds: Vec<u64> = windows
+            let mut mm = crate::wa::multi_monitor::MultiMonitorManager::empty();
+            if !mm.refresh() || mm.count() == 0 {
+                return Err(Box::<dyn Error>::from(
+                    "no monitors could be enumerated, so tile bounds cannot be computed",
+                ));
+            }
+            let monitor = match mm.get(monitor_index) {
+                Some(m) => Some((m.work_area.width, m.work_area.height)),
+                None => None,
+            };
+            let (mw, mh) = match monitor {
+                Some(dims) => dims,
+                None => {
+                    let valid: Vec<u32> = (0..mm.count() as u32).collect();
+                    return Err(Box::<dyn Error>::from(format!(
+                        "no monitor at index {monitor_index} (valid indices: {valid:?})"
+                    )));
+                }
+            };
+            if mw == 0 || mh == 0 {
+                return Err(Box::<dyn Error>::from(format!(
+                    "monitor {monitor_index} reports a {mw}x{mh} work area; refusing to tile"
+                )));
+            }
+            // Skip handles that are no longer live windows rather than issuing
+            // MoveWindow against garbage.
+            let live: Vec<u64> = crate::wa::window_mgmt::WindowManager::enumerate_windows()
                 .iter()
-                .filter(|w| !w.title.is_empty())
                 .map(|w| w.hwnd)
                 .collect();
-            // Resolve the target monitor's work area (excludes taskbar) for tile bounds;
-            // fall back to a sensible default when enumeration is unavailable.
-            let mut mm = crate::wa::multi_monitor::MultiMonitorManager::empty();
-            let _ = mm.refresh();
-            let (mw, mh) = mm
-                .get(monitor_index)
-                .or_else(|| mm.primary())
-                .map(|m| (m.work_area.width, m.work_area.height))
-                .filter(|(w, h)| *w > 0 && *h > 0)
-                .unwrap_or((1920, 1080));
-            let results = crate::wa::window_mgmt::WindowManager::tile_windows(&hwnds, mw, mh);
+            let targets: Vec<u64> = requested
+                .iter()
+                .copied()
+                .filter(|h| live.contains(h))
+                .collect();
+            let skipped: Vec<u64> = requested
+                .iter()
+                .copied()
+                .filter(|h| !live.contains(h))
+                .collect();
+            if targets.is_empty() {
+                return Err(Box::<dyn Error>::from(format!(
+                    "none of the {} requested handle(s) are live windows",
+                    requested.len()
+                )));
+            }
+            let columns = arguments["columns"].as_u64().map(|v| v as u32);
+            let results =
+                crate::wa::window_mgmt::WindowManager::tile_windows(&targets, mw, mh, columns);
             let succeeded = results.iter().filter(|r| r.success).count();
-            format!(
-                "{{\"success\":true,\"windows_tiled\":{},\"succeeded\":{},\"monitor_width\":{},\"monitor_height\":{}}}",
-                hwnds.len(),
-                succeeded,
-                mw,
-                mh
-            )
+            let failures: Vec<serde_json::Value> = results
+                .iter()
+                .filter(|r| !r.success)
+                .map(|r| serde_json::json!({ "hwnd": r.hwnd, "detail": r.detail }))
+                .collect();
+            serde_json::to_string(&serde_json::json!({
+                "success": succeeded == targets.len(),
+                "windows_tiled": succeeded,
+                "windows_requested": targets.len(),
+                "windows_skipped": skipped,
+                "columns": columns,
+                "monitor": monitor_index,
+                "monitor_work_area": [mw, mh],
+                "failures": failures,
+            }))
+            .map_err(|err| Box::<dyn Error>::from(format!("serialise tile result: {err}")))?
         }
         // ─── Browser Bridge ────────────────────────────────────────────────────
         "wa_browser_navigate" => {
@@ -2737,18 +2810,92 @@ mod tests {
         assert!(parsed["events_captured"].is_number(), "got: {out}");
     }
 
-    // `wa_window_tile` must actually run the tiling path and report a real result shape
-    // (windows_tiled / succeeded / monitor bounds) instead of a hardcoded stub.
+    // Bug #37: `wa_window_tile` used to enumerate every titled window on the
+    // desktop and tile all of them, and an out-of-range `monitor` silently fell
+    // back to the primary display - so a bogus probe call rearranged real
+    // windows and still reported success. It must now name its targets and
+    // refuse anything it cannot aim. The grid maths itself ("is `columns`
+    // honoured?") is asserted side-effect-free in
+    // `window_mgmt::tests::tile_rects_*`, because a positive tile case here
+    // would move the developer's own windows during `cargo test`.
     #[test]
-    fn window_tile_executes_and_reports() {
+    fn window_tile_refuses_without_named_handles() {
         let temp = tempfile::tempdir().unwrap();
-        let args = serde_json::json!({});
-        let out = handle_wa_tool(temp.path(), "wa_window_tile", &args)
-            .expect("dispatch should not error")
-            .expect("tool should produce output");
-        assert!(out.contains("\"success\":true"), "got: {out}");
-        assert!(out.contains("windows_tiled"), "got: {out}");
-        assert!(out.contains("monitor_width"), "got: {out}");
+        for args in [
+            serde_json::json!({}),
+            serde_json::json!({ "hwnds": [] }),
+            serde_json::json!({ "hwnds": "459150" }),
+        ] {
+            let err = handle_wa_tool(temp.path(), "wa_window_tile", &args)
+                .expect_err(&format!("must refuse when no handles are named: {args}"));
+            let msg = err.to_string();
+            assert!(
+                msg.contains("hwnds is required"),
+                "unhelpful refusal: {msg}"
+            );
+            assert!(
+                msg.contains("wa_window_list"),
+                "refusal should say where to get handles: {msg}"
+            );
+        }
+    }
+
+    #[test]
+    #[cfg(target_os = "windows")]
+    fn window_tile_rejects_an_out_of_range_monitor_and_lists_valid_ones() {
+        let temp = tempfile::tempdir().unwrap();
+        let args = serde_json::json!({ "hwnds": [1], "monitor": 99 });
+        let err = handle_wa_tool(temp.path(), "wa_window_tile", &args)
+            .expect_err("monitor 99 must not silently retarget the primary display");
+        let msg = err.to_string();
+        assert!(msg.contains("no monitor at index 99"), "got: {msg}");
+        assert!(
+            msg.contains("valid indices"),
+            "should name the monitors that do exist: {msg}"
+        );
+    }
+
+    #[test]
+    #[cfg(target_os = "windows")]
+    fn window_tile_refuses_when_no_requested_handle_is_a_live_window() {
+        let temp = tempfile::tempdir().unwrap();
+        let args = serde_json::json!({ "hwnds": [1, 2, 3], "monitor": 0 });
+        let err = handle_wa_tool(temp.path(), "wa_window_tile", &args)
+            .expect_err("dead handles must not be reported as a successful tile");
+        assert!(
+            err.to_string().contains("none of the 3 requested handle"),
+            "got: {err}"
+        );
+    }
+
+    // The result shape changed with bug #37: it now reports what it was asked
+    // for, what it skipped, and the monitor it actually used.
+    #[test]
+    #[cfg(target_os = "windows")]
+    fn window_tile_reports_skips_and_monitor_instead_of_a_bare_success_flag() {
+        let temp = tempfile::tempdir().unwrap();
+        // Monitor 0 always exists on any machine that gets this far, and handle
+        // 1 never does, so this exercises the shape without moving anything.
+        let args = serde_json::json!({ "hwnds": [1], "monitor": 0, "columns": 4 });
+        match handle_wa_tool(temp.path(), "wa_window_tile", &args) {
+            Ok(Some(out)) => {
+                let parsed: serde_json::Value = serde_json::from_str(&out).expect("valid JSON");
+                for field in [
+                    "success",
+                    "windows_tiled",
+                    "windows_requested",
+                    "windows_skipped",
+                    "monitor",
+                ] {
+                    assert!(!parsed[field].is_null(), "missing {field} in {out}");
+                }
+            }
+            Ok(None) => panic!("tool produced no output"),
+            Err(err) => {
+                let msg = err.to_string();
+                assert!(msg.contains("live windows"), "unexpected error: {msg}");
+            }
+        }
     }
 
     // `wa_registry_read` must perform a real read (returning a structured result with a

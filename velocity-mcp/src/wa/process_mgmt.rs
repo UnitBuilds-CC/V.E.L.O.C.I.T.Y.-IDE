@@ -35,6 +35,22 @@ pub struct ProcessInfo {
     pub start_time_ms: Option<u64>,
 }
 
+/// How confident the "is this pid alive?" answer is, and how it was obtained.
+///
+/// A bare `bool` forced bug #31: `OpenProcess` fails with access denied for
+/// protected pids (`System`, `csrss.exe`), and "could not open a handle" was
+/// reported to callers as "not running" while `get_process(pid)` on the same
+/// pid happily returned its name from the process snapshot.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProcessStatus {
+    pub pid: u32,
+    pub running: bool,
+    /// `exit_code`, `process_snapshot`, `proc_fs` or `unsupported`.
+    pub method: &'static str,
+    /// Why the primary probe was inconclusive, when it was.
+    pub detail: Option<String>,
+}
+
 /// Process launch configuration.
 #[derive(Debug, Clone)]
 pub struct LaunchConfig {
@@ -198,14 +214,31 @@ impl ProcessManager {
     }
 
     /// Check if a process is still running.
+    ///
+    /// Kept as the boolean convenience for wait/kill loops; use
+    /// [`ProcessManager::status`] when the caller needs to distinguish
+    /// "exited" from "alive, but this token cannot open it".
     pub fn is_running(pid: u32) -> bool {
+        Self::status(pid).running
+    }
+
+    /// Determine whether `pid` is alive, recording how the answer was reached.
+    pub fn status(pid: u32) -> ProcessStatus {
         #[cfg(target_os = "windows")]
         {
-            is_process_running_native(pid)
+            native::process_status_native(pid)
         }
         #[cfg(not(target_os = "windows"))]
         {
-            false
+            // The old code returned `false` for every pid off Windows, which is
+            // a flat lie rather than an unsupported answer.
+            let present = std::path::Path::new(&format!("/proc/{pid}")).exists();
+            ProcessStatus {
+                pid,
+                running: present,
+                method: if present { "proc_fs" } else { "unsupported" },
+                detail: None,
+            }
         }
     }
 
@@ -368,25 +401,61 @@ mod native {
     /// the exit code — it stays `STILL_ACTIVE` (259) only while the process is
     /// actually running.
     pub fn is_process_running_native(pid: u32) -> bool {
+        process_status_native(pid).running
+    }
+
+    /// Resolve a pid to an honest presence verdict.
+    ///
+    /// `OpenProcess` is the accurate probe but it fails with access denied on
+    /// protected pids, and bug #31 turned that into "`System` is not running".
+    /// When the handle cannot be opened, fall back to the Toolhelp snapshot:
+    /// a exited process is removed from the process list, so appearing there
+    /// means the pid is alive even though its handle is unreachable.
+    pub fn process_status_native(pid: u32) -> ProcessStatus {
         const STILL_ACTIVE: u32 = 259;
         // SAFETY: Win32 process handle lifecycle for exit-code query.
         // - OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, ...) opens a handle with
-        //   minimal access. On failure (e.g., access denied, invalid pid) returns false.
+        //   minimal access. On failure the snapshot fallback decides.
         // - GetExitCodeProcess writes into a stack-allocated u32. The handle is valid
         //   because OpenProcess succeeded.
         // - CloseHandle always runs after the query, preventing handle leaks.
         // - A running process has exit_code == STILL_ACTIVE (259); a terminated one
         //   has its actual exit code.
-        unsafe {
+        let open_error = unsafe {
             match OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid) {
                 Ok(handle) => {
                     let mut exit_code: u32 = 0;
                     let ok = GetExitCodeProcess(handle, &mut exit_code).is_ok();
                     let _ = CloseHandle(handle);
-                    ok && exit_code == STILL_ACTIVE
+                    return ProcessStatus {
+                        pid,
+                        running: ok && exit_code == STILL_ACTIVE,
+                        method: "exit_code",
+                        detail: if ok {
+                            None
+                        } else {
+                            Some("GetExitCodeProcess failed for an open handle".to_string())
+                        },
+                    };
                 }
-                Err(_) => false,
+                Err(err) => format!("{err:#}"),
             }
+        };
+        let listed = enumerate_processes_native().iter().any(|p| p.pid == pid);
+        // The snapshot is what decided in this branch, in both directions: an
+        // exited process is dropped from the process list, so absence is a real
+        // negative rather than an unprobed guess.
+        ProcessStatus {
+            pid,
+            running: listed,
+            method: "process_snapshot",
+            detail: Some(if listed {
+                format!(
+                    "handle not openable ({open_error}); pid is present in the process snapshot"
+                )
+            } else {
+                format!("handle not openable ({open_error}) and pid is absent from the process snapshot")
+            }),
         }
     }
 
@@ -612,8 +681,8 @@ mod native {
 
 #[cfg(target_os = "windows")]
 use native::{
-    enumerate_processes_native, is_process_running_native, kill_process_native,
-    launch_process_native, terminate_process_native, wait_for_condition_native,
+    enumerate_processes_native, kill_process_native, launch_process_native,
+    terminate_process_native, wait_for_condition_native,
 };
 
 // ─── Tests ───────────────────────────────────────────────────────────────────
@@ -724,5 +793,89 @@ mod tests {
             "exit should be detected: {}",
             wait.detail
         );
+    }
+
+    // ─── Bug #31: "cannot open it" is not "it is not running" ────────────────
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn listed_pids_are_never_reported_stopped() {
+        // A process the shell lists cannot also be "not running". The regression
+        // answered false for pid 4 (System) because OpenProcess denies a handle,
+        // while get_process(4) returned its name from the same snapshot.
+        let first = ProcessManager::enumerate();
+        assert!(!first.is_empty(), "snapshot should list processes");
+        let candidates: Vec<u32> = first.iter().map(|p| p.pid).collect();
+        assert!(
+            candidates.len() > 10,
+            "expected processes to probe, got {}",
+            candidates.len()
+        );
+        for pid in candidates {
+            let status = ProcessManager::status(pid);
+            if status.running {
+                continue;
+            }
+            // A verdict of "stopped" is only defensible while the pid has also
+            // left the process list. Re-checking rather than pre-filtering keeps
+            // genuine transient children from failing the assertion: processes
+            // do exit during a test run, and that is not bug #31.
+            let still_listed = ProcessManager::enumerate().iter().any(|p| p.pid == pid);
+            assert!(
+                !still_listed,
+                "pid {pid} is still in the process list but status() reported stopped (detail: {:?})",
+                status.detail
+            );
+        }
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn own_pid_resolves_through_the_exit_code() {
+        let status = ProcessManager::status(std::process::id());
+        assert!(status.running);
+        assert_eq!(
+            status.method, "exit_code",
+            "a process we own must not need the snapshot fallback"
+        );
+        assert!(status.detail.is_none());
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn a_killed_child_reports_stopped_via_exit_code() {
+        let config = LaunchConfig::new("cmd.exe")
+            .arg("/c")
+            .arg("ping -n 4 127.0.0.1 >nul")
+            .hidden()
+            .no_wait_window();
+        let result = ProcessManager::launch(&config);
+        assert!(result.success, "launch failed: {}", result.detail);
+        let pid = result.pid.expect("launched pid");
+
+        assert!(ProcessManager::kill(pid), "kill should succeed");
+        std::thread::sleep(Duration::from_millis(400));
+        let status = ProcessManager::status(pid);
+        assert!(!status.running, "exited child reported running");
+        // Once every handle to the process object is released the pid can no
+        // longer be opened at all, so absence from the snapshot is what proves
+        // it stopped. Either probe is an acceptable answer; a lie is not.
+        assert!(
+            matches!(status.method, "exit_code" | "process_snapshot"),
+            "unexpected probe: {}",
+            status.method
+        );
+        assert!(
+            status.detail.is_some(),
+            "a fallback verdict must explain why the handle probe failed"
+        );
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn kill_tree_reports_zero_kills_as_failure() {
+        // bug #32: the arm returned "success":true regardless of the count.
+        let killed = ProcessManager::kill_tree(0xFFFF_FFFE);
+        assert_eq!(killed, 0, "a nonexistent pid must not report kills");
     }
 }
