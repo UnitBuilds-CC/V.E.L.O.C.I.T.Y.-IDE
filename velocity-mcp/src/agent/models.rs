@@ -142,7 +142,9 @@ pub enum ApiStyle {
 }
 
 /// Which AI backend to use for inference.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+/// Serialize keeps variant names; Deserialize is handwritten (below) so
+/// persisted files, UI labels, and hand-written LLM team JSON all parse.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
 pub enum AiProvider {
     CloudflareWorkersAi,
     OpenRouter,
@@ -259,7 +261,9 @@ impl AiProvider {
                 Some(AiProvider::GoogleVertex)
             }
             "deepseek" => Some(AiProvider::Deepseek),
-            "alibaba" | "qwen" | "dashscope" | "alibaba_qwen" => Some(AiProvider::AlibabaQwen),
+            "alibaba" | "qwen" | "dashscope" | "alibaba_qwen" | "alibabaqwen" => {
+                Some(AiProvider::AlibabaQwen)
+            }
             "bedrock" | "awsbedrock" | "aws_bedrock" | "aws" => Some(AiProvider::AwsBedrock),
             "groq" => Some(AiProvider::Groq),
             "mistral" | "mistralai" | "mistral_ai" | "laplateforme" => Some(AiProvider::Mistral),
@@ -269,6 +273,38 @@ impl AiProvider {
             "cerebras" => Some(AiProvider::Cerebras),
             _ => None,
         }
+    }
+}
+
+/// Lenient deserializer: accepts the serde variant name (`"AlibabaQwen"`),
+/// the UI display label (`"Alibaba Qwen"`), or any slug/alias (`"alibaba"`,
+/// `"qwen"`). The derived variant-name-only form made `import_expert_team`
+/// reject exactly the JSON shape its sibling tools (`create_expert_team`,
+/// `bulk_import_members`) produce and accept. Serialization still emits
+/// variant names, so persisted formats are unchanged.
+impl<'de> serde::Deserialize<'de> for AiProvider {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        use serde::de::Error as _;
+        let raw = <String as serde::Deserialize>::deserialize(deserializer)?;
+        if let Some(p) = Self::from_label(&raw) {
+            return Ok(p);
+        }
+        // "AWS Bedrock", "aws-bedrock", "AwsBedrock" → "awsbedrock"
+        let compact: String = raw
+            .chars()
+            .filter(|c| c.is_alphanumeric())
+            .flat_map(|c| c.to_lowercase())
+            .collect();
+        if let Some(p) = Self::from_slug(&compact) {
+            return Ok(p);
+        }
+        Err(D::Error::custom(format!(
+            "unknown AI provider {raw:?}; use a variant name (e.g. \"AlibabaQwen\"), \
+             a display label (\"Alibaba Qwen\"), or a slug (\"alibaba\")"
+        )))
     }
 }
 
@@ -293,6 +329,38 @@ pub struct ToolCallAccumulator {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The lenient `Deserialize` impl must accept every spelling the tool
+    /// surface produces: variant names (persisted format), display labels
+    /// (workspace preferences), and slugs/aliases (hand-written team JSON).
+    #[test]
+    fn ai_provider_deserializes_from_variant_label_and_slug() {
+        let ok: &[(&str, AiProvider)] = &[
+            ("\"AlibabaQwen\"", AiProvider::AlibabaQwen),
+            ("\"Alibaba Qwen\"", AiProvider::AlibabaQwen),
+            ("\"alibaba\"", AiProvider::AlibabaQwen),
+            ("\"qwen\"", AiProvider::AlibabaQwen),
+            ("\"CloudflareWorkersAi\"", AiProvider::CloudflareWorkersAi),
+            ("\"cf\"", AiProvider::CloudflareWorkersAi),
+            ("\"AWS Bedrock\"", AiProvider::AwsBedrock),
+            ("\"aws-bedrock\"", AiProvider::AwsBedrock),
+            ("\"OpenAI\"", AiProvider::OpenAI),
+            ("\"cerebras\"", AiProvider::Cerebras),
+        ];
+        for (raw, expected) in ok {
+            let parsed: AiProvider =
+                serde_json::from_str(raw).unwrap_or_else(|e| panic!("{raw}: {e}"));
+            assert_eq!(&parsed, expected, "for {raw}");
+        }
+        // Unknown spellings still fail loudly with a helpful message.
+        let err = serde_json::from_str::<AiProvider>("\"bogus\"").unwrap_err();
+        assert!(err.to_string().contains("unknown AI provider"));
+        // Serialize keeps emitting variant names (persisted format unchanged).
+        assert_eq!(
+            serde_json::to_string(&AiProvider::AlibabaQwen).unwrap(),
+            "\"AlibabaQwen\""
+        );
+    }
 
     #[test]
     fn new_provider_labels() {
@@ -334,7 +402,10 @@ mod tests {
             );
         }
         // Slug fallback + whitespace tolerance for legacy files.
-        assert_eq!(AiProvider::from_label("  alibaba  "), Some(AiProvider::AlibabaQwen));
+        assert_eq!(
+            AiProvider::from_label("  alibaba  "),
+            Some(AiProvider::AlibabaQwen)
+        );
         assert_eq!(AiProvider::from_label("NoSuchProvider"), None);
         assert_eq!(AiProvider::from_label(""), None);
     }

@@ -129,7 +129,15 @@ impl CodeEditor {
                     spans.push((word.to_string(), style.foreground));
                 }
                 if line.ends_with('\n') {
-                    spans.push(("\n".to_string(), highlighting::Color { r: 0, g: 0, b: 0, a: 0 }));
+                    spans.push((
+                        "\n".to_string(),
+                        highlighting::Color {
+                            r: 0,
+                            g: 0,
+                            b: 0,
+                            a: 0,
+                        },
+                    ));
                 }
             }
             self.syntax_cache_hash = text_hash;

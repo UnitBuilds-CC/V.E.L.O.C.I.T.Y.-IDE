@@ -543,3 +543,58 @@ fn knowledge_ingest_and_search() {
 
     assert!(!output.is_empty());
 }
+
+// ═══════════════════════════════════════════════════════════════════════════
+// execute_nda fallback — Bug #11 (workspace-relative path + no hang)
+// ═══════════════════════════════════════════════════════════════════════════
+
+/// The fallback must resolve `ndaPath` against the workspace root, not the
+/// process CWD, and reject a non-NDAV container with a clean error rather
+/// than spawning a runaway child (the hang that killed batch7a).
+#[test]
+fn execute_nda_fallback_resolves_workspace_root_and_rejects_bad_magic() {
+    let (_temp, root) = setup_root();
+    let root = root.canonicalize().unwrap();
+    fs::write(root.join("bogus.nda"), b"NDA1-not-a-real-container").unwrap();
+
+    let result = crate::registry::system_tools::execute_rust_fallback_tool(
+        &root,
+        "execute_nda",
+        &json!({ "ndaPath": "bogus.nda" }),
+    );
+    let err = result.unwrap_err().to_string();
+    assert!(err.contains("Invalid NDA container"), "got: {err}");
+}
+
+/// A missing file must report "not found in workspace" (proving the path was
+/// resolved against the root) instead of reading from the launch directory.
+#[test]
+fn execute_nda_fallback_missing_path_is_workspace_scoped() {
+    let (_temp, root) = setup_root();
+    let root = root.canonicalize().unwrap();
+
+    let result = crate::registry::system_tools::execute_rust_fallback_tool(
+        &root,
+        "execute_nda",
+        &json!({ "ndaPath": "nowhere.nda" }),
+    );
+    let err = result.unwrap_err().to_string();
+    assert!(err.contains("not found in workspace"), "got: {err}");
+}
+
+/// A well-behaved payload (echo) runs to completion under the deadline and
+/// its stdout is captured.
+#[cfg(windows)]
+#[test]
+fn run_child_with_timeout_captures_quick_child() {
+    use std::process::{Command, Stdio};
+    let child = Command::new("cmd")
+        .args(["/C", "echo sidecar-ok"])
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let out = crate::registry::system_tools::run_child_with_timeout(child).unwrap();
+    assert!(out.contains("sidecar-ok"), "got: {out}");
+}

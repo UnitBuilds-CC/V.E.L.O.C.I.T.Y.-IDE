@@ -15,9 +15,7 @@ pub struct QuickJsRuntime {
 impl QuickJsRuntime {
     /// Create a new QuickJS runtime.
     pub fn new() -> Result<Self, Box<dyn Error>> {
-        Ok(Self {
-            initialized: false,
-        })
+        Ok(Self { initialized: false })
     }
 
     /// Initialize the QuickJS runtime with WASM module bytes.

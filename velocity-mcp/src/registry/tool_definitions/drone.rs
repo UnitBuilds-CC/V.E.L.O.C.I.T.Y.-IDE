@@ -197,7 +197,11 @@ mod tests {
     fn test_all_tools_have_required_fields() {
         for tool in get_drone_tools() {
             assert!(!tool.name.is_empty(), "tool name must not be empty");
-            assert!(!tool.description.is_empty(), "{} has empty description", tool.name);
+            assert!(
+                !tool.description.is_empty(),
+                "{} has empty description",
+                tool.name
+            );
             assert!(
                 tool.input_schema.get("type").is_some(),
                 "{} missing input schema type",

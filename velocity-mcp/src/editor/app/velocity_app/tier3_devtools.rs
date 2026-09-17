@@ -183,7 +183,8 @@ impl VelocityApp {
             });
         if redetect {
             let ws = self.workspace_root.clone();
-            self.lsp_state.lsp_manager = Some(crate::editor::lsp_client::LspManager::auto_detect(&ws));
+            self.lsp_state.lsp_manager =
+                Some(crate::editor::lsp_client::LspManager::auto_detect(&ws));
         }
     }
 

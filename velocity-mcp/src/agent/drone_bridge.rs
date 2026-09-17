@@ -70,21 +70,22 @@ pub struct TaskResult {
 impl TaskStatus {
     /// Get the effective exit code, checking both top-level and nested result.
     pub fn effective_exit_code(&self) -> Option<i32> {
-        self.exit_code.or_else(|| self.result.as_ref().and_then(|r| r.exit_code))
+        self.exit_code
+            .or_else(|| self.result.as_ref().and_then(|r| r.exit_code))
     }
 
     /// Get the effective stdout, checking both top-level and nested result.
     pub fn effective_stdout(&self) -> Option<&str> {
-        self.stdout.as_deref().or_else(|| {
-            self.result.as_ref().and_then(|r| r.stdout.as_deref())
-        })
+        self.stdout
+            .as_deref()
+            .or_else(|| self.result.as_ref().and_then(|r| r.stdout.as_deref()))
     }
 
     /// Get the effective stderr, checking both top-level and nested result.
     pub fn effective_stderr(&self) -> Option<&str> {
-        self.stderr.as_deref().or_else(|| {
-            self.result.as_ref().and_then(|r| r.stderr.as_deref())
-        })
+        self.stderr
+            .as_deref()
+            .or_else(|| self.result.as_ref().and_then(|r| r.stderr.as_deref()))
     }
 }
 
@@ -133,7 +134,9 @@ impl DroneClient {
             .timeout(std::time::Duration::from_secs(self.timeout_secs))
             .call()
             .map_err(|e| format!("Drone health check failed: {}", e))?;
-        let health: DroneHealth = resp.into_json().map_err(|e| format!("Failed to parse health response: {}", e))?;
+        let health: DroneHealth = resp
+            .into_json()
+            .map_err(|e| format!("Failed to parse health response: {}", e))?;
         Ok(health)
     }
 
@@ -141,30 +144,32 @@ impl DroneClient {
     pub fn submit_task(&self, command: &str) -> Result<TaskSubmission, Box<dyn Error>> {
         let url = format!("{}/peer/task", self.base_url);
         let body = json!({ "command": command });
-        let mut req = ureq::post(&url)
-            .timeout(std::time::Duration::from_secs(self.timeout_secs));
+        let mut req = ureq::post(&url).timeout(std::time::Duration::from_secs(self.timeout_secs));
         if let Some(auth) = self.auth_header() {
             req = req.set("Authorization", &auth);
         }
         let resp = req
             .send_json(body)
             .map_err(|e| format!("Task submission failed: {}", e))?;
-        let task: TaskSubmission = resp.into_json().map_err(|e| format!("Failed to parse task response: {}", e))?;
+        let task: TaskSubmission = resp
+            .into_json()
+            .map_err(|e| format!("Failed to parse task response: {}", e))?;
         Ok(task)
     }
 
     /// GET /peer/task/{id}/status — poll task progress.
     pub fn task_status(&self, task_id: &str) -> Result<TaskStatus, Box<dyn Error>> {
         let url = format!("{}/peer/task/{}/status", self.base_url, task_id);
-        let mut req = ureq::get(&url)
-            .timeout(std::time::Duration::from_secs(self.timeout_secs));
+        let mut req = ureq::get(&url).timeout(std::time::Duration::from_secs(self.timeout_secs));
         if let Some(auth) = self.auth_header() {
             req = req.set("Authorization", &auth);
         }
         let resp = req
             .call()
             .map_err(|e| format!("Task status check failed: {}", e))?;
-        let status: TaskStatus = resp.into_json().map_err(|e| format!("Failed to parse status response: {}", e))?;
+        let status: TaskStatus = resp
+            .into_json()
+            .map_err(|e| format!("Failed to parse status response: {}", e))?;
         Ok(status)
     }
 
@@ -175,15 +180,16 @@ impl DroneClient {
             "peer_id": format!("ide_{}", std::process::id()),
             "name": peer_name,
         });
-        let mut req = ureq::post(&url)
-            .timeout(std::time::Duration::from_secs(self.timeout_secs));
+        let mut req = ureq::post(&url).timeout(std::time::Duration::from_secs(self.timeout_secs));
         if let Some(auth) = self.auth_header() {
             req = req.set("Authorization", &auth);
         }
         let resp = req
             .send_json(body)
             .map_err(|e| format!("Pairing failed: {}", e))?;
-        let pairing: PairingResponse = resp.into_json().map_err(|e| format!("Failed to parse pairing response: {}", e))?;
+        let pairing: PairingResponse = resp
+            .into_json()
+            .map_err(|e| format!("Failed to parse pairing response: {}", e))?;
         Ok(pairing)
     }
 
@@ -195,15 +201,16 @@ impl DroneClient {
             "kind": "Chat",
             "text": text,
         });
-        let mut req = ureq::post(&url)
-            .timeout(std::time::Duration::from_secs(self.timeout_secs));
+        let mut req = ureq::post(&url).timeout(std::time::Duration::from_secs(self.timeout_secs));
         if let Some(auth) = self.auth_header() {
             req = req.set("Authorization", &auth);
         }
         let resp = req
             .send_json(body)
             .map_err(|e| format!("Message send failed: {}", e))?;
-        let val: Value = resp.into_json().map_err(|e| format!("Failed to parse message response: {}", e))?;
+        let val: Value = resp
+            .into_json()
+            .map_err(|e| format!("Failed to parse message response: {}", e))?;
         Ok(val)
     }
 
@@ -214,12 +221,16 @@ impl DroneClient {
         remote_path: &str,
         deploy_instructions: Option<&Value>,
     ) -> Result<Value, Box<dyn Error>> {
-        let data = std::fs::read(local_path)
-            .map_err(|e| format!("Failed to read local file: {}", e))?;
+        let data =
+            std::fs::read(local_path).map_err(|e| format!("Failed to read local file: {}", e))?;
 
         let mut hasher = Sha256::new();
         hasher.update(&data);
-        let sha256_hex: String = hasher.finalize().iter().map(|b| format!("{:02x}", b)).collect();
+        let sha256_hex: String = hasher
+            .finalize()
+            .iter()
+            .map(|b| format!("{:02x}", b))
+            .collect();
         let file_name = local_path
             .file_name()
             .map(|n| n.to_string_lossy().to_string())
@@ -234,8 +245,8 @@ impl DroneClient {
             "sha256": sha256_hex,
             "destination": remote_path,
         });
-        let mut req = ureq::post(&start_url)
-            .timeout(std::time::Duration::from_secs(self.timeout_secs));
+        let mut req =
+            ureq::post(&start_url).timeout(std::time::Duration::from_secs(self.timeout_secs));
         if let Some(auth) = self.auth_header() {
             req = req.set("Authorization", &auth);
         }
@@ -274,35 +285,42 @@ impl DroneClient {
         if let Some(instructions) = deploy_instructions {
             complete_body["deploy_instructions"] = instructions.clone();
         }
-        let mut req = ureq::post(&complete_url)
-            .timeout(std::time::Duration::from_secs(self.timeout_secs));
+        let mut req =
+            ureq::post(&complete_url).timeout(std::time::Duration::from_secs(self.timeout_secs));
         if let Some(auth) = self.auth_header() {
             req = req.set("Authorization", &auth);
         }
         let resp = req
             .send_json(complete_body)
             .map_err(|e| format!("File upload complete failed: {}", e))?;
-        let val: Value = resp.into_json().map_err(|e| format!("Failed to parse complete response: {}", e))?;
+        let val: Value = resp
+            .into_json()
+            .map_err(|e| format!("Failed to parse complete response: {}", e))?;
         Ok(val)
     }
 
     /// Send a system command via the message endpoint (for GUI automation).
-    pub fn send_system_command(&self, command_type: &str, payload: &Value) -> Result<Value, Box<dyn Error>> {
+    pub fn send_system_command(
+        &self,
+        command_type: &str,
+        payload: &Value,
+    ) -> Result<Value, Box<dyn Error>> {
         let url = format!("{}/peer/message", self.base_url);
         let body = json!({
             "from": "ide",
             "kind": "TaskRequest",
             "text": format!("{}:{}", command_type, payload),
         });
-        let mut req = ureq::post(&url)
-            .timeout(std::time::Duration::from_secs(self.timeout_secs));
+        let mut req = ureq::post(&url).timeout(std::time::Duration::from_secs(self.timeout_secs));
         if let Some(auth) = self.auth_header() {
             req = req.set("Authorization", &auth);
         }
         let resp = req
             .send_json(body)
             .map_err(|e| format!("System command failed: {}", e))?;
-        let val: Value = resp.into_json().map_err(|e| format!("Failed to parse response: {}", e))?;
+        let val: Value = resp
+            .into_json()
+            .map_err(|e| format!("Failed to parse response: {}", e))?;
         Ok(val)
     }
 }
@@ -391,9 +409,10 @@ impl DroneDeployer {
         for arg in &ssh_args {
             cmd.arg(arg);
         }
-        cmd.arg(&remote_target)
-            .arg("mkdir -p ~/.velocity-drone");
-        let output = cmd.output().map_err(|e| format!("SSH mkdir failed: {}", e))?;
+        cmd.arg(&remote_target).arg("mkdir -p ~/.velocity-drone");
+        let output = cmd
+            .output()
+            .map_err(|e| format!("SSH mkdir failed: {}", e))?;
         if !output.status.success() {
             return Err(format!(
                 "SSH mkdir failed: {}",
@@ -407,18 +426,13 @@ impl DroneDeployer {
         for arg in &ssh_args {
             scp_cmd.arg(arg);
         }
-        scp_cmd
-            .arg(&binary_path)
-            .arg(format!("{}:~/.velocity-drone/velocity-drone", remote_target));
-        let output = scp_cmd
-            .output()
-            .map_err(|e| format!("SCP failed: {}", e))?;
+        scp_cmd.arg(&binary_path).arg(format!(
+            "{}:~/.velocity-drone/velocity-drone",
+            remote_target
+        ));
+        let output = scp_cmd.output().map_err(|e| format!("SCP failed: {}", e))?;
         if !output.status.success() {
-            return Err(format!(
-                "SCP failed: {}",
-                String::from_utf8_lossy(&output.stderr)
-            )
-            .into());
+            return Err(format!("SCP failed: {}", String::from_utf8_lossy(&output.stderr)).into());
         }
 
         // Step 3: Make executable and start
@@ -437,7 +451,9 @@ impl DroneDeployer {
             cmd.arg(arg);
         }
         cmd.arg(&remote_target).arg(&start_cmd);
-        let output = cmd.output().map_err(|e| format!("SSH start failed: {}", e))?;
+        let output = cmd
+            .output()
+            .map_err(|e| format!("SSH start failed: {}", e))?;
         if !output.status.success() {
             return Err(format!(
                 "SSH start failed: {}",
@@ -456,7 +472,9 @@ impl DroneDeployer {
             match client.health() {
                 Ok(health) => return Ok(health),
                 Err(_) if attempt < 9 => continue,
-                Err(e) => return Err(format!("Drone deployed but health check failed: {}", e).into()),
+                Err(e) => {
+                    return Err(format!("Drone deployed but health check failed: {}", e).into())
+                }
             }
         }
 
@@ -491,7 +509,9 @@ pub fn handle_drone_tool(
 fn handle_deploy(_root: &Path, args: &Value) -> Result<String, Box<dyn Error>> {
     let host = args["host"].as_str().ok_or("host is required")?;
     let ssh_port = args["port"].as_u64().unwrap_or(DEFAULT_SSH_PORT as u64) as u16;
-    let drone_port = args["drone_port"].as_u64().unwrap_or(DEFAULT_DRONE_PORT as u64) as u16;
+    let drone_port = args["drone_port"]
+        .as_u64()
+        .unwrap_or(DEFAULT_DRONE_PORT as u64) as u16;
     let drone_name = args["drone_name"]
         .as_str()
         .unwrap_or(&format!("drone-{}", host.replace('.', "-")))
@@ -504,7 +524,10 @@ fn handle_deploy(_root: &Path, args: &Value) -> Result<String, Box<dyn Error>> {
             let hash = Sha256::new()
                 .chain_update(format!("{}-{}-{}", host, drone_port, std::process::id()))
                 .finalize();
-            hash.iter().map(|b| format!("{:02x}", b)).collect::<String>()[..32].to_string()
+            hash.iter()
+                .map(|b| format!("{:02x}", b))
+                .collect::<String>()[..32]
+                .to_string()
         });
     let ssh_user = args["ssh_user"].as_str().unwrap_or("root");
     let ssh_key_path = args["ssh_key_path"].as_str().map(PathBuf::from);
@@ -581,11 +604,15 @@ fn handle_type_keys(args: &Value) -> Result<String, Box<dyn Error>> {
     let client = DroneClient::new(drone_url, auth_token);
     let payload = match action {
         "type" => {
-            let text = args["text"].as_str().ok_or("text is required for type action")?;
+            let text = args["text"]
+                .as_str()
+                .ok_or("text is required for type action")?;
             json!({ "action": "type", "text": text })
         }
         "press_key" => {
-            let key = args["key"].as_str().ok_or("key is required for press_key action")?;
+            let key = args["key"]
+                .as_str()
+                .ok_or("key is required for press_key action")?;
             json!({ "action": "press_key", "key": key })
         }
         _ => return Err(format!("Unknown action: {}", action).into()),
@@ -631,8 +658,12 @@ fn handle_network_stats(args: &Value) -> Result<String, Box<dyn Error>> {
 
 fn handle_upload(root: &Path, args: &Value) -> Result<String, Box<dyn Error>> {
     let drone_url = args["drone_url"].as_str().ok_or("drone_url is required")?;
-    let local_path = args["local_path"].as_str().ok_or("local_path is required")?;
-    let remote_path = args["remote_path"].as_str().ok_or("remote_path is required")?;
+    let local_path = args["local_path"]
+        .as_str()
+        .ok_or("local_path is required")?;
+    let remote_path = args["remote_path"]
+        .as_str()
+        .ok_or("remote_path is required")?;
     let auth_token = args["auth_token"].as_str();
     let deploy_instructions = args.get("deploy_instructions");
 
@@ -708,7 +739,8 @@ mod tests {
 
     #[test]
     fn test_ssh_common_args_includes_key() {
-        let deployer = DroneDeployer::new("admin", Some(Path::new("/home/user/.ssh/id_ed25519")), 22);
+        let deployer =
+            DroneDeployer::new("admin", Some(Path::new("/home/user/.ssh/id_ed25519")), 22);
         let args = deployer.ssh_common_args();
         assert!(args.contains(&"/home/user/.ssh/id_ed25519".to_string()));
     }
@@ -736,13 +768,17 @@ mod tests {
     #[ignore]
     fn drone_integration_submit_and_poll_task() {
         let client = DroneClient::new("http://127.0.0.1:9191", None);
-        let task = client.submit_task("echo integration-test").expect("task submit should succeed");
+        let task = client
+            .submit_task("echo integration-test")
+            .expect("task submit should succeed");
         assert!(!task.task_id.is_empty());
 
         // Poll until complete (max 5 seconds)
         for _ in 0..10 {
             std::thread::sleep(std::time::Duration::from_millis(500));
-            let status = client.task_status(&task.task_id).expect("status poll should succeed");
+            let status = client
+                .task_status(&task.task_id)
+                .expect("status poll should succeed");
             if status.status == "completed" {
                 assert_eq!(status.effective_exit_code(), Some(0));
                 return;
@@ -755,7 +791,9 @@ mod tests {
     #[ignore]
     fn drone_integration_pair() {
         let client = DroneClient::new("http://127.0.0.1:9191", None);
-        let pairing = client.pair("IntegrationTestIDE").expect("pairing should succeed");
+        let pairing = client
+            .pair("IntegrationTestIDE")
+            .expect("pairing should succeed");
         assert!(pairing.accepted);
         assert!(!pairing.drone_id.is_empty());
     }
@@ -764,7 +802,9 @@ mod tests {
     #[ignore]
     fn drone_integration_send_message() {
         let client = DroneClient::new("http://127.0.0.1:9191", None);
-        let resp = client.send_message("Hello from integration test").expect("message should succeed");
+        let resp = client
+            .send_message("Hello from integration test")
+            .expect("message should succeed");
         assert_eq!(resp["received"], true);
     }
 }

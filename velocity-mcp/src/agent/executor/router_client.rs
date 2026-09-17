@@ -208,10 +208,7 @@ pub struct HealthResponse {
 /// Returns `None` if the router is unreachable or unhealthy.
 pub fn check_router_health(router_url: &str) -> Option<HealthResponse> {
     let url = format!("{}/health", router_url.trim_end_matches('/'));
-    let response = ureq::get(&url)
-        .timeout(HEALTH_TIMEOUT)
-        .call()
-        .ok()?;
+    let response = ureq::get(&url).timeout(HEALTH_TIMEOUT).call().ok()?;
 
     if response.status() != 200 {
         return None;
@@ -304,9 +301,7 @@ pub enum RouterError {
 impl RouterError {
     fn from_ureq(err: ureq::Error) -> Self {
         match err {
-            ureq::Error::Transport(transport) => {
-                RouterError::Unreachable(transport.to_string())
-            }
+            ureq::Error::Transport(transport) => RouterError::Unreachable(transport.to_string()),
             ureq::Error::Status(code, _response) => RouterError::HttpStatus(code),
         }
     }
@@ -422,10 +417,7 @@ mod tests {
     #[test]
     fn test_router_error_display() {
         let err = RouterError::Unreachable("connection refused".to_string());
-        assert_eq!(
-            format!("{}", err),
-            "Router unreachable: connection refused"
-        );
+        assert_eq!(format!("{}", err), "Router unreachable: connection refused");
     }
 
     #[test]

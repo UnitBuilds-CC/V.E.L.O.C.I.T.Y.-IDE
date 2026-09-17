@@ -246,12 +246,7 @@ impl Tracer {
     }
 
     /// Record a timestamped event on an active span.
-    pub fn add_event(
-        &mut self,
-        span_id: u64,
-        name: &str,
-        attributes: HashMap<String, String>,
-    ) {
+    pub fn add_event(&mut self, span_id: u64, name: &str, attributes: HashMap<String, String>) {
         if let Some(span) = self.active_spans.get_mut(&span_id) {
             span.events.push(SpanEvent {
                 name: name.to_string(),
@@ -270,11 +265,15 @@ impl Tracer {
 
     /// Duration of an active span (from start to now) or a completed span.
     pub fn trace_duration(&self, span_id: u64) -> Option<Duration> {
-        self.active_spans.get(&span_id).map(|s| {
-            s.start_time.elapsed()
-        }).or_else(|| {
-            self.completed_spans.iter().find(|s| s.span_id == span_id).and_then(|s| s.duration())
-        })
+        self.active_spans
+            .get(&span_id)
+            .map(|s| s.start_time.elapsed())
+            .or_else(|| {
+                self.completed_spans
+                    .iter()
+                    .find(|s| s.span_id == span_id)
+                    .and_then(|s| s.duration())
+            })
     }
 
     // -- Export / housekeeping ----------------------------------------------

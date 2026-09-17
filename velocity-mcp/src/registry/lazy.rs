@@ -237,10 +237,7 @@ impl LazyToolRegistry {
     ///
     /// Call this after a tool has been executed to track metrics.
     pub fn record_invocation(&mut self, tool_name: &str, latency_ms: f64) {
-        let metrics = self
-            .metrics
-            .entry(tool_name.to_string())
-            .or_default();
+        let metrics = self.metrics.entry(tool_name.to_string()).or_default();
         metrics.invocation_count += 1;
         metrics.total_latency_ms += latency_ms;
     }
@@ -384,7 +381,10 @@ mod tests {
         // Adding a 4th tool should evict tool1 (LRU)
         cache.put(make_tool("tool4", "Tool 4"));
         assert_eq!(cache.len(), 3);
-        assert!(cache.get("tool1").is_none(), "tool1 should have been evicted");
+        assert!(
+            cache.get("tool1").is_none(),
+            "tool1 should have been evicted"
+        );
         assert!(cache.get("tool2").is_some());
         assert!(cache.get("tool3").is_some());
         assert!(cache.get("tool4").is_some());
@@ -404,7 +404,10 @@ mod tests {
         // Adding tool4 should now evict tool2 (the LRU)
         cache.put(make_tool("tool4", "Tool 4"));
         assert!(cache.get("tool1").is_some(), "tool1 should still be cached");
-        assert!(cache.get("tool2").is_none(), "tool2 should have been evicted");
+        assert!(
+            cache.get("tool2").is_none(),
+            "tool2 should have been evicted"
+        );
         assert!(cache.get("tool3").is_some());
         assert!(cache.get("tool4").is_some());
     }
@@ -578,7 +581,10 @@ mod tests {
         let second = registry.discover_tools();
 
         // Second call should return empty (already discovered)
-        assert!(second.is_empty(), "Second discover should return no new tools");
+        assert!(
+            second.is_empty(),
+            "Second discover should return no new tools"
+        );
         assert_eq!(registry.discovered_count(), first.len());
     }
 
@@ -614,11 +620,18 @@ mod tests {
 
         // First access: cache miss
         let _ = registry.get_tool(&tool_name);
-        assert_eq!(registry.cache_hit_rate(), 0.0, "First access should be a miss");
+        assert_eq!(
+            registry.cache_hit_rate(),
+            0.0,
+            "First access should be a miss"
+        );
 
         // Second access: cache hit
         let _ = registry.get_tool(&tool_name);
-        assert!(registry.cache_hit_rate() > 0.0, "Second access should be a hit");
+        assert!(
+            registry.cache_hit_rate() > 0.0,
+            "Second access should be a hit"
+        );
     }
 
     #[test]

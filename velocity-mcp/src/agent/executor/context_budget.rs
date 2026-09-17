@@ -32,57 +32,147 @@ pub struct ModelContextBudget {
 /// Ordered from most specific patterns to least specific for correct matching.
 pub const MODEL_BUDGETS: &[ModelContextBudget] = &[
     // GPT-4o and GPT-4-turbo: 128k tokens
-    ModelContextBudget { pattern: "gpt-4o", max_tokens: 128_000 },
-    ModelContextBudget { pattern: "gpt-4-turbo", max_tokens: 128_000 },
-    ModelContextBudget { pattern: "gpt-4-0125", max_tokens: 128_000 },
-    ModelContextBudget { pattern: "gpt-4-1106", max_tokens: 128_000 },
-    
+    ModelContextBudget {
+        pattern: "gpt-4o",
+        max_tokens: 128_000,
+    },
+    ModelContextBudget {
+        pattern: "gpt-4-turbo",
+        max_tokens: 128_000,
+    },
+    ModelContextBudget {
+        pattern: "gpt-4-0125",
+        max_tokens: 128_000,
+    },
+    ModelContextBudget {
+        pattern: "gpt-4-1106",
+        max_tokens: 128_000,
+    },
     // GPT-3.5-turbo: 16k tokens
-    ModelContextBudget { pattern: "gpt-3.5-turbo", max_tokens: 16_000 },
-    ModelContextBudget { pattern: "gpt-35-turbo", max_tokens: 16_000 },
-    
+    ModelContextBudget {
+        pattern: "gpt-3.5-turbo",
+        max_tokens: 16_000,
+    },
+    ModelContextBudget {
+        pattern: "gpt-35-turbo",
+        max_tokens: 16_000,
+    },
     // Claude 3.5 Sonnet and Opus: 200k tokens
-    ModelContextBudget { pattern: "claude-3.5-sonnet", max_tokens: 200_000 },
-    ModelContextBudget { pattern: "claude-3-5-sonnet", max_tokens: 200_000 },
-    ModelContextBudget { pattern: "claude-3.5-opus", max_tokens: 200_000 },
-    ModelContextBudget { pattern: "claude-3-5-opus", max_tokens: 200_000 },
-    ModelContextBudget { pattern: "claude-sonnet-3.5", max_tokens: 200_000 },
-    ModelContextBudget { pattern: "claude-opus-3.5", max_tokens: 200_000 },
-    
+    ModelContextBudget {
+        pattern: "claude-3.5-sonnet",
+        max_tokens: 200_000,
+    },
+    ModelContextBudget {
+        pattern: "claude-3-5-sonnet",
+        max_tokens: 200_000,
+    },
+    ModelContextBudget {
+        pattern: "claude-3.5-opus",
+        max_tokens: 200_000,
+    },
+    ModelContextBudget {
+        pattern: "claude-3-5-opus",
+        max_tokens: 200_000,
+    },
+    ModelContextBudget {
+        pattern: "claude-sonnet-3.5",
+        max_tokens: 200_000,
+    },
+    ModelContextBudget {
+        pattern: "claude-opus-3.5",
+        max_tokens: 200_000,
+    },
     // Claude 3 Haiku: 200k tokens
-    ModelContextBudget { pattern: "claude-3-haiku", max_tokens: 200_000 },
-    ModelContextBudget { pattern: "claude-3-5-haiku", max_tokens: 200_000 },
-    ModelContextBudget { pattern: "claude-haiku-3", max_tokens: 200_000 },
-    
+    ModelContextBudget {
+        pattern: "claude-3-haiku",
+        max_tokens: 200_000,
+    },
+    ModelContextBudget {
+        pattern: "claude-3-5-haiku",
+        max_tokens: 200_000,
+    },
+    ModelContextBudget {
+        pattern: "claude-haiku-3",
+        max_tokens: 200_000,
+    },
     // Claude 3 Sonnet: 200k tokens
-    ModelContextBudget { pattern: "claude-3-sonnet", max_tokens: 200_000 },
-    ModelContextBudget { pattern: "claude-sonnet-3", max_tokens: 200_000 },
-    
+    ModelContextBudget {
+        pattern: "claude-3-sonnet",
+        max_tokens: 200_000,
+    },
+    ModelContextBudget {
+        pattern: "claude-sonnet-3",
+        max_tokens: 200_000,
+    },
     // Claude 3 Opus: 200k tokens
-    ModelContextBudget { pattern: "claude-3-opus", max_tokens: 200_000 },
-    ModelContextBudget { pattern: "claude-opus-3", max_tokens: 200_000 },
-    
+    ModelContextBudget {
+        pattern: "claude-3-opus",
+        max_tokens: 200_000,
+    },
+    ModelContextBudget {
+        pattern: "claude-opus-3",
+        max_tokens: 200_000,
+    },
     // Llama 3.1 variants: 128k tokens
-    ModelContextBudget { pattern: "llama-3.1-70b", max_tokens: 128_000 },
-    ModelContextBudget { pattern: "llama-3.1-405b", max_tokens: 128_000 },
-    ModelContextBudget { pattern: "llama-3.1-8b", max_tokens: 128_000 },
-    ModelContextBudget { pattern: "llama-3-1-70b", max_tokens: 128_000 },
-    ModelContextBudget { pattern: "llama-3-1-405b", max_tokens: 128_000 },
-    ModelContextBudget { pattern: "llama-3-1-8b", max_tokens: 128_000 },
-    
+    ModelContextBudget {
+        pattern: "llama-3.1-70b",
+        max_tokens: 128_000,
+    },
+    ModelContextBudget {
+        pattern: "llama-3.1-405b",
+        max_tokens: 128_000,
+    },
+    ModelContextBudget {
+        pattern: "llama-3.1-8b",
+        max_tokens: 128_000,
+    },
+    ModelContextBudget {
+        pattern: "llama-3-1-70b",
+        max_tokens: 128_000,
+    },
+    ModelContextBudget {
+        pattern: "llama-3-1-405b",
+        max_tokens: 128_000,
+    },
+    ModelContextBudget {
+        pattern: "llama-3-1-8b",
+        max_tokens: 128_000,
+    },
     // Mistral Large: 128k tokens
-    ModelContextBudget { pattern: "mistral-large", max_tokens: 128_000 },
-    ModelContextBudget { pattern: "mistral-large-2407", max_tokens: 128_000 },
-    
+    ModelContextBudget {
+        pattern: "mistral-large",
+        max_tokens: 128_000,
+    },
+    ModelContextBudget {
+        pattern: "mistral-large-2407",
+        max_tokens: 128_000,
+    },
     // Deepseek V2 and Coder: 128k tokens
-    ModelContextBudget { pattern: "deepseek-v2", max_tokens: 128_000 },
-    ModelContextBudget { pattern: "deepseek-coder", max_tokens: 128_000 },
-    ModelContextBudget { pattern: "deepseek-chat", max_tokens: 128_000 },
-    
+    ModelContextBudget {
+        pattern: "deepseek-v2",
+        max_tokens: 128_000,
+    },
+    ModelContextBudget {
+        pattern: "deepseek-coder",
+        max_tokens: 128_000,
+    },
+    ModelContextBudget {
+        pattern: "deepseek-chat",
+        max_tokens: 128_000,
+    },
     // Qwen 2.5: 128k tokens
-    ModelContextBudget { pattern: "qwen-2.5", max_tokens: 128_000 },
-    ModelContextBudget { pattern: "qwen2.5", max_tokens: 128_000 },
-    ModelContextBudget { pattern: "qwen-2-5", max_tokens: 128_000 },
+    ModelContextBudget {
+        pattern: "qwen-2.5",
+        max_tokens: 128_000,
+    },
+    ModelContextBudget {
+        pattern: "qwen2.5",
+        max_tokens: 128_000,
+    },
+    ModelContextBudget {
+        pattern: "qwen-2-5",
+        max_tokens: 128_000,
+    },
 ];
 
 /// Look up the context budget (max tokens) for a given model identifier.
@@ -101,14 +191,14 @@ pub const MODEL_BUDGETS: &[ModelContextBudget] = &[
 /// ```
 pub fn get_model_budget(model: &str) -> usize {
     let model_lower = model.to_lowercase();
-    
+
     // Linear scan through budget table (fast for small tables)
     for entry in MODEL_BUDGETS {
         if model_lower.contains(entry.pattern) {
             return entry.max_tokens;
         }
     }
-    
+
     DEFAULT_BUDGET_TOKENS
 }
 
@@ -181,36 +271,35 @@ fn compression_action_for(
     if msg.role == "system" || msg.role == "developer" {
         return CompressionAction::Preserve;
     }
-    
+
     // Always preserve last 2 messages
     if index >= total.saturating_sub(MIN_PRESERVE_MESSAGES) {
         return CompressionAction::Preserve;
     }
-    
+
     // Preserve messages containing file paths or code blocks
     if contains_file_paths(&msg.content) || contains_code_blocks(&msg.content) {
         return CompressionAction::Preserve;
     }
-    
+
     // Drop old tool results (older than threshold turns)
     if msg.role == "tool" && turn_distance > TOOL_RESULT_TURNS_THRESHOLD {
         return CompressionAction::Drop;
     }
-    
+
     // Summarize older assistant/user messages
     if turn_distance > 2 {
         return CompressionAction::Summarize;
     }
-    
+
     CompressionAction::Preserve
 }
 
 /// Check if content contains file paths (common patterns).
 fn contains_file_paths(content: &str) -> bool {
     let code_extensions = [
-        ".rs", ".py", ".js", ".ts", ".json", ".toml", ".md",
-        ".c", ".cpp", ".h", ".hpp", ".java", ".go", ".rb",
-        ".css", ".html", ".xml", ".yaml", ".yml", ".sh",
+        ".rs", ".py", ".js", ".ts", ".json", ".toml", ".md", ".c", ".cpp", ".h", ".hpp", ".java",
+        ".go", ".rb", ".css", ".html", ".xml", ".yaml", ".yml", ".sh",
     ];
 
     // Check for path separators combined with extensions
@@ -221,19 +310,26 @@ fn contains_file_paths(content: &str) -> bool {
     let has_bare_filename = code_extensions.iter().any(|ext| {
         if let Some(pos) = content.find(ext) {
             // Ensure there's a word character before the extension (part of a filename)
-            pos > 0 && content.as_bytes().get(pos - 1).is_some_and(|b| b.is_ascii_alphanumeric() || *b == b'_' || *b == b'-')
+            pos > 0
+                && content
+                    .as_bytes()
+                    .get(pos - 1)
+                    .is_some_and(|b| b.is_ascii_alphanumeric() || *b == b'_' || *b == b'-')
         } else {
             false
         }
     });
 
-    has_path_with_ext || has_bare_filename || content.contains("file://") || content.contains("path:")
+    has_path_with_ext
+        || has_bare_filename
+        || content.contains("file://")
+        || content.contains("path:")
 }
 
 /// Check if content contains code blocks (fenced or indented).
 fn contains_code_blocks(content: &str) -> bool {
-    content.contains("```") 
-        || content.contains("fn ") 
+    content.contains("```")
+        || content.contains("fn ")
         || content.contains("pub fn ")
         || content.contains("def ")
         || content.contains("class ")
@@ -272,19 +368,19 @@ pub fn compress_history_with_budget(
 ) -> Vec<ChatMessage> {
     // First apply base compression (cleans up malformed messages, etc.)
     let base_compressed = compress_history(messages, supports_tools);
-    
+
     // Get model-specific budget
     let max_tokens = get_model_budget(model);
     let target_tokens = max_tokens.saturating_sub(RESERVED_OUTPUT_TOKENS);
-    
+
     // Estimate current usage
     let current_tokens = estimate_messages_tokens(&base_compressed);
-    
+
     // If already within budget, return as-is
     if current_tokens <= target_tokens {
         return base_compressed;
     }
-    
+
     // Need to compress further - apply budget-aware compression
     apply_budget_compression(&base_compressed, target_tokens)
 }
@@ -294,30 +390,30 @@ fn apply_budget_compression(messages: &[ChatMessage], target_tokens: usize) -> V
     if messages.is_empty() {
         return Vec::new();
     }
-    
+
     let total = messages.len();
-    
+
     // Phase 1: Separate system messages (always preserved)
     let system_msgs: Vec<ChatMessage> = messages
         .iter()
         .filter(|m| m.role == "system" || m.role == "developer")
         .cloned()
         .collect();
-    
+
     let non_system: Vec<(usize, &ChatMessage)> = messages
         .iter()
         .enumerate()
         .filter(|(_, m)| m.role != "system" && m.role != "developer")
         .collect();
-    
+
     let system_tokens = estimate_messages_tokens(&system_msgs);
     let mut remaining_budget = target_tokens.saturating_sub(system_tokens);
-    
+
     // Phase 2: Calculate turn distances for each message
     // A "turn" is a user-assistant pair
     let mut turn_count = 0;
     let mut turn_distances: Vec<usize> = Vec::with_capacity(non_system.len());
-    
+
     for (_, msg) in non_system.iter().rev() {
         if msg.role == "user" {
             turn_count += 1;
@@ -325,14 +421,14 @@ fn apply_budget_compression(messages: &[ChatMessage], target_tokens: usize) -> V
         turn_distances.push(turn_count);
     }
     turn_distances.reverse();
-    
+
     // Phase 3: Classify messages and build result
     let mut result: Vec<ChatMessage> = Vec::new();
     let mut summaries: Vec<String> = Vec::new();
-    
+
     for ((orig_idx, msg), turn_dist) in non_system.iter().zip(turn_distances.iter()) {
         let action = compression_action_for(msg, *orig_idx, total, *turn_dist);
-        
+
         match action {
             CompressionAction::Preserve => {
                 let msg_tokens = estimate_tokens(&msg.content) as usize;
@@ -364,10 +460,10 @@ fn apply_budget_compression(messages: &[ChatMessage], target_tokens: usize) -> V
             }
         }
     }
-    
+
     // Phase 4: Build final result with summary if needed
     let mut final_result = system_msgs;
-    
+
     if !summaries.is_empty() {
         let summary_text = build_conversation_summary(&summaries);
         let summary_msg = ChatMessage {
@@ -382,7 +478,7 @@ fn apply_budget_compression(messages: &[ChatMessage], target_tokens: usize) -> V
             final_result.push(summary_msg);
         }
     }
-    
+
     final_result.extend(result);
     final_result
 }
@@ -395,11 +491,11 @@ fn extract_summary_snippet(msg: &ChatMessage) -> String {
         "tool" => "Tool",
         _ => "Message",
     };
-    
+
     // Take first 100 chars as preview
     let preview: String = msg.content.chars().take(100).collect();
     let preview = preview.trim();
-    
+
     if preview.is_empty() {
         format!("[{}: (empty)]", role_label)
     } else {
@@ -410,18 +506,22 @@ fn extract_summary_snippet(msg: &ChatMessage) -> String {
 /// Extract a brief conclusion from a tool result.
 fn extract_tool_conclusion(msg: &ChatMessage) -> String {
     let tool_name = msg.name.as_deref().unwrap_or("unknown_tool");
-    
+
     // Try to extract the last meaningful line as conclusion
-    let lines: Vec<&str> = msg.content.lines().filter(|l| !l.trim().is_empty()).collect();
-    
+    let lines: Vec<&str> = msg
+        .content
+        .lines()
+        .filter(|l| !l.trim().is_empty())
+        .collect();
+
     if lines.is_empty() {
         return String::new();
     }
-    
+
     // Take last line as conclusion, truncated if needed
     let conclusion = lines.last().unwrap_or(&"");
     let conclusion: String = conclusion.chars().take(200).collect();
-    
+
     format!("[Earlier {} result: {}...]", tool_name, conclusion.trim())
 }
 
@@ -430,21 +530,24 @@ fn build_conversation_summary(snippets: &[String]) -> String {
     if snippets.is_empty() {
         return String::new();
     }
-    
+
     let mut summary = String::from(
         "[Earlier conversation compressed to optimize context budget.\n\
-         Key points from previous exchanges:"
+         Key points from previous exchanges:",
     );
-    
+
     for snippet in snippets.iter().take(5) {
         summary.push_str("\n  - ");
         summary.push_str(snippet);
     }
-    
+
     if snippets.len() > 5 {
-        summary.push_str(&format!("\n  ... and {} more exchanges", snippets.len() - 5));
+        summary.push_str(&format!(
+            "\n  ... and {} more exchanges",
+            snippets.len() - 5
+        ));
     }
-    
+
     summary.push(']');
     summary
 }
@@ -693,9 +796,7 @@ mod tests {
 
     #[test]
     fn test_build_conversation_summary_truncation() {
-        let snippets: Vec<String> = (0..10)
-            .map(|i| format!("[Message {}]", i))
-            .collect();
+        let snippets: Vec<String> = (0..10).map(|i| format!("[Message {}]", i)).collect();
         let summary = build_conversation_summary(&snippets);
         assert!(summary.contains("5 more exchanges"));
     }
@@ -728,7 +829,7 @@ mod tests {
                 tool_calls: None,
             },
         ];
-        
+
         // With unknown model (8k budget), small messages should fit
         let compressed = compress_history_with_budget(&messages, "unknown-model", false);
         assert!(!compressed.is_empty());
@@ -754,7 +855,7 @@ mod tests {
                 tool_calls: None,
             },
         ];
-        
+
         // With GPT-4o (128k budget), these messages easily fit
         let compressed = compress_history_with_budget(&messages, "gpt-4o", false);
         assert_eq!(compressed.len(), 2);
@@ -778,8 +879,10 @@ mod tests {
                 tool_calls: None,
             },
         ];
-        
+
         let compressed = compress_history_with_budget(&messages, "gpt-3.5-turbo", false);
-        assert!(compressed.iter().any(|m| m.role == "system" && m.content.contains("Important system instructions")));
+        assert!(compressed
+            .iter()
+            .any(|m| m.role == "system" && m.content.contains("Important system instructions")));
     }
 }

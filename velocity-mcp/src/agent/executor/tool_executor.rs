@@ -592,7 +592,10 @@ mod tests {
         let big_args = "x".repeat(MAX_ARGS_SIZE + 1);
         let result = exec.execute_with_retry("tool", |_| Ok("ok".into()), &big_args);
         assert!(!result.success);
-        assert!(result.validation_errors.iter().any(|e| e.contains("maximum size")));
+        assert!(result
+            .validation_errors
+            .iter()
+            .any(|e| e.contains("maximum size")));
     }
 
     // ---- Duration tracking ---------------------------------------------------

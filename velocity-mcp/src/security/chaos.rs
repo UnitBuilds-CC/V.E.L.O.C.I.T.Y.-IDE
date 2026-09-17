@@ -336,7 +336,10 @@ mod tests {
     #[test]
     fn start_next_dequeues() {
         let mut runner = ChaosRunner::new();
-        runner.schedule(latency_spike(ChaosTarget::FileSystem, Duration::from_secs(1)));
+        runner.schedule(latency_spike(
+            ChaosTarget::FileSystem,
+            Duration::from_secs(1),
+        ));
         let active = runner.start_next().expect("should return experiment");
         assert_eq!(active.name, "latency_spike");
         assert!(active.started_at.is_some());
@@ -523,7 +526,10 @@ mod tests {
     #[test]
     fn full_pipeline() {
         let mut runner = ChaosRunner::new();
-        runner.schedule(latency_spike(ChaosTarget::ProviderApi, Duration::from_millis(100)));
+        runner.schedule(latency_spike(
+            ChaosTarget::ProviderApi,
+            Duration::from_millis(100),
+        ));
         runner.schedule(error_burst(ChaosTarget::FileSystem, 5));
         runner.schedule(provider_down(ChaosTarget::IpcChannel));
 

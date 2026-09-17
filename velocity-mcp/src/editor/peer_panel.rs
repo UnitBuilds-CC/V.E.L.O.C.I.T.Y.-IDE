@@ -500,14 +500,16 @@ impl VelocityApp {
                 let _ = crate::agent::peer_server::request_pairing(
                     &host,
                     port,
-                    self.peer_state.peer_manager
+                    self.peer_state
+                        .peer_manager
                         .local_identity
                         .as_ref()
                         .map(|id| id.name.as_str())
                         .unwrap_or("velocity"),
                 );
 
-                self.peer_state.peer_status = format!("Connected to {} at {}:{}", peer_name, host, port);
+                self.peer_state.peer_status =
+                    format!("Connected to {} at {}:{}", peer_name, host, port);
             }
             Err(e) => {
                 // Add peer anyway (may come online later).
@@ -528,7 +530,8 @@ impl VelocityApp {
                     environment: None,
                 };
                 self.peer_state.peer_manager.add_peer(peer);
-                self.peer_state.peer_status = format!("Added {} (unreachable: {}). Will retry.", name, e);
+                self.peer_state.peer_status =
+                    format!("Added {} (unreachable: {}). Will retry.", name, e);
             }
         }
 

@@ -1209,7 +1209,10 @@ pub(crate) fn configured_providers(root: &Path) -> Vec<(AiProvider, bool)> {
         (AiProvider::FireworksAi, settings.fireworks.is_configured()),
         (AiProvider::Perplexity, settings.perplexity.is_configured()),
         (AiProvider::Cerebras, settings.cerebras.is_configured()),
-        (AiProvider::AzureOpenAi, settings.azure_openai.is_configured()),
+        (
+            AiProvider::AzureOpenAi,
+            settings.azure_openai.is_configured(),
+        ),
         (
             AiProvider::CloudflareWorkersAi,
             !settings.cloudflare.api_token.trim().is_empty(),
@@ -1255,18 +1258,37 @@ fn fallback_models_for(provider: AiProvider, primary: &str) -> Vec<String> {
             }
         }
         AiProvider::OpenRouter => {
-            for m in &["tencent/hy3:free", "google/gemini-2.0-flash-exp:free", "meta-llama/llama-3.3-70b-instruct:free"] {
-                if *m != primary { models.push(m.to_string()); }
+            for m in &[
+                "tencent/hy3:free",
+                "google/gemini-2.0-flash-exp:free",
+                "meta-llama/llama-3.3-70b-instruct:free",
+            ] {
+                if *m != primary {
+                    models.push(m.to_string());
+                }
             }
         }
         AiProvider::CloudflareWorkersAi => {
-            for m in &["@cf/qwen/qwen2.5-coder-7b-instruct", "@cf/meta/llama-3.3-70b-instruct-fp8-fast"] {
-                if *m != primary { models.push(m.to_string()); }
+            for m in &[
+                "@cf/qwen/qwen2.5-coder-7b-instruct",
+                "@cf/meta/llama-3.3-70b-instruct-fp8-fast",
+            ] {
+                if *m != primary {
+                    models.push(m.to_string());
+                }
             }
         }
         AiProvider::LocalOllama => {
-            for m in &["qwen2.5-coder:1.5b", "qwen2.5-coder:7b", "llama3.2:1b", "llama3.2:3b", "phi3:mini"] {
-                if *m != primary { models.push(m.to_string()); }
+            for m in &[
+                "qwen2.5-coder:1.5b",
+                "qwen2.5-coder:7b",
+                "llama3.2:1b",
+                "llama3.2:3b",
+                "phi3:mini",
+            ] {
+                if *m != primary {
+                    models.push(m.to_string());
+                }
             }
         }
         _ => {} // Other providers: no model fallback, just move to next provider
@@ -1280,7 +1302,9 @@ pub(crate) fn is_provider_unavailable(status_updates: &[String], transcript: &st
     transcript.contains("No Cloudflare accounts")
         || transcript.contains("No OpenRouter accounts")
         || transcript.contains("No Alibaba")
-        || status_updates.iter().any(|s| s.contains("No ") && s.contains("accounts configured"))
+        || status_updates
+            .iter()
+            .any(|s| s.contains("No ") && s.contains("accounts configured"))
         || status_updates.iter().any(|s| s.contains("missing"))
 }
 
@@ -1291,14 +1315,16 @@ pub(crate) fn is_provider_unavailable(status_updates: &[String], transcript: &st
 /// 4. Other configured workspace providers
 /// 5. Member's original provider (even if unconfigured — last resort)
 /// 6. LocalOllama as final fallback (might be running locally)
-pub(crate) fn build_fallback_chain(member: &ExpertMember, root: &Path) -> Vec<(AiProvider, String)> {
+pub(crate) fn build_fallback_chain(
+    member: &ExpertMember,
+    root: &Path,
+) -> Vec<(AiProvider, String)> {
     let mut chain = Vec::new();
     let configured = configured_providers(root);
 
     // Helper: check if a provider is configured in this workspace
-    let is_configured = |p: AiProvider| -> bool {
-        configured.iter().any(|(prov, yes)| *prov == p && *yes)
-    };
+    let is_configured =
+        |p: AiProvider| -> bool { configured.iter().any(|(prov, yes)| *prov == p && *yes) };
 
     let member_provider_configured = is_configured(member.provider);
 
@@ -1321,10 +1347,7 @@ pub(crate) fn build_fallback_chain(member: &ExpertMember, root: &Path) -> Vec<(A
 
     // 3. Member's explicit fallback_provider — if configured and not already in chain
     if let Some(fallback) = member.fallback_provider {
-        if fallback != member.provider
-            && fallback != workspace_default
-            && is_configured(fallback)
-        {
+        if fallback != member.provider && fallback != workspace_default && is_configured(fallback) {
             let model = crate::agent::provider::default_provider_model(fallback);
             chain.push((fallback, model));
         }
@@ -1346,10 +1369,8 @@ pub(crate) fn build_fallback_chain(member: &ExpertMember, root: &Path) -> Vec<(A
     // 5. Member's original provider as last resort (even if unconfigured)
     if !member_provider_configured && !chain.iter().any(|(p, _)| *p == member.provider) {
         let default_model = crate::agent::provider::default_provider_model(member.provider);
-        let (_, model) = member.resolve_effective_provider_and_model(
-            workspace_default,
-            &default_model,
-        );
+        let (_, model) =
+            member.resolve_effective_provider_and_model(workspace_default, &default_model);
         chain.push((member.provider, model));
     }
 
@@ -1398,8 +1419,8 @@ fn team_dispatch(root: &Path, arguments: &Value) -> Result<String, Box<dyn Error
         .ok_or_else(|| format!("team '{}' not found", team_ref))?;
 
     // Route to the best member
-    let routed = route_member(team, task, &files, None)
-        .ok_or("routing failed: team has no members")?;
+    let routed =
+        route_member(team, task, &files, None).ok_or("routing failed: team has no members")?;
 
     let member = team
         .members
@@ -1428,7 +1449,11 @@ fn team_dispatch(root: &Path, arguments: &Value) -> Result<String, Box<dyn Error
             Ok(contents) => {
                 // Truncate very large files to keep prompt manageable
                 let truncated = if contents.len() > 12_000 {
-                    format!("{}\n... [truncated, {} bytes total]", &contents[..12_000], contents.len())
+                    format!(
+                        "{}\n... [truncated, {} bytes total]",
+                        &contents[..12_000],
+                        contents.len()
+                    )
                 } else {
                     contents
                 };
@@ -1468,11 +1493,15 @@ fn team_dispatch(root: &Path, arguments: &Value) -> Result<String, Box<dyn Error
     prompt.push_str("\nBe concise. No preamble, no exploration narrative, just results.\n");
 
     // ── Routing metadata ───────────────────────────────────────────
-    prompt.push_str(&format!("\n(Routing: {} → {} via: {})\n",
+    prompt.push_str(&format!(
+        "\n(Routing: {} → {} via: {})\n",
         team.name, member.name, routed.reason
     ));
     if !member.workflow_instructions.is_empty() {
-        prompt.push_str(&format!("(Team instructions: {})\n", member.workflow_instructions));
+        prompt.push_str(&format!(
+            "(Team instructions: {})\n",
+            member.workflow_instructions
+        ));
     }
 
     // Build fallback chain and execute with failover
@@ -1485,8 +1514,14 @@ fn team_dispatch(root: &Path, arguments: &Value) -> Result<String, Box<dyn Error
 
     let mut all_status_updates = Vec::new();
     let mut final_transcript = String::new();
-    let mut used_provider = fallback_chain.first().map(|(p, _)| *p).unwrap_or(AiProvider::CloudflareWorkersAi);
-    let mut used_model = fallback_chain.first().map(|(_, m)| m.clone()).unwrap_or_default();
+    let mut used_provider = fallback_chain
+        .first()
+        .map(|(p, _)| *p)
+        .unwrap_or(AiProvider::CloudflareWorkersAi);
+    let mut used_model = fallback_chain
+        .first()
+        .map(|(_, m)| m.clone())
+        .unwrap_or_default();
     let mut attempt_log = Vec::new();
     let dispatch_start = std::time::Instant::now();
     const MAX_DISPATCH_TIME: std::time::Duration = std::time::Duration::from_secs(90);
@@ -1495,7 +1530,8 @@ fn team_dispatch(root: &Path, arguments: &Value) -> Result<String, Box<dyn Error
         // Check overall timeout
         if dispatch_start.elapsed() > MAX_DISPATCH_TIME {
             log::warn!("team_dispatch: overall timeout (90s) exceeded, stopping fallback attempts");
-            final_transcript.push_str("\n\n[Dispatch timeout: no model succeeded within 90 seconds]");
+            final_transcript
+                .push_str("\n\n[Dispatch timeout: no model succeeded within 90 seconds]");
             break;
         }
 
@@ -1507,17 +1543,18 @@ fn team_dispatch(root: &Path, arguments: &Value) -> Result<String, Box<dyn Error
         let mut provider_succeeded = false;
 
         for try_model in &models_to_try {
-            let result = crate::agent::run_headless_subagent(crate::agent::HeadlessSubAgentRequest {
-                workspace_root: root.to_path_buf(),
-                provider: *provider,
-                model: try_model.clone(),
-                thinking: false,
-                prompt: prompt.clone(),
-                cancel_rx: None,
-                progress: None,
-                scoped_files: scoped_files.clone(),
-                max_turns: Some(8),
-            });
+            let result =
+                crate::agent::run_headless_subagent(crate::agent::HeadlessSubAgentRequest {
+                    workspace_root: root.to_path_buf(),
+                    provider: *provider,
+                    model: try_model.clone(),
+                    thinking: false,
+                    prompt: prompt.clone(),
+                    cancel_rx: None,
+                    progress: None,
+                    scoped_files: scoped_files.clone(),
+                    max_turns: Some(8),
+                });
 
             all_status_updates.extend(result.status_updates.clone());
             used_provider = *provider;

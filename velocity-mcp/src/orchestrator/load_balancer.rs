@@ -111,7 +111,8 @@ impl LoadBalancer {
 
     /// Register a new worker.
     pub fn register_worker(&mut self, id: u64, capacity: usize, specializations: Vec<String>) {
-        self.workers.insert(id, WorkerLoad::new(id, capacity, specializations));
+        self.workers
+            .insert(id, WorkerLoad::new(id, capacity, specializations));
     }
 
     /// Remove a worker from the pool.  In-flight tasks are *not* migrated
@@ -192,7 +193,11 @@ impl LoadBalancer {
         // Imbalance = coefficient of variation clamped to [0,1].
         let variance = utils.iter().map(|u| (u - avg).powi(2)).sum::<f64>() / total as f64;
         let stddev = variance.sqrt();
-        let imbalance = if avg > 0.0 { (stddev / avg).min(1.0) } else { 0.0 };
+        let imbalance = if avg > 0.0 {
+            (stddev / avg).min(1.0)
+        } else {
+            0.0
+        };
 
         ClusterHealth {
             total_workers: total,
@@ -570,7 +575,11 @@ mod tests {
         lb.record_task_start(1);
         lb.record_task_start(2);
         let h = lb.cluster_health();
-        assert!(h.imbalance_score < 0.01, "imbalance was {}", h.imbalance_score);
+        assert!(
+            h.imbalance_score < 0.01,
+            "imbalance was {}",
+            h.imbalance_score
+        );
     }
 
     #[test]
@@ -584,7 +593,11 @@ mod tests {
         lb.record_task_start(1);
         // Worker 1 at 1.0, Worker 2 at 0.0.
         let h = lb.cluster_health();
-        assert!(h.imbalance_score > 0.5, "imbalance was {}", h.imbalance_score);
+        assert!(
+            h.imbalance_score > 0.5,
+            "imbalance was {}",
+            h.imbalance_score
+        );
     }
 
     // -- rebalance ----------------------------------------------------------

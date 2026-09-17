@@ -398,7 +398,8 @@ impl NativeBrowserBridge {
     pub fn screencast_capture(&mut self) -> (u32, usize, u64) {
         let element_count = self
             .active_session
-            .dom.dom_tree
+            .dom
+            .dom_tree
             .as_ref()
             .map(|tree| AgenticAomTree::build_aom_nodes(tree).len())
             .unwrap_or(0);
@@ -862,7 +863,8 @@ impl NativeBrowserBridge {
         let before = self.active_session.capture_state_document();
         let selector = self
             .active_session
-            .dom.dom_tree
+            .dom
+            .dom_tree
             .as_ref()
             .and_then(|tree| tree.get_node(node_id))
             .and_then(|n| n.attributes.get("id"))
@@ -884,11 +886,13 @@ impl NativeBrowserBridge {
                 );
                 let _ = self
                     .active_session
-                    .js.js_vm
+                    .js
+                    .js_vm
                     .dispatch_event(tree, &selector, "mouseenter");
                 let _ = self
                     .active_session
-                    .js.js_vm
+                    .js
+                    .js_vm
                     .dispatch_event(tree, &selector, "mouseover");
             }
         }
@@ -913,7 +917,8 @@ impl NativeBrowserBridge {
     /// List recent network requests.
     pub fn list_network_requests(&self) -> Vec<(String, String, u16, String)> {
         self.active_session
-            .net.network_tracker
+            .net
+            .network_tracker
             .requests
             .iter()
             .map(|r| {

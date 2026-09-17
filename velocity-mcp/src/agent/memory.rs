@@ -209,8 +209,11 @@ impl SessionMemory {
         // Phase 2: if still at/over capacity, sort by importance and keep the
         // top half (leaving room for at least one new insertion).
         if self.entries.len() >= self.max_entries {
-            self.entries
-                .sort_by(|a, b| b.importance.partial_cmp(&a.importance).unwrap_or(std::cmp::Ordering::Equal));
+            self.entries.sort_by(|a, b| {
+                b.importance
+                    .partial_cmp(&a.importance)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            });
             let keep = (self.max_entries / 2).min(self.max_entries.saturating_sub(1));
             self.entries.truncate(keep);
         }
@@ -229,7 +232,11 @@ impl SessionMemory {
         let query_words: Vec<String> = query
             .to_lowercase()
             .split_whitespace()
-            .map(|w| w.chars().filter(|c| c.is_alphanumeric()).collect::<String>())
+            .map(|w| {
+                w.chars()
+                    .filter(|c| c.is_alphanumeric())
+                    .collect::<String>()
+            })
             .filter(|w| !w.is_empty())
             .collect();
 
@@ -249,7 +256,11 @@ impl SessionMemory {
                     .content
                     .to_lowercase()
                     .split_whitespace()
-                    .map(|w| w.chars().filter(|c| c.is_alphanumeric()).collect::<String>())
+                    .map(|w| {
+                        w.chars()
+                            .filter(|c| c.is_alphanumeric())
+                            .collect::<String>()
+                    })
                     .filter(|w| !w.is_empty())
                     .collect();
 
@@ -261,7 +272,11 @@ impl SessionMemory {
                     .filter(|w| query_set.contains(w.as_str()))
                     .count() as f64;
                 let union = entry_words.len() as f64 + query_set.len() as f64 - intersection;
-                let keyword_score = if union > 0.0 { intersection / union } else { 0.0 };
+                let keyword_score = if union > 0.0 {
+                    intersection / union
+                } else {
+                    0.0
+                };
 
                 // Recency: exponential decay with half-life of 24 hours.
                 let age_secs = now
@@ -279,7 +294,11 @@ impl SessionMemory {
         scored.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
 
         // Take top N and bump access counters.
-        let top: Vec<usize> = scored.iter().take(max_results).map(|(idx, _)| *idx).collect();
+        let top: Vec<usize> = scored
+            .iter()
+            .take(max_results)
+            .map(|(idx, _)| *idx)
+            .collect();
         for &idx in &top {
             self.entries[idx].access_count += 1;
             self.entries[idx].last_accessed = SystemTime::now();
@@ -290,13 +309,14 @@ impl SessionMemory {
 
     /// Recall entries filtered to a specific [`MemoryKind`].
     pub fn recall_by_kind(&mut self, kind: MemoryKind, max_results: usize) -> Vec<&MemoryEntry> {
-        let mut matches: Vec<&MemoryEntry> = self
-            .entries
-            .iter()
-            .filter(|e| e.kind == kind)
-            .collect();
+        let mut matches: Vec<&MemoryEntry> =
+            self.entries.iter().filter(|e| e.kind == kind).collect();
         // Sort by importance descending.
-        matches.sort_by(|a, b| b.importance.partial_cmp(&a.importance).unwrap_or(std::cmp::Ordering::Equal));
+        matches.sort_by(|a, b| {
+            b.importance
+                .partial_cmp(&a.importance)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
         matches.truncate(max_results);
         matches
     }
@@ -308,7 +328,11 @@ impl SessionMemory {
             .iter()
             .filter(|e| tags.iter().all(|t| e.tags.iter().any(|et| et == t)))
             .collect();
-        matches.sort_by(|a, b| b.importance.partial_cmp(&a.importance).unwrap_or(std::cmp::Ordering::Equal));
+        matches.sort_by(|a, b| {
+            b.importance
+                .partial_cmp(&a.importance)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
         matches.truncate(max_results);
         matches
     }
@@ -457,7 +481,12 @@ mod tests {
         let mut mem = make_memory();
         mem.remember(MemoryKind::Fact, "The quick brown fox".into(), 0.5, vec![]);
         mem.remember(MemoryKind::Fact, "A lazy dog sleeps".into(), 0.5, vec![]);
-        mem.remember(MemoryKind::Fact, "Fox and hound adventure".into(), 0.5, vec![]);
+        mem.remember(
+            MemoryKind::Fact,
+            "Fox and hound adventure".into(),
+            0.5,
+            vec![],
+        );
 
         let results = mem.recall("fox", 10);
         // Both entries mentioning "fox" should rank higher than the dog one.
@@ -468,18 +497,8 @@ mod tests {
     #[test]
     fn test_importance_weighted_recall() {
         let mut mem = make_memory();
-        mem.remember(
-            MemoryKind::Fact,
-            "alpha beta gamma".into(),
-            0.1,
-            vec![],
-        );
-        mem.remember(
-            MemoryKind::Fact,
-            "alpha beta gamma".into(),
-            1.0,
-            vec![],
-        );
+        mem.remember(MemoryKind::Fact, "alpha beta gamma".into(), 0.1, vec![]);
+        mem.remember(MemoryKind::Fact, "alpha beta gamma".into(), 1.0, vec![]);
         let results = mem.recall("alpha beta", 2);
         assert_eq!(results.len(), 2);
         // The higher-importance entry should be first.
@@ -597,7 +616,10 @@ mod tests {
 
         assert_eq!(restored.len(), 2);
         assert_eq!(restored.session_id(), "test-session");
-        assert_eq!(restored.entries[0].content, "Use RAII for resource management");
+        assert_eq!(
+            restored.entries[0].content,
+            "Use RAII for resource management"
+        );
         assert_eq!(restored.entries[1].kind, MemoryKind::UserPreference);
     }
 
@@ -616,12 +638,7 @@ mod tests {
         mem.set_max_entries(5);
 
         for i in 0..10 {
-            mem.remember(
-                MemoryKind::Fact,
-                format!("entry {i}"),
-                0.5,
-                vec![],
-            );
+            mem.remember(MemoryKind::Fact, format!("entry {i}"), 0.5, vec![]);
         }
         assert!(mem.len() <= mem.max_entries());
     }
@@ -633,7 +650,12 @@ mod tests {
         let mut mem = make_memory();
         mem.remember(MemoryKind::Fact, "a".into(), 0.5, vec!["rust".into()]);
         mem.remember(MemoryKind::Fact, "b".into(), 0.5, vec!["python".into()]);
-        mem.remember(MemoryKind::Fact, "c".into(), 0.5, vec!["rust".into(), "web".into()]);
+        mem.remember(
+            MemoryKind::Fact,
+            "c".into(),
+            0.5,
+            vec!["rust".into(), "web".into()],
+        );
 
         let results = mem.recall_by_tags(&["rust"], 10);
         assert_eq!(results.len(), 2);
@@ -642,7 +664,12 @@ mod tests {
     #[test]
     fn test_recall_by_tags_multiple() {
         let mut mem = make_memory();
-        mem.remember(MemoryKind::Fact, "a".into(), 0.5, vec!["rust".into(), "web".into()]);
+        mem.remember(
+            MemoryKind::Fact,
+            "a".into(),
+            0.5,
+            vec!["rust".into(), "web".into()],
+        );
         mem.remember(MemoryKind::Fact, "b".into(), 0.5, vec!["rust".into()]);
 
         let results = mem.recall_by_tags(&["rust", "web"], 10);
@@ -666,8 +693,18 @@ mod tests {
     fn test_recall_by_kind() {
         let mut mem = make_memory();
         mem.remember(MemoryKind::Error, "segfault in parser".into(), 0.8, vec![]);
-        mem.remember(MemoryKind::Fact, "parser is in parser.rs".into(), 0.5, vec![]);
-        mem.remember(MemoryKind::Error, "null pointer in lexer".into(), 0.6, vec![]);
+        mem.remember(
+            MemoryKind::Fact,
+            "parser is in parser.rs".into(),
+            0.5,
+            vec![],
+        );
+        mem.remember(
+            MemoryKind::Error,
+            "null pointer in lexer".into(),
+            0.6,
+            vec![],
+        );
 
         let errors = mem.recall_by_kind(MemoryKind::Error, 10);
         assert_eq!(errors.len(), 2);
@@ -740,7 +777,11 @@ mod tests {
         let mut mem = make_memory();
         mem.remember(MemoryKind::Fact, "recalled fact".into(), 0.5, vec![]);
         let _ = mem.recall("recalled", 10);
-        let entry = mem.entries.iter().find(|e| e.content == "recalled fact").unwrap();
+        let entry = mem
+            .entries
+            .iter()
+            .find(|e| e.content == "recalled fact")
+            .unwrap();
         assert_eq!(entry.access_count, 1);
     }
 

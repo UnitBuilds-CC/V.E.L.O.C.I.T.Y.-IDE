@@ -1207,7 +1207,8 @@ impl VelocityApp {
         };
         // Start the GUI control listener (TCP for external MCP/agent control)
         let auth_token = crate::editor::gui_control::load_or_generate_token(&workspace_root);
-        let (cmd_rx, shutdown) = crate::editor::gui_control::start_listener(cc.egui_ctx.clone(), auth_token);
+        let (cmd_rx, shutdown) =
+            crate::editor::gui_control::start_listener(cc.egui_ctx.clone(), auth_token);
         app.gui_cmd_rx = Some(cmd_rx);
         app.gui_control_handle = Some(crate::editor::gui_control::GuiControlHandle { shutdown });
         // Don't create an untitled editor by default — show the welcome screen instead.

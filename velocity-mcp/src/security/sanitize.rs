@@ -119,16 +119,12 @@ pub fn sanitize_path(input: &str, workspace_root: &Path) -> Result<PathBuf, Sani
         Ok(p) => p,
         Err(_) => {
             // File may not exist yet (e.g. write to new path). Canonicalize parent.
-            let parent = candidate
-                .parent()
-                .unwrap_or(workspace_root);
-            let file_name = candidate
-                .file_name()
-                .ok_or_else(|| SanitizeError {
-                    domain: "path",
-                    reason: "path has no filename component".into(),
-                    input_preview: preview(input, 80),
-                })?;
+            let parent = candidate.parent().unwrap_or(workspace_root);
+            let file_name = candidate.file_name().ok_or_else(|| SanitizeError {
+                domain: "path",
+                reason: "path has no filename component".into(),
+                input_preview: preview(input, 80),
+            })?;
             match parent.canonicalize() {
                 Ok(p) => p.join(file_name),
                 Err(e) => {
@@ -205,7 +201,10 @@ pub fn sanitize_url(input: &str) -> Result<String, SanitizeError> {
     if !URL_ALLOWED_SCHEMES.contains(&scheme.as_str()) {
         return Err(SanitizeError {
             domain: "url",
-            reason: format!("unsupported scheme: {:?} (allowed: {:?})", scheme, URL_ALLOWED_SCHEMES),
+            reason: format!(
+                "unsupported scheme: {:?} (allowed: {:?})",
+                scheme, URL_ALLOWED_SCHEMES
+            ),
             input_preview: preview(trimmed, 80),
         });
     }

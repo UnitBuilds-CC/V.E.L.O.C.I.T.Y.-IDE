@@ -218,10 +218,7 @@ impl SoftwareInterpreter {
         }
         let abs_sum: f64 = weights.iter().map(|w| w.unsigned_abs() as f64).sum();
         let denom = abs_sum.max(1.0);
-        weights
-            .iter()
-            .map(|w| (*w as f64) / denom)
-            .collect()
+        weights.iter().map(|w| (*w as f64) / denom).collect()
     }
 
     /// Convenience wrapper: returns an aggregate scalar score (mean of
@@ -353,7 +350,11 @@ mod tests {
         let mut cache = JitCache::new();
         let _ = cache.get_or_compile(&[1]).unwrap();
         let _ = cache.get_or_compile(&[2]).unwrap();
-        assert_eq!(cache.len(), 2, "different weights should produce different cache entries");
+        assert_eq!(
+            cache.len(),
+            2,
+            "different weights should produce different cache entries"
+        );
     }
 
     #[test]
@@ -378,11 +379,18 @@ mod tests {
     fn cache_warm_up_defaults() {
         let mut cache = JitCache::new();
         let count = cache.warm_up_defaults();
-        assert!(count > 0, "warm_up_defaults should compile at least one pattern");
+        assert!(
+            count > 0,
+            "warm_up_defaults should compile at least one pattern"
+        );
         assert_eq!(cache.len(), count);
         // All default patterns should now be cache hits.
         for pat in common_weight_patterns() {
-            assert!(cache.contains(&pat), "pattern {:?} should be cached after warm-up", pat);
+            assert!(
+                cache.contains(&pat),
+                "pattern {:?} should be cached after warm-up",
+                pat
+            );
         }
     }
 
@@ -405,7 +413,10 @@ mod tests {
     fn weight_hash_differs_for_different_inputs() {
         let h1 = weight_vector_hash(&[1, 2, 3]);
         let h2 = weight_vector_hash(&[3, 2, 1]);
-        assert_ne!(h1, h2, "different weight vectors should (almost certainly) hash differently");
+        assert_ne!(
+            h1, h2,
+            "different weight vectors should (almost certainly) hash differently"
+        );
     }
 
     // -- Software interpreter tests -----------------------------------------
@@ -420,7 +431,10 @@ mod tests {
     fn interpreter_single_weight() {
         let scores = SoftwareInterpreter::interpret(&[5]);
         assert_eq!(scores.len(), 1);
-        assert!((scores[0] - 1.0).abs() < f64::EPSILON, "single positive weight → score 1.0");
+        assert!(
+            (scores[0] - 1.0).abs() < f64::EPSILON,
+            "single positive weight → score 1.0"
+        );
     }
 
     #[test]

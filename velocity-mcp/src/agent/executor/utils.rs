@@ -1,8 +1,8 @@
 use super::super::models::*;
-use velocity_ide::hash_str;
 use crate::usage::{CloudflareAccount, OpenRouterAccount, UsageTracker};
 use crossbeam_channel::Sender;
 use serde_json::{json, Value};
+use velocity_ide::hash_str;
 
 pub fn send_usage_update(
     tracker: &mut UsageTracker,

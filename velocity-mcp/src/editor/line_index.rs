@@ -68,7 +68,13 @@ impl LineIndex {
         let new_lines: Vec<usize> = replacement
             .bytes()
             .enumerate()
-            .filter_map(|(i, b)| if b == b'\n' { Some(start + i + 1) } else { None })
+            .filter_map(|(i, b)| {
+                if b == b'\n' {
+                    Some(start + i + 1)
+                } else {
+                    None
+                }
+            })
             .collect();
 
         // ── 3. Build the new line_starts ────────────────────────────────
@@ -476,7 +482,9 @@ mod tests {
         // Deterministic pseudo-random via simple LCG so the test is reproducible.
         let mut seed: u64 = 0xDEAD_BEEF;
         let next_rand = |s: &mut u64| -> u64 {
-            *s = s.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            *s = s
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
             *s >> 33
         };
 
@@ -541,7 +549,9 @@ mod tests {
         // Delete one character at a time from random positions
         let mut seed: u64 = 42;
         let next_rand = |s: &mut u64| -> u64 {
-            *s = s.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            *s = s
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
             *s >> 33
         };
 

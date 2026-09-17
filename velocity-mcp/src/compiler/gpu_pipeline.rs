@@ -109,9 +109,7 @@ impl GpuPipeline {
 
     fn detect_gpu() -> (bool, String, u32, u32) {
         match std::env::var("VELOCITY_GPU") {
-            Ok(val) if val == "1" => {
-                (true, "Velocity GPU (Simulated)".to_string(), 32, 256)
-            }
+            Ok(val) if val == "1" => (true, "Velocity GPU (Simulated)".to_string(), 32, 256),
             _ => (false, "None".to_string(), 0, 0),
         }
     }
@@ -151,8 +149,7 @@ impl GpuPipeline {
         self.pipeline_stats.avg_dispatch_time_us =
             old_avg + dispatch_time.saturating_sub(old_avg) / n;
         // Bump utilization slightly per dispatch, capped at 1.0.
-        self.pipeline_stats.gpu_utilization =
-            (self.pipeline_stats.gpu_utilization + 0.01).min(1.0);
+        self.pipeline_stats.gpu_utilization = (self.pipeline_stats.gpu_utilization + 0.01).min(1.0);
 
         TaskResult::GpuSuccess {
             dispatch_time_us: dispatch_time,
@@ -378,9 +375,18 @@ mod tests {
     fn task_submission_all_variants() {
         let mut p = GpuPipeline::with_gpu(true);
         let tasks = vec![
-            TextProcessingTask::SyntaxHighlight { text_hash: 1, line_count: 10 },
-            TextProcessingTask::TokenCount { text_hash: 2, char_count: 20 },
-            TextProcessingTask::DiffCompute { old_hash: 3, new_hash: 4 },
+            TextProcessingTask::SyntaxHighlight {
+                text_hash: 1,
+                line_count: 10,
+            },
+            TextProcessingTask::TokenCount {
+                text_hash: 2,
+                char_count: 20,
+            },
+            TextProcessingTask::DiffCompute {
+                old_hash: 3,
+                new_hash: 4,
+            },
             TextProcessingTask::IndentAnalysis { text_hash: 5 },
         ];
         for t in tasks {

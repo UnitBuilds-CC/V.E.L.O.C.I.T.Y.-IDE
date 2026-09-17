@@ -379,13 +379,18 @@ fn generate_state(provider_id: &str, connector_id: &str) -> String {
     };
     // Combine random bytes with context hash for a unique, unpredictable state.
     let ts = now_secs();
-    format!("{:016x}{:016x}{:08x}", {
-        let mut acc: u64 = 0;
-        for chunk in random_bytes[..8].chunks(8) {
-            acc = acc.wrapping_add(u64::from_le_bytes(chunk.try_into().unwrap_or([0; 8])));
-        }
-        acc
-    }, context_hash, ts % 0xFFFFFFFF)
+    format!(
+        "{:016x}{:016x}{:08x}",
+        {
+            let mut acc: u64 = 0;
+            for chunk in random_bytes[..8].chunks(8) {
+                acc = acc.wrapping_add(u64::from_le_bytes(chunk.try_into().unwrap_or([0; 8])));
+            }
+            acc
+        },
+        context_hash,
+        ts % 0xFFFFFFFF
+    )
 }
 
 /// Minimal URL encoding for OAuth parameters.

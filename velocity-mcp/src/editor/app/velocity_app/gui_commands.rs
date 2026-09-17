@@ -40,19 +40,17 @@ impl VelocityApp {
     /// within the workspace root.
     fn cmd_open_file(&mut self, path: String) -> GuiResponse {
         // Validate path security: must be absolute, within workspace, no symlink escapes
-        let validated_path = match crate::editor::gui_control::validate_open_path(
-            &path,
-            &self.workspace_root,
-        ) {
-            Ok(p) => p,
-            Err(e) => {
-                return GuiResponse {
-                    success: false,
-                    data: None,
-                    error: Some(e),
-                };
-            }
-        };
+        let validated_path =
+            match crate::editor::gui_control::validate_open_path(&path, &self.workspace_root) {
+                Ok(p) => p,
+                Err(e) => {
+                    return GuiResponse {
+                        success: false,
+                        data: None,
+                        error: Some(e),
+                    };
+                }
+            };
 
         self.open_editor(Some(validated_path.clone()));
         GuiResponse {

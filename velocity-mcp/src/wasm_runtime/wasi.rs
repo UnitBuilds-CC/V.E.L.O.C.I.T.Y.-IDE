@@ -50,7 +50,8 @@ impl WasiEnv {
 
     /// Add a preopened directory mapping.
     pub fn add_preopen(&mut self, guest_path: &str, host_path: &str) {
-        self.preopens.push((guest_path.to_string(), host_path.to_string()));
+        self.preopens
+            .push((guest_path.to_string(), host_path.to_string()));
     }
 
     /// Get stdout contents as string.

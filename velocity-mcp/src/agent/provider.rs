@@ -585,10 +585,7 @@ pub fn fetch_alibaba_models(api_key: &str) -> Result<Vec<ModelInfo>, String> {
 /// endpoint rejects. It never falls back to the pay-as-you-go DashScope
 /// endpoint — a model that works there but not here is NOT considered
 /// available on the Token Plan.
-pub fn fetch_alibaba_models_at(
-    base_url: &str,
-    api_key: &str,
-) -> Result<Vec<ModelInfo>, String> {
+pub fn fetch_alibaba_models_at(base_url: &str, api_key: &str) -> Result<Vec<ModelInfo>, String> {
     if api_key.trim().is_empty() {
         return Err("No API key configured for Alibaba Qwen".to_string());
     }
@@ -727,8 +724,7 @@ fn probe_models_parallel(
     }
     use std::sync::atomic::{AtomicUsize, Ordering};
     let next_idx = AtomicUsize::new(0);
-    let outcomes: Mutex<Vec<Option<ProbeOutcome>>> =
-        Mutex::new(vec![None; candidates.len()]);
+    let outcomes: Mutex<Vec<Option<ProbeOutcome>>> = Mutex::new(vec![None; candidates.len()]);
     let worker_count = candidates.len().min(6);
     let base_owned = base_url.to_string();
     let key_owned = api_key.to_string();
@@ -911,7 +907,8 @@ mod tests {
 
     #[test]
     fn classify_probe_400_with_message_is_unsupported() {
-        let body = r#"{"error":{"message":"The model `qwen-audio-3.0-realtime-plus` is not supported"}}"#;
+        let body =
+            r#"{"error":{"message":"The model `qwen-audio-3.0-realtime-plus` is not supported"}}"#;
         assert_eq!(classify_probe(400, body), ProbeOutcome::Unsupported);
     }
 
@@ -940,9 +937,18 @@ mod tests {
 
     #[test]
     fn classify_probe_transient_errors_are_inconclusive() {
-        assert_eq!(classify_probe(429, "rate limited"), ProbeOutcome::Inconclusive);
-        assert_eq!(classify_probe(500, "server error"), ProbeOutcome::Inconclusive);
-        assert_eq!(classify_probe(503, "upstream unavailable"), ProbeOutcome::Inconclusive);
+        assert_eq!(
+            classify_probe(429, "rate limited"),
+            ProbeOutcome::Inconclusive
+        );
+        assert_eq!(
+            classify_probe(500, "server error"),
+            ProbeOutcome::Inconclusive
+        );
+        assert_eq!(
+            classify_probe(503, "upstream unavailable"),
+            ProbeOutcome::Inconclusive
+        );
         assert_eq!(classify_probe(408, "timeout"), ProbeOutcome::Inconclusive);
     }
 
@@ -975,7 +981,11 @@ mod tests {
             },
         ];
         let out = probe_models_parallel("http://127.0.0.1:1", "sk-test", &cands);
-        assert_eq!(out.len(), 2, "unreachable host must not prune any candidate");
+        assert_eq!(
+            out.len(),
+            2,
+            "unreachable host must not prune any candidate"
+        );
     }
 
     // ── infer_model_info ───────────────────────────────────────────────

@@ -340,11 +340,7 @@ impl Sandbox {
         // Also log to security audit
         crate::security::audit::audit_log(crate::security::audit::SecurityEvent::AuthEvent {
             kind: "failure",
-            detail: format!(
-                "{}: {}",
-                category_label(&category),
-                detail
-            ),
+            detail: format!("{}: {}", category_label(&category), detail),
         });
         format!("Security Violation: {} blocked by sandbox", detail)
     }
@@ -559,7 +555,9 @@ fn apply_job_object_limits(child: &mut std::process::Child, max_memory: usize) {
     unsafe {
         let job = CreateJobObjectW(std::ptr::null_mut(), std::ptr::null());
         if job.is_null() {
-            tracing::warn!("Failed to create Job Object for sandbox; continuing without memory limits");
+            tracing::warn!(
+                "Failed to create Job Object for sandbox; continuing without memory limits"
+            );
             return;
         }
 
@@ -690,7 +688,9 @@ pub fn sanitize_error(msg: &str) -> String {
             // Found a Windows path, find its end.
             // Skip past the drive letter colon (idx+2) to find the real terminator.
             let end = sanitized[idx + 2..]
-                .find(|c: char| c.is_whitespace() || matches!(c, ':' | ',' | ';' | '"' | '\'' | ')' | ']'))
+                .find(|c: char| {
+                    c.is_whitespace() || matches!(c, ':' | ',' | ';' | '"' | '\'' | ')' | ']')
+                })
                 .map(|e| idx + 2 + e)
                 .unwrap_or(sanitized.len());
             sanitized = format!("{}<path>{}", &sanitized[..idx], &sanitized[end..]);
@@ -704,7 +704,9 @@ pub fn sanitize_error(msg: &str) -> String {
     for prefix in &["/home/", "/tmp/", "/var/", "/usr/", "/etc/"] {
         if let Some(idx) = sanitized.find(prefix) {
             let end = sanitized[idx..]
-                .find(|c: char| c.is_whitespace() || matches!(c, ':' | ',' | ';' | '"' | '\'' | ')' | ']'))
+                .find(|c: char| {
+                    c.is_whitespace() || matches!(c, ':' | ',' | ';' | '"' | '\'' | ')' | ']')
+                })
                 .map(|e| idx + e)
                 .unwrap_or(sanitized.len());
             sanitized = format!("{}<path>{}", &sanitized[..idx], &sanitized[end..]);
@@ -889,7 +891,10 @@ mod tests {
     fn test_category_labels() {
         assert_eq!(category_label(&ViolationCategory::FileSystem), "FileSystem");
         assert_eq!(category_label(&ViolationCategory::Network), "Network");
-        assert_eq!(category_label(&ViolationCategory::Interpreter), "Interpreter");
+        assert_eq!(
+            category_label(&ViolationCategory::Interpreter),
+            "Interpreter"
+        );
         assert_eq!(category_label(&ViolationCategory::Memory), "Memory");
         assert_eq!(category_label(&ViolationCategory::Timeout), "Timeout");
     }

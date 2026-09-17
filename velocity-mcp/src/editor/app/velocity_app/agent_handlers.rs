@@ -725,16 +725,8 @@ impl VelocityApp {
                     self.account_usage = accounts;
                     self.usage_date = date;
                     // Emit a token budget update event to the timeline.
-                    let total_remaining: u32 = self
-                        .account_usage
-                        .iter()
-                        .map(|a| a.remaining)
-                        .sum();
-                    let total_limit: u32 = self
-                        .account_usage
-                        .iter()
-                        .map(|a| a.daily_limit)
-                        .sum();
+                    let total_remaining: u32 = self.account_usage.iter().map(|a| a.remaining).sum();
+                    let total_limit: u32 = self.account_usage.iter().map(|a| a.daily_limit).sum();
                     self.task_timeline.token_budget_update(
                         self.current_agent_task_id,
                         total_limit.saturating_sub(total_remaining),

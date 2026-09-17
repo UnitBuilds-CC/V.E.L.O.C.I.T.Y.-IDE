@@ -141,7 +141,11 @@ impl KeyRotationManager {
     }
 
     /// Create with custom rotation parameters.
-    pub fn with_config(initial_key: Vec<u8>, rotation_interval: Duration, max_retained: usize) -> Self {
+    pub fn with_config(
+        initial_key: Vec<u8>,
+        rotation_interval: Duration,
+        max_retained: usize,
+    ) -> Self {
         let mut mgr = Self::new(initial_key);
         mgr.rotation_interval = rotation_interval;
         mgr.max_retained = max_retained;
@@ -252,7 +256,13 @@ mod tests {
     fn test_rotate_increments_version() {
         let mut mgr = KeyRotationManager::new(test_key());
         let result = mgr.rotate(test_key_v2());
-        assert_eq!(result, RotationResult::Rotated { old_version: 1, new_version: 2 });
+        assert_eq!(
+            result,
+            RotationResult::Rotated {
+                old_version: 1,
+                new_version: 2
+            }
+        );
         assert_eq!(mgr.active_version(), 2);
         assert_eq!(mgr.active_key(), &test_key_v2());
     }

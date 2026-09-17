@@ -16,9 +16,7 @@ pub struct MicroPythonRuntime {
 impl MicroPythonRuntime {
     /// Create a new MicroPython runtime.
     pub fn new() -> Result<Self, Box<dyn Error>> {
-        Ok(Self {
-            initialized: false,
-        })
+        Ok(Self { initialized: false })
     }
 
     /// Initialize the MicroPython runtime with WASM module bytes.

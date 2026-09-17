@@ -441,7 +441,9 @@ impl MemoryStore {
         let mut oldest_age = std::time::Duration::ZERO;
 
         for snapshot in self.sessions.values() {
-            let age = now.duration_since(snapshot.created).unwrap_or(std::time::Duration::ZERO);
+            let age = now
+                .duration_since(snapshot.created)
+                .unwrap_or(std::time::Duration::ZERO);
             if age > oldest_age {
                 oldest_age = age;
             }
@@ -495,8 +497,11 @@ impl MemoryStore {
         }
 
         // Sort by importance and keep the highest.
-        self.global_entries
-            .sort_by(|a, b| b.importance.partial_cmp(&a.importance).unwrap_or(std::cmp::Ordering::Equal));
+        self.global_entries.sort_by(|a, b| {
+            b.importance
+                .partial_cmp(&a.importance)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
         self.global_entries.truncate(self.max_global_entries);
     }
 
@@ -516,14 +521,13 @@ impl MemoryStore {
             global_entries: &self.global_entries,
         };
 
-        let json = serde_json::to_string_pretty(&data)
-            .map_err(|e| format!("Serialize failed: {}", e))?;
+        let json =
+            serde_json::to_string_pretty(&data).map_err(|e| format!("Serialize failed: {}", e))?;
 
         // Try NDA encryption if crypto is available.
         let bytes = self.maybe_encrypt(json.as_bytes());
 
-        std::fs::write(&self.store_path, bytes)
-            .map_err(|e| format!("Write failed: {}", e))?;
+        std::fs::write(&self.store_path, bytes).map_err(|e| format!("Write failed: {}", e))?;
 
         Ok(())
     }

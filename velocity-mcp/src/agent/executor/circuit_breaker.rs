@@ -80,10 +80,7 @@ impl CircuitBreakerError {
     /// Create a new error for a provider whose circuit is open.
     pub fn new(provider: impl Into<String>, state: CircuitState) -> Self {
         let provider = provider.into();
-        let message = format!(
-            "calls are blocked while circuit is {}",
-            state,
-        );
+        let message = format!("calls are blocked while circuit is {}", state,);
         Self {
             provider,
             state,

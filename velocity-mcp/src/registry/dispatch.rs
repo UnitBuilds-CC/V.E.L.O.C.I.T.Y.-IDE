@@ -80,8 +80,7 @@ pub fn call_tool_in_workspace(
             // agent sees *why* code exists, not just *what* it contains.
             if name == "read_file" {
                 if let Some(rel_path) = arguments["relativeFilePath"].as_str() {
-                    let enriched =
-                        event_store::enrich_read_response(&root, rel_path, output);
+                    let enriched = event_store::enrich_read_response(&root, rel_path, output);
                     return Ok(enriched);
                 }
             }
@@ -130,11 +129,7 @@ fn try_builtin_tools(
 }
 
 /// Try to execute a dynamically registered custom tool.
-fn try_custom_tool(
-    root: &Path,
-    name: &str,
-    arguments: &Value,
-) -> Result<String, Box<dyn Error>> {
+fn try_custom_tool(root: &Path, name: &str, arguments: &Value) -> Result<String, Box<dyn Error>> {
     if let Some(tool) = custom_tools::get_tool(root, name) {
         custom_tools::execute_tool(root, &tool, arguments)
     } else {

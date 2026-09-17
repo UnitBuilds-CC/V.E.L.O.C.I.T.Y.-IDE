@@ -447,10 +447,12 @@ and any notable relationships. Use Markdown. Do not repeat the raw lists verbati
                     self.tree_section(ui, "SYMBOLS", palette);
                     for (idx, title) in symbols {
                         let label = symbol_display_title(&title);
-                        let response = self.tree_row(ui, "\u{0192}", &label, PageRef::Symbol(idx), palette);
+                        let response =
+                            self.tree_row(ui, "\u{0192}", &label, PageRef::Symbol(idx), palette);
                         // Add tooltip for unresolved hex hash symbols
                         if label.starts_with('#') {
-                            response.on_hover_text(format!("Unresolved symbol reference: {}", title));
+                            response
+                                .on_hover_text(format!("Unresolved symbol reference: {}", title));
                         }
                     }
                 }

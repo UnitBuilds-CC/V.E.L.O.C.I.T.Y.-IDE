@@ -290,7 +290,10 @@ impl ThreatAssessment {
         ];
 
         // Require at least 2 indicators for privilege escalation to reduce false positives.
-        let match_count = privesc_patterns.iter().filter(|p| lower.contains(*p)).count();
+        let match_count = privesc_patterns
+            .iter()
+            .filter(|p| lower.contains(*p))
+            .count();
         match_count >= 2
     }
 

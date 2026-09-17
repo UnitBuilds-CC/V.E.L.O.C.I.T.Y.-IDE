@@ -105,7 +105,9 @@ impl AtomicRateLimiter {
         {
             loop {
                 let current = self.tokens_scaled.load(Ordering::Relaxed);
-                let new_val = current.saturating_add(new_tokens_scaled).min(self.burst_scaled);
+                let new_val = current
+                    .saturating_add(new_tokens_scaled)
+                    .min(self.burst_scaled);
                 match self.tokens_scaled.compare_exchange_weak(
                     current,
                     new_val,
@@ -216,8 +218,7 @@ impl RateLimiter {
             }
         } else {
             let deficit = 1.0 - state.tokens;
-            let retry_after =
-                Duration::from_secs_f64(deficit * self.refill_interval.as_secs_f64());
+            let retry_after = Duration::from_secs_f64(deficit * self.refill_interval.as_secs_f64());
             RateLimitResult::Denied {
                 retry_after: retry_after.max(Duration::from_millis(50)),
             }

@@ -10,7 +10,7 @@ pub fn spawn_ast_watcher(workspace_root: PathBuf, shmem_path: PathBuf) {
     thread::spawn(move || {
         // HMAC key for IPC authentication - in production, load from secure config
         let ipc_key = b"velocity_ipc_hmac_key_change_in_production";
-        
+
         let mut client = match TelemetryClient::open(&shmem_path, ipc_key) {
             Ok(c) => c,
             Err(e) => {

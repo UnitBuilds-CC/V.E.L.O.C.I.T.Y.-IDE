@@ -3,9 +3,11 @@
 //!
 //! Run: `cargo test -p velocity_mcp proptest_agent`
 
-use proptest::prelude::*;
-use super::nda::{encode_nda_text, decode_nda_text, encode_optional_nda_text, decode_optional_nda_text};
 use super::executor::utils::sanitize_chat_token;
+use super::nda::{
+    decode_nda_text, decode_optional_nda_text, encode_nda_text, encode_optional_nda_text,
+};
+use proptest::prelude::*;
 
 // ─── NDA text encode/decode roundtrip ──────────────────────────────────────
 

@@ -4,8 +4,8 @@
 //! and runs in-process via Wasmer. This provides sandboxed execution without
 //! needing system interpreters installed.
 
-pub mod quickjs;
 pub mod micropython;
+pub mod quickjs;
 pub mod wasi;
 
 use std::collections::HashMap;

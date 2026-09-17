@@ -84,9 +84,14 @@ impl<'a> TabViewer for TabViewerImpl<'a> {
                                         let diff_marks = buf.diff_marks.clone();
                                         let options = crate::editor::code_editor::EditorOptions {
                                             cursor_offset: 0,
-                                            diagnostic_lines: self.app.lsp_state.diagnostics.lines_for_file(
-                                                path.as_deref().unwrap_or(std::path::Path::new("")),
-                                            ),
+                                            diagnostic_lines: self
+                                                .app
+                                                .lsp_state
+                                                .diagnostics
+                                                .lines_for_file(
+                                                    path.as_deref()
+                                                        .unwrap_or(std::path::Path::new("")),
+                                                ),
                                             breakpoints: buf.breakpoints.clone(),
                                             collapsed_lines: buf.fold_state.collapsed_lines(),
                                             word_wrap: self.app.word_wrap,
@@ -94,10 +99,14 @@ impl<'a> TabViewer for TabViewerImpl<'a> {
                                                 // Estimate visible line range from the UI clip rect
                                                 // and code font height for viewport-only gutter rendering.
                                                 let clip = ui.clip_rect();
-                                                let font_height = self.app.appearance.code_font_id().size;
+                                                let font_height =
+                                                    self.app.appearance.code_font_id().size;
                                                 let line_h = (font_height * 1.4).max(1.0); // approximate line height
-                                                let first_visible = (clip.top() / line_h).floor().max(0.0) as usize + 1;
-                                                let visible_count = (clip.height() / line_h).ceil() as usize + 2; // +2 for safety margin
+                                                let first_visible =
+                                                    (clip.top() / line_h).floor().max(0.0) as usize
+                                                        + 1;
+                                                let visible_count =
+                                                    (clip.height() / line_h).ceil() as usize + 2; // +2 for safety margin
                                                 let last_visible = first_visible + visible_count;
                                                 Some((first_visible, last_visible))
                                             },
@@ -128,13 +137,16 @@ impl<'a> TabViewer for TabViewerImpl<'a> {
                                             let palette = self.app.appearance.palette();
                                             // Use the editor's cursor position for popup placement.
                                             let cursor_pos = ui.cursor().min;
-                                            self.app.lsp_state.diagnostics.render_inline_popup_at_line(
-                                                ui,
-                                                file_path,
-                                                cursor_line,
-                                                cursor_pos,
-                                                &palette,
-                                            );
+                                            self.app
+                                                .lsp_state
+                                                .diagnostics
+                                                .render_inline_popup_at_line(
+                                                    ui,
+                                                    file_path,
+                                                    cursor_line,
+                                                    cursor_pos,
+                                                    &palette,
+                                                );
                                         }
                                     },
                                 );

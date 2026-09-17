@@ -117,7 +117,7 @@ impl Default for SecurityPolicy {
                 "ncat".into(),
                 "netcat".into(),
             ],
-            max_file_size_bytes: 50 * 1024 * 1024, // 50 MB
+            max_file_size_bytes: 50 * 1024 * 1024,    // 50 MB
             max_request_size_bytes: 10 * 1024 * 1024, // 10 MB
             allowed_url_schemes: vec!["http".into(), "https".into()],
             blocked_env_vars: vec![
@@ -180,10 +180,7 @@ impl PolicyEnforcer {
             if matches!(component, std::path::Component::ParentDir) {
                 let violation = PolicyViolation {
                     kind: ViolationKind::PathTraversal,
-                    details: format!(
-                        "path contains traversal component (..): {}",
-                        path.display()
-                    ),
+                    details: format!("path contains traversal component (..): {}", path.display()),
                     timestamp: Instant::now(),
                 };
                 self.record_violation(violation.clone());
@@ -192,10 +189,14 @@ impl PolicyEnforcer {
         }
 
         // Check workspace containment if required.
-        if self.policy.require_workspace_containment && !self.policy.allowed_workspace_paths.is_empty() {
-            let is_contained = self.policy.allowed_workspace_paths.iter().any(|root| {
-                path.starts_with(root)
-            });
+        if self.policy.require_workspace_containment
+            && !self.policy.allowed_workspace_paths.is_empty()
+        {
+            let is_contained = self
+                .policy
+                .allowed_workspace_paths
+                .iter()
+                .any(|root| path.starts_with(root));
 
             if !is_contained {
                 let violation = PolicyViolation {
@@ -234,17 +235,16 @@ impl PolicyEnforcer {
             .or_else(|| command_name.strip_suffix(".bat"))
             .unwrap_or(command_name);
 
-        let is_blocked = self.policy.blocked_process_names.iter().any(|blocked| {
-            blocked.eq_ignore_ascii_case(command_base)
-        });
+        let is_blocked = self
+            .policy
+            .blocked_process_names
+            .iter()
+            .any(|blocked| blocked.eq_ignore_ascii_case(command_base));
 
         if is_blocked {
             let violation = PolicyViolation {
                 kind: ViolationKind::ProcessBlocked,
-                details: format!(
-                    "process {:?} is blocked (args: {:?})",
-                    command, args
-                ),
+                details: format!("process {:?} is blocked (args: {:?})", command, args),
                 timestamp: Instant::now(),
             };
             self.record_violation(violation.clone());
@@ -298,9 +298,11 @@ impl PolicyEnforcer {
 
         let scheme = url[..scheme_end].to_lowercase();
 
-        let is_allowed = self.policy.allowed_url_schemes.iter().any(|allowed| {
-            allowed.eq_ignore_ascii_case(&scheme)
-        });
+        let is_allowed = self
+            .policy
+            .allowed_url_schemes
+            .iter()
+            .any(|allowed| allowed.eq_ignore_ascii_case(&scheme));
 
         if !is_allowed {
             let violation = PolicyViolation {
@@ -324,9 +326,11 @@ impl PolicyEnforcer {
             // Extract variable name (before '=' if present).
             let var_name = var.split('=').next().unwrap_or(var);
 
-            let is_blocked = self.policy.blocked_env_vars.iter().any(|blocked| {
-                blocked.eq_ignore_ascii_case(var_name)
-            });
+            let is_blocked = self
+                .policy
+                .blocked_env_vars
+                .iter()
+                .any(|blocked| blocked.eq_ignore_ascii_case(var_name));
 
             if is_blocked {
                 let violation = PolicyViolation {
@@ -353,7 +357,11 @@ impl PolicyEnforcer {
 
     /// Generate a security report summarizing all violations.
     pub fn generate_report(&self) -> SecurityReport {
-        let violations = self.violations.lock().map(|v| v.clone()).unwrap_or_default();
+        let violations = self
+            .violations
+            .lock()
+            .map(|v| v.clone())
+            .unwrap_or_default();
         let total = violations.len();
 
         let mut violations_by_kind: HashMap<ViolationKind, usize> = HashMap::new();
@@ -635,8 +643,14 @@ mod tests {
 
         let report = enforcer.generate_report();
         assert_eq!(report.total_violations, 3);
-        assert_eq!(report.violations_by_kind[&ViolationKind::WorkspaceEscape], 1);
-        assert_eq!(report.violations_by_kind[&ViolationKind::UrlSchemeBlocked], 1);
+        assert_eq!(
+            report.violations_by_kind[&ViolationKind::WorkspaceEscape],
+            1
+        );
+        assert_eq!(
+            report.violations_by_kind[&ViolationKind::UrlSchemeBlocked],
+            1
+        );
         assert_eq!(report.violations_by_kind[&ViolationKind::ProcessBlocked], 1);
         assert!(report.last_violation.is_some());
     }

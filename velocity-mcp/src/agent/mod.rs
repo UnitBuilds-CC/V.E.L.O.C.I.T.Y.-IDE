@@ -23,9 +23,9 @@ pub mod self_improve;
 pub mod shared_memory;
 
 #[cfg(test)]
-mod tests;
-#[cfg(test)]
 mod proptest_agent;
+#[cfg(test)]
+mod tests;
 
 pub use executor::{run_agent_thread, run_headless_subagent};
 pub use models::{

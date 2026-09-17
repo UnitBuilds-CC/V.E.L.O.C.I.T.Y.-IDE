@@ -23,10 +23,14 @@ impl VelocityApp {
 
         // Mode tabs: List | Visual | Templates | AI Generate
         ui.horizontal(|ui| {
-            let list_btn =
-                ui.selectable_label(!self.workflow_state.workflow_visual_mode, RichText::new("List").size(9.0));
-            let visual_btn =
-                ui.selectable_label(self.workflow_state.workflow_visual_mode, RichText::new("Visual").size(9.0));
+            let list_btn = ui.selectable_label(
+                !self.workflow_state.workflow_visual_mode,
+                RichText::new("List").size(9.0),
+            );
+            let visual_btn = ui.selectable_label(
+                self.workflow_state.workflow_visual_mode,
+                RichText::new("Visual").size(9.0),
+            );
             let templates_btn = ui
                 .selectable_label(false, RichText::new("Templates").size(9.0))
                 .on_hover_text("Browse built-in workflow templates (coming soon)");
@@ -216,14 +220,18 @@ impl VelocityApp {
                     ui.add_space(4.0);
                     ui.horizontal(|ui| {
                         ui.add(
-                            egui::TextEdit::singleline(&mut self.workflow_state.workflow_step_tool_input)
-                                .hint_text("tool name")
-                                .desired_width(110.0),
+                            egui::TextEdit::singleline(
+                                &mut self.workflow_state.workflow_step_tool_input,
+                            )
+                            .hint_text("tool name")
+                            .desired_width(110.0),
                         );
                         ui.add(
-                            egui::TextEdit::singleline(&mut self.workflow_state.workflow_step_args_input)
-                                .hint_text("{\"json\":\"args\"}")
-                                .desired_width(ui.available_width() - 70.0),
+                            egui::TextEdit::singleline(
+                                &mut self.workflow_state.workflow_step_args_input,
+                            )
+                            .hint_text("{\"json\":\"args\"}")
+                            .desired_width(ui.available_width() - 70.0),
                         );
                         if ui.button(RichText::new("+tool").size(9.0)).clicked() {
                             add_tool = true;
@@ -231,9 +239,11 @@ impl VelocityApp {
                     });
                     ui.horizontal(|ui| {
                         ui.add(
-                            egui::TextEdit::singleline(&mut self.workflow_state.workflow_step_prompt_input)
-                                .hint_text("agent prompt")
-                                .desired_width(ui.available_width() - 70.0),
+                            egui::TextEdit::singleline(
+                                &mut self.workflow_state.workflow_step_prompt_input,
+                            )
+                            .hint_text("agent prompt")
+                            .desired_width(ui.available_width() - 70.0),
                         );
                         if ui.button(RichText::new("+agent").size(9.0)).clicked() {
                             add_agent = true;
@@ -294,7 +304,9 @@ impl VelocityApp {
                     .push(crate::editor::toast::Toast::error("Workflow needs a name"));
             } else {
                 let id = format!("wf-{}", crate::editor::triggers::now_secs());
-                self.workflow_state.workflows.add(Workflow::new(id.clone(), name));
+                self.workflow_state
+                    .workflows
+                    .add(Workflow::new(id.clone(), name));
                 if let Err(e) = self.workflow_state.workflows.save(&ws) {
                     Self::persist_err(&mut self.toasts, "workflows", &e);
                 }
@@ -318,9 +330,17 @@ impl VelocityApp {
         }
         if add_tool {
             if let Some(sel) = self.workflow_state.workflow_selected.clone() {
-                let name = self.workflow_state.workflow_step_tool_input.trim().to_string();
+                let name = self
+                    .workflow_state
+                    .workflow_step_tool_input
+                    .trim()
+                    .to_string();
                 if !name.is_empty() {
-                    let args_raw = self.workflow_state.workflow_step_args_input.trim().to_string();
+                    let args_raw = self
+                        .workflow_state
+                        .workflow_step_args_input
+                        .trim()
+                        .to_string();
                     let parsed = if args_raw.is_empty() {
                         Some(serde_json::json!({}))
                     } else {
@@ -349,7 +369,11 @@ impl VelocityApp {
         }
         if add_agent {
             if let Some(sel) = self.workflow_state.workflow_selected.clone() {
-                let prompt = self.workflow_state.workflow_step_prompt_input.trim().to_string();
+                let prompt = self
+                    .workflow_state
+                    .workflow_step_prompt_input
+                    .trim()
+                    .to_string();
                 if !prompt.is_empty() {
                     if let Some(wf) = self.workflow_state.workflows.get_mut(&sel) {
                         wf.steps
@@ -771,9 +795,14 @@ impl VelocityApp {
 
             if ui.button(RichText::new("+ New").size(9.0)).clicked() {
                 let id = format!("wf-{}", crate::editor::triggers::now_secs());
-                let name = format!("Workflow {}", self.workflow_state.workflow_canvases.len() + 1);
+                let name = format!(
+                    "Workflow {}",
+                    self.workflow_state.workflow_canvases.len() + 1
+                );
                 let canvas = WorkflowCanvas::new(&id, &name);
-                self.workflow_state.workflow_canvases.insert(id.clone(), canvas);
+                self.workflow_state
+                    .workflow_canvases
+                    .insert(id.clone(), canvas);
                 selected_id = Some(id);
             }
 
@@ -790,7 +819,9 @@ impl VelocityApp {
                         {
                             let id = format!("wf-{}", crate::editor::triggers::now_secs());
                             let canvas = template.build(&id, template.name);
-                            self.workflow_state.workflow_canvases.insert(id.clone(), canvas);
+                            self.workflow_state
+                                .workflow_canvases
+                                .insert(id.clone(), canvas);
                             selected_id = Some(id);
                         }
                     }
@@ -839,7 +870,8 @@ impl VelocityApp {
                 ];
                 for (label, kind) in add_buttons {
                     if ui.small_button(RichText::new(*label).size(8.0)).clicked() {
-                        if let Some(canvas) = self.workflow_state.workflow_canvases.get_mut(&sel_id) {
+                        if let Some(canvas) = self.workflow_state.workflow_canvases.get_mut(&sel_id)
+                        {
                             let offset = canvas.nodes.len() as f32;
                             let pos = NodePosition {
                                 x: 200.0 + offset * 40.0,
@@ -856,15 +888,21 @@ impl VelocityApp {
                         .clicked()
                     {
                         if let Some(canvas) = self.workflow_state.workflow_canvases.get(&sel_id) {
-                            self.workflow_state.workflow_versions.snapshot(canvas, "Manual snapshot");
-                            let _ = self.workflow_state.workflow_versions.save(&self.workspace_root);
+                            self.workflow_state
+                                .workflow_versions
+                                .snapshot(canvas, "Manual snapshot");
+                            let _ = self
+                                .workflow_state
+                                .workflow_versions
+                                .save(&self.workspace_root);
                         }
                     }
                     if ui
                         .small_button(RichText::new("Delete Node").size(8.0))
                         .clicked()
                     {
-                        if let Some(canvas) = self.workflow_state.workflow_canvases.get_mut(&sel_id) {
+                        if let Some(canvas) = self.workflow_state.workflow_canvases.get_mut(&sel_id)
+                        {
                             if let Some(selected) = canvas.selected_node() {
                                 let nid = selected.id.clone();
                                 canvas.remove_node(&nid);
@@ -915,7 +953,8 @@ impl VelocityApp {
                     if ui.small_button(RichText::new("Link").size(8.0)).clicked()
                         && from_idx != to_idx
                     {
-                        if let Some(canvas) = self.workflow_state.workflow_canvases.get_mut(&sel_id) {
+                        if let Some(canvas) = self.workflow_state.workflow_canvases.get_mut(&sel_id)
+                        {
                             let from = node_ids[from_idx].0.clone();
                             let to = node_ids[to_idx].0.clone();
                             canvas.add_edge(from, "ok", to);

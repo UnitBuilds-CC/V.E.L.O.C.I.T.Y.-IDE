@@ -306,10 +306,9 @@ fn agent_route(root: &Path, team: Option<&str>) -> (crate::agent::AiProvider, St
             });
         if let Some(t) = found {
             if let Some(member) = t.members.first() {
-                if let Some(route) =
-                    crate::registry::team_tools::build_fallback_chain(member, root)
-                        .into_iter()
-                        .next()
+                if let Some(route) = crate::registry::team_tools::build_fallback_chain(member, root)
+                    .into_iter()
+                    .next()
                 {
                     return route;
                 }
@@ -335,8 +334,8 @@ fn agent_route(root: &Path, team: Option<&str>) -> (crate::agent::AiProvider, St
 /// The provider + model the user picked in the IDE, as persisted by
 /// `save_workspace_preferences`. Empty/invalid values fall through.
 fn workspace_selected_route(root: &Path) -> Option<(crate::agent::AiProvider, String)> {
-    let raw = std::fs::read_to_string(root.join(".velocity").join("workspace-preferences.json"))
-        .ok()?;
+    let raw =
+        std::fs::read_to_string(root.join(".velocity").join("workspace-preferences.json")).ok()?;
     let json: serde_json::Value = serde_json::from_str(raw.trim_start_matches('\u{feff}')).ok()?;
     let provider = crate::agent::AiProvider::from_label(json["provider"].as_str()?)?;
     let model = json["selected_model"].as_str()?.trim();
@@ -586,13 +585,9 @@ mod tests {
         // The chosen provider must actually be configured in this workspace
         // (or be the explicit last-resort Cloudflare).
         let configured = crate::registry::team_tools::configured_providers(tmp.path());
-        let is_cloudflare_last_resort =
-            none.0 == crate::agent::AiProvider::CloudflareWorkersAi
-                && !configured.iter().any(|(_, ok)| *ok);
-        assert!(
-            configured.iter().any(|(p, ok)| *ok && *p == none.0)
-                || is_cloudflare_last_resort
-        );
+        let is_cloudflare_last_resort = none.0 == crate::agent::AiProvider::CloudflareWorkersAi
+            && !configured.iter().any(|(_, ok)| *ok);
+        assert!(configured.iter().any(|(p, ok)| *ok && *p == none.0) || is_cloudflare_last_resort);
     }
 
     #[test]
@@ -605,7 +600,9 @@ mod tests {
         std::fs::create_dir_all(&vel).unwrap();
         std::fs::write(
             vel.join("workspace-preferences.json"),
-            format!("\u{feff}{{\"provider\":\"Alibaba Qwen\",\"selected_model\":\"qwen3.8-flash\"}}"),
+            format!(
+                "\u{feff}{{\"provider\":\"Alibaba Qwen\",\"selected_model\":\"qwen3.8-flash\"}}"
+            ),
         )
         .unwrap();
         let (provider, model) = agent_route(tmp.path(), None);

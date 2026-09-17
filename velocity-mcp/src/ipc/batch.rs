@@ -402,9 +402,7 @@ mod tests {
 
     #[test]
     fn test_batch_request_empty() {
-        let req = BatchRequest::Mixed {
-            operations: vec![],
-        };
+        let req = BatchRequest::Mixed { operations: vec![] };
         assert_eq!(req.len(), 0);
         assert!(req.is_empty());
     }
@@ -781,20 +779,16 @@ mod tests {
 
     #[test]
     fn test_batch_request_constructors() {
-        let req1 = BatchRequest::ast_batch_update(vec![
-            ("a.rs".to_string(), vec![(1, 2, 3)]),
-        ]);
+        let req1 = BatchRequest::ast_batch_update(vec![("a.rs".to_string(), vec![(1, 2, 3)])]);
         assert_eq!(req1.len(), 1);
 
         let req2 = BatchRequest::ast_batch_delete(vec!["a.rs".to_string()]);
         assert_eq!(req2.len(), 1);
 
-        let req3 = BatchRequest::mixed(vec![
-            BatchOperation::PresenceUpdate {
-                cursor_line: 1,
-                cursor_col: 2,
-            },
-        ]);
+        let req3 = BatchRequest::mixed(vec![BatchOperation::PresenceUpdate {
+            cursor_line: 1,
+            cursor_col: 2,
+        }]);
         assert_eq!(req3.len(), 1);
     }
 }

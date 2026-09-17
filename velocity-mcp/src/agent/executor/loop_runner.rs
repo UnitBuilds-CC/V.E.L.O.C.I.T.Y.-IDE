@@ -10,9 +10,7 @@ use super::router_client::{
     self, AssignmentRequest, AssignmentStatus, ExecutionMode, ExecutionTier,
 };
 use super::thread::{apply_headless_control_messages, run_compilation_check};
-use super::utils::{
-    build_request, estimate_tokens, sanitize_chat_token, send_usage_update,
-};
+use super::utils::{build_request, estimate_tokens, sanitize_chat_token, send_usage_update};
 use crate::registry;
 use crate::safety::SafeMutex;
 use crate::usage::{
@@ -203,7 +201,11 @@ pub fn run_agent_reasoning_loop(
                         let router_request = AssignmentRequest {
                             task: user_prompt,
                             tier: ExecutionTier::Ultimate,
-                            context: if context.is_empty() { None } else { Some(context) },
+                            context: if context.is_empty() {
+                                None
+                            } else {
+                                Some(context)
+                            },
                             file_paths,
                             mode: ExecutionMode::Sync,
                             max_cost_usd: None,
@@ -270,7 +272,8 @@ pub fn run_agent_reasoning_loop(
                                         false
                                     }
                                 } else if response.status == AssignmentStatus::Failed {
-                                    let err = response.error.unwrap_or_else(|| "Unknown error".into());
+                                    let err =
+                                        response.error.unwrap_or_else(|| "Unknown error".into());
                                     ui_tx
                                         .send(AgentToUiMessage::StatusUpdate(format!(
                                             "MoA failed: {}. Falling back to direct dispatch.",
@@ -353,16 +356,24 @@ pub fn run_agent_reasoning_loop(
             AiProvider::LocalOllama => {
                 super::dispatch::execute_ollama_request(ollama_accounts, &request_body, ui_tx)
             }
-            AiProvider::Deepseek => super::dispatch::execute_deepseek_request(&request_body, ui_tx, workspace_root),
+            AiProvider::Deepseek => {
+                super::dispatch::execute_deepseek_request(&request_body, ui_tx, workspace_root)
+            }
             AiProvider::AlibabaQwen => {
                 super::dispatch::execute_alibaba_qwen_request(&request_body, ui_tx, workspace_root)
             }
             AiProvider::AwsBedrock => {
                 super::dispatch::execute_bedrock_request(&request_body, ui_tx, workspace_root)
             }
-            AiProvider::Groq => super::dispatch::execute_groq_request(&request_body, ui_tx, workspace_root),
-            AiProvider::Mistral => super::dispatch::execute_mistral_request(&request_body, ui_tx, workspace_root),
-            AiProvider::OpenAI => super::dispatch::execute_openai_request(&request_body, ui_tx, workspace_root),
+            AiProvider::Groq => {
+                super::dispatch::execute_groq_request(&request_body, ui_tx, workspace_root)
+            }
+            AiProvider::Mistral => {
+                super::dispatch::execute_mistral_request(&request_body, ui_tx, workspace_root)
+            }
+            AiProvider::OpenAI => {
+                super::dispatch::execute_openai_request(&request_body, ui_tx, workspace_root)
+            }
             AiProvider::GoogleVertex => {
                 super::dispatch::execute_google_request(&request_body, ui_tx, workspace_root)
             }
@@ -375,7 +386,9 @@ pub fn run_agent_reasoning_loop(
             AiProvider::Perplexity => {
                 super::dispatch::execute_perplexity_request(&request_body, ui_tx, workspace_root)
             }
-            AiProvider::Cerebras => super::dispatch::execute_cerebras_request(&request_body, ui_tx, workspace_root),
+            AiProvider::Cerebras => {
+                super::dispatch::execute_cerebras_request(&request_body, ui_tx, workspace_root)
+            }
             AiProvider::Anthropic => {
                 super::dispatch::execute_anthropic_request(&request_body, ui_tx, workspace_root)
             }
@@ -1462,12 +1475,14 @@ fn gather_workspace_context(workspace_root: &PathBuf, prompt: &str) -> (Vec<Stri
 
     // Extract file paths from the prompt using simple pattern matching
     for word in prompt.split_whitespace() {
-        let cleaned = word.trim_matches(|c: char| !c.is_alphanumeric() && c != '.' && c != '/' && c != '\\' && c != '-' && c != '_');
-        
+        let cleaned = word.trim_matches(|c: char| {
+            !c.is_alphanumeric() && c != '.' && c != '/' && c != '\\' && c != '-' && c != '_'
+        });
+
         // Check if it looks like a file path
         if cleaned.contains('.') || cleaned.contains('/') || cleaned.contains('\\') {
             let has_extension = source_extensions.iter().any(|ext| cleaned.ends_with(ext));
-            
+
             if has_extension {
                 // Try to resolve the path relative to workspace root
                 let path = if std::path::Path::new(cleaned).is_absolute() {
@@ -1486,12 +1501,10 @@ fn gather_workspace_context(workspace_root: &PathBuf, prompt: &str) -> (Vec<Stri
                                     .unwrap_or(&path)
                                     .to_string_lossy()
                                     .to_string();
-                                
+
                                 file_paths.push(relative_path.clone());
-                                context_parts.push(format!(
-                                    "=== {} ===\n{}\n",
-                                    relative_path, contents
-                                ));
+                                context_parts
+                                    .push(format!("=== {} ===\n{}\n", relative_path, contents));
                             }
                         }
                     }
@@ -1503,7 +1516,10 @@ fn gather_workspace_context(workspace_root: &PathBuf, prompt: &str) -> (Vec<Stri
     // Also gather a high-level overview of the workspace structure
     let workspace_overview = gather_workspace_overview(workspace_root);
     if !workspace_overview.is_empty() {
-        context_parts.insert(0, format!("=== Workspace Structure ===\n{}\n", workspace_overview));
+        context_parts.insert(
+            0,
+            format!("=== Workspace Structure ===\n{}\n", workspace_overview),
+        );
     }
 
     let context = context_parts.join("\n");
@@ -1514,36 +1530,43 @@ fn gather_workspace_context(workspace_root: &PathBuf, prompt: &str) -> (Vec<Stri
 /// and key files) to give the MoA specialists context about the project.
 fn gather_workspace_overview(workspace_root: &PathBuf) -> String {
     let mut overview = String::new();
-    
+
     // List top-level directories
     if let Ok(entries) = std::fs::read_dir(workspace_root) {
         let mut dirs = Vec::new();
         let mut files = Vec::new();
-        
+
         for entry in entries.flatten() {
             let path = entry.path();
             let name = entry.file_name().to_string_lossy().to_string();
-            
+
             // Skip hidden directories and common non-source directories
-            if name.starts_with('.') || name == "target" || name == "node_modules" || name == "dist" {
+            if name.starts_with('.') || name == "target" || name == "node_modules" || name == "dist"
+            {
                 continue;
             }
-            
+
             if path.is_dir() {
                 dirs.push(name);
             } else if path.is_file() {
                 // Only include key config files
-                if ["Cargo.toml", "package.json", "README.md", "Cargo.lock", "tsconfig.json"]
-                    .contains(&name.as_str())
+                if [
+                    "Cargo.toml",
+                    "package.json",
+                    "README.md",
+                    "Cargo.lock",
+                    "tsconfig.json",
+                ]
+                .contains(&name.as_str())
                 {
                     files.push(name);
                 }
             }
         }
-        
+
         dirs.sort();
         files.sort();
-        
+
         if !dirs.is_empty() {
             overview.push_str(&format!("Directories: {}\n", dirs.join(", ")));
         }
@@ -1551,7 +1574,7 @@ fn gather_workspace_overview(workspace_root: &PathBuf) -> String {
             overview.push_str(&format!("Key files: {}\n", files.join(", ")));
         }
     }
-    
+
     // Read Cargo.toml or package.json for project metadata
     let cargo_toml = workspace_root.join("Cargo.toml");
     if cargo_toml.exists() {
@@ -1559,11 +1582,14 @@ fn gather_workspace_overview(workspace_root: &PathBuf) -> String {
             // Extract just the [package] section
             if let Some(start) = contents.find("[package]") {
                 if let Some(end) = contents[start..].find("\n[").map(|p| start + p) {
-                    overview.push_str(&format!("\n=== Cargo.toml [package] ===\n{}\n", &contents[start..end]));
+                    overview.push_str(&format!(
+                        "\n=== Cargo.toml [package] ===\n{}\n",
+                        &contents[start..end]
+                    ));
                 }
             }
         }
     }
-    
+
     overview
 }

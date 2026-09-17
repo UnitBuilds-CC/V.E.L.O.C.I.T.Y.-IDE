@@ -628,6 +628,41 @@ fn export_and_import_team_roundtrip() {
     assert_eq!(imported.members[0].name, "Lead Dev");
 }
 
+/// Hand-written team JSON — the shape `create_expert_team` documents and
+/// LLMs naturally emit (no internal ids, provider as slug) — must import.
+/// Previously this failed with "missing field `id`" / "unknown variant
+/// `alibaba`" even though the sibling tools accept exactly that shape.
+#[test]
+fn import_expert_team_accepts_minimal_hand_written_json() {
+    let (_temp, root) = setup_root();
+
+    let json_str = r#"{
+        "name": "B7 Imported",
+        "members": [
+            { "name": "Imported-Bot", "role": "Tester", "provider": "alibaba", "model_id": "qwen3.8-flash" }
+        ]
+    }"#;
+
+    let output =
+        call_tool_in_workspace(&root, "import_expert_team", &json!({ "json": json_str })).unwrap();
+    assert!(output.contains("Imported team"), "got: {output}");
+    assert!(output.contains("B7 Imported"));
+
+    let canon = root.canonicalize().unwrap();
+    let teams = load_expert_teams(&canon);
+    let team = teams
+        .iter()
+        .find(|t| t.slug() == "b7-imported")
+        .expect("team persisted under slug");
+    assert_eq!(team.id, "team_b7-imported", "id regenerated from name");
+    assert_eq!(
+        team.members[0].provider,
+        crate::agent::AiProvider::AlibabaQwen
+    );
+    assert_eq!(team.members[0].model_id, "qwen3.8-flash");
+    assert!(!team.members[0].id.is_empty(), "member id regenerated");
+}
+
 #[test]
 fn import_expert_team_replaces_matching_slug() {
     let (_temp, root) = setup_root();

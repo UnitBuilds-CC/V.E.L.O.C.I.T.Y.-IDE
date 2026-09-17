@@ -134,12 +134,7 @@ impl MinimapRenderer {
     /// * `syntax_spans` — `(token, colour)` pairs produced by the syntax
     ///   highlighter.  Each entry maps an exact token string to an RGB colour.
     /// * `config` — current minimap configuration.
-    pub fn update(
-        &mut self,
-        text: &str,
-        syntax_spans: &[SyntaxSpan],
-        config: &MinimapConfig,
-    ) {
+    pub fn update(&mut self, text: &str, syntax_spans: &[SyntaxSpan], config: &MinimapConfig) {
         let new_hash = Self::hash_content(text);
         if new_hash == self.cache_hash && !self.dirty {
             return; // content unchanged — skip work
@@ -159,9 +154,7 @@ impl MinimapRenderer {
         };
 
         // Build colour data for the (possibly subsampled) lines.
-        let mut line_colors: Vec<Vec<Rgb>> = Vec::with_capacity(
-            total.div_ceil(stride),
-        );
+        let mut line_colors: Vec<Vec<Rgb>> = Vec::with_capacity(total.div_ceil(stride));
 
         for (idx, line) in all_lines.iter().enumerate() {
             if idx % stride != 0 {
@@ -205,11 +198,7 @@ impl MinimapRenderer {
     }
 
     /// Produce a per-character colour vec for a single source line.
-    fn colorize_line(
-        line: &str,
-        syntax_spans: &[SyntaxSpan],
-        max_width: usize,
-    ) -> Vec<Rgb> {
+    fn colorize_line(line: &str, syntax_spans: &[SyntaxSpan], max_width: usize) -> Vec<Rgb> {
         let chars: Vec<char> = line.chars().take(max_width).collect();
         let len = chars.len();
         // Default: muted grey for non-highlighted characters.

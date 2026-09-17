@@ -96,25 +96,13 @@ pub enum ProviderEvent {
         new_status: ProviderHealthState,
     },
     /// Provider latency measurement updated.
-    LatencyUpdated {
-        provider: String,
-        latency_ms: f64,
-    },
+    LatencyUpdated { provider: String, latency_ms: f64 },
     /// Provider hit rate limit.
-    RateLimitHit {
-        provider: String,
-        reset_at: Instant,
-    },
+    RateLimitHit { provider: String, reset_at: Instant },
     /// A model became available on a provider.
-    ModelAvailable {
-        provider: String,
-        model: String,
-    },
+    ModelAvailable { provider: String, model: String },
     /// A model became unavailable on a provider.
-    ModelUnavailable {
-        provider: String,
-        model: String,
-    },
+    ModelUnavailable { provider: String, model: String },
 }
 
 // ---------------------------------------------------------------------------
@@ -407,7 +395,9 @@ mod tests {
 
         let healthy = sync.healthy_providers();
         assert_eq!(healthy.len(), 2);
-        assert!(healthy.iter().all(|p| p.status == ProviderHealthState::Healthy));
+        assert!(healthy
+            .iter()
+            .all(|p| p.status == ProviderHealthState::Healthy));
     }
 
     #[test]

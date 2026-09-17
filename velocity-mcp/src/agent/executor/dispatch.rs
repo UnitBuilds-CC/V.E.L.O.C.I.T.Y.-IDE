@@ -15,7 +15,11 @@ use std::time::Duration;
 ///
 /// When a provider supports a pay-per-token plan (e.g. Alibaba DashScope
 /// Token Plan), the token-plan key is preferred when `use_token_plan` is true.
-pub(crate) fn resolve_api_key(workspace_root: &PathBuf, settings_field: &str, env_var: &str) -> String {
+pub(crate) fn resolve_api_key(
+    workspace_root: &PathBuf,
+    settings_field: &str,
+    env_var: &str,
+) -> String {
     let settings_path = crate::usage::provider_settings_path(workspace_root);
     if let Ok(contents) = std::fs::read_to_string(&settings_path) {
         // Strip UTF-8 BOM if present (Windows editors often insert it)
@@ -28,10 +32,7 @@ pub(crate) fn resolve_api_key(workspace_root: &PathBuf, settings_field: &str, en
                     .and_then(|v| v.as_bool())
                     .unwrap_or(false);
                 if use_token {
-                    if let Some(tk) = section
-                        .get("token_plan_api_key")
-                        .and_then(|k| k.as_str())
-                    {
+                    if let Some(tk) = section.get("token_plan_api_key").and_then(|k| k.as_str()) {
                         if !tk.trim().is_empty() {
                             return tk.to_string();
                         }
@@ -300,9 +301,7 @@ pub fn execute_ollama_request(
     let host = account
         .map(|a| a.host.as_str())
         .unwrap_or("http://localhost:11434");
-    let label = account
-        .map(|a| a.label.as_str())
-        .unwrap_or("Local-Ollama");
+    let label = account.map(|a| a.label.as_str()).unwrap_or("Local-Ollama");
     let api_url = ollama_chat_url(host);
     match ureq::post(&api_url)
         .timeout(Duration::from_secs(60))
@@ -595,7 +594,8 @@ pub fn execute_google_request(
     if api_key.trim().is_empty() {
         ui_tx
             .send(AgentToUiMessage::StatusUpdate(
-                "Google API key not set. Configure it in Settings or export GOOGLE_API_KEY.".to_string(),
+                "Google API key not set. Configure it in Settings or export GOOGLE_API_KEY."
+                    .to_string(),
             ))
             .ok();
         return None;
@@ -1019,7 +1019,11 @@ mod tests {
                 "api_key": "sk-ant-from-file"
             }
         });
-        std::fs::write(dir.path().join("provider-settings.json"), settings.to_string()).unwrap();
+        std::fs::write(
+            dir.path().join("provider-settings.json"),
+            settings.to_string(),
+        )
+        .unwrap();
 
         let root = tempfile::tempdir().unwrap().path().to_path_buf();
         let key = resolve_api_key(&root, "anthropic", "NONEXISTENT_ENV_VAR_FOR_TEST");
@@ -1047,7 +1051,11 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         std::env::set_var("VELOCITY_CONFIG_DIR", dir.path().to_str().unwrap());
         let root = tempfile::tempdir().unwrap().path().to_path_buf();
-        let key = resolve_api_key(&root, "nonexistent_provider", "VELOCITY_NONEXISTENT_ENV_VAR_XYZ");
+        let key = resolve_api_key(
+            &root,
+            "nonexistent_provider",
+            "VELOCITY_NONEXISTENT_ENV_VAR_XYZ",
+        );
         assert_eq!(key, "");
         std::env::remove_var("VELOCITY_CONFIG_DIR");
     }
@@ -1062,7 +1070,11 @@ mod tests {
                 "api_key": "   "
             }
         });
-        std::fs::write(dir.path().join("provider-settings.json"), settings.to_string()).unwrap();
+        std::fs::write(
+            dir.path().join("provider-settings.json"),
+            settings.to_string(),
+        )
+        .unwrap();
 
         let root = tempfile::tempdir().unwrap().path().to_path_buf();
         // Whitespace-only key should be treated as empty → fall back to env.
@@ -1081,7 +1093,11 @@ mod tests {
                 "api_key": "sk-from-file"
             }
         });
-        std::fs::write(dir.path().join("provider-settings.json"), settings.to_string()).unwrap();
+        std::fs::write(
+            dir.path().join("provider-settings.json"),
+            settings.to_string(),
+        )
+        .unwrap();
 
         std::env::set_var("VELOCITY_TEST_GROQ_KEY", "sk-from-env");
         let root = tempfile::tempdir().unwrap().path().to_path_buf();
@@ -1103,7 +1119,11 @@ mod tests {
                 "use_token_plan": true
             }
         });
-        std::fs::write(dir.path().join("provider-settings.json"), settings.to_string()).unwrap();
+        std::fs::write(
+            dir.path().join("provider-settings.json"),
+            settings.to_string(),
+        )
+        .unwrap();
         let root = tempfile::tempdir().unwrap().path().to_path_buf();
         let key = resolve_api_key(&root, "alibaba", "DASHSCOPE_NONEXISTENT_ENV_XYZ");
         assert_eq!(key, "sk-sp-tokenplan");
@@ -1122,7 +1142,11 @@ mod tests {
                 "use_token_plan": false
             }
         });
-        std::fs::write(dir.path().join("provider-settings.json"), settings.to_string()).unwrap();
+        std::fs::write(
+            dir.path().join("provider-settings.json"),
+            settings.to_string(),
+        )
+        .unwrap();
         let root = tempfile::tempdir().unwrap().path().to_path_buf();
         let key = resolve_api_key(&root, "alibaba", "DASHSCOPE_NONEXISTENT_ENV_XYZ");
         assert_eq!(key, "sk-ws-default");
@@ -1141,7 +1165,11 @@ mod tests {
                 "use_token_plan": true
             }
         });
-        std::fs::write(dir.path().join("provider-settings.json"), settings.to_string()).unwrap();
+        std::fs::write(
+            dir.path().join("provider-settings.json"),
+            settings.to_string(),
+        )
+        .unwrap();
         let root = tempfile::tempdir().unwrap().path().to_path_buf();
         // Token plan enabled but no key → fall through to normal api_key.
         let key = resolve_api_key(&root, "alibaba", "DASHSCOPE_NONEXISTENT_ENV_XYZ");
@@ -1159,7 +1187,11 @@ mod tests {
         let settings = json!({
             "alibaba": { "api_key": "sk-ws-..." }
         });
-        std::fs::write(dir.path().join("provider-settings.json"), settings.to_string()).unwrap();
+        std::fs::write(
+            dir.path().join("provider-settings.json"),
+            settings.to_string(),
+        )
+        .unwrap();
         let root = tempfile::tempdir().unwrap().path().to_path_buf();
         assert_eq!(alibaba_base_url(&root), ALIBABA_DASHSCOPE_INTL_BASE_URL);
         assert_eq!(
@@ -1181,7 +1213,11 @@ mod tests {
                 "use_token_plan": true
             }
         });
-        std::fs::write(dir.path().join("provider-settings.json"), settings.to_string()).unwrap();
+        std::fs::write(
+            dir.path().join("provider-settings.json"),
+            settings.to_string(),
+        )
+        .unwrap();
         let root = tempfile::tempdir().unwrap().path().to_path_buf();
         assert_eq!(alibaba_base_url(&root), ALIBABA_TOKEN_PLAN_DEFAULT_BASE_URL);
         assert_eq!(
@@ -1204,7 +1240,11 @@ mod tests {
                 "token_plan_base_url": "https://token-plan.eu-central-1.maas.aliyuncs.com/compatible-mode/v1/"
             }
         });
-        std::fs::write(dir.path().join("provider-settings.json"), settings.to_string()).unwrap();
+        std::fs::write(
+            dir.path().join("provider-settings.json"),
+            settings.to_string(),
+        )
+        .unwrap();
         let root = tempfile::tempdir().unwrap().path().to_path_buf();
         assert_eq!(
             alibaba_base_url(&root),
@@ -1229,7 +1269,11 @@ mod tests {
                 "use_token_plan": false
             }
         });
-        std::fs::write(dir.path().join("provider-settings.json"), settings.to_string()).unwrap();
+        std::fs::write(
+            dir.path().join("provider-settings.json"),
+            settings.to_string(),
+        )
+        .unwrap();
         let root = tempfile::tempdir().unwrap().path().to_path_buf();
         assert_eq!(alibaba_base_url(&root), ALIBABA_DASHSCOPE_INTL_BASE_URL);
         std::env::remove_var("VELOCITY_CONFIG_DIR");
@@ -1553,7 +1597,11 @@ mod tests {
 
     // ── build_request (from utils) ───────────────────────────────────
 
-    fn test_model_info(api_style: ApiStyle, supports_tools: bool, supports_thinking: bool) -> ModelInfo {
+    fn test_model_info(
+        api_style: ApiStyle,
+        supports_tools: bool,
+        supports_thinking: bool,
+    ) -> ModelInfo {
         ModelInfo {
             id: "test-model".to_string(),
             label: "Test Model".to_string(),
@@ -1566,16 +1614,21 @@ mod tests {
     #[test]
     fn build_request_openai_chat_includes_messages() {
         let profile = test_model_info(ApiStyle::OpenAiChat, true, false);
-        let messages = vec![
-            crate::agent::models::ChatMessage {
-                role: "user".to_string(),
-                content: "Hello".to_string(),
-                name: None,
-                tool_call_id: None,
-                tool_calls: None,
-            },
-        ];
-        let req = build_request(&profile, "gpt-4o", &messages, &[], false, AiProvider::OpenRouter);
+        let messages = vec![crate::agent::models::ChatMessage {
+            role: "user".to_string(),
+            content: "Hello".to_string(),
+            name: None,
+            tool_call_id: None,
+            tool_calls: None,
+        }];
+        let req = build_request(
+            &profile,
+            "gpt-4o",
+            &messages,
+            &[],
+            false,
+            AiProvider::OpenRouter,
+        );
         assert_eq!(req["model"], "gpt-4o");
         assert_eq!(req["stream"], true);
         assert!(req["messages"].is_array());
@@ -1587,17 +1640,22 @@ mod tests {
     #[test]
     fn build_request_openai_chat_with_tools() {
         let profile = test_model_info(ApiStyle::OpenAiTools, true, false);
-        let messages = vec![
-            crate::agent::models::ChatMessage {
-                role: "user".to_string(),
-                content: "Search".to_string(),
-                name: None,
-                tool_call_id: None,
-                tool_calls: None,
-            },
-        ];
+        let messages = vec![crate::agent::models::ChatMessage {
+            role: "user".to_string(),
+            content: "Search".to_string(),
+            name: None,
+            tool_call_id: None,
+            tool_calls: None,
+        }];
         let tools = vec![json!({"type": "function", "function": {"name": "search"}})];
-        let req = build_request(&profile, "gpt-4o", &messages, &tools, false, AiProvider::OpenRouter);
+        let req = build_request(
+            &profile,
+            "gpt-4o",
+            &messages,
+            &tools,
+            false,
+            AiProvider::OpenRouter,
+        );
         assert!(req["tools"].is_array());
         assert_eq!(req["tools"][0]["function"]["name"], "search");
     }
@@ -1605,16 +1663,21 @@ mod tests {
     #[test]
     fn build_request_prompt_completion_uses_prompt_field() {
         let profile = test_model_info(ApiStyle::PromptCompletion, false, false);
-        let messages = vec![
-            crate::agent::models::ChatMessage {
-                role: "user".to_string(),
-                content: "Hello".to_string(),
-                name: None,
-                tool_call_id: None,
-                tool_calls: None,
-            },
-        ];
-        let req = build_request(&profile, "llama3", &messages, &[], false, AiProvider::CloudflareWorkersAi);
+        let messages = vec![crate::agent::models::ChatMessage {
+            role: "user".to_string(),
+            content: "Hello".to_string(),
+            name: None,
+            tool_call_id: None,
+            tool_calls: None,
+        }];
+        let req = build_request(
+            &profile,
+            "llama3",
+            &messages,
+            &[],
+            false,
+            AiProvider::CloudflareWorkersAi,
+        );
         assert!(req.get("prompt").is_some());
         assert!(req.get("messages").is_none());
         assert!(req["prompt"].as_str().unwrap().contains("user: Hello"));
@@ -1623,32 +1686,42 @@ mod tests {
     #[test]
     fn build_request_thinking_cloudflare() {
         let profile = test_model_info(ApiStyle::OpenAiChat, false, true);
-        let messages = vec![
-            crate::agent::models::ChatMessage {
-                role: "user".to_string(),
-                content: "Think".to_string(),
-                name: None,
-                tool_call_id: None,
-                tool_calls: None,
-            },
-        ];
-        let req = build_request(&profile, "model", &messages, &[], true, AiProvider::CloudflareWorkersAi);
+        let messages = vec![crate::agent::models::ChatMessage {
+            role: "user".to_string(),
+            content: "Think".to_string(),
+            name: None,
+            tool_call_id: None,
+            tool_calls: None,
+        }];
+        let req = build_request(
+            &profile,
+            "model",
+            &messages,
+            &[],
+            true,
+            AiProvider::CloudflareWorkersAi,
+        );
         assert_eq!(req["thinking"], true);
     }
 
     #[test]
     fn build_request_thinking_openrouter() {
         let profile = test_model_info(ApiStyle::OpenAiChat, false, true);
-        let messages = vec![
-            crate::agent::models::ChatMessage {
-                role: "user".to_string(),
-                content: "Think".to_string(),
-                name: None,
-                tool_call_id: None,
-                tool_calls: None,
-            },
-        ];
-        let req = build_request(&profile, "model", &messages, &[], true, AiProvider::OpenRouter);
+        let messages = vec![crate::agent::models::ChatMessage {
+            role: "user".to_string(),
+            content: "Think".to_string(),
+            name: None,
+            tool_call_id: None,
+            tool_calls: None,
+        }];
+        let req = build_request(
+            &profile,
+            "model",
+            &messages,
+            &[],
+            true,
+            AiProvider::OpenRouter,
+        );
         assert_eq!(req["reasoning"]["effort"], "high");
         assert_eq!(req["reasoning"]["exclude"], false);
     }
@@ -1656,48 +1729,63 @@ mod tests {
     #[test]
     fn build_request_thinking_azure() {
         let profile = test_model_info(ApiStyle::OpenAiChat, false, true);
-        let messages = vec![
-            crate::agent::models::ChatMessage {
-                role: "user".to_string(),
-                content: "Think".to_string(),
-                name: None,
-                tool_call_id: None,
-                tool_calls: None,
-            },
-        ];
-        let req = build_request(&profile, "model", &messages, &[], true, AiProvider::AzureOpenAi);
+        let messages = vec![crate::agent::models::ChatMessage {
+            role: "user".to_string(),
+            content: "Think".to_string(),
+            name: None,
+            tool_call_id: None,
+            tool_calls: None,
+        }];
+        let req = build_request(
+            &profile,
+            "model",
+            &messages,
+            &[],
+            true,
+            AiProvider::AzureOpenAi,
+        );
         assert_eq!(req["reasoning_effort"], "high");
     }
 
     #[test]
     fn build_request_thinking_ollama() {
         let profile = test_model_info(ApiStyle::OpenAiChat, false, true);
-        let messages = vec![
-            crate::agent::models::ChatMessage {
-                role: "user".to_string(),
-                content: "Think".to_string(),
-                name: None,
-                tool_call_id: None,
-                tool_calls: None,
-            },
-        ];
-        let req = build_request(&profile, "model", &messages, &[], true, AiProvider::LocalOllama);
+        let messages = vec![crate::agent::models::ChatMessage {
+            role: "user".to_string(),
+            content: "Think".to_string(),
+            name: None,
+            tool_call_id: None,
+            tool_calls: None,
+        }];
+        let req = build_request(
+            &profile,
+            "model",
+            &messages,
+            &[],
+            true,
+            AiProvider::LocalOllama,
+        );
         assert_eq!(req["think"], true);
     }
 
     #[test]
     fn build_request_thinking_disabled_no_thinking_key() {
         let profile = test_model_info(ApiStyle::OpenAiChat, false, true);
-        let messages = vec![
-            crate::agent::models::ChatMessage {
-                role: "user".to_string(),
-                content: "No think".to_string(),
-                name: None,
-                tool_call_id: None,
-                tool_calls: None,
-            },
-        ];
-        let req = build_request(&profile, "model", &messages, &[], false, AiProvider::OpenRouter);
+        let messages = vec![crate::agent::models::ChatMessage {
+            role: "user".to_string(),
+            content: "No think".to_string(),
+            name: None,
+            tool_call_id: None,
+            tool_calls: None,
+        }];
+        let req = build_request(
+            &profile,
+            "model",
+            &messages,
+            &[],
+            false,
+            AiProvider::OpenRouter,
+        );
         assert!(req.get("reasoning").is_none());
         assert!(req.get("thinking").is_none());
         assert!(req.get("think").is_none());
@@ -1706,17 +1794,22 @@ mod tests {
     #[test]
     fn build_request_no_tools_when_unsupported() {
         let profile = test_model_info(ApiStyle::OpenAiChat, false, false);
-        let messages = vec![
-            crate::agent::models::ChatMessage {
-                role: "user".to_string(),
-                content: "Hi".to_string(),
-                name: None,
-                tool_call_id: None,
-                tool_calls: None,
-            },
-        ];
+        let messages = vec![crate::agent::models::ChatMessage {
+            role: "user".to_string(),
+            content: "Hi".to_string(),
+            name: None,
+            tool_call_id: None,
+            tool_calls: None,
+        }];
         let tools = vec![json!({"type": "function", "function": {"name": "search"}})];
-        let req = build_request(&profile, "model", &messages, &tools, false, AiProvider::OpenRouter);
+        let req = build_request(
+            &profile,
+            "model",
+            &messages,
+            &tools,
+            false,
+            AiProvider::OpenRouter,
+        );
         // Model doesn't support tools → tools key should be absent.
         assert!(req.get("tools").is_none());
     }

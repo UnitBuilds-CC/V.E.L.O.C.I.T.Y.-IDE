@@ -15,8 +15,8 @@
 //! eviction. See [`ToolAuditLog`] and [`ToolAuditRegistry`].
 
 use std::collections::HashMap;
-use std::sync::LazyLock;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+use std::sync::LazyLock;
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 // ─── Event types ──────────────────────────────────────────────────────────────
@@ -31,19 +31,11 @@ pub enum SecurityEvent {
         pid: Option<u32>,
     },
     /// A secret was accessed (read from the secret store).
-    SecretAccess {
-        handle: String,
-        consumer: String,
-    },
+    SecretAccess { handle: String, consumer: String },
     /// A file was written outside the editor buffer (agent-initiated).
-    FileWrite {
-        path: String,
-    },
+    FileWrite { path: String },
     /// An AI provider API call was made.
-    ApiCall {
-        provider: String,
-        endpoint: String,
-    },
+    ApiCall { provider: String, endpoint: String },
     /// An IPC message was sent or received on shared memory.
     IpcMessage {
         direction: &'static str, // "tx" or "rx"
@@ -79,7 +71,9 @@ impl SecurityEvent {
     /// for everything else.
     pub fn severity(&self) -> &'static str {
         match self {
-            Self::AuthEvent { kind: "failure", .. } => "error",
+            Self::AuthEvent {
+                kind: "failure", ..
+            } => "error",
             _ => "info",
         }
     }
@@ -390,11 +384,19 @@ impl ToolAuditLog {
                 ToolAuditOutcome::Success => "success".to_string(),
                 ToolAuditOutcome::Error(msg) => format!("error:{}", msg.replace(',', ";")),
                 ToolAuditOutcome::Timeout => "timeout".to_string(),
-                ToolAuditOutcome::Rejected(reason) => format!("rejected:{}", reason.replace(',', ";")),
+                ToolAuditOutcome::Rejected(reason) => {
+                    format!("rejected:{}", reason.replace(',', ";"))
+                }
             };
             let transport_str = entry.transport.unwrap_or_default();
-            let payload_str = entry.payload_size.map(|s| s.to_string()).unwrap_or_default();
-            let response_str = entry.response_size.map(|s| s.to_string()).unwrap_or_default();
+            let payload_str = entry
+                .payload_size
+                .map(|s| s.to_string())
+                .unwrap_or_default();
+            let response_str = entry
+                .response_size
+                .map(|s| s.to_string())
+                .unwrap_or_default();
             let merkle_str = entry.merkle_root.unwrap_or_default();
             let session_str = entry.session_id.unwrap_or_default();
 
@@ -632,7 +634,10 @@ mod tool_audit_tests {
         log.record("rej", start, ToolAuditOutcome::Rejected("denied".into()));
 
         let entries = log.recent(10);
-        assert_eq!(entries[0].outcome, ToolAuditOutcome::Rejected("denied".into()));
+        assert_eq!(
+            entries[0].outcome,
+            ToolAuditOutcome::Rejected("denied".into())
+        );
         assert_eq!(entries[1].outcome, ToolAuditOutcome::Timeout);
     }
 
@@ -738,7 +743,12 @@ mod tool_audit_tests {
 
     #[test]
     fn test_tool_audit_convenience_record() {
-        record_tool_call("test-session", "test_tool", Instant::now(), ToolAuditOutcome::Success);
+        record_tool_call(
+            "test-session",
+            "test_tool",
+            Instant::now(),
+            ToolAuditOutcome::Success,
+        );
 
         let entries = tool_audit_registry().aggregate_all();
         assert!(!entries.is_empty());

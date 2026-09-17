@@ -326,7 +326,8 @@ impl EventStore {
         payload.push('\n');
         file.write_all(payload.as_bytes())
             .map_err(|e| format!("Failed to write event: {}", e))?;
-        file.flush().map_err(|e| format!("Failed to flush event: {}", e))?;
+        file.flush()
+            .map_err(|e| format!("Failed to flush event: {}", e))?;
         Ok(())
     }
 
@@ -412,11 +413,7 @@ fn recover_concatenated(input: &str) -> Vec<String> {
 /// Enrich a `read_file` response with a decision trail from the event store.
 /// Returns the original content with a `── Decision Trail ──` section appended
 /// (only if events exist for the file).
-pub fn enrich_read_response(
-    root: &Path,
-    relative_path: &str,
-    content: &str,
-) -> String {
+pub fn enrich_read_response(root: &Path, relative_path: &str, content: &str) -> String {
     let store = EventStore::open(root);
     let events = match store.query(Some(relative_path), None, 5) {
         Ok(e) if !e.is_empty() => e,
@@ -450,13 +447,8 @@ pub fn enrich_read_response(
 // ─── MCP tool handlers ──────────────────────────────────────────────────────
 
 /// Handle `event_record` — create a new codebase event.
-pub fn handle_event_record(
-    root: &Path,
-    arguments: &serde_json::Value,
-) -> Result<String, String> {
-    let tool_name = arguments["tool_name"]
-        .as_str()
-        .unwrap_or("manual");
+pub fn handle_event_record(root: &Path, arguments: &serde_json::Value) -> Result<String, String> {
+    let tool_name = arguments["tool_name"].as_str().unwrap_or("manual");
     let description = arguments["description"]
         .as_str()
         .ok_or_else(|| "description is required".to_string())?;
@@ -495,10 +487,7 @@ pub fn handle_event_record(
 }
 
 /// Handle `event_history` — query event history.
-pub fn handle_event_history(
-    root: &Path,
-    arguments: &serde_json::Value,
-) -> Result<String, String> {
+pub fn handle_event_history(root: &Path, arguments: &serde_json::Value) -> Result<String, String> {
     let store = EventStore::open(root);
     let file_filter = arguments["file"].as_str();
     let limit = arguments["limit"].as_u64().unwrap_or(20).min(200) as usize;
@@ -540,10 +529,7 @@ pub fn handle_event_history(
 }
 
 /// Handle `event_context` — get full detail for a single event.
-pub fn handle_event_context(
-    root: &Path,
-    arguments: &serde_json::Value,
-) -> Result<String, String> {
+pub fn handle_event_context(root: &Path, arguments: &serde_json::Value) -> Result<String, String> {
     let seq = arguments["sequence"]
         .as_u64()
         .ok_or_else(|| "sequence is required".to_string())?;
@@ -591,11 +577,14 @@ pub fn handle_event_mark_outcome(
         "failure" => EventOutcome::Failure,
         "revert" => EventOutcome::Revert,
         "pending" => EventOutcome::Pending,
-        other => return Err(format!("Unknown outcome '{}'. Expected: success, failure, revert, pending", other)),
+        other => {
+            return Err(format!(
+                "Unknown outcome '{}'. Expected: success, failure, revert, pending",
+                other
+            ))
+        }
     };
-    let failure_reason = arguments["failure_reason"]
-        .as_str()
-        .map(|s| s.to_string());
+    let failure_reason = arguments["failure_reason"].as_str().map(|s| s.to_string());
 
     let store = EventStore::open(root);
     let updated = store.mark_outcome(seq, outcome, failure_reason)?;
@@ -615,10 +604,7 @@ pub fn handle_event_mark_outcome(
 
 /// Handle `event_timeline` — chronological view of all events with state
 /// transitions, showing the codebase's journey over time.
-pub fn handle_event_timeline(
-    root: &Path,
-    arguments: &serde_json::Value,
-) -> Result<String, String> {
+pub fn handle_event_timeline(root: &Path, arguments: &serde_json::Value) -> Result<String, String> {
     let store = EventStore::open(root);
     let limit = arguments["limit"].as_u64().unwrap_or(50).min(500) as usize;
     let events = store.load_all()?;
@@ -768,9 +754,7 @@ mod tests {
     #[test]
     fn mark_outcome_updates_event() {
         let (_dir, store) = open_store();
-        store
-            .record("t", "desc", None, None, None, vec![])
-            .unwrap();
+        store.record("t", "desc", None, None, None, vec![]).unwrap();
         let updated = store
             .mark_outcome(1, EventOutcome::Failure, Some("broke tests".into()))
             .unwrap();
@@ -815,9 +799,7 @@ mod tests {
             .mark_outcome(2, EventOutcome::Failure, Some("oops".into()))
             .unwrap();
 
-        let failures = store
-            .query(None, Some(&EventOutcome::Failure), 10)
-            .unwrap();
+        let failures = store.query(None, Some(&EventOutcome::Failure), 10).unwrap();
         assert_eq!(failures.len(), 1);
         assert_eq!(failures[0].description, "b");
     }
@@ -841,13 +823,34 @@ mod tests {
     fn by_merkle_root_finds_matching_events() {
         let (_dir, store) = open_store();
         store
-            .record("t", "a", Some("aaaa".into()), Some("bbbb".into()), None, vec![])
+            .record(
+                "t",
+                "a",
+                Some("aaaa".into()),
+                Some("bbbb".into()),
+                None,
+                vec![],
+            )
             .unwrap();
         store
-            .record("t", "b", Some("bbbb".into()), Some("cccc".into()), None, vec![])
+            .record(
+                "t",
+                "b",
+                Some("bbbb".into()),
+                Some("cccc".into()),
+                None,
+                vec![],
+            )
             .unwrap();
         store
-            .record("t", "c", Some("cccc".into()), Some("dddd".into()), None, vec![])
+            .record(
+                "t",
+                "c",
+                Some("cccc".into()),
+                Some("dddd".into()),
+                None,
+                vec![],
+            )
             .unwrap();
 
         // "bbbb" appears as merkle_after in event 1 and merkle_before in event 2
@@ -974,12 +977,21 @@ mod tests {
     fn update_context_attaches_reasoning() {
         let (_dir, store) = open_store();
         store
-            .record("write_file", "Added cache", None, None, None, vec!["cache.rs".into()])
+            .record(
+                "write_file",
+                "Added cache",
+                None,
+                None,
+                None,
+                vec!["cache.rs".into()],
+            )
             .unwrap();
         // Initially no context
         assert!(store.get(1).unwrap().unwrap().context.is_none());
         // Attach context
-        let updated = store.update_context(1, "Response times were 2s, needed <200ms").unwrap();
+        let updated = store
+            .update_context(1, "Response times were 2s, needed <200ms")
+            .unwrap();
         assert!(updated);
         assert_eq!(
             store.get(1).unwrap().unwrap().context,
@@ -1006,9 +1018,7 @@ mod tests {
                 vec!["src/auth.rs".into()],
             )
             .unwrap();
-        store
-            .mark_outcome(1, EventOutcome::Success, None)
-            .unwrap();
+        store.mark_outcome(1, EventOutcome::Success, None).unwrap();
 
         let content = "fn authenticate() { /* ... */ }";
         let enriched = enrich_read_response(dir.path(), "src/auth.rs", content);
@@ -1073,7 +1083,11 @@ mod tests {
             .unwrap();
         // Manually inject a totally-garbage line, then append another valid
         // event via the normal path.
-        let path = dir.path().join(".velocity").join("events").join("events.jsonl");
+        let path = dir
+            .path()
+            .join(".velocity")
+            .join("events")
+            .join("events.jsonl");
         let mut raw = fs::read_to_string(&path).unwrap();
         raw.push_str("this-is-not-json-at-all\n");
         fs::write(&path, raw).unwrap();
@@ -1119,7 +1133,11 @@ mod tests {
             metadata: None,
         })
         .unwrap();
-        let path = dir.path().join(".velocity").join("events").join("events.jsonl");
+        let path = dir
+            .path()
+            .join(".velocity")
+            .join("events")
+            .join("events.jsonl");
         fs::write(&path, format!("{a}{b}\n")).unwrap();
 
         let events = store.load_all().unwrap();
@@ -1138,11 +1156,18 @@ mod tests {
                 .record("t", &format!("desc {i}"), None, None, None, vec![])
                 .unwrap();
         }
-        let path = dir.path().join(".velocity").join("events").join("events.jsonl");
+        let path = dir
+            .path()
+            .join(".velocity")
+            .join("events")
+            .join("events.jsonl");
         let raw = fs::read_to_string(&path).unwrap();
         assert_eq!(raw.lines().count(), 20);
         for line in raw.lines() {
-            assert!(line.starts_with('{') && line.ends_with('}'), "line shape: {line}");
+            assert!(
+                line.starts_with('{') && line.ends_with('}'),
+                "line shape: {line}"
+            );
             // Every line must parse as a single event object.
             let ev: CodebaseEvent = serde_json::from_str(line)
                 .unwrap_or_else(|e| panic!("line did not parse cleanly: {e}"));

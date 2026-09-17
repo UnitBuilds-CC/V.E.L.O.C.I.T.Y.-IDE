@@ -13,6 +13,86 @@ struct SidecarDaemon {
 
 static SIDECAR_DAEMON: Mutex<Option<SidecarDaemon>> = Mutex::new(None);
 
+/// Hard deadline for one sidecar request/response round-trip. The daemon is
+/// an external process; an unbounded `read_line` on its stdout used to wedge
+/// the dispatch thread *and* the global SIDECAR_DAEMON mutex forever whenever
+/// the daemon was alive-but-silent (see the execute_nda hang: a
+/// VELOCITY_MCP_SERVER pointing at another velocity_mcp build made every
+/// generation spawn its own sidecar and wait on the next, forever).
+const SIDECAR_TIMEOUT_SECS: u64 = 30;
+
+/// Spawn the sidecar daemon with the guards that keep the chain finite:
+/// `env_remove(VELOCITY_MCP_SERVER)` so a Rust sibling takes the local
+/// fallback path instead of spawning a sidecar of its own. velocity_mcp-
+/// family binaries also get an explicit `--mode stdio` (the standalone
+/// upstream server predates `--workspace`, so paths are resolved by the
+/// parent before the request is forwarded).
+fn spawn_sidecar(exe_path: &str) -> Result<SidecarDaemon, Box<dyn Error>> {
+    let mut cmd = Command::new(exe_path);
+    cmd.env_remove("VELOCITY_MCP_SERVER");
+    if Path::new(exe_path)
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .map(|s| s.eq_ignore_ascii_case("velocity_mcp"))
+        .unwrap_or(false)
+    {
+        cmd.arg("--mode").arg("stdio");
+    }
+    let child = cmd.stdin(Stdio::piped()).stdout(Stdio::piped()).spawn()?;
+    Ok(SidecarDaemon { child })
+}
+
+/// Deadline for running an extracted NDA payload.
+const NDA_EXEC_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
+
+/// `wait_with_output` off-thread with a hard deadline; on expiry the child
+/// is force-killed by PID (taskkill /F) so the waiting thread unwinds and
+/// its own pipes drain.
+pub(crate) fn run_child_with_timeout(child: std::process::Child) -> Result<String, Box<dyn Error>> {
+    let pid = child.id();
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let _ = tx.send(child.wait_with_output());
+    });
+    let collected = match rx.recv_timeout(NDA_EXEC_TIMEOUT) {
+        Ok(result) => result,
+        Err(_) => {
+            kill_process(pid);
+            rx.recv_timeout(std::time::Duration::from_secs(5))
+                .map_err(|_| "extracted payload did not exit after being killed")?
+        }
+    };
+    let output = collected.map_err(|e| format!("failed to run extracted payload: {e}"))?;
+    if !output.status.success() {
+        return Err(format!(
+            "extracted payload exited with {}: {}",
+            output
+                .status
+                .code()
+                .map(|c| c.to_string())
+                .unwrap_or_else(|| "signal".to_string()),
+            String::from_utf8_lossy(&output.stderr).trim()
+        )
+        .into());
+    }
+    Ok(String::from_utf8_lossy(&output.stdout).to_string())
+}
+
+fn kill_process(pid: u32) {
+    #[cfg(target_os = "windows")]
+    {
+        let _ = Command::new("taskkill")
+            .args(["/F", "/PID", &pid.to_string()])
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status();
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        let _ = Command::new("kill").args(["-9", &pid.to_string()]).status();
+    }
+}
+
 pub fn resolve_workspace_path(
     root: &Path,
     rel_path: &str,
@@ -285,7 +365,7 @@ pub fn handle_system_tool(
         // Native Rust NDA document path (portable NDA1 with in-file history).
         "convert_to_nda" => native_convert_to_nda(root, arguments)?,
         "read_nda" => native_read_nda(root, arguments)?,
-        "execute_nda" => execute_csharp_mcp_tool(name, arguments)?,
+        "execute_nda" => execute_csharp_mcp_tool(root, name, arguments)?,
         "read_file" => {
             let rel_path = arguments["relativeFilePath"]
                 .as_str()
@@ -719,9 +799,7 @@ pub fn handle_system_tool(
             let description = arguments["description"]
                 .as_str()
                 .ok_or("description is required")?;
-            let command = arguments["command"]
-                .as_str()
-                .ok_or("command is required")?;
+            let command = arguments["command"].as_str().ok_or("command is required")?;
             let parameters = arguments["parameters"]
                 .as_object()
                 .cloned()
@@ -737,13 +815,11 @@ pub fn handle_system_tool(
                 command: command.to_string(),
                 input_schema,
             };
-            super::custom_tools::register_tool(root, tool)
-                .map_err(|e| e.to_string())?
+            super::custom_tools::register_tool(root, tool).map_err(|e| e.to_string())?
         }
         "tool_unregister" => {
             let name = arguments["name"].as_str().ok_or("name is required")?;
-            super::custom_tools::unregister_tool(root, name)
-                .map_err(|e| e.to_string())?
+            super::custom_tools::unregister_tool(root, name).map_err(|e| e.to_string())?
         }
         "tool_list_custom" => {
             let tools = super::custom_tools::list_tools(root);
@@ -763,15 +839,19 @@ pub fn handle_system_tool(
             let all = registry.aggregate_all();
             let total = all.len();
             let sessions = registry.session_count();
-            let recent: Vec<_> = all.iter().take(limit).map(|e| {
-                json!({
-                    "seq": e.sequence,
-                    "tool": e.tool_name,
-                    "duration_us": e.duration_us,
-                    "outcome": format!("{:?}", e.outcome),
-                    "timestamp_ms": e.timestamp_ms
+            let recent: Vec<_> = all
+                .iter()
+                .take(limit)
+                .map(|e| {
+                    json!({
+                        "seq": e.sequence,
+                        "tool": e.tool_name,
+                        "duration_us": e.duration_us,
+                        "outcome": format!("{:?}", e.outcome),
+                        "timestamp_ms": e.timestamp_ms
+                    })
                 })
-            }).collect();
+                .collect();
             serde_json::to_string(&json!({
                 "totalEntries": total,
                 "activeSessions": sessions,
@@ -976,35 +1056,39 @@ fn native_read_nda(root: &Path, arguments: &Value) -> Result<String, Box<dyn Err
     Ok(out)
 }
 
-fn execute_csharp_mcp_tool(tool_name: &str, arguments: &Value) -> Result<String, Box<dyn Error>> {
+fn execute_csharp_mcp_tool(
+    root: &Path,
+    tool_name: &str,
+    arguments: &Value,
+) -> Result<String, Box<dyn Error>> {
     let exe_path = std::env::var("VELOCITY_MCP_SERVER")
         .unwrap_or_else(|_| r"C:\WUIAS\velocity_nda\VelocityMcpServer.exe".to_string());
 
     if !Path::new(&exe_path).exists() {
-        return execute_rust_fallback_tool(tool_name, arguments);
+        return execute_rust_fallback_tool(root, tool_name, arguments);
     }
 
     let mut daemon_guard = SIDECAR_DAEMON.lock_safe();
 
     if daemon_guard.is_none() {
-        let child = Command::new(exe_path)
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .spawn()?;
-        *daemon_guard = Some(SidecarDaemon { child });
+        *daemon_guard = Some(spawn_sidecar(&exe_path)?);
     } else if let Some(daemon) = daemon_guard.as_mut() {
         if let Ok(Some(_status)) = daemon.child.try_wait() {
-            let child = Command::new(exe_path)
-                .stdin(Stdio::piped())
-                .stdout(Stdio::piped())
-                .spawn()?;
-            *daemon = SidecarDaemon { child };
+            *daemon = spawn_sidecar(&exe_path)?;
         }
     }
 
-    let daemon = daemon_guard
-        .as_mut()
-        .ok_or("failed to initialize sidecar daemon")?;
+    // The sidecar may be an older standalone server without workspace-flag
+    // support; resolve its file arguments against *our* root first so the
+    // tool's workspace-relative contract holds either way.
+    let mut arguments = arguments.clone();
+    if let Some(raw) = arguments["ndaPath"].as_str() {
+        if !Path::new(raw).is_absolute() {
+            if let Ok(resolved) = resolve_workspace_path(root, raw, false) {
+                arguments["ndaPath"] = json!(resolved.to_string_lossy());
+            }
+        }
+    }
 
     let request = json!({
         "jsonrpc": "2.0",
@@ -1019,6 +1103,9 @@ fn execute_csharp_mcp_tool(tool_name: &str, arguments: &Value) -> Result<String,
     let request_str = serde_json::to_string(&request)? + "\n";
 
     {
+        let daemon = daemon_guard
+            .as_mut()
+            .ok_or("failed to initialize sidecar daemon")?;
         let stdin = daemon
             .child
             .stdin
@@ -1028,29 +1115,63 @@ fn execute_csharp_mcp_tool(tool_name: &str, arguments: &Value) -> Result<String,
         stdin.flush()?;
     }
 
-    let response_str;
+    // Hand the stdout pipe to a reader thread and poll with a deadline: a
+    // wedged daemon now costs one 30 s round-trip, not the server. The
+    // `daemon` borrow must not outlive this block — the timeout arm below
+    // re-borrows `daemon_guard` to kill and retire the child.
+    let (tx, rx) = std::sync::mpsc::channel::<String>();
     {
+        let daemon = daemon_guard
+            .as_mut()
+            .ok_or("failed to initialize sidecar daemon")?;
         let stdout = daemon
             .child
             .stdout
-            .as_mut()
+            .take()
             .ok_or("Failed to open stdout of C# daemon")?;
-        let mut reader = BufReader::new(stdout);
-        loop {
-            let mut line = String::new();
-            reader.read_line(&mut line)?;
-            if line.is_empty() {
-                return Err("C# sidecar daemon closed stdout unexpectedly".into());
+        std::thread::spawn(move || {
+            let mut reader = BufReader::new(stdout);
+            loop {
+                let mut line = String::new();
+                match reader.read_line(&mut line) {
+                    Ok(0) | Err(_) => break,
+                    Ok(_) => {
+                        if !line.trim().is_empty() && tx.send(line).is_err() {
+                            break;
+                        }
+                    }
+                }
             }
-            let trimmed = line.trim();
-            if trimmed.is_empty() {
-                continue;
-            }
-            if trimmed.starts_with('{') && trimmed.ends_with('}') {
-                response_str = trimmed.to_string();
-                break;
-            } else {
+        });
+    }
+
+    let response_str;
+    loop {
+        match rx.recv_timeout(std::time::Duration::from_secs(SIDECAR_TIMEOUT_SECS)) {
+            Ok(line) => {
+                let trimmed = line.trim();
+                if trimmed.starts_with('{') && trimmed.ends_with('}') {
+                    response_str = trimmed.to_string();
+                    break;
+                }
+                // Non-JSON chatter from the daemon: surface it, keep waiting.
                 eprintln!("[C# Sidecar Log] {}", trimmed);
+            }
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+                if let Some(daemon) = daemon_guard.as_mut() {
+                    let _ = daemon.child.kill();
+                }
+                *daemon_guard = None;
+                return Err(format!(
+                    "C# sidecar daemon did not respond within {}s; it was killed \
+                     and will be respawned on the next call",
+                    SIDECAR_TIMEOUT_SECS
+                )
+                .into());
+            }
+            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
+                *daemon_guard = None;
+                return Err("C# sidecar daemon closed stdout unexpectedly".into());
             }
         }
     }
@@ -1077,7 +1198,8 @@ fn execute_csharp_mcp_tool(tool_name: &str, arguments: &Value) -> Result<String,
     }
 }
 
-fn execute_rust_fallback_tool(
+pub(crate) fn execute_rust_fallback_tool(
+    root: &Path,
     tool_name: &str,
     arguments: &Value,
 ) -> Result<String, Box<dyn Error>> {
@@ -1149,8 +1271,11 @@ fn execute_rust_fallback_tool(
             Ok(serde_json::to_string_pretty(&report)?)
         }
         "execute_nda" => {
-            let nda_path = arguments["ndaPath"].as_str().ok_or("ndaPath is required")?;
-            let nda_bytes = fs::read(nda_path)?;
+            let nda_raw = arguments["ndaPath"].as_str().ok_or("ndaPath is required")?;
+            // Resolve against the workspace root, not the process CWD — the
+            // stdio server's CWD is wherever the client launched it from.
+            let nda_path = resolve_workspace_path(root, nda_raw, false)?;
+            let nda_bytes = fs::read(&nda_path)?;
 
             if nda_bytes.len() < 9 || &nda_bytes[0..4] != b"NDAV" {
                 return Err("Invalid NDA container format".into());
@@ -1229,14 +1354,27 @@ fn execute_rust_fallback_tool(
                 }
                 #[cfg(not(target_os = "windows"))]
                 {
-                    let out = Command::new(&shell_cmd).args(&final_args).output()?;
-                    String::from_utf8_lossy(&out.stdout).to_string()
-                        + &String::from_utf8_lossy(&out.stderr)
+                    run_child_with_timeout(
+                        Command::new(&shell_cmd)
+                            .args(&final_args)
+                            .stdin(Stdio::null())
+                            .stdout(Stdio::piped())
+                            .stderr(Stdio::piped())
+                            .spawn()?,
+                    )?
                 }
             } else {
-                let out = Command::new(&shell_cmd).args(&final_args).output()?;
-                String::from_utf8_lossy(&out.stdout).to_string()
-                    + &String::from_utf8_lossy(&out.stderr)
+                // Bounded execution: a payload that never exits (GUI subsystem
+                // app, interactive script) used to wedge the whole MCP server —
+                // `.output()` waits forever by design.
+                run_child_with_timeout(
+                    Command::new(&shell_cmd)
+                        .args(&final_args)
+                        .stdin(Stdio::null())
+                        .stdout(Stdio::piped())
+                        .stderr(Stdio::piped())
+                        .spawn()?,
+                )?
             };
 
             let _ = fs::remove_file(temp_file_path);

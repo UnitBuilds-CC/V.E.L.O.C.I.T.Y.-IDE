@@ -329,7 +329,10 @@ mod tests {
     fn context_window_filters_providers() {
         let mut r = ProviderRouter::new();
         // Give one provider a tiny context window.
-        r.providers.get_mut("gpt-3.5-turbo").unwrap().max_context_tokens = 500;
+        r.providers
+            .get_mut("gpt-3.5-turbo")
+            .unwrap()
+            .max_context_tokens = 500;
         r.providers.get_mut("gpt-3.5-turbo").unwrap().avg_latency_ms = 10.0;
 
         // Task of 600 tokens should exclude gpt-3.5-turbo even though it's fastest.

@@ -153,9 +153,9 @@ pub fn validate_open_path(
     })?;
 
     // Resolve workspace root canonical path
-    let canonical_root = workspace_root.canonicalize().map_err(|e| {
-        format!("Cannot resolve workspace root: {}", e)
-    })?;
+    let canonical_root = workspace_root
+        .canonicalize()
+        .map_err(|e| format!("Cannot resolve workspace root: {}", e))?;
 
     // Check the path is within the workspace root
     if !canonical.starts_with(&canonical_root) {
@@ -265,7 +265,10 @@ fn listener_loop(
                     let resp = GuiResponse {
                         success: false,
                         data: None,
-                        error: Some(format!("Parse error: {}. Expected AuthenticatedCommand with auth_token.", e)),
+                        error: Some(format!(
+                            "Parse error: {}. Expected AuthenticatedCommand with auth_token.",
+                            e
+                        )),
                     };
                     let json = serde_json::to_string(&resp).unwrap_or_default();
                     let _ = writeln!(stream, "{}", json);

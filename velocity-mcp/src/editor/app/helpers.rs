@@ -1,7 +1,7 @@
 use super::types::*;
 use crate::automation::AgentTaskKind;
-pub use velocity_ide::hash_str;
 use std::path::{Path, PathBuf};
+pub use velocity_ide::hash_str;
 
 pub fn get_cursor_pos(text: &str, char_idx: usize) -> (usize, usize) {
     let mut line = 0;

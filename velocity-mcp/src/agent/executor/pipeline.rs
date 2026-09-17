@@ -213,8 +213,8 @@ impl RequestPipeline {
                 self.avg_queue_time_ms = result.queue_time_ms as f64;
                 self.first_completed_at = Some(Instant::now());
             } else {
-                self.avg_queue_time_ms =
-                    EMA_ALPHA * result.queue_time_ms as f64 + (1.0 - EMA_ALPHA) * self.avg_queue_time_ms;
+                self.avg_queue_time_ms = EMA_ALPHA * result.queue_time_ms as f64
+                    + (1.0 - EMA_ALPHA) * self.avg_queue_time_ms;
             }
         }
     }

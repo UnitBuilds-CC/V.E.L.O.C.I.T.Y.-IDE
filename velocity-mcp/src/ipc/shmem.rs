@@ -319,8 +319,8 @@ impl SharedMemoryBuffer {
 
     /// Compute HMAC-SHA256 over sequence number + message bytes
     fn compute_hmac(key: &[u8], seq: u32, data: &[u8]) -> Result<[u8; 32], Box<dyn Error>> {
-        let mut mac =
-            HmacSha256::new_from_slice(key).map_err(|e| -> Box<dyn Error> { format!("HMAC key error: {}", e).into() })?;
+        let mut mac = HmacSha256::new_from_slice(key)
+            .map_err(|e| -> Box<dyn Error> { format!("HMAC key error: {}", e).into() })?;
         mac.update(&seq.to_le_bytes());
         mac.update(data);
         let result = mac.finalize();
@@ -401,9 +401,7 @@ impl SharedMemoryBuffer {
         }
 
         // Verify HMAC if enabled
-        if self.is_hmac_enabled()
-            && !Self::verify_hmac(key, seq, bytes, &stored_hmac)
-        {
+        if self.is_hmac_enabled() && !Self::verify_hmac(key, seq, bytes, &stored_hmac) {
             return Err("HMAC verification failed - message authentication error".into());
         }
 
@@ -467,9 +465,7 @@ impl SharedMemoryBuffer {
         }
 
         // Verify HMAC if enabled
-        if self.is_hmac_enabled()
-            && !Self::verify_hmac(key, seq, bytes, &stored_hmac)
-        {
+        if self.is_hmac_enabled() && !Self::verify_hmac(key, seq, bytes, &stored_hmac) {
             return Err("HMAC verification failed - message authentication error".into());
         }
 
