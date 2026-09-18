@@ -451,7 +451,7 @@ function Send-VdHotkey([int]$vk) {
 /// Reads the shell's ordered desktop IDs, so indices line up with what Task
 /// View shows and with the IDs the move/pin APIs expect.
 pub fn build_enumerate_desktops_script() -> String {
-    let script = String::from(VD_PRELUDE)
+    String::from(VD_PRELUDE)
         + r#"
 $ids = Get-VdDesktopIds
 $current = Get-VdCurrentId
@@ -475,8 +475,7 @@ $result = @{
     registry_available = (Test-Path $vdReg)
 }
 ConvertTo-Json $result -Compress -Depth 4
-"#;
-    script
+"#
 }
 
 /// Assemble a virtual-desktop script: shared prelude, then the body, with
@@ -615,7 +614,9 @@ Write-Output (ConvertTo-Json @{ success = $ok; detail = $detail; from = $fromIdx
 /// Build a PowerShell script to create a new virtual desktop.
 pub fn build_create_desktop_script(name: Option<&str>) -> String {
     let name_token = match name {
-        Some(n) => n.replace('"', "").replace('\\', ""),
+        // Strip the characters that would break out of the quoted literal
+        // below - one pass, since chained `replace` calls allocate twice.
+        Some(n) => n.chars().filter(|c| *c != '"' && *c != '\\').collect(),
         None => String::new(),
     };
     vd_script(
@@ -860,10 +861,7 @@ fn parse_enumerate_result(json: &str) -> Option<VirtualDesktopState> {
     // A missing current desktop must stay missing: defaulting it to index 0
     // reported a measurement that was never taken (bug #21).
     let current_known = r.current_desktop_known.unwrap_or(false);
-    let current_index = match r.current_index {
-        Some(index) => index,
-        None => 0,
-    };
+    let current_index = r.current_index.unwrap_or(0);
     Some(VirtualDesktopState {
         desktops,
         current_index,

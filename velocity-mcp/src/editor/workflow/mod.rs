@@ -600,9 +600,7 @@ mod tests {
         std::fs::create_dir_all(&vel).unwrap();
         std::fs::write(
             vel.join("workspace-preferences.json"),
-            format!(
-                "\u{feff}{{\"provider\":\"Alibaba Qwen\",\"selected_model\":\"qwen3.8-flash\"}}"
-            ),
+            "\u{feff}{\"provider\":\"Alibaba Qwen\",\"selected_model\":\"qwen3.8-flash\"}",
         )
         .unwrap();
         let (provider, model) = agent_route(tmp.path(), None);

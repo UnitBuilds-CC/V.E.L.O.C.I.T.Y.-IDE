@@ -652,7 +652,7 @@ fn dispatch_records_failure_with_reason() {
     assert!(
         failure["failure_reason"]
             .as_str()
-            .map_or(false, |s| !s.is_empty()),
+            .is_some_and(|s| !s.is_empty()),
         "failure_reason should be populated: {failure}"
     );
 }
