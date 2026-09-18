@@ -1,7 +1,7 @@
 //! Page-state assertions (guards) for the native browser tools.
 //!
-//! `browser_native_assert` checks text/element conditions in one call and
-//! reports failure in-band; a failed guard is also recorded in the outcome
+//! `browser_native_assert` checks text/element conditions in one call; an
+//! unmet condition is a tool error, and is also recorded in the outcome
 //! history so the reflection loop treats repeated misses as a pattern.
 
 use serde_json::Value;
@@ -24,10 +24,10 @@ pub(super) fn evaluate_assert_checks(
     let label = raw_label.trim().to_lowercase();
     let mut checks: Vec<(String, String, bool, String)> = Vec::new();
     if !text.is_empty() {
-        let mut content = bridge.page_content_markdown();
-        if content.is_empty() {
-            content = bridge.page_markdown();
-        }
+        // One shared definition of "the content" (bug #53): the old
+        // readability-markdown-only chain saw a JSON document as 0 chars, so
+        // `assert` reported the text the agent had just submitted as missing.
+        let content = bridge.distilled_content();
         let ok = content.to_lowercase().contains(&text);
         let detail = format!(
             "content is {} chars: {}",
@@ -52,6 +52,12 @@ pub(super) fn evaluate_assert_checks(
     checks
 }
 
+/// Whether every check held. Kept next to the report renderer so the verdict
+/// the agent reads and the verdict the tool reports can never disagree.
+pub(super) fn asserts_hold(checks: &[(String, String, bool, String)]) -> bool {
+    checks.iter().all(|(_, _, ok, _)| *ok)
+}
+
 /// Render an assert verdict. `waited_ms` is only set when the call used a
 /// waitMs grace period, in which case the report carries the elapsed time.
 pub(super) fn render_assert_report(
@@ -59,7 +65,7 @@ pub(super) fn render_assert_report(
     waited_ms: Option<u64>,
     compact: bool,
 ) -> Result<String, Box<dyn Error>> {
-    let all_ok = checks.iter().all(|(_, _, ok, _)| *ok);
+    let all_ok = asserts_hold(checks);
     if compact {
         let mut json = serde_json::json!({
             "ok": all_ok,
@@ -98,9 +104,13 @@ pub(super) fn render_assert_report(
     Ok(out)
 }
 
-/// Check page-state conditions in one call and report failure in-band.
-/// A failed assertion is a result (with enough detail to diagnose), never
-/// a tool error, so agents can use it as a cheap guard after any action.
+/// Check page-state conditions in one call. An unmet condition is reported as
+/// a tool error, carrying the full per-check diagnosis, because `isError` is
+/// the only failure signal that survives into the MCP audit trail: an assert
+/// that answered `isError: false` next to its own "assert FAILED" text made a
+/// sweep count unverified guards as passes (bug #49). A failed assertion is
+/// still recorded in the outcome history, so it stays a cheap guard an agent
+/// can probe with rather than a hard stop it must avoid.
 /// With waitMs > 0 the checks poll (lock released between polls) until the
 /// conditions hold or the grace period elapses.
 pub(super) fn assert_on_session(
@@ -132,8 +142,7 @@ pub(super) fn assert_on_session(
             .lock()
             .map_err(|_| "native browser bridge lock poisoned")?;
         let checks = evaluate_assert_checks(&bridge, raw_text, raw_label);
-        let all_ok = checks.iter().all(|(_, _, ok, _)| *ok);
-        if all_ok || start.elapsed().as_millis() >= u128::from(wait_ms) {
+        if asserts_hold(&checks) || start.elapsed().as_millis() >= u128::from(wait_ms) {
             break checks;
         }
         drop(bridge);
@@ -143,7 +152,7 @@ pub(super) fn assert_on_session(
     // Failed guards are learning signals: record each missed check in the
     // outcome history so browser_native_reflect spots repeated "expected
     // X" misses exactly like repeated dead clicks.
-    if checks.iter().any(|(_, _, ok, _)| !*ok) {
+    if !asserts_hold(&checks) {
         let mut bridge = arc
             .lock()
             .map_err(|_| "native browser bridge lock poisoned")?;
@@ -152,12 +161,16 @@ pub(super) fn assert_on_session(
                 continue;
             }
             let role = if what == "text" { "content" } else { "element" };
-            let result = AgentActionResult::new(
+            let result = AgentActionResult::failed(
                 format!("assert failed: {what} \"{value}\" not satisfied"),
                 NdaDelta::default(),
             );
             bridge.record_outcome("assert", role, value, &result);
         }
     }
-    Ok(Some(render_assert_report(&checks, waited, compact)?))
+    let report = render_assert_report(&checks, waited, compact)?;
+    if asserts_hold(&checks) {
+        return Ok(Some(report));
+    }
+    Err(report.into())
 }

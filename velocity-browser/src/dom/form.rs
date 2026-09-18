@@ -208,6 +208,36 @@ impl FormDataSerializer {
                     }
                 }
             }
+            // Temporal controls carry the same min/max range constraint, and
+            // their values compare correctly as plain strings because every
+            // one of these formats is big-endian ISO-8601: the most
+            // significant field is always the leftmost. An order form open
+            // 11:00-21:00 accepted a 23:00 delivery slot in silence (bug #54).
+            "date" | "month" | "week" | "time" | "datetime-local" => {
+                // A malformed temporal value has no comparable position on the
+                // range, so shape is checked first and only a well-formed
+                // value is measured against min/max.
+                let shaped =
+                    !value.is_empty() && Self::iso_temporal_is_well_formed(&value, input_type);
+                if !value.is_empty() && !shaped {
+                    state.is_valid = false;
+                    state.type_mismatch = true;
+                }
+                if shaped {
+                    if let Some(min) = node.attributes.get("min") {
+                        if value.as_str() < min.as_str() {
+                            state.is_valid = false;
+                            state.range_underflow = true;
+                        }
+                    }
+                    if let Some(max) = node.attributes.get("max") {
+                        if value.as_str() > max.as_str() {
+                            state.is_valid = false;
+                            state.range_overflow = true;
+                        }
+                    }
+                }
+            }
             _ => {}
         }
 
@@ -222,13 +252,14 @@ impl FormDataSerializer {
             }
         }
 
-        // minlength / maxlength
+        // minlength / maxlength count characters, not bytes: an accented value
+        // was previously billed double and reported tooLong.
         if let Some(maxlen) = node
             .attributes
             .get("maxlength")
             .and_then(|v| v.parse::<usize>().ok())
         {
-            if value.len() > maxlen {
+            if value.chars().count() > maxlen {
                 state.is_valid = false;
                 state.too_long = true;
             }
@@ -238,13 +269,60 @@ impl FormDataSerializer {
             .get("minlength")
             .and_then(|v| v.parse::<usize>().ok())
         {
-            if !value.is_empty() && value.len() < minlen {
+            if !value.is_empty() && value.chars().count() < minlen {
                 state.is_valid = false;
                 state.too_short = true;
             }
         }
 
         state
+    }
+
+    /// Whether a temporal input's value has the shape its type requires.
+    /// Field ranges are enforced (`25:99` is not a time, `2026-13-01` is not a
+    /// date) but the calendar is not: `2026-02-30` is well-shaped even though
+    /// it never happens. That is enough to tell an agent it typed `11pm` into
+    /// a time field instead of silently skipping the range check.
+    fn iso_temporal_is_well_formed(value: &str, input_type: &str) -> bool {
+        // Exactly two ASCII digits inside an inclusive range: every field of
+        // these formats is zero-padded.
+        let pair = |s: &str, range: std::ops::RangeInclusive<u8>| {
+            s.len() == 2
+                && s.bytes().all(|b| b.is_ascii_digit())
+                && range.contains(&s.parse::<u8>().expect("two ASCII digits parse"))
+        };
+        let year = |s: &str| s.len() == 4 && s.bytes().all(|b| b.is_ascii_digit());
+        match input_type {
+            "date" => {
+                let f: Vec<_> = value.split('-').collect();
+                f.len() == 3 && year(f[0]) && pair(f[1], 1..=12) && pair(f[2], 1..=31)
+            }
+            "month" => {
+                let f: Vec<_> = value.split('-').collect();
+                f.len() == 2 && year(f[0]) && pair(f[1], 1..=12)
+            }
+            "week" => {
+                // YYYY-Www: the literal `W` is what separates this from a month.
+                let f: Vec<_> = value.split('-').collect();
+                f.len() == 2
+                    && year(f[0])
+                    && f[1].strip_prefix('W').is_some_and(|d| pair(d, 1..=53))
+            }
+            "time" => {
+                let f: Vec<_> = value.split(':').collect();
+                // HH:MM, optionally with :SS or a fractional part.
+                (f.len() == 2 || f.len() == 3)
+                    && pair(f[0], 0..=23)
+                    && pair(f[1], 0..=59)
+                    && f.get(2)
+                        .is_none_or(|sec| pair(sec.split('.').next().unwrap_or(""), 0..=60))
+            }
+            "datetime-local" => value.split_once('T').is_some_and(|(d, t)| {
+                Self::iso_temporal_is_well_formed(d, "date")
+                    && Self::iso_temporal_is_well_formed(t, "time")
+            }),
+            _ => true,
+        }
     }
 
     /// Simple pattern matching (supports [a-z], [0-9], ., *, +).
@@ -681,6 +759,124 @@ mod tests {
         let state = FormDataSerializer::validate_control(&node);
         assert!(!state.is_valid);
         assert!(state.too_short);
+    }
+
+    /// Build an `<input>` carrying only the given attributes, so the constraint
+    /// tests below read as the constraints themselves.
+    fn control(attrs: &[(&str, &str)]) -> DomNode {
+        DomNode {
+            id: 0,
+            node_type: NodeType::Element,
+            tag_name: "input".to_string(),
+            attributes: attrs
+                .iter()
+                .map(|(k, v)| (k.to_string(), v.to_string()))
+                .collect(),
+            text_content: String::new(),
+            children: Vec::new(),
+            parent: None,
+        }
+    }
+
+    #[test]
+    fn a_time_outside_the_allowed_window_overflows_or_underflows() {
+        // Bug #54: httpbin's delivery slot is open 11:00-21:00 in 15-minute
+        // steps. A 23:00 booking validated as clean because only `number`
+        // and `range` were measured against min/max.
+        let late = control(&[
+            ("type", "time"),
+            ("value", "23:00"),
+            ("min", "11:00"),
+            ("max", "21:00"),
+        ]);
+        let state = FormDataSerializer::validate_control(&late);
+        assert!(!state.is_valid);
+        assert!(state.range_overflow, "23:00 is past the closing time");
+        assert!(!state.range_underflow);
+
+        let early = control(&[
+            ("type", "time"),
+            ("value", "09:00"),
+            ("min", "11:00"),
+            ("max", "21:00"),
+        ]);
+        assert!(FormDataSerializer::validate_control(&early).range_underflow);
+
+        let inside = control(&[
+            ("type", "time"),
+            ("value", "18:00"),
+            ("min", "11:00"),
+            ("max", "21:00"),
+        ]);
+        assert!(
+            FormDataSerializer::validate_control(&inside).is_valid,
+            "an in-window slot must stay clean"
+        );
+    }
+
+    #[test]
+    fn temporal_ranges_apply_to_dates_and_datetime_too() {
+        let date = control(&[
+            ("type", "date"),
+            ("value", "2026-09-18"),
+            ("min", "2026-01-01"),
+            ("max", "2026-06-30"),
+        ]);
+        assert!(FormDataSerializer::validate_control(&date).range_overflow);
+
+        // Lexicographic order holds because ISO-8601 is big-endian, so a
+        // zero-padded single-digit day still compares correctly.
+        let month = control(&[("type", "month"), ("value", "2026-09"), ("max", "2026-08")]);
+        assert!(FormDataSerializer::validate_control(&month).range_overflow);
+
+        let stamp = control(&[
+            ("type", "datetime-local"),
+            ("value", "2026-09-18T07:30"),
+            ("min", "2026-09-01T00:00"),
+        ]);
+        assert!(FormDataSerializer::validate_control(&stamp).is_valid);
+    }
+
+    #[test]
+    fn a_malformed_temporal_value_is_a_type_mismatch_not_a_range_violation() {
+        for (ty, value) in [("time", "11pm"), ("date", "03/23/2026"), ("time", "25:99")] {
+            let node = control(&[("type", ty), ("value", value), ("min", "11:00")]);
+            let state = FormDataSerializer::validate_control(&node);
+            assert!(
+                state.type_mismatch,
+                "{ty}={value} is not a well-formed {ty}"
+            );
+            assert!(
+                !state.range_overflow && !state.range_underflow,
+                "{ty}={value} has no comparable position on the range"
+            );
+        }
+    }
+
+    #[test]
+    fn a_week_value_needs_its_literal_w() {
+        let good = control(&[("type", "week"), ("value", "2026-W37")]);
+        assert!(FormDataSerializer::validate_control(&good).is_valid);
+        let bad = control(&[("type", "week"), ("value", "2026-37")]);
+        assert!(FormDataSerializer::validate_control(&bad).type_mismatch);
+    }
+
+    #[test]
+    fn length_constraints_count_characters_not_bytes() {
+        // "café" is five bytes but four characters: the byte comparison billed
+        // accented input double and reported a false tooLong.
+        let node = control(&[
+            ("type", "text"),
+            ("value", "café"),
+            ("maxlength", "4"),
+            ("minlength", "4"),
+        ]);
+        let state = FormDataSerializer::validate_control(&node);
+        assert!(
+            state.is_valid,
+            "too_long={} too_short={}",
+            state.too_long, state.too_short
+        );
     }
 
     #[test]

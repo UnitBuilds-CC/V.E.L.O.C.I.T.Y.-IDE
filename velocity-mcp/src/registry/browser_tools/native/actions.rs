@@ -9,6 +9,23 @@ use crate::editor::browser::native_bridge::NativeBrowserBridge;
 
 use super::*;
 
+/// Bug #43: an action that landed on nothing is a failed call, not a successful
+/// one whose prose happens to be negative.
+///
+/// Every `browser_native_*` action used to answer `isError: false` for
+/// `"no checkable control matching 'Cheese'"`, so the audit trail recorded
+/// form fills that never happened and a sweep scored 33/39 while several of
+/// those "passes" changed nothing at all. The engine now carries a typed
+/// `executed` flag and it is turned into a real error here, at the single
+/// boundary the MCP faces.
+pub(super) fn require_executed(status: &str, executed: bool) -> Result<(), Box<dyn Error>> {
+    if executed {
+        Ok(())
+    } else {
+        Err(status.to_string().into())
+    }
+}
+
 pub(super) fn handle_action_tool(
     bridge: &mut NativeBrowserBridge,
     name: &str,
@@ -49,35 +66,39 @@ pub(super) fn handle_action_tool(
         let role = arguments["role"].as_str();
         let timeout = arguments["timeout"].as_u64().unwrap_or(5000);
         let found = bridge.agent_wait_for(role, target_name, timeout);
-        return Ok(Some(match found {
-            Some(node_id) => {
-                let view = bridge.current_view();
-                if compact {
-                    serde_json::to_string_pretty(&serde_json::json!({
-                        "found": true,
-                        "nodeId": node_id,
-                        "view": view_report(&view)
-                    }))
-                    .unwrap_or_default()
-                } else {
-                    format!(
-                        "Found element at node_{}\n---\n{}",
-                        node_id,
-                        render_view(&view)
-                    )
-                }
+        // Bug #49: the miss path used to answer `isError: false` with prose
+        // saying the element was never found, so waiting for something that
+        // never appeared looked like a pass.
+        let Some(node_id) = found else {
+            if compact {
+                return Err(serde_json::to_string_pretty(&serde_json::json!({
+                    "found": false,
+                    "role": role,
+                    "name": target_name,
+                    "timeoutMs": timeout,
+                }))
+                .unwrap_or_default()
+                .into());
             }
-            None => {
-                if compact {
-                    serde_json::to_string_pretty(&serde_json::json!({ "found": false }))
-                        .unwrap_or_default()
-                } else {
-                    format!(
-                        "Element with role={:?} name=\"{}\" not found within {}ms",
-                        role, target_name, timeout
-                    )
-                }
-            }
+            return Err(format!(
+                "Element with role={role:?} name=\"{target_name}\" not found within {timeout}ms"
+            )
+            .into());
+        };
+        let view = bridge.current_view();
+        return Ok(Some(if compact {
+            serde_json::to_string_pretty(&serde_json::json!({
+                "found": true,
+                "nodeId": node_id,
+                "view": view_report(&view)
+            }))
+            .unwrap_or_default()
+        } else {
+            format!(
+                "Found element at node_{}\n---\n{}",
+                node_id,
+                render_view(&view)
+            )
         }));
     }
 
@@ -173,6 +194,7 @@ pub(super) fn handle_action_tool(
         // before the most recent action, so diff works without an explicit save.
         bridge.checkpoint_save("_pre");
         let result = bridge.agent_hover(node_id);
+        require_executed(&result.status, result.executed)?;
         let view = bridge.current_view();
         if compact {
             let report = ActionReport {
@@ -201,6 +223,7 @@ pub(super) fn handle_action_tool(
         // Rolling auto-checkpoint (see browser_native_hover).
         bridge.checkpoint_save("_pre");
         let result = bridge.agent_press_key(key);
+        require_executed(&result.status, result.executed)?;
         let view = bridge.current_view();
         if compact {
             let report = ActionReport {
@@ -295,8 +318,11 @@ pub(super) fn handle_action_tool(
 
     // Score the observed outcome so browser_native_reflect can learn from it:
     // the signals come from the NDA delta the action actually produced.
+    // This runs *before* the honesty guard on purpose - a failed resolution is
+    // exactly the lesson the learner needs to stop repeating the attempt.
     let (action, role, target) = outcome_descriptor(name, arguments);
     bridge.record_outcome(action, role, &target, &result);
+    require_executed(&result.status, result.executed)?;
 
     let view = bridge.current_view();
     if compact {

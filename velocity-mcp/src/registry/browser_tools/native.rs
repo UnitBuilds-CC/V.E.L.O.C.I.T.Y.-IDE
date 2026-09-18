@@ -58,17 +58,31 @@ fn outcome_descriptor(name: &str, arguments: &Value) -> (&'static str, &'static 
 
 /// Resolve the target node id from either an explicit `nodeId` (accepts a raw
 /// integer, `"5"`, or `"node_5"`) or a semantic `role` + `name` lookup.
+///
+/// An explicit id is verified against the live document. Agents carry node ids
+/// across turns and the document is replaced by every navigation, so trusting
+/// the number let `click`/`extract`/`type` answer `isError: false` about a node
+/// that does not exist — with `extract` returning an empty body that looked
+/// exactly like an empty element (bug #50).
 fn resolve_node(bridge: &NativeBrowserBridge, arguments: &Value) -> Result<usize, Box<dyn Error>> {
-    if let Some(n) = arguments.get("nodeId") {
-        if let Some(u) = n.as_u64() {
-            return Ok(u as usize);
+    let explicit = if let Some(n) = arguments.get("nodeId") {
+        n.as_u64().map(|u| u as usize).or_else(|| {
+            n.as_str()
+                .and_then(|s| s.strip_prefix("node_").unwrap_or(s).parse::<usize>().ok())
+        })
+    } else {
+        None
+    };
+    if let Some(u) = explicit {
+        if !bridge.has_node(u) {
+            return Err(format!(
+                "node_{u} does not exist in the current document; the page has {} element(s) \
+                 - call browser_native_read to refresh node ids",
+                bridge.current_view().elements.len()
+            )
+            .into());
         }
-        if let Some(s) = n.as_str() {
-            let trimmed = s.strip_prefix("node_").unwrap_or(s);
-            if let Ok(u) = trimmed.parse::<usize>() {
-                return Ok(u);
-            }
-        }
+        return Ok(u);
     }
     let name = arguments["name"]
         .as_str()
@@ -186,11 +200,7 @@ pub fn handle_native_tool(
         let page_query = bridge.page_text();
         // Distilled content size: lets the agent notice silent page growth
         // between turns without diffing or re-reading the whole page.
-        let mut content = bridge.page_content_markdown();
-        if content.is_empty() {
-            content = bridge.page_markdown();
-        }
-        let content_chars = content.chars().count();
+        let content_chars = bridge.distilled_content().chars().count();
         let memories = if page_query.trim().is_empty() {
             Vec::new()
         } else {

@@ -23,7 +23,8 @@
 // ---------------------------------------------------------------------------
 /// ARIA/computed role of a node ("button", "link", "textbox", ...).
 pub const AOM_ROLE: u16 = 10;
-/// Accessible name (aria-label / placeholder / name / id / title).
+/// Accessible name (aria-labelledby / aria-label / bound <label> / placeholder
+/// / name / id / title, in HTML-AAM order).
 pub const AOM_NAME: u16 = 11;
 /// Current value of an input-like node.
 pub const AOM_VALUE: u16 = 12;
@@ -37,6 +38,10 @@ pub const AOM_EXPANDED: u16 = 15;
 pub const AOM_SELECTOR: u16 = 16;
 /// Node is disabled (disabled attr / aria-disabled=true).
 pub const AOM_DISABLED: u16 = 17;
+/// A checkbox/radio is currently checked. Without this predicate the whole
+/// selected-state of a form was invisible to the fact base, so a check that
+/// really landed still diffed as "no state change" (bug #52).
+pub const AOM_CHECKED: u16 = 18;
 
 // ---------------------------------------------------------------------------
 // Canvas / drawing: 40..=69
@@ -163,6 +168,7 @@ pub fn predicate_name(id: u16) -> &'static str {
         AOM_EXPANDED => "expanded",
         AOM_SELECTOR => "selector",
         AOM_DISABLED => "disabled",
+        AOM_CHECKED => "checked",
         CANVAS_CONTEXT => "canvas.context",
         CANVAS_SIZE => "canvas.size",
         CANVAS_DRAW_CALLS => "canvas.drawCalls",
@@ -239,6 +245,7 @@ mod tests {
             AOM_EXPANDED,
             AOM_SELECTOR,
             AOM_DISABLED,
+            AOM_CHECKED,
             CANVAS_CONTEXT,
             CANVAS_SIZE,
             CANVAS_DRAW_CALLS,
@@ -299,6 +306,7 @@ mod tests {
             AOM_EXPANDED,
             AOM_SELECTOR,
             AOM_DISABLED,
+            AOM_CHECKED,
             CANVAS_CONTEXT,
             CANVAS_SIZE,
             CANVAS_DRAW_CALLS,
@@ -361,6 +369,14 @@ mod tests {
         assert!((10..=39).contains(&AOM_EXPANDED));
         assert!((10..=39).contains(&AOM_SELECTOR));
         assert!((10..=39).contains(&AOM_DISABLED));
+        assert!((10..=39).contains(&AOM_CHECKED));
+    }
+
+    #[test]
+    fn checked_predicate_is_readable_as_the_word_checked() {
+        // Delta lines and NDA exports render predicates through this name, so
+        // `+ node_39 checked = checked` is what an agent sees after a toggle.
+        assert_eq!(predicate_name(AOM_CHECKED), "checked");
     }
 
     #[test]

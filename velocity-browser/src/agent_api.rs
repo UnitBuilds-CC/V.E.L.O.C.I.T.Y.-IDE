@@ -142,6 +142,14 @@ pub fn diff(before: &NdaDocument, after: &NdaDocument) -> NdaDelta {
 pub struct AgentActionResult {
     pub status: String,
     pub delta: NdaDelta,
+    /// Whether the action actually landed on something.
+    ///
+    /// `status` is prose an LLM reads; `executed` is the flag a caller checks.
+    /// Before it existed, "no checkable control matching 'Cheese'" travelled
+    /// back as a successful tool call, so the audit log recorded a form fill
+    /// that never happened and the agent had to parse English to notice.
+    /// Anything with `executed == false` must be surfaced as a failure.
+    pub executed: bool,
 }
 
 impl AgentActionResult {
@@ -149,7 +157,25 @@ impl AgentActionResult {
         Self {
             status: status.into(),
             delta,
+            executed: true,
         }
+    }
+
+    /// The action did not happen - unresolvable target, no enclosing form,
+    /// nothing focused. The status must say why.
+    pub fn failed(status: impl Into<String>, delta: NdaDelta) -> Self {
+        Self {
+            status: status.into(),
+            delta,
+            executed: false,
+        }
+    }
+
+    /// For paths that already computed a boolean telling them whether the
+    /// mutation landed, alongside a status derived from the same boolean.
+    pub fn with_executed(mut self, executed: bool) -> Self {
+        self.executed = executed;
+        self
     }
 }
 

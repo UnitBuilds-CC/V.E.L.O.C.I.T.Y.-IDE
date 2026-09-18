@@ -248,10 +248,7 @@ impl BrowserSession {
     }
 
     /// Click target node by OCR text spatial bounding box match
-    pub fn click_ocr_text(
-        &mut self,
-        target_text: &str,
-    ) -> Result<(), BrowserError> {
+    pub fn click_ocr_text(&mut self, target_text: &str) -> Result<(), BrowserError> {
         let ocr_boxes = self.perform_ocr_scan();
         if let Some(target_box) = ocr_boxes.iter().find(|b| b.text.contains(target_text)) {
             let trajectory = StealthHumanBehavior::generate_bezier_trajectory(
@@ -276,11 +273,16 @@ impl BrowserSession {
     }
 
     /// Fetch HTML over native HTTP transport client and parse into DOM tree
-    pub fn fetch_and_load(
-        &mut self,
-        url: &str,
-    ) -> Result<Vec<NdaTriple>, BrowserError> {
+    pub fn fetch_and_load(&mut self, url: &str) -> Result<Vec<NdaTriple>, BrowserError> {
         log::info!("fetch_and_load: GET {}", url);
+        // Synthetic schemes carry their own document and never reach the
+        // network, so they are resolved before the sandbox check: nothing
+        // leaves the process, so there is no host to authorise.
+        match synthetic_document(url) {
+            Synthetic::Document(body) => return Ok(self.load_html(url, &body)),
+            Synthetic::Unsupported(err) => return Err(err),
+            Synthetic::Network => {}
+        }
         if let Err(e) = self.tab_sandbox.check_network_access(url) {
             log::warn!("fetch_and_load: network access denied for {}: {}", url, e);
             return Err(BrowserError::SandboxViolation(e));
@@ -294,7 +296,8 @@ impl BrowserSession {
             url,
             resp.status_code
         );
-        self.net.network_tracker
+        self.net
+            .network_tracker
             .record_request(url, "GET", resp.status_code, "document");
         Ok(self.load_html(url, &resp.body))
     }
@@ -345,10 +348,7 @@ impl BrowserSession {
     }
 
     /// Execute JavaScript expression natively via JS Virtual Machine
-    pub fn eval_js(
-        &mut self,
-        expr: &str,
-    ) -> Result<String, BrowserError> {
+    pub fn eval_js(&mut self, expr: &str) -> Result<String, BrowserError> {
         if self.dom.dom_tree.is_none() {
             return Err(BrowserError::NoDomLoaded);
         }
@@ -403,7 +403,8 @@ impl BrowserSession {
                 self.net.http_client.get(&url)
             };
             let r = resp.map_err(|e| BrowserError::NetworkError(e.to_string()))?;
-            self.net.network_tracker
+            self.net
+                .network_tracker
                 .record_request(&url, &method, r.status_code, "fetch");
             let fetch_resp = crate::js::web_apis::build_fetch_response(r.status_code, &r.body);
             return Ok(format!("{:?}", fetch_resp));
@@ -481,10 +482,7 @@ impl BrowserSession {
     }
 
     /// Native CSS selector element query & click event execution
-    pub fn click(
-        &mut self,
-        selector: &str,
-    ) -> Result<(), BrowserError> {
+    pub fn click(&mut self, selector: &str) -> Result<(), BrowserError> {
         if let Some(tree) = &mut self.dom.dom_tree {
             let file_event = self.file_manager.handle_file_input_click(tree, selector);
             if file_event.is_some() {
@@ -507,7 +505,8 @@ impl BrowserSession {
                 };
                 let _ =
                     SyntheticEventDispatcher::dispatch_pointer_event_static(tree, node_id, event);
-                self.dom.mutation_observer
+                self.dom
+                    .mutation_observer
                     .observe_attribute_change(node_id, "click");
                 self.trace_collector.record_mutation(
                     selector,
@@ -522,11 +521,7 @@ impl BrowserSession {
     }
 
     /// Native CSS selector form input filling
-    pub fn fill(
-        &mut self,
-        selector: &str,
-        text: &str,
-    ) -> Result<(), BrowserError> {
+    pub fn fill(&mut self, selector: &str, text: &str) -> Result<(), BrowserError> {
         if let Some(tree) = &mut self.dom.dom_tree {
             let target_id = {
                 let matches = CssMatcher::find_matches(&tree.nodes, selector);
@@ -539,7 +534,9 @@ impl BrowserSession {
                     node.attributes
                         .insert("value".to_string(), text.to_string());
                     let _ = self.js.js_vm.dispatch_event(tree, selector, "input");
-                    self.dom.mutation_observer.observe_attribute_change(id, "value");
+                    self.dom
+                        .mutation_observer
+                        .observe_attribute_change(id, "value");
                     self.trace_collector.record_mutation(
                         selector,
                         "attribute_changed",
@@ -563,16 +560,14 @@ impl BrowserSession {
         AuthReseeder::reseed_into_session(self, auth);
     }
 
-    pub fn attach_file(
-        &mut self,
-        selector: &str,
-        file_path: &str,
-    ) -> Result<String, BrowserError> {
+    pub fn attach_file(&mut self, selector: &str, file_path: &str) -> Result<String, BrowserError> {
         if let Err(e) = self.tab_sandbox.check_file_access(file_path) {
             return Err(BrowserError::SandboxViolation(e));
         }
         if let Some(tree) = &mut self.dom.dom_tree {
-            let res = self.file_manager.attach_file(tree, selector, file_path)
+            let res = self
+                .file_manager
+                .attach_file(tree, selector, file_path)
                 .map_err(|e| BrowserError::NetworkError(e.to_string()))?;
             self.trace_collector
                 .record_mutation(selector, "file_attached", file_path);
@@ -584,11 +579,7 @@ impl BrowserSession {
     /// Scroll the viewport by a pixel delta. Offsets are clamped at the
     /// document origin; the resulting position feeds the in-viewport facts
     /// emitted by [`capture_state_document`](Self::capture_state_document).
-    pub fn scroll(
-        &mut self,
-        delta_x: i32,
-        delta_y: i32,
-    ) -> Result<(), BrowserError> {
+    pub fn scroll(&mut self, delta_x: i32, delta_y: i32) -> Result<(), BrowserError> {
         self.scroll_x = (self.scroll_x + delta_x as f32).max(0.0);
         self.scroll_y = (self.scroll_y + delta_y as f32).max(0.0);
         self.trace_collector.record_console(
@@ -598,10 +589,7 @@ impl BrowserSession {
         Ok(())
     }
 
-    pub fn hover(
-        &mut self,
-        selector: &str,
-    ) -> Result<(), BrowserError> {
+    pub fn hover(&mut self, selector: &str) -> Result<(), BrowserError> {
         self.trace_collector
             .record_console("info", &format!("Hovered native selector '{}'", selector));
         Ok(())
@@ -632,6 +620,106 @@ impl BrowserSession {
         Some(node.tag_name.clone())
     }
 
+    /// Whether `node_id` exists in the live document. Callers that take a node
+    /// id from the agent must check this first: acting on a stale or invented
+    /// id used to produce a well-formed empty answer (bug #50).
+    pub fn has_node(&self, node_id: usize) -> bool {
+        self.dom
+            .dom_tree
+            .as_ref()
+            .and_then(|tree| tree.get_node(node_id))
+            .is_some()
+    }
+
+    /// Set the `checked` state of a checkbox/radio the way a browser would,
+    /// including radio-group exclusivity: selecting one radio clears every
+    /// other radio that shares its non-empty `name`. Returns false when the
+    /// node is missing or is not a checkable control.
+    fn set_checked_state(&mut self, node_id: usize, state: bool) -> bool {
+        let Some(tree) = &mut self.dom.dom_tree else {
+            return false;
+        };
+        // Read the kind and group as owned data before writing anything, so
+        // the mutation cannot invalidate what the group was computed from.
+        let Some(kind) = tree.get_node(node_id).and_then(|node| {
+            if node.tag_name != "input" {
+                return None;
+            }
+            let ty = node
+                .attributes
+                .get("type")
+                .map(|t| t.as_str())
+                .unwrap_or("text");
+            match ty {
+                "checkbox" | "radio" => Some(ty.to_string()),
+                _ => None,
+            }
+        }) else {
+            return false;
+        };
+        let group = (kind == "radio")
+            .then(|| {
+                tree.get_node(node_id)
+                    .and_then(|node| node.attributes.get("name"))
+                    .filter(|name| !name.is_empty())
+                    .cloned()
+            })
+            .flatten();
+        if let Some(group) = &group {
+            for sibling in tree.nodes.iter_mut() {
+                if sibling.id == node_id {
+                    continue;
+                }
+                let in_group = sibling.tag_name == "input"
+                    && sibling.attributes.get("type").map(|s| s.as_str()) == Some("radio")
+                    && sibling.attributes.get("name").map(|s| s.as_str()) == Some(group.as_str());
+                if in_group {
+                    sibling.attributes.remove("checked");
+                }
+            }
+        }
+        if let Some(node) = tree.get_node_mut(node_id) {
+            if state {
+                node.attributes
+                    .insert("checked".to_string(), "checked".to_string());
+            } else {
+                node.attributes.remove("checked");
+            }
+        }
+        true
+    }
+
+    /// Activation behaviour for a click on a checkable control: a checkbox
+    /// toggles, a radio is selected (and its group is cleared). Returns false
+    /// for anything that is not checkable, so the caller can tell "clicked a
+    /// button" from "clicked a checkbox and changed its state" (bug #51).
+    fn apply_checked_activation(&mut self, node_id: usize) -> bool {
+        let wanted = self
+            .dom
+            .dom_tree
+            .as_ref()
+            .and_then(|tree| tree.get_node(node_id))
+            .and_then(|node| {
+                if node.tag_name != "input" {
+                    return None;
+                }
+                match node
+                    .attributes
+                    .get("type")
+                    .map(|t| t.as_str())
+                    .unwrap_or("text")
+                {
+                    "checkbox" => Some(!node.attributes.contains_key("checked")),
+                    "radio" => Some(true),
+                    _ => None,
+                }
+            });
+        match wanted {
+            Some(state) => self.set_checked_state(node_id, state),
+            None => false,
+        }
+    }
+
     /// Click a node by id: dispatch a real synthetic pointer event and fire any
     /// matching JS click listeners, then report the NDA delta it produced.
     /// If the node is an `<a>` element with a navigable `href`, the click
@@ -655,7 +743,8 @@ impl BrowserSession {
                 if let Some(sel) = &selector {
                     let _ = self.js.js_vm.dispatch_event(tree, sel, "click");
                 }
-                self.dom.mutation_observer
+                self.dom
+                    .mutation_observer
                     .observe_attribute_change(node_id, "click");
                 true
             } else {
@@ -667,9 +756,24 @@ impl BrowserSession {
 
         // Follow link navigation: if the clicked element is <a href="..."> with
         // a navigable target, perform a full fetch-and-load.
+        let mut nav_note = String::new();
         if dispatched {
+            // A click on a checkbox/radio has to move its state, not just fire
+            // the event: previously the report said "clicked" while the form
+            // kept its old values, and the submission dropped the control.
+            if self.apply_checked_activation(node_id) {
+                if let Some(sel) = &selector {
+                    if let Some(tree) = &mut self.dom.dom_tree {
+                        let _ = self.js.js_vm.dispatch_event(tree, sel, "change");
+                    }
+                }
+                self.dom
+                    .mutation_observer
+                    .observe_attribute_change(node_id, "checked");
+            }
             let href = self
-                .dom.dom_tree
+                .dom
+                .dom_tree
                 .as_ref()
                 .and_then(|tree| tree.get_node(node_id))
                 .filter(|node| node.tag_name == "a")
@@ -678,17 +782,22 @@ impl BrowserSession {
                 .cloned();
             if let Some(href) = href {
                 let target = self.resolve_url(&href);
-                let _ = self.fetch_and_load(&target);
+                if let Err(e) = self.fetch_and_load(&target) {
+                    // The click did fire, but the navigation it triggered
+                    // went nowhere. Silently reporting a bare "clicked" hid
+                    // that from every caller.
+                    nav_note = format!(" (navigation failed: {})", e);
+                }
             }
         }
 
         let after = self.capture_state_document();
         let status = if dispatched {
-            format!("clicked node_{}", node_id)
+            format!("clicked node_{}{}", node_id, nav_note)
         } else {
             format!("node_{} not found", node_id)
         };
-        AgentActionResult::new(status, diff(&before, &after))
+        AgentActionResult::new(status, diff(&before, &after)).with_executed(dispatched)
     }
 
     /// Type text into a node by id: set its `value`, fire matching JS `input`
@@ -708,7 +817,8 @@ impl BrowserSession {
                 if let Some(sel) = &selector {
                     let _ = self.js.js_vm.dispatch_event(tree, sel, "input");
                 }
-                self.dom.mutation_observer
+                self.dom
+                    .mutation_observer
                     .observe_attribute_change(node_id, "value");
             }
             found
@@ -721,7 +831,7 @@ impl BrowserSession {
         } else {
             format!("node_{} not found", node_id)
         };
-        AgentActionResult::new(status, diff(&before, &after))
+        AgentActionResult::new(status, diff(&before, &after)).with_executed(ok)
     }
 
     /// Select a value on a combobox/select node by id, fire `change` listeners,
@@ -741,7 +851,8 @@ impl BrowserSession {
                 if let Some(sel) = &selector {
                     let _ = self.js.js_vm.dispatch_event(tree, sel, "change");
                 }
-                self.dom.mutation_observer
+                self.dom
+                    .mutation_observer
                     .observe_attribute_change(node_id, "value");
             }
             found
@@ -754,7 +865,7 @@ impl BrowserSession {
         } else {
             format!("node_{} not found", node_id)
         };
-        AgentActionResult::new(status, diff(&before, &after))
+        AgentActionResult::new(status, diff(&before, &after)).with_executed(ok)
     }
 
     /// Submit a form (or a control within one) by node id: collect form fields,
@@ -771,52 +882,74 @@ impl BrowserSession {
                 if let Some(sel) = &selector {
                     let _ = self.js.js_vm.dispatch_event(tree, sel, "submit");
                 }
-                self.dom.mutation_observer
+                self.dom
+                    .mutation_observer
                     .observe_attribute_change(node_id, "submit");
             }
         }
 
-        // Collect form data and perform actual HTTP submission
-        let submitted = if let Some((method, action_url, encoded_body)) =
-            self.collect_form_submission(node_id)
-        {
-            if method.eq_ignore_ascii_case("post") {
-                match self.net.http_client.post(
-                    &action_url,
-                    &encoded_body,
-                    "application/x-www-form-urlencoded",
-                ) {
-                    Ok(resp) => {
-                        self.net.network_tracker.record_request(
-                            &action_url,
-                            "POST",
-                            resp.status_code,
-                            "document",
-                        );
-                        self.load_html(&action_url, &resp.body);
-                        true
+        // Collect form data and perform the actual submission. Three endings
+        // have to stay distinguishable: no form at all, a submission that
+        // landed, and a submission that was attempted but failed.
+        let outcome = match self.collect_form_submission(node_id) {
+            None => SubmitOutcome::NoForm,
+            Some((method, action_url, encoded_body)) => {
+                if method.eq_ignore_ascii_case("post") {
+                    match self.net.http_client.post(
+                        &action_url,
+                        &encoded_body,
+                        "application/x-www-form-urlencoded",
+                    ) {
+                        Ok(resp) => {
+                            self.net.network_tracker.record_request(
+                                &action_url,
+                                "POST",
+                                resp.status_code,
+                                "document",
+                            );
+                            self.load_html(&action_url, &resp.body);
+                            SubmitOutcome::Submitted(action_url)
+                        }
+                        // The transport error is the whole story here, so it
+                        // has to reach the caller instead of becoming a bool.
+                        Err(e) => SubmitOutcome::Failed(e.to_string()),
                     }
-                    Err(_) => false,
-                }
-            } else {
-                let target = if encoded_body.is_empty() {
-                    action_url
                 } else {
-                    format!("{}?{}", action_url, encoded_body)
-                };
-                self.fetch_and_load(&target).is_ok()
+                    let target = if encoded_body.is_empty() {
+                        action_url
+                    } else {
+                        format!("{}?{}", action_url, encoded_body)
+                    };
+                    match self.fetch_and_load(&target) {
+                        Ok(_) => SubmitOutcome::Submitted(target),
+                        Err(e) => SubmitOutcome::Failed(e.to_string()),
+                    }
+                }
             }
-        } else {
-            false
         };
 
         let after = self.capture_state_document();
-        let status = if submitted {
-            format!("submitted node_{}", node_id)
-        } else {
-            format!("submitted node_{} (no form found)", node_id)
+        let (status, landed) = match outcome {
+            SubmitOutcome::Submitted(url) => (
+                format!(
+                    "submitted node_{} to {}",
+                    node_id,
+                    truncate_url_for_message(&url)
+                ),
+                true,
+            ),
+            SubmitOutcome::NoForm => (
+                // Firing the submit listeners is not a submission: no request
+                // went out and no response was loaded.
+                format!("node_{} is not inside a form", node_id),
+                false,
+            ),
+            SubmitOutcome::Failed(err) => (
+                format!("submit for node_{} failed: {}", node_id, err),
+                false,
+            ),
         };
-        AgentActionResult::new(status, diff(&before, &after))
+        AgentActionResult::new(status, diff(&before, &after)).with_executed(landed)
     }
 
     /// Scroll the viewport and report the NDA delta: the session scroll fact
@@ -840,7 +973,7 @@ impl BrowserSession {
     /// delta shows exactly which nodes entered or left the viewport.
     pub fn agent_scroll_into_view(&mut self, query: &str) -> AgentActionResult {
         let Some(node_id) = self.resolve_node_by_name(query, |_| true) else {
-            return AgentActionResult::new(
+            return AgentActionResult::failed(
                 format!("no element matching '{}'", query),
                 NdaDelta::default(),
             );
@@ -853,7 +986,7 @@ impl BrowserSession {
                 .find(|b| b.node_id == node_id)
         });
         let Some(b) = target else {
-            return AgentActionResult::new(
+            return AgentActionResult::failed(
                 format!("node_{} has no layout box", node_id),
                 NdaDelta::default(),
             );
@@ -886,44 +1019,44 @@ impl BrowserSession {
     /// previous and freshly loaded page state.
     pub fn agent_navigate(&mut self, url: &str) -> AgentActionResult {
         let before = self.capture_state_document();
-        let status = match self.fetch_and_load(url) {
-            Ok(_) => format!("navigated to {}", url),
-            Err(e) => format!("navigation to {} failed: {}", url, e),
+        let (status, landed) = match self.fetch_and_load(url) {
+            Ok(_) => (format!("navigated to {}", url), true),
+            Err(e) => (format!("navigation to {} failed: {}", url, e), false),
         };
         let after = self.capture_state_document();
-        AgentActionResult::new(status, diff(&before, &after))
+        AgentActionResult::new(status, diff(&before, &after)).with_executed(landed)
     }
 
     /// Go back to the previous page in the session history stack.
     pub fn agent_back(&mut self) -> AgentActionResult {
         let before = self.capture_state_document();
         let url = self.history_stack.back().map(|h| h.url.clone());
-        let status = if let Some(url) = url {
+        let (status, landed) = if let Some(url) = url {
             match self.fetch_and_load(&url) {
-                Ok(_) => format!("navigated back to {}", self.current_url),
-                Err(e) => format!("back navigation failed: {}", e),
+                Ok(_) => (format!("navigated back to {}", self.current_url), true),
+                Err(e) => (format!("back navigation failed: {}", e), false),
             }
         } else {
-            "no history entry to go back to".to_string()
+            ("no history entry to go back to".to_string(), false)
         };
         let after = self.capture_state_document();
-        AgentActionResult::new(status, diff(&before, &after))
+        AgentActionResult::new(status, diff(&before, &after)).with_executed(landed)
     }
 
     /// Go forward in the session history stack.
     pub fn agent_forward(&mut self) -> AgentActionResult {
         let before = self.capture_state_document();
         let url = self.history_stack.forward().map(|h| h.url.clone());
-        let status = if let Some(url) = url {
+        let (status, landed) = if let Some(url) = url {
             match self.fetch_and_load(&url) {
-                Ok(_) => format!("navigated forward to {}", self.current_url),
-                Err(e) => format!("forward navigation failed: {}", e),
+                Ok(_) => (format!("navigated forward to {}", self.current_url), true),
+                Err(e) => (format!("forward navigation failed: {}", e), false),
             }
         } else {
-            "no history entry to go forward to".to_string()
+            ("no history entry to go forward to".to_string(), false)
         };
         let after = self.capture_state_document();
-        AgentActionResult::new(status, diff(&before, &after))
+        AgentActionResult::new(status, diff(&before, &after)).with_executed(landed)
     }
 
     /// Drain pending event-loop work (timers, microtasks) and report the NDA
@@ -1074,6 +1207,24 @@ impl BrowserSession {
             }
         }
         out.trim_end().to_string()
+    }
+
+    /// The readable core of the page: the readability projection, then plain
+    /// markdown, then raw visible text. The last step matters for documents
+    /// that are not HTML prose at all - a JSON or plain-text body has no
+    /// paragraphs for markdown to shape, so it used to distil to an empty
+    /// string while `page_text` still reported hundreds of characters. Every
+    /// reader of "the content" (content fact, assert, wait) goes through here
+    /// so they can never disagree (bug #53).
+    pub fn distilled_content(&self) -> String {
+        let mut content = self.page_content_markdown();
+        if content.is_empty() {
+            content = self.page_markdown();
+        }
+        if content.is_empty() {
+            content = self.page_text();
+        }
+        content
     }
 
     fn markdown_walk(tree: &DomTree, id: usize, out: &mut String) {
@@ -1355,6 +1506,10 @@ impl BrowserSession {
     /// Resolve a DOM node by accessible name using the AOM. Exact
     /// (case-insensitive) name matches beat substring matches; among equal
     /// ranks the more actionable node wins. `role_ok` filters candidate roles.
+    ///
+    /// A control's own `placeholder` is a secondary key: it stops being the
+    /// accessible name as soon as a real `<label>` is bound to the control,
+    /// and the label-based tools promise to match it either way.
     fn resolve_node_by_name(&self, query: &str, role_ok: fn(&str) -> bool) -> Option<usize> {
         let tree = self.dom.dom_tree.as_ref()?;
         let needle = query.trim().to_lowercase();
@@ -1368,17 +1523,34 @@ impl BrowserSession {
                 continue;
             }
             let name = node.name.to_lowercase();
-            let rank = if name == needle {
+            let mut rank = if name == needle {
                 2
             } else if name.contains(&needle) {
                 1
             } else {
-                continue;
+                0
             };
-            // AOM ids are "node_{id}" — recover the numeric DOM id.
+            // The AOM id is "node_{id}" — recover the numeric DOM id so the
+            // raw attributes stay reachable for the placeholder fallback.
             let Some(id) = node.id.strip_prefix("node_").and_then(|s| s.parse().ok()) else {
                 continue;
             };
+            if rank < 2 {
+                if let Some(ph) = tree
+                    .get_node(id)
+                    .and_then(|n| n.attributes.get("placeholder"))
+                {
+                    let ph = ph.to_lowercase();
+                    if ph == needle {
+                        rank = 2;
+                    } else if ph.contains(&needle) {
+                        rank = rank.max(1);
+                    }
+                }
+            }
+            if rank == 0 {
+                continue;
+            }
             let candidate = (rank, node.actionability_score, id);
             if best
                 .map(|b| (candidate.0, candidate.1) > (b.0, b.1))
@@ -1397,7 +1569,7 @@ impl BrowserSession {
             matches!(r, "button" | "link" | "checkbox" | "radio" | "generic")
         }) {
             Some(id) => self.agent_click(id),
-            None => AgentActionResult::new(
+            None => AgentActionResult::failed(
                 format!("no clickable element matching '{}'", query),
                 NdaDelta::default(),
             ),
@@ -1409,7 +1581,7 @@ impl BrowserSession {
     pub fn agent_fill_by_label(&mut self, query: &str, text: &str) -> AgentActionResult {
         match self.resolve_node_by_name(query, |r| matches!(r, "textbox" | "combobox")) {
             Some(id) => self.agent_type(id, text),
-            None => AgentActionResult::new(
+            None => AgentActionResult::failed(
                 format!("no fillable control matching '{}'", query),
                 NdaDelta::default(),
             ),
@@ -1421,26 +1593,22 @@ impl BrowserSession {
     pub fn agent_check_by_label(&mut self, query: &str, state: bool) -> AgentActionResult {
         let Some(node_id) = self.resolve_node_by_name(query, |r| matches!(r, "checkbox" | "radio"))
         else {
-            return AgentActionResult::new(
+            return AgentActionResult::failed(
                 format!("no checkable control matching '{}'", query),
                 NdaDelta::default(),
             );
         };
         let before = self.capture_state_document();
         let selector = self.selector_for_node(node_id);
-        if let Some(tree) = &mut self.dom.dom_tree {
-            if let Some(node) = tree.get_node_mut(node_id) {
-                if state {
-                    node.attributes
-                        .insert("checked".to_string(), "checked".to_string());
-                } else {
-                    node.attributes.remove("checked");
+        let changed = self.set_checked_state(node_id, state);
+        if changed {
+            if let Some(tree) = &mut self.dom.dom_tree {
+                if let Some(sel) = &selector {
+                    let _ = self.js.js_vm.dispatch_event(tree, sel, "change");
                 }
             }
-            if let Some(sel) = &selector {
-                let _ = self.js.js_vm.dispatch_event(tree, sel, "change");
-            }
-            self.dom.mutation_observer
+            self.dom
+                .mutation_observer
                 .observe_attribute_change(node_id, "checked");
         }
         let after = self.capture_state_document();
@@ -1498,7 +1666,8 @@ impl BrowserSession {
     pub fn agent_focus(&mut self, node_id: usize) -> AgentActionResult {
         let before = self.capture_state_document();
         let exists = self
-            .dom.dom_tree
+            .dom
+            .dom_tree
             .as_ref()
             .and_then(|t| t.get_node(node_id))
             .is_some();
@@ -1509,7 +1678,8 @@ impl BrowserSession {
                 if let Some(tree) = &mut self.dom.dom_tree {
                     let _ = self.js.js_vm.dispatch_event(tree, &sel, "blur");
                 }
-                self.dom.mutation_observer
+                self.dom
+                    .mutation_observer
                     .observe_attribute_change(old_id, "blur");
             }
             self.focused_node = Some(node_id);
@@ -1518,7 +1688,8 @@ impl BrowserSession {
                     let _ = self.js.js_vm.dispatch_event(tree, &sel, "focus");
                 }
             }
-            self.dom.mutation_observer
+            self.dom
+                .mutation_observer
                 .observe_attribute_change(node_id, "focus");
         }
         let after = self.capture_state_document();
@@ -1527,14 +1698,14 @@ impl BrowserSession {
         } else {
             format!("node_{} not found", node_id)
         };
-        AgentActionResult::new(status, diff(&before, &after))
+        AgentActionResult::new(status, diff(&before, &after)).with_executed(exists)
     }
 
     /// Focus a control by its accessible name — any focusable role qualifies.
     pub fn agent_focus_by_label(&mut self, query: &str) -> AgentActionResult {
         match self.resolve_node_by_name(query, Self::is_focusable_role) {
             Some(id) => self.agent_focus(id),
-            None => AgentActionResult::new(
+            None => AgentActionResult::failed(
                 format!("no focusable element matching '{}'", query),
                 NdaDelta::default(),
             ),
@@ -1546,7 +1717,7 @@ impl BrowserSession {
     /// form, `Tab` advances focus to the next focusable control (wrapping).
     pub fn agent_press(&mut self, key: &str) -> AgentActionResult {
         let Some(node_id) = self.focused_node else {
-            return AgentActionResult::new(
+            return AgentActionResult::failed(
                 format!("cannot press '{}': nothing focused", key),
                 NdaDelta::default(),
             );
@@ -1555,15 +1726,19 @@ impl BrowserSession {
         let selector = self.selector_for_node(node_id);
         if let (Some(tree), Some(sel)) = (&mut self.dom.dom_tree, &selector) {
             let _ = self.js.js_vm.dispatch_event(tree, sel, "keydown");
+            // The tool contract advertises keydown/keypress/keyup, so the
+            // cancelable text-input event has to fire too - not just the two
+            // ends of the sequence.
+            let _ = self.js.js_vm.dispatch_event(tree, sel, "keypress");
         }
 
-        let status = match key {
+        let (status, landed) = match key {
             "Enter" => {
                 if self.find_enclosing_form(node_id).is_some() {
                     let submit = self.agent_submit(node_id);
-                    format!("pressed Enter: {}", submit.status)
+                    (format!("pressed Enter: {}", submit.status), submit.executed)
                 } else {
-                    "pressed Enter".to_string()
+                    ("pressed Enter".to_string(), true)
                 }
             }
             "Tab" => {
@@ -1584,9 +1759,11 @@ impl BrowserSession {
                 match next.flatten() {
                     Some(next_id) => {
                         let moved = self.agent_focus(next_id);
-                        format!("pressed Tab: {}", moved.status)
+                        (format!("pressed Tab: {}", moved.status), true)
                     }
-                    None => "pressed Tab: no focusable elements".to_string(),
+                    // Tab promises to move focus; with nothing focusable it
+                    // moved nowhere, so the result must not read as done.
+                    None => ("pressed Tab: no focusable elements".to_string(), false),
                 }
             }
             _ => {
@@ -1601,11 +1778,12 @@ impl BrowserSession {
                         if let Some(sel) = &selector {
                             let _ = self.js.js_vm.dispatch_event(tree, sel, "input");
                         }
-                        self.dom.mutation_observer
+                        self.dom
+                            .mutation_observer
                             .observe_attribute_change(node_id, "value");
                     }
                 }
-                format!("pressed '{}' on node_{}", key, node_id)
+                (format!("pressed '{}' on node_{}", key, node_id), true)
             }
         };
 
@@ -1613,7 +1791,7 @@ impl BrowserSession {
             let _ = self.js.js_vm.dispatch_event(tree, sel, "keyup");
         }
         let after = self.capture_state_document();
-        AgentActionResult::new(status, diff(&before, &after))
+        AgentActionResult::new(status, diff(&before, &after)).with_executed(landed)
     }
 
     /// Choose a dropdown option by its visible text (or `value` attribute) on
@@ -1621,7 +1799,7 @@ impl BrowserSession {
     /// mirrors its value onto the select, and fires `change` listeners.
     pub fn agent_select_by_label(&mut self, query: &str, option: &str) -> AgentActionResult {
         let Some(select_id) = self.resolve_node_by_name(query, |r| r == "combobox") else {
-            return AgentActionResult::new(
+            return AgentActionResult::failed(
                 format!("no select matching '{}'", query),
                 NdaDelta::default(),
             );
@@ -1671,7 +1849,7 @@ impl BrowserSession {
             best.map(|(_, id, value)| (id, value))
         });
         let Some((option_id, value)) = chosen else {
-            return AgentActionResult::new(
+            return AgentActionResult::failed(
                 format!("no option matching '{}' in '{}'", option, query),
                 NdaDelta::default(),
             );
@@ -1705,7 +1883,8 @@ impl BrowserSession {
             if let Some(sel) = &selector {
                 let _ = self.js.js_vm.dispatch_event(tree, sel, "change");
             }
-            self.dom.mutation_observer
+            self.dom
+                .mutation_observer
                 .observe_attribute_change(select_id, "value");
         }
         let after = self.capture_state_document();
@@ -1724,13 +1903,21 @@ impl BrowserSession {
     /// Resolve a possibly-relative URL against the session's current URL.
     fn resolve_url(&self, href: &str) -> String {
         let href = href.trim();
-        if href.starts_with("http://") || href.starts_with("https://") {
+        if href.is_empty() || self.current_url.is_empty() {
             return href.to_string();
         }
-        if self.current_url.is_empty() {
+        // Any absolute reference - http, https, data, about, anything with a
+        // scheme - is already fully qualified and must survive untouched.
+        if has_url_scheme(href) {
             return href.to_string();
         }
-        let scheme_end = self.current_url.find("://").unwrap_or(0) + 3;
+        let Some(scheme_end) = self.current_url.find("://").map(|at| at + 3) else {
+            // The base is not a hierarchical http(s) URL (e.g. `about:test`),
+            // so there is no authority or directory to resolve against.
+            // Stitching the reference onto such a base produced garbage like
+            // `about:test/about:submitted`; hand it back unchanged instead.
+            return href.to_string();
+        };
         let scheme = &self.current_url[..scheme_end];
         let after_scheme = &self.current_url[scheme_end..];
         let authority = after_scheme.split('/').next().unwrap_or(after_scheme);
@@ -2043,10 +2230,7 @@ impl BrowserSession {
             // Distilled content: the readability projection (main/article
             // region, boilerplate stripped) capped so one fact carries the
             // readable core of the page without bloating the state document.
-            let mut content = self.page_content_markdown();
-            if content.is_empty() {
-                content = self.page_markdown();
-            }
+            let mut content = self.distilled_content();
             const CONTENT_FACT_CHARS: usize = 8000;
             if content.chars().count() > CONTENT_FACT_CHARS {
                 content = content.chars().take(CONTENT_FACT_CHARS).collect::<String>();
@@ -2058,7 +2242,9 @@ impl BrowserSession {
         }
 
         // Canvas contents as readable literals (drawn text/shapes/images).
-        doc.merge(&CanvasExtractor::extract_canvases_document(&self.dom.canvases));
+        doc.merge(&CanvasExtractor::extract_canvases_document(
+            &self.dom.canvases,
+        ));
 
         // Session-level keyboard focus is a fact the agent can diff on.
         if let Some(id) = self.focused_node {
@@ -2135,14 +2321,156 @@ fn simple_url_encode(input: &str) -> String {
     out
 }
 
+// -- Synthetic (non-network) URL schemes --------------------------------------
+
+/// What [`synthetic_document`] decided about a URL.
+pub(crate) enum Synthetic {
+    /// The URL names its own document; load the returned HTML without network.
+    Document(String),
+    /// A known synthetic scheme with no representable document (e.g. `about:`
+    /// anything other than `blank`).
+    Unsupported(BrowserError),
+    /// A real transport scheme (`http:`, `https:`, ...): go fetch it.
+    Network,
+}
+
+/// True when `url` opens with a scheme token per RFC 3986: a leading ASCII
+/// letter followed by letters/digits/`+`/`-`/`.` and then `:`, with no `/`,
+/// `?` or `#` intruding before the colon (which would make it a plain
+/// relative reference like `a/b:page`).
+fn has_url_scheme(url: &str) -> bool {
+    let Some(colon) = url.find(':') else {
+        return false;
+    };
+    let scheme = &url[..colon];
+    let mut chars = scheme.chars();
+    match chars.next() {
+        Some(c) if c.is_ascii_alphabetic() => {}
+        _ => return false,
+    }
+    chars.all(|c| c.is_ascii_alphanumeric() || matches!(c, '+' | '-' | '.'))
+}
+
+/// Resolve the document named by a non-transport URL: `about:blank` renders
+/// empty, `data:text/html,...` renders its own inline payload, any other
+/// `about:` target has nothing to render, and everything else needs the
+/// network.
+fn synthetic_document(url: &str) -> Synthetic {
+    if let Some(target) = url.strip_prefix("about:") {
+        if target.is_empty() || target.eq_ignore_ascii_case("blank") {
+            return Synthetic::Document(String::new());
+        }
+        return Synthetic::Unsupported(BrowserError::NavigationFailed(format!(
+            "about:{} has no built-in document",
+            target
+        )));
+    }
+    if let Some(rest) = url.strip_prefix("data:") {
+        return match decode_data_url(rest) {
+            Some(body) => Synthetic::Document(body),
+            None => Synthetic::Unsupported(BrowserError::MalformedResponse(format!(
+                "data: URL is unreadable: {}",
+                truncate_url_for_message(url)
+            ))),
+        };
+    }
+    Synthetic::Network
+}
+
+/// Where a form submission ended up, so the status line can say precisely
+/// whether a request went out at all.
+enum SubmitOutcome {
+    /// The node is not inside a `<form>`, so nothing could be submitted.
+    NoForm,
+    /// Fields were collected, a request went out, and its response was loaded.
+    Submitted(String),
+    /// A form was found but submitting it failed.
+    Failed(String),
+}
+
+/// Shorten a URL enough to quote it in an error without echoing a whole
+/// inline document back at the caller.
+fn truncate_url_for_message(url: &str) -> String {
+    const MAX: usize = 48;
+    if url.len() <= MAX {
+        return url.to_string();
+    }
+    let mut end = MAX;
+    while !url.is_char_boundary(end) {
+        end -= 1;
+    }
+    format!("{}... ({} bytes)", &url[..end], url.len())
+}
+
+/// Decode the `media-type[,charset][;base64],payload` part of a `data:` URL
+/// (RFC 2397). Only HTML/XML payloads are treated as documents; anything else
+/// still decodes, since the caller is asking to render it.
+fn decode_data_url(rest: &str) -> Option<String> {
+    let (meta, payload) = rest.split_once(',')?;
+    if meta.split(';').any(|p| p.eq_ignore_ascii_case("base64")) {
+        let bytes = base64_decode_bytes(payload)?;
+        return Some(String::from_utf8_lossy(&bytes).to_string());
+    }
+    Some(percent_decode(payload))
+}
+
+/// Percent-decode, keeping `+` literal the way `decodeURIComponent` does (the
+/// form-encoded `+`-means-space rule belongs to query strings, not data URLs).
+fn percent_decode(input: &str) -> String {
+    let bytes = input.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'%' && i + 2 < bytes.len() {
+            if let Ok(b) = u8::from_str_radix(&input[i + 1..i + 3], 16) {
+                out.push(b);
+                i += 3;
+                continue;
+            }
+        }
+        out.push(bytes[i]);
+        i += 1;
+    }
+    String::from_utf8_lossy(&out).to_string()
+}
+
+/// Strict-ish base64 decoder for `data:` payloads: ignores whitespace and
+/// padding, rejects characters outside the standard alphabet.
+fn base64_decode_bytes(input: &str) -> Option<Vec<u8>> {
+    let mut acc: u32 = 0;
+    let mut nbits: u32 = 0;
+    let mut out = Vec::new();
+    for c in input.chars() {
+        if c.is_ascii_whitespace() || c == '=' {
+            continue;
+        }
+        let v = match c {
+            'A'..='Z' => c as u32 - 'A' as u32,
+            'a'..='z' => c as u32 - 'a' as u32 + 26,
+            '0'..='9' => c as u32 - '0' as u32 + 52,
+            '+' | '-' => 62,
+            '/' | '_' => 63,
+            _ => return None,
+        };
+        acc = (acc << 6) | v;
+        nbits += 6;
+        if nbits >= 8 {
+            nbits -= 8;
+            out.push((acc >> nbits) as u8);
+        }
+    }
+    Some(out)
+}
+
 #[cfg(test)]
 mod agent_action_tests {
     use super::*;
-    use crate::predicates::{AOM_EXPANDED, AOM_VALUE};
+    use crate::predicates::{AOM_CHECKED, AOM_EXPANDED, AOM_VALUE};
 
     fn node_id_by_tag(session: &BrowserSession, tag: &str) -> usize {
         session
-            .dom.dom_tree
+            .dom
+            .dom_tree
             .as_ref()
             .unwrap()
             .nodes
@@ -2315,7 +2643,8 @@ mod agent_action_tests {
         let result = session.agent_check_by_label("Subscribe", true);
         assert!(result.status.contains("checked"), "got {}", result.status);
         let checked = session
-            .dom.dom_tree
+            .dom
+            .dom_tree
             .as_ref()
             .unwrap()
             .get_node(checkbox_id)
@@ -2327,7 +2656,8 @@ mod agent_action_tests {
         let result = session.agent_check_by_label("Subscribe", false);
         assert!(result.status.contains("unchecked"), "got {}", result.status);
         let checked = session
-            .dom.dom_tree
+            .dom
+            .dom_tree
             .as_ref()
             .unwrap()
             .get_node(checkbox_id)
@@ -2399,7 +2729,8 @@ mod agent_action_tests {
             result.status
         );
         let value = session
-            .dom.dom_tree
+            .dom
+            .dom_tree
             .as_ref()
             .unwrap()
             .get_node(input_id)
@@ -2445,7 +2776,7 @@ mod agent_action_tests {
         let mut session = BrowserSession::new("s18".to_string());
         session.load_html(
             "about:test",
-            "<form action=\"about:submitted\"><input type=\"text\" name=\"q\"></form>",
+            "<form action=\"data:text/html,%3Ch1%3Ethanks%3C/h1%3E\"><input type=\"text\" name=\"q\"></form>",
         );
         let input_id = node_id_by_tag(&session, "input");
         session.agent_focus(input_id);
@@ -2455,7 +2786,15 @@ mod agent_action_tests {
             "got {}",
             result.status
         );
-        assert!(result.status.contains("submitted"), "got {}", result.status);
+        // The old action() target `about:submitted` was never reachable, so
+        // this only ever passed on the engine claiming success. Assert the
+        // submission genuinely landed.
+        assert!(result.executed, "got {}", result.status);
+        assert!(
+            result.status.contains("submitted node_"),
+            "got {}",
+            result.status
+        );
     }
 
     #[test]
@@ -2476,7 +2815,8 @@ mod agent_action_tests {
             result.status
         );
         let value = session
-            .dom.dom_tree
+            .dom
+            .dom_tree
             .as_ref()
             .unwrap()
             .get_node(select_id)
@@ -2533,7 +2873,8 @@ mod agent_action_tests {
         // Shrink the viewport so only the first paragraph starts in view.
         session.viewport_height = 10.0;
         let second_p = session
-            .dom.dom_tree
+            .dom
+            .dom_tree
             .as_ref()
             .unwrap()
             .nodes
@@ -2832,5 +3173,378 @@ mod agent_action_tests {
         assert_eq!(session.page_content_markdown(), "");
         assert_eq!(session.page_tables_text(), "");
         assert_eq!(session.page_summary_text(), "");
+    }
+
+    // -- Synthetic URL schemes and form submission outcomes -------------------
+
+    fn has_tag(session: &BrowserSession, tag: &str) -> bool {
+        session
+            .dom
+            .dom_tree
+            .as_ref()
+            .map(|t| t.nodes.iter().any(|n| n.tag_name == tag))
+            .unwrap_or(false)
+    }
+
+    #[test]
+    fn agent_navigate_about_blank_loads_an_empty_document_offline() {
+        let mut session = BrowserSession::new("s38".to_string());
+        session.load_html("about:test", "<h1>Stale page</h1>");
+        let result = session.agent_navigate("about:blank");
+        assert!(
+            result.executed,
+            "about:blank always renders: {}",
+            result.status
+        );
+        assert!(!has_tag(&session, "h1"), "previous page must be cleared");
+    }
+
+    #[test]
+    fn agent_navigate_data_url_renders_its_inline_document() {
+        let mut session = BrowserSession::new("s39".to_string());
+        let result =
+            session.agent_navigate("data:text/html,%3Ch1%3EInline%3C/h1%3E%3Cp%3EBody%3C/p%3E");
+        assert!(
+            result.executed,
+            "data: URL should render: {}",
+            result.status
+        );
+        assert!(has_tag(&session, "h1"), "inline document was not parsed");
+        assert!(session.page_content_markdown().contains("Body"));
+    }
+
+    #[test]
+    fn agent_navigate_base64_data_url_decodes_its_payload() {
+        let mut session = BrowserSession::new("s40".to_string());
+        // base64 of "<h2>H64</h2>"
+        let result = session.agent_navigate("data:text/html;base64,PGgyPkg2NDwvaDI+");
+        assert!(
+            result.executed,
+            "base64 data: URL should render: {}",
+            result.status
+        );
+        assert!(has_tag(&session, "h2"), "base64 payload was not decoded");
+    }
+
+    #[test]
+    fn agent_navigate_unknown_about_scheme_fails_loudly() {
+        let mut session = BrowserSession::new("s41".to_string());
+        let result = session.agent_navigate("about:config");
+        assert!(
+            !result.executed,
+            "no built-in document exists for about:config"
+        );
+        assert!(
+            result.status.contains("no built-in document"),
+            "status must name the reason: {}",
+            result.status
+        );
+    }
+
+    #[test]
+    fn agent_navigate_malformed_data_url_reports_it_unreadable() {
+        let mut session = BrowserSession::new("s42".to_string());
+        // No comma separating the media type from the payload.
+        let result = session.agent_navigate("data:text/html");
+        assert!(!result.executed);
+        assert!(
+            result.status.contains("unreadable"),
+            "status must name the reason: {}",
+            result.status
+        );
+    }
+
+    #[test]
+    fn resolve_url_keeps_absolute_references_of_every_scheme() {
+        let mut session = BrowserSession::new("s43".to_string());
+        session.load_html("https://example.com/docs/page", "<p>x</p>");
+        assert_eq!(
+            session.resolve_url("data:text/html,%3Ch1%3Ei%3C/h1%3E"),
+            "data:text/html,%3Ch1%3Ei%3C/h1%3E"
+        );
+        assert_eq!(session.resolve_url("about:blank"), "about:blank");
+        assert_eq!(
+            session.resolve_url("https://other.test/a"),
+            "https://other.test/a"
+        );
+    }
+
+    #[test]
+    fn resolve_url_does_not_stitch_refs_onto_a_non_hierarchical_base() {
+        let mut session = BrowserSession::new("s44".to_string());
+        session.load_html("about:test", "<p>x</p>");
+        // `about:test` has no authority or path, so a relative reference
+        // cannot be resolved against it - the old code invented
+        // `about:test/next` out of thin air.
+        assert_eq!(session.resolve_url("next"), "next");
+        assert_eq!(session.resolve_url("/abs"), "/abs");
+    }
+
+    #[test]
+    fn resolve_url_still_resolves_relative_paths_against_http_base() {
+        let mut session = BrowserSession::new("s45".to_string());
+        session.load_html("https://example.com/docs/page.html", "<p>x</p>");
+        assert_eq!(
+            session.resolve_url("other.html"),
+            "https://example.com/docs/other.html"
+        );
+        assert_eq!(session.resolve_url("/root"), "https://example.com/root");
+    }
+
+    #[test]
+    fn has_url_scheme_rejects_colons_inside_relative_references() {
+        assert!(has_url_scheme("https://a.test"));
+        assert!(has_url_scheme("data:text/html,x"));
+        assert!(has_url_scheme("mailto:someone@t.test"));
+        // A colon that appears after a path separator belongs to the path, not
+        // to a scheme, so these stay relative.
+        assert!(!has_url_scheme("/docs/a:b"));
+        assert!(!has_url_scheme("?q=:"));
+        assert!(!has_url_scheme("#frag:ment"));
+        assert!(!has_url_scheme("dir/file"));
+        assert!(!has_url_scheme(""));
+        assert!(!has_url_scheme("1abc:x"));
+    }
+
+    #[test]
+    fn agent_press_enter_submits_enclosing_form_and_loads_response() {
+        let mut session = BrowserSession::new("s46".to_string());
+        session.load_html(
+            "about:test",
+            "<form action=\"data:text/html,%3Ch1%3EDone%3C/h1%3E\"><input type=\"text\" name=\"q\"></form>",
+        );
+        let input_id = node_id_by_tag(&session, "input");
+        session.agent_focus(input_id);
+        let result = session.agent_press("Enter");
+        assert!(
+            result.status.contains("pressed Enter"),
+            "got {}",
+            result.status
+        );
+        assert!(
+            result.executed,
+            "Enter in a form field must actually submit it: {}",
+            result.status
+        );
+        assert!(
+            result.status.contains("submitted node_"),
+            "got {}",
+            result.status
+        );
+        assert!(has_tag(&session, "h1"), "response was not loaded");
+    }
+
+    #[test]
+    fn agent_submit_outside_a_form_says_so() {
+        let mut session = BrowserSession::new("s47".to_string());
+        session.load_html("about:test", "<button>Send</button>");
+        let button_id = node_id_by_tag(&session, "button");
+        let result = session.agent_submit(button_id);
+        assert!(!result.executed, "nothing was submitted");
+        assert!(
+            result.status.contains("not inside a form"),
+            "got {}",
+            result.status
+        );
+    }
+
+    #[test]
+    fn agent_submit_surfaces_the_transport_error_when_the_post_fails() {
+        let mut session = BrowserSession::new("s48".to_string());
+        // Port 1 is not listening, so this fails fast with a real error.
+        session.load_html(
+            "about:test",
+            "<form action=\"http://127.0.0.1:1/gone\"><input type=\"text\" name=\"q\"></form>",
+        );
+        let input_id = node_id_by_tag(&session, "input");
+        let result = session.agent_submit(input_id);
+        assert!(!result.executed, "the request never landed");
+        assert!(
+            result.status.contains("submit for node_") && result.status.contains("failed:"),
+            "a failed post must not read as \"not inside a form\": {}",
+            result.status
+        );
+    }
+
+    // === Activation behaviour and selected state (bugs #48, #51, #52, #53) ==
+
+    /// ids of every `<input>` in document order.
+    fn input_ids(session: &BrowserSession) -> Vec<usize> {
+        session
+            .dom
+            .dom_tree
+            .as_ref()
+            .unwrap()
+            .nodes
+            .iter()
+            .filter(|n| n.tag_name == "input")
+            .map(|n| n.id)
+            .collect()
+    }
+
+    /// values of every currently-checked control.
+    fn checked_values(session: &BrowserSession) -> Vec<String> {
+        session
+            .dom
+            .dom_tree
+            .as_ref()
+            .unwrap()
+            .nodes
+            .iter()
+            .filter(|n| n.attributes.contains_key("checked"))
+            .filter_map(|n| n.attributes.get("value").cloned())
+            .collect()
+    }
+
+    #[test]
+    fn clicking_a_radio_selects_it_and_clears_its_group() {
+        let mut session = BrowserSession::new("s49".to_string());
+        session.load_html(
+            "about:test",
+            "<form action=\"/x\"><input type=\"radio\" name=\"size\" value=\"small\" checked>\
+             <input type=\"radio\" name=\"size\" value=\"medium\">\
+             <input type=\"radio\" name=\"topping\" value=\"bacon\"><button>Go</button></form>",
+        );
+        let ids = input_ids(&session);
+        assert_eq!(ids.len(), 3);
+        assert_eq!(checked_values(&session), vec!["small".to_string()]);
+
+        let result = session.agent_click(ids[1]);
+        assert!(result.executed, "{}", result.status);
+        assert_eq!(
+            checked_values(&session),
+            vec!["medium".to_string()],
+            "the same-name radio has to be cleared; a different group is not"
+        );
+    }
+
+    #[test]
+    fn a_clicked_radio_is_what_the_form_submits() {
+        let mut session = BrowserSession::new("s50".to_string());
+        session.load_html(
+            "about:test",
+            "<form action=\"/x\"><input type=\"radio\" name=\"size\" value=\"small\" checked>\
+             <input type=\"radio\" name=\"size\" value=\"medium\"><button>Go</button></form>",
+        );
+        let ids = input_ids(&session);
+        session.agent_click(ids[1]);
+        let button = node_id_by_tag(&session, "button");
+        let (_, _, body) = session
+            .collect_form_submission(button)
+            .expect("the button is inside the form");
+        assert!(body.contains("size=medium"), "submitted body: {body}");
+        assert!(
+            !body.contains("small"),
+            "stale selection still submitted: {body}"
+        );
+    }
+
+    #[test]
+    fn clicking_a_checkbox_toggles_it_both_ways() {
+        let mut session = BrowserSession::new("s51".to_string());
+        session.load_html(
+            "about:test",
+            "<input type=\"checkbox\" aria-label=\"Subscribe\" value=\"yes\">",
+        );
+        let id = node_id_by_tag(&session, "input");
+        session.agent_click(id);
+        assert_eq!(checked_values(&session), vec!["yes".to_string()]);
+        assert!(session.agent_read_form().contains("checked"));
+        session.agent_click(id);
+        assert!(
+            checked_values(&session).is_empty(),
+            "second click untoggles"
+        );
+        assert!(session.agent_read_form().contains("unchecked"));
+    }
+
+    #[test]
+    fn a_check_that_lands_shows_up_in_the_delta() {
+        let mut session = BrowserSession::new("s52".to_string());
+        session.load_html(
+            "about:test",
+            "<input type=\"checkbox\" aria-label=\"Subscribe\" value=\"yes\">",
+        );
+        let id = node_id_by_tag(&session, "input");
+        let subject = format!("node_{id}");
+
+        let result = session.agent_check_by_label("Subscribe", true);
+        assert!(
+            result
+                .delta
+                .added
+                .contains(&(subject.clone(), AOM_CHECKED, "checked".to_string())),
+            "bug #52: a real check diffed as {:?}",
+            result.delta
+        );
+
+        let result = session.agent_check_by_label("Subscribe", false);
+        assert!(
+            result
+                .delta
+                .removed
+                .contains(&(subject, AOM_CHECKED, "checked".to_string())),
+            "unchecking has to remove the fact, got {:?}",
+            result.delta.removed
+        );
+    }
+
+    #[test]
+    fn fill_by_label_also_matches_a_placeholder_shadowed_by_a_real_label() {
+        let mut session = BrowserSession::new("s53".to_string());
+        session.load_html(
+            "about:test",
+            "<label>Nick:<input placeholder=\"handle\" name=\"nick\"></label>",
+        );
+        // The bound label owns the accessible name, so a placeholder lookup is
+        // only possible if resolution also consults the raw attribute.
+        let result = session.agent_fill_by_label("handle", "ada");
+        assert!(result.executed, "{}", result.status);
+        assert!(
+            session.agent_read_form().contains("ada"),
+            "form: {}",
+            session.agent_read_form()
+        );
+        // The label still resolves the same control.
+        let result = session.agent_fill_by_label("Nick:", "grace");
+        assert!(result.executed, "{}", result.status);
+    }
+
+    #[test]
+    fn distilled_content_reaches_a_document_without_html_prose() {
+        let mut session = BrowserSession::new("s54".to_string());
+        // What a JSON API response looks like to the engine: bare text with no
+        // <p>/<h*> structure, so both markdown projections come back empty.
+        session.load_html(
+            "https://httpbin.org/post",
+            "{ \"args\": {}, \"form\": { \"custname\": \"Ada\" } }",
+        );
+        assert!(
+            session.page_content_markdown().is_empty() && session.page_markdown().is_empty(),
+            "precondition: the markdown projections are the empty ones"
+        );
+        let content = session.distilled_content();
+        assert!(
+            content.contains("custname") && content.contains("Ada"),
+            "content projection lost text page_text can see: {content:?}"
+        );
+        let doc = session.capture_state_document();
+        assert!(
+            doc.readable_facts()
+                .iter()
+                .any(|(_, p, o)| *p == SESSION_CONTENT && o.contains("Ada")),
+            "the content fact was left empty"
+        );
+    }
+
+    #[test]
+    fn has_node_only_accepts_ids_in_the_live_document() {
+        let mut session = BrowserSession::new("s55".to_string());
+        session.load_html("about:test", "<button>Go</button>");
+        let id = node_id_by_tag(&session, "button");
+        assert!(session.has_node(id));
+        assert!(!session.has_node(id + 1_000), "invented id must be refused");
+        let blank = BrowserSession::new("s56".to_string());
+        assert!(!blank.has_node(0), "no document loaded, so no nodes");
     }
 }

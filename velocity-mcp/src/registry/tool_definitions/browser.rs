@@ -883,7 +883,7 @@ pub fn get_browser_tools() -> Vec<Tool> {
         },
         Tool {
             name: "browser_native_read".to_string(),
-            description: "Read the current live Agentic Object Model of a native browser session: URL, title, and every actionable element with its node id, role, accessible name, value, and actionability score. Use the node ids or role+name here to target native click/type/select/submit actions.".to_string(),
+            description: "Read the current live Agentic Object Model of a native browser session: URL, title, and every actionable element with its node id, role, accessible name, value, actionability score, and checked state (a checkbox or radio that is ticked is marked *checked*). Node ids are valid only for the document that is loaded now, so re-read after any navigation. Use the node ids or role+name here to target native click/type/select/submit actions.".to_string(),
             input_schema: json!({
                 "type": "object",
                 "properties": {
@@ -895,7 +895,7 @@ pub fn get_browser_tools() -> Vec<Tool> {
         },
         Tool {
             name: "browser_native_click".to_string(),
-            description: "Click an element in the live native browser DOM, targeted by node id or by role + accessible name, and return the resulting NDA delta and refreshed AOM view.".to_string(),
+            description: "Click an element in the live native browser DOM, targeted by node id (from the current browser_native_read; a stale or invented id is an error) or by role + accessible name, and return the resulting NDA delta and refreshed AOM view. Clicking a checkbox toggles it; clicking a radio selects it and clears every other radio sharing its name.".to_string(),
             input_schema: json!({
                 "type": "object",
                 "properties": {
@@ -910,7 +910,7 @@ pub fn get_browser_tools() -> Vec<Tool> {
         },
         Tool {
             name: "browser_native_type".to_string(),
-            description: "Type text into an input-like element in the live native browser DOM, targeted by node id or role + accessible name, and return the resulting NDA delta and refreshed AOM view.".to_string(),
+            description: "Type text into an input-like element in the live native browser DOM, targeted by node id (from the current browser_native_read; a stale or invented id is an error) or role + accessible name, and return the resulting NDA delta and refreshed AOM view.".to_string(),
             input_schema: json!({
                 "type": "object",
                 "properties": {
@@ -926,7 +926,7 @@ pub fn get_browser_tools() -> Vec<Tool> {
         },
         Tool {
             name: "browser_native_select".to_string(),
-            description: "Set the selected value of a combobox/select element in the live native browser DOM, targeted by node id or role + accessible name, and return the resulting NDA delta and refreshed AOM view.".to_string(),
+            description: "Set the selected value of a combobox/select element in the live native browser DOM, targeted by node id (from the current browser_native_read; a stale or invented id is an error) or role + accessible name, and return the resulting NDA delta and refreshed AOM view.".to_string(),
             input_schema: json!({
                 "type": "object",
                 "properties": {
@@ -942,7 +942,7 @@ pub fn get_browser_tools() -> Vec<Tool> {
         },
         Tool {
             name: "browser_native_submit".to_string(),
-            description: "Submit a form (or form control) in the live native browser DOM, targeted by node id or role + accessible name, and return the resulting NDA delta and refreshed AOM view.".to_string(),
+            description: "Submit a form (or form control) in the live native browser DOM, targeted by node id (from the current browser_native_read; a stale or invented id is an error) or role + accessible name, and return the resulting NDA delta and refreshed AOM view.".to_string(),
             input_schema: json!({
                 "type": "object",
                 "properties": {
@@ -1055,7 +1055,7 @@ pub fn get_browser_tools() -> Vec<Tool> {
         },
         Tool {
             name: "browser_native_validate".to_string(),
-            description: "Run HTML5 constraint validation over every form control on the current page of the native browser session (required, email/url/number type checks, pattern, minlength/maxlength, min/max range). Reports which controls would block a submit and why \u{2014} check before submitting instead of burning a failed round trip.".to_string(),
+            description: "Run HTML5 constraint validation over every form control on the current page of the native browser session: required, email/url/number/date/time type checks (including whether a temporal value is even well-formed), pattern, minlength/maxlength (counted in characters), and min/max ranges for numbers *and* for date, time, month, week and datetime-local slots. Reports which controls would block a submit and why \u{2014} check before submitting instead of burning a failed round trip.".to_string(),
             input_schema: json!({
                 "type": "object",
                 "properties": {
@@ -1146,7 +1146,7 @@ pub fn get_browser_tools() -> Vec<Tool> {
         },
         Tool {
             name: "browser_native_wait".to_string(),
-            description: "Block until a condition holds on the page or the timeout elapses, instead of polling observe/brief. mode=content (default) waits for the distilled content size to change by at least minDelta chars (async updates, lazy loading); mode=element waits until an element whose name contains `label` appears (or, with gone=true, until it disappears - spinners, overlays, toasts); mode=url waits for navigation (with `label`: until the URL contains it, without: until the URL differs from the call-time URL); mode=stable waits until the distilled content size stays unchanged for `stable` consecutive polls (the page has fully settled). Reports matched or timeout with elapsed milliseconds.".to_string(),
+            description: "Block until a condition holds on the page or the timeout elapses, instead of polling observe/brief. mode=content (default) waits for the distilled content size to change by at least minDelta chars (async updates, lazy loading); mode=element waits until an element whose name contains `label` appears (or, with gone=true, until it disappears - spinners, overlays, toasts); mode=url waits for navigation (with `label`: until the URL contains it, without: until the URL differs from the call-time URL); mode=stable waits until the distilled content size stays unchanged for `stable` consecutive polls (the page has fully settled). A match returns with elapsed milliseconds; a timeout is reported as a tool error, so an expired wait can never be mistaken for a satisfied condition.".to_string(),
             input_schema: json!({
                 "type": "object",
                 "properties": {
@@ -1165,7 +1165,7 @@ pub fn get_browser_tools() -> Vec<Tool> {
         },
         Tool {
             name: "browser_native_assert".to_string(),
-            description: "Assert page-state conditions in one call instead of observe-then-read. Checks that the distilled page content contains `text` and/or that an element whose name contains `label` exists. With waitMs > 0 the checks poll until the conditions hold or the grace period elapses (guard-after-action on async pages). Reports 'assert ok' or 'assert FAILED' with per-check detail (actual content snippet, element count) - a failed assertion is a result, not an error. Failed checks are recorded in the outcome history, so repeated misses surface in browser_native_reflect.".to_string(),
+            description: "Assert page-state conditions in one call instead of observe-then-read. Checks that the distilled page content contains `text` and/or that an element whose name contains `label` exists. With waitMs > 0 the checks poll until the conditions hold or the grace period elapses (guard-after-action on async pages). Reports 'assert ok' with per-check detail, or fails the call with 'assert FAILED' and the diagnosis (actual content snippet, element count) - an unmet guard is an error, because isError is the only failure signal that reaches the caller. Failed checks are recorded in the outcome history, so repeated misses surface in browser_native_reflect.".to_string(),
             input_schema: json!({
                 "type": "object",
                 "properties": {
@@ -1234,7 +1234,7 @@ pub fn get_browser_tools() -> Vec<Tool> {
         // -- Phase 5: Enhanced agent tools --
         Tool {
             name: "browser_native_wait_for".to_string(),
-            description: "Poll the live AOM until an element matching the given role and/or accessible name appears (with timeout). Returns the matched node id and refreshed view, or a not-found message.".to_string(),
+            description: "Poll the live AOM until an element matching the given role and/or accessible name appears (with timeout). Returns the matched node id and refreshed view; if nothing matches before the timeout the call fails, so a miss cannot be read as a hit. Use browser_native_wait with mode=element for repeated polling.".to_string(),
             input_schema: json!({
                 "type": "object",
                 "properties": {
@@ -1249,7 +1249,7 @@ pub fn get_browser_tools() -> Vec<Tool> {
         },
         Tool {
             name: "browser_native_extract".to_string(),
-            description: "Extract content from a DOM element: its text content, innerHTML, outerHTML, or a specific attribute value.".to_string(),
+            description: "Extract content from a DOM element: its text content, innerHTML, outerHTML, or a specific attribute value. The nodeId must exist in the currently loaded document (take it from browser_native_read); an id from an earlier page is reported as an error rather than extracting nothing.".to_string(),
             input_schema: json!({
                 "type": "object",
                 "properties": {
@@ -1318,7 +1318,7 @@ pub fn get_browser_tools() -> Vec<Tool> {
         },
         Tool {
             name: "browser_native_hover".to_string(),
-            description: "Hover an element (fire mouseenter/mouseover events) targeted by node id or role + accessible name.".to_string(),
+            description: "Hover an element (fire mouseenter/mouseover events) targeted by node id (from the current browser_native_read; a stale or invented id is an error) or role + accessible name.".to_string(),
             input_schema: json!({
                 "type": "object",
                 "properties": {
@@ -1375,7 +1375,7 @@ pub fn get_browser_tools() -> Vec<Tool> {
         },
         Tool {
             name: "browser_native_check_label".to_string(),
-            description: "Check or uncheck the checkbox/radio whose label best matches the query and return the resulting NDA delta and refreshed AOM view.".to_string(),
+            description: "Check or uncheck the checkbox/radio whose label or accessible name best matches the query, and return the resulting NDA delta and refreshed AOM view. Selecting a radio clears every other radio that shares its name, and the new state is reported as a 'checked' fact in the delta.".to_string(),
             input_schema: json!({
                 "type": "object",
                 "properties": {
@@ -1440,7 +1440,7 @@ pub fn get_browser_tools() -> Vec<Tool> {
         },
         Tool {
             name: "browser_native_observe".to_string(),
-            description: "Dump the full readable fact base of the session (URL, title, AOM roles/names/values, focus, layout, cookies, storage) as 'subject predicate = object' lines. The complete observation an agent can diff or reason over.".to_string(),
+            description: "Dump the full readable fact base of the session (URL, title, AOM roles/names/values/checked state, focus, layout, cookies, storage) as 'subject predicate = object' lines. The complete observation an agent can diff or reason over.".to_string(),
             input_schema: json!({
                 "type": "object",
                 "properties": {

@@ -105,15 +105,57 @@ fn check_and_select_label_tools_update_form_state() {
     assert!(form.contains("pro"), "form shows selected value: {form}");
 }
 
+/// Bug #43: the label-resolution actions used to answer `isError: false` with
+/// a prose negation, so a sweep could score "checked the Cheese box" as a pass
+/// while `read_form` still showed every control untouched.
+#[test]
+fn unresolvable_action_targets_fail_instead_of_reporting_a_quiet_miss() {
+    load("t17-lie");
+    let err = call_err(
+        "browser_native_check_label",
+        json!({ "sessionId": "t17-lie", "label": "Cheese" }),
+    );
+    assert!(
+        err.to_string()
+            .contains("no checkable control matching 'Cheese'"),
+        "{err}"
+    );
+    let err = call_err(
+        "browser_native_select_label",
+        json!({ "sessionId": "t17-lie", "label": "Plan", "option": "Enterprise" }),
+    );
+    assert!(err.to_string().contains("Enterprise"), "{err}");
+    let err = call_err(
+        "browser_native_fill_label",
+        json!({ "sessionId": "t17-lie", "label": "Fax Number", "text": "123" }),
+    );
+    assert!(
+        err.to_string().contains("no fillable control matching"),
+        "{err}"
+    );
+    // And the page really is unchanged: the error is not cosmetic.
+    let form = call(
+        "browser_native_read_form",
+        json!({ "sessionId": "t17-lie" }),
+    );
+    assert!(
+        form.contains("unchecked") && !form.contains("123"),
+        "nothing landed on the form: {form}"
+    );
+}
+
 #[test]
 fn focus_label_and_press_drive_session_keyboard() {
     load("t17-press");
-    let miss = call(
+    // Bug #43: pressing with nothing focused lands on nothing, so the call
+    // has to fail rather than return a prose "nothing focused" under
+    // isError: false.
+    let miss = call_err(
         "browser_native_press",
         json!({ "sessionId": "t17-press", "key": "x" }),
     );
     assert!(
-        miss.contains("nothing focused"),
+        miss.to_string().contains("nothing focused"),
         "press without focus: {miss}"
     );
     let out = call(
@@ -448,14 +490,15 @@ fn scroll_into_view_tool_resolves_element_by_label() {
 #[test]
 fn scroll_into_view_tool_reports_missing_label() {
     load("t20-miss");
-    let out = call(
+    let err = call_err(
         "browser_native_scroll_into_view",
         json!({ "sessionId": "t20-miss", "label": "Nonexistent Widget" }),
     );
+    let out = err.to_string();
     assert!(out.contains("no element matching"), "{out}");
     assert!(
-        out.contains("(no state change)"),
-        "miss produces an empty delta: {out}"
+        !out.contains("node_"),
+        "a miss must not name a node it never resolved: {out}"
     );
 }
 
@@ -1220,19 +1263,33 @@ fn wait_tool_matches_element_and_times_out() {
         "{compact}"
     );
 
-    // Nothing named "Nonexistent" appears: the wait times out.
-    let out = call(
+    // Nothing named "Nonexistent" appears: the wait times out, and timing out
+    // is a failed call - a `timeout after` line under isError: false was read
+    // as a pass by the tool sweep (bug #49).
+    let err = call_err(
         "browser_native_wait",
         json!({ "sessionId": "t47-wait", "mode": "element", "label": "Nonexistent", "timeout": 250, "poll": 50 }),
     );
-    assert!(out.starts_with("timeout after "), "{out}");
+    assert!(err.to_string().starts_with("timeout after "), "{err}");
 
     // Static content never changes: content mode times out too.
-    let out = call(
+    let err = call_err(
         "browser_native_wait",
         json!({ "sessionId": "t47-wait", "mode": "content", "timeout": 250, "poll": 50 }),
     );
-    assert!(out.contains("no 'content' change observed"), "{out}");
+    assert!(
+        err.to_string().contains("no 'content' change observed"),
+        "{err}"
+    );
+
+    // Compact timeout is an error whose message stays machine-readable.
+    let err = call_err(
+        "browser_native_wait",
+        json!({ "sessionId": "t47-wait", "mode": "content", "timeout": 250, "poll": 50, "compact": true }),
+    );
+    let report: serde_json::Value =
+        serde_json::from_str(&err.to_string()).expect("compact timeout is valid JSON");
+    assert_eq!(report["status"], "timeout", "{err}");
 }
 
 #[test]
@@ -1355,13 +1412,16 @@ fn content_delta_threshold_ignores_small_moves() {
 fn wait_tool_honours_min_delta_argument() {
     load("t50-mindelta");
     // A static page with a large threshold times out just like the
-    // default â€” but the argument path is exercised end to end.
-    let out = call(
+    // default - but the argument path is exercised end to end.
+    let err = call_err(
         "browser_native_wait",
         json!({ "sessionId": "t50-mindelta", "mode": "content", "minDelta": 500, "timeout": 250, "poll": 50 }),
     );
-    assert!(out.starts_with("timeout after "), "{out}");
-    assert!(out.contains("no 'content' change observed"), "{out}");
+    assert!(err.to_string().starts_with("timeout after "), "{err}");
+    assert!(
+        err.to_string().contains("no 'content' change observed"),
+        "{err}"
+    );
 }
 
 #[test]
@@ -1377,21 +1437,22 @@ fn wait_tool_url_mode_matches_and_times_out() {
     assert!(out.contains("url http://local.test/form"), "{out}");
 
     // Without a label, no navigation means timeout.
-    let out = call(
+    let err = call_err(
         "browser_native_wait",
         json!({ "sessionId": "t51-url", "mode": "url", "timeout": 250, "poll": 50 }),
     );
-    assert!(out.starts_with("timeout after "), "{out}");
+    assert!(err.to_string().starts_with("timeout after "), "{err}");
 
-    // A label that never appears also times out.
-    let compact = call(
+    // A label that never appears also times out, and the compact timeout
+    // report is still parseable out of the error channel.
+    let err = call_err(
         "browser_native_wait",
         json!({ "sessionId": "t51-url", "mode": "url", "label": "nowhere.example", "timeout": 250, "poll": 50, "compact": true }),
     );
     let report: serde_json::Value =
-        serde_json::from_str(&compact).expect("compact wait report is valid JSON");
-    assert_eq!(report["status"], "timeout", "{compact}");
-    assert_eq!(report["mode"], "url", "{compact}");
+        serde_json::from_str(&err.to_string()).expect("compact wait report is valid JSON");
+    assert_eq!(report["status"], "timeout", "{err}");
+    assert_eq!(report["mode"], "url", "{err}");
 }
 
 #[test]
@@ -1407,11 +1468,11 @@ fn wait_tool_gone_flag_inverts_element_predicate() {
     assert!(out.contains("\"Nonexistent\" gone"), "{out}");
 
     // An element that IS on the page never becomes gone: timeout.
-    let out = call(
+    let err = call_err(
         "browser_native_wait",
         json!({ "sessionId": "t52-gone", "mode": "element", "label": "log in", "gone": true, "timeout": 250, "poll": 50 }),
     );
-    assert!(out.starts_with("timeout after "), "{out}");
+    assert!(err.to_string().starts_with("timeout after "), "{err}");
 
     // Compact report carries the inverted match.
     let compact = call(
@@ -1466,23 +1527,27 @@ fn assert_tool_checks_content_and_elements() {
     assert!(out.contains("text \"Signup\""), "{out}");
     assert!(out.contains("element \"log in\""), "{out}");
 
-    // A missing text fragment fails in-band with diagnostic detail.
-    let out = call(
+    // A missing text fragment fails the call, carrying diagnostic detail
+    // (bug #49: it used to answer isError: false next to its own "FAILED").
+    let err = call_err(
         "browser_native_assert",
         json!({ "sessionId": "t54-assert", "text": "zebra" }),
     );
-    assert!(out.starts_with("assert FAILED:"), "{out}");
-    assert!(out.contains("text \"zebra\": FAILED"), "{out}");
-    assert!(out.contains("content is"), "{out}");
+    assert!(err.to_string().starts_with("assert FAILED:"), "{err}");
+    assert!(err.to_string().contains("text \"zebra\": FAILED"), "{err}");
+    assert!(err.to_string().contains("content is"), "{err}");
 
     // Mixed pass/fail reports both verdicts.
-    let out = call(
+    let err = call_err(
         "browser_native_assert",
         json!({ "sessionId": "t54-assert", "text": "Signup", "label": "Checkout" }),
     );
-    assert!(out.starts_with("assert FAILED:"), "{out}");
-    assert!(out.contains("text \"Signup\": ok"), "{out}");
-    assert!(out.contains("element \"Checkout\": FAILED"), "{out}");
+    assert!(err.to_string().starts_with("assert FAILED:"), "{err}");
+    assert!(err.to_string().contains("text \"Signup\": ok"), "{err}");
+    assert!(
+        err.to_string().contains("element \"Checkout\": FAILED"),
+        "{err}"
+    );
 
     // Compact report carries per-check results.
     let compact = call(
@@ -1493,6 +1558,15 @@ fn assert_tool_checks_content_and_elements() {
         serde_json::from_str(&compact).expect("compact assert report is valid JSON");
     assert_eq!(report["ok"], true, "{compact}");
     assert_eq!(report["checks"][0]["what"], "element", "{compact}");
+
+    // A failed compact assert stays parseable, out of the error channel.
+    let err = call_err(
+        "browser_native_assert",
+        json!({ "sessionId": "t54-assert", "label": "Checkout", "compact": true }),
+    );
+    let report: serde_json::Value =
+        serde_json::from_str(&err.to_string()).expect("compact assert report is valid JSON");
+    assert_eq!(report["ok"], false, "{err}");
 
     // No conditions at all is a usage error, not a silent pass.
     let err = call_err(
@@ -1518,19 +1592,19 @@ fn assert_tool_wait_ms_grace_period_polls() {
     assert!(out.starts_with("after "), "{out}");
     assert!(out.contains("assert ok: "), "{out}");
 
-    // A condition that never holds burns the whole grace period and
-    // then reports failure with the elapsed time.
-    let compact = call(
+    // A condition that never holds burns the whole grace period and then
+    // fails, reporting the elapsed time in the compact payload.
+    let err = call_err(
         "browser_native_assert",
         json!({ "sessionId": "t55-waitassert", "label": "Checkout", "waitMs": 250, "poll": 50, "compact": true }),
     );
     let report: serde_json::Value =
-        serde_json::from_str(&compact).expect("compact assert report is valid JSON");
-    assert_eq!(report["ok"], false, "{compact}");
+        serde_json::from_str(&err.to_string()).expect("compact assert report is valid JSON");
+    assert_eq!(report["ok"], false, "{err}");
     let elapsed = report["elapsedMs"]
         .as_u64()
         .expect("elapsedMs present when waiting");
-    assert!(elapsed >= 200, "grace period should be spent: {compact}");
+    assert!(elapsed >= 200, "grace period should be spent: {err}");
 
     // Without waitMs the report stays free of timing noise.
     let out = call(
@@ -1547,11 +1621,11 @@ fn failed_asserts_feed_the_reflection_loop() {
     // Two failed guards on the same missing element: reflect must spot
     // the repeated assertion failure like any other repeated miss.
     for _ in 0..2 {
-        let out = call(
+        let err = call_err(
             "browser_native_assert",
             json!({ "sessionId": "t56-reflect", "label": "Checkout" }),
         );
-        assert!(out.starts_with("assert FAILED:"), "{out}");
+        assert!(err.to_string().starts_with("assert FAILED:"), "{err}");
     }
     let out = call(
         "browser_native_reflect",
@@ -1592,11 +1666,11 @@ fn brief_reports_guard_health() {
     // Two failed guards enter the outcome history and surface in the
     // brief as a summary. Passing asserts record nothing (Batch 56),
     // so the failed count is exactly the number of failed checks.
-    call(
+    call_err(
         "browser_native_assert",
         json!({ "sessionId": "t57-guards", "label": "zebra" }),
     );
-    call(
+    call_err(
         "browser_native_assert",
         json!({ "sessionId": "t57-guards", "label": "unicorn" }),
     );
@@ -1616,15 +1690,15 @@ fn brief_guards_name_most_missed_target() {
 
     // Two misses on one label, one on another: the breakdown points
     // at the repeater instead of forcing a read of the outcome list.
-    call(
+    call_err(
         "browser_native_assert",
         json!({ "sessionId": "t58-most", "label": "zebra" }),
     );
-    call(
+    call_err(
         "browser_native_assert",
         json!({ "sessionId": "t58-most", "label": "zebra" }),
     );
-    call(
+    call_err(
         "browser_native_assert",
         json!({ "sessionId": "t58-most", "label": "unicorn" }),
     );
@@ -1650,14 +1724,14 @@ fn reflect_tool_surfaces_repeated_failure_lessons() {
     assert!(out.contains("(no failure patterns detected)"), "{out}");
     assert!(!out.contains("Recent action outcomes"), "{out}");
 
-    // Two clicks on a target that does not exist: observed delta is empty
-    // and the status reports the miss, so both score as failures.
+    // Two clicks on a target that does not exist: both are hard failures and
+    // both must still reach the learner before the error is returned.
     for _ in 0..2 {
-        let out = call(
+        let err = call_err(
             "browser_native_click_text",
             json!({ "sessionId": "t29-reflect", "text": "Launch Rocket" }),
         );
-        assert!(out.contains("no clickable element"), "{out}");
+        assert!(err.to_string().contains("no clickable element"), "{err}");
     }
     let out = call(
         "browser_native_reflect",
@@ -1949,11 +2023,11 @@ fn learn_tool_persists_outcome_history_across_sessions() {
 
     // Two clicks on a missing target record two scored failures.
     for _ in 0..2 {
-        let out = call(
+        let err = call_err(
             "browser_native_click_text",
             json!({ "sessionId": "t33-out-a", "text": "Launch Rocket" }),
         );
-        assert!(out.contains("no clickable element"), "{out}");
+        assert!(err.to_string().contains("no clickable element"), "{err}");
     }
     let out = call_rooted(
         &root,
@@ -2407,7 +2481,7 @@ fn brief_tool_bundles_pre_action_context() {
         }),
     );
     for _ in 0..2 {
-        call(
+        call_err(
             "browser_native_click_text",
             json!({ "sessionId": "t35-brief", "text": "Launch Rocket" }),
         );
@@ -2449,4 +2523,268 @@ fn brief_tool_bundles_pre_action_context() {
         3,
         "{compact}"
     );
+}
+
+// === Batch 15 regressions (bugs #48-#53) =====================================
+// A fixture shaped like a real order form: every control carries both a bound
+// <label> and (for the text field) a placeholder, so the accessible name is
+// the label and the placeholder is only reachable as a secondary key.
+
+const ORDER_HTML: &str = r#"<html><head><title>Contact</title></head><body>
+        <form id="c" method="post" action="/post">
+          <label for="em">E-mail address:</label>
+          <input id="em" type="email" name="custemail" placeholder="yourname@example.com" />
+          <label for="sm">Small</label>
+          <input id="sm" type="radio" name="size" value="small" />
+          <label for="md">Medium</label>
+          <input id="md" type="radio" name="size" value="medium" />
+          <label for="bc">Bacon</label>
+          <input id="bc" type="checkbox" name="topping" value="bacon" />
+          <button type="submit">Submit order</button>
+        </form>
+    </body></html>"#;
+
+fn load_order(session: &str) {
+    let bridge = get_or_create_native_bridge(session);
+    bridge
+        .lock()
+        .unwrap()
+        .load_html("http://local.test/order", ORDER_HTML);
+}
+
+/// Load a body the markdown projections cannot render, to prove a tool that
+/// reads "the content" falls through to visible text rather than reporting an
+/// empty page.
+fn load_raw(session: &str, body: &str) {
+    let bridge = get_or_create_native_bridge(session);
+    bridge
+        .lock()
+        .unwrap()
+        .load_html("http://local.test/raw", body);
+}
+
+fn read(session: &str) -> String {
+    call("browser_native_read", json!({ "sessionId": session }))
+}
+
+/// The rendered view's line for a named element. Matched per line so a state
+/// marker can be asserted independently of how many other segments (value,
+/// focus) sit between the accessible name and the marker.
+fn view_line<'a>(view: &'a str, name: &str) -> Option<&'a str> {
+    let needle = format!("\"{name}\"");
+    view.lines().find(|line| line.contains(&needle))
+}
+
+#[test]
+fn fill_label_reaches_a_control_whose_placeholder_a_real_label_shadowed() {
+    // Bug #48: the schema promises "label or placeholder", but once a <label>
+    // is bound the placeholder stops being the accessible name and the tool
+    // errored on text it had itself just listed.
+    load_order("t48-ph");
+    let out = call(
+        "browser_native_fill_label",
+        json!({ "sessionId": "t48-ph", "label": "yourname@example.com", "text": "ada@example.com" }),
+    );
+    assert!(!out.contains("no text control matching"), "{out}");
+    let form = call("browser_native_read_form", json!({ "sessionId": "t48-ph" }));
+    assert!(form.contains("ada@example.com"), "{form}");
+}
+
+#[test]
+fn a_check_lands_in_the_view_the_delta_and_the_rendered_line() {
+    // Bug #52: `checked` was nowhere in the fact base, so a check that really
+    // landed still diffed as "(no state change)".
+    load_order("t52-check");
+    let out = call(
+        "browser_native_check_label",
+        json!({ "sessionId": "t52-check", "label": "Bacon", "checked": true }),
+    );
+    assert!(!out.contains("(no state change)"), "{out}");
+    assert!(out.contains(" checked = checked"), "{out}");
+    let view = read("t52-check");
+    let line = view_line(&view, "Bacon").expect("Bacon is in the view");
+    assert!(line.contains("*checked*"), "{line}");
+
+    // Compact view carries the same state as a field.
+    let compact = call(
+        "browser_native_read",
+        json!({ "sessionId": "t52-check", "compact": true }),
+    );
+    let report: serde_json::Value =
+        serde_json::from_str(&compact).expect("compact view is valid JSON");
+    let bacon = report["elements"]
+        .as_array()
+        .expect("elements")
+        .iter()
+        .find(|e| e["name"] == "Bacon")
+        .expect("Bacon checkbox is in the view");
+    assert_eq!(bacon["checked"], true, "{compact}");
+
+    // Unchecking is visible too, so the state is not a one-way flag.
+    call(
+        "browser_native_check_label",
+        json!({ "sessionId": "t52-check", "label": "Bacon", "checked": false }),
+    );
+    let after = read("t52-check");
+    let line = view_line(&after, "Bacon").expect("Bacon is still in the view");
+    assert!(
+        !line.contains("*checked*"),
+        "uncheck must be visible: {line}"
+    );
+}
+
+#[test]
+fn clicking_a_radio_selects_it_and_clears_the_group_the_view_shows() {
+    // Bug #51: the click fired an event but never applied activation
+    // behaviour, so the report said "clicked" and the form kept its old value.
+    load_order("t51-radio");
+    call(
+        "browser_native_check_label",
+        json!({ "sessionId": "t51-radio", "label": "Small", "checked": true }),
+    );
+    let setup = read("t51-radio");
+    let line = view_line(&setup, "Small").expect("Small is in the view");
+    assert!(line.contains("*checked*"), "setup: {line}");
+
+    let out = call(
+        "browser_native_click_text",
+        json!({ "sessionId": "t51-radio", "text": "Medium" }),
+    );
+    assert!(!out.contains("(no state change)"), "{out}");
+    let view = read("t51-radio");
+    let line = view_line(&view, "Medium").expect("Medium is in the view");
+    assert!(line.contains("*checked*"), "{line}");
+    let line = view_line(&view, "Small").expect("Small is still in the view");
+    assert!(!line.contains("*checked*"), "group must clear: {line}");
+}
+
+#[test]
+fn node_ids_absent_from_the_document_are_refused() {
+    // Bug #50: `extract` on an invented node id returned an empty body under
+    // isError: false - indistinguishable from a genuinely empty element.
+    load_order("t50-node");
+    let err = call_err(
+        "browser_native_extract",
+        json!({ "sessionId": "t50-node", "nodeId": 99999, "what": "text" }),
+    );
+    assert!(err.to_string().contains("does not exist"), "{err}");
+    assert!(
+        err.to_string().contains("browser_native_read"),
+        "the error must say how to recover: {err}"
+    );
+
+    // Acting on a stale id is refused the same way instead of reporting a
+    // click that hit nothing.
+    let err = call_err(
+        "browser_native_click",
+        json!({ "sessionId": "t50-node", "nodeId": "node_99998" }),
+    );
+    assert!(err.to_string().contains("does not exist"), "{err}");
+
+    // A real id from the view still extracts.
+    let compact = call(
+        "browser_native_read",
+        json!({ "sessionId": "t50-node", "compact": true }),
+    );
+    let report: serde_json::Value = serde_json::from_str(&compact).unwrap();
+    let button = report["elements"]
+        .as_array()
+        .expect("elements")
+        .iter()
+        .find(|e| e["name"] == "Submit order")
+        .expect("submit button is in the view");
+    let out = call(
+        "browser_native_extract",
+        json!({ "sessionId": "t50-node", "nodeId": button["node_id"], "what": "text" }),
+    );
+    assert!(out.contains("Submit order"), "{out}");
+}
+
+#[test]
+fn assert_reads_a_body_that_has_no_markdown_projection() {
+    // Bug #53: assert watched the readability projection only, so it reported
+    // "content is 0 chars" about a page other tools had just quoted in full.
+    load_raw(
+        "t53-raw",
+        "{ \"args\": {}, \"form\": { \"custname\": \"Ada Lovelace\" } }",
+    );
+    let bridge = get_or_create_native_bridge("t53-raw");
+    let bridge = bridge.lock().unwrap();
+    assert!(
+        bridge.page_content_markdown().is_empty() && bridge.page_markdown().is_empty(),
+        "precondition: both markdown projections are empty"
+    );
+    assert!(
+        !bridge.distilled_content().is_empty(),
+        "distilled content survives"
+    );
+    drop(bridge);
+
+    let out = call(
+        "browser_native_assert",
+        json!({ "sessionId": "t53-raw", "text": "Ada Lovelace" }),
+    );
+    assert!(out.starts_with("assert ok:"), "{out}");
+}
+
+#[test]
+fn wait_for_reports_a_miss_as_a_failed_call() {
+    // Bug #49: "not found within 5000ms" came back under isError: false.
+    load_order("t49-waitfor");
+    let err = call_err(
+        "browser_native_wait_for",
+        json!({ "sessionId": "t49-waitfor", "name": "Nonexistent", "timeout": 10 }),
+    );
+    assert!(err.to_string().contains("not found within"), "{err}");
+
+    let err = call_err(
+        "browser_native_wait_for",
+        json!({ "sessionId": "t49-waitfor", "name": "Nonexistent", "timeout": 10, "compact": true }),
+    );
+    let report: serde_json::Value =
+        serde_json::from_str(&err.to_string()).expect("compact miss report is valid JSON");
+    assert_eq!(report["found"], false, "{err}");
+
+    // A present element is still a plain success.
+    let out = call(
+        "browser_native_wait_for",
+        json!({ "sessionId": "t49-waitfor", "name": "Submit order", "role": "button" }),
+    );
+    assert!(out.starts_with("Found element at node_"), "{out}");
+}
+
+#[test]
+fn validate_flags_a_slot_outside_its_allowed_window() {
+    // Bug #54: an order form whose delivery slot runs 11:00-21:00 reported
+    // "form is valid" for a 23:00 booking, so the agent spent the submit.
+    load_raw(
+        "t54-validate",
+        r#"<html><body><form><label for="d">Preferred delivery time:</label>
+           <input id="d" type="time" name="delivery" value="23:00" min="11:00" max="21:00" />
+           <label for="e">E-mail address:</label>
+           <input id="e" type="email" name="custemail" value="ada@example.com" />
+           </form></body></html>"#,
+    );
+    let out = call(
+        "browser_native_validate",
+        json!({ "sessionId": "t54-validate" }),
+    );
+    assert!(out.contains("rangeOverflow"), "{out}");
+    assert!(
+        out.contains("Preferred delivery time"),
+        "the report must name the offending control: {out}"
+    );
+    assert!(
+        !out.contains("E-mail address"),
+        "a well-formed email is not a finding: {out}"
+    );
+
+    let compact = call(
+        "browser_native_validate",
+        json!({ "sessionId": "t54-validate", "compact": true }),
+    );
+    let report: serde_json::Value =
+        serde_json::from_str(&compact).expect("compact validate report is valid JSON");
+    assert_eq!(report["invalid"].as_u64(), Some(1), "{compact}");
+    assert_eq!(report["controls"].as_u64(), Some(2), "{compact}");
 }

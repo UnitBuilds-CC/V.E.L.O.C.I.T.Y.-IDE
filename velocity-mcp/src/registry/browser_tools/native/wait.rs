@@ -10,14 +10,11 @@ use std::error::Error;
 
 use crate::editor::browser::native_bridge::{get_or_create_native_bridge, NativeBrowserBridge};
 
-/// Size of the distilled content projection (readability markdown, with the
-/// plain markdown as fallback) — the baseline `browser_native_wait` watches.
+/// Size of the distilled content projection — the baseline `browser_native_wait`
+/// watches. Delegates to the engine's single definition so the watcher and
+/// `assert`/`read` agree on what counts as the page's content (bug #53).
 pub(super) fn distilled_content_chars(bridge: &NativeBrowserBridge) -> usize {
-    let mut content = bridge.page_content_markdown();
-    if content.is_empty() {
-        content = bridge.page_markdown();
-    }
-    content.chars().count()
+    bridge.distilled_content().chars().count()
 }
 
 /// Whether a content-size move clears the significance threshold. Kept pure
@@ -128,10 +125,29 @@ pub(super) fn wait_on_session(
         }
     }
     let elapsed = start.elapsed().as_millis() as u64;
+    // A wait that expires is the one answer a caller must not be able to
+    // mistake for success: "timeout after 250 ms" under `isError: false` let a
+    // sweep count unobserved changes as passes (bug #49).
+    let matched = match matched {
+        Some(m) => m,
+        None => {
+            if compact {
+                return Err(serde_json::to_string_pretty(&serde_json::json!({
+                    "status": "timeout",
+                    "mode": mode,
+                    "timeoutMs": timeout_ms,
+                    "elapsedMs": elapsed,
+                }))
+                .unwrap_or_else(|e| format!("serialise wait report: {e}"))
+                .into());
+            }
+            return Err(format!("timeout after {elapsed} ms: no '{mode}' change observed").into());
+        }
+    };
     if compact {
         return Ok(Some(
             serde_json::to_string_pretty(&serde_json::json!({
-                "status": if matched.is_some() { "matched" } else { "timeout" },
+                "status": "matched",
                 "mode": mode,
                 "matched": matched,
                 "elapsedMs": elapsed,
@@ -139,8 +155,5 @@ pub(super) fn wait_on_session(
             .map_err(|e| format!("serialise wait report: {e}"))?,
         ));
     }
-    Ok(Some(match matched {
-        Some(m) => format!("matched after {elapsed} ms: {m}\n"),
-        None => format!("timeout after {elapsed} ms: no '{mode}' change observed\n"),
-    }))
+    Ok(Some(format!("matched after {elapsed} ms: {matched}\n")))
 }

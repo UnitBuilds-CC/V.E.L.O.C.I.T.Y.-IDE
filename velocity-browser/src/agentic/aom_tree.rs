@@ -1,8 +1,8 @@
 use crate::dom::DomTree;
 use crate::nda::{NdaDocument, NdaTriple};
-use crate::parser::html::NodeType;
+use crate::parser::html::{DomNode, NodeType};
 use crate::predicates::{
-    AOM_ACTIONABILITY, AOM_EXPANDED, AOM_FOCUSED, AOM_NAME, AOM_ROLE, AOM_VALUE,
+    AOM_ACTIONABILITY, AOM_CHECKED, AOM_EXPANDED, AOM_FOCUSED, AOM_NAME, AOM_ROLE, AOM_VALUE,
 };
 
 /// Recursively collect the visible text content of a node and its descendants,
@@ -24,6 +24,71 @@ fn inner_text_walk(tree: &DomTree, id: usize, out: &mut String) {
             inner_text_walk(tree, child, out);
         }
     }
+}
+
+/// Tags whose accessible name comes from their surroundings rather than from
+/// their own contents, and which therefore honour a bound `<label>`.
+fn is_form_control(tag: &str) -> bool {
+    matches!(tag, "input" | "select" | "textarea" | "button")
+}
+
+/// The text of every node referenced by `aria-labelledby`, space-joined in
+/// author order (the idref-list order is significant per ARIA).
+fn labelledby_text(tree: &DomTree, node: &DomNode) -> Option<String> {
+    let refs = node.attributes.get("aria-labelledby")?;
+    let parts: Vec<String> = refs
+        .split_whitespace()
+        .filter_map(|id| {
+            tree.nodes
+                .iter()
+                .find(|n| n.attributes.get("id").map(|s| s.as_str()) == Some(id))
+                .map(|n| collect_inner_text(tree, n.id))
+        })
+        .filter(|s| !s.is_empty())
+        .collect();
+    (!parts.is_empty()).then(|| parts.join(" "))
+}
+
+/// The `<label>` bound to a control: either `<label for="the-id">` anywhere in
+/// the document, or a `<label>` the control sits inside.
+///
+/// This was missing entirely, so the AOM reported `name="custname"` for
+/// `<label>Customer name:</label><input name="custname">`. Every tool that
+/// promises resolution "by accessible name" - the whole `browser_native_*label`
+/// family and the `role` + `name` arguments on the rest - therefore could not
+/// address a field by the words printed next to it, which is the only thing an
+/// agent reading the screen has.
+fn associated_label_text(tree: &DomTree, node: &DomNode) -> Option<String> {
+    if let Some(id) = node.attributes.get("id") {
+        for candidate in &tree.nodes {
+            if candidate.node_type != NodeType::Element || candidate.tag_name != "label" {
+                continue;
+            }
+            if candidate.attributes.get("for").map(|s| s.as_str()) == Some(id.as_str()) {
+                let text = collect_inner_text(tree, candidate.id);
+                if !text.is_empty() {
+                    return Some(text);
+                }
+            }
+        }
+    }
+    let mut current = node.parent;
+    while let Some(pid) = current {
+        let Some(parent) = tree.get_node(pid) else {
+            break;
+        };
+        if parent.tag_name == "label" {
+            // A wrapping label's own text includes the control's inner text;
+            // for input/select/textarea that is empty, so the caption comes
+            // through on its own.
+            let text = collect_inner_text(tree, pid);
+            if !text.is_empty() {
+                return Some(text);
+            }
+        }
+        current = parent.parent;
+    }
+    None
 }
 
 #[cfg(test)]
@@ -126,6 +191,7 @@ mod tests {
             actionability_score: 100,
             is_focused: false,
             is_expanded: false,
+            is_checked: false,
         }];
         let triples = AgenticAomTree::to_nda_triples(&nodes);
         // role + name + actionability = 3
@@ -144,6 +210,7 @@ mod tests {
             actionability_score: 90,
             is_focused: true,
             is_expanded: false,
+            is_checked: false,
         }];
         let triples = AgenticAomTree::to_nda_triples(&nodes);
         let focused = triples.iter().find(|t| t.predicate_id == AOM_FOCUSED);
@@ -160,6 +227,7 @@ mod tests {
             actionability_score: 90,
             is_focused: false,
             is_expanded: true,
+            is_checked: false,
         }];
         let triples = AgenticAomTree::to_nda_triples(&nodes);
         let expanded = triples.iter().find(|t| t.predicate_id == AOM_EXPANDED);
@@ -176,6 +244,7 @@ mod tests {
             actionability_score: 100,
             is_focused: false,
             is_expanded: false,
+            is_checked: false,
         }];
         let doc = AgenticAomTree::to_nda_document(&nodes);
         assert!(!doc.facts.is_empty());
@@ -286,6 +355,7 @@ mod tests {
             actionability_score: 90,
             is_focused: false,
             is_expanded: false,
+            is_checked: false,
         }];
         let triples = AgenticAomTree::to_nda_triples(&nodes);
         let val = triples.iter().find(|t| t.predicate_id == AOM_VALUE);
@@ -302,6 +372,7 @@ mod tests {
             actionability_score: 10,
             is_focused: false,
             is_expanded: false,
+            is_checked: false,
         }];
         let triples = AgenticAomTree::to_nda_triples(&nodes);
         let name_triple = triples.iter().find(|t| t.predicate_id == AOM_NAME);
@@ -322,6 +393,137 @@ mod tests {
         // button + input, div without label is skipped
         assert_eq!(aom.len(), 2);
     }
+
+    // -- Accessible-name computation (bug #45) --------------------------------
+    // Parsed from real markup, so the parent/child wiring the label lookup
+    // depends on is the same one production uses.
+
+    use crate::parser::html::HtmlParser;
+
+    fn aom_from(html: &str) -> Vec<AgenticAomNode> {
+        AgenticAomTree::build_aom_nodes(&DomTree::new(HtmlParser::parse(html)))
+    }
+
+    /// The first node with `role`, dumping the whole set if there is none.
+    fn named<'a>(nodes: &'a [AgenticAomNode], role: &str) -> &'a AgenticAomNode {
+        nodes
+            .iter()
+            .find(|n| n.role == role)
+            .unwrap_or_else(|| panic!("no node with role {role} in {nodes:?}"))
+    }
+
+    #[test]
+    fn label_for_becomes_the_accessible_name() {
+        let nodes = aom_from(
+            r#"<label for="cust">Customer name:</label><input id="cust" name="custname" type="text">"#,
+        );
+        assert_eq!(named(&nodes, "textbox").name, "Customer name:");
+    }
+
+    #[test]
+    fn wrapping_label_names_the_control_inside_it() {
+        let nodes = aom_from(r#"<label>E-mail<input type="email" name="custemail"></label>"#);
+        assert_eq!(named(&nodes, "textbox").name, "E-mail");
+    }
+
+    #[test]
+    fn bound_label_beats_placeholder() {
+        let nodes =
+            aom_from(r#"<label for="a">Visible caption</label><input id="a" placeholder="ph">"#);
+        assert_eq!(named(&nodes, "textbox").name, "Visible caption");
+    }
+
+    #[test]
+    fn aria_label_beats_the_bound_label() {
+        let nodes =
+            aom_from(r#"<label for="b">Ignored</label><input id="b" aria-label="Explicit">"#);
+        assert_eq!(named(&nodes, "textbox").name, "Explicit");
+    }
+
+    #[test]
+    fn aria_labelledby_wins_and_joins_its_idref_list() {
+        let nodes = aom_from(
+            r#"<span id="first">Preferred</span><span id="second">delivery time</span><input type="text" aria-labelledby="first second" name="delivery">"#,
+        );
+        assert_eq!(named(&nodes, "textbox").name, "Preferred delivery time");
+    }
+
+    #[test]
+    fn unlabelled_control_still_resolves_by_name_attribute() {
+        // The fallback chain has to survive: agents drive headless pages that
+        // carry no labels at all by their `name` attribute.
+        let nodes = aom_from(r#"<input type="text" name="custtel">"#);
+        assert_eq!(named(&nodes, "textbox").name, "custtel");
+    }
+
+    #[test]
+    fn labelledby_promotes_an_otherwise_generic_container() {
+        let nodes = aom_from(r#"<span id="cap">Sidebar</span><div aria-labelledby="cap"></div>"#);
+        let has_named_region = nodes
+            .iter()
+            .any(|n| n.role == "generic" && n.name == "Sidebar");
+        assert!(has_named_region, "got {nodes:?}");
+    }
+
+    // -- Selected state (bug #52) ------------------------------------------
+    // A checkbox that a tool really checked used to produce an empty delta,
+    // because nothing in the AOM could carry "checked".
+
+    #[test]
+    fn checked_attribute_reaches_the_aom_node() {
+        let nodes = aom_from(
+            r#"<input type="checkbox" name="t" value="bacon" checked="checked"><input type="checkbox" name="t" value="onion">"#,
+        );
+        let boxes: Vec<&AgenticAomNode> = nodes.iter().filter(|n| n.role == "checkbox").collect();
+        assert_eq!(boxes.len(), 2, "got {nodes:?}");
+        assert!(boxes[0].is_checked, "the checked box must report it");
+        assert!(!boxes[1].is_checked, "the empty box must not");
+    }
+
+    #[test]
+    fn valueless_boolean_attribute_is_still_a_checked_box() {
+        // Real markup writes `<input checked>` with no value at all; if the
+        // parser drops it every selected control looks unselected.
+        let nodes = aom_from(r#"<input type="radio" name="size" value="large" checked>"#);
+        assert!(named(&nodes, "radio").is_checked);
+    }
+
+    #[test]
+    fn checked_survives_into_the_readable_fact_and_triple_streams() {
+        let nodes = aom_from(r#"<input type="checkbox" name="t" value="bacon" checked>"#);
+        let box_node = named(&nodes, "checkbox");
+        assert_eq!(
+            box_node.value, "bacon",
+            "value stays the submission value; checked is its own fact"
+        );
+        let doc = AgenticAomTree::to_nda_document(&nodes);
+        let checked: Vec<(String, String)> = doc
+            .readable_facts()
+            .iter()
+            .filter(|(_, p, _)| *p == AOM_CHECKED)
+            .map(|(s, _, o)| (s.clone(), o.clone()))
+            .collect();
+        assert_eq!(
+            checked,
+            vec![(box_node.id.clone(), "checked".to_string())],
+            "document facts: {:?}",
+            doc.facts
+        );
+        let triples = AgenticAomTree::to_nda_triples(&nodes);
+        assert!(
+            triples.iter().any(|t| t.predicate_id == AOM_CHECKED
+                && t.object_hash == crate::nda::hash_str("checked")),
+            "checked triple missing"
+        );
+    }
+
+    #[test]
+    fn unchecked_control_emits_no_checked_fact() {
+        // Otherwise a delta would show a spurious removal on every page.
+        let nodes = aom_from(r#"<input type="checkbox" name="t" value="bacon">"#);
+        let doc = AgenticAomTree::to_nda_document(&nodes);
+        assert!(!doc.facts.iter().any(|f| f.predicate == AOM_CHECKED));
+    }
 }
 #[derive(Debug, Clone)]
 pub struct AgenticAomNode {
@@ -332,6 +534,9 @@ pub struct AgenticAomNode {
     pub actionability_score: u8,
     pub is_focused: bool,
     pub is_expanded: bool,
+    /// Checkbox/radio currently checked. Kept out of `value` (which carries
+    /// the control's submission value) so both facts survive independently.
+    pub is_checked: bool,
 }
 
 pub struct AgenticAomTree;
@@ -375,6 +580,7 @@ impl AgenticAomTree {
 
             if role == "generic"
                 && !node.attributes.contains_key("aria-label")
+                && !node.attributes.contains_key("aria-labelledby")
                 && !node.attributes.contains_key("id")
             {
                 continue;
@@ -385,20 +591,48 @@ impl AgenticAomTree {
             // what an agent reads on screen). aria-label still wins overall.
             let content_named = matches!(role, "button" | "link");
             let attr_name = if content_named {
-                node.attributes
-                    .get("aria-label")
-                    .cloned()
-                    .or_else(|| node.attributes.get("title").cloned())
-                    .filter(|s| !s.is_empty())
+                labelledby_text(tree, node)
+                    .or_else(|| {
+                        node.attributes
+                            .get("aria-label")
+                            .cloned()
+                            .filter(|s| !s.is_empty())
+                    })
+                    .or_else(|| {
+                        node.attributes
+                            .get("title")
+                            .cloned()
+                            .filter(|s| !s.is_empty())
+                    })
                     .or_else(|| Some(collect_inner_text(tree, node.id)).filter(|s| !s.is_empty()))
                     .or_else(|| node.attributes.get("name").cloned())
                     .or_else(|| node.attributes.get("id").cloned())
                     .unwrap_or_default()
             } else {
-                node.attributes
-                    .get("aria-label")
-                    .cloned()
-                    .or_else(|| node.attributes.get("placeholder").cloned())
+                // HTML-AAM order: aria-labelledby, then aria-label, then the
+                // bound <label>, then the fallbacks the engine already used.
+                // `name`/`id` stay in the chain so unlabelled controls keep
+                // resolving by the same string they used to.
+                labelledby_text(tree, node)
+                    .or_else(|| {
+                        node.attributes
+                            .get("aria-label")
+                            .cloned()
+                            .filter(|s| !s.is_empty())
+                    })
+                    .or_else(|| {
+                        if is_form_control(&node.tag_name) {
+                            associated_label_text(tree, node)
+                        } else {
+                            None
+                        }
+                    })
+                    .or_else(|| {
+                        node.attributes
+                            .get("placeholder")
+                            .cloned()
+                            .filter(|s| !s.is_empty())
+                    })
                     .or_else(|| node.attributes.get("name").cloned())
                     .or_else(|| node.attributes.get("id").cloned())
                     .or_else(|| node.attributes.get("title").cloned())
@@ -417,6 +651,11 @@ impl AgenticAomTree {
                 .get("aria-expanded")
                 .map(|s| s == "true")
                 .unwrap_or(false);
+            // Selected state used to be invisible here, so `read`, the NDA
+            // export and every action delta could not tell a checked box from
+            // an empty one (bug #52).
+            let is_checked =
+                matches!(role, "checkbox" | "radio") && node.attributes.contains_key("checked");
 
             let actionability_score = match role {
                 "button" | "link" => 100,
@@ -434,6 +673,7 @@ impl AgenticAomTree {
                 actionability_score,
                 is_focused,
                 is_expanded,
+                is_checked,
             });
         }
 
@@ -461,6 +701,9 @@ impl AgenticAomTree {
             if node.is_expanded {
                 triples.push(NdaTriple::new(&node.id, AOM_EXPANDED, "expanded"));
             }
+            if node.is_checked {
+                triples.push(NdaTriple::new(&node.id, AOM_CHECKED, "checked"));
+            }
         }
         triples
     }
@@ -484,6 +727,9 @@ impl AgenticAomTree {
             }
             if node.is_expanded {
                 doc.push_str(&node.id, AOM_EXPANDED, "expanded");
+            }
+            if node.is_checked {
+                doc.push_str(&node.id, AOM_CHECKED, "checked");
             }
         }
         doc

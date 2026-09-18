@@ -153,6 +153,7 @@ pub(super) fn handle_inspect_tool(
                         "value": e.value,
                         "actionability": e.actionability,
                         "focused": e.is_focused,
+                        "checked": e.is_checked,
                     })
                 })
                 .collect();
@@ -176,19 +177,7 @@ pub(super) fn handle_inspect_tool(
                 text
             );
             for e in &hits {
-                out.push_str(&format!(
-                    "  [{}] {} \"{}\"{}{} (act {})\n",
-                    e.node_id,
-                    e.role,
-                    e.name,
-                    if e.value.is_empty() {
-                        String::new()
-                    } else {
-                        format!(" value=\"{}\"", e.value)
-                    },
-                    if e.is_focused { " *focused*" } else { "" },
-                    e.actionability,
-                ));
+                out.push_str(&element_line(e));
             }
             if matched > hits.len() {
                 out.push_str(&format!(

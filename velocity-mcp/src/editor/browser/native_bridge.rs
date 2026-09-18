@@ -29,6 +29,10 @@ pub struct NativeAomElement {
     pub actionability: u8,
     pub is_focused: bool,
     pub is_expanded: bool,
+    /// Checkbox/radio currently checked. `value` carries the submission value,
+    /// so without this field the view could not tell a ticked box from an
+    /// empty one (bug #52).
+    pub is_checked: bool,
 }
 
 /// A readable snapshot of the current page: where we are plus every actionable
@@ -388,6 +392,22 @@ impl NativeBrowserBridge {
         self.active_session.page_content_markdown()
     }
 
+    /// The page's content as one agent should read it: readability markdown,
+    /// falling back to full markdown, then to visible text. Every tool that
+    /// reasons about "what does this page say" has to agree on a single
+    /// definition, or a non-HTML body silently looks empty to half of them
+    /// (bug #53).
+    pub fn distilled_content(&self) -> String {
+        self.active_session.distilled_content()
+    }
+
+    /// Whether a node id exists in the live document. Tools that accept a
+    /// `nodeId` from the agent must check it: an invented or stale id used to
+    /// produce a well-formed empty answer (bug #50).
+    pub fn has_node(&self, node_id: usize) -> bool {
+        self.active_session.has_node(node_id)
+    }
+
     // -- Screencast -----------------------------------------------------------
     // Structural screencast: each frame records the page's shape (viewport +
     // AOM element count + content hash) instead of pixels, giving the agent a
@@ -551,6 +571,7 @@ impl NativeBrowserBridge {
                     actionability: aom.actionability_score,
                     is_focused: aom.is_focused,
                     is_expanded: aom.is_expanded,
+                    is_checked: aom.is_checked,
                 });
             }
         }
@@ -786,8 +807,8 @@ impl NativeBrowserBridge {
     // spot patterns like "clicking this keeps doing nothing".
 
     /// Score a native action from its observed result and record it in the
-    /// outcome history. All signals derive from the NDA delta and status
-    /// string -- nothing is self-reported.
+    /// outcome history. The failure signal is the engine's typed `executed`
+    /// flag, not a guess at what the status prose says.
     pub fn record_outcome(
         &mut self,
         action: &str,
@@ -796,7 +817,6 @@ impl NativeBrowserBridge {
         result: &AgentActionResult,
     ) {
         let kind = ActionKind::from_str(action);
-        let status = result.status.to_lowercase();
         let signals = OutcomeSignals {
             dom_changed: !result.delta.is_empty(),
             url_changed: result
@@ -804,9 +824,10 @@ impl NativeBrowserBridge {
                 .changed
                 .iter()
                 .any(|c| c.predicate == velocity_browser::predicates::SESSION_URL),
-            error_thrown: status.starts_with("no ")
-                || status.contains("failed")
-                || status.contains("error"),
+            // Bug #43: this sniffed `status.starts_with("no ")`, which matched
+            // by luck on "no element matching" and missed "node_7 not found"
+            // and "hovered node_7" outright.
+            error_thrown: !result.executed,
             target_removed: false,
             content_added: result.delta.added.len() > result.delta.removed.len(),
             network_request_fired: false,
@@ -870,6 +891,13 @@ impl NativeBrowserBridge {
             .and_then(|n| n.attributes.get("id"))
             .map(|id| format!("#{}", id))
             .unwrap_or_else(|| format!("node_{}", node_id));
+        let exists = self
+            .active_session
+            .dom
+            .dom_tree
+            .as_ref()
+            .map(|tree| tree.get_node(node_id).is_some())
+            .unwrap_or(false);
         if let Some(tree) = &mut self.active_session.dom.dom_tree {
             if tree.get_node(node_id).is_some() {
                 let event = velocity_browser::PointerEvent {
@@ -897,21 +925,30 @@ impl NativeBrowserBridge {
             }
         }
         let after = self.active_session.capture_state_document();
-        let status = format!("hovered node_{}", node_id);
+        // Bug #43: this used to answer "hovered node_99999" for a node that was
+        // never there, because the dispatch guard below the `is_some()` check
+        // left no trace of having skipped it.
+        let status = if exists {
+            format!("hovered node_{}", node_id)
+        } else {
+            format!("node_{} not found", node_id)
+        };
         AgentActionResult::new(status, velocity_browser::agent_api::diff(&before, &after))
+            .with_executed(exists)
     }
 
-    /// Press a key and fire keyboard events.
+    /// Press a key against the focused element, firing the full
+    /// keydown/keypress/keyup sequence through the session's keyboard path.
     pub fn agent_press_key(&mut self, key: &str) -> AgentActionResult {
-        let before = self.active_session.capture_state_document();
         self.active_session
             .trace_collector
             .record_console("info", &format!("Key press: {}", key));
-        let after = self.active_session.capture_state_document();
-        AgentActionResult::new(
-            format!("pressed key '{}'", key),
-            velocity_browser::agent_api::diff(&before, &after),
-        )
+        // Bug #44: this used to be a trace line masquerading as an input event.
+        // It recorded "pressed key 'Tab'", fired nothing and changed nothing,
+        // while `browser_native_press` - the same operation, one letter
+        // shorter in its name - did the real work. Delegating means the
+        // advertised "fire keydown/keypress/keyup events" is now true.
+        self.active_session.agent_press(key)
     }
 
     /// List recent network requests.
@@ -1027,7 +1064,7 @@ mod native_bridge_tests {
         bridge.load_html(
             "http://local.test/form",
             r#"<html><head><title>Login</title></head><body>
-                <form>
+                <form action="data:text/html,%3Ch1%3EWelcome%20agent007%3C%2Fh1%3E">
                   <input type="text" name="username" aria-label="Username" />
                   <button type="submit" aria-label="Sign in">Sign in</button>
                 </form>
@@ -1062,7 +1099,45 @@ mod native_bridge_tests {
             .resolve_target(Some("button"), "Sign in")
             .expect("submit button resolvable by role+name");
         let submit_result = bridge.agent_submit(submit);
-        assert!(submit_result.status.contains("submitted"));
+        // The form action is a data: URL so the post lands without a network:
+        // asserting on the prose "submitted" used to pass even when the
+        // request went nowhere (bug #43 - the status lied).
+        assert!(
+            submit_result.executed,
+            "submitting the enclosing form should land: {}",
+            submit_result.status
+        );
+        assert!(
+            submit_result.status.contains("submitted node_"),
+            "got {}",
+            submit_result.status
+        );
+        assert!(
+            bridge.page_text().contains("Welcome agent007"),
+            "the submitted response should replace the page: {}",
+            bridge.page_text()
+        );
+    }
+
+    /// A submit that cannot land has to report so, and report it as not
+    /// executed - the guard every `browser_native_*` action now leans on.
+    #[test]
+    fn submit_outside_a_form_is_reported_as_not_executed() {
+        let mut bridge = NativeBrowserBridge::new("test-session-noframe");
+        bridge.load_html(
+            "http://local.test/lone",
+            r#"<html><body><button id="b">Sign in</button></body></html>"#,
+        );
+        let button = bridge
+            .resolve_target(Some("button"), "Sign in")
+            .expect("lone button resolvable");
+        let result = bridge.agent_submit(button);
+        assert!(!result.executed, "nothing was submitted: {}", result.status);
+        assert!(
+            result.status.contains("not inside a form"),
+            "got {}",
+            result.status
+        );
     }
 
     /// End-to-end proof that the native engine fetches over real HTTPS and

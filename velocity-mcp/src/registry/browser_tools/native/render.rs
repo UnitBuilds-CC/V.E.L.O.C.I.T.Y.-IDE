@@ -7,7 +7,9 @@
 use serde::Serialize;
 use serde_json::Value;
 
-use crate::editor::browser::native_bridge::{NativeBrowserBridge, NativeBrowserView};
+use crate::editor::browser::native_bridge::{
+    NativeAomElement, NativeBrowserBridge, NativeBrowserView,
+};
 use velocity_browser::NdaDelta;
 
 #[derive(Serialize)]
@@ -20,6 +22,7 @@ pub(super) struct ElementReport {
     actionability: u8,
     focused: bool,
     expanded: bool,
+    checked: bool,
 }
 
 #[derive(Serialize)]
@@ -86,6 +89,7 @@ pub(super) fn view_report(view: &NativeBrowserView) -> ViewReport {
                 actionability: e.actionability,
                 focused: e.is_focused,
                 expanded: e.is_expanded,
+                checked: e.is_checked,
             })
             .collect(),
     }
@@ -129,21 +133,32 @@ pub(super) fn render_view(view: &NativeBrowserView) -> String {
     out.push_str(&format!("URL: {}\nTitle: {}\n", view.url, view.title));
     out.push_str(&format!("Actionable elements: {}\n", view.elements.len()));
     for e in &view.elements {
-        out.push_str(&format!(
-            "  [{}] {} \"{}\"{}{} (act {})\n",
-            e.node_id,
-            e.role,
-            e.name,
-            if e.value.is_empty() {
-                String::new()
-            } else {
-                format!(" value=\"{}\"", e.value)
-            },
-            if e.is_focused { " *focused*" } else { "" },
-            e.actionability,
-        ));
+        out.push_str(&element_line(e));
     }
     out
+}
+
+/// One AOM element as a single readable line. Shared by the element view and
+/// the `find` tool so a state marker can never show up in one listing and go
+/// missing from the other.
+pub(super) fn element_line(e: &NativeAomElement) -> String {
+    format!(
+        "  [{}] {} \"{}\"{}{}{} (act {})\n",
+        e.node_id,
+        e.role,
+        e.name,
+        if e.value.is_empty() {
+            String::new()
+        } else {
+            format!(" value=\"{}\"", e.value)
+        },
+        if e.is_focused { " *focused*" } else { "" },
+        // A ticked box has to be visible in the view: before this, the
+        // rendered state of a checked radio was byte-identical to an
+        // unchecked one (bug #52).
+        if e.is_checked { " *checked*" } else { "" },
+        e.actionability,
+    )
 }
 
 /// Diff lines are summaries, not state dumps: long fact values (like the
