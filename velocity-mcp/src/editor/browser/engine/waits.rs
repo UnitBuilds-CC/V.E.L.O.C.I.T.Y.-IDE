@@ -538,7 +538,35 @@ pub fn apply_fill_field(
     if matched {
         Ok(())
     } else {
-        Err(format!("workflow fill target not found: '{}'", field_name))
+        // A miss is nearly always a caller who guessed a label the page does
+        // not use, so name the fields that are actually there. Also drop the
+        // "workflow" prefix: this same path serves browser_session_fill, where
+        // no workflow is involved and the word just misdirects the reader.
+        let mut available: Vec<String> = Vec::new();
+        for form in &state.snapshot.forms {
+            for field in &form.fields {
+                if available.len() >= 8 {
+                    break;
+                }
+                available.push(if field.label.eq_ignore_ascii_case(&field.name) {
+                    format!("{} [{}]", field.name, field.input_type)
+                } else {
+                    format!("{} \"{}\" [{}]", field.name, field.label, field.input_type)
+                });
+            }
+        }
+        if available.is_empty() {
+            Err(format!(
+                "no field matches '{}': this page has no fillable fields",
+                field_name
+            ))
+        } else {
+            Err(format!(
+                "no field matches '{}': the page offers {}",
+                field_name,
+                available.join(", ")
+            ))
+        }
     }
 }
 

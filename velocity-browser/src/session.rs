@@ -2377,6 +2377,23 @@ fn synthetic_document(url: &str) -> Synthetic {
     Synthetic::Network
 }
 
+/// Non-transport URL resolution for callers that drive their own HTTP stack.
+///
+/// The MCP persisted-session engine fetches with `ureq`, which has no notion
+/// of `data:` or `about:` and answers them as a URL with an empty host. Rather
+/// than let a second copy of the rule drift into that crate, it calls this.
+///
+/// * `Some(Ok(html))` - the URL names its own document; no network needed.
+/// * `Some(Err(msg))` - a recognised synthetic scheme with nothing renderable.
+/// * `None`           - a transport scheme; the caller should fetch it.
+pub fn resolve_synthetic_url(url: &str) -> Option<Result<String, String>> {
+    match synthetic_document(url) {
+        Synthetic::Document(html) => Some(Ok(html)),
+        Synthetic::Unsupported(err) => Some(Err(err.to_string())),
+        Synthetic::Network => None,
+    }
+}
+
 /// Where a form submission ended up, so the status line can say precisely
 /// whether a request went out at all.
 enum SubmitOutcome {
