@@ -854,8 +854,17 @@ mod tests {
         let pid = result.pid.expect("launched pid");
 
         assert!(ProcessManager::kill(pid), "kill should succeed");
-        std::thread::sleep(Duration::from_millis(400));
-        let status = ProcessManager::status(pid);
+        // A terminated child's process object is signalled asynchronously, and
+        // with the whole suite in flight a fixed sleep was not a guarantee: this
+        // assertion is about the verdict the probes reach, not about how fast
+        // Windows releases the handle. Poll to a bound instead of gambling on a
+        // single delay.
+        let deadline = std::time::Instant::now() + Duration::from_millis(4_000);
+        let mut status = ProcessManager::status(pid);
+        while status.running && std::time::Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(25));
+            status = ProcessManager::status(pid);
+        }
         assert!(!status.running, "exited child reported running");
         // Once every handle to the process object is released the pid can no
         // longer be opened at all, so absence from the snapshot is what proves
