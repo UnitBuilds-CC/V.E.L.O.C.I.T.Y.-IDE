@@ -93,8 +93,7 @@ pub fn export_markdown_reported(
     for page in &model.symbol_pages {
         let path = dir.join("symbols").join(format!("{}.md", page.slug));
         let md = render_page_markdown(page, model);
-        fs::write(&path, &md)
-            .with_context(|| format!("writing symbol page {}", path.display()))?;
+        fs::write(&path, &md).with_context(|| format!("writing symbol page {}", path.display()))?;
         total_bytes += md.len();
         count += 1;
     }
@@ -518,8 +517,12 @@ pub fn auto_link(text: &str, model: &WikiModel) -> String {
 /// Try to create a wiki link for the given backtick content.
 fn try_auto_link(content: &str, model: &WikiModel) -> Option<String> {
     // Skip if it looks like code (contains operators, etc.)
-    if content.contains("fn ") || content.contains("let ") || content.contains("mut ")
-        || content.contains("->") || content.contains("=>") || content.contains('|')
+    if content.contains("fn ")
+        || content.contains("let ")
+        || content.contains("mut ")
+        || content.contains("->")
+        || content.contains("=>")
+        || content.contains('|')
     {
         return None;
     }
@@ -567,32 +570,36 @@ fn try_auto_link(content: &str, model: &WikiModel) -> Option<String> {
 /// Uses PageRank scores to determine importance.
 pub fn render_reading_guide(model: &WikiModel, scores: &super::pagerank::PageRankScores) -> String {
     let mut out = String::new();
-    
+
     out.push_str("# Reading Guide\n\n");
     out.push_str("_A suggested order for reading through the wiki, based on code importance._\n\n");
     out.push_str(&generated_header(model));
     out.push('\n');
-    
+
     // Get top files by PageRank score
     let file_titles: Vec<&str> = model.file_pages.iter().map(|p| p.title.as_str()).collect();
     let reading_order = scores.reading_order(&file_titles);
-    
+
     if reading_order.is_empty() {
         out.push_str("_No files to display in reading order._\n");
         return out;
     }
-    
+
     out.push_str("## Start Here\n\n");
     out.push_str("These are the most important files to understand the codebase:\n\n");
-    
-    let top_count = (reading_order.len() / 10).max(3).min(10);
+
+    let top_count = (reading_order.len() / 10).clamp(3, 10);
     for (i, title) in reading_order.iter().take(top_count).enumerate() {
         if let Some(page) = model.file_pages.iter().find(|p| p.title == *title) {
             let _score = scores.get(title);
             let module = title.split('/').next().unwrap_or("root");
-            let module = if module.contains('.') || module.is_empty() { "root" } else { module };
+            let module = if module.contains('.') || module.is_empty() {
+                "root"
+            } else {
+                module
+            };
             let link = format!("files/{}/{}.md", slugify_module(module), page.slug);
-            
+
             out.push_str(&format!(
                 "{}. **[{}]({})** — {}\n",
                 i + 1,
@@ -600,15 +607,16 @@ pub fn render_reading_guide(model: &WikiModel, scores: &super::pagerank::PageRan
                 link,
                 page.summary
             ));
-            
+
             // Show why this is important
-            let defines_count = page.relationships
+            let defines_count = page
+                .relationships
                 .iter()
                 .find(|(l, _)| l == "Defines")
                 .map(|(_, t)| t.len())
                 .unwrap_or(0);
             let called_by_count = page.called_by.len();
-            
+
             if defines_count > 0 || called_by_count > 0 {
                 out.push_str(&format!(
                     "   _{} symbol(s) defined, referenced by {} file(s)_\n",
@@ -618,20 +626,24 @@ pub fn render_reading_guide(model: &WikiModel, scores: &super::pagerank::PageRan
             out.push('\n');
         }
     }
-    
+
     // Full reading order
     out.push_str("## Complete Reading Order\n\n");
     out.push_str("Full list of files in suggested reading order:\n\n");
-    
+
     for (i, title) in reading_order.iter().enumerate() {
         if let Some(page) = model.file_pages.iter().find(|p| p.title == *title) {
             let module = title.split('/').next().unwrap_or("root");
-            let module = if module.contains('.') || module.is_empty() { "root" } else { module };
+            let module = if module.contains('.') || module.is_empty() {
+                "root"
+            } else {
+                module
+            };
             let link = format!("files/{}/{}.md", slugify_module(module), page.slug);
             out.push_str(&format!("{}. [{}]({})\n", i + 1, title, link));
         }
     }
-    
+
     out
 }
 
@@ -642,22 +654,22 @@ pub fn render_reading_guide(model: &WikiModel, scores: &super::pagerank::PageRan
 pub fn export_github_pages(model: &WikiModel, dir: &Path) -> Result<usize> {
     // First export as regular markdown
     let count = export_markdown(model, dir)?;
-    
+
     // Create docsify index.html
     let index_html = render_docsify_index(model);
     fs::write(dir.join("index.html"), index_html)?;
-    
+
     // Create .nojekyll to disable Jekyll processing
     fs::write(dir.join(".nojekyll"), "")?;
-    
+
     // Create _sidebar.md for docsify navigation
     let sidebar = render_docsify_sidebar(model);
     fs::write(dir.join("_sidebar.md"), sidebar)?;
-    
+
     // Create _coverpage.md for docsify
     let coverpage = render_docsify_coverpage(model);
     fs::write(dir.join("_coverpage.md"), coverpage)?;
-    
+
     Ok(count + 4) // markdown files + index.html + .nojekyll + _sidebar.md + _coverpage.md
 }
 
@@ -723,21 +735,19 @@ fn render_docsify_index(model: &WikiModel) -> String {
     </script>
 </body>
 </html>"#,
-        model.stats_summary,
-        model.stats_summary,
-        model.stats_summary
+        model.stats_summary, model.stats_summary, model.stats_summary
     )
 }
 
 /// Render the docsify sidebar navigation.
 fn render_docsify_sidebar(model: &WikiModel) -> String {
     let mut out = String::new();
-    
+
     out.push_str("- **Home**\n");
     out.push_str("  - [Overview](index.md)\n");
     out.push_str("  - [Symbol Index](symbol_index.md)\n");
     out.push_str("  - [Dependency Graph](graph.md)\n\n");
-    
+
     if !model.file_pages.is_empty() {
         out.push_str("- **Files**\n");
         let modules = group_by_module(&model.file_pages);
@@ -747,7 +757,7 @@ fn render_docsify_sidebar(model: &WikiModel) -> String {
             for page in pages.iter().take(10) {
                 out.push_str(&format!(
                     "    - [{}](files/{}/{}.md)\n",
-                    page.title.split('/').last().unwrap_or(&page.title),
+                    page.title.split('/').next_back().unwrap_or(&page.title),
                     module_slug,
                     page.slug
                 ));
@@ -758,44 +768,41 @@ fn render_docsify_sidebar(model: &WikiModel) -> String {
         }
         out.push('\n');
     }
-    
+
     if !model.symbol_pages.is_empty() {
         out.push_str("- **Symbols**\n");
         for page in model.symbol_pages.iter().take(20) {
             out.push_str(&format!("  - [{}](symbols/{}.md)\n", page.title, page.slug));
         }
         if model.symbol_pages.len() > 20 {
-            out.push_str(&format!("  - _... and {} more_\n", model.symbol_pages.len() - 20));
+            out.push_str(&format!(
+                "  - _... and {} more_\n",
+                model.symbol_pages.len() - 20
+            ));
         }
     }
-    
+
     out
 }
 
 /// Render the docsify cover page.
 fn render_docsify_coverpage(model: &WikiModel) -> String {
     let mut out = String::new();
-    
+
     out.push_str("# Project Wiki\n\n");
     out.push_str(&format!(
         "> Auto-generated documentation for {}\n\n",
         model.stats_summary
     ));
-    out.push_str(&format!(
-        "- **{}** file pages\n",
-        model.file_pages.len()
-    ));
+    out.push_str(&format!("- **{}** file pages\n", model.file_pages.len()));
     out.push_str(&format!(
         "- **{}** symbol pages\n",
         model.symbol_pages.len()
     ));
-    out.push_str(&format!(
-        "- **{}** total pages\n\n",
-        model.total_pages()
-    ));
+    out.push_str(&format!("- **{}** total pages\n\n", model.total_pages()));
     out.push_str("[Get Started](index.md)\n\n");
     out.push_str(&format!("_Generated at {}_\n", model.generated_at));
-    
+
     out
 }
 
@@ -827,13 +834,13 @@ impl CoverageReport {
         let documented_files = model.file_pages.len();
         let excluded_files = excluded.len();
         let indexed_files = documented_files;
-        
+
         let coverage_percent = if total_files > 0 {
             (documented_files as f64 / total_files as f64) * 100.0
         } else {
             0.0
         };
-        
+
         CoverageReport {
             total_files,
             indexed_files,
@@ -844,31 +851,37 @@ impl CoverageReport {
             excluded_paths: excluded.iter().map(|s| s.to_string()).collect(),
         }
     }
-    
+
     /// Render the coverage report as markdown.
     pub fn render_markdown(&self) -> String {
         let mut out = String::new();
-        
+
         out.push_str("## Coverage Report\n\n");
-        out.push_str(&format!("**{:.1}%** of workspace files are documented.\n\n", self.coverage_percent));
-        
+        out.push_str(&format!(
+            "**{:.1}%** of workspace files are documented.\n\n",
+            self.coverage_percent
+        ));
+
         out.push_str("| Metric | Count |\n");
         out.push_str("|--------|-------|\n");
         out.push_str(&format!("| Total files | {} |\n", self.total_files));
         out.push_str(&format!("| Documented | {} |\n", self.documented_files));
         out.push_str(&format!("| Excluded | {} |\n", self.excluded_files));
         out.push_str(&format!("| Oversized | {} |\n\n", self.oversized_files));
-        
+
         if !self.excluded_paths.is_empty() {
             out.push_str("### Excluded Files\n\n");
             for path in self.excluded_paths.iter().take(20) {
                 out.push_str(&format!("- `{}`\n", path));
             }
             if self.excluded_paths.len() > 20 {
-                out.push_str(&format!("\n_... and {} more_\n", self.excluded_paths.len() - 20));
+                out.push_str(&format!(
+                    "\n_... and {} more_\n",
+                    self.excluded_paths.len() - 20
+                ));
             }
         }
-        
+
         out
     }
 }
@@ -1764,7 +1777,7 @@ mod tests {
         // dir component (which would write straight into files/).
         assert_eq!(slugify_module(""), "root");
     }
-    
+
     #[test]
     fn slugify_module_all_special_chars() {
         let result = slugify_module("!!!@@@");

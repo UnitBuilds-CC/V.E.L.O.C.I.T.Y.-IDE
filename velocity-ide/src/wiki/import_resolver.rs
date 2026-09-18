@@ -50,14 +50,30 @@ impl ImportResolver {
         };
 
         // Register default strategies
-        resolver.strategies.insert(SourceLanguage::Rust, ResolutionStrategy::Rust);
-        resolver.strategies.insert(SourceLanguage::Python, ResolutionStrategy::Python);
-        resolver.strategies.insert(SourceLanguage::JavaScript, ResolutionStrategy::JavaScript);
-        resolver.strategies.insert(SourceLanguage::TypeScript, ResolutionStrategy::JavaScript);
-        resolver.strategies.insert(SourceLanguage::Go, ResolutionStrategy::Go);
-        resolver.strategies.insert(SourceLanguage::Java, ResolutionStrategy::Java);
-        resolver.strategies.insert(SourceLanguage::C, ResolutionStrategy::CFamily);
-        resolver.strategies.insert(SourceLanguage::Cpp, ResolutionStrategy::CFamily);
+        resolver
+            .strategies
+            .insert(SourceLanguage::Rust, ResolutionStrategy::Rust);
+        resolver
+            .strategies
+            .insert(SourceLanguage::Python, ResolutionStrategy::Python);
+        resolver
+            .strategies
+            .insert(SourceLanguage::JavaScript, ResolutionStrategy::JavaScript);
+        resolver
+            .strategies
+            .insert(SourceLanguage::TypeScript, ResolutionStrategy::JavaScript);
+        resolver
+            .strategies
+            .insert(SourceLanguage::Go, ResolutionStrategy::Go);
+        resolver
+            .strategies
+            .insert(SourceLanguage::Java, ResolutionStrategy::Java);
+        resolver
+            .strategies
+            .insert(SourceLanguage::C, ResolutionStrategy::CFamily);
+        resolver
+            .strategies
+            .insert(SourceLanguage::Cpp, ResolutionStrategy::CFamily);
 
         // Scan workspace for modules
         resolver.scan_workspace(workspace_root);
@@ -78,13 +94,18 @@ impl ImportResolver {
         for entry in entries.flatten() {
             let path = entry.path();
             if path.is_dir() {
-                let name = path.file_name()
+                let name = path
+                    .file_name()
                     .and_then(|n| n.to_str())
                     .unwrap_or("")
                     .to_string();
                 // Skip hidden and common non-source directories
-                if name.starts_with('.') || name == "target" || name == "node_modules"
-                    || name == "dist" || name == "build" || name == "__pycache__"
+                if name.starts_with('.')
+                    || name == "target"
+                    || name == "node_modules"
+                    || name == "dist"
+                    || name == "build"
+                    || name == "__pycache__"
                 {
                     continue;
                 }
@@ -94,7 +115,8 @@ impl ImportResolver {
                     self.package_map.insert(pkg_name.clone(), path.clone());
                     // Also register just the directory name
                     if let Some(dir_name) = path.file_name().and_then(|n| n.to_str()) {
-                        self.package_map.entry(dir_name.to_string())
+                        self.package_map
+                            .entry(dir_name.to_string())
                             .or_insert(path.clone());
                     }
                 }
@@ -106,8 +128,7 @@ impl ImportResolver {
                         self.module_map.insert(stem.to_string(), rel.to_path_buf());
                         // Register by full relative path without extension
                         let path_no_ext = rel.with_extension("");
-                        let module_path = path_no_ext.to_string_lossy()
-                            .replace(['/', '\\'], ".");
+                        let module_path = path_no_ext.to_string_lossy().replace(['/', '\\'], ".");
                         self.module_map.insert(module_path, rel.to_path_buf());
                     }
                 }
@@ -150,7 +171,11 @@ impl ImportResolver {
         }
         // Try with .rs extension
         let with_ext = format!("{}.rs", file_path);
-        if let Some(resolved) = self.module_map.values().find(|p| p.to_string_lossy() == with_ext) {
+        if let Some(resolved) = self
+            .module_map
+            .values()
+            .find(|p| p.to_string_lossy() == with_ext)
+        {
             return Some(resolved.clone());
         }
         // Try just the last component (module name)
@@ -171,7 +196,7 @@ impl ImportResolver {
             return Some(dir.join("__init__.py"));
         }
         // Try last component
-        let last = import_path.split('.').last()?;
+        let last = import_path.split('.').next_back()?;
         self.module_map.get(last).cloned()
     }
 
@@ -207,8 +232,10 @@ impl ImportResolver {
     /// Resolve a Go import path.
     fn resolve_go(&self, import_path: &str) -> Option<PathBuf> {
         // Go imports are full module paths; try matching the last component
-        let last = import_path.split('/').last()?;
-        self.module_map.get(last).cloned()
+        let last = import_path.split('/').next_back()?;
+        self.module_map
+            .get(last)
+            .cloned()
             .or_else(|| self.package_map.get(last).cloned())
     }
 
@@ -218,12 +245,13 @@ impl ImportResolver {
         let file_path = import_path.replace('.', "/");
         let with_ext = format!("{}.java", file_path);
         // Search for matching path
-        self.module_map.values()
+        self.module_map
+            .values()
             .find(|p| p.to_string_lossy().ends_with(&with_ext))
             .cloned()
             .or_else(|| {
                 // Try last component
-                let last = import_path.split('.').last()?;
+                let last = import_path.split('.').next_back()?;
                 self.module_map.get(last).cloned()
             })
     }
@@ -231,7 +259,8 @@ impl ImportResolver {
     /// Resolve a C/C++ include path.
     fn resolve_cfamily(&self, import_path: &str) -> Option<PathBuf> {
         // Try direct match
-        self.module_map.values()
+        self.module_map
+            .values()
             .find(|p| p.to_string_lossy().ends_with(import_path))
             .cloned()
             .or_else(|| {
@@ -250,9 +279,7 @@ impl ImportResolver {
             return Some(path.clone());
         }
         // Try last component
-        let last = import_path
-            .split(|c| c == '.' || c == '/' || c == '\\' || c == ':')
-            .last()?;
+        let last = import_path.split(['.', '/', '\\', ':']).next_back()?;
         self.module_map.get(last).cloned()
     }
 

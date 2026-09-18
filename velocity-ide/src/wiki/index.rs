@@ -4,8 +4,8 @@
 //! any LLM calls. This structured data feeds compact summaries to the LLM
 //! instead of raw source, reducing token cost by ~85%.
 
-use std::path::{Path, PathBuf};
 use std::fs;
+use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
@@ -166,15 +166,18 @@ impl FileIndex {
     /// This is ~85% smaller than raw source while preserving structure.
     pub fn compact_summary(&self) -> String {
         let mut summary = String::new();
-        
+
         summary.push_str(&format!("File: {}\n", self.path.display()));
         summary.push_str(&format!("Language: {:?}\n", self.language));
-        summary.push_str(&format!("Size: {} bytes, {} lines\n\n", self.size_bytes, self.line_count));
-        
+        summary.push_str(&format!(
+            "Size: {} bytes, {} lines\n\n",
+            self.size_bytes, self.line_count
+        ));
+
         if let Some(doc) = &self.module_doc {
             summary.push_str(&format!("Module doc: {}\n\n", doc));
         }
-        
+
         if !self.imports.is_empty() {
             summary.push_str("Imports:\n");
             for imp in self.imports.iter().take(20) {
@@ -189,20 +192,38 @@ impl FileIndex {
             }
             summary.push('\n');
         }
-        
+
         if !self.symbols.is_empty() {
             summary.push_str("Symbols:\n");
             for sym in self.symbols.iter().take(30) {
                 let params = if sym.parameters.is_empty() {
                     String::new()
                 } else {
-                    let ps: Vec<String> = sym.parameters.iter()
-                        .map(|(n, t)| if t.is_empty() { n.clone() } else { format!("{}: {}", n, t) })
+                    let ps: Vec<String> = sym
+                        .parameters
+                        .iter()
+                        .map(|(n, t)| {
+                            if t.is_empty() {
+                                n.clone()
+                            } else {
+                                format!("{}: {}", n, t)
+                            }
+                        })
                         .collect();
                     format!("({})", ps.join(", "))
                 };
-                let ret = sym.return_type.as_ref().map(|r| format!(" -> {}", r)).unwrap_or_default();
-                summary.push_str(&format!("  - {} {}{}{}\n", sym.kind.label(), sym.name, params, ret));
+                let ret = sym
+                    .return_type
+                    .as_ref()
+                    .map(|r| format!(" -> {}", r))
+                    .unwrap_or_default();
+                summary.push_str(&format!(
+                    "  - {} {}{}{}\n",
+                    sym.kind.label(),
+                    sym.name,
+                    params,
+                    ret
+                ));
                 if let Some(doc) = &sym.doc_comment {
                     let short_doc = if doc.len() > 80 { &doc[..77] } else { doc };
                     summary.push_str(&format!("    /* {} */\n", short_doc));
@@ -212,10 +233,10 @@ impl FileIndex {
                 summary.push_str(&format!("  ... and {} more\n", self.symbols.len() - 30));
             }
         }
-        
+
         summary
     }
-    
+
     /// Estimate token count for this index (rough: 1 token ≈ 4 chars).
     pub fn estimated_tokens(&self) -> usize {
         self.compact_summary().len() / 4
@@ -234,18 +255,23 @@ fn index_directory(root: &Path, dir: &Path, indices: &mut Vec<FileIndex>) {
         Ok(e) => e,
         Err(_) => return,
     };
-    
+
     for entry in entries.flatten() {
         let path = entry.path();
-        
+
         // Skip hidden directories and common non-source directories
         if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
-            if name.starts_with('.') || name == "target" || name == "node_modules" 
-                || name == "dist" || name == "build" || name == "__pycache__" {
+            if name.starts_with('.')
+                || name == "target"
+                || name == "node_modules"
+                || name == "dist"
+                || name == "build"
+                || name == "__pycache__"
+            {
                 continue;
             }
         }
-        
+
         if path.is_dir() {
             index_directory(root, &path, indices);
         } else if path.is_file() {
@@ -260,17 +286,17 @@ fn index_directory(root: &Path, dir: &Path, indices: &mut Vec<FileIndex>) {
 pub fn index_file(root: &Path, path: &Path) -> Option<FileIndex> {
     let ext = path.extension()?.to_str()?;
     let language = SourceLanguage::from_extension(ext);
-    
+
     if !language.is_supported() {
         return None;
     }
-    
+
     let content = fs::read_to_string(path).ok()?;
     let content_hash = sha256_hex(&content);
     let size_bytes = content.len();
     let line_count = content.lines().count();
     let relative_path = path.strip_prefix(root).unwrap_or(path).to_path_buf();
-    
+
     let (symbols, imports, calls, module_doc) = match language {
         SourceLanguage::Rust => index_rust(&content),
         SourceLanguage::Python => index_python(&content),
@@ -278,7 +304,7 @@ pub fn index_file(root: &Path, path: &Path) -> Option<FileIndex> {
         SourceLanguage::Go => index_go(&content),
         _ => (Vec::new(), Vec::new(), Vec::new(), None),
     };
-    
+
     Some(FileIndex {
         path: relative_path,
         language,
@@ -294,9 +320,9 @@ pub fn index_file(root: &Path, path: &Path) -> Option<FileIndex> {
 
 /// Compute SHA256 hash of content.
 fn sha256_hex(content: &str) -> String {
-    use std::hash::{Hash, Hasher};
     use std::collections::hash_map::DefaultHasher;
-    
+    use std::hash::{Hash, Hasher};
+
     // Simple hash for now - in production use proper SHA256
     let mut hasher = DefaultHasher::new();
     content.hash(&mut hasher);
@@ -306,22 +332,32 @@ fn sha256_hex(content: &str) -> String {
 // ─── Language-specific indexers ────────────────────────────────────────────
 
 /// Index Rust source code.
-fn index_rust(content: &str) -> (Vec<IndexedSymbol>, Vec<IndexedImport>, Vec<CallEdge>, Option<String>) {
+fn index_rust(
+    content: &str,
+) -> (
+    Vec<IndexedSymbol>,
+    Vec<IndexedImport>,
+    Vec<CallEdge>,
+    Option<String>,
+) {
     let mut symbols = Vec::new();
     let mut imports = Vec::new();
     let calls = Vec::new();
     let mut module_doc = None;
-    
+
     let mut current_doc: Option<String> = None;
     let mut in_doc_comment = false;
-    
+
     for (line_num, line) in content.lines().enumerate() {
         let line_num = line_num + 1;
         let trimmed = line.trim();
-        
+
         // Track doc comments
         if trimmed.starts_with("///") || trimmed.starts_with("//!") {
-            let doc = trimmed.trim_start_matches("///").trim_start_matches("//!").trim();
+            let doc = trimmed
+                .trim_start_matches("///")
+                .trim_start_matches("//!")
+                .trim();
             if in_doc_comment {
                 current_doc = Some(format!("{} {}", current_doc.unwrap_or_default(), doc));
             } else {
@@ -336,35 +372,44 @@ fn index_rust(content: &str) -> (Vec<IndexedSymbol>, Vec<IndexedImport>, Vec<Cal
         } else {
             in_doc_comment = false;
         }
-        
+
         // Parse use statements (imports)
         if trimmed.starts_with("use ") {
-            let path = trimmed.strip_prefix("use ").unwrap_or("").trim_end_matches(';');
+            let path = trimmed
+                .strip_prefix("use ")
+                .unwrap_or("")
+                .trim_end_matches(';');
             let path = path.trim();
-            
+
             // Handle "use foo::bar::{baz, qux}"
             let (main_path, items) = if let Some(brace_start) = path.find('{') {
                 let main = &path[..brace_start].trim_end_matches("::");
                 let items_str = &path[brace_start + 1..].trim_end_matches('}');
-                let items: Vec<String> = items_str.split(',').map(|s| s.trim().to_string()).collect();
+                let items: Vec<String> =
+                    items_str.split(',').map(|s| s.trim().to_string()).collect();
                 (main.to_string(), items)
             } else {
                 (path.to_string(), Vec::new())
             };
-            
+
             imports.push(IndexedImport {
                 path: main_path,
                 items,
                 line: line_num,
-                is_relative: path.starts_with("super") || path.starts_with("crate") || path.starts_with("self"),
+                is_relative: path.starts_with("super")
+                    || path.starts_with("crate")
+                    || path.starts_with("self"),
                 alias: None,
             });
             current_doc = None;
             continue;
         }
-        
+
         // Parse function definitions
-        if let Some(rest) = trimmed.strip_prefix("pub fn ").or_else(|| trimmed.strip_prefix("fn ")) {
+        if let Some(rest) = trimmed
+            .strip_prefix("pub fn ")
+            .or_else(|| trimmed.strip_prefix("fn "))
+        {
             let is_pub = trimmed.starts_with("pub fn");
             if let Some((name, params, ret)) = parse_rust_function(rest) {
                 symbols.push(IndexedSymbol {
@@ -372,7 +417,11 @@ fn index_rust(content: &str) -> (Vec<IndexedSymbol>, Vec<IndexedImport>, Vec<Cal
                     kind: SymbolKind::Function,
                     line: line_num,
                     offset: 0,
-                    visibility: if is_pub { Visibility::Public } else { Visibility::Private },
+                    visibility: if is_pub {
+                        Visibility::Public
+                    } else {
+                        Visibility::Private
+                    },
                     doc_comment: current_doc.take(),
                     parameters: params,
                     return_type: ret,
@@ -380,9 +429,12 @@ fn index_rust(content: &str) -> (Vec<IndexedSymbol>, Vec<IndexedImport>, Vec<Cal
             }
             continue;
         }
-        
+
         // Parse struct definitions
-        if let Some(rest) = trimmed.strip_prefix("pub struct ").or_else(|| trimmed.strip_prefix("struct ")) {
+        if let Some(rest) = trimmed
+            .strip_prefix("pub struct ")
+            .or_else(|| trimmed.strip_prefix("struct "))
+        {
             let is_pub = trimmed.starts_with("pub struct");
             if let Some(name) = parse_rust_struct(rest) {
                 symbols.push(IndexedSymbol {
@@ -390,7 +442,11 @@ fn index_rust(content: &str) -> (Vec<IndexedSymbol>, Vec<IndexedImport>, Vec<Cal
                     kind: SymbolKind::Struct,
                     line: line_num,
                     offset: 0,
-                    visibility: if is_pub { Visibility::Public } else { Visibility::Private },
+                    visibility: if is_pub {
+                        Visibility::Public
+                    } else {
+                        Visibility::Private
+                    },
                     doc_comment: current_doc.take(),
                     parameters: Vec::new(),
                     return_type: None,
@@ -398,9 +454,12 @@ fn index_rust(content: &str) -> (Vec<IndexedSymbol>, Vec<IndexedImport>, Vec<Cal
             }
             continue;
         }
-        
+
         // Parse enum definitions
-        if let Some(rest) = trimmed.strip_prefix("pub enum ").or_else(|| trimmed.strip_prefix("enum ")) {
+        if let Some(rest) = trimmed
+            .strip_prefix("pub enum ")
+            .or_else(|| trimmed.strip_prefix("enum "))
+        {
             let is_pub = trimmed.starts_with("pub enum");
             if let Some(name) = parse_rust_enum(rest) {
                 symbols.push(IndexedSymbol {
@@ -408,7 +467,11 @@ fn index_rust(content: &str) -> (Vec<IndexedSymbol>, Vec<IndexedImport>, Vec<Cal
                     kind: SymbolKind::Enum,
                     line: line_num,
                     offset: 0,
-                    visibility: if is_pub { Visibility::Public } else { Visibility::Private },
+                    visibility: if is_pub {
+                        Visibility::Public
+                    } else {
+                        Visibility::Private
+                    },
                     doc_comment: current_doc.take(),
                     parameters: Vec::new(),
                     return_type: None,
@@ -416,9 +479,12 @@ fn index_rust(content: &str) -> (Vec<IndexedSymbol>, Vec<IndexedImport>, Vec<Cal
             }
             continue;
         }
-        
+
         // Parse trait definitions
-        if let Some(rest) = trimmed.strip_prefix("pub trait ").or_else(|| trimmed.strip_prefix("trait ")) {
+        if let Some(rest) = trimmed
+            .strip_prefix("pub trait ")
+            .or_else(|| trimmed.strip_prefix("trait "))
+        {
             let is_pub = trimmed.starts_with("pub trait");
             if let Some(name) = parse_rust_trait(rest) {
                 symbols.push(IndexedSymbol {
@@ -426,7 +492,11 @@ fn index_rust(content: &str) -> (Vec<IndexedSymbol>, Vec<IndexedImport>, Vec<Cal
                     kind: SymbolKind::Trait,
                     line: line_num,
                     offset: 0,
-                    visibility: if is_pub { Visibility::Public } else { Visibility::Private },
+                    visibility: if is_pub {
+                        Visibility::Public
+                    } else {
+                        Visibility::Private
+                    },
                     doc_comment: current_doc.take(),
                     parameters: Vec::new(),
                     return_type: None,
@@ -434,47 +504,53 @@ fn index_rust(content: &str) -> (Vec<IndexedSymbol>, Vec<IndexedImport>, Vec<Cal
             }
             continue;
         }
-        
+
         // Parse impl blocks (for methods)
         if trimmed.starts_with("impl ") {
             // Methods inside impl blocks would need more sophisticated parsing
             // For now, we track the impl target
             continue;
         }
-        
+
         // Reset doc comment if we hit a non-definition line
         if !trimmed.is_empty() && !trimmed.starts_with("//") && !trimmed.starts_with('#') {
             current_doc = None;
         }
     }
-    
+
     (symbols, imports, calls, module_doc)
 }
 
-fn parse_rust_function(rest: &str) -> Option<(String, Vec<(String, String)>, Option<String>)> {
+/// A parsed function signature: name, `(param, type)` pairs, return type.
+type FuncSignature = (String, Vec<(String, String)>, Option<String>);
+
+fn parse_rust_function(rest: &str) -> Option<FuncSignature> {
     let paren_start = rest.find('(')?;
     let name = rest[..paren_start].trim().to_string();
-    
+
     if name.is_empty() || !name.chars().all(|c| c.is_alphanumeric() || c == '_') {
         return None;
     }
-    
+
     let after_name = &rest[paren_start..];
     let paren_end = find_matching_paren(after_name)?;
     let params_str = &after_name[1..paren_end];
-    
+
     let parameters = parse_rust_params(params_str);
-    
+
     // Parse return type
     let after_params = after_name[paren_end + 1..].trim();
     let return_type = if let Some(rest) = after_params.strip_prefix("->") {
         let rest = rest.trim();
-        let end = rest.find('{').or_else(|| rest.find("where")).unwrap_or(rest.len());
+        let end = rest
+            .find('{')
+            .or_else(|| rest.find("where"))
+            .unwrap_or(rest.len());
         Some(rest[..end].trim().to_string())
     } else {
         None
     };
-    
+
     Some((name, parameters, return_type))
 }
 
@@ -482,11 +558,17 @@ fn parse_rust_params(params: &str) -> Vec<(String, String)> {
     let mut result = Vec::new();
     let mut depth = 0;
     let mut current = String::new();
-    
+
     for ch in params.chars() {
         match ch {
-            '<' | '(' | '[' => { depth += 1; current.push(ch); }
-            '>' | ')' | ']' => { depth -= 1; current.push(ch); }
+            '<' | '(' | '[' => {
+                depth += 1;
+                current.push(ch);
+            }
+            '>' | ')' | ']' => {
+                depth -= 1;
+                current.push(ch);
+            }
             ',' if depth == 0 => {
                 if let Some((name, ty)) = parse_rust_param(&current) {
                     result.push((name, ty));
@@ -496,13 +578,13 @@ fn parse_rust_params(params: &str) -> Vec<(String, String)> {
             _ => current.push(ch),
         }
     }
-    
+
     if !current.trim().is_empty() {
         if let Some((name, ty)) = parse_rust_param(&current) {
             result.push((name, ty));
         }
     }
-    
+
     result
 }
 
@@ -511,15 +593,15 @@ fn parse_rust_param(param: &str) -> Option<(String, String)> {
     if param == "self" || param == "&self" || param == "&mut self" {
         return Some(("self".to_string(), String::new()));
     }
-    
+
     let colon = param.find(':')?;
     let name = param[..colon].trim().to_string();
     let ty = param[colon + 1..].trim().to_string();
-    
+
     if name.is_empty() || name.starts_with('_') && name.len() == 1 {
         return None;
     }
-    
+
     Some((name, ty))
 }
 
@@ -530,7 +612,9 @@ fn find_matching_paren(s: &str) -> Option<usize> {
             '(' => depth += 1,
             ')' => {
                 depth -= 1;
-                if depth == 0 { return Some(i); }
+                if depth == 0 {
+                    return Some(i);
+                }
             }
             _ => {}
         }
@@ -541,35 +625,54 @@ fn find_matching_paren(s: &str) -> Option<usize> {
 fn parse_rust_struct(rest: &str) -> Option<String> {
     let name_end = rest.find(|c: char| !c.is_alphanumeric() && c != '_')?;
     let name = rest[..name_end].trim().to_string();
-    if name.is_empty() { None } else { Some(name) }
+    if name.is_empty() {
+        None
+    } else {
+        Some(name)
+    }
 }
 
 fn parse_rust_enum(rest: &str) -> Option<String> {
     let name_end = rest.find(|c: char| !c.is_alphanumeric() && c != '_')?;
     let name = rest[..name_end].trim().to_string();
-    if name.is_empty() { None } else { Some(name) }
+    if name.is_empty() {
+        None
+    } else {
+        Some(name)
+    }
 }
 
 fn parse_rust_trait(rest: &str) -> Option<String> {
     let name_end = rest.find(|c: char| !c.is_alphanumeric() && c != '_')?;
     let name = rest[..name_end].trim().to_string();
-    if name.is_empty() { None } else { Some(name) }
+    if name.is_empty() {
+        None
+    } else {
+        Some(name)
+    }
 }
 
 /// Index Python source code.
-fn index_python(content: &str) -> (Vec<IndexedSymbol>, Vec<IndexedImport>, Vec<CallEdge>, Option<String>) {
+fn index_python(
+    content: &str,
+) -> (
+    Vec<IndexedSymbol>,
+    Vec<IndexedImport>,
+    Vec<CallEdge>,
+    Option<String>,
+) {
     let mut symbols = Vec::new();
     let mut imports = Vec::new();
     let calls = Vec::new();
     let mut module_doc = None;
-    
+
     let mut in_docstring = false;
     let mut docstring_content = String::new();
-    
+
     for (line_num, line) in content.lines().enumerate() {
         let line_num = line_num + 1;
         let trimmed = line.trim();
-        
+
         // Track docstrings
         if trimmed.starts_with("\"\"\"") || trimmed.starts_with("'''") {
             let quote = &trimmed[..3];
@@ -594,20 +697,21 @@ fn index_python(content: &str) -> (Vec<IndexedSymbol>, Vec<IndexedImport>, Vec<C
             }
             continue;
         }
-        
+
         if in_docstring {
             docstring_content.push_str(trimmed);
             docstring_content.push(' ');
             continue;
         }
-        
+
         // Parse imports
         if trimmed.starts_with("import ") || trimmed.starts_with("from ") {
             let (path, items, is_relative) = if let Some(rest) = trimmed.strip_prefix("from ") {
                 let parts: Vec<&str> = rest.splitn(2, " import ").collect();
                 if parts.len() == 2 {
                     let is_rel = parts[0].starts_with('.');
-                    let items: Vec<String> = parts[1].split(',').map(|s| s.trim().to_string()).collect();
+                    let items: Vec<String> =
+                        parts[1].split(',').map(|s| s.trim().to_string()).collect();
                     (parts[0].to_string(), items, is_rel)
                 } else {
                     continue;
@@ -617,7 +721,7 @@ fn index_python(content: &str) -> (Vec<IndexedSymbol>, Vec<IndexedImport>, Vec<C
             } else {
                 continue;
             };
-            
+
             imports.push(IndexedImport {
                 path,
                 items,
@@ -627,7 +731,7 @@ fn index_python(content: &str) -> (Vec<IndexedSymbol>, Vec<IndexedImport>, Vec<C
             });
             continue;
         }
-        
+
         // Parse function definitions
         if let Some(rest) = trimmed.strip_prefix("def ") {
             if let Some((name, params, ret)) = parse_python_function(rest) {
@@ -644,7 +748,7 @@ fn index_python(content: &str) -> (Vec<IndexedSymbol>, Vec<IndexedImport>, Vec<C
             }
             continue;
         }
-        
+
         // Parse class definitions
         if let Some(rest) = trimmed.strip_prefix("class ") {
             if let Some(name) = parse_python_class(rest) {
@@ -662,22 +766,22 @@ fn index_python(content: &str) -> (Vec<IndexedSymbol>, Vec<IndexedImport>, Vec<C
             continue;
         }
     }
-    
+
     (symbols, imports, calls, module_doc)
 }
 
-fn parse_python_function(rest: &str) -> Option<(String, Vec<(String, String)>, Option<String>)> {
+fn parse_python_function(rest: &str) -> Option<FuncSignature> {
     let paren_start = rest.find('(')?;
     let name = rest[..paren_start].trim().to_string();
-    
+
     if name.is_empty() {
         return None;
     }
-    
+
     let after_name = &rest[paren_start..];
     let paren_end = find_matching_paren(after_name)?;
     let params_str = &after_name[1..paren_end];
-    
+
     let parameters: Vec<(String, String)> = params_str
         .split(',')
         .filter_map(|p| {
@@ -687,11 +791,14 @@ fn parse_python_function(rest: &str) -> Option<(String, Vec<(String, String)>, O
             }
             let parts: Vec<&str> = p.splitn(2, ':').collect();
             let name = parts[0].trim().split('=').next()?.trim().to_string();
-            let ty = parts.get(1).map(|t| t.trim().split('=').next().unwrap_or("").trim().to_string()).unwrap_or_default();
+            let ty = parts
+                .get(1)
+                .map(|t| t.trim().split('=').next().unwrap_or("").trim().to_string())
+                .unwrap_or_default();
             Some((name, ty))
         })
         .collect();
-    
+
     // Parse return type
     let after_params = after_name[paren_end + 1..].trim();
     let return_type = if let Some(rest) = after_params.strip_prefix("->") {
@@ -701,49 +808,62 @@ fn parse_python_function(rest: &str) -> Option<(String, Vec<(String, String)>, O
     } else {
         None
     };
-    
+
     Some((name, parameters, return_type))
 }
 
 fn parse_python_class(rest: &str) -> Option<String> {
     let name_end = rest.find(|c: char| !c.is_alphanumeric() && c != '_')?;
     let name = rest[..name_end].trim().to_string();
-    if name.is_empty() { None } else { Some(name) }
+    if name.is_empty() {
+        None
+    } else {
+        Some(name)
+    }
 }
 
 /// Index JavaScript/TypeScript source code.
-fn index_jsts(content: &str) -> (Vec<IndexedSymbol>, Vec<IndexedImport>, Vec<CallEdge>, Option<String>) {
+fn index_jsts(
+    content: &str,
+) -> (
+    Vec<IndexedSymbol>,
+    Vec<IndexedImport>,
+    Vec<CallEdge>,
+    Option<String>,
+) {
     let mut symbols = Vec::new();
     let mut imports = Vec::new();
     let calls = Vec::new();
     let module_doc = None;
-    
+
     for (line_num, line) in content.lines().enumerate() {
         let line_num = line_num + 1;
         let trimmed = line.trim();
-        
+
         // Parse imports
         if trimmed.starts_with("import ") {
             let rest = trimmed.strip_prefix("import ").unwrap_or("");
-            
+
             // import { foo, bar } from 'module'
             // import foo from 'module'
             // import * as foo from 'module'
             if let Some(from_idx) = rest.find(" from ") {
                 let import_part = &rest[..from_idx];
-                let module_part = rest[from_idx + 6..].trim().trim_matches(|c| c == '\'' || c == '"');
-                
-                let items = if import_part.starts_with('{') && import_part.ends_with('}') {
-                    import_part[1..import_part.len()-1]
-                        .split(',')
-                        .map(|s| s.trim().to_string())
-                        .collect()
-                } else if import_part.starts_with("* as ") {
-                    vec![import_part[5..].to_string()]
+                let module_part = rest[from_idx + 6..]
+                    .trim()
+                    .trim_matches(|c| c == '\'' || c == '"');
+
+                let items = if let Some(inner) = import_part
+                    .strip_prefix('{')
+                    .and_then(|s| s.strip_suffix('}'))
+                {
+                    inner.split(',').map(|s| s.trim().to_string()).collect()
+                } else if let Some(alias) = import_part.strip_prefix("* as ") {
+                    vec![alias.to_string()]
                 } else {
                     vec![import_part.to_string()]
                 };
-                
+
                 imports.push(IndexedImport {
                     path: module_part.to_string(),
                     items,
@@ -754,9 +874,9 @@ fn index_jsts(content: &str) -> (Vec<IndexedSymbol>, Vec<IndexedImport>, Vec<Cal
             }
             continue;
         }
-        
+
         // Parse function declarations
-        if let Some(rest) = trimmed.strip_prefix("function "){
+        if let Some(rest) = trimmed.strip_prefix("function ") {
             if let Some((name, params)) = parse_js_function(rest) {
                 symbols.push(IndexedSymbol {
                     name,
@@ -771,14 +891,24 @@ fn index_jsts(content: &str) -> (Vec<IndexedSymbol>, Vec<IndexedImport>, Vec<Cal
             }
             continue;
         }
-        
+
         // Parse const/let/var function expressions
-        if trimmed.starts_with("const ") || trimmed.starts_with("let ") || trimmed.starts_with("var ") {
+        if trimmed.starts_with("const ")
+            || trimmed.starts_with("let ")
+            || trimmed.starts_with("var ")
+        {
             if let Some(arrow_pos) = trimmed.find("=>") {
                 let before_arrow = &trimmed[..arrow_pos];
                 if let Some(eq_pos) = before_arrow.find('=') {
-                    let name_part = before_arrow[before_arrow.find(|c: char| !c.is_alphanumeric() && c != '_' && c != '$').unwrap_or(0)..eq_pos].trim();
-                    let name = name_part.split(|c: char| !c.is_alphanumeric() && c != '_' && c != '$').last().unwrap_or("").trim();
+                    let name_part = before_arrow[before_arrow
+                        .find(|c: char| !c.is_alphanumeric() && c != '_' && c != '$')
+                        .unwrap_or(0)..eq_pos]
+                        .trim();
+                    let name = name_part
+                        .split(|c: char| !c.is_alphanumeric() && c != '_' && c != '$')
+                        .next_back()
+                        .unwrap_or("")
+                        .trim();
                     if !name.is_empty() {
                         symbols.push(IndexedSymbol {
                             name: name.to_string(),
@@ -795,7 +925,7 @@ fn index_jsts(content: &str) -> (Vec<IndexedSymbol>, Vec<IndexedImport>, Vec<Cal
             }
             continue;
         }
-        
+
         // Parse class declarations
         if let Some(rest) = trimmed.strip_prefix("class ") {
             if let Some(name) = parse_js_class(rest) {
@@ -812,67 +942,92 @@ fn index_jsts(content: &str) -> (Vec<IndexedSymbol>, Vec<IndexedImport>, Vec<Cal
             }
             continue;
         }
-        
+
         // Parse export declarations
         if trimmed.starts_with("export ") {
             let rest = trimmed.strip_prefix("export ").unwrap_or("");
-            if rest.starts_with("function ") || rest.starts_with("class ") || rest.starts_with("const ") {
+            if rest.starts_with("function ")
+                || rest.starts_with("class ")
+                || rest.starts_with("const ")
+            {
                 // Recursively parse the inner declaration
                 // For simplicity, we just note it's exported
             }
             continue;
         }
     }
-    
+
     (symbols, imports, calls, module_doc)
 }
 
 fn parse_js_function(rest: &str) -> Option<(String, Vec<(String, String)>)> {
     let paren_start = rest.find('(')?;
     let name = rest[..paren_start].trim().to_string();
-    
-    if name.is_empty() || !name.chars().all(|c| c.is_alphanumeric() || c == '_' || c == '$') {
+
+    if name.is_empty()
+        || !name
+            .chars()
+            .all(|c| c.is_alphanumeric() || c == '_' || c == '$')
+    {
         return None;
     }
-    
+
     let after_name = &rest[paren_start..];
     let paren_end = find_matching_paren(after_name)?;
     let params_str = &after_name[1..paren_end];
-    
+
     let parameters: Vec<(String, String)> = params_str
         .split(',')
         .filter_map(|p| {
             let p = p.trim();
-            if p.is_empty() { return None; }
-            let name = p.split(|c: char| !c.is_alphanumeric() && c != '_' && c != '$').next()?.to_string();
-            if name.is_empty() { return None; }
+            if p.is_empty() {
+                return None;
+            }
+            let name = p
+                .split(|c: char| !c.is_alphanumeric() && c != '_' && c != '$')
+                .next()?
+                .to_string();
+            if name.is_empty() {
+                return None;
+            }
             Some((name, String::new()))
         })
         .collect();
-    
+
     Some((name, parameters))
 }
 
 fn parse_js_class(rest: &str) -> Option<String> {
     let name_end = rest.find(|c: char| !c.is_alphanumeric() && c != '_' && c != '$')?;
     let name = rest[..name_end].trim().to_string();
-    if name.is_empty() { None } else { Some(name) }
+    if name.is_empty() {
+        None
+    } else {
+        Some(name)
+    }
 }
 
 /// Index Go source code.
-fn index_go(content: &str) -> (Vec<IndexedSymbol>, Vec<IndexedImport>, Vec<CallEdge>, Option<String>) {
+fn index_go(
+    content: &str,
+) -> (
+    Vec<IndexedSymbol>,
+    Vec<IndexedImport>,
+    Vec<CallEdge>,
+    Option<String>,
+) {
     let mut symbols = Vec::new();
     let mut imports = Vec::new();
     let calls = Vec::new();
     let mut module_doc = None;
-    
+
     let mut in_package_doc = false;
     let mut package_doc = String::new();
-    
+
     for (line_num, line) in content.lines().enumerate() {
         let line_num = line_num + 1;
         let trimmed = line.trim();
-        
+
         // Track package comment (Go module doc)
         if trimmed.starts_with("//") && !in_package_doc && line_num < 20 {
             let doc = trimmed.strip_prefix("//").unwrap_or("").trim();
@@ -885,16 +1040,16 @@ fn index_go(content: &str) -> (Vec<IndexedSymbol>, Vec<IndexedImport>, Vec<CallE
             }
             in_package_doc = false;
         }
-        
+
         // Parse imports
         if trimmed.starts_with("import ") {
             let rest = trimmed.strip_prefix("import ").unwrap_or("").trim();
-            
+
             if rest.starts_with('(') {
                 // Multi-line import block - simplified parsing
                 continue;
             }
-            
+
             let path = rest.trim_matches('"');
             imports.push(IndexedImport {
                 path: path.to_string(),
@@ -905,18 +1060,26 @@ fn index_go(content: &str) -> (Vec<IndexedSymbol>, Vec<IndexedImport>, Vec<CallE
             });
             continue;
         }
-        
+
         // Parse function declarations
         if trimmed.starts_with("func ") {
             let rest = trimmed.strip_prefix("func ").unwrap_or("");
             if let Some((name, params, ret)) = parse_go_function(rest) {
-                let is_exported = name.chars().next().map(|c| c.is_uppercase()).unwrap_or(false);
+                let is_exported = name
+                    .chars()
+                    .next()
+                    .map(|c| c.is_uppercase())
+                    .unwrap_or(false);
                 symbols.push(IndexedSymbol {
                     name,
                     kind: SymbolKind::Function,
                     line: line_num,
                     offset: 0,
-                    visibility: if is_exported { Visibility::Public } else { Visibility::Private },
+                    visibility: if is_exported {
+                        Visibility::Public
+                    } else {
+                        Visibility::Private
+                    },
                     doc_comment: None,
                     parameters: params,
                     return_type: ret,
@@ -924,18 +1087,26 @@ fn index_go(content: &str) -> (Vec<IndexedSymbol>, Vec<IndexedImport>, Vec<CallE
             }
             continue;
         }
-        
+
         // Parse type declarations (struct, interface)
         if trimmed.starts_with("type ") {
             let rest = trimmed.strip_prefix("type ").unwrap_or("");
             if let Some((name, kind)) = parse_go_type(rest) {
-                let is_exported = name.chars().next().map(|c| c.is_uppercase()).unwrap_or(false);
+                let is_exported = name
+                    .chars()
+                    .next()
+                    .map(|c| c.is_uppercase())
+                    .unwrap_or(false);
                 symbols.push(IndexedSymbol {
                     name,
                     kind,
                     line: line_num,
                     offset: 0,
-                    visibility: if is_exported { Visibility::Public } else { Visibility::Private },
+                    visibility: if is_exported {
+                        Visibility::Public
+                    } else {
+                        Visibility::Private
+                    },
                     doc_comment: None,
                     parameters: Vec::new(),
                     return_type: None,
@@ -944,11 +1115,11 @@ fn index_go(content: &str) -> (Vec<IndexedSymbol>, Vec<IndexedImport>, Vec<CallE
             continue;
         }
     }
-    
+
     (symbols, imports, calls, module_doc)
 }
 
-fn parse_go_function(rest: &str) -> Option<(String, Vec<(String, String)>, Option<String>)> {
+fn parse_go_function(rest: &str) -> Option<FuncSignature> {
     // Skip receiver if present: func (r *Receiver) Name(...)
     let rest = if rest.starts_with('(') {
         let paren_end = find_matching_paren(rest)?;
@@ -956,23 +1127,25 @@ fn parse_go_function(rest: &str) -> Option<(String, Vec<(String, String)>, Optio
     } else {
         rest
     };
-    
+
     let paren_start = rest.find('(')?;
     let name = rest[..paren_start].trim().to_string();
-    
+
     if name.is_empty() {
         return None;
     }
-    
+
     let after_name = &rest[paren_start..];
     let paren_end = find_matching_paren(after_name)?;
     let params_str = &after_name[1..paren_end];
-    
+
     let parameters: Vec<(String, String)> = params_str
         .split(',')
         .filter_map(|p| {
             let p = p.trim();
-            if p.is_empty() { return None; }
+            if p.is_empty() {
+                return None;
+            }
             let parts: Vec<&str> = p.split_whitespace().collect();
             if parts.len() >= 2 {
                 Some((parts[0].to_string(), parts[1..].join(" ")))
@@ -983,17 +1156,21 @@ fn parse_go_function(rest: &str) -> Option<(String, Vec<(String, String)>, Optio
             }
         })
         .collect();
-    
+
     // Parse return type
     let after_params = after_name[paren_end + 1..].trim();
     let return_type = if !after_params.is_empty() && !after_params.starts_with('{') {
         let end = after_params.find('{').unwrap_or(after_params.len());
         let ret = after_params[..end].trim();
-        if ret.is_empty() { None } else { Some(ret.to_string()) }
+        if ret.is_empty() {
+            None
+        } else {
+            Some(ret.to_string())
+        }
     } else {
         None
     };
-    
+
     Some((name, parameters, return_type))
 }
 
@@ -1002,30 +1179,40 @@ fn parse_go_type(rest: &str) -> Option<(String, SymbolKind)> {
     if parts.len() < 2 {
         return None;
     }
-    
+
     let name = parts[0].to_string();
     let kind = match parts[1] {
         "struct" => SymbolKind::Struct,
         "interface" => SymbolKind::Interface,
         _ => return None,
     };
-    
-    if name.is_empty() { None } else { Some((name, kind)) }
+
+    if name.is_empty() {
+        None
+    } else {
+        Some((name, kind))
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     #[test]
     fn test_language_detection() {
         assert_eq!(SourceLanguage::from_extension("rs"), SourceLanguage::Rust);
         assert_eq!(SourceLanguage::from_extension("py"), SourceLanguage::Python);
-        assert_eq!(SourceLanguage::from_extension("ts"), SourceLanguage::TypeScript);
+        assert_eq!(
+            SourceLanguage::from_extension("ts"),
+            SourceLanguage::TypeScript
+        );
         assert_eq!(SourceLanguage::from_extension("go"), SourceLanguage::Go);
-        assert_eq!(SourceLanguage::from_extension("xyz"), SourceLanguage::Unknown);
+        assert_eq!(
+            SourceLanguage::from_extension("xyz"),
+            SourceLanguage::Unknown
+        );
     }
-    
+
     #[test]
     fn test_rust_indexing() {
         let content = r#"
@@ -1047,19 +1234,23 @@ pub fn test_function(x: i32, y: String) -> bool {
 fn private_func() {}
 "#;
         let (symbols, imports, _, module_doc) = index_rust(content);
-        
+
         assert!(module_doc.is_some());
         assert_eq!(imports.len(), 2);
         assert_eq!(imports[0].path, "std::collections::HashMap");
         assert_eq!(imports[1].path, "crate::foo");
         assert_eq!(imports[1].items, vec!["bar", "baz"]);
-        
+
         assert!(symbols.len() >= 3);
-        assert!(symbols.iter().any(|s| s.name == "TestStruct" && s.kind == SymbolKind::Struct));
-        assert!(symbols.iter().any(|s| s.name == "test_function" && s.kind == SymbolKind::Function));
+        assert!(symbols
+            .iter()
+            .any(|s| s.name == "TestStruct" && s.kind == SymbolKind::Struct));
+        assert!(symbols
+            .iter()
+            .any(|s| s.name == "test_function" && s.kind == SymbolKind::Function));
         assert!(symbols.iter().any(|s| s.name == "private_func"));
     }
-    
+
     #[test]
     fn test_python_indexing() {
         let content = r#"
@@ -1076,16 +1267,16 @@ class MyClass:
     pass
 "#;
         let (symbols, imports, _, module_doc) = index_python(content);
-        
+
         assert!(module_doc.is_some());
         assert_eq!(imports.len(), 2);
         assert_eq!(imports[1].items, vec!["defaultdict", "OrderedDict"]);
-        
+
         assert!(symbols.len() >= 2);
         assert!(symbols.iter().any(|s| s.name == "hello"));
         assert!(symbols.iter().any(|s| s.name == "MyClass"));
     }
-    
+
     #[test]
     fn test_compact_summary() {
         let index = FileIndex {
@@ -1094,31 +1285,27 @@ class MyClass:
             content_hash: "abc123".to_string(),
             size_bytes: 1000,
             line_count: 50,
-            symbols: vec![
-                IndexedSymbol {
-                    name: "main".to_string(),
-                    kind: SymbolKind::Function,
-                    line: 10,
-                    offset: 0,
-                    visibility: Visibility::Public,
-                    doc_comment: Some("Entry point".to_string()),
-                    parameters: Vec::new(),
-                    return_type: None,
-                },
-            ],
-            imports: vec![
-                IndexedImport {
-                    path: "std::io".to_string(),
-                    items: vec!["Read".to_string()],
-                    line: 1,
-                    is_relative: false,
-                    alias: None,
-                },
-            ],
+            symbols: vec![IndexedSymbol {
+                name: "main".to_string(),
+                kind: SymbolKind::Function,
+                line: 10,
+                offset: 0,
+                visibility: Visibility::Public,
+                doc_comment: Some("Entry point".to_string()),
+                parameters: Vec::new(),
+                return_type: None,
+            }],
+            imports: vec![IndexedImport {
+                path: "std::io".to_string(),
+                items: vec!["Read".to_string()],
+                line: 1,
+                is_relative: false,
+                alias: None,
+            }],
             calls: Vec::new(),
             module_doc: Some("A test module".to_string()),
         };
-        
+
         let summary = index.compact_summary();
         assert!(summary.contains("src/lib.rs"));
         assert!(summary.contains("Rust"));

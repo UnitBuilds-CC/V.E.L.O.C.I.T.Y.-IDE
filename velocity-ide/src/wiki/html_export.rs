@@ -30,13 +30,16 @@ pub fn export_html(model: &WikiModel, dir: &Path) -> Result<usize> {
     // Write file pages
     let modules = group_by_module(&model.file_pages);
     for (_module, pages) in &modules {
-        let module_slug = slugify_module(&_module);
+        let module_slug = slugify_module(_module);
         let module_dir = dir.join("files").join(&module_slug);
         fs::create_dir_all(&module_dir)?;
         for page in pages {
             let breadcrumbs = vec![
                 ("Home".to_string(), "../index.html".to_string()),
-                (_module.clone(), format!("../files/{}/index.html", module_slug)),
+                (
+                    _module.clone(),
+                    format!("../files/{}/index.html", module_slug),
+                ),
             ];
             let html = render_html_page(model, page, &breadcrumbs);
             let path = module_dir.join(format!("{}.html", page.slug));
@@ -80,9 +83,14 @@ fn render_html_page(
 
     out.push_str("<!DOCTYPE html>\n<html lang=\"en\">\n<head>\n");
     out.push_str("    <meta charset=\"UTF-8\">\n");
-    out.push_str("    <meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\">\n");
-    out.push_str(&format!("    <title>{} — Wiki</title>\n", html_escape(&page.title)));
-    out.push_str(&HTML_STYLES);
+    out.push_str(
+        "    <meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\">\n",
+    );
+    out.push_str(&format!(
+        "    <title>{} — Wiki</title>\n",
+        html_escape(&page.title)
+    ));
+    out.push_str(HTML_STYLES);
     out.push_str("</head>\n<body>\n");
 
     // Navigation header
@@ -105,10 +113,7 @@ fn render_html_page(
     out.push_str(&format!("<h1>{}</h1>\n", html_escape(&page.title)));
 
     // Kind badge
-    out.push_str(&format!(
-        "<p class=\"badge\">{}</p>\n",
-        page.kind.label()
-    ));
+    out.push_str(&format!("<p class=\"badge\">{}</p>\n", page.kind.label()));
 
     // Summary
     out.push_str(&format!(
@@ -175,7 +180,7 @@ fn render_html_page(
     out.push_str("</footer>\n");
 
     // Mermaid.js for diagram support (pinned with SRI hash)
-    out.push_str(&MERMAID_SCRIPT);
+    out.push_str(MERMAID_SCRIPT);
 
     out.push_str("</body>\n</html>\n");
     out
@@ -187,14 +192,14 @@ fn render_symbol_index_html(model: &WikiModel) -> String {
     out.push_str("<!DOCTYPE html>\n<html lang=\"en\">\n<head>\n");
     out.push_str("    <meta charset=\"UTF-8\">\n");
     out.push_str("    <title>Symbol Index — Wiki</title>\n");
-    out.push_str(&HTML_STYLES);
+    out.push_str(HTML_STYLES);
     out.push_str("</head>\n<body>\n");
     out.push_str("<nav class=\"breadcrumbs\"><a href=\"index.html\">Home</a> &gt; <strong>Symbol Index</strong></nav>\n");
     out.push_str("<main>\n<h1>Symbol Index</h1>\n<table>\n");
     out.push_str("<thead><tr><th>Symbol</th><th>Summary</th></tr></thead>\n<tbody>\n");
 
     let mut sorted: Vec<&WikiPage> = model.symbol_pages.iter().collect();
-    sorted.sort_by(|a, b| a.title.to_lowercase().cmp(&b.title.to_lowercase()));
+    sorted.sort_by_key(|a| a.title.to_lowercase());
 
     for page in &sorted {
         out.push_str(&format!(
@@ -217,7 +222,7 @@ fn render_graph_html(model: &WikiModel) -> String {
     out.push_str("<!DOCTYPE html>\n<html lang=\"en\">\n<head>\n");
     out.push_str("    <meta charset=\"UTF-8\">\n");
     out.push_str("    <title>Dependency Graph — Wiki</title>\n");
-    out.push_str(&HTML_STYLES);
+    out.push_str(HTML_STYLES);
     out.push_str("</head>\n<body>\n");
     out.push_str("<nav class=\"breadcrumbs\"><a href=\"index.html\">Home</a> &gt; <strong>Dependency Graph</strong></nav>\n");
     out.push_str("<main>\n<h1>Dependency Graph</h1>\n");
@@ -230,7 +235,7 @@ fn render_graph_html(model: &WikiModel) -> String {
 
     out.push_str("</main>\n");
     out.push_str("<footer><p>Generated from Velocity site map</p></footer>\n");
-    out.push_str(&MERMAID_SCRIPT);
+    out.push_str(MERMAID_SCRIPT);
     out.push_str("</body>\n</html>\n");
     out
 }
@@ -241,20 +246,24 @@ fn build_mermaid_graph(model: &WikiModel) -> String {
 
     // Limit nodes for readability
     let max_nodes = 50;
-    let mut node_count = 0;
 
-    for page in model.file_pages.iter().chain(model.symbol_pages.iter()) {
-        if node_count >= max_nodes {
-            break;
-        }
+    for page in model
+        .file_pages
+        .iter()
+        .chain(model.symbol_pages.iter())
+        .take(max_nodes)
+    {
         let node_id = mermaid_node_id(&page.slug);
-        let label = if page.title.len() > 30 {
-            format!("{}...", &page.title[..27])
+        let label = if page.title.chars().count() > 30 {
+            // Byte slicing panicked whenever the 27th byte fell inside a
+            // multi-byte character, which any non-ASCII title can do.
+            let mut clipped: String = page.title.chars().take(27).collect();
+            clipped.push_str("...");
+            clipped
         } else {
             page.title.clone()
         };
         out.push_str(&format!("    {}[\"{}\"]\n", node_id, html_escape(&label)));
-        node_count += 1;
     }
 
     // Add edges
@@ -314,12 +323,7 @@ fn resolve_html_link(model: &WikiModel, target: &str) -> String {
 fn group_by_module(pages: &[WikiPage]) -> BTreeMap<String, Vec<&WikiPage>> {
     let mut modules: BTreeMap<String, Vec<&WikiPage>> = BTreeMap::new();
     for page in pages {
-        let module = page
-            .title
-            .split('/')
-            .next()
-            .unwrap_or("root")
-            .to_string();
+        let module = page.title.split('/').next().unwrap_or("root").to_string();
         let module = if module.contains('.') || module.is_empty() {
             "root".to_string()
         } else {
@@ -489,6 +493,24 @@ mod tests {
         let graph = build_mermaid_graph(&model);
         assert!(graph.contains("graph TD"));
         assert!(graph.contains("main_fn"));
+    }
+
+    /// A long title used to panic the graph builder: `&title[..27]` is not a
+    /// UTF-8 char boundary when multi-byte characters straddle byte 27.
+    #[test]
+    fn build_mermaid_graph_clips_multibyte_titles_without_panicking() {
+        let mut model = make_model();
+        // 40 two-byte chars: byte index 27 falls inside the 14th character.
+        let title = "é".repeat(40);
+        model
+            .file_pages
+            .push(make_page(WikiPageKind::File, &title, "accented-rs"));
+        let graph = build_mermaid_graph(&model);
+        assert!(
+            graph.contains("...\""),
+            "the long title should be clipped:\n{graph}"
+        );
+        assert!(graph.contains(&"é".repeat(27)), "clip keeps 27 chars");
     }
 
     #[test]

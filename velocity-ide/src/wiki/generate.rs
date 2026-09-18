@@ -891,10 +891,7 @@ pub struct EnhancedWikiResult {
 /// 3. Build wiki model enriched with index data
 /// 4. Compute PageRank scores for reading guide
 /// 5. Return enriched model with diagnostics
-pub fn build_wiki_enhanced(
-    sm: &SiteMap,
-    workspace_root: &std::path::Path,
-) -> EnhancedWikiResult {
+pub fn build_wiki_enhanced(sm: &SiteMap, workspace_root: &std::path::Path) -> EnhancedWikiResult {
     use std::time::Instant;
     let start = Instant::now();
 
@@ -919,9 +916,7 @@ pub fn build_wiki_enhanced(
             if sym_count > 0 || import_count > 0 {
                 page.summary = format!(
                     "Defines {} symbol(s), {} import(s). {} lines.",
-                    sym_count,
-                    import_count,
-                    idx.line_count
+                    sym_count, import_count, idx.line_count
                 );
             }
 
@@ -949,10 +944,7 @@ pub fn build_wiki_enhanced(
     }
 
     // Phase 4: Compute PageRank scores
-    let pagerank = super::pagerank::compute_wiki_pagerank(
-        &model.file_pages,
-        &model.symbol_pages,
-    );
+    let pagerank = super::pagerank::compute_wiki_pagerank(&model.file_pages, &model.symbol_pages);
 
     // Phase 5: Update overview with PageRank info
     let top_nodes = pagerank.top_n(5);
@@ -961,10 +953,10 @@ pub fn build_wiki_enhanced(
             .iter()
             .map(|(name, _)| (*name).to_string())
             .collect();
-        model.overview.relationships.push((
-            "Key Entry Points".to_string(),
-            top_names,
-        ));
+        model
+            .overview
+            .relationships
+            .push(("Key Entry Points".to_string(), top_names));
     }
 
     let elapsed = start.elapsed().as_micros() as u64;
@@ -1016,9 +1008,7 @@ pub fn build_wiki_incremental(
             if sym_count > 0 || import_count > 0 {
                 page.summary = format!(
                     "Defines {} symbol(s), {} import(s). {} lines.",
-                    sym_count,
-                    import_count,
-                    idx.line_count
+                    sym_count, import_count, idx.line_count
                 );
             }
 
@@ -1062,10 +1052,7 @@ pub fn build_wiki_incremental(
     cache.prune_missing(&existing_files);
 
     // Phase 5: Compute PageRank
-    let pagerank = super::pagerank::compute_wiki_pagerank(
-        &model.file_pages,
-        &model.symbol_pages,
-    );
+    let pagerank = super::pagerank::compute_wiki_pagerank(&model.file_pages, &model.symbol_pages);
 
     // Update overview
     let top_nodes = pagerank.top_n(5);
@@ -1074,10 +1061,10 @@ pub fn build_wiki_incremental(
             .iter()
             .map(|(name, _)| (*name).to_string())
             .collect();
-        model.overview.relationships.push((
-            "Key Entry Points".to_string(),
-            top_names,
-        ));
+        model
+            .overview
+            .relationships
+            .push(("Key Entry Points".to_string(), top_names));
     }
 
     let elapsed = start.elapsed().as_micros() as u64;
@@ -1131,10 +1118,7 @@ pub fn enrich_with_details(model: &mut WikiModel, generator: &DetailGenerator) -
 ///
 /// This is the zero-cost fallback that produces useful detail from
 /// the file index alone.
-pub fn enrich_with_structural_details(
-    model: &mut WikiModel,
-    indices: &[super::index::FileIndex],
-) {
+pub fn enrich_with_structural_details(model: &mut WikiModel, indices: &[super::index::FileIndex]) {
     let index_map: HashMap<String, &super::index::FileIndex> = indices
         .iter()
         .map(|idx| (idx.path.to_string_lossy().to_string(), idx))
@@ -1223,9 +1207,9 @@ fn generate_structural_detail(idx: &super::index::FileIndex) -> String {
     let mut detail = String::new();
 
     detail.push_str(&format!(
-        "**{}** — {} source file ({} lines, {} bytes)\n\n",
+        "**{}** — {:?} source file ({} lines, {} bytes)\n\n",
         idx.path.display(),
-        format!("{:?}", idx.language),
+        idx.language,
         idx.line_count,
         idx.size_bytes
     ));
@@ -1271,11 +1255,7 @@ fn generate_structural_detail(idx: &super::index::FileIndex) -> String {
             if imp.items.is_empty() {
                 detail.push_str(&format!("- `{}`\n", imp.path));
             } else {
-                detail.push_str(&format!(
-                    "- `{}`: {{{}}}",
-                    imp.path,
-                    imp.items.join(", ")
-                ));
+                detail.push_str(&format!("- `{}`: {{{}}}", imp.path, imp.items.join(", ")));
                 detail.push('\n');
             }
         }
@@ -1392,7 +1372,10 @@ impl SitemapCoverageReport {
             "| Symbols | {} | {} | {} |\n",
             self.sitemap_symbol_count, self.wiki_symbol_count, self.symbols_covered
         ));
-        out.push_str(&format!("| Triples | {} | - | - |\n\n", self.sitemap_triple_count));
+        out.push_str(&format!(
+            "| Triples | {} | - | - |\n\n",
+            self.sitemap_triple_count
+        ));
 
         if !self.wiki_only_files.is_empty() {
             out.push_str(&format!(
