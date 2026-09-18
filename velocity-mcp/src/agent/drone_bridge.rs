@@ -5,6 +5,11 @@
 //! - HTTP client for all drone API endpoints
 //! - File upload with chunked transfer and SHA-256 verification
 //! - Pairing integration with the IDE's peer system
+//!
+//! Every request body here follows `drone/DRONE_PROTOCOL.md`, which the drone
+//! server implements. Field names are load-bearing: the drone reads a missing
+//! key as its default rather than rejecting the call, so a misnamed field turns
+//! into a command that silently never ran, not an error.
 
 use base64::{engine::general_purpose::STANDARD as B64, Engine};
 use serde::{Deserialize, Serialize};
@@ -13,6 +18,7 @@ use sha2::{Digest, Sha256};
 use std::error::Error;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 /// Default drone API port.
 pub const DEFAULT_DRONE_PORT: u16 = 9191;
@@ -20,6 +26,111 @@ pub const DEFAULT_DRONE_PORT: u16 = 9191;
 pub const DEFAULT_SSH_PORT: u16 = 22;
 /// Default drone API timeout in seconds.
 pub const DRONE_TIMEOUT_SECS: u64 = 30;
+
+/// Monotonic counter behind locally generated task / transfer / message ids.
+static ID_COUNTER: AtomicU64 = AtomicU64::new(0);
+
+/// Build an id unique to this process in the shape the protocol docs use
+/// (`task_001`, `xfer_001`, `msg_001`).
+///
+/// Omitting the id is not harmless: the drone keys its task map by `task_id`
+/// and files anything absent under the `"unknown"` fallback, so every
+/// submission overwrites the previous one's status.
+fn next_id(prefix: &str) -> String {
+    let n = ID_COUNTER.fetch_add(1, Ordering::Relaxed);
+    format!("{prefix}_{}_{n:06}", std::process::id())
+}
+
+/// Build the `POST /peer/task` body.
+///
+/// Split out from the HTTP call so the keys the drone reads are pinned by
+/// tests. `instructions` is the field the drone hands to the shell; `prompt` is
+/// a label. A body that carries the command under any other key runs an empty
+/// string and still reports the task completed.
+fn task_body(task_id: &str, command: &str) -> Value {
+    json!({
+        "task_id": task_id,
+        "prompt": command,
+        "instructions": command,
+        "attached_files": [],
+    })
+}
+
+/// Build the `POST /peer/file/start` body.
+fn file_start_body(
+    transfer_id: &str,
+    filename: &str,
+    total_size: usize,
+    sha256: &str,
+    total_chunks: u32,
+    instructions: Option<&str>,
+) -> Value {
+    json!({
+        "transfer_id": transfer_id,
+        "filename": filename,
+        "total_size": total_size,
+        "sha256": sha256,
+        // Omitting this makes the drone default to 1 chunk, accept only index 0
+        // and then assemble the single chunk it kept - the last one it received.
+        "total_chunks": total_chunks,
+        "instructions": instructions,
+    })
+}
+
+/// Build a `POST /peer/file/chunk` body.
+fn file_chunk_body(transfer_id: &str, index: u32, data_b64: &str) -> Value {
+    json!({
+        "transfer_id": transfer_id,
+        "index": index,
+        "data": data_b64,
+    })
+}
+
+/// Build a `POST /peer/message` envelope. `payload` holds the body; the drone
+/// stores the whole message and returns `{received, message_id}`.
+fn message_envelope(id: &str, kind: &str, payload: Value, text: String) -> Value {
+    json!({
+        "id": id,
+        "from": format!("ide_{}", std::process::id()),
+        "kind": kind,
+        "payload": payload,
+        "text": text,
+    })
+}
+
+/// Translate the tool's `deploy_instructions` argument into the line format the
+/// drone parses. Accepts a string used verbatim, or the `{action, target}`
+/// objects the schema advertises.
+fn deploy_instruction_lines(value: Option<&Value>) -> Result<Option<String>, String> {
+    match value {
+        None | Some(Value::Null) => Ok(None),
+        Some(Value::String(s)) => Ok(Some(s.clone())),
+        Some(Value::Array(items)) => {
+            let mut lines = Vec::with_capacity(items.len());
+            for item in items {
+                let action = item
+                    .get("action")
+                    .and_then(Value::as_str)
+                    .filter(|a| matches!(*a, "run" | "copy" | "notify"))
+                    .ok_or_else(|| {
+                        format!(
+                            "each deploy instruction needs an action of run, copy or notify; got {item}"
+                        )
+                    })?;
+                let target = item.get("target").and_then(Value::as_str).unwrap_or("");
+                lines.push(if target.is_empty() {
+                    action.to_string()
+                } else {
+                    format!("{action} {target}")
+                });
+            }
+            Ok(Some(lines.join("\n")))
+        }
+        Some(other) => Err(format!(
+            "deploy_instructions must be a string or an array of {{action, target}} objects; got {other}"
+        )),
+    }
+}
 
 // ── Drone API Response Types ──
 
@@ -89,10 +200,19 @@ impl TaskStatus {
     }
 }
 
+/// The drone's answer to `POST /peer/file/start`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct FileUploadStart {
-    pub upload_id: String,
-    pub status: String,
+pub struct FileTransferAccepted {
+    #[serde(default = "return_true")]
+    pub accepted: bool,
+    #[serde(default)]
+    pub transfer_id: String,
+    #[serde(default)]
+    pub save_path: String,
+}
+
+fn return_true() -> bool {
+    true
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -141,9 +261,15 @@ impl DroneClient {
     }
 
     /// POST /peer/task — submit a command for execution.
+    ///
+    /// `instructions` is the field the drone actually runs through the shell;
+    /// `prompt` is only the human-readable label. Sending the command under any
+    /// other key makes the drone execute an empty string and still report the
+    /// task `completed` with exit code 0.
     pub fn submit_task(&self, command: &str) -> Result<TaskSubmission, Box<dyn Error>> {
         let url = format!("{}/peer/task", self.base_url);
-        let body = json!({ "command": command });
+        let task_id = next_id("task");
+        let body = task_body(&task_id, command);
         let mut req = ureq::post(&url).timeout(std::time::Duration::from_secs(self.timeout_secs));
         if let Some(auth) = self.auth_header() {
             req = req.set("Authorization", &auth);
@@ -151,10 +277,32 @@ impl DroneClient {
         let resp = req
             .send_json(body)
             .map_err(|e| format!("Task submission failed: {}", e))?;
-        let task: TaskSubmission = resp
+        let val: Value = resp
             .into_json()
             .map_err(|e| format!("Failed to parse task response: {}", e))?;
-        Ok(task)
+        // At its concurrency ceiling the drone answers `accepted: false` with a
+        // plain 200, so the status code cannot be the only check.
+        if val.get("accepted").and_then(Value::as_bool) == Some(false) {
+            return Err(format!(
+                "Drone rejected the task: {}",
+                val.get("error")
+                    .and_then(Value::as_str)
+                    .unwrap_or("no reason given")
+            )
+            .into());
+        }
+        Ok(TaskSubmission {
+            task_id: val
+                .get("task_id")
+                .and_then(Value::as_str)
+                .unwrap_or(task_id.as_str())
+                .to_string(),
+            status: val
+                .get("status")
+                .and_then(Value::as_str)
+                .unwrap_or("pending")
+                .to_string(),
+        })
     }
 
     /// GET /peer/task/{id}/status — poll task progress.
@@ -193,14 +341,18 @@ impl DroneClient {
         Ok(pairing)
     }
 
-    /// POST /peer/message — send a chat message to the drone.
+    /// POST /peer/message — deliver a chat message to the drone.
+    ///
+    /// The protocol puts the body inside `payload` and identifies the message
+    /// with a top-level `id`; the receipt echoes that id back.
     pub fn send_message(&self, text: &str) -> Result<Value, Box<dyn Error>> {
         let url = format!("{}/peer/message", self.base_url);
-        let body = json!({
-            "from": "ide",
-            "kind": "Chat",
-            "text": text,
-        });
+        let body = message_envelope(
+            &next_id("msg"),
+            "Chat",
+            json!({ "text": text }),
+            text.to_string(),
+        );
         let mut req = ureq::post(&url).timeout(std::time::Duration::from_secs(self.timeout_secs));
         if let Some(auth) = self.auth_header() {
             req = req.set("Authorization", &auth);
@@ -215,11 +367,18 @@ impl DroneClient {
     }
 
     /// Upload a file in chunks with SHA-256 verification.
+    ///
+    /// `total_chunks` must be sent: the drone defaults it to 1, which makes it
+    /// accept only chunk index 0 and then assemble *just the last chunk it was
+    /// handed*, so a multi-chunk file lands truncated with no failure raised.
+    /// Deploy instructions belong on `start`, where the server reads them, not
+    /// on `complete`. The drone saves into its own drop inbox and keeps the
+    /// base file name, so there is no destination path in this protocol.
     pub fn upload_file(
         &self,
         local_path: &Path,
-        remote_path: &str,
-        deploy_instructions: Option<&Value>,
+        remote_name: Option<&str>,
+        instructions: Option<&str>,
     ) -> Result<Value, Box<dyn Error>> {
         let data =
             std::fs::read(local_path).map_err(|e| format!("Failed to read local file: {}", e))?;
@@ -231,60 +390,69 @@ impl DroneClient {
             .iter()
             .map(|b| format!("{:02x}", b))
             .collect();
-        let file_name = local_path
-            .file_name()
-            .map(|n| n.to_string_lossy().to_string())
+        let file_name = remote_name
+            .map(|n| n.to_string())
+            .or_else(|| {
+                local_path
+                    .file_name()
+                    .map(|n| n.to_string_lossy().to_string())
+            })
             .unwrap_or_else(|| "upload".to_string());
         let file_size = data.len();
+        let chunk_size = 256 * 1024;
+        let total_chunks = data.len().div_ceil(chunk_size) as u32;
+        let transfer_id = next_id("xfer");
 
-        // Step 1: Start upload
         let start_url = format!("{}/peer/file/start", self.base_url);
-        let start_body = json!({
-            "file_name": file_name,
-            "file_size": file_size,
-            "sha256": sha256_hex,
-            "destination": remote_path,
-        });
+        let start_body = file_start_body(
+            &transfer_id,
+            &file_name,
+            file_size,
+            &sha256_hex,
+            total_chunks,
+            instructions,
+        );
         let mut req =
             ureq::post(&start_url).timeout(std::time::Duration::from_secs(self.timeout_secs));
         if let Some(auth) = self.auth_header() {
             req = req.set("Authorization", &auth);
         }
-        let _start_resp: FileUploadStart = req
+        let accepted: FileTransferAccepted = req
             .send_json(start_body)
             .map_err(|e| format!("File upload start failed: {}", e))?
             .into_json()
             .map_err(|e| format!("Failed to parse upload start response: {}", e))?;
+        if !accepted.accepted {
+            return Err(format!("Drone refused the transfer (id {transfer_id})").into());
+        }
 
         // Step 2: Send chunks (256KB each)
-        let chunk_size = 256 * 1024;
-        let total_chunks = data.len().div_ceil(chunk_size);
         for (i, chunk) in data.chunks(chunk_size).enumerate() {
             let chunk_url = format!("{}/peer/file/chunk", self.base_url);
-            let chunk_body = json!({
-                "file_name": file_name,
-                "chunk_index": i,
-                "chunk_total": total_chunks,
-                "data": B64.encode(chunk),
-            });
+            let chunk_body = file_chunk_body(&transfer_id, i as u32, &B64.encode(chunk));
             let mut req = ureq::post(&chunk_url)
                 .timeout(std::time::Duration::from_secs(self.timeout_secs * 2));
             if let Some(auth) = self.auth_header() {
                 req = req.set("Authorization", &auth);
             }
-            req.send_json(chunk_body)
-                .map_err(|e| format!("Chunk {} upload failed: {}", i, e))?;
+            let receipt: Value = req
+                .send_json(chunk_body)
+                .map_err(|e| format!("Chunk {} upload failed: {}", i, e))?
+                .into_json()
+                .map_err(|e| format!("Failed to parse chunk {} response: {}", i, e))?;
+            // The drone answers `received: false` when a chunk is out of range
+            // for the declared total; ignoring it loses bytes silently.
+            if receipt.get("received").and_then(Value::as_bool) == Some(false) {
+                return Err(format!(
+                    "Drone rejected chunk {i} of {total_chunks} for {file_name} (index out of range)"
+                )
+                .into());
+            }
         }
 
-        // Step 3: Complete upload
+        // Step 3: Complete transfer
         let complete_url = format!("{}/peer/file/complete", self.base_url);
-        let mut complete_body = json!({
-            "file_name": file_name,
-            "sha256": sha256_hex,
-        });
-        if let Some(instructions) = deploy_instructions {
-            complete_body["deploy_instructions"] = instructions.clone();
-        }
+        let complete_body = json!({ "transfer_id": transfer_id.as_str() });
         let mut req =
             ureq::post(&complete_url).timeout(std::time::Duration::from_secs(self.timeout_secs));
         if let Some(auth) = self.auth_header() {
@@ -296,21 +464,37 @@ impl DroneClient {
         let val: Value = resp
             .into_json()
             .map_err(|e| format!("Failed to parse complete response: {}", e))?;
+        // Carry the transfer identity out so callers can tie the result to what
+        // they asked for even when the drone words its reply differently.
+        let mut val = val;
+        if let Some(obj) = val.as_object_mut() {
+            obj.entry("transfer_id")
+                .or_insert_with(|| json!(transfer_id));
+            obj.entry("sha256").or_insert_with(|| json!(sha256_hex));
+        }
         Ok(val)
     }
 
-    /// Send a system command via the message endpoint (for GUI automation).
+    /// Queue a system-level request on the drone's message endpoint.
+    ///
+    /// This is *not* a request/response call. `handle_message` on the drone
+    /// appends the message to a bounded queue and returns a receipt; it never
+    /// dispatches on `kind`, so no capture, input or monitoring work happens.
+    /// The screen-capture, `SendInput` and network-monitor implementations in
+    /// `drone/src/system.rs` exist but are unreachable over HTTP. Callers must
+    /// surface the receipt as "queued", never as a result.
     pub fn send_system_command(
         &self,
         command_type: &str,
         payload: &Value,
     ) -> Result<Value, Box<dyn Error>> {
         let url = format!("{}/peer/message", self.base_url);
-        let body = json!({
-            "from": "ide",
-            "kind": "TaskRequest",
-            "text": format!("{}:{}", command_type, payload),
-        });
+        let body = message_envelope(
+            &next_id("msg"),
+            "TaskRequest",
+            payload.clone(),
+            format!("{}:{}", command_type, payload),
+        );
         let mut req = ureq::post(&url).timeout(std::time::Duration::from_secs(self.timeout_secs));
         if let Some(auth) = self.auth_header() {
             req = req.set("Authorization", &auth);
@@ -555,8 +739,10 @@ fn handle_command(args: &Value) -> Result<String, Box<dyn Error>> {
     let task = client.submit_task(command)?;
 
     Ok(serde_json::to_string_pretty(&json!({
+        "success": true,
         "task_id": task.task_id,
         "status": task.status,
+        "command": command,
         "message": "Command submitted. Use drone_task_status to check progress.",
     }))?)
 }
@@ -582,6 +768,27 @@ fn handle_status(args: &Value) -> Result<String, Box<dyn Error>> {
     Ok(serde_json::to_string_pretty(&health)?)
 }
 
+/// Shape the in-band answer for a request the drone only queued.
+///
+/// A receipt is not a result. Reporting `success: true` here is what made
+/// `drone_screenshot` claim `"status": "captured"` while returning no image and
+/// `drone_network_stats` hand back `{"received": true}` where the tool
+/// advertises byte counters.
+fn queued_without_result(action: &str, wanted: &str, receipt: &Value) -> Value {
+    json!({
+        "success": false,
+        "status": "queued",
+        "action": action,
+        "receipt": receipt,
+        "detail": format!(
+            "The drone queued the {action} request and returned a receipt; no {wanted} was produced. \
+             POST /peer/message is one-way and the drone does not dispatch on message kind, so screen \
+             capture, input synthesis and network monitoring are not reachable over HTTP even though \
+             drone/src/system.rs implements them.",
+        ),
+    })
+}
+
 fn handle_screenshot(args: &Value) -> Result<String, Box<dyn Error>> {
     let drone_url = args["drone_url"].as_str().ok_or("drone_url is required")?;
     let auth_token = args["auth_token"].as_str();
@@ -589,11 +796,11 @@ fn handle_screenshot(args: &Value) -> Result<String, Box<dyn Error>> {
     let client = DroneClient::new(drone_url, auth_token);
     let result = client.send_system_command("screenshot", &json!({}))?;
 
-    Ok(serde_json::to_string_pretty(&json!({
-        "status": "captured",
-        "message": "Screenshot request sent to drone.",
-        "response": result,
-    }))?)
+    Ok(serde_json::to_string_pretty(&queued_without_result(
+        "screenshot",
+        "image data",
+        &result,
+    ))?)
 }
 
 fn handle_type_keys(args: &Value) -> Result<String, Box<dyn Error>> {
@@ -619,11 +826,11 @@ fn handle_type_keys(args: &Value) -> Result<String, Box<dyn Error>> {
     };
 
     let result = client.send_system_command("input", &payload)?;
-    Ok(serde_json::to_string_pretty(&json!({
-        "status": "sent",
-        "action": action,
-        "response": result,
-    }))?)
+    Ok(serde_json::to_string_pretty(&queued_without_result(
+        "keyboard input",
+        "keystroke delivered",
+        &result,
+    ))?)
 }
 
 fn handle_click(args: &Value) -> Result<String, Box<dyn Error>> {
@@ -637,13 +844,11 @@ fn handle_click(args: &Value) -> Result<String, Box<dyn Error>> {
     let payload = json!({ "action": "click", "x": x, "y": y, "button": button });
     let result = client.send_system_command("input", &payload)?;
 
-    Ok(serde_json::to_string_pretty(&json!({
-        "status": "sent",
-        "x": x,
-        "y": y,
-        "button": button,
-        "response": result,
-    }))?)
+    Ok(serde_json::to_string_pretty(&queued_without_result(
+        "mouse click",
+        "click delivered",
+        &result,
+    ))?)
 }
 
 fn handle_network_stats(args: &Value) -> Result<String, Box<dyn Error>> {
@@ -653,7 +858,11 @@ fn handle_network_stats(args: &Value) -> Result<String, Box<dyn Error>> {
     let client = DroneClient::new(drone_url, auth_token);
     let result = client.send_system_command("network_stats", &json!({}))?;
 
-    Ok(serde_json::to_string_pretty(&result)?)
+    Ok(serde_json::to_string_pretty(&queued_without_result(
+        "network stats",
+        "counter",
+        &result,
+    ))?)
 }
 
 fn handle_upload(root: &Path, args: &Value) -> Result<String, Box<dyn Error>> {
@@ -665,7 +874,12 @@ fn handle_upload(root: &Path, args: &Value) -> Result<String, Box<dyn Error>> {
         .as_str()
         .ok_or("remote_path is required")?;
     let auth_token = args["auth_token"].as_str();
-    let deploy_instructions = args.get("deploy_instructions");
+    // The tool schema offers deploy instructions as `{action, target}` objects;
+    // the drone's `instructions` field is a string of `run`/`copy`/`notify`
+    // lines. Passing the array straight through is what made the server's
+    // `as_str()` read it as absent and skip the deploy entirely.
+    let deploy_instructions =
+        deploy_instruction_lines(args.get("deploy_instructions")).map_err(|e| e.to_string())?;
 
     let full_path = if Path::new(local_path).is_absolute() {
         PathBuf::from(local_path)
@@ -674,12 +888,48 @@ fn handle_upload(root: &Path, args: &Value) -> Result<String, Box<dyn Error>> {
     };
 
     let client = DroneClient::new(drone_url, auth_token);
-    let result = client.upload_file(&full_path, remote_path, deploy_instructions)?;
+    // The protocol carries no destination, only a file name, so honour the part
+    // of `remote_path` a drone can actually act on.
+    let wanted_name = Path::new(remote_path)
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .filter(|n| !n.is_empty());
+    let source_name = full_path
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "upload".to_string());
+    let sent_as = wanted_name.unwrap_or_else(|| source_name.clone());
+    let result = client.upload_file(
+        &full_path,
+        Some(sent_as.as_str()),
+        deploy_instructions.as_deref(),
+    )?;
+
+    let verified = result.get("verified").and_then(Value::as_bool);
+    let dest = result
+        .pointer("/deploy_result/dest_path")
+        .or_else(|| result.get("save_path"))
+        .and_then(Value::as_str);
+    // A failed checksum means the drone kept something other than the bytes we
+    // sent; calling that "uploaded" hands the caller a corrupt file to deploy.
+    if verified == Some(false) {
+        return Err(format!(
+            "Upload did not verify: the drone reassembled {source_name} under a SHA-256 that does not \
+             match what was sent, so the copy on the drone is unusable. Destination: {dest:?}"
+        )
+        .into());
+    }
 
     Ok(serde_json::to_string_pretty(&json!({
+        "success": true,
         "status": "uploaded",
         "local_path": local_path,
-        "remote_path": remote_path,
+        "requested_remote_path": remote_path,
+        "dropped_as": dest,
+        "note": format!(
+            "The drone stores drops in its own inbox directory and keeps only the file name, so the \
+             directory part of remote_path is not honoured; {sent_as} landed where the drone chose."
+        ),
         "result": result,
     }))?)
 }
@@ -750,6 +1000,144 @@ mod tests {
         let result = handle_drone_tool(Path::new("/tmp"), "drone_nonexistent", &json!({}));
         assert!(result.is_ok());
         assert!(result.unwrap().is_none());
+    }
+
+    /// Mirror how `drone/src/core.rs` reads a `/peer/task` body: every field is
+    /// looked up by name with a default, never rejected.
+    fn drone_reads_task(body: &Value) -> (String, String) {
+        (
+            body.get("task_id")
+                .and_then(|v| v.as_str())
+                .unwrap_or("unknown")
+                .to_string(),
+            body.get("instructions")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string(),
+        )
+    }
+
+    #[test]
+    fn the_command_lands_where_the_drone_actually_reads_it() {
+        // The drone runs `instructions` through the shell. The client used to
+        // send `{"command": ...}`, so the drone executed an empty string and
+        // reported the task completed with exit code 0 - a command that silently
+        // never ran.
+        let body = task_body("task_1", "cargo test --release");
+        let (task_id, instructions) = drone_reads_task(&body);
+        assert_eq!(instructions, "cargo test --release");
+        assert_eq!(task_id, "task_1");
+        assert!(
+            body.get("command").is_none(),
+            "a `command` key is read by nobody: {body}"
+        );
+    }
+
+    #[test]
+    fn each_submission_gets_its_own_task_id() {
+        // Keyed by `task_id`, the drone files anything missing under "unknown",
+        // so back-to-back commands overwrite one another's status.
+        let ids: Vec<String> = (0..200).map(|_| next_id("task")).collect();
+        let unique: std::collections::HashSet<&String> = ids.iter().collect();
+        assert_eq!(unique.len(), ids.len(), "task ids collided");
+    }
+
+    /// Mirror `handle_file_start`: it defaults `total_chunks` to 1 and every
+    /// other field to an empty value.
+    fn drone_reads_start(body: &Value) -> (String, String, u64) {
+        (
+            body["transfer_id"].as_str().unwrap_or("").to_string(),
+            body["filename"].as_str().unwrap_or("").to_string(),
+            body["total_chunks"].as_u64().unwrap_or(1),
+        )
+    }
+
+    #[test]
+    fn a_start_body_names_the_transfer_and_declares_its_chunk_count() {
+        let body = file_start_body("xfer_7", "app.exe", 786_456, "abc", 3, None);
+        let (transfer_id, filename, total_chunks) = drone_reads_start(&body);
+        assert_eq!(transfer_id, "xfer_7", "an empty id shares one map slot");
+        assert_eq!(filename, "app.exe", "an empty name drops as 'unnamed'");
+        assert_eq!(
+            total_chunks, 3,
+            "defaulting to 1 makes the drone keep only the last chunk"
+        );
+    }
+
+    #[test]
+    fn deploy_instructions_reach_the_drone_as_lines_at_start() {
+        // The server reads `instructions` in the *start* body; the client used
+        // to attach them to the complete body under a different key, so a
+        // transfer finished and nothing was deployed.
+        let body = file_start_body("xfer_7", "app.exe", 10, "abc", 1, Some("notify shipped"));
+        assert_eq!(body["instructions"].as_str(), Some("notify shipped"));
+    }
+
+    #[test]
+    fn chunk_bodies_number_each_chunk_under_one_transfer() {
+        let first = file_chunk_body("xfer_7", 0, "AAA=");
+        let second = file_chunk_body("xfer_7", 1, "BBB=");
+        // The client used to send `chunk_index`, which the server read as 0 for
+        // every chunk - so each write replaced the previous one.
+        assert_eq!(first["index"].as_u64(), Some(0));
+        assert_eq!(second["index"].as_u64(), Some(1));
+        assert_eq!(first["transfer_id"], second["transfer_id"]);
+        assert_eq!(first["data"].as_str(), Some("AAA="));
+    }
+
+    #[test]
+    fn message_envelopes_identify_themselves_and_carry_a_payload() {
+        let env = message_envelope(
+            "msg_3",
+            "TaskRequest",
+            json!({ "action": "type", "text": "hi" }),
+            "input:{\"action\":\"type\"}".to_string(),
+        );
+        // The drone echoes `id` back as `message_id`; with no id the receipt was
+        // always blank, so nothing could be correlated.
+        assert_eq!(env["id"].as_str(), Some("msg_3"));
+        assert_eq!(env["kind"].as_str(), Some("TaskRequest"));
+        assert_eq!(env["payload"]["text"].as_str(), Some("hi"));
+        assert!(env["from"].as_str().unwrap().starts_with("ide_"));
+    }
+
+    #[test]
+    fn the_advertised_instruction_objects_become_drone_lines() {
+        let args = json!([
+            { "action": "run", "target": "{file} --test" },
+            { "action": "notify", "target": "shipped" },
+        ]);
+        assert_eq!(
+            deploy_instruction_lines(Some(&args)).unwrap().as_deref(),
+            Some("run {file} --test\nnotify shipped")
+        );
+        assert_eq!(
+            deploy_instruction_lines(Some(&json!("notify shipped")))
+                .unwrap()
+                .as_deref(),
+            Some("notify shipped"),
+            "a plain string is already in the drone's format"
+        );
+        assert_eq!(deploy_instruction_lines(None).unwrap(), None);
+        assert_eq!(deploy_instruction_lines(Some(&json!(null))).unwrap(), None);
+        assert!(
+            deploy_instruction_lines(Some(&json!([{"action": "rm", "target": "-rf"}]))).is_err()
+        );
+        assert!(deploy_instruction_lines(Some(&json!(7))).is_err());
+    }
+
+    #[test]
+    fn a_queued_request_never_reports_itself_done() {
+        // `drone_screenshot` used to answer `{"status": "captured"}` from a
+        // mailbox receipt, advertising base64 PNG it never produced.
+        let out = queued_without_result("screenshot", "image data", &json!({"received": true}));
+        assert_eq!(out["success"], false);
+        assert_eq!(out["status"], "queued");
+        assert!(out.get("image_data").is_none());
+        assert!(out["detail"]
+            .as_str()
+            .unwrap()
+            .contains("no image data was produced"));
     }
 
     /// Integration test: requires a running drone on localhost:9191 (no auth).

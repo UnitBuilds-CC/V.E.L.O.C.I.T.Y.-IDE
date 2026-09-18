@@ -64,7 +64,7 @@ pub fn get_drone_tools() -> Vec<Tool> {
         },
         Tool {
             name: "drone_screenshot".to_string(),
-            description: "Capture a screenshot from the remote machine where the drone is running. Returns base64-encoded PNG image data."
+            description: "Ask a drone to capture its screen. Returns no image data: the request is filed on the drone's message queue and answered with a receipt only (`success: false`, `status: \"queued\"`). The drone implements screen capture in drone/src/system.rs but exposes no endpoint that invokes it."
                 .to_string(),
             input_schema: json!({
                 "type": "object",
@@ -77,7 +77,7 @@ pub fn get_drone_tools() -> Vec<Tool> {
         },
         Tool {
             name: "drone_type_keys".to_string(),
-            description: "Simulate keyboard input on the remote machine. Can type text or press key combinations (e.g., 'ctrl+c', 'alt+f4')."
+            description: "Ask a drone to simulate keyboard input on the remote machine. Queues a TaskRequest message and reports `success: false`, `status: \"queued\"`: the drone does not dispatch message kinds, so no keystroke is delivered. Use drone_command to run a shell command on the remote machine instead."
                 .to_string(),
             input_schema: json!({
                 "type": "object",
@@ -97,7 +97,7 @@ pub fn get_drone_tools() -> Vec<Tool> {
         },
         Tool {
             name: "drone_click".to_string(),
-            description: "Simulate a mouse click at specific coordinates on the remote machine."
+            description: "Ask a drone to simulate a mouse click at coordinates on the remote machine. Queues a TaskRequest message and reports `success: false`, `status: \"queued\"`: the drone does not dispatch message kinds, so no click is delivered."
                 .to_string(),
             input_schema: json!({
                 "type": "object",
@@ -113,7 +113,7 @@ pub fn get_drone_tools() -> Vec<Tool> {
         },
         Tool {
             name: "drone_network_stats".to_string(),
-            description: "Get network statistics from the remote machine — bytes sent/received, active connections, packet counts."
+            description: "Ask a drone for network statistics (bytes sent/received, active connections). Returns no counters: the request is queued on the message endpoint and answered with a receipt (`success: false`, `status: \"queued\"`). The drone implements a network monitor in drone/src/system.rs but exposes no endpoint that invokes it."
                 .to_string(),
             input_schema: json!({
                 "type": "object",
@@ -133,7 +133,7 @@ pub fn get_drone_tools() -> Vec<Tool> {
                 "properties": {
                     "drone_url": { "type": "string", "description": "Drone base URL." },
                     "local_path": { "type": "string", "description": "Local file path (relative to workspace root)." },
-                    "remote_path": { "type": "string", "description": "Destination path on the remote machine." },
+                    "remote_path": { "type": "string", "description": "Destination path on the remote machine. The protocol has no destination field, so only the file name is honoured - the drone saves the drop into its own inbox directory and reports where in `dropped_as`." },
                     "deploy_instructions": {
                         "type": "array",
                         "items": {
