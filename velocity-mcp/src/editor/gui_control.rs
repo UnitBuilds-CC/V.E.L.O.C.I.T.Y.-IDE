@@ -49,6 +49,9 @@ pub enum GuiCommand {
     GetState {},
     /// Navigate to a specific activity bar panel.
     NavigatePanel { panel: String },
+    /// Open (or close, if already focused) a central panel tab: Settings, Wiki,
+    /// Graph, ... Drives the same `toggle_panel` the gear and Ctrl+, call.
+    TogglePanel { panel: String },
     /// Capture a screenshot and save to disk.
     Screenshot { path: String },
     /// Close the IDE.
@@ -86,6 +89,14 @@ pub struct IdeState {
     pub sidebar_visible: bool,
     pub chat_message_count: usize,
     pub git_branch: Option<String>,
+    /// Title of the tab holding the central area ("Settings", "Chat", ...).
+    #[serde(default)]
+    pub focused_tab: Option<String>,
+    /// `"dock"` or `"welcome"`: which host is actually on screen in the central
+    /// area. A panel tab only renders inside the dock, so this is what tells a
+    /// driver whether its open-the-settings-panel request became visible.
+    #[serde(default)]
+    pub central_area: String,
 }
 
 /// Handle for the GUI control listener. Holds the shutdown flag.
@@ -368,4 +379,49 @@ pub fn load_token(workspace_root: &std::path::Path) -> Option<String> {
         .ok()
         .map(|s| s.trim().to_string())
         .filter(|s| !s.is_empty())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The command crosses the wire as `{"command": ..., "params": {...}}`
+    /// flattened beside `auth_token`. A new variant that does not survive that
+    /// shape is silently dropped by the listener, so pin the bytes.
+    #[test]
+    fn toggle_panel_uses_the_tagged_wire_shape() {
+        let cmd = AuthenticatedCommand {
+            auth_token: "tok".into(),
+            command: GuiCommand::TogglePanel {
+                panel: "settings".into(),
+            },
+        };
+        let json = serde_json::to_string(&cmd).unwrap();
+        let parsed: AuthenticatedCommand = serde_json::from_str(&json).unwrap();
+        assert!(json.contains("\"command\":\"TogglePanel\""), "{json}");
+        assert!(json.contains("\"panel\":\"settings\""), "{json}");
+        match parsed.command {
+            GuiCommand::TogglePanel { panel } => assert_eq!(panel, "settings"),
+            other => panic!("round-trip changed the command: {other:?}"),
+        }
+    }
+
+    /// `velocity_mcp.exe` and the GUI binary are swapped independently, so a new
+    /// MCP against an older GUI must still parse the state it gets back rather
+    /// than failing the whole call over two missing fields.
+    #[test]
+    fn ide_state_reads_pre_reconciliation_payloads() {
+        let older = r#"{
+            "open_files": [],
+            "active_file": null,
+            "active_panel": "files",
+            "workspace_root": "C:/ws",
+            "sidebar_visible": true,
+            "chat_message_count": 0,
+            "git_branch": null
+        }"#;
+        let state: IdeState = serde_json::from_str(older).unwrap();
+        assert_eq!(state.focused_tab, None);
+        assert_eq!(state.central_area, "");
+    }
 }

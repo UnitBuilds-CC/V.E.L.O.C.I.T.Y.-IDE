@@ -1471,9 +1471,16 @@ impl eframe::App for VelocityApp {
         egui::CentralPanel::default()
             .frame(egui::Frame::new().fill(palette.bg_primary))
             .show(ui, |ui| {
-            // Show welcome screen when no editor tabs are open, otherwise show the dock
-            let has_editor_tabs = self.tabs.iter().any(|t| matches!(t.kind, TabKind::Editor { .. }));
-            if has_editor_tabs {
+            // The dock is the only host for a panel tab the user asked to open
+            // (Settings, Wiki, Graph, ...), so it has to be on screen for it to be
+            // visible; the welcome screen keeps the central area otherwise.
+            // Gating on editor tabs alone made every Settings entry point -- the
+            // activity-bar gear, the menu, Ctrl+,, the status-bar provider chip and
+            // the command palette -- a silent no-op in a workspace with no file
+            // open, which is the state a fresh session starts in. Same predicate
+            // the GUI-bridge state report uses, so a probe cannot disagree with
+            // what the frame drew.
+            if self.central_shows_dock() {
                 // Show the dock with editor tabs
                 if let Some(mut dock_state) = self.dock_state.take() {
                     let mut viewer = TabViewerImpl { app: self };

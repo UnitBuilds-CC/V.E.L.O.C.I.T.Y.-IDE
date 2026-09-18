@@ -233,6 +233,69 @@ pub struct WorkspaceProviderSettings {
     pub velocity_router: WorkspaceRouterSettings,
 }
 
+impl WorkspaceProviderSettings {
+    /// Every dispatchable provider with whether this workspace actually holds
+    /// credentials for it, in the order the IDE should prefer them.
+    ///
+    /// Single source of truth for "is this provider usable". The team builder,
+    /// the workflow router and the editor's startup default each used to keep
+    /// their own answer, which is how the editor could open on a provider with
+    /// no key in a workspace that had exactly one configured.
+    pub fn credentials(&self) -> Vec<(crate::agent::AiProvider, bool)> {
+        use crate::agent::AiProvider;
+        vec![
+            (AiProvider::AlibabaQwen, self.alibaba.is_configured()),
+            (AiProvider::Deepseek, self.deepseek.is_configured()),
+            (AiProvider::OpenRouter, self.openrouter.is_configured()),
+            (AiProvider::OpenAI, self.openai.is_configured()),
+            (AiProvider::Anthropic, self.anthropic.is_configured()),
+            (AiProvider::GoogleVertex, self.google.is_configured()),
+            (AiProvider::Groq, self.groq.is_configured()),
+            (AiProvider::Mistral, self.mistral.is_configured()),
+            (AiProvider::TogetherAi, self.together.is_configured()),
+            (AiProvider::FireworksAi, self.fireworks.is_configured()),
+            (AiProvider::Perplexity, self.perplexity.is_configured()),
+            (AiProvider::Cerebras, self.cerebras.is_configured()),
+            (AiProvider::AzureOpenAi, self.azure_openai.is_configured()),
+            (
+                AiProvider::CloudflareWorkersAi,
+                !self.cloudflare.api_token.trim().is_empty(),
+            ),
+            (AiProvider::LocalOllama, !self.ollama.host.trim().is_empty()),
+        ]
+    }
+
+    /// `Some(true)` / `Some(false)` when [`Self::credentials`] tracks the
+    /// provider, `None` when it does not appear at all. AwsBedrock is absent on
+    /// purpose (it authenticates via the AWS chain, not a stored key), so
+    /// "not listed" must not be read as "unusable".
+    pub fn is_usable(&self, provider: crate::agent::AiProvider) -> Option<bool> {
+        self.credentials()
+            .into_iter()
+            .find(|(candidate, _)| *candidate == provider)
+            .map(|(_, configured)| configured)
+    }
+
+    /// The provider to fall back to when `current` cannot actually be called.
+    ///
+    /// Returns `None` -- leave the choice alone -- when `current` is usable, when
+    /// it is untracked, or when nothing in the workspace is configured, because
+    /// guessing a provider the user has no key for is worse than the stale one.
+    pub fn fallback_provider(
+        &self,
+        current: crate::agent::AiProvider,
+    ) -> Option<crate::agent::AiProvider> {
+        if self.is_usable(current).unwrap_or(true) {
+            return None;
+        }
+        self.credentials()
+            .into_iter()
+            .find(|(_, configured)| *configured)
+            .map(|(provider, _)| provider)
+            .filter(|provider| *provider != current)
+    }
+}
+
 /// Settings for the Velocity Router (MoA orchestration service).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WorkspaceRouterSettings {
@@ -1160,6 +1223,124 @@ fn chrono_now_iso() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::agent::AiProvider;
+
+    // ── Provider credential table ─────────────────────────────────────────
+
+    /// The state the shipped IDE actually starts a fresh workspace in: the
+    /// default is Cloudflare, the only key on disk is Alibaba's, and the
+    /// persisted `selected_model` is a `@cf/...` id nothing can serve.
+    #[test]
+    fn fallback_moves_off_the_default_provider_when_only_alibaba_is_keyed() {
+        let settings = WorkspaceProviderSettings {
+            alibaba: WorkspaceApiKeySettings {
+                api_key: "sk-alibaba".into(),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        assert_eq!(
+            settings.fallback_provider(AiProvider::CloudflareWorkersAi),
+            Some(AiProvider::AlibabaQwen)
+        );
+    }
+
+    #[test]
+    fn fallback_leaves_a_usable_provider_alone() {
+        let settings = WorkspaceProviderSettings {
+            alibaba: WorkspaceApiKeySettings {
+                api_key: "sk-alibaba".into(),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        assert_eq!(settings.fallback_provider(AiProvider::AlibabaQwen), None);
+    }
+
+    /// A token-plan key is a credential: Alibaba is reachable with it even when
+    /// the pay-as-you-go `api_key` field is blank.
+    #[test]
+    fn token_plan_key_alone_counts_as_configured() {
+        let settings = WorkspaceProviderSettings {
+            alibaba: WorkspaceApiKeySettings {
+                token_plan_api_key: "tp-key".into(),
+                use_token_plan: true,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        assert_eq!(settings.is_usable(AiProvider::AlibabaQwen), Some(true));
+        assert_eq!(
+            settings.fallback_provider(AiProvider::OpenAI),
+            Some(AiProvider::AlibabaQwen)
+        );
+    }
+
+    /// Guessing a provider the user holds no key for is worse than leaving a
+    /// stale choice in place, where at least the Settings panel explains it.
+    #[test]
+    fn fallback_says_nothing_when_nothing_is_configured() {
+        let settings = WorkspaceProviderSettings {
+            // Default() seeds a localhost host, which reads as "configured".
+            ollama: WorkspaceOllamaSettings {
+                host: String::new(),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        assert_eq!(
+            settings.fallback_provider(AiProvider::CloudflareWorkersAi),
+            None
+        );
+    }
+
+    /// Bedrock authenticates through the AWS chain, so its absence from the
+    /// table must not be read as "unusable" and trigger a switch.
+    #[test]
+    fn untracked_providers_are_not_judged() {
+        let settings = WorkspaceProviderSettings {
+            alibaba: WorkspaceApiKeySettings {
+                api_key: "sk-alibaba".into(),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        assert_eq!(settings.is_usable(AiProvider::AwsBedrock), None);
+        assert_eq!(settings.fallback_provider(AiProvider::AwsBedrock), None);
+    }
+
+    #[test]
+    fn credential_table_prefers_alibaba_and_ends_with_local_ollama() {
+        let table = WorkspaceProviderSettings::default().credentials();
+        assert_eq!(
+            table.first().map(|(p, _)| *p),
+            Some(AiProvider::AlibabaQwen)
+        );
+        assert_eq!(table.last().map(|(p, _)| *p), Some(AiProvider::LocalOllama));
+        // Every dispatchable provider except the untracked one is listed.
+        assert_eq!(
+            table
+                .iter()
+                .filter(|(p, _)| *p == AiProvider::AwsBedrock)
+                .count(),
+            0
+        );
+        assert_eq!(table.len(), 15, "16 providers, Bedrock untracked");
+    }
+
+    /// The whole point of one shared table: an empty key must never read as
+    /// usable, and whitespace-only must not either.
+    #[test]
+    fn blank_and_whitespace_keys_are_not_credentials() {
+        let mut settings = WorkspaceProviderSettings::default();
+        settings.cloudflare.api_token = "   ".into();
+        settings.openai.api_key = "".into();
+        assert_eq!(
+            settings.is_usable(AiProvider::CloudflareWorkersAi),
+            Some(false)
+        );
+        assert_eq!(settings.is_usable(AiProvider::OpenAI), Some(false));
+    }
 
     #[test]
     fn writes_nda_usage_state() {

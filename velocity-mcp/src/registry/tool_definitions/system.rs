@@ -456,7 +456,7 @@ pub fn get_system_tools() -> Vec<Tool> {
         },
         Tool {
             name: "gui_get_state".to_string(),
-            description: "Get the current state of the running IDE: open files, active file, active panel, sidebar visibility, chat message count, git branch. Requires the GUI to be running.".to_string(),
+            description: "Get the current state of the running IDE: open files, active file, active panel, focused central tab, whether the central area shows the dock or the welcome screen, sidebar visibility, chat message count, git branch. Requires the GUI to be running.".to_string(),
             input_schema: json!({
                 "type": "object",
                 "properties": {},
@@ -469,6 +469,22 @@ pub fn get_system_tools() -> Vec<Tool> {
                 "type": "object",
                 "properties": {
                     "panel": { "type": "string", "description": "Panel name: files, search, git, chat, build, agents, knowledge, or workspace." }
+                },
+                "required": ["panel"]
+            }),
+        },
+        Tool {
+            name: "gui_toggle_panel".to_string(),
+            // Built from the same table the command resolves against, so the
+            // advertised list cannot drift from the accepted one.
+            description: format!(
+                "Open a central panel tab in the running IDE (settings, wiki, graph, ...) -- the same entry point the activity-bar gear, the menu, Ctrl+, and the status-bar provider chip use -- or close it if it already has focus. Valid panels: {}. Requires the GUI to be running.",
+                crate::editor::app::types::bridge_panel_names().join(", ")
+            ),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "panel": { "type": "string", "description": format!("One of: {}.", crate::editor::app::types::bridge_panel_names().join(", ")) }
                 },
                 "required": ["panel"]
             }),

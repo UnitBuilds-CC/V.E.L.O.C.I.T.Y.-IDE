@@ -152,6 +152,27 @@ fn fetch_models_for_provider(
     }
 }
 
+/// The model to land on when the requested one is not in the catalog.
+///
+/// `model_catalog.first()` is whatever order the endpoint listed, and some
+/// plans are multi-vendor: the Alibaba token plan serves DeepSeek, Kimi and GLM
+/// beside Qwen, so the alphabetical first entry was a DeepSeek model on a
+/// workspace that had just been moved onto Alibaba Qwen. Prefer the family the
+/// provider is named after; everyone else keeps the endpoint's own order.
+fn preferred_default_model(provider: AiProvider, catalog: &[ModelInfo]) -> Option<&ModelInfo> {
+    let family = provider_family_keyword(provider)?;
+    catalog
+        .iter()
+        .find(|model| model.id.to_ascii_lowercase().contains(family))
+}
+
+fn provider_family_keyword(provider: AiProvider) -> Option<&'static str> {
+    match provider {
+        AiProvider::AlibabaQwen => Some("qwen"),
+        _ => None,
+    }
+}
+
 fn sync_model_state(
     provider: AiProvider,
     accounts: &[CloudflareAccount],
@@ -170,8 +191,8 @@ fn sync_model_state(
     {
         *model = fallback_model;
     } else {
-        *model = model_catalog
-            .first()
+        *model = preferred_default_model(provider, model_catalog)
+            .or_else(|| model_catalog.first())
             .map(|candidate| candidate.id.clone())
             .unwrap_or(fallback_model);
     }
@@ -915,5 +936,72 @@ pub fn apply_headless_control_messages(
             Err(crossbeam_channel::TryRecvError::Empty) => return false,
             Err(crossbeam_channel::TryRecvError::Disconnected) => return false,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn model(id: &str) -> ModelInfo {
+        ModelInfo {
+            id: id.into(),
+            label: id.into(),
+            api_style: ApiStyle::OpenAiChat,
+            supports_tools: false,
+            supports_thinking: false,
+        }
+    }
+
+    /// The token-plan listing is alphabetical, so its first entry is a DeepSeek
+    /// model. A workspace that has just been reconciled onto Alibaba Qwen must
+    /// land on Qwen, not on somebody else's model that happens to sort first.
+    #[test]
+    fn alibaba_defaults_to_a_qwen_model_not_the_first_in_the_list() {
+        let catalog = [
+            model("deepseek-v4-flash-0731"),
+            model("kimi-k2.7-code"),
+            model("qwen3.8-flash"),
+        ];
+        assert_eq!(
+            preferred_default_model(AiProvider::AlibabaQwen, &catalog).map(|m| m.id.as_str()),
+            Some("qwen3.8-flash")
+        );
+    }
+
+    #[test]
+    fn other_providers_keep_the_endpoints_own_order() {
+        let catalog = [model("gpt-x"), model("gpt-y")];
+        assert!(preferred_default_model(AiProvider::OpenAI, &catalog).is_none());
+        assert!(preferred_default_model(AiProvider::CloudflareWorkersAi, &catalog).is_none());
+    }
+
+    /// A token-plan listing with no Qwen in it makes the family preference
+    /// useless; the caller must still fall through to the first entry rather
+    /// than end up with no model at all.
+    #[test]
+    fn family_preference_is_skipped_when_the_vendor_is_absent() {
+        let catalog = [model("deepseek-v4-flash-0731"), model("glm-4.6")];
+        assert!(preferred_default_model(AiProvider::AlibabaQwen, &catalog).is_none());
+        let picked = preferred_default_model(AiProvider::AlibabaQwen, &catalog)
+            .or_else(|| catalog.first())
+            .map(|m| m.id.clone())
+            .unwrap_or_default();
+        assert_eq!(picked, "deepseek-v4-flash-0731");
+    }
+
+    #[test]
+    fn family_match_is_case_insensitive() {
+        let catalog = [model("DeepSeek-R1"), model("QWEN3-MAX")];
+        assert_eq!(
+            preferred_default_model(AiProvider::AlibabaQwen, &catalog).map(|m| m.id.as_str()),
+            Some("QWEN3-MAX")
+        );
+    }
+
+    #[test]
+    fn empty_catalog_has_no_preferred_model() {
+        let catalog: [ModelInfo; 0] = [];
+        assert!(preferred_default_model(AiProvider::AlibabaQwen, &catalog).is_none());
     }
 }

@@ -143,6 +143,12 @@ pub struct VelocityApp {
     pub buffers: HashMap<TabId, EditorBuffer>,
 
     pub dock_state: Option<DockState<Tab>>,
+    /// Set when the user asks for a panel (button, shortcut, palette, bridge)
+    /// and cleared when they close it. Distinguishes an explicit request from
+    /// the profile's own always-present primary tabs, so the welcome screen can
+    /// stay home on a fresh start yet step aside the moment a panel is asked
+    /// for. See [`central_area_is_dock`](crate::editor::app::types::central_area_is_dock).
+    pub panel_requested: bool,
 
     pub chat: ChatPanelState,
     pub command_output: String,
@@ -547,6 +553,11 @@ impl VelocityApp {
 
     pub fn restore_workspace_preferences(&mut self) {
         let Some(preferences) = Self::load_workspace_preferences(&self.workspace_root) else {
+            // No saved session, so every field keeps its shipped default -- and
+            // that default is Cloudflare plus a `@cf/` model, which a
+            // brand-new workspace may hold no key for at all. Reconcile before
+            // letting the first save pin the unreachable choice to disk.
+            self.reconcile_provider_with_credentials();
             return;
         };
 
@@ -558,6 +569,7 @@ impl VelocityApp {
             self.provider = provider;
             self.chat.provider = provider;
         }
+        self.reconcile_provider_with_credentials();
         self.thinking_enabled = preferences.thinking_enabled;
         self.left_sidebar_visible = preferences.left_sidebar_visible;
         self.left_sidebar_width = preferences
@@ -592,6 +604,48 @@ impl VelocityApp {
         self.rebuild_dock();
 
         self.status_message = format!("Restored {} workspace", self.appearance.profile.label());
+    }
+
+    /// Point the editor at a provider the workspace can actually call.
+    ///
+    /// The shipped default is Cloudflare + `@cf/moonshotai/kimi-k2.7-code`, and
+    /// `save_workspace_preferences` writes it on the first save whether or not
+    /// Cloudflare was ever configured. A workspace whose only key is Alibaba
+    /// therefore reopened on a model it could not reach, and the stale model id
+    /// was re-persisted on top of it. The team builder and the workflow router
+    /// already resolve the default from the credentials on disk; the editor has
+    /// to agree with them.
+    fn reconcile_provider_with_credentials(&mut self) {
+        // Read from disk instead of trusting `self.provider_settings`: on a
+        // workspace switch that field still held the *previous* project's keys
+        // -- nothing reloads it -- which the Settings panel then displayed and,
+        // on save, wrote into the new workspace.
+        let settings = load_workspace_provider_settings(&self.workspace_root);
+        self.provider_settings = settings.clone();
+        let Some(resolved) = settings.fallback_provider(self.provider) else {
+            return;
+        };
+        let previous = self.provider;
+        self.provider = resolved;
+        self.chat.provider = resolved;
+        // The old id belongs to the abandoned provider. Clearing it lets the
+        // agent's `sync_model_state` fall through to the new catalog's first
+        // entry instead of keeping a model the new provider has never heard of.
+        self.selected_model.clear();
+        self.chat.selected_model.clear();
+        // `SetProvider`, not `refresh_models()`. The agent thread resolves the
+        // catalog from its *own* copy of the provider, so a bare RefreshModels
+        // would go fetch the abandoned provider's list a moment before we told
+        // it which provider we actually moved to. SetProvider assigns, fetches
+        // and syncs in one step, and reports back through ModelCatalog.
+        self.models_loading = true;
+        self.chat.models_loading = true;
+        let _ = self.agent_tx.send(UiToAgentMessage::SetProvider(resolved));
+        self.toasts.push(crate::editor::toast::Toast::info(format!(
+            "{} has no credentials in this workspace - switched to {}",
+            previous.label(),
+            resolved.label()
+        )));
     }
 
     pub fn persist_mission_activity(&self) -> Result<(), String> {
@@ -667,54 +721,8 @@ impl VelocityApp {
         self.search_hits = hits;
     }
 
-    fn find_tab_by_kind(tabs: &[Tab], kind: &TabKind) -> Option<Tab> {
-        tabs.iter()
-            .find(|tab| std::mem::discriminant(&tab.kind) == std::mem::discriminant(kind))
-            .cloned()
-    }
-
-    fn collect_panel_tabs(tabs: &[Tab], kinds: &[TabKind]) -> Vec<Tab> {
-        let mut collected = Vec::new();
-        for kind in kinds {
-            if let Some(tab) = Self::find_tab_by_kind(tabs, kind) {
-                if !collected.iter().any(|existing: &Tab| existing.id == tab.id) {
-                    collected.push(tab);
-                }
-            }
-        }
-        collected
-    }
-
     pub(crate) fn build_workspace_dock(&self, profile: WorkspaceProfile) -> DockState<Tab> {
-        let mut root_tabs: Vec<Tab> = self
-            .tabs
-            .iter()
-            .filter(|tab| matches!(tab.kind, TabKind::Editor { .. }))
-            .cloned()
-            .collect();
-
-        let primary_kinds: Vec<TabKind> = match profile {
-            WorkspaceProfile::Coder => vec![TabKind::Chat, TabKind::Output],
-            WorkspaceProfile::AutomationOperator => {
-                vec![TabKind::Orchestrator, TabKind::Chat, TabKind::Output]
-            }
-            WorkspaceProfile::MissionControl => {
-                vec![TabKind::MissionControl, TabKind::Chat, TabKind::Output]
-            }
-            WorkspaceProfile::Accessibility => vec![TabKind::Chat, TabKind::Output],
-        };
-
-        for tab in Self::collect_panel_tabs(&self.tabs, &primary_kinds) {
-            if !root_tabs.iter().any(|existing| existing.id == tab.id) {
-                root_tabs.push(tab);
-            }
-        }
-
-        DockState::new(if root_tabs.is_empty() {
-            self.tabs.clone()
-        } else {
-            root_tabs
-        })
+        DockState::new(dock_tab_set(&self.tabs, profile, self.active_tab.as_ref()))
     }
 
     pub fn apply_workspace_profile(&mut self, profile: WorkspaceProfile) {
@@ -731,55 +739,15 @@ impl VelocityApp {
             WorkspaceProfile::Accessibility => (true, true),
         };
 
-        // Collect current editor tabs (kinds) and prepare the desired set.
-        let mut desired_tabs: Vec<Tab> = self
-            .tabs
-            .iter()
-            .filter(|tab| matches!(tab.kind, TabKind::Editor { .. }))
-            .cloned()
-            .collect();
-
-        let push_unique = |kind: TabKind, tabs: &mut Vec<Tab>, counter: &mut u64| {
-            if tabs
-                .iter()
-                .any(|tab| std::mem::discriminant(&tab.kind) == std::mem::discriminant(&kind))
-            {
-                return;
-            }
-            tabs.push(Tab {
-                id: TabId::next(counter),
-                kind,
-            });
-        };
-
-        match profile {
-            WorkspaceProfile::Coder => {
-                push_unique(TabKind::Chat, &mut desired_tabs, &mut self.tab_counter);
-                push_unique(TabKind::Output, &mut desired_tabs, &mut self.tab_counter);
-            }
-            WorkspaceProfile::AutomationOperator => {
-                push_unique(
-                    TabKind::Orchestrator,
-                    &mut desired_tabs,
-                    &mut self.tab_counter,
-                );
-                push_unique(TabKind::Chat, &mut desired_tabs, &mut self.tab_counter);
-                push_unique(TabKind::Output, &mut desired_tabs, &mut self.tab_counter);
-            }
-            WorkspaceProfile::MissionControl => {
-                push_unique(
-                    TabKind::MissionControl,
-                    &mut desired_tabs,
-                    &mut self.tab_counter,
-                );
-                push_unique(TabKind::Chat, &mut desired_tabs, &mut self.tab_counter);
-                push_unique(TabKind::Output, &mut desired_tabs, &mut self.tab_counter);
-            }
-            WorkspaceProfile::Accessibility => {
-                push_unique(TabKind::Chat, &mut desired_tabs, &mut self.tab_counter);
-                push_unique(TabKind::Output, &mut desired_tabs, &mut self.tab_counter);
-            }
-        }
+        // Collect the tab set this profile should own. Same rule the dock uses,
+        // so applying a profile can no longer delete a panel tab (Settings, Wiki,
+        // Graph, ...) that the dock was just told to show.
+        let desired_tabs = dock_tab_set_with_defaults(
+            &self.tabs,
+            profile,
+            self.active_tab.as_ref(),
+            &mut self.tab_counter,
+        );
 
         // Determine whether visible sidebars or tab kinds changed; only rebuild
         // dock when those change to reduce layout churn (fixes jitter on mode swap).
@@ -839,7 +807,11 @@ impl VelocityApp {
 
         // Only change focus if we rebuilt or the focused kind is missing.
         if sidebars_changed || tabs_changed || self.active_tab.is_none() {
-            self.focus_panel(focus_kind);
+            // Quiet: this is the preset choosing its landing panel, not the user
+            // asking for a panel. Routing it through `focus_panel` would set the
+            // request flag and trade the fresh-session welcome screen for the
+            // dock on every start.
+            self.focus_panel_quiet(focus_kind);
         }
 
         self.status_message = format!("Applied {} workspace preset", profile.label());
@@ -962,6 +934,7 @@ impl VelocityApp {
             active_tab: Some(chat.id.clone()),
             buffers: HashMap::new(),
             dock_state: Some(DockState::new(tabs)),
+            panel_requested: false,
             chat_history: String::new(),
             command_output: String::from("V.E.L.O.C.I.T.Y. IDE initialized.\n"),
             command_palette: CommandPalette {
@@ -1274,6 +1247,7 @@ impl VelocityApp {
             active_tab: Some(chat.id.clone()),
             buffers: HashMap::new(),
             dock_state: Some(DockState::new(tabs)),
+            panel_requested: false,
             chat_history: String::new(),
             command_output: String::new(),
             command_palette: CommandPalette::default(),

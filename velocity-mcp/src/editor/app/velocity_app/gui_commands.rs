@@ -33,6 +33,7 @@ impl VelocityApp {
             GuiCommand::OpenFile { path } => self.cmd_open_file(path),
             GuiCommand::GetState {} => self.cmd_get_state(),
             GuiCommand::NavigatePanel { panel } => self.cmd_navigate_panel(panel),
+            GuiCommand::TogglePanel { panel } => self.cmd_toggle_panel(panel),
             GuiCommand::Screenshot { path } => self.cmd_screenshot(path),
             GuiCommand::Quit {} => self.cmd_quit(ctx),
         }
@@ -110,6 +111,19 @@ impl VelocityApp {
             .unwrap_or(&"unknown")
             .to_string();
 
+        // What the central area is actually showing. Read the same way the frame
+        // reads it, so a driver can tell "the tab exists and is drawing" apart
+        // from "the tab exists but the welcome screen owns the panel".
+        let focused_tab =
+            crate::editor::app::types::focused_tab(&self.tabs, self.active_tab.as_ref())
+                .map(|tab| tab.title());
+        let central_area = if self.central_shows_dock() {
+            "dock"
+        } else {
+            "welcome"
+        }
+        .to_string();
+
         let state = IdeState {
             open_files,
             active_file,
@@ -122,11 +136,54 @@ impl VelocityApp {
             } else {
                 Some(self.git_state.branch.clone())
             },
+            focused_tab,
+            central_area,
         };
 
         GuiResponse {
             success: true,
             data: Some(serde_json::to_value(&state).unwrap_or_default()),
+            error: None,
+        }
+    }
+
+    /// Open (or, if already focused, close) a central panel tab. Goes through
+    /// `toggle_panel` -- the identical entry point the activity-bar gear, the
+    /// menu item, Ctrl+, and the status-bar provider chip use -- so a driver
+    /// reaching Settings by this route exercises the same code a click does.
+    fn cmd_toggle_panel(&mut self, panel: String) -> GuiResponse {
+        let kind = match crate::editor::app::types::panel_kind_from_name(&panel) {
+            Some(kind) => kind,
+            None => {
+                return GuiResponse {
+                    success: false,
+                    data: None,
+                    error: Some(format!(
+                        "Unknown panel '{panel}'. Valid: {:?}",
+                        crate::editor::app::types::bridge_panel_names()
+                    )),
+                };
+            }
+        };
+
+        self.toggle_panel(kind);
+        // Report what the central area ended up showing: opening can equally
+        // have toggled the tab closed, and the caller should not have to guess.
+        GuiResponse {
+            success: true,
+            data: Some(serde_json::json!({
+                "panel": panel,
+                "focused_tab": crate::editor::app::types::focused_tab(
+                    &self.tabs,
+                    self.active_tab.as_ref()
+                )
+                .map(|tab| tab.title()),
+                "central_area": if self.central_shows_dock() {
+                    "dock"
+                } else {
+                    "welcome"
+                },
+            })),
             error: None,
         }
     }

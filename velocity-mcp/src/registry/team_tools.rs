@@ -1194,34 +1194,11 @@ fn md5_hash(data: &[u8]) -> u128 {
 
 /// Determine which providers have credentials configured in the workspace.
 /// Returns a list of (provider, is_configured) pairs in priority order.
+///
+/// The table itself lives on `WorkspaceProviderSettings` so the editor's startup
+/// default and the workflow router resolve the same answer from the same data.
 pub(crate) fn configured_providers(root: &Path) -> Vec<(AiProvider, bool)> {
-    let settings = load_workspace_provider_settings(root);
-    vec![
-        (AiProvider::AlibabaQwen, settings.alibaba.is_configured()),
-        (AiProvider::Deepseek, settings.deepseek.is_configured()),
-        (AiProvider::OpenRouter, settings.openrouter.is_configured()),
-        (AiProvider::OpenAI, settings.openai.is_configured()),
-        (AiProvider::Anthropic, settings.anthropic.is_configured()),
-        (AiProvider::GoogleVertex, settings.google.is_configured()),
-        (AiProvider::Groq, settings.groq.is_configured()),
-        (AiProvider::Mistral, settings.mistral.is_configured()),
-        (AiProvider::TogetherAi, settings.together.is_configured()),
-        (AiProvider::FireworksAi, settings.fireworks.is_configured()),
-        (AiProvider::Perplexity, settings.perplexity.is_configured()),
-        (AiProvider::Cerebras, settings.cerebras.is_configured()),
-        (
-            AiProvider::AzureOpenAi,
-            settings.azure_openai.is_configured(),
-        ),
-        (
-            AiProvider::CloudflareWorkersAi,
-            !settings.cloudflare.api_token.trim().is_empty(),
-        ),
-        (
-            AiProvider::LocalOllama,
-            !settings.ollama.host.trim().is_empty(),
-        ),
-    ]
+    load_workspace_provider_settings(root).credentials()
 }
 
 /// Get the first configured provider as the workspace default.

@@ -6,17 +6,45 @@ use super::tier3_common::primary_button;
 use crate::agent::UiToAgentMessage;
 
 impl VelocityApp {
+    /// The user asked to see this panel. Every click, shortcut, palette entry
+    /// and bridge command lands here, so this is where the request gets
+    /// recorded -- see [`central_shows_dock`].
     pub fn focus_panel(&mut self, kind: TabKind) {
-        if let Some(dock) = self.dock_state.as_mut() {
-            let found_tab = dock
-                .iter_all_tabs()
-                .find(|(_, tab)| std::mem::discriminant(&tab.kind) == std::mem::discriminant(&kind))
-                .map(|(_, tab)| tab.clone());
+        self.set_focused_panel(kind, true);
+    }
 
-            if let Some(tab) = found_tab {
+    /// Place the panel without claiming the user asked for it. Used only by
+    /// profile application, whose choice of landing panel is the preset's,
+    /// not a request to hide the welcome screen. Kept out of the public API so
+    /// a UI handler cannot accidentally take the easy route and leave its own
+    /// click with no visible effect.
+    pub(super) fn focus_panel_quiet(&mut self, kind: TabKind) {
+        self.set_focused_panel(kind, false);
+    }
+
+    fn set_focused_panel(&mut self, kind: TabKind, requested: bool) {
+        // Every panel entry point funnels through here. With no dock there was
+        // nowhere to put the tab and the call did nothing at all -- it did not
+        // even record the tab in `self.tabs`, so the click left no trace.
+        if self.dock_state.is_none() {
+            self.rebuild_dock();
+        }
+        if requested {
+            self.panel_requested = true;
+        }
+        if let Some(dock) = self.dock_state.as_mut() {
+            // Resolve from the tab list, not from the dock. A rebuild can leave a
+            // panel tab in `self.tabs` that the dock has forgotten, and matching
+            // only the dock let a second copy pile up beside the orphaned first.
+            if let Some(tab) = find_tab_by_kind(&self.tabs, &kind) {
+                let id = tab.id.clone();
+                let docked = dock.iter_all_tabs().any(|(_, docked)| docked.id == id);
+                if !docked {
+                    dock.push_to_focused_leaf(tab.clone());
+                }
                 if let Some(tab_path) = dock.find_tab(&tab) {
                     let _ = dock.set_active_tab(tab_path);
-                    self.active_tab = Some(tab.id);
+                    self.active_tab = Some(id);
                     return;
                 }
             }
@@ -37,6 +65,17 @@ impl VelocityApp {
         }
     }
 
+    /// Which host the central area should draw. The render loop and the GUI
+    /// bridge state report both ask here so neither can disagree with the other
+    /// about what the frame actually showed.
+    pub fn central_shows_dock(&self) -> bool {
+        crate::editor::app::types::central_area_is_dock(
+            &self.tabs,
+            self.active_tab.as_ref(),
+            self.panel_requested,
+        )
+    }
+
     pub fn toggle_panel(&mut self, kind: TabKind) {
         // If the panel is already open AND is the active tab, close it (toggle off).
         // Otherwise, open/focus it (toggle on).
@@ -48,11 +87,14 @@ impl VelocityApp {
 
         if let Some(ref id) = dominated {
             if self.active_tab.as_ref() == Some(id) {
-                // Panel is active -- toggle it off.
+                // Panel is active -- toggle it off. The user has now taken back
+                // their request, so with no editor open the welcome screen is
+                // the central area again rather than an abandoned dock.
                 let id = id.clone();
                 self.tabs.retain(|t| t.id != id);
                 self.buffers.remove(&id);
                 self.active_tab = self.tabs.first().map(|t| t.id.clone());
+                self.panel_requested = false;
                 self.rebuild_dock();
                 return;
             }

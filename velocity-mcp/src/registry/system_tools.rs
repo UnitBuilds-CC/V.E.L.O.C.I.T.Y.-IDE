@@ -943,6 +943,16 @@ pub fn handle_system_tool(
             let resp = crate::editor::gui_control::send_command(&cmd, &token)?;
             serde_json::to_string(&resp)?
         }
+        "gui_toggle_panel" => {
+            let panel = arguments["panel"].as_str().ok_or("panel is required")?;
+            let token = crate::editor::gui_control::load_token(root)
+                .ok_or("GUI control token not found. Is the IDE running?")?;
+            let cmd = crate::editor::gui_control::GuiCommand::TogglePanel {
+                panel: panel.to_string(),
+            };
+            let resp = crate::editor::gui_control::send_command(&cmd, &token)?;
+            serde_json::to_string(&resp)?
+        }
         "gui_quit" => {
             let token = crate::editor::gui_control::load_token(root)
                 .ok_or("GUI control token not found. Is the IDE running?")?;
