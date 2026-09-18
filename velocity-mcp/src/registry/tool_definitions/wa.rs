@@ -86,15 +86,15 @@ pub fn get_wa_tools() -> Vec<Tool> {
         },
         Tool {
             name: "wa_capture_windows_snapshot".to_string(),
-            description: "Capture a live Windows accessibility snapshot via UIAutomation and persist it as a WA snapshot.".to_string(),
+            description: "Capture a live Windows accessibility snapshot via UIAutomation and persist it as a WA snapshot. Read-only: it walks the target window's tree and synthesises no input.".to_string(),
             input_schema: json!({
                 "type": "object",
                 "properties": {
-                    "sessionId": { "type": "string", "description": "WA session identifier." },
+                    "sessionId": { "type": "string", "description": "WA session identifier. The session must already exist - create it with wa_create_session." },
                     "snapshotName": { "type": "string", "description": "Logical name for the captured snapshot." },
                     "title": { "type": "string", "description": "Optional title override for the captured snapshot." },
-                    "processId": { "type": "integer", "minimum": 1, "description": "Optional target process id. Defaults to the foreground or first named window when omitted." },
-                    "windowNameContains": { "type": "string", "description": "Optional case-insensitive window title substring filter." },
+                    "processId": { "type": "integer", "minimum": 1, "description": "Optional target process id. When omitted the foreground window is captured; when supplied but no top-level window belongs to it, the capture is refused and the live windows are listed rather than a substitute being captured." },
+                    "windowNameContains": { "type": "string", "description": "Optional case-insensitive window title substring filter. Refused on no match, like processId." },
                     "maxDepth": { "type": "integer", "minimum": 0, "description": "Optional maximum UIAutomation traversal depth. Defaults to 3." },
                     "maxChildrenPerNode": { "type": "integer", "minimum": 1, "description": "Optional maximum number of children to inspect per node. Defaults to 64." },
                     "compact": { "type": "boolean", "description": "When true, return a structured Windows capture report instead of human-readable text." }

@@ -126,16 +126,24 @@ function Add-WaNode($element, $depth, $maxDepth, $maxChildren) {
 $root = [System.Windows.Automation.AutomationElement]::RootElement
 $topLevel = $root.FindAll([System.Windows.Automation.TreeScope]::Children, [System.Windows.Automation.Condition]::TrueCondition)
 $target = $null
+# Records the filters the caller actually asked for, so a filter that matches
+# nothing can be reported instead of quietly dropped (bug #64).
+$filterText = @()
 if (-not [string]::IsNullOrWhiteSpace($processIdFilter)) {
+    $filterText += "processId $processIdFilter"
     for ($i = 0; $i -lt $topLevel.Count; $i++) {
         $candidate = $topLevel.Item($i)
-        if ($candidate.Current.ProcessId -eq [int]$processIdFilter) {
+        # `[long]`, not `[int]`: a process id is unsigned, so casting it down
+        # made anything above Int32.MaxValue throw a conversion error instead of
+        # simply reporting no match.
+        if ($candidate.Current.ProcessId -eq [long]$processIdFilter) {
             $target = $candidate
             break
         }
     }
 }
 if ($null -eq $target -and -not [string]::IsNullOrWhiteSpace($windowNameFilter)) {
+    $filterText += "windowNameContains '$windowNameFilter'"
     for ($i = 0; $i -lt $topLevel.Count; $i++) {
         $candidate = $topLevel.Item($i)
         $name = $candidate.Current.Name
@@ -145,7 +153,10 @@ if ($null -eq $target -and -not [string]::IsNullOrWhiteSpace($windowNameFilter))
         }
     }
 }
-if ($null -eq $target) {
+# The fallbacks belong to the unfiltered path only. A caller that named a
+# process asked for that process; capturing some other window and reporting it
+# as a success is how a stale process id read back as a fresh snapshot.
+if ($null -eq $target -and $filterText.Count -eq 0) {
     $foreground = [WaNative]::GetForegroundWindow()
     if ($foreground -ne [IntPtr]::Zero) {
         for ($i = 0; $i -lt $topLevel.Count; $i++) {
@@ -157,7 +168,7 @@ if ($null -eq $target) {
         }
     }
 }
-if ($null -eq $target) {
+if ($null -eq $target -and $filterText.Count -eq 0) {
     for ($i = 0; $i -lt $topLevel.Count; $i++) {
         $candidate = $topLevel.Item($i)
         $name = $candidate.Current.Name
@@ -167,10 +178,20 @@ if ($null -eq $target) {
         }
     }
 }
-if ($null -eq $target -and $topLevel.Count -gt 0) {
+if ($null -eq $target -and $filterText.Count -eq 0 -and $topLevel.Count -gt 0) {
     $target = $topLevel.Item(0)
 }
 if ($null -eq $target) {
+    if ($filterText.Count -gt 0) {
+        $seen = @()
+        for ($i = 0; $i -lt $topLevel.Count; $i++) {
+            $candidate = $topLevel.Item($i)
+            $candidateName = $candidate.Current.Name
+            if ([string]::IsNullOrWhiteSpace($candidateName)) { $candidateName = '<untitled>' }
+            $seen += ('{0} (pid {1})' -f $candidateName, $candidate.Current.ProcessId)
+        }
+        throw ('no top-level window matched ' + ($filterText -join ' and ') + '; ' + $topLevel.Count + ' window(s) on the desktop: ' + (($seen | Select-Object -First 12) -join ', '))
+    }
     throw 'no Windows UIAutomation target window found'
 }
 
@@ -204,7 +225,7 @@ function Get-WaTargetWindow() {
     if (-not [string]::IsNullOrWhiteSpace($processIdFilter)) {
         for ($i = 0; $i -lt $topLevel.Count; $i++) {
             $candidate = $topLevel.Item($i)
-            if ($candidate.Current.ProcessId -eq [int]$processIdFilter) {
+            if ($candidate.Current.ProcessId -eq [long]$processIdFilter) {
                 return $candidate
             }
         }
@@ -358,7 +379,7 @@ function Get-WaTargetWindow() {
     if (-not [string]::IsNullOrWhiteSpace($processIdFilter)) {
         for ($i = 0; $i -lt $topLevel.Count; $i++) {
             $candidate = $topLevel.Item($i)
-            if ($candidate.Current.ProcessId -eq [int]$processIdFilter) {
+            if ($candidate.Current.ProcessId -eq [long]$processIdFilter) {
                 return $candidate
             }
         }
@@ -372,6 +393,8 @@ function Get-WaTargetWindow() {
             }
         }
     }
+    # No fallback to the foreground window here: the action path throws on a
+    # null target, so returning null is the honest answer.
     return $null
 }
 
@@ -477,4 +500,134 @@ if (-not $satisfied -and [string]::IsNullOrWhiteSpace($detail)) {
     detail = $detail
 } | ConvertTo-Json -Depth 4 -Compress
 "#
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The defect these lines pin (bug #64): `wa_capture_windows_snapshot`
+    /// asked for one process, found no window belonging to it, and captured the
+    /// foreground window instead - then reported success. A supplied filter has
+    /// to be either honoured or reported as unmatched.
+    #[test]
+    fn a_named_process_that_matches_nothing_is_reported_not_substituted() {
+        let script = build_capture_script();
+        assert!(
+            script.contains("no top-level window matched"),
+            "an unmatched filter has to say so: {script}"
+        );
+        assert!(
+            script.contains("$filterText += \"processId $processIdFilter\""),
+            "the process id the caller named has to reach the error text"
+        );
+        assert!(
+            script.contains("$filterText += \"windowNameContains '$windowNameFilter'\""),
+            "so does the title filter"
+        );
+    }
+
+    /// Every fallback in the capture script is for the unfiltered path. If one
+    /// of them loses its guard the substitution comes straight back.
+    #[test]
+    fn the_unfiltered_fallbacks_are_all_gated_on_having_no_filter() {
+        let script = build_capture_script();
+        let fallbacks = [
+            "if ($null -eq $target -and $filterText.Count -eq 0) {\n    $foreground",
+            "if ($null -eq $target -and $filterText.Count -eq 0) {\n    for ($i = 0",
+            "if ($null -eq $target -and $filterText.Count -eq 0 -and $topLevel.Count -gt 0)",
+        ];
+        for fallback in fallbacks {
+            assert!(
+                script.contains(fallback),
+                "fallback is reachable with a filter supplied: missing `{fallback}`"
+            );
+        }
+        // Once at the P/Invoke declaration and once at the call site - two is
+        // correct; three would mean a second, unguarded fallback.
+        assert_eq!(
+            script.matches("GetForegroundWindow").count(),
+            2,
+            "the foreground window may only be consulted once, inside the guard"
+        );
+        assert_eq!(
+            script
+                .matches("$foreground = [WaNative]::GetForegroundWindow()")
+                .count(),
+            1,
+            "the guarded call site has to be unique"
+        );
+    }
+
+    /// Process ids are unsigned. Reading one as `[int]` made anything above
+    /// Int32.MaxValue fail with a .NET conversion complaint - a developer-facing
+    /// message, and a different one per script - instead of "no window matched".
+    #[test]
+    fn process_ids_are_compared_as_unsigned_everywhere() {
+        for script in [
+            build_capture_script(),
+            build_action_script(),
+            build_wait_script(),
+        ] {
+            assert!(
+                !script.contains("[int]$processIdFilter"),
+                "a large process id would throw a conversion error here"
+            );
+            assert!(
+                script.contains("[long]$processIdFilter"),
+                "the filter has to be read as a wide integer"
+            );
+        }
+    }
+
+    /// The action path never had the bug - it returns null and the caller
+    /// throws. Guarded so a "helpful" foreground fallback can't be added there.
+    #[test]
+    fn the_action_and_wait_paths_still_refuse_a_null_target() {
+        for script in [build_action_script(), build_wait_script()] {
+            assert!(
+                !script.contains("GetForegroundWindow"),
+                "neither path may act on a window the caller did not name"
+            );
+        }
+        assert!(build_action_script()
+            .contains("throw 'no Windows UIAutomation target window found for action execution'"));
+    }
+
+    /// End to end against the real shell: the generated script, a process id
+    /// that owns no window, and the answer the caller gets. The id is above
+    /// Int32::MAX, so this also proves the `[long]` comparison rather than a
+    /// conversion error.
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn an_unmatched_process_id_refuses_the_capture_in_the_shell() {
+        let temp = tempfile::tempdir().unwrap();
+        let err = crate::wa::capture_windows_snapshot_report(
+            temp.path(),
+            "b64",
+            "unmatched",
+            None,
+            Some(4_000_000_000),
+            None,
+            1,
+            1,
+        )
+        .expect_err("no window can belong to that process id");
+        let text = err.to_string();
+        assert!(
+            text.contains("no top-level window matched processId 4000000000"),
+            "got: {text}"
+        );
+        assert!(
+            !text.contains("Int32"),
+            "must not surface a conversion error: {text}"
+        );
+        assert!(
+            !temp.path().join("wa-snapshots").exists()
+                || std::fs::read_dir(temp.path().join("wa-snapshots"))
+                    .map(|mut it| it.next().is_none())
+                    .unwrap_or(true),
+            "a refused capture must not leave a snapshot behind"
+        );
+    }
 }
