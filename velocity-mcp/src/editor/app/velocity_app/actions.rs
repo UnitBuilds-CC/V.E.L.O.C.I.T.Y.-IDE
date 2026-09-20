@@ -1039,12 +1039,20 @@ impl VelocityApp {
         self.status_message = "Split editor view".to_string();
     }
 
+    /// Ctrl+O: raise the file picker.
+    ///
+    /// There is no native dialog and nothing to fall back to --
+    /// `open_file_dialog` shows the app's own browser, which is the only picker
+    /// there is. The comment here claimed otherwise for long enough that the
+    /// bridge gate believed it and refused two commands a driver can actually
+    /// complete.
     pub fn prompt_open_file(&mut self) {
-        // Trigger the native file dialog to let the user pick a file to open.
-        // Falls back to opening an empty editor if no dialog system is available.
         self.open_file_dialog();
     }
 
+    /// Open the in-app file browser. An `egui::Window` inside this app rather
+    /// than a system modal: the frame keeps drawing, Cancel closes it, and
+    /// `dismiss_transient_ui` stands it down from outside the frame loop.
     pub fn open_file_dialog(&mut self) {
         self.pending_open_path = Some(PathBuf::new());
     }
@@ -1062,6 +1070,9 @@ impl VelocityApp {
         }
     }
 
+    /// Ctrl+Shift+S: raise the in-app save-as prompt for the focused editor.
+    /// With no editor open there is nothing to name, so it says so rather than
+    /// showing a dialog that could not save anything.
     pub fn save_active_as(&mut self) {
         if self.active_tab.is_some() {
             self.pending_save_as_path = Some(PathBuf::new());

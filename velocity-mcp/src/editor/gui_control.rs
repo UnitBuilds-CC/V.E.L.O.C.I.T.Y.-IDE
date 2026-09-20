@@ -54,7 +54,9 @@ pub enum GuiCommand {
     /// Open (or close, if already focused) a central panel tab: Settings, Wiki,
     /// Graph, ... Drives the same `toggle_panel` the gear and Ctrl+, call.
     TogglePanel { panel: String },
-    /// Capture a screenshot and save to disk.
+    /// Capture the IDE's own window and save it to disk. An empty `path` picks
+    /// a timestamped name under `<workspace>/.velocity/screenshots/`; a given
+    /// path has to stay inside the workspace.
     Screenshot { path: String },
     /// Close the IDE.
     Quit {},
@@ -92,6 +94,11 @@ pub enum GuiCommand {
     SelectTab { tab: String },
     /// Pick a sub-tab within an activity-bar rail (`agents:orchestration`).
     SelectSubTab { rail: String, sub_tab: String },
+    /// Close every transient overlay -- palettes, switchers, in-app dialogs and
+    /// find/replace -- the way a run of Escape presses would. The route back to
+    /// a known state once something has been raised, since Escape is only heard
+    /// by the overlay that currently owns the frame.
+    DismissOverlays {},
 }
 
 /// Wrapper that includes the auth token alongside the command.
@@ -142,6 +149,13 @@ pub struct IdeState {
     /// so a refusal needs it to be explainable.
     #[serde(default)]
     pub mode: String,
+    /// Transient overlays currently on screen: command palette, quick open, the
+    /// in-app file dialogs, find/replace, ... A driver raises these and needs to
+    /// know both that one took and that it has since stood them back down --
+    /// `DismissOverlays` reports what it closed, which is not the same as proof
+    /// nothing is left.
+    #[serde(default)]
+    pub open_overlays: Vec<String>,
 }
 
 /// Handle for the GUI control listener. Holds the shutdown flag.
@@ -532,7 +546,7 @@ mod tests {
 
     /// `velocity_mcp.exe` and the GUI binary are swapped independently, so a new
     /// MCP against an older GUI must still parse the state it gets back rather
-    /// than failing the whole call over two missing fields.
+    /// than failing the whole call over the fields added since.
     #[test]
     fn ide_state_reads_pre_reconciliation_payloads() {
         let older = r#"{
@@ -552,6 +566,9 @@ mod tests {
         // driver can tell apart from a real profile name.
         assert_eq!(state.active_section, None);
         assert_eq!(state.mode, "");
+        // An old GUI says nothing about overlays; "nothing reported" must not
+        // parse as "something is stuck open".
+        assert!(state.open_overlays.is_empty());
     }
 
     /// Every command the bridge accepts has to survive the adjacently-tagged
@@ -585,6 +602,7 @@ mod tests {
                 rail: "agents".into(),
                 sub_tab: "orchestration".into(),
             },
+            GuiCommand::DismissOverlays {},
         ];
         for command in cases {
             let envelope = AuthenticatedCommand {

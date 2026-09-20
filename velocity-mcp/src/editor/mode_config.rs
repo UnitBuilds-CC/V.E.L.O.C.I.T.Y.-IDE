@@ -1,15 +1,11 @@
 //! Mode Configuration - Trait-based specialization for each WorkspaceProfile.
 //!
 //! Each mode (Coder, Operator, MissionControl, Accessibility) implements the
-//! `ModeConfig` trait, providing its own sidebar tabs, toolbar actions, right
-//! panel layout, bottom panel layout, and command filtering. The main render
-//! loop delegates to the active `ModeConfig` instead of hardcoding per-mode
-//! branches throughout `ui_render.rs`.
+//! `ModeConfig` trait, providing its own right panel layout and command
+//! filtering. The main render loop delegates to the active `ModeConfig` instead
+//! of hardcoding per-mode branches throughout `ui_render.rs`.
 
-use crate::editor::bottom_panel::BottomPanelLayout;
-use crate::editor::sidebar_tabs::SidebarTab;
 use crate::editor::theme::WorkspaceProfile;
-use crate::editor::toolbar_actions::ToolbarAction;
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Right Panel Descriptors
@@ -30,36 +26,20 @@ pub struct RightPanel {
 /// Cohesive per-mode UI configuration. Eliminates scattered per-mode branching
 /// throughout the render loop.
 ///
-/// **Which of these the app actually draws.** Three are live and three are not,
-/// and the difference matters: a command wired to a dead accessor appears to
-/// work (it sets a field) while changing nothing on screen, which is exactly how
-/// the Research Browser item lost its panel for a whole release cycle.
+/// Carries only what the app draws: `right_panels` from `ui_render.rs`, the two
+/// category lists from the command palette in `actions.rs`.
 ///
-/// | accessor | rendered by |
-/// |---|---|
-/// | `right_panels` | `ui_render.rs`, the right sidebar |
-/// | `priority_categories`, `hidden_categories` | `actions.rs`, the command palette |
-/// | `left_tabs` | nothing -- the activity bar (`app_map::RAILS`) replaced it |
-/// | `toolbar_actions` | nothing -- the unified header replaced the toolbar row |
-/// | `bottom_layout` | nothing -- `bottom_panel.rs` owns its own tab list |
-///
-/// The three dead ones are left in place because the module they belong to is
-/// not itself dead: `sidebar_tabs.rs` also holds the content renderers and entry
-/// types (`BookmarkEntry`, `TargetEntry`, `AuditFinding`) the live dock panels
-/// call. Only the `SidebarTab`/`ToolbarAction` vocabularies are unread, so they
-/// are a separate removal. Do not wire new commands through them.
+/// It used to also carry `left_tabs`, `toolbar_actions` and `bottom_layout`.
+/// All three were read by nothing -- the activity bar (`app_map::RAILS`) replaced
+/// the left tab strip, the unified header replaced the toolbar row, and the
+/// bottom panel builds its own tab list from `bottom_panel::TAB_*`. They are
+/// removed rather than left dormant and tested: a command wired to an accessor
+/// nothing renders appears to work, because it sets a field that changes nothing
+/// on screen, which is exactly how the Research Browser item lost its panel for
+/// a whole release cycle.
 pub trait ModeConfig: Send + Sync {
-    /// Left sidebar tabs for this mode. NOT RENDERED; see the trait doc.
-    fn left_tabs(&self) -> &[SidebarTab];
-
     /// Right sidebar panels for this mode.
     fn right_panels(&self) -> &[RightPanel];
-
-    /// Toolbar action buttons for this mode. NOT RENDERED; see the trait doc.
-    fn toolbar_actions(&self) -> &[ToolbarAction];
-
-    /// Bottom panel layout for this mode. NOT RENDERED; see the trait doc.
-    fn bottom_layout(&self) -> BottomPanelLayout;
 
     /// Filter predicate for the command palette: returns the list of command
     /// categories that are prioritized (shown first) in this mode.
@@ -76,14 +56,6 @@ pub trait ModeConfig: Send + Sync {
 // ═══════════════════════════════════════════════════════════════════════════
 
 pub struct CoderMode;
-
-static CODER_LEFT_TABS: &[SidebarTab] = &[
-    SidebarTab::Files,
-    SidebarTab::Outline,
-    SidebarTab::Git,
-    SidebarTab::Search,
-    SidebarTab::Browse,
-];
 
 static CODER_RIGHT_PANELS: &[RightPanel] = &[
     RightPanel {
@@ -104,71 +76,11 @@ static CODER_RIGHT_PANELS: &[RightPanel] = &[
     },
 ];
 
-static CODER_TOOLBAR: &[ToolbarAction] = &[
-    ToolbarAction {
-        id: "file",
-        label: "File",
-        icon: "\u{25a1}",
-        shortcut: Some("Ctrl+N"),
-        category: "File",
-    },
-    ToolbarAction {
-        id: "run",
-        label: "Run",
-        icon: "\u{25b6}",
-        shortcut: Some("Ctrl+R"),
-        category: "Build",
-    },
-    ToolbarAction {
-        id: "build",
-        label: "Build",
-        icon: "\u{2699}",
-        shortcut: Some("Ctrl+B"),
-        category: "Build",
-    },
-    ToolbarAction {
-        id: "debug",
-        label: "Debug",
-        icon: "\u{2298}",
-        shortcut: None,
-        category: "Build",
-    },
-    ToolbarAction {
-        id: "test",
-        label: "Test",
-        icon: "\u{2713}",
-        shortcut: None,
-        category: "Build",
-    },
-    ToolbarAction {
-        id: "git",
-        label: "Git",
-        icon: "\u{2442}",
-        shortcut: None,
-        category: "File",
-    },
-];
-
 static CODER_PRIORITY_CATEGORIES: &[&str] = &["File", "Build", "View"];
 
 impl ModeConfig for CoderMode {
-    fn left_tabs(&self) -> &[SidebarTab] {
-        CODER_LEFT_TABS
-    }
     fn right_panels(&self) -> &[RightPanel] {
         CODER_RIGHT_PANELS
-    }
-    fn toolbar_actions(&self) -> &[ToolbarAction] {
-        CODER_TOOLBAR
-    }
-    fn bottom_layout(&self) -> BottomPanelLayout {
-        BottomPanelLayout::Tabbed(vec![
-            "Terminal",
-            "Problems",
-            "Output",
-            "Checkpoints",
-            "Chat",
-        ])
     }
     fn priority_categories(&self) -> &[&'static str] {
         CODER_PRIORITY_CATEGORIES
@@ -180,13 +92,6 @@ impl ModeConfig for CoderMode {
 // ═══════════════════════════════════════════════════════════════════════════
 
 pub struct OperatorMode;
-
-static OPERATOR_LEFT_TABS: &[SidebarTab] = &[
-    SidebarTab::Flows,
-    SidebarTab::Targets,
-    SidebarTab::Recordings,
-    SidebarTab::Logs,
-];
 
 static OPERATOR_RIGHT_PANELS: &[RightPanel] = &[
     RightPanel {
@@ -206,68 +111,11 @@ static OPERATOR_RIGHT_PANELS: &[RightPanel] = &[
     },
 ];
 
-static OPERATOR_TOOLBAR: &[ToolbarAction] = &[
-    ToolbarAction {
-        id: "record",
-        label: "Record",
-        icon: "\u{25cf}",
-        shortcut: Some("Ctrl+R"),
-        category: "Automation",
-    },
-    ToolbarAction {
-        id: "run_flow",
-        label: "Run Flow",
-        icon: "\u{25b6}",
-        shortcut: Some("Ctrl+Enter"),
-        category: "Automation",
-    },
-    ToolbarAction {
-        id: "stop",
-        label: "Stop",
-        icon: "\u{25a0}",
-        shortcut: Some("Ctrl+."),
-        category: "Automation",
-    },
-    ToolbarAction {
-        id: "schedule",
-        label: "Schedule",
-        icon: "\u{23f2}",
-        shortcut: None,
-        category: "Automation",
-    },
-    ToolbarAction {
-        id: "targets",
-        label: "Targets",
-        icon: "\u{25ce}",
-        shortcut: None,
-        category: "Automation",
-    },
-    ToolbarAction {
-        id: "settings",
-        label: "Settings",
-        icon: "\u{2699}",
-        shortcut: None,
-        category: "Panels",
-    },
-];
-
 static OPERATOR_PRIORITY_CATEGORIES: &[&str] = &["Automation", "Panels"];
 
 impl ModeConfig for OperatorMode {
-    fn left_tabs(&self) -> &[SidebarTab] {
-        OPERATOR_LEFT_TABS
-    }
     fn right_panels(&self) -> &[RightPanel] {
         OPERATOR_RIGHT_PANELS
-    }
-    fn toolbar_actions(&self) -> &[ToolbarAction] {
-        OPERATOR_TOOLBAR
-    }
-    fn bottom_layout(&self) -> BottomPanelLayout {
-        BottomPanelLayout::Split {
-            left: "Live Action Preview",
-            right: "Console",
-        }
     }
     fn priority_categories(&self) -> &[&'static str] {
         OPERATOR_PRIORITY_CATEGORIES
@@ -282,13 +130,6 @@ impl ModeConfig for OperatorMode {
 // ═══════════════════════════════════════════════════════════════════════════
 
 pub struct MissionMode;
-
-static MISSION_LEFT_TABS: &[SidebarTab] = &[
-    SidebarTab::Agents,
-    SidebarTab::Queue,
-    SidebarTab::Timeline,
-    SidebarTab::Metrics,
-];
 
 static MISSION_RIGHT_PANELS: &[RightPanel] = &[
     RightPanel {
@@ -308,65 +149,11 @@ static MISSION_RIGHT_PANELS: &[RightPanel] = &[
     },
 ];
 
-static MISSION_TOOLBAR: &[ToolbarAction] = &[
-    ToolbarAction {
-        id: "deploy",
-        label: "Deploy",
-        icon: "\u{25b2}",
-        shortcut: Some("Ctrl+D"),
-        category: "Agent",
-    },
-    ToolbarAction {
-        id: "pause_all",
-        label: "Pause All",
-        icon: "\u{23f8}",
-        shortcut: None,
-        category: "Agent",
-    },
-    ToolbarAction {
-        id: "resume_all",
-        label: "Resume All",
-        icon: "\u{25b6}",
-        shortcut: None,
-        category: "Agent",
-    },
-    ToolbarAction {
-        id: "scale",
-        label: "Scale",
-        icon: "\u{21c5}",
-        shortcut: None,
-        category: "Agent",
-    },
-    ToolbarAction {
-        id: "alerts",
-        label: "Alerts",
-        icon: "\u{26a0}",
-        shortcut: None,
-        category: "Agent",
-    },
-    ToolbarAction {
-        id: "reports",
-        label: "Reports",
-        icon: "\u{25eb}",
-        shortcut: None,
-        category: "Agent",
-    },
-];
-
 static MISSION_PRIORITY_CATEGORIES: &[&str] = &["Agent", "Workspace"];
 
 impl ModeConfig for MissionMode {
-    fn left_tabs(&self) -> &[SidebarTab] {
-        MISSION_LEFT_TABS
-    }
     fn right_panels(&self) -> &[RightPanel] {
         MISSION_RIGHT_PANELS
-    }
-    fn toolbar_actions(&self) -> &[ToolbarAction] {
-        MISSION_TOOLBAR
-    }
-    fn bottom_layout(&self) -> BottomPanelLayout {
-        BottomPanelLayout::Dashboard
     }
     fn priority_categories(&self) -> &[&'static str] {
         MISSION_PRIORITY_CATEGORIES
@@ -381,13 +168,6 @@ impl ModeConfig for MissionMode {
 // ═══════════════════════════════════════════════════════════════════════════
 
 pub struct AccessMode;
-
-static ACCESS_LEFT_TABS: &[SidebarTab] = &[
-    SidebarTab::Files,
-    SidebarTab::Favorites,
-    SidebarTab::Bookmarks,
-    SidebarTab::AccessibilityAudit,
-];
 
 static ACCESS_RIGHT_PANELS: &[RightPanel] = &[
     RightPanel {
@@ -407,58 +187,11 @@ static ACCESS_RIGHT_PANELS: &[RightPanel] = &[
     },
 ];
 
-static ACCESS_TOOLBAR: &[ToolbarAction] = &[
-    ToolbarAction {
-        id: "file",
-        label: "File",
-        icon: "\u{25a1}",
-        shortcut: Some("Ctrl+N"),
-        category: "File",
-    },
-    ToolbarAction {
-        id: "preview",
-        label: "Preview",
-        icon: "\u{25c9}",
-        shortcut: None,
-        category: "View",
-    },
-    ToolbarAction {
-        id: "audit",
-        label: "Audit",
-        icon: "\u{2713}",
-        shortcut: None,
-        category: "View",
-    },
-    ToolbarAction {
-        id: "contrast",
-        label: "Contrast",
-        icon: "\u{25d0}",
-        shortcut: None,
-        category: "View",
-    },
-    ToolbarAction {
-        id: "screen_reader",
-        label: "SR Sim",
-        icon: "\u{267f}",
-        shortcut: None,
-        category: "View",
-    },
-];
-
 static ACCESS_PRIORITY_CATEGORIES: &[&str] = &["View", "File"];
 
 impl ModeConfig for AccessMode {
-    fn left_tabs(&self) -> &[SidebarTab] {
-        ACCESS_LEFT_TABS
-    }
     fn right_panels(&self) -> &[RightPanel] {
         ACCESS_RIGHT_PANELS
-    }
-    fn toolbar_actions(&self) -> &[ToolbarAction] {
-        ACCESS_TOOLBAR
-    }
-    fn bottom_layout(&self) -> BottomPanelLayout {
-        BottomPanelLayout::Tabbed(vec!["Audit Results", "Keyboard Nav Map", "Chat"])
     }
     fn priority_categories(&self) -> &[&'static str] {
         ACCESS_PRIORITY_CATEGORIES
@@ -911,18 +644,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn each_mode_has_four_left_tabs() {
-        for profile in WorkspaceProfile::ALL {
-            let cfg = mode_config_for(profile);
-            assert!(
-                cfg.left_tabs().len() >= 3,
-                "{:?} has too few left tabs",
-                profile
-            );
-        }
-    }
-
-    #[test]
     fn each_mode_has_right_panels() {
         for profile in WorkspaceProfile::ALL {
             let cfg = mode_config_for(profile);
@@ -935,36 +656,24 @@ mod tests {
         }
     }
 
+    /// The one thing the palette actually reads per mode: a prioritised list,
+    /// and for two modes a set of categories taken out of the list entirely.
     #[test]
-    fn each_mode_has_toolbar_actions() {
+    fn each_mode_prioritises_and_can_hide_categories() {
         for profile in WorkspaceProfile::ALL {
             let cfg = mode_config_for(profile);
             assert!(
-                cfg.toolbar_actions().len() >= 5,
-                "{:?} has too few toolbar actions",
-                profile
+                !cfg.priority_categories().is_empty(),
+                "{profile:?} puts nothing first"
             );
         }
-    }
-
-    #[test]
-    fn coder_bottom_is_tabbed() {
-        let cfg = mode_config_for(WorkspaceProfile::Coder);
-        assert!(matches!(cfg.bottom_layout(), BottomPanelLayout::Tabbed(_)));
-    }
-
-    #[test]
-    fn operator_bottom_is_split() {
-        let cfg = mode_config_for(WorkspaceProfile::AutomationOperator);
-        assert!(matches!(
-            cfg.bottom_layout(),
-            BottomPanelLayout::Split { .. }
-        ));
-    }
-
-    #[test]
-    fn mission_bottom_is_dashboard() {
-        let cfg = mode_config_for(WorkspaceProfile::MissionControl);
-        assert!(matches!(cfg.bottom_layout(), BottomPanelLayout::Dashboard));
+        assert_eq!(
+            mode_config_for(WorkspaceProfile::Coder).hidden_categories(),
+            &[] as &[&str]
+        );
+        assert_eq!(
+            mode_config_for(WorkspaceProfile::MissionControl).hidden_categories(),
+            &["Build", "File"]
+        );
     }
 }

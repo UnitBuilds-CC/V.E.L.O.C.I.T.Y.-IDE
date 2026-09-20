@@ -1,135 +1,12 @@
-//! Sidebar Tabs - Mode-specific left sidebar tab definitions and renderers.
+//! Sidebar Tab Content - the panels the left sidebar draws for each section.
 //!
-//! Each mode declares its own set of sidebar tabs. The left sidebar renders
-//! whichever set the active `ModeConfig` returns.
+//! The tab *strip* used to live here too, driven by a `SidebarTab` enum and a
+//! per-mode list. The activity bar (`app_map::RAILS`) replaced it and nothing
+//! read the enum, so the strip and its enum are gone; what is left is the set
+//! of content renderers `render.rs` calls.
 
 use crate::editor::theme::IdePalette;
 use eframe::egui;
-
-// ═══════════════════════════════════════════════════════════════════════════
-// SidebarTab enum
-// ═══════════════════════════════════════════════════════════════════════════
-
-/// All possible sidebar tabs across all modes.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub enum SidebarTab {
-    // Shared / Coder
-    Files,
-    Outline,
-    Git,
-    Search,
-
-    // Operator
-    Flows,
-    Targets,
-    Recordings,
-    Logs,
-
-    // Mission Control
-    Agents,
-    Queue,
-    Timeline,
-    Metrics,
-
-    // Accessibility
-    Favorites,
-    Bookmarks,
-    AccessibilityAudit,
-
-    // Cross-mode utility
-    Browse,
-}
-
-impl SidebarTab {
-    /// Human-readable label shown in the sidebar tab strip.
-    pub fn label(self) -> &'static str {
-        match self {
-            Self::Files => "Files",
-            Self::Outline => "Outline",
-            Self::Git => "Git",
-            Self::Search => "Search",
-            Self::Flows => "Flows",
-            Self::Targets => "Targets",
-            Self::Recordings => "Recordings",
-            Self::Logs => "Logs",
-            Self::Agents => "Agents",
-            Self::Queue => "Queue",
-            Self::Timeline => "Timeline",
-            Self::Metrics => "Metrics",
-            Self::Favorites => "Favorites",
-            Self::Bookmarks => "Bookmarks",
-            Self::AccessibilityAudit => "Audit",
-            Self::Browse => "Browse",
-        }
-    }
-
-    /// Short glyph icon for the sidebar tab.
-    pub fn icon(self) -> &'static str {
-        match self {
-            Self::Files => "\u{25eb}",
-            Self::Outline => "\u{2261}",
-            Self::Git => "\u{2442}",
-            Self::Search => "\u{2295}",
-            Self::Flows => "\u{29c9}",
-            Self::Targets => "\u{25ce}",
-            Self::Recordings => "\u{25cf}",
-            Self::Logs => "\u{2263}",
-            Self::Agents => "\u{2299}",
-            Self::Queue => "\u{229e}",
-            Self::Timeline => "\u{23e4}",
-            Self::Metrics => "\u{22bf}",
-            Self::Favorites => "\u{2605}",
-            Self::Bookmarks => "\u{229b}",
-            Self::AccessibilityAudit => "\u{267f}",
-            Self::Browse => "\u{2295}",
-        }
-    }
-}
-
-// ═══════════════════════════════════════════════════════════════════════════
-// Sidebar Tab Strip Renderer
-// ═══════════════════════════════════════════════════════════════════════════
-
-/// Render the tab strip for the left sidebar, returning the index of the
-/// selected tab. `active` is the current selection index.
-///
-/// Uses icon-only buttons with tooltips to save horizontal space — the
-/// sidebar is narrow (180–420 px) so text labels would wrap or truncate.
-pub fn render_sidebar_tab_strip(
-    ui: &mut egui::Ui,
-    tabs: &[SidebarTab],
-    active: usize,
-    palette: IdePalette,
-) -> usize {
-    let mut selected = active.min(tabs.len().saturating_sub(1));
-
-    ui.horizontal(|ui| {
-        ui.spacing_mut().item_spacing.x = 2.0;
-        for (i, tab) in tabs.iter().enumerate() {
-            let is_active = i == selected;
-            let icon_text = egui::RichText::new(tab.icon())
-                .size(14.0)
-                .color(if is_active {
-                    palette.accent
-                } else {
-                    palette.text_muted
-                });
-
-            let resp = ui.selectable_label(is_active, icon_text);
-            let tooltip = format!("{}  {}", tab.icon(), tab.label());
-            let resp = if is_active {
-                resp.on_hover_text(format!("{tooltip}  (active)"))
-            } else {
-                resp.on_hover_text(&tooltip)
-            };
-            if resp.clicked() {
-                selected = i;
-            }
-        }
-    });
-
-    selected
-}
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Sidebar Tab Data Context (real data passed from VelocityApp)
@@ -1153,36 +1030,5 @@ pub fn render_audit_content(ui: &mut egui::Ui, findings: &[AuditFinding], palett
                     ui.add_space(2.0);
                 }
             });
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn all_tabs_have_labels_and_icons() {
-        let all = [
-            SidebarTab::Files,
-            SidebarTab::Outline,
-            SidebarTab::Git,
-            SidebarTab::Search,
-            SidebarTab::Flows,
-            SidebarTab::Targets,
-            SidebarTab::Recordings,
-            SidebarTab::Logs,
-            SidebarTab::Agents,
-            SidebarTab::Queue,
-            SidebarTab::Timeline,
-            SidebarTab::Metrics,
-            SidebarTab::Favorites,
-            SidebarTab::Bookmarks,
-            SidebarTab::AccessibilityAudit,
-            SidebarTab::Browse,
-        ];
-        for tab in all {
-            assert!(!tab.label().is_empty());
-            assert!(!tab.icon().is_empty());
-        }
     }
 }

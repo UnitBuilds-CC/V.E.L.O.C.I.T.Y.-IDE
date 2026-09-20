@@ -456,7 +456,7 @@ pub fn get_system_tools() -> Vec<Tool> {
         },
         Tool {
             name: "gui_get_state".to_string(),
-            description: "Get the current state of the running IDE: open files, active file, selected activity-bar rail and the sub-tab it is showing, focused central tab, whether the central area shows the dock or the welcome screen, active workspace profile/mode, sidebar visibility, chat message count, git branch. Requires the GUI to be running.".to_string(),
+            description: "Get the current state of the running IDE: open files, active file, selected activity-bar rail and the sub-tab it is showing, focused central tab, whether the central area shows the dock or the welcome screen, active workspace profile/mode, sidebar visibility, chat message count, git branch, and any transient overlays on screen (open_overlays). Requires the GUI to be running.".to_string(),
             input_schema: json!({
                 "type": "object",
                 "properties": {},
@@ -521,7 +521,7 @@ pub fn get_system_tools() -> Vec<Tool> {
         },
         Tool {
             name: "gui_run_command".to_string(),
-            description: "Invoke a command palette entry by label in the running IDE, through the same action a click fires. Refused for anything tiered modify or execute unless allow_unsafe is set, for entries the current workspace profile hides, and -- whatever allow_unsafe says -- for entries that open a native modal, because those block the UI thread until a person answers. gui_list_commands labels those as interactive. Requires the GUI to be running.".to_string(),
+            description: "Invoke a command palette entry by label in the running IDE, through the same action a click fires. Refused for anything tiered modify or execute unless allow_unsafe is set, and for entries the current workspace profile hides. Entries that raise a dialog are reported as interactive by gui_list_commands and left on screen by this call -- gui_dismiss_overlays stands them down. Requires the GUI to be running.".to_string(),
             input_schema: json!({
                 "type": "object",
                 "properties": {
@@ -585,6 +585,24 @@ pub fn get_system_tools() -> Vec<Tool> {
                     "sub_tab": { "type": "string", "description": "Sub-tab slug or label within that rail; gui_app_map lists them." }
                 },
                 "required": ["rail", "sub_tab"]
+            }),
+        },
+        Tool {
+            name: "gui_dismiss_overlays".to_string(),
+            description: "Close every transient overlay in the running IDE at once -- command palette, quick open, go-to-line/symbol, references, the tab and workspace switchers, the keyboard cheat-sheet, full diff, find/replace, and the in-app open/save-as/close prompts. Nothing is accepted on the way out: dialogs are cancelled, the same as their Cancel buttons, so no file is written. Escape only reaches the overlay holding the frame, so this is the route back for a driver that has lost track. Reports what it closed and the state after. Requires the GUI to be running.".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {},
+            }),
+        },
+        Tool {
+            name: "gui_screenshot".to_string(),
+            description: "Capture the running IDE's own window to an image file and report its path and size, so a claim about the UI can be checked against pixels rather than only against what the app says it drew. The path must stay inside the workspace; omit it to get a timestamped PNG under <workspace>/.velocity/screenshots/. Refused while the window is minimised, because a capture of an off-screen window shows whatever is behind it. Requires the GUI to be running.".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "path": { "type": "string", "description": "Where to write, absolute or relative to the workspace. Extension must be one of .png .jpg .jpeg .gif .webp .bmp -- anything else is refused rather than quietly written as PNG." }
+                },
             }),
         },
     ]

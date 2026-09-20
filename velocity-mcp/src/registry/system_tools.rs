@@ -1003,6 +1003,20 @@ pub fn handle_system_tool(
                 },
             )?
         }
+        "gui_dismiss_overlays" => gui_call(
+            root,
+            crate::editor::gui_control::GuiCommand::DismissOverlays {},
+        )?,
+        "gui_screenshot" => {
+            // An absent path is the normal request -- "just show me the window"
+            // -- and the GUI picks a timestamped name inside the workspace, so
+            // the caller does not have to know where the app is allowed to write.
+            let path = arguments["path"].as_str().unwrap_or("").to_string();
+            gui_call(
+                root,
+                crate::editor::gui_control::GuiCommand::Screenshot { path },
+            )?
+        }
 
         _ => return Ok(None),
     };

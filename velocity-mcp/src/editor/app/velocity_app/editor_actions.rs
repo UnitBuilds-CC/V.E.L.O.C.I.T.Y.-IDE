@@ -289,7 +289,7 @@ impl VelocityApp {
     /// Reveal the integrated research browser in the sidebar.
     ///
     /// This used to switch the whole workspace profile to Coder and then set
-    /// `left_sidebar_tab` from `ModeConfig::left_tabs()`. Nothing renders that
+    /// `left_sidebar_tab` from the mode's left-tab list. Nothing renders that
     /// list any more -- the activity bar replaced it, and the field was never
     /// read back -- so the menu item reflowed the window and showed no browser.
     /// It now selects the section that actually draws one, and leaves the user's

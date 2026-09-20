@@ -14,6 +14,7 @@ use crate::editor::app::types::{
 use crate::editor::app::velocity_app::actions::fuzzy_subsequence;
 use crate::editor::gui_control::{GuiCommand, GuiResponse, IdeState};
 use crate::editor::theme::WorkspaceProfile;
+use crate::wa::window_mgmt::WindowState;
 use eframe::egui;
 
 /// Shorthand for the refusal shape every guarded path returns.
@@ -62,7 +63,7 @@ impl VelocityApp {
             GuiCommand::GetState {} => self.cmd_get_state(),
             GuiCommand::NavigatePanel { panel } => self.cmd_navigate_panel(panel),
             GuiCommand::TogglePanel { panel } => self.cmd_toggle_panel(panel),
-            GuiCommand::Screenshot { path } => self.cmd_screenshot(path),
+            GuiCommand::Screenshot { path } => self.cmd_screenshot(ctx, path),
             GuiCommand::Quit {} => self.cmd_quit(ctx),
             GuiCommand::ListCommands { category } => self.cmd_list_commands(category),
             GuiCommand::RunCommand {
@@ -74,6 +75,7 @@ impl VelocityApp {
             GuiCommand::ListTabs {} => self.cmd_list_tabs(),
             GuiCommand::SelectTab { tab } => self.cmd_select_tab(tab),
             GuiCommand::SelectSubTab { rail, sub_tab } => self.cmd_select_sub_tab(rail, sub_tab),
+            GuiCommand::DismissOverlays {} => self.cmd_dismiss_overlays(),
         }
     }
 
@@ -181,6 +183,11 @@ impl VelocityApp {
             central_area,
             active_section,
             mode: self.appearance.profile.label().to_string(),
+            open_overlays: self
+                .open_transient_ui()
+                .into_iter()
+                .map(str::to_string)
+                .collect(),
         }
     }
 
@@ -254,16 +261,107 @@ impl VelocityApp {
         }
     }
 
-    /// Capture a screenshot and save to disk.
-    fn cmd_screenshot(&mut self, _path: String) -> GuiResponse {
-        // egui doesn't have built-in screenshot capture from the app side.
-        // This would require the egui Context to capture the next frame.
-        // For now, return a not-implemented response.
-        GuiResponse {
-            success: false,
-            data: None,
-            error: Some("Screenshot capture not yet implemented".into()),
+    /// Capture the IDE's own window to an image file, so a driver can check
+    /// what is on screen instead of only what the state struct claims.
+    ///
+    /// Goes through the same desktop-automation capture the browser subsystem
+    /// uses (`wa::screenshot`, Win32 BitBlt of the window rect), which is
+    /// already tested -- this handler only decides where the bytes go and what
+    /// counts as a failure. It used to answer "not yet implemented", which left
+    /// every pixel-level claim about the app unmade.
+    ///
+    /// Runs on the UI thread, so the frame loop stalls for the length of the
+    /// grab (a few hundred ms: PowerShell is spawned to do the copy). That is
+    /// the same trade every other capture in this codebase makes, and it is
+    /// what lets the shot show the frame as it was when the call arrived.
+    fn cmd_screenshot(&mut self, ctx: &egui::Context, path: String) -> GuiResponse {
+        let now_ms = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis() as u64)
+            .unwrap_or(0);
+        let target = match resolve_screenshot_path(&path, &self.workspace_root, now_ms) {
+            Ok(target) => target,
+            Err(e) => return refusal(e),
+        };
+
+        // A minimised window has nothing on screen to copy: BitBlt reads the
+        // desktop where the window used to be, which is somebody else's pixels.
+        // Refusing beats saving that behind a success reply. See
+        // [`window_is_minimised`] for why `egui` alone cannot answer this.
+        let own_windows: Vec<WindowState> =
+            crate::wa::window_mgmt::WindowManager::find_by_pid(std::process::id())
+                .iter()
+                .map(|w| w.state)
+                .collect();
+        if window_is_minimised(
+            ctx.input(|i| i.viewport().minimized.unwrap_or(false)),
+            &own_windows,
+        ) {
+            return refusal(
+                "The IDE window is minimised, so a capture would show whatever is \
+                 behind it rather than the app. Restore the window and ask again."
+                    .to_string(),
+            );
         }
+
+        if let Some(parent) = target.parent() {
+            if let Err(e) = std::fs::create_dir_all(parent) {
+                return refusal(format!(
+                    "Cannot create {} to hold the capture: {e}",
+                    parent.display()
+                ));
+            }
+        }
+
+        let shot = crate::wa::screenshot::capture(&crate::wa::screenshot::CaptureTarget::Window(
+            std::process::id(),
+        ));
+        // `capture` reports failure by handing back an empty image, so the pixel
+        // count is the only status it carries. Checking it is the difference
+        // between "saved" and "saved a file that proves nothing".
+        if shot.pixel_count() == 0 {
+            return refusal(format!(
+                "Capture of the IDE window (pid {}) returned no pixels (source: {}). \
+                 The window may be hidden, off-screen, or gone.",
+                std::process::id(),
+                shot.source
+            ));
+        }
+        if let Err(e) = shot.save_to(&target) {
+            return refusal(format!(
+                "Captured {}x{} but could not write {}: {e}",
+                shot.width,
+                shot.height,
+                target.display()
+            ));
+        }
+        accepted(serde_json::json!({
+            "path": target.display().to_string(),
+            "format": crate::wa::screenshot::image_format_for_path(&target),
+            "width": shot.width,
+            "height": shot.height,
+            "captured_at_ms": shot.captured_at_ms,
+        }))
+    }
+
+    /// Stand down every transient overlay: the route back to a known state for
+    /// a driver that has raised a palette or an in-app dialog. Escape is only
+    /// heard by the overlay that owns the frame, so there is no single key press
+    /// a remote call can make; this closes the whole stack at once.
+    fn cmd_dismiss_overlays(&mut self) -> GuiResponse {
+        let closed = self.dismiss_transient_ui();
+        self.status_message = if closed.is_empty() {
+            "Nothing to dismiss".to_string()
+        } else {
+            format!("Dismissed {}", closed.join(", "))
+        };
+        // The listener already asked for a repaint when the command arrived, so
+        // the overlays go on screen as gone on the next frame; the response is
+        // held until the UI thread has run this handler, which is that frame.
+        accepted(serde_json::json!({
+            "closed": closed,
+            "state_after": self.ide_state(),
+        }))
     }
 
     /// Quit the IDE. Sends a viewport Close command through the egui
@@ -684,10 +782,11 @@ pub(crate) fn find_command<'a>(commands: &'a [Command], label: &str) -> Option<&
 /// active profile is not among them, so the bridge and the visible list cannot
 /// disagree about what exists in this workspace.
 ///
-/// Checked next, before the tier: a native file dialog is modal to the window
-/// and the frame loop stops until someone answers it. No `allow_unsafe` value
-/// changes that, so opting in is not enough to make the call safe to make and
-/// the refusal is unconditional rather than tiered.
+/// Commands that raise an in-app dialog (`Open File…`, `Save As…`) are *not*
+/// refused. They are ordinary palette entries that leave something on screen --
+/// the same `egui` windows a click raises, with Cancel buttons -- and
+/// `gui_dismiss_overlays` stands them back down. Only the tier gate below
+/// applies to them, which is the same treatment `New File` gets.
 pub(crate) fn command_gate(
     cmd: &Command,
     profile: WorkspaceProfile,
@@ -704,14 +803,6 @@ pub(crate) fn command_gate(
                 .collect::<Vec<_>>()
                 .join("/"),
             profile.label()
-        ));
-    }
-    if command_is_interactive(cmd.label) {
-        return Err(format!(
-            "'{}' opens a native modal, which blocks the UI thread until a person answers \
-             it and cannot be dismissed over the bridge. gui_list_commands reports it as \
-             interactive; press it with a keyboard instead.",
-            cmd.label
         ));
     }
     if risk.needs_opt_in() && !allow_unsafe {
@@ -744,6 +835,147 @@ pub(crate) fn unknown_command_message(commands: &[Command], label: &str) -> Stri
         "Unknown command '{label}'. Nearest matches: {}",
         hints.join(", ")
     )
+}
+
+/// Where a bridge-initiated capture may write, and under what name.
+///
+/// An empty path is the usual request -- "just show me the window" -- so the
+/// default lands under `.velocity/screenshots/` beside the other machine state
+/// rather than in the working directory, which for a GUI started from Explorer
+/// or a service is somewhere the app has no business writing to. A path that is
+/// given has to stay inside the workspace: the listener is localhost-and-token
+/// bound, but holding the token should not turn a capture into an arbitrary file
+/// overwrite.
+///
+/// The target normally does not exist yet, so [`std::path::Path::canonicalize`]
+/// cannot be used on it directly. Instead the deepest ancestor that does exist
+/// is resolved and the remainder hung off it, which still collapses any `..` a
+/// caller used to walk out of the workspace.
+pub(crate) fn resolve_screenshot_path(
+    raw: &str,
+    workspace_root: &std::path::Path,
+    now_ms: u64,
+) -> Result<std::path::PathBuf, String> {
+    let raw = raw.trim();
+    let requested = if raw.is_empty() {
+        workspace_root
+            .join(".velocity")
+            .join("screenshots")
+            .join(format!("gui-{now_ms}.png"))
+    } else {
+        let given = std::path::Path::new(raw);
+        if given.is_absolute() {
+            given.to_path_buf()
+        } else {
+            // Relative names resolve against the workspace rather than being
+            // rejected: the caller already knows the workspace, and
+            // `shots/now.png` is exactly what it means by that.
+            workspace_root.join(given)
+        }
+    };
+
+    let root = workspace_root.canonicalize().map_err(|e| {
+        format!(
+            "Cannot resolve workspace root {:?}: {e}",
+            workspace_root.display()
+        )
+    })?;
+
+    let mut missing: Vec<std::ffi::OsString> = Vec::new();
+    let mut cursor = requested.as_path();
+    let resolved = loop {
+        if let Ok(base) = cursor.canonicalize() {
+            let mut out = base;
+            for name in missing.iter().rev() {
+                out.push(name);
+            }
+            break out;
+        }
+        let (Some(name), Some(parent)) = (cursor.file_name(), cursor.parent()) else {
+            return Err(format!(
+                "Cannot work out an absolute save path for {:?}.",
+                requested
+            ));
+        };
+        missing.push(name.to_os_string());
+        cursor = parent;
+    };
+
+    if !resolved.starts_with(&root) {
+        return Err(format!(
+            "Screenshot path {} resolves to {:?}, outside the workspace root {root:?}. \
+             The bridge may only write inside the workspace it is attached to.",
+            requested.display(),
+            resolved
+        ));
+    }
+
+    // The encoders `save_to` knows. Anything else would silently be written as
+    // PNG, which is how `capture.png` once ended up holding BMP bytes behind a
+    // `.png` name (bug #23) -- refuse the name instead of shipping that again.
+    let extension = resolved
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(|e| e.to_ascii_lowercase());
+    if !matches!(
+        extension.as_deref(),
+        Some("png") | Some("jpg") | Some("jpeg") | Some("gif") | Some("webp") | Some("bmp")
+    ) {
+        return Err(format!(
+            "{} has no extension a capture can be written as. Use one of .png .jpg \
+             .jpeg .gif .webp .bmp.",
+            resolved.display()
+        ));
+    }
+
+    // Containment is decided against the canonical form, so the prefix can be
+    // dropped from here on without anything left to re-interpret.
+    let resolved = plain_windows_path(&resolved);
+    Ok(resolved)
+}
+
+/// The same path without the `\\?\` prefix [`std::path::Path::canonicalize`]
+/// puts in front of every Windows path it resolves.
+///
+/// Not cosmetic. `GetState` reports a plain `workspace_root`, so a driver told
+/// its capture landed at `\\?\C:\ws\shot.png` cannot see that it landed in the
+/// workspace it is already looking at, and PowerShell's `Resolve-Path` refuses
+/// the extended form outright. Only safe once containment has been checked
+/// against the canonical form, since that is what removed any `..` left in the
+/// path -- stripping the prefix first would make it load-bearing again.
+pub(crate) fn plain_windows_path(path: &std::path::Path) -> std::path::PathBuf {
+    let text = path.display().to_string();
+    if let Some(rest) = text.strip_prefix(r"\\?\UNC\") {
+        return std::path::PathBuf::from(format!(r"\\{rest}"));
+    }
+    match text.strip_prefix(r"\\?\") {
+        Some(rest) => std::path::PathBuf::from(rest),
+        None => path.to_path_buf(),
+    }
+}
+
+/// Whether there is anything on screen for a window capture to copy.
+///
+/// `egui` reports `minimized` only after it has seen a minimise event, so an
+/// instance launched straight into the taskbar -- which is how every headless
+/// sweep and every automated run starts one -- reports nothing, and the capture
+/// came back with zero pixels and a message saying "hidden, off-screen, or gone"
+/// when the actual answer was "restore me and it will work". The window manager
+/// knows the real state, so ask it as well.
+///
+/// Every window the process owns has to be minimised for this to say yes: an
+/// instance with a floating panel still on screen has pixels worth capturing,
+/// and refusing that would be the guard inventing a problem. An empty list says
+/// nothing either -- that is the non-Windows case, where the enumeration is
+/// deliberately empty and `egui`'s answer stands on its own.
+///
+/// Pure so the rule is testable without a desktop.
+pub(crate) fn window_is_minimised(egui_says_minimised: bool, own_windows: &[WindowState]) -> bool {
+    egui_says_minimised
+        || (!own_windows.is_empty()
+            && own_windows
+                .iter()
+                .all(|state| *state == WindowState::Minimized))
 }
 
 /// What to do with a resolved map node. Decided apart from the handler so the
@@ -989,30 +1221,153 @@ mod tests {
         assert!(err.starts_with("'Save' is only available in"), "{err}");
     }
 
-    /// `Open File…` blocks the frame loop until a person answers the dialog, and
-    /// the bridge has no way to answer it, so `allow_unsafe` would not make the
-    /// call safe to make -- it would just hang the app. Refused either way, and
-    /// with a message that does not point at the flag that will not help.
+    /// `Open File…` and `Save As…` raise the app's own dialog, not a system
+    /// modal, so the bridge may run them: the frame keeps drawing and
+    /// `gui_dismiss_overlays` closes what they leave up. They get the ordinary
+    /// opt-in for anything that can write, and nothing more than that -- an
+    /// earlier version of this gate refused them outright on the belief that a
+    /// native dialog was blocking the UI thread, which the actions do not do.
     #[test]
-    fn a_dialog_command_is_refused_even_with_allow_unsafe() {
+    fn a_dialog_command_is_pressable_and_reports_that_it_leaves_a_dialog_up() {
         for label in ["Open File\u{2026}", "Save As\u{2026}"] {
             let dialog = cmd(label, "File", &[]);
-            for allow_unsafe in [false, true] {
-                let err = command_gate(&dialog, WorkspaceProfile::Coder, allow_unsafe).unwrap_err();
-                assert!(
-                    err.contains("native modal"),
-                    "{label} allow={allow_unsafe}: {err}"
-                );
-                assert!(
-                    !err.contains("allow_unsafe"),
-                    "must not ask for a flag that changes nothing: {err}"
-                );
-            }
+            // Held to the tier, not barred: the complaint is about the flag, and
+            // setting it gets the command run.
+            let err = command_gate(&dialog, WorkspaceProfile::Coder, false).unwrap_err();
+            assert!(err.contains("allow_unsafe=true"), "{label}: {err}");
+            assert!(!err.contains("modal"), "{label}: {err}");
+            assert!(!err.contains("keyboard"), "{label}: {err}");
+            assert_eq!(
+                command_gate(&dialog, WorkspaceProfile::Coder, true),
+                Ok(()),
+                "{label} should run once the driver has opted in"
+            );
+            // A driver still learns that something is going to be on screen.
+            assert!(command_is_interactive(label), "{label} must stay flagged");
         }
         // An ordinary write still goes down the opt-in path.
         let save = cmd("Save", "File", &[]);
         assert!(command_gate(&save, WorkspaceProfile::Coder, false).is_err());
         assert_eq!(command_gate(&save, WorkspaceProfile::Coder, true), Ok(()));
+    }
+
+    // ─── Where a capture is allowed to land ───────────────────────────────
+
+    #[test]
+    fn an_empty_capture_path_picks_a_timestamped_name_inside_the_workspace() {
+        let ws = tempfile::tempdir().unwrap();
+        let got = resolve_screenshot_path("", ws.path(), 1_700_000_000_000).unwrap();
+        assert!(
+            got.starts_with(plain_windows_path(&ws.path().canonicalize().unwrap())),
+            "{got:?} left the workspace"
+        );
+        // Under `.velocity/`, beside the other machine state, and not in the
+        // process working directory -- which for a GUI launched from Explorer is
+        // wherever the shortcut happened to point.
+        assert_eq!(got.file_name().unwrap(), "gui-1700000000000.png");
+        assert!(
+            got.to_string_lossy()
+                .replace('\\', "/")
+                .contains(".velocity/screenshots/"),
+            "{got:?}"
+        );
+    }
+
+    #[test]
+    fn a_relative_capture_name_resolves_against_the_workspace() {
+        let ws = tempfile::tempdir().unwrap();
+        let got = resolve_screenshot_path("shots/now.png", ws.path(), 1).unwrap();
+        assert_eq!(
+            got,
+            plain_windows_path(&ws.path().canonicalize().unwrap())
+                .join("shots")
+                .join("now.png")
+        );
+    }
+
+    /// A reply the driver cannot compare against `workspace_root`, or open with
+    /// the tools it has, is a reply about a file that might not exist. The
+    /// `\\?\` form canonicalise hands back is both of those things.
+    #[test]
+    fn a_capture_path_comes_back_in_the_same_form_as_the_workspace_root() {
+        let ws = tempfile::tempdir().unwrap();
+        let got = resolve_screenshot_path("now.png", ws.path(), 1).unwrap();
+        assert!(
+            !got.display().to_string().starts_with(r"\\?\"),
+            "{got:?} is still in the verbatim form"
+        );
+        assert_eq!(
+            got.parent(),
+            Some(plain_windows_path(&ws.path().canonicalize().unwrap()).as_path()),
+            "{got:?}"
+        );
+    }
+
+    /// The bridge is localhost-and-token bound, but a token in hand should not
+    /// be an arbitrary-file overwrite. `..` is the interesting case: it has to
+    /// be collapsed before the containment test, not after.
+    #[test]
+    fn a_capture_cannot_be_written_outside_the_workspace() {
+        let ws = tempfile::tempdir().unwrap();
+        let neighbour = ws
+            .path()
+            .parent()
+            .unwrap()
+            .join("velocity-escape-was-here.png");
+        for raw in [
+            "../outside.png".to_string(),
+            ".\\..\\outside.png".to_string(),
+            neighbour.display().to_string(),
+        ] {
+            let err = resolve_screenshot_path(&raw, ws.path(), 1).unwrap_err();
+            assert!(err.contains("outside the workspace"), "{raw}: {err}");
+            // Refusing is a refusal: nothing gets created on the way out.
+            assert!(!neighbour.exists(), "refusing created {neighbour:?}");
+        }
+    }
+
+    /// The hole the live sweep found: an instance launched straight into the
+    /// taskbar never emits a minimise event, so `egui` reports nothing and the
+    /// capture failed with a message about a window that had gone away. The
+    /// window manager's answer is what makes the refusal actionable.
+    #[test]
+    fn a_window_launched_minimised_is_caught_by_the_window_manager() {
+        use WindowState::{Maximized, Minimized, Normal};
+        // Launched minimised: `egui` knows nothing, Win32 does.
+        assert!(window_is_minimised(false, &[Minimized]));
+        // A window `egui` minimised itself is still caught by its own flag.
+        assert!(window_is_minimised(true, &[]));
+        // A second window still on screen is pixels worth capturing, so the
+        // guard does not invent a problem that is not there.
+        assert!(!window_is_minimised(false, &[Minimized, Normal]));
+        assert!(!window_is_minimised(false, &[Maximized, Normal]));
+        // Off Windows the enumeration is deliberately empty, which has to mean
+        // "no information" rather than "everything is minimised".
+        assert!(!window_is_minimised(false, &[]));
+    }
+
+    /// `save_to` falls back to PNG for a name it does not recognise, which is
+    /// how `capture.png` once ended up holding BMP bytes behind the extension
+    /// (bug #23). A name that cannot be encoded honestly is refused instead.
+    #[test]
+    fn only_extensions_the_encoder_can_write_are_accepted() {
+        let ws = tempfile::tempdir().unwrap();
+        let err = resolve_screenshot_path("notes.txt", ws.path(), 1).unwrap_err();
+        assert!(
+            err.contains("no extension a capture can be written as"),
+            "{err}"
+        );
+        for name in [
+            "a.png", "a.jpg", "a.jpeg", "a.gif", "a.webp", "a.bmp", "A.PNG",
+        ] {
+            assert!(
+                resolve_screenshot_path(name, ws.path(), 1).is_ok(),
+                "{name}"
+            );
+        }
+        // A parent directory that does not exist yet is fine: the capture
+        // creates it. Only the workspace itself has to be resolvable.
+        assert!(resolve_screenshot_path("deep/deeper/x.png", ws.path(), 1).is_ok());
     }
 
     #[test]
@@ -1196,5 +1551,197 @@ mod tests {
         assert!(!bad.success);
         assert_eq!(bad.error.as_deref(), Some("nope"));
         assert_eq!(bad.data.unwrap()["route"], serde_json::json!([]));
+    }
+
+    // ── In-process handler coverage ───────────────────────────────────────
+    //
+    // Everything above exercises free functions. These run `execute_gui_command`
+    // against a real `VelocityApp` -- `test_stub` had no callers at all until
+    // here, so the harness existed but had never been executed -- which is what
+    // lets a claim like "this command leaves a dialog up" be checked against the
+    // state the handler actually leaves rather than against another reading of
+    // the same code.
+
+    fn harness() -> (VelocityApp, egui::Context) {
+        (VelocityApp::test_stub(), egui::Context::default())
+    }
+
+    /// Put a real editor tab and its buffer on the app, leaving it focused, the
+    /// way opening a file does. Several commands only mean something with an
+    /// editor in front of them.
+    fn attach_editor(app: &mut VelocityApp, name: &str) -> TabId {
+        let id = TabId(900 + app.tabs.len() as u64);
+        let path = app.workspace_root.join(name);
+        let tab = Tab {
+            id: id.clone(),
+            kind: TabKind::Editor {
+                path: Some(path.clone()),
+                buffer_id: id.clone(),
+            },
+        };
+        app.buffers.insert(
+            id,
+            crate::editor::buffer::EditorBuffer::new(Some(path), "hello\n".to_string()),
+        );
+        app.tabs.push(tab);
+        app.active_tab = app.tabs.last().map(|t| t.id.clone());
+        app.active_tab.clone().expect("tab just pushed")
+    }
+
+    #[test]
+    fn the_tier_gate_holds_the_dialog_command_back_until_it_is_opted_into() {
+        let (mut app, ctx) = harness();
+
+        let denied = app.execute_gui_command(
+            GuiCommand::RunCommand {
+                label: "Open File\u{2026}".to_string(),
+                allow_unsafe: None,
+            },
+            &ctx,
+        );
+        assert!(!denied.success, "a Modify-tier command ran unopted-in");
+        assert!(denied.error.unwrap().contains("allow_unsafe=true"));
+        // Refusing has to mean refusing: nothing left on screen to trip the next
+        // call over.
+        assert!(
+            app.pending_open_path.is_none(),
+            "the refused command raised a dialog anyway"
+        );
+        assert!(app.ide_state().open_overlays.is_empty());
+
+        let ok = app.execute_gui_command(
+            GuiCommand::RunCommand {
+                label: "Open File\u{2026}".to_string(),
+                allow_unsafe: Some(true),
+            },
+            &ctx,
+        );
+        assert!(ok.success, "{:?}", ok.error);
+        let data = ok.data.unwrap();
+        assert_eq!(data["interactive"], serde_json::json!(true));
+        assert!(app.pending_open_path.is_some());
+        // Both the embedded report and a following GetState say the same thing,
+        // so a driver can wait on either.
+        let listed = |overlays: &serde_json::Value| {
+            overlays
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|o| o == "open file dialog")
+        };
+        assert!(listed(&data["state_after"]["open_overlays"]));
+        assert!(listed(
+            &serde_json::to_value(app.ide_state()).unwrap()["open_overlays"]
+        ));
+    }
+
+    #[test]
+    fn save_as_only_promises_a_prompt_it_can_act_on() {
+        let (mut app, ctx) = harness();
+        // The stub starts on the chat tab, which has no path to name, so the
+        // command says so instead of raising a dialog whose Save would fail.
+        app.active_tab = None;
+        let r = app.execute_gui_command(
+            GuiCommand::RunCommand {
+                label: "Save As\u{2026}".to_string(),
+                allow_unsafe: Some(true),
+            },
+            &ctx,
+        );
+        assert!(r.success, "{:?}", r.error);
+        assert!(app.pending_save_as_path.is_none());
+        assert!(app.status_message.contains("No active editor"));
+
+        attach_editor(&mut app, "name_me.txt");
+        let r = app.execute_gui_command(
+            GuiCommand::RunCommand {
+                label: "Save As\u{2026}".to_string(),
+                allow_unsafe: Some(true),
+            },
+            &ctx,
+        );
+        assert!(r.success, "{:?}", r.error);
+        assert!(app.pending_save_as_path.is_some());
+        assert!(app
+            .ide_state()
+            .open_overlays
+            .iter()
+            .any(|o| o == "save as dialog"));
+    }
+
+    #[test]
+    fn dismissing_closes_exactly_what_the_state_report_listed() {
+        let (mut app, ctx) = harness();
+        app.command_palette.open = true;
+        app.quick_open.open = true;
+        app.goto_line_open = true;
+        app.show_shortcuts = true;
+        app.pending_close_tab = Some(TabId(7));
+        let editor = attach_editor(&mut app, "find_me.txt");
+        app.buffers
+            .get_mut(&editor)
+            .expect("editor buffer")
+            .find_replace
+            .visible = true;
+
+        let reported = app.ide_state().open_overlays.clone();
+        assert_eq!(reported.len(), 6, "harness left {reported:?} up");
+
+        let resp = app.execute_gui_command(GuiCommand::DismissOverlays {}, &ctx);
+        assert!(resp.success, "{:?}", resp.error);
+        let closed: Vec<String> = resp.data.as_ref().unwrap()["closed"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|v| v.as_str().unwrap().to_string())
+            .collect();
+        // One list backs both the report and the close, so they cannot drift.
+        assert_eq!(closed, reported, "closed a different set than it reported");
+
+        let after = app.execute_gui_command(GuiCommand::GetState {}, &ctx);
+        assert_eq!(
+            after.data.unwrap()["open_overlays"]
+                .as_array()
+                .unwrap()
+                .len(),
+            0,
+            "something survived the dismiss"
+        );
+        assert!(!app.command_palette.open && !app.quick_open.open && !app.goto_line_open);
+        assert!(app.pending_close_tab.is_none());
+        assert!(
+            !app.buffers
+                .get(&editor)
+                .expect("editor buffer")
+                .find_replace
+                .visible
+        );
+    }
+
+    #[test]
+    fn a_clean_app_reports_nothing_to_dismiss() {
+        let (mut app, ctx) = harness();
+        assert!(app.ide_state().open_overlays.is_empty());
+        let r = app.execute_gui_command(GuiCommand::DismissOverlays {}, &ctx);
+        assert!(r.success, "{:?}", r.error);
+        assert_eq!(r.data.as_ref().unwrap()["closed"], serde_json::json!([]));
+        assert_eq!(app.status_message, "Nothing to dismiss");
+    }
+
+    #[test]
+    fn a_capture_destination_outside_the_workspace_is_refused_before_capture() {
+        let (mut app, ctx) = harness();
+        let before = app.status_message.clone();
+        let r = app.execute_gui_command(
+            GuiCommand::Screenshot {
+                path: "..\\elsewhere.png".to_string(),
+            },
+            &ctx,
+        );
+        assert!(!r.success, "wrote a capture outside the workspace");
+        assert!(r.error.unwrap().contains("workspace"));
+        // Refusing must not spawn the PowerShell grab, which is the expensive
+        // and externally visible half of the call.
+        assert_eq!(app.status_message, before);
     }
 }

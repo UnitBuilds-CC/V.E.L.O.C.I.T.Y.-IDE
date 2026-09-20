@@ -813,8 +813,13 @@ impl CommandRisk {
     }
 }
 
-/// Commands that open a native modal and block the frame until the user answers.
-/// Not dangerous, but a driver cannot dismiss one, so they are reported as such.
+/// Palette entries that leave a modal on screen until something answers them.
+///
+/// These are in-app `egui` windows rather than native dialogs: the frame keeps
+/// drawing behind them and their Cancel buttons work, so a driver can raise one
+/// over the bridge and stand it back down with `DismissOverlays`. Still flagged,
+/// because the app is not idle while one is up -- the next command lands on top
+/// of it, and a sweep that never dismisses ends the run with a dialog showing.
 const INTERACTIVE_COMMANDS: &[&str] = &["Open File\u{2026}", "Save As\u{2026}"];
 
 /// Tier a command falls into, keyed on the action it performs.
@@ -899,7 +904,7 @@ pub fn command_risk(category: &str, label: &str) -> CommandRisk {
     }
 }
 
-/// Whether a command will block on a native dialog.
+/// Whether a command leaves an in-app modal on screen to be answered or dismissed.
 pub fn command_is_interactive(label: &str) -> bool {
     INTERACTIVE_COMMANDS.contains(&label.trim())
 }
@@ -912,6 +917,9 @@ pub struct CommandSpec {
     pub category: String,
     pub shortcut: Option<String>,
     pub risk: CommandRisk,
+    /// True when running this leaves a dialog up, so the caller knows to read
+    /// the screen or dismiss it rather than treating the reply as the end of
+    /// the interaction. Kept under this name on the wire for compatibility.
     pub interactive: bool,
 }
 
@@ -1502,7 +1510,7 @@ mod tests {
     }
 
     #[test]
-    fn dialog_commands_are_flagged_so_a_driver_does_not_stall() {
+    fn dialog_commands_are_flagged_as_leaving_one_up() {
         assert!(command_is_interactive("Open File\u{2026}"));
         assert!(command_is_interactive("Save As\u{2026}"));
         assert!(!command_is_interactive("Save"));

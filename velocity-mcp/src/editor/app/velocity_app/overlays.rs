@@ -1325,4 +1325,108 @@ impl VelocityApp {
             });
         self.show_full_diff = open;
     }
+
+    /// The transient overlays currently up, in a fixed order.
+    ///
+    /// This is the one list that says what counts as transient: it backs both
+    /// the bridge's read-only report and [`Self::dismiss_transient_ui`], so a
+    /// driver can never be told about fewer popups than the dismiss route
+    /// stands down.
+    pub fn open_transient_ui(&self) -> Vec<&'static str> {
+        let mut up = Vec::new();
+        if self.command_palette.open {
+            up.push("command palette");
+        }
+        if self.quick_open.open {
+            up.push("quick open");
+        }
+        if self.mru.open {
+            up.push("tab switcher");
+        }
+        if self.workspace_switcher_open {
+            up.push("workspace switcher");
+        }
+        if self.goto_line_open {
+            up.push("go to line");
+        }
+        if self.goto_symbol_open {
+            up.push("go to symbol");
+        }
+        if self.references_open {
+            up.push("references");
+        }
+        if self.show_shortcuts {
+            up.push("keyboard shortcuts");
+        }
+        if self.show_full_diff {
+            up.push("full diff");
+        }
+        // These three are modelled as a pending value rather than a flag, where
+        // anything at all means the prompt is on screen.
+        if self.pending_open_path.is_some() {
+            up.push("open file dialog");
+        }
+        if self.pending_save_as_path.is_some() {
+            up.push("save as dialog");
+        }
+        if self.pending_close_tab.is_some() {
+            up.push("close confirmation");
+        }
+        // Find/replace lives on the buffer, not the window, so it is only up
+        // when the focused editor is showing it.
+        if let Some(id) = &self.active_tab {
+            if self
+                .buffers
+                .get(id)
+                .is_some_and(|buf| buf.find_replace.visible)
+            {
+                up.push("find and replace");
+            }
+        }
+        up
+    }
+
+    /// Stand down every transient popup, the way a person tapping Escape out of
+    /// a stack of dialogs would.
+    ///
+    /// Each `*_ui` above handles its own Escape, but only while it owns the
+    /// frame, which means the key works for someone watching the window and not
+    /// for a driver several calls away that has lost track of what it raised.
+    /// This is the same reset applied from outside the frame loop, and it is
+    /// deliberately exhaustive: clearing `quick_open` while leaving
+    /// `command_palette` up would just move the stall somewhere else.
+    ///
+    /// Nothing is accepted on the way out. The open-file, save-as and
+    /// close-tab prompts are cancelled rather than confirmed -- the same result
+    /// as their Cancel buttons -- so a driver can raise a destructive prompt
+    /// over the bridge and stand it back down without a file being touched.
+    ///
+    /// Returns the overlays it closed, so a caller can tell "nothing was open"
+    /// from "four things just went away".
+    pub fn dismiss_transient_ui(&mut self) -> Vec<&'static str> {
+        let closed = self.open_transient_ui();
+        if closed.is_empty() {
+            return closed;
+        }
+        self.command_palette.open = false;
+        self.quick_open.open = false;
+        self.mru.open = false;
+        self.workspace_switcher_open = false;
+        self.goto_line_open = false;
+        self.goto_symbol_open = false;
+        self.references_open = false;
+        self.show_shortcuts = false;
+        self.show_full_diff = false;
+        self.pending_open_path = None;
+        self.pending_save_as_path = None;
+        // Cancelling the prompt leaves the dirty tab open, exactly as pressing
+        // Cancel in it would.
+        self.pending_close_tab = None;
+        if let Some(id) = self.active_tab.clone() {
+            if let Some(buf) = self.buffers.get_mut(&id) {
+                buf.find_replace.close();
+            }
+        }
+        closed
+    }
 }

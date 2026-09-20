@@ -25,7 +25,8 @@
      10  every workspace mode, and the controls only that mode exposes
      11  every modify-tier command, run for real
      11b the execute-tier commands that cost nothing to press
-     12  the quick-open, go-to and find overlays, last
+     12  the quick-open, go-to and find overlays, then dismissed
+     13  a pixel capture of the running window, read back off the disk
 
     A mode refusal is treated as information, not a dead end: see Press. The
     gate says which profiles carry a command, so the sweep switches to one,
@@ -43,10 +44,16 @@
 
 .NOTES
     Needs a running instance to talk to. Launch the release binary against a
-    throwaway workspace so the write tier has somewhere harmless to land:
+    throwaway workspace so the write tier has somewhere harmless to land --
+    the same directory -TokenFile points at, so getting this wrong just makes
+    phase 1 fail to find a token:
 
         Start-Process target\release\velocity_ide_gui.exe `
-          -ArgumentList '--workspace','target\sweep-workspace' -WindowStyle Minimized
+          -ArgumentList '--workspace','target\gui-sweep-workspace' -WindowStyle Minimized
+
+    Minimising is fine: phase 13 restores the window for the length of a screen
+    capture and puts it back. That is the only thing here that can touch the
+    foreground, and it only ever acts on the process owning port 19821.
 
     It is the answer to "have you actually pressed every button": the counts it
     prints -- rails, sub-tabs, dock panels, tabs cycled, palette entries by tier
@@ -117,6 +124,42 @@ function Ok($resp) { [bool]$resp.success }
 function Err($resp) { [string]$resp.error }
 function Body($resp) { if ($resp.data) { $resp.data } else { [pscustomobject]@{} } }
 function Settled() { (Body (Send 'GetState' $null)) }
+
+# The transient overlays the app reports as on screen. Guarded, because an
+# instance built before the field existed answers without it and @($null).Count
+# is 1 -- an absent field must not read as "one overlay up".
+function Overlays() {
+    $st = Settled
+    if ($st.open_overlays) { @($st.open_overlays) } else { @() }
+}
+
+# The instance under test, found through the port it listens to rather than by
+# process name: several builds can be running and only one owns the bridge.
+function InstancePid() {
+    (Get-NetTCPConnection -LocalPort 19821 -State Listen -ErrorAction SilentlyContinue |
+        Select-Object -First 1).OwningProcess
+}
+
+# Bring the instance's own window in from the taskbar, or push it back. Applied
+# only to the pid owning the bridge. Returns $false when no handle is available,
+# which callers report as "pixels not verified" rather than passing a capture
+# that was never taken.
+function Set-InstanceWindow([int]$procId, [switch]$Minimize) {
+    if (-not $procId) { return $false }
+    if (-not ('SweepWin32.User32' -as [type])) {
+        try {
+            Add-Type -Namespace SweepWin32 -Name User32 -ErrorAction Stop -MemberDefinition @'
+[System.Runtime.InteropServices.DllImport("user32.dll")] public static extern bool ShowWindow(System.IntPtr hWnd, int nCmdShow);
+[System.Runtime.InteropServices.DllImport("user32.dll")] public static extern bool IsIconic(System.IntPtr hWnd);
+'@
+        } catch { return $false }
+    }
+    $hwnd = (Get-Process -Id $procId -ErrorAction SilentlyContinue).MainWindowHandle
+    if (-not $hwnd -or $hwnd -eq [System.IntPtr]::Zero) { return $false }
+    [void][SweepWin32.User32]::ShowWindow($hwnd, $(if ($Minimize) { 7 } else { 9 }))  # SW_MINIMIZE / SW_RESTORE
+    Start-Sleep -Milliseconds 400
+    return $true
+}
 
 function Switch-Mode($name) {
     Send 'RunCommand' @{ label = "Mode: $name"; allow_unsafe = $true }
@@ -276,10 +319,10 @@ Check 'every docked tab takes focus when named by slug' ($bad -eq 0) "$bad faile
 # ── 7. Navigation-tier commands ────────────────────────────────────────────
 Log '[7] every navigation-tier command'
 # Two hold-backs. The overlay openers (quick-open, go-to-line, go-to-symbol,
-# the find bars) are deferred to phase 12, because nothing over the bridge
-# presses Escape and running them early would leave the app wearing an overlay
-# for the rest of the sweep. Mode-hidden entries are skipped here and picked up
-# in phase 10, which visits the mode that shows them.
+# the find bars) are deferred to phase 12, where they get dismissed again: an
+# overlay left up here would sit in front of every phase that reads the screen.
+# Mode-hidden entries are skipped here and picked up in phase 10, which visits
+# the mode that shows them.
 $nav = @($commands | Where-Object { $_.risk -eq 'navigate' -and -not $_.interactive })
 function Test-Overlay($c) {
     $c.label -like 'Go to File*' -or $c.label -like 'Go to Line*' -or
@@ -313,14 +356,24 @@ foreach ($c in $gated) {
 }
 Check "none of the $($gated.Count) gated commands ran without allow_unsafe" ($leaks.Count -eq 0) "leaked: $($leaks -join ', ')"
 
-# A native modal blocks the frame loop until a person answers it, so the
-# opt-in flag cannot make running one over a socket safe.
+# The two palette entries that raise a dialog are ordinary modify-tier commands.
+# They used to be refused outright on the theory that they opened a native modal
+# that would hang the frame loop; they are in-app `egui` windows with Cancel
+# buttons, so the interesting question is the one below: does opting in actually
+# put one on screen, does GetState see it, and does dismissal get the instance
+# back to a clean state for the phases that follow.
 foreach ($c in @($commands | Where-Object { $_.interactive })) {
     $r = Send 'RunCommand' @{ label = $c.label; allow_unsafe = $true }
-    Check "'$($c.label)' is refused even with allow_unsafe" (-not (Ok $r)) 'it ran, and would have hung the UI thread on a dialog'
-    if (-not (Ok $r)) {
-        Check "  ...and the refusal says why" ((Err $r) -match 'native modal') (Err $r)
-    }
+    Check "'$($c.label)' runs once opted in" (Ok $r) (Err $r)
+    if (-not (Ok $r)) { continue }
+    $up = Overlays
+    Check "  ...and GetState reports a dialog on screen" ($up.Count -gt 0) 'open_overlays is empty'
+    $d = Send 'DismissOverlays' @{}
+    # The foreach, not @(): a reply from an app that has no `closed` field would
+    # otherwise read as one item and pass this check without closing anything.
+    $shut = @(foreach ($one in (Body $d).closed) { $one })
+    Check '  ...and DismissOverlays closes it' ((Ok $d) -and ($shut.Count -gt 0)) "$(Err $d) closed=$($shut -join ',')"
+    Check "  ...leaving nothing transient up for the rest of the sweep" ((Overlays).Count -eq 0) ((Overlays) -join ', ')
 }
 
 # A route must not smuggle a state change past the tier gate.
@@ -413,7 +466,9 @@ if (-not $AllowUnsafe) {
     Note 'modify-tier commands' 'pass -AllowUnsafe to run them; they write files and close tabs'
 } else {
     # Everything the sweep has already verified by refusing these; now press
-    # them. Execute tier is still not run: see the skips below.
+    # them. Execute tier is still not run: see the skips below. The two that
+    # raise a dialog are excluded here because phase 8 already pressed them and
+    # dismissed the dialog again; running them here would leave one up.
     foreach ($c in @($commands | Where-Object { $_.risk -eq 'modify' -and $_.label -notlike 'Mode:*' -and -not $_.interactive })) {
         $r = Press $c.label $true
         if ((Err $r) -match 'only available in') { Note "'$($c.label)'" "hidden by every mode, even after switching: $(Err $r)"; continue }
@@ -450,16 +505,76 @@ if ($script:modeMoved) {
     $script:modeMoved = $false
 }
 
-# ── 12. Overlay openers, last ──────────────────────────────────────────────
+# ── 12. Overlay openers, then dismissed ────────────────────────────────────
 Log '[12] the quick-open, go-to and find overlays'
-# Held to the end on purpose: these raise an in-app overlay and there is no
-# bridge call that presses Escape, so the instance is left wearing them and is
-# shut down straight afterwards.
+# Held to the end so an overlay never sits in front of the phases that read the
+# screen, and dismissed afterwards: `DismissOverlays` closes the whole stack at
+# once, so the instance no longer has to be left wearing them.
 foreach ($c in $navOverlay) {
     $r = Press $c.label $false
     if ((Err $r) -match 'only available in') { Note "'$($c.label)'" 'hidden by the current mode'; continue }
     Check "overlay '$($c.label)'" (Ok $r) (Err $r)
 }
+$raised = Overlays
+Check "the overlay openers left something on screen" ($raised.Count -gt 0) 'open_overlays is empty'
+$d = Send 'DismissOverlays' @{}
+Check 'DismissOverlays answers' (Ok $d) (Err $d)
+# The invariant the in-process test checks, on a live app this time: what the
+# dismiss call says it closed has to be exactly what the state report listed as
+# up, or the report and the reset are drifting apart. Read into a variable first:
+# Compare-Object returns nothing when the two agree, and `-and ... -eq $null`
+# would parse as `(-and) -eq $null` and always fail.
+$shut = @(foreach ($one in (Body $d).closed) { $one })
+$drift = @(Compare-Object $raised $shut)
+Check "it closed exactly the $($raised.Count) overlays the state listed" (($shut.Count -eq $raised.Count) -and ($drift.Count -eq 0)) "state=$($raised -join ',') closed=$($shut -join ',')"
+Check 'nothing transient is left up' ((Overlays).Count -eq 0) ((Overlays) -join ', ')
+$d2 = Send 'DismissOverlays' @{}
+Check 'dismissing an already-clean app says so' ((Ok $d2) -and (@(foreach ($one in (Body $d2).closed) { $one }).Count -eq 0)) (Err $d2)
+
+# ── 13. Pixel capture ──────────────────────────────────────────────────────
+Log '[13] gui_screenshot'
+# The phase that turns "the state struct says X" into "the screen shows X", so
+# it is checked as a file on disk rather than as a success flag: a handler that
+# saves an empty image is worse than one that admits it failed.
+$shot = Send 'Screenshot' @{ path = 'sweep-capture.png' }
+if (-not (Ok $shot)) {
+    # Either guard can be the one that fires: `minimized` when the app knows it
+    # was minimised, `no pixels` when BitBlt found nothing where the window rect
+    # claims to be. Both mean the same fix, and only the second one is not
+    # self-describing, so the original error is logged rather than swallowed.
+    Log "      first capture failed: $(Err $shot)"
+    $inst = InstancePid
+    if (-not (Set-InstanceWindow $inst)) {
+        Note 'pixel capture' "no window handle for pid $inst, so the capture could not be retried"
+    } else {
+        Log '      restoring the instance window and capturing again'
+        $shot = Send 'Screenshot' @{ path = 'sweep-capture.png' }
+        Check 'a capture once the window is restored' (Ok $shot) (Err $shot)
+        [void](Set-InstanceWindow $inst -Minimize)
+    }
+} else {
+    Check 'a capture of the visible window' (Ok $shot) (Err $shot)
+}
+if (Ok $shot) {
+    $cap = Body $shot
+    Check "  ...wrote a $($cap.width)x$($cap.height) $($cap.format)" ([int]$cap.width -gt 0 -and [int]$cap.height -gt 0) "$($cap.width)x$($cap.height)"
+    $under = $false
+    try {
+        $under = (Resolve-Path $cap.path).Path.StartsWith((Resolve-Path $base.workspace_root).Path, [StringComparison]::OrdinalIgnoreCase)
+    } catch { $under = $false }
+    Check '  ...inside the instance workspace' $under $cap.path
+    $bytes = @(try { [System.IO.File]::ReadAllBytes($cap.path) } catch { @() })
+    Check "  ...as a real $( [math]::Round($bytes.Length / 1KB) ) KB file on disk" ($bytes.Length -gt 10240) "length=$($bytes.Length)"
+    Check '  ...with a PNG signature' ($bytes.Length -ge 4 -and $bytes[0] -eq 0x89 -and $bytes[1] -eq 0x50 -and $bytes[2] -eq 0x4E -and $bytes[3] -eq 0x47) 'not a PNG'
+}
+# The containment guard is the one part of this that can be tested without
+# writing anything: a relative path that walks out of the workspace has to be
+# refused, not canonicalised into somebody else's directory.
+$r = Send 'Screenshot' @{ path = '..\..\sweep-escaped.png' }
+Check 'a capture path outside the workspace is refused' (-not (Ok $r)) (Err $r)
+Check '  ...and nothing was written beside the repo' (-not (Test-Path "$PSScriptRoot\sweep-escaped.png")) 'sweep-escaped.png exists'
+$r = Send 'Screenshot' @{ path = 'not-an-image.xyz' }
+Check 'an extension the encoder cannot write is refused' (-not (Ok $r)) (Err $r)
 
 # ── summary ────────────────────────────────────────────────────────────────
 $final = Settled

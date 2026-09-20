@@ -449,11 +449,47 @@ pub fn capture(target: &CaptureTarget) -> Screenshot {
     if !cfg!(target_os = "windows") {
         return Screenshot::empty("non_windows");
     }
-    let script = build_screenshot_script(target);
+    // A window has to become a rectangle before anything can be copied off the
+    // screen, and that resolution happens here rather than in the script: an
+    // `out` struct argument does not survive being marshalled back through
+    // `Add-Type`, so the script that tried to P/Invoke `GetWindowRect` itself
+    // ended up with a null `$bounds`, threw its way to the end of the script,
+    // and still printed a JSON envelope -- which every caller read as a capture
+    // that happened to contain no pixels.
+    let resolved = match target {
+        CaptureTarget::Window(pid) => match window_rect_for(*pid) {
+            Some(region) => CaptureTarget::Region(region),
+            None => return Screenshot::empty(&format!("window_not_found:{pid}")),
+        },
+        other => other.clone(),
+    };
+    let script = build_screenshot_script(&resolved);
     match run_ps_script(&script) {
         Ok(json) => parse_capture_result(&json),
         Err(_) => Screenshot::empty("capture_failed"),
     }
+}
+
+/// The screen rectangle of a process's main window, or `None` if it has none.
+///
+/// The window manager already reads window rectangles through Win32, so a window
+/// capture reuses it and becomes a plain region capture. The largest window
+/// wins, because that is the one a person means by "the app's window"; a
+/// minimised one is skipped, since its rectangle points at wherever the taskbar
+/// keeps icons (-32000,-32000) rather than at anything on screen.
+pub fn window_rect_for(pid: u32) -> Option<CaptureRegion> {
+    use crate::wa::window_mgmt::{WindowManager, WindowState};
+    WindowManager::find_by_pid(pid)
+        .iter()
+        .filter(|w| w.state != WindowState::Minimized)
+        .filter(|w| w.rect.width > 0 && w.rect.height > 0)
+        .max_by_key(|w| w.rect.width as u64 * w.rect.height as u64)
+        .map(|w| CaptureRegion {
+            x: w.rect.x,
+            y: w.rect.y,
+            width: w.rect.width,
+            height: w.rect.height,
+        })
 }
 
 fn run_ps_script(script: &str) -> Result<String, String> {
@@ -545,10 +581,13 @@ pub fn build_screenshot_script(target: &CaptureTarget) -> String {
             format!("monitor:{}", idx),
         ),
         CaptureTarget::Window(pid) => (
-            format!(
-                "Add-Type -AssemblyName System.Windows.Forms\n$proc = Get-Process -Id {} -ErrorAction SilentlyContinue\nif ($null -eq $proc -or $null -eq $proc.MainWindowHandle -or $proc.MainWindowHandle -eq 0) {{ Write-Error 'Window not found'; exit 1 }}\n$src = New-Object System.Drawing.Rectangle; Add-Type @'\nusing System; using System.Runtime.InteropServices;\npublic class WinRect {{ [DllImport(\"user32.dll\")] public static extern bool GetWindowRect(IntPtr hWnd, out RECT lpRect); [StructLayout(LayoutKind.Sequential)] public struct RECT {{ public int Left; public int Top; public int Right; public int Bottom; }} }}\n'@\n$rect = New-Object WinRect+RECT\n[WinRect]::GetWindowRect($proc.MainWindowHandle, [ref]$rect) | Out-Null\n$bounds = New-Object System.Drawing.Rectangle($rect.Left, $rect.Top, $rect.Right - $rect.Left, $rect.Bottom - $rect.Top)",
-                pid
-            ),
+            // Unreachable through [`capture`], which resolves a window to its
+            // rectangle first (see [`window_rect_for`]). Kept as a loud failure
+            // rather than a silent one: an unresolved window target has no
+            // rectangle to copy, and grabbing whatever happens to be at the
+            // last coordinates somebody remembered is how a capture starts
+            // proving nothing again.
+            "Write-Error 'window target was not resolved to a rectangle'; exit 1".to_string(),
             format!("window:{}", pid),
         ),
         CaptureTarget::Region(r) => (
@@ -827,5 +866,43 @@ mod tests {
             .save_to(&scratch_path(&dir, "broken.png"))
             .expect_err("a short buffer must not silently encode");
         assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
+    }
+
+    /// The window arm used to P/Invoke `GetWindowRect` from inside the generated
+    /// script. An `out` struct does not survive being marshalled back through
+    /// `Add-Type`, so `$bounds` came out null, the script threw its way past it
+    /// and still printed its JSON -- a capture that reported success holding no
+    /// pixels, from every caller. Windows are resolved to a rectangle in Rust
+    /// now, so a script must never be built for an unresolved one.
+    #[test]
+    fn a_window_target_is_resolved_before_any_script_is_built() {
+        let script = build_screenshot_script(&CaptureTarget::Window(1234));
+        assert!(
+            !script.contains("GetWindowRect") && !script.contains("WinRect"),
+            "the script is marshalling an out struct by hand again: {script}"
+        );
+        assert!(
+            script.contains("exit 1"),
+            "an unresolved window has to fail loudly rather than grab whatever \
+             is at the last coordinates it remembered: {script}"
+        );
+    }
+
+    /// A region capture is what a window resolves to, so the rectangle has to
+    /// reach the script intact: it is the only thing the copy operates on.
+    #[test]
+    fn a_region_script_names_the_exact_pixels_it_copies() {
+        let region = CaptureRegion {
+            x: 12,
+            y: 34,
+            width: 56,
+            height: 78,
+        };
+        let script = build_screenshot_script(&CaptureTarget::Region(region));
+        assert!(
+            script.contains("System.Drawing.Rectangle(12, 34, 56, 78)"),
+            "{script}"
+        );
+        assert!(script.contains("region:12,34,56x78"), "{script}");
     }
 }

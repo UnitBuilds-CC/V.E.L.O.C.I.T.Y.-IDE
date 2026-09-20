@@ -33,10 +33,15 @@ pub mod team_builder_chat;
 pub mod team_router;
 
 // Mode-Specialized UI Workflows
+//
+// `mode_config` once also declared left tabs, toolbar actions and a bottom
+// panel layout. All three were read by nothing, so the renderers that would
+// have consumed them (`toolbar_actions`, the `SidebarTab` strip, the
+// `BottomPanelLayout` match arm) went with them rather than sitting tested
+// and unwired.
 pub mod bottom_panel;
 pub mod mode_config;
 pub mod sidebar_tabs;
-pub mod toolbar_actions;
 
 // IDE Core Editor Capabilities
 pub mod auto_indent;
