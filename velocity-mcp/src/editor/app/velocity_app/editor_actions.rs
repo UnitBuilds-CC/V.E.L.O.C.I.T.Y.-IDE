@@ -265,18 +265,37 @@ impl VelocityApp {
         }
     }
 
-    /// Switch to Build and reveal the integrated research browser in its sidebar.
-    /// The browser is a contextual tool, so it does not create a competing dock tab.
+    /// Show a sub-tab within an activity-bar rail, returning whether both names
+    /// resolve against `app_map::RAILS`.
+    ///
+    /// One writer for `activity_bar_selection` + `activity_sub_panel`, because
+    /// the menu commands and the GUI bridge both need to move the strip: kept
+    /// separate, the bridge could select a section the renderer then clamped
+    /// away, so the call reported success and the sidebar showed something else.
+    pub fn select_rail_section(&mut self, rail: &str, section: &str) -> bool {
+        let Some(rail_spec) = crate::editor::app::app_map::rail_from_name(rail) else {
+            return false;
+        };
+        let Some(index) = rail_spec.sub_tab_index(section) else {
+            return false;
+        };
+        let rail_index = rail_spec.index();
+        self.activity_bar_selection = rail_index;
+        self.activity_sub_panel[rail_index] = index;
+        self.left_sidebar_visible = true;
+        true
+    }
+
+    /// Reveal the integrated research browser in the sidebar.
+    ///
+    /// This used to switch the whole workspace profile to Coder and then set
+    /// `left_sidebar_tab` from `ModeConfig::left_tabs()`. Nothing renders that
+    /// list any more -- the activity bar replaced it, and the field was never
+    /// read back -- so the menu item reflowed the window and showed no browser.
+    /// It now selects the section that actually draws one, and leaves the user's
+    /// mode alone.
     pub fn open_browse_workspace(&mut self) {
-        self.set_work_mode(crate::editor::theme::WorkspaceProfile::Coder);
-        let tabs = crate::editor::mode_config::mode_config_for(self.appearance.profile).left_tabs();
-        if let Some(index) = tabs
-            .iter()
-            .position(|tab| *tab == crate::editor::sidebar_tabs::SidebarTab::Browse)
-        {
-            self.left_sidebar_visible = true;
-            self.left_sidebar_tab = index;
-        }
+        self.select_rail_section("chat", "browser");
     }
 
     pub fn toggle_search(&mut self) {

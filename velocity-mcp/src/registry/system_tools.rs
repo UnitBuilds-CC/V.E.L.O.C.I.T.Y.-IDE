@@ -918,53 +918,111 @@ pub fn handle_system_tool(
         // ── GUI Control Bridge ─────────────────────────────────────────────
         "gui_open_file" => {
             let path = arguments["path"].as_str().ok_or("path is required")?;
-            let token = crate::editor::gui_control::load_token(root)
-                .ok_or("GUI control token not found. Is the IDE running?")?;
-            let cmd = crate::editor::gui_control::GuiCommand::OpenFile {
-                path: path.to_string(),
-            };
-            let resp = crate::editor::gui_control::send_command(&cmd, &token)?;
-            serde_json::to_string(&resp)?
+            gui_call(
+                root,
+                crate::editor::gui_control::GuiCommand::OpenFile {
+                    path: path.to_string(),
+                },
+            )?
         }
-        "gui_get_state" => {
-            let token = crate::editor::gui_control::load_token(root)
-                .ok_or("GUI control token not found. Is the IDE running?")?;
-            let cmd = crate::editor::gui_control::GuiCommand::GetState {};
-            let resp = crate::editor::gui_control::send_command(&cmd, &token)?;
-            serde_json::to_string(&resp)?
-        }
+        "gui_get_state" => gui_call(root, crate::editor::gui_control::GuiCommand::GetState {})?,
         "gui_navigate_panel" => {
             let panel = arguments["panel"].as_str().ok_or("panel is required")?;
-            let token = crate::editor::gui_control::load_token(root)
-                .ok_or("GUI control token not found. Is the IDE running?")?;
-            let cmd = crate::editor::gui_control::GuiCommand::NavigatePanel {
-                panel: panel.to_string(),
-            };
-            let resp = crate::editor::gui_control::send_command(&cmd, &token)?;
-            serde_json::to_string(&resp)?
+            gui_call(
+                root,
+                crate::editor::gui_control::GuiCommand::NavigatePanel {
+                    panel: panel.to_string(),
+                },
+            )?
         }
         "gui_toggle_panel" => {
             let panel = arguments["panel"].as_str().ok_or("panel is required")?;
-            let token = crate::editor::gui_control::load_token(root)
-                .ok_or("GUI control token not found. Is the IDE running?")?;
-            let cmd = crate::editor::gui_control::GuiCommand::TogglePanel {
-                panel: panel.to_string(),
-            };
-            let resp = crate::editor::gui_control::send_command(&cmd, &token)?;
-            serde_json::to_string(&resp)?
+            gui_call(
+                root,
+                crate::editor::gui_control::GuiCommand::TogglePanel {
+                    panel: panel.to_string(),
+                },
+            )?
         }
-        "gui_quit" => {
-            let token = crate::editor::gui_control::load_token(root)
-                .ok_or("GUI control token not found. Is the IDE running?")?;
-            let cmd = crate::editor::gui_control::GuiCommand::Quit {};
-            let resp = crate::editor::gui_control::send_command(&cmd, &token)?;
-            serde_json::to_string(&resp)?
+        "gui_quit" => gui_call(root, crate::editor::gui_control::GuiCommand::Quit {})?,
+        "gui_list_commands" => {
+            let category = arguments["category"].as_str().map(str::to_string);
+            gui_call(
+                root,
+                crate::editor::gui_control::GuiCommand::ListCommands { category },
+            )?
+        }
+        "gui_run_command" => {
+            let label = arguments["label"].as_str().ok_or("label is required")?;
+            gui_call(
+                root,
+                crate::editor::gui_control::GuiCommand::RunCommand {
+                    label: label.to_string(),
+                    // Deliberately read from the caller's arguments rather than
+                    // defaulted to true: an omitted flag means "do not run
+                    // anything that writes".
+                    allow_unsafe: arguments["allow_unsafe"].as_bool(),
+                },
+            )?
+        }
+        "gui_app_map" => {
+            let from = arguments["from"].as_str().map(str::to_string);
+            let to = arguments["to"].as_str().map(str::to_string);
+            gui_call(
+                root,
+                crate::editor::gui_control::GuiCommand::AppMap { from, to },
+            )?
+        }
+        "gui_navigate_to" => {
+            let target = arguments["target"].as_str().ok_or("target is required")?;
+            gui_call(
+                root,
+                crate::editor::gui_control::GuiCommand::NavigateTo {
+                    target: target.to_string(),
+                },
+            )?
+        }
+        "gui_list_tabs" => gui_call(root, crate::editor::gui_control::GuiCommand::ListTabs {})?,
+        "gui_select_tab" => {
+            let tab = arguments["tab"].as_str().ok_or("tab is required")?;
+            gui_call(
+                root,
+                crate::editor::gui_control::GuiCommand::SelectTab {
+                    tab: tab.to_string(),
+                },
+            )?
+        }
+        "gui_select_sub_tab" => {
+            let rail = arguments["rail"].as_str().ok_or("rail is required")?;
+            let sub_tab = arguments["sub_tab"].as_str().ok_or("sub_tab is required")?;
+            gui_call(
+                root,
+                crate::editor::gui_control::GuiCommand::SelectSubTab {
+                    rail: rail.to_string(),
+                    sub_tab: sub_tab.to_string(),
+                },
+            )?
         }
 
         _ => return Ok(None),
     };
 
     Ok(Some(result))
+}
+
+/// Hand one command to the running IDE over the control bridge.
+///
+/// Every `gui_*` tool used to repeat the token load and the "is the GUI
+/// running?" message inline, which is how one of them ended up describing a
+/// panel list the handler no longer used. One call site, one error text.
+fn gui_call(
+    root: &Path,
+    cmd: crate::editor::gui_control::GuiCommand,
+) -> Result<String, Box<dyn Error>> {
+    let token = crate::editor::gui_control::load_token(root)
+        .ok_or("GUI control token not found. Is the IDE running?")?;
+    let resp = crate::editor::gui_control::send_command(&cmd, &token)?;
+    Ok(serde_json::to_string(&resp)?)
 }
 
 /// Native `convert_to_nda`: convert any file to a portable NDA1 document

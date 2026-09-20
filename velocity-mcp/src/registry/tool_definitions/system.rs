@@ -456,7 +456,7 @@ pub fn get_system_tools() -> Vec<Tool> {
         },
         Tool {
             name: "gui_get_state".to_string(),
-            description: "Get the current state of the running IDE: open files, active file, active panel, focused central tab, whether the central area shows the dock or the welcome screen, sidebar visibility, chat message count, git branch. Requires the GUI to be running.".to_string(),
+            description: "Get the current state of the running IDE: open files, active file, selected activity-bar rail and the sub-tab it is showing, focused central tab, whether the central area shows the dock or the welcome screen, active workspace profile/mode, sidebar visibility, chat message count, git branch. Requires the GUI to be running.".to_string(),
             input_schema: json!({
                 "type": "object",
                 "properties": {},
@@ -464,11 +464,16 @@ pub fn get_system_tools() -> Vec<Tool> {
         },
         Tool {
             name: "gui_navigate_panel".to_string(),
-            description: "Navigate to a specific panel in the IDE's activity bar. Valid panels: files, search, git, chat, build, agents, knowledge, workspace. Requires the GUI to be running.".to_string(),
+            // From the table the handler validates against, for the same reason
+            // `gui_toggle_panel` below takes its list from `bridge_panel_names`.
+            description: format!(
+                "Select a rail in the IDE's activity bar (the left strip), which is not the same as opening a panel in the centre -- see gui_toggle_panel. Valid rails: {}. Requires the GUI to be running.",
+                crate::editor::app::types::ACTIVITY_CATEGORY_NAMES.join(", ")
+            ),
             input_schema: json!({
                 "type": "object",
                 "properties": {
-                    "panel": { "type": "string", "description": "Panel name: files, search, git, chat, build, agents, knowledge, or workspace." }
+                    "panel": { "type": "string", "description": format!("One of: {}.", crate::editor::app::types::ACTIVITY_CATEGORY_NAMES.join(", ")) }
                 },
                 "required": ["panel"]
             }),
@@ -495,6 +500,91 @@ pub fn get_system_tools() -> Vec<Tool> {
             input_schema: json!({
                 "type": "object",
                 "properties": {},
+            }),
+        },
+
+        // ─── Driving the app itself ────────────────────────────────────────
+        //
+        // Until these existed a driver could name 18 panels and nothing else:
+        // the command palette, the dock's tab list and the 33 activity-bar
+        // sub-tabs had no entry point, so "test every button" was not a thing
+        // that could be done from outside the process, only by hand.
+        Tool {
+            name: "gui_list_commands".to_string(),
+            description: "List the running IDE's command palette entries with their risk tier: 'navigate' only moves focus, 'modify' writes, 'execute' spawns processes or opens a dialog. Pass a category to filter. Requires the GUI to be running.".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "category": { "type": "string", "description": "Optional category filter, e.g. File, Build, Panels, Agent, View." }
+                },
+            }),
+        },
+        Tool {
+            name: "gui_run_command".to_string(),
+            description: "Invoke a command palette entry by label in the running IDE, through the same action a click fires. Refused for anything tiered modify or execute unless allow_unsafe is set, for entries the current workspace profile hides, and -- whatever allow_unsafe says -- for entries that open a native modal, because those block the UI thread until a person answers. gui_list_commands labels those as interactive. Requires the GUI to be running.".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "label": { "type": "string", "description": "Command label, e.g. 'Toggle Sidebar'. Tolerates a dropped ellipsis and case differences." },
+                    "allow_unsafe": { "type": "boolean", "description": "Set true to run a modify- or execute-tier command. Off by default: nothing that writes, spawns or opens a dialog runs because a driver forgot to ask." }
+                },
+                "required": ["label"]
+            }),
+        },
+        Tool {
+            name: "gui_app_map".to_string(),
+            description: "Get the running IDE's navigable surface as a graph: rails, their sub-tabs, menus, dock panels, workspace profiles and commands, with the action each hop needs. With 'to', returns the shortest route there instead. Requires the GUI to be running.".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "from": { "type": "string", "description": "Node id to start from. Defaults to the app root." },
+                    "to": { "type": "string", "description": "Node id or name to route to. Omit for the whole map." }
+                },
+            }),
+        },
+        Tool {
+            name: "gui_navigate_to".to_string(),
+            description: "Move the running IDE to a node named by gui_app_map, walking there through the same entry points a click uses. Focus only: it refuses commands tiered modify or execute, so use gui_run_command for those. Requires the GUI to be running.".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "target": { "type": "string", "description": "Node id ('panel:settings', 'rail:git/changes', 'mode:coder'), or a bare rail/panel/mode name." }
+                },
+                "required": ["target"]
+            }),
+        },
+        Tool {
+            name: "gui_list_tabs".to_string(),
+            description: "List the tabs the running IDE holds, with each one's dock membership and which has focus. Reports 'docked' separately from membership in the tab list, because a dock rebuild can orphan a tab and those need different fixes. Requires the GUI to be running.".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {},
+            }),
+        },
+        Tool {
+            name: "gui_select_tab".to_string(),
+            description: "Switch the running IDE's focused tab by numeric id, title or panel slug -- the Ctrl+Tab path, not the open-a-new-panel path. Requires the GUI to be running.".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "tab": { "type": "string", "description": "Tab id, title ('Settings'), or panel slug ('settings')." }
+                },
+                "required": ["tab"]
+            }),
+        },
+        Tool {
+            name: "gui_select_sub_tab".to_string(),
+            description: format!(
+                "Select a sub-tab within an activity-bar rail in one call, the strip under the rail icon. Rails: {}. Requires the GUI to be running.",
+                crate::editor::app::app_map::RAILS.iter().map(|rail| rail.slug).collect::<Vec<_>>().join(", ")
+            ),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "rail": { "type": "string", "description": "Rail slug, e.g. files, git, build, agents." },
+                    "sub_tab": { "type": "string", "description": "Sub-tab slug or label within that rail; gui_app_map lists them." }
+                },
+                "required": ["rail", "sub_tab"]
             }),
         },
     ]

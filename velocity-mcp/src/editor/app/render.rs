@@ -212,6 +212,7 @@ impl<'a> TabViewer for TabViewerImpl<'a> {
                     &mut self.app.active_team_index,
                     palette,
                 );
+                self.app.take_orchestrator_route_request();
             }
             TabKind::MissionControl => {
                 self.mission_control_panel(ui);

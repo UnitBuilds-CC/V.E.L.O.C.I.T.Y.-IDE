@@ -43,6 +43,10 @@ impl eframe::App for VelocityApp {
         self.bottom_panel_state.warning_count = self.lsp_state.diagnostics.warning_count();
         // Sync terminal output
         self.bottom_panel_state.terminal_output = self.command_output.clone();
+        // Sync the model a hand-authored orchestrator task will run on. Done per
+        // frame rather than inside the Orchestrator tab so the value is current
+        // even when work is launched from Mission Control or the bridge.
+        self.sync_orchestrator_defaults();
 
         // Poll open buffers for external on-disk changes (throttled ~5s).
         let external_due = self
@@ -857,41 +861,12 @@ impl eframe::App for VelocityApp {
                     ui.vertical_centered(|ui| {
                         ui.add_space(8.0);
 
-                        // Activity bar icons - 8 main categories, Phosphor icons + labels
-                        let activities = [
-                            (egui_phosphor::regular::FOLDER, "Files", "Files", "Ctrl+E"),
-                            (
-                                egui_phosphor::regular::MAGNIFYING_GLASS,
-                                "Search",
-                                "Search",
-                                "Ctrl+Shift+F",
-                            ),
-                            (egui_phosphor::regular::GIT_BRANCH, "Git", "Git", "Ctrl+G"),
-                            (
-                                egui_phosphor::regular::CHAT_CIRCLE,
-                                "Chat",
-                                "Chat",
-                                "Ctrl+J",
-                            ),
-                            (egui_phosphor::regular::HAMMER, "Build", "Build", "Ctrl+B"),
-                            (egui_phosphor::regular::ROBOT, "Agents", "Agents", "Ctrl+D"),
-                            (
-                                egui_phosphor::regular::BOOK_OPEN,
-                                "Knowledge",
-                                "Know",
-                                "Ctrl+K",
-                            ),
-                            (
-                                egui_phosphor::regular::SQUARES_FOUR,
-                                "Workspace",
-                                "Work",
-                                "Ctrl+Shift+X",
-                            ),
-                        ];
-
-                        for (i, (icon, label, short_label, shortcut)) in
-                            activities.iter().enumerate()
-                        {
+                        // Activity bar icons - the eight rails from
+                        // `app_map::RAILS`, the same table the app map and the
+                        // GUI bridge validate panel names against. These used to
+                        // be a local tuple array, which is how the bridge's
+                        // copy of the names drifted from what was drawn.
+                        for (i, rail) in crate::editor::app::app_map::RAILS.iter().enumerate() {
                             let is_selected = self.activity_bar_selection == i;
                             let icon_size = egui::vec2(48.0, 48.0);
                             let rect = egui::Rect::from_min_size(ui.cursor().min, icon_size);
@@ -936,7 +911,7 @@ impl eframe::App for VelocityApp {
                             ui.painter().text(
                                 icon_pos,
                                 egui::Align2::CENTER_CENTER,
-                                *icon,
+                                rail.icon,
                                 crate::editor::theme::icon_font_id(18.0),
                                 icon_color,
                             );
@@ -953,7 +928,7 @@ impl eframe::App for VelocityApp {
                             ui.painter().text(
                                 label_pos,
                                 egui::Align2::CENTER_CENTER,
-                                *short_label,
+                                rail.short_label,
                                 egui::FontId::proportional(10.0),
                                 label_color,
                             );
@@ -964,7 +939,7 @@ impl eframe::App for VelocityApp {
                             // Zero-alloc: LayoutJob instead of format!("{}  ({})", label, shortcut).
                             let mut hover_job = egui::text::LayoutJob::default();
                             hover_job.append(
-                                label,
+                                rail.label,
                                 0.0,
                                 egui::TextFormat {
                                     font_id: egui::FontId::proportional(11.0),
@@ -982,7 +957,7 @@ impl eframe::App for VelocityApp {
                                 },
                             );
                             hover_job.append(
-                                shortcut,
+                                rail.shortcut,
                                 0.0,
                                 egui::TextFormat {
                                     font_id: egui::FontId::proportional(10.0),

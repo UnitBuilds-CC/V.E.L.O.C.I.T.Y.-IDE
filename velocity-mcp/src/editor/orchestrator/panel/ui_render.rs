@@ -1,8 +1,10 @@
+use super::authoring::TaskDraft;
 use super::struct_def::OrchestratorPanel;
+use crate::automation::AgentTaskKind;
 use crate::editor::expert_team::ExpertTeam;
 use crate::editor::theme::IdePalette;
-use crate::orchestrator::blueprint::{Task, TaskGraph};
-use crate::orchestrator::registry::{OrchestratorRegistry, TaskStatus};
+use crate::orchestrator::blueprint::Task;
+use crate::orchestrator::registry::TaskStatus;
 use crate::orchestrator::scheduler;
 use crate::orchestrator::TaskId;
 use eframe::egui;
@@ -26,6 +28,10 @@ impl OrchestratorPanel {
             ui.ctx()
                 .request_repaint_after(std::time::Duration::from_millis(100));
         }
+
+        // Tasks the user deletes this pass are applied once drawing finishes, so
+        // no card is ever rendered from a graph that changed mid-iteration.
+        let mut removals: Vec<TaskId> = Vec::new();
 
         ScrollArea::vertical()
             .id_salt("orchestrator_panel_scroll")
@@ -129,27 +135,47 @@ impl OrchestratorPanel {
                 ui.add_space(6.0);
 
                 // Action buttons
+                let blocker = self.execution_blocker();
                 ui.horizontal_wrapped(|ui| {
+                    if ui
+                        .button(RichText::new("+ Add task").strong())
+                        .on_hover_text("Write a task by hand and put it in the plan.")
+                        .clicked()
+                    {
+                        self.draft.open = !self.draft.open;
+                        self.draft.error.clear();
+                    }
+                    if ui
+                        .button("Route goal")
+                        .on_hover_text("Ask the planner to decompose a goal into sub-agent tasks.")
+                        .clicked()
+                    {
+                        self.goal_input_open = !self.goal_input_open;
+                    }
+
                     if has_cycle {
                         if ui
                             .button(RichText::new("Fix Cycle").color(palette.warning))
+                            .on_hover_text(
+                                "Drop only the dependencies that loop; every task is kept.",
+                            )
                             .clicked()
                         {
-                            self.graph = TaskGraph::example_game();
-                            self.registry = Some(OrchestratorRegistry::new(&self.graph));
-                            self.execution_running = false;
-                            self.running_workers.clear();
-                            self.runtime_status = "Graph repaired".to_string();
+                            self.repair_cycles_action();
                         }
                     } else if self.execution_running {
                         ui.add_enabled_ui(false, |ui| {
                             let _ = ui.button("Executing...");
                         });
-                    } else if ui
-                        .button(RichText::new("Execute").color(palette.success))
-                        .clicked()
-                    {
-                        self.execute_routed_tasks(workspace_root, mediator);
+                    } else {
+                        ui.add_enabled_ui(blocker.is_none(), |ui| {
+                            if ui
+                                .button(RichText::new("Execute").color(palette.success))
+                                .clicked()
+                            {
+                                self.execute_routed_tasks(workspace_root, mediator);
+                            }
+                        });
                     }
 
                     if ui
@@ -165,7 +191,37 @@ impl OrchestratorPanel {
                     if ui.button("Reset").clicked() {
                         self.reset_runtime_action();
                     }
+
+                    if !self.plan_is_empty() {
+                        ui.add_enabled_ui(!self.execution_running, |ui| {
+                            if ui
+                                .button("Clear plan")
+                                .on_hover_text("Empty the plan. Running work is cancelled.")
+                                .clicked()
+                            {
+                                self.clear_plan();
+                            }
+                        });
+                    }
                 });
+
+                // Stated in the open: a greyed-out Execute with no reason reads
+                // exactly like a button that is broken.
+                if let Some(reason) = blocker {
+                    if !self.execution_running && !self.draft.open && !has_cycle {
+                        ui.label(RichText::new(reason).small().color(palette.warning));
+                    }
+                }
+
+                if self.goal_input_open {
+                    ui.add_space(6.0);
+                    self.render_route_goal(ui, palette);
+                }
+
+                if self.draft.open {
+                    ui.add_space(6.0);
+                    self.render_task_draft(ui, palette);
+                }
 
                 // Policy editor (collapsible)
                 if self.show_policy_editor {
@@ -177,16 +233,28 @@ impl OrchestratorPanel {
                 if has_cycle {
                     ui.add_space(6.0);
                     ui.group(|ui| {
-                        ui.horizontal(|ui| {
-                            ui.label(
-                                RichText::new("Dependency cycle detected").color(palette.error),
-                            );
-                            if ui.small_button("Auto-repair").clicked() {
-                                self.graph = TaskGraph::example_game();
-                                self.registry = Some(OrchestratorRegistry::new(&self.graph));
-                                self.runtime_status = "Graph repaired".to_string();
-                            }
-                        });
+                        ui.label(
+                            RichText::new("Dependency cycle detected").color(palette.error),
+                        );
+                        ui.label(
+                            RichText::new(
+                                "The plan cannot be scheduled until the loop is cut.",
+                            )
+                            .small()
+                            .color(palette.text_muted),
+                        );
+                        if ui.small_button("Cut back-edges").clicked() {
+                            self.repair_cycles_action();
+                        }
+                    });
+                } else if !self.repair_report.is_empty() {
+                    ui.add_space(6.0);
+                    ui.group(|ui| {
+                        ui.label(
+                            RichText::new(format!("Repaired: {}", self.repair_report))
+                                .small()
+                                .color(palette.warning),
+                        );
                     });
                 }
 
@@ -256,13 +324,20 @@ impl OrchestratorPanel {
                                                 );
                                                 ui.add_space(2.0);
                                                 for id in phase {
-                                                    if let Some(task) = self.graph.tasks.get(id) {
-                                                        self.render_task_card(
-                                                            ui,
-                                                            task,
-                                                            active_team,
-                                                            palette,
-                                                        );
+                                                    let remove =
+                                                        if let Some(task) = self.graph.tasks.get(id)
+                                                        {
+                                                            self.render_task_card(
+                                                                ui,
+                                                                task,
+                                                                active_team,
+                                                                palette,
+                                                            )
+                                                        } else {
+                                                            false
+                                                        };
+                                                    if remove {
+                                                        removals.push(*id);
                                                     }
                                                 }
                                             });
@@ -272,14 +347,14 @@ impl OrchestratorPanel {
                                         ui.add_space(16.0);
                                         ui.vertical_centered(|ui| {
                                             ui.label(
-                                                RichText::new("?")
+                                                RichText::new("\u{25cb}")
                                                     .size(28.0)
                                                     .color(palette.accent.gamma_multiply(0.7)),
                                             );
                                             ui.add_space(6.0);
                                             ui.label(
                                                 RichText::new(
-                                                    "No tasks yet ? route a goal to build the plan",
+                                                    "No tasks yet \u{2014} pick a model, then \"+ Add task\"\nto write the plan by hand, or \"Route goal\" to\nhave the planner decompose one for you.",
                                                 )
                                                 .color(palette.text_muted),
                                             );
@@ -288,13 +363,23 @@ impl OrchestratorPanel {
                                         ui.group(|ui| {
                                             ui.label(RichText::new("Tasks").small().strong());
                                             ui.add_space(2.0);
-                                            for task in self.graph.tasks.values() {
-                                                self.render_task_card(
-                                                    ui,
-                                                    task,
-                                                    active_team,
-                                                    palette,
-                                                );
+                                            let ids: Vec<TaskId> =
+                                                self.graph.tasks.keys().copied().collect();
+                                            for id in ids {
+                                                let remove =
+                                                    if let Some(task) = self.graph.tasks.get(&id) {
+                                                        self.render_task_card(
+                                                            ui,
+                                                            task,
+                                                            active_team,
+                                                            palette,
+                                                        )
+                                                    } else {
+                                                        false
+                                                    };
+                                                if remove {
+                                                    removals.push(id);
+                                                }
                                             }
                                         });
                                     }
@@ -322,15 +407,164 @@ impl OrchestratorPanel {
                     }
                 });
             });
+
+        for id in removals {
+            self.remove_task(id);
+        }
     }
 
+    /// Inline "route a goal" box. Hands the goal to the app, which owns the
+    /// coordinator, the SiteMap and Mission Control.
+    fn render_route_goal(&mut self, ui: &mut Ui, palette: IdePalette) {
+        let mut submit = false;
+        let mut cancel = false;
+        ui.group(|ui| {
+            ui.label(RichText::new("Route a goal").strong().color(palette.accent));
+            ui.label(
+                RichText::new(
+                    "The planner decomposes it into scoped sub-agents. This replaces the current plan.",
+                )
+                .small()
+                .color(palette.text_muted),
+            );
+            ui.add(
+                egui::TextEdit::multiline(&mut self.goal_draft)
+                    .desired_rows(2)
+                    .desired_width(f32::INFINITY)
+                    .hint_text("Outcome, constraints, and acceptance criteria..."),
+            );
+            ui.horizontal_wrapped(|ui| {
+                if ui.button(RichText::new("Route it").strong()).clicked() {
+                    submit = true;
+                }
+                if ui.button("Cancel").clicked() {
+                    cancel = true;
+                }
+            });
+        });
+
+        if cancel {
+            self.goal_input_open = false;
+            self.goal_draft.clear();
+        } else if submit {
+            let goal = self.goal_draft.clone();
+            if goal.trim().is_empty() {
+                self.runtime_status = "Type the goal you want routed.".to_string();
+            } else {
+                self.request_route_goal(&goal);
+            }
+        }
+    }
+
+    /// The inline add-task form. Fields live on the panel (`self.draft`) rather
+    /// than in locals so a half-typed task survives the frame it loses focus in.
+    fn render_task_draft(&mut self, ui: &mut Ui, palette: IdePalette) {
+        let mut submit = false;
+        let mut cancel = false;
+
+        ui.group(|ui| {
+            ui.horizontal(|ui| {
+                ui.label(RichText::new("New task").strong().color(palette.accent));
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    ui.label(
+                        RichText::new(format!(
+                            "Runs on {} / {}",
+                            self.defaults.provider.label(),
+                            self.defaults.model_label
+                        ))
+                        .small()
+                        .color(palette.text_muted),
+                    );
+                });
+            });
+
+            let title_response = ui.add(
+                egui::TextEdit::singleline(&mut self.draft.title)
+                    .hint_text("Title (required)")
+                    .desired_width(f32::INFINITY),
+            );
+            // Enter in the title field is how everyone tries to submit a one-word
+            // task first; making it work removes a click from the common path.
+            if title_response.lost_focus() && ui.input(|input| input.key_pressed(egui::Key::Enter))
+            {
+                submit = true;
+            }
+            ui.add(
+                egui::TextEdit::multiline(&mut self.draft.description)
+                    .desired_rows(2)
+                    .desired_width(f32::INFINITY)
+                    .hint_text("What the worker should actually do"),
+            );
+            ui.add(
+                egui::TextEdit::multiline(&mut self.draft.scope)
+                    .desired_rows(2)
+                    .desired_width(f32::INFINITY)
+                    .hint_text("Files it may touch, comma or newline separated"),
+            );
+            ui.horizontal_wrapped(|ui| {
+                ui.label(RichText::new("Depends on").small());
+                ui.add(
+                    egui::TextEdit::singleline(&mut self.draft.dependencies)
+                        .hint_text("1, 2 (blank starts immediately)")
+                        .desired_width(170.0),
+                );
+                ui.label(RichText::new("Kind").small());
+                let current_kind = self.draft.kind;
+                egui::ComboBox::from_id_salt("orchestrator-draft-kind")
+                    .selected_text(current_kind.as_str())
+                    .show_ui(ui, |ui| {
+                        for candidate in AgentTaskKind::ALL {
+                            if ui
+                                .selectable_label(current_kind == candidate, candidate.as_str())
+                                .clicked()
+                            {
+                                self.draft.kind = candidate;
+                            }
+                        }
+                    });
+            });
+
+            ui.horizontal_wrapped(|ui| {
+                if ui.button(RichText::new("Add to plan").strong()).clicked() {
+                    submit = true;
+                }
+                if ui.button("Cancel").clicked() {
+                    cancel = true;
+                }
+            });
+
+            if !self.draft.error.is_empty() {
+                ui.label(
+                    RichText::new(&self.draft.error)
+                        .small()
+                        .color(palette.error),
+                );
+            }
+        });
+
+        if cancel {
+            self.draft = TaskDraft::default();
+        } else if submit {
+            if let Err(err) = self.add_draft_task() {
+                self.draft.error = err;
+            } else {
+                // `add_draft_task` cleared the fields; keep the form open so a
+                // plan can be typed task by task without re-opening it each time.
+                self.draft.open = true;
+            }
+        }
+    }
+
+    /// Draw one task. Returns true when the user asked to delete it, so the
+    /// caller can mutate the graph outside the borrow this card holds of it.
     fn render_task_card(
         &self,
         ui: &mut Ui,
         task: &Task,
         active_team: Option<&ExpertTeam>,
         palette: IdePalette,
-    ) {
+    ) -> bool {
+        let mut remove = false;
         let status = self
             .registry
             .as_ref()
@@ -367,6 +601,9 @@ impl OrchestratorPanel {
                     );
                     ui.label(RichText::new(&task.title).small().strong());
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if self.is_removable(task.id) && ui.small_button("Remove").clicked() {
+                            remove = true;
+                        }
                         ui.label(RichText::new(status_text).small().color(status_color));
                     });
                 });
@@ -391,6 +628,7 @@ impl OrchestratorPanel {
                 });
             });
         ui.add_space(4.0);
+        remove
     }
 
     pub fn draw_task_graph(

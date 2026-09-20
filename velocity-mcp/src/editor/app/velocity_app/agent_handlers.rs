@@ -277,6 +277,53 @@ impl VelocityApp {
         };
     }
 
+    /// Publish the live provider/model choice to the Orchestrator panel.
+    ///
+    /// A hand-authored task has no route of its own: it runs on whatever the
+    /// user can see in the chat panel. Reading it at draw time rather than
+    /// storing it once at construction is what keeps "Runs on ..." in the form
+    /// honest after a model switch.
+    pub fn sync_orchestrator_defaults(&mut self) {
+        let model_label = self
+            .available_models
+            .iter()
+            .find(|model| model.id == self.selected_model)
+            .map(|model| model.label.clone())
+            .unwrap_or_else(|| {
+                if self.selected_model.is_empty() {
+                    crate::editor::orchestrator::panel::ExecutionDefaults::PLACEHOLDER_MODEL
+                        .to_string()
+                } else {
+                    // A selected id the catalog has never heard of still beats
+                    // showing "not selected": it is the string the worker will
+                    // actually be asked for.
+                    self.selected_model.clone()
+                }
+            });
+        self.orchestrator.defaults = crate::editor::orchestrator::panel::ExecutionDefaults {
+            provider: self.provider,
+            model_id: self.selected_model.clone(),
+            model_label,
+            thinking: self.thinking_enabled,
+            task_kind: self.orchestrator.selected_policy_kind(),
+        };
+    }
+
+    /// Run a route request the Orchestrator panel raised, then put focus back
+    /// where the user asked from.
+    pub fn take_orchestrator_route_request(&mut self) {
+        let Some(goal) = self.orchestrator.route_request.take() else {
+            return;
+        };
+        // The planner reads its goal from the chat draft -- the same handoff
+        // Mission Control's "Create plan" uses.
+        self.chat.input = goal;
+        self.plan_routed_subagents();
+        // Planning finishes by opening Mission Control for review; the user
+        // routed from inside the Orchestrator, so bring their panel back.
+        self.focus_panel(TabKind::Orchestrator);
+    }
+
     pub fn current_routing_goal(&self) -> Option<String> {
         let draft = self.chat.input.trim();
         if !draft.is_empty() {

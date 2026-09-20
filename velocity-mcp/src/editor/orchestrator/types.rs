@@ -81,13 +81,11 @@ pub struct OrchestratorTaskSnapshot {
     pub live_thread: Option<WorkerThreadSnapshot>,
 }
 
-pub fn routed_task_for_id(
-    plan: &Option<RoutedPlanState>,
-    task_id: TaskId,
-) -> Option<&RoutedSubAgentTask> {
-    let routed_idx = task_id.0.checked_sub(2)? as usize;
-    plan.as_ref()?.tasks.get(routed_idx)
-}
+// Task execution parameters are resolved through `OrchestratorPanel::bindings`,
+// keyed by task id. There used to be a `routed_task_for_id` here deriving them
+// from `task_id - 2`, which only ever matched the contiguous block the router
+// emits: anything else resolved to `None` and was skipped at dispatch without a
+// word to the user.
 
 pub fn task_result_outputs(result: &WorkerResult) -> Vec<String> {
     let mut outputs = result.outputs.clone();

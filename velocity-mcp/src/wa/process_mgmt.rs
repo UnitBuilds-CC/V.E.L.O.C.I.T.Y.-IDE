@@ -816,14 +816,20 @@ mod tests {
             if status.running {
                 continue;
             }
-            // A verdict of "stopped" is only defensible while the pid has also
-            // left the process list. Re-checking rather than pre-filtering keeps
-            // genuine transient children from failing the assertion: processes
-            // do exit during a test run, and that is not bug #31.
+            // A stopped verdict needs a reason behind it. Two are good: the pid
+            // has also left the process list, or the OS handed back a real exit
+            // code. The second is not a loophole -- on Windows a child that has
+            // exited but that its parent has not reaped yet keeps its entry in
+            // the toolhelp snapshot, so "still listed" is no evidence that it is
+            // running, and requiring it made this test race its own suite.
+            // What must never happen is bug #31's shape: a stopped verdict
+            // answered from a snapshot that disagrees with the list.
             let still_listed = ProcessManager::enumerate().iter().any(|p| p.pid == pid);
             assert!(
-                !still_listed,
-                "pid {pid} is still in the process list but status() reported stopped (detail: {:?})",
+                !still_listed || status.method == "exit_code",
+                "pid {pid} is still in the process list, status() reported stopped, and the \
+                 answer came from neither the list nor an exit code (method: {}, detail: {:?})",
+                status.method,
                 status.detail
             );
         }

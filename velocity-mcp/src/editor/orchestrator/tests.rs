@@ -1,10 +1,11 @@
+use super::panel::authoring::TaskDraft;
 use super::panel::OrchestratorPanel;
 use super::types::*;
-use crate::automation::{AgentTaskKind, RoutedSubAgentTask};
+use crate::automation::{AgentTaskKind, DecompositionStyle, RoutedSubAgentTask};
 use crate::orchestrator::blueprint::TaskGraph;
 use crate::orchestrator::registry::{OrchestratorRegistry, TaskStatus};
 use crate::orchestrator::worker::{WorkerHandle, WorkerResult, WorkerThreadSnapshot};
-use crate::orchestrator::TaskId;
+use crate::orchestrator::{scheduler, TaskId};
 
 struct StubWorkerHandle {
     snapshot: WorkerThreadSnapshot,
@@ -45,6 +46,26 @@ impl WorkerHandle for StubWorkerHandle {
 
     fn snapshot(&self) -> WorkerThreadSnapshot {
         self.snapshot.clone()
+    }
+}
+
+/// One routed task, as the planner would hand it to the panel.
+fn routed_task(task_id: &str, planned_root: u64) -> RoutedSubAgentTask {
+    RoutedSubAgentTask {
+        task_id: task_id.to_string(),
+        task_kind: AgentTaskKind::Refactor,
+        planned_site_map_root: planned_root,
+        files: vec![std::path::PathBuf::from("src/main.rs")],
+        provider: crate::agent::AiProvider::CloudflareWorkersAi,
+        model_id: "routed-model".to_string(),
+        model_label: "routed-model".to_string(),
+        thinking: false,
+        fallback_chain: Vec::new(),
+        execution_contract: String::new(),
+        summary: String::new(),
+        rationale: String::new(),
+        decomposition_policy_id: String::new(),
+        decomposition_style: DecompositionStyle::CoupledComponents,
     }
 }
 
@@ -582,5 +603,399 @@ fn runtime_status_expands_mixed_blocked_waits() {
     assert_eq!(
         panel.runtime_status,
         "Waiting on 3 blocked task(s) (2 retryable)"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Hand-authored plans (panel::authoring)
+// ---------------------------------------------------------------------------
+
+fn authored_defaults() -> crate::editor::orchestrator::panel::ExecutionDefaults {
+    crate::editor::orchestrator::panel::ExecutionDefaults {
+        provider: crate::agent::AiProvider::CloudflareWorkersAi,
+        model_id: "@cf/unit-test/model".to_string(),
+        model_label: "unit-test-model".to_string(),
+        thinking: false,
+        task_kind: AgentTaskKind::BugFix,
+    }
+}
+
+#[test]
+fn panel_opens_on_an_empty_plan_that_says_so() {
+    let panel = OrchestratorPanel::new();
+    assert!(panel.plan_is_empty());
+    assert!(!panel.has_dispatchable_work());
+    // The old panel opened on a nine-task demo blueprint, so the empty state was
+    // never shown and Execute appeared to do nothing.
+    assert_eq!(
+        panel.execution_blocker(),
+        Some("The plan is empty. Add a task, or route a goal.")
+    );
+}
+
+#[test]
+fn adding_tasks_builds_a_plan_the_panel_can_execute() {
+    let mut panel = OrchestratorPanel::new();
+    let first = panel
+        .add_task("Reproduce", "Write a failing test", vec![], vec![], None)
+        .expect("first task");
+    let second = panel
+        .add_task(
+            "Fix it",
+            "Make the test pass",
+            vec!["src/lib.rs".into()],
+            vec![first],
+            Some(AgentTaskKind::BugFix),
+        )
+        .expect("second task");
+
+    assert_eq!((first, second), (TaskId(1), TaskId(2)));
+    assert_eq!(panel.graph.tasks[&second].dependencies, vec![first]);
+    assert!(panel.is_authored(second));
+    assert!(!panel.is_authored(first));
+    assert!(panel.has_dispatchable_work());
+    assert_eq!(
+        panel
+            .registry
+            .as_ref()
+            .unwrap()
+            .statuses
+            .get(&second)
+            .cloned()
+            .map(|s| matches!(s, TaskStatus::Pending)),
+        Some(true)
+    );
+
+    // No model has been synced yet, so the blocker is the model, not the plan.
+    assert_eq!(
+        panel.execution_blocker(),
+        Some("No model selected. Pick one in Settings or Chat first.")
+    );
+    panel.defaults = authored_defaults();
+    assert_eq!(panel.execution_blocker(), None);
+}
+
+#[test]
+fn unknown_dependency_is_refused_with_a_single_hash() {
+    let mut panel = OrchestratorPanel::new();
+    let err = panel
+        .add_task("Orphan", "", vec![], vec![TaskId(9)], None)
+        .expect_err("task 9 does not exist");
+    // TaskId's Display already carries the '#'; "#{}" here read as "##9".
+    assert_eq!(err, "Task #9 does not exist to depend on.");
+    assert!(panel.plan_is_empty());
+}
+
+#[test]
+fn cycle_repair_keeps_every_task_and_names_the_edge_it_cut() {
+    let mut panel = OrchestratorPanel::new();
+    panel
+        .graph
+        .add(TaskId(1), "one", "", vec![], vec![TaskId(2)], None);
+    panel
+        .graph
+        .add(TaskId(2), "two", "", vec![], vec![TaskId(1)], None);
+    panel.registry = Some(OrchestratorRegistry::new(&panel.graph));
+    assert_eq!(
+        panel.execution_blocker(),
+        Some("Resolve the dependency cycle first.")
+    );
+
+    let cut = panel.repair_cycles_action();
+
+    // DFS reaches #2 first and finds #1 still on the path, so the back-edge is
+    // the one that closes the loop, not the one that opened it.
+    assert_eq!(cut, vec![(TaskId(2), TaskId(1))]);
+    assert_eq!(panel.graph.tasks.len(), 2, "no task may be lost");
+    assert!(!scheduler::detect_cycle(&panel.graph));
+    assert!(panel.repair_report.contains("kept all 2 task(s)"));
+    assert_eq!(panel.runtime_status, "Cycle repaired");
+    // Repairing must not quietly substitute the demo blueprint.
+    assert!(!panel.graph.tasks.contains_key(&TaskId(7)));
+}
+
+#[test]
+fn removing_a_task_unblocks_the_tasks_that_were_waiting_on_it() {
+    let mut panel = OrchestratorPanel::new();
+    let first = panel.add_task("one", "", vec![], vec![], None).unwrap();
+    let second = panel
+        .add_task("two", "", vec![], vec![first], None)
+        .unwrap();
+
+    assert!(panel.remove_task(first));
+    assert!(!panel.graph.tasks.contains_key(&first));
+    assert_eq!(
+        panel.graph.tasks[&second].dependencies,
+        Vec::new(),
+        "a dangling dependency can never be Done and would wedge the plan"
+    );
+    assert!(!panel
+        .registry
+        .as_ref()
+        .unwrap()
+        .statuses
+        .contains_key(&first));
+}
+
+#[test]
+fn task_ids_are_never_handed_out_twice() {
+    let mut panel = OrchestratorPanel::new();
+    let first = panel.add_task("one", "", vec![], vec![], None).unwrap();
+    assert!(panel.remove_task(first));
+    let next = panel.add_task("two", "", vec![], vec![], None).unwrap();
+    assert_ne!(next, first);
+    assert_eq!(next, TaskId(2));
+}
+
+#[test]
+fn the_reconcile_node_has_no_delete_affordance() {
+    let mut panel = OrchestratorPanel::new();
+    panel.set_routed_tasks(
+        "goal".to_string(),
+        AgentTaskKind::Refactor,
+        1,
+        vec![routed_task("r1", 0)],
+    );
+    let root = panel.reconcile_root.expect("routed plan has a root");
+    assert!(!panel.is_removable(root));
+    assert!(!panel.remove_task(root));
+    assert!(panel.is_removable(TaskId(2)));
+}
+
+#[test]
+fn rerouting_discards_hand_authored_bindings() {
+    let mut panel = OrchestratorPanel::new();
+    panel.defaults = authored_defaults();
+    let authored = panel
+        .add_task(
+            "mine",
+            "",
+            vec!["a.rs".into()],
+            vec![],
+            Some(AgentTaskKind::Test),
+        )
+        .unwrap();
+    panel
+        .bind_unbound_tasks(std::path::Path::new("."))
+        .expect("binding");
+    assert!(panel.binding_for(authored).is_some());
+
+    panel.set_routed_tasks(
+        "goal".to_string(),
+        AgentTaskKind::Refactor,
+        1,
+        vec![routed_task("r1", 0)],
+    );
+
+    assert!(!panel.authored_kinds.contains_key(&authored));
+    assert!(panel.binding_for(authored).is_none());
+    assert!(panel.binding_for(TaskId(2)).is_some());
+}
+
+#[test]
+fn a_hand_authored_task_binds_to_the_panels_current_model() {
+    let workspace = tempfile::tempdir().expect("tempdir");
+    let mut panel = OrchestratorPanel::new();
+    panel.defaults = authored_defaults();
+    let id = panel
+        .add_task(
+            "Rename the field",
+            "Rename `len` to `size` everywhere.",
+            vec!["src/a.rs".into(), "src\\b.rs".into()],
+            vec![],
+            Some(AgentTaskKind::Refactor),
+        )
+        .unwrap();
+    assert!(panel.binding_for(id).is_none(), "not bound until dispatch");
+
+    panel.bind_unbound_tasks(workspace.path()).expect("binding");
+
+    let bound = panel.binding_for(id).expect("binding exists");
+    assert_eq!(bound.model_id, "@cf/unit-test/model");
+    assert_eq!(bound.model_label, "unit-test-model");
+    assert_eq!(bound.task_kind, AgentTaskKind::Refactor);
+    assert_eq!(bound.task_id, format!("manual-{}", id.0));
+    assert_eq!(bound.decomposition_policy_id, "manual");
+    assert_eq!(
+        bound.files,
+        vec![
+            std::path::PathBuf::from("src/a.rs"),
+            std::path::PathBuf::from("src/b.rs"),
+        ]
+    );
+    assert!(bound.execution_contract.contains("Task: Rename the field"));
+    assert!(bound.execution_contract.contains("Rename the field"));
+    assert!(bound
+        .execution_contract
+        .contains("Declared scope (change nothing outside it): src/a.rs, src/b.rs"));
+    // Nothing to bind means nothing was opened, so no SiteMap error either.
+    assert_eq!(panel.graph.tasks[&id].title, "Rename the field");
+}
+
+#[test]
+fn binding_leaves_the_reconcile_node_alone() {
+    let mut panel = OrchestratorPanel::new();
+    panel.defaults = authored_defaults();
+    panel.set_routed_tasks(
+        "goal".to_string(),
+        AgentTaskKind::Refactor,
+        1,
+        vec![routed_task("r1", 0)],
+    );
+    let root = panel.reconcile_root.expect("root");
+    panel.bindings.remove(&TaskId(2));
+
+    panel
+        .bind_unbound_tasks(std::path::Path::new("."))
+        .expect("binding");
+
+    assert!(panel.binding_for(TaskId(2)).is_some());
+    assert!(
+        !panel.bindings.contains_key(&root),
+        "the bookkeeping node must not be given a worker route"
+    );
+}
+
+#[test]
+fn the_draft_form_parses_and_validates_typed_input() {
+    assert_eq!(
+        TaskDraft::parse_list(" src/a.rs , \n src/b.rs \n"),
+        vec!["src/a.rs", "src/b.rs"]
+    );
+    assert_eq!(
+        TaskDraft::parse_dependencies("#1, 2").expect("parses"),
+        vec![TaskId(1), TaskId(2)]
+    );
+    assert_eq!(
+        TaskDraft::parse_dependencies("").expect("blank is no dependencies"),
+        Vec::new()
+    );
+    assert!(TaskDraft::parse_dependencies("1, soon").is_err());
+
+    let mut panel = OrchestratorPanel::new();
+    panel.defaults = authored_defaults();
+    panel.draft.title = "   ".to_string();
+    assert_eq!(
+        panel.add_draft_task().expect_err("blank title"),
+        "Give the task a title."
+    );
+    panel.draft.title = "Ship it".to_string();
+    panel.draft.dependencies = "nope".to_string();
+    assert!(panel.add_draft_task().is_err());
+    assert!(panel.plan_is_empty(), "a rejected draft adds nothing");
+
+    panel.draft.dependencies = String::new();
+    let id = panel.add_draft_task().expect("valid draft");
+    assert_eq!(id, TaskId(1));
+    assert!(panel.draft.title.is_empty(), "form resets after adding");
+}
+
+#[test]
+fn clearing_the_plan_returns_the_panel_to_an_empty_slate() {
+    let mut panel = OrchestratorPanel::new();
+    panel.defaults = authored_defaults();
+    panel
+        .add_task("one", "", vec![], vec![], None)
+        .expect("task");
+    panel.clear_plan();
+    assert!(panel.plan_is_empty());
+    assert!(panel.bindings.is_empty());
+    assert!(panel.reconcile_root.is_none());
+    assert!(panel.routed_plan.is_none());
+    assert!(!panel.has_dispatchable_work());
+}
+
+#[test]
+fn routing_a_goal_from_the_panel_asks_the_app_and_ignores_blanks() {
+    let mut panel = OrchestratorPanel::new();
+    panel.request_route_goal("   ");
+    assert!(panel.route_request.is_none());
+
+    panel.request_route_goal("  Extract the retry helper  ");
+    assert_eq!(
+        panel.route_request.as_deref(),
+        Some("Extract the retry helper")
+    );
+    assert_eq!(panel.goal_draft, "Extract the retry helper");
+    assert!(!panel.goal_input_open);
+    assert_eq!(panel.runtime_status, "Routing goal...");
+}
+#[test]
+fn a_plan_with_no_model_stays_pending_instead_of_launching_a_worker() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let mediator = std::sync::Arc::new(crate::automation::mediator::MediatorArena::new());
+    let mut panel = OrchestratorPanel::new();
+    let id = panel
+        .add_task(
+            "no route yet",
+            "",
+            vec![],
+            vec![],
+            Some(AgentTaskKind::BugFix),
+        )
+        .expect("task");
+
+    let err = panel
+        .bind_unbound_tasks(temp.path())
+        .expect_err("nothing to run on");
+    assert!(err.starts_with("No model selected"), "was: {err}");
+    assert!(panel.binding_for(id).is_none());
+
+    panel.execution_running = true;
+    panel.poll_live_workers(temp.path(), &mediator);
+
+    assert!(
+        panel.running_workers.is_empty(),
+        "no worker without a model"
+    );
+    assert!(matches!(
+        panel.registry.as_ref().unwrap().statuses.get(&id),
+        Some(TaskStatus::Pending)
+    ));
+    // The reason belongs next to the button, which is what the panel renders.
+    assert_eq!(
+        panel.execution_blocker(),
+        Some("No model selected. Pick one in Settings or Chat first.")
+    );
+}
+
+#[test]
+fn mission_control_and_the_panel_agree_on_whether_work_can_launch() {
+    let mut panel = OrchestratorPanel::new();
+    panel
+        .add_task("one", "", vec![], vec![], Some(AgentTaskKind::BugFix))
+        .expect("task");
+    // Hand-authored work exists, but with no model neither surface may offer it.
+    assert!(panel.has_dispatchable_work());
+    assert!(!panel.dashboard_snapshot().can_launch_routed_tasks);
+
+    panel.defaults = authored_defaults();
+    assert!(panel.dashboard_snapshot().can_launch_routed_tasks);
+}
+
+#[test]
+fn typed_scope_paths_are_normalised_where_the_task_is_born() {
+    let mut panel = OrchestratorPanel::new();
+    panel.defaults = authored_defaults();
+    let id = panel
+        .add_task(
+            "windows paths in",
+            "",
+            vec!["src\\win\\a.rs".into()],
+            vec![],
+            Some(AgentTaskKind::Refactor),
+        )
+        .expect("task");
+    panel
+        .bind_unbound_tasks(std::path::Path::new("."))
+        .expect("binding");
+
+    assert_eq!(
+        panel.graph.tasks[&id].scope,
+        vec!["src/win/a.rs".to_string()]
+    );
+    assert_eq!(
+        panel.binding_for(id).expect("binding").files,
+        vec![std::path::PathBuf::from("src/win/a.rs")]
     );
 }

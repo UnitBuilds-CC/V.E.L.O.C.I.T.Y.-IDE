@@ -41,6 +41,15 @@ impl OrchestratorPanel {
         self.reset_task(task_id)
     }
 
+    /// Record a task's status without holding a mutable borrow of the whole
+    /// panel. The dispatch loop needs to read bindings and running workers
+    /// between status writes, and `registry` is one field of `self`.
+    pub(super) fn set_task_status(&mut self, task_id: TaskId, status: TaskStatus) {
+        if let Some(reg) = self.registry.as_mut() {
+            reg.statuses.insert(task_id, status);
+        }
+    }
+
     pub fn stop_task_action(&mut self, task_id: TaskId) -> bool {
         self.stop_task(task_id)
     }
@@ -64,12 +73,22 @@ impl OrchestratorPanel {
 
     pub fn reset_runtime(&mut self) {
         self.execution_running = false;
+        for handle in self.running_workers.values_mut() {
+            let _ = handle.cancel();
+        }
         self.running_workers.clear();
         if let Some(reg) = &mut self.registry {
             for status in reg.statuses.values_mut() {
                 *status = TaskStatus::Pending;
             }
             reg.outputs.clear();
+        }
+        // Bindings carry the SiteMap root they were planned against. Dropping
+        // the hand-authored ones makes the next run re-bind against the current
+        // root instead of reporting a stale plan for work that never ran.
+        let authored: Vec<TaskId> = self.authored_kinds.keys().copied().collect();
+        for id in authored {
+            self.bindings.remove(&id);
         }
         self.runtime_status = "Idle".to_string();
     }
@@ -288,15 +307,23 @@ impl OrchestratorPanel {
         complete_reconcile_root(&mut self.graph, reg);
 
         let ready_ids = reg.ready_ids(&self.graph);
+        // From here on the panel is borrowed whole, so every registry write goes
+        // through `set_task_status` rather than `reg`.
+        // Hand-authored tasks have no router-produced binding; give every task
+        // that is about to be considered for dispatch one, against the SiteMap
+        // root as of now, before the freshness check below compares to it.
+        let _ = self.bind_unbound_tasks(workspace_root);
         let weight_root = resolve_weight_root(workspace_root);
         for id in ready_ids {
             if self.running_workers.contains_key(&id) {
                 continue;
             }
-            let Some(task) = self.graph.tasks.get(&id).cloned() else {
+            if Some(id) == self.reconcile_root {
+                // Bookkeeping node: completed by `complete_reconcile_root` once
+                // its dependencies are, never by a worker of its own.
                 continue;
-            };
-            let Some(routed_task) = routed_task_for_id(&self.routed_plan, id) else {
+            }
+            let Some(task) = self.graph.tasks.get(&id).cloned() else {
                 continue;
             };
             let site_map_path = workspace_root.join(".velocity").join("site_map");
@@ -304,7 +331,24 @@ impl OrchestratorPanel {
                 velocity_ide::site_map::SiteMap::open(&site_map_path, weight_root)
                     .map(|site_map| site_map.root());
             match current_site_map_root {
-                Ok(current_root) if current_root == routed_task.planned_site_map_root => {
+                Ok(current_root) => {
+                    let Some(routed_task) = self.binding_for(id).cloned() else {
+                        // Unreachable in practice -- binding above covers every
+                        // dispatchable id -- but a task that cannot say what it
+                        // runs with must not be launched on a guess.
+                        continue;
+                    };
+                    if current_root != routed_task.planned_site_map_root {
+                        let mut result = WorkerResult::new(&task);
+                        result.success = false;
+                        result.message = format!(
+                            "stale routed plan: planned SiteMap root {:016x} but current root is {:016x}",
+                            routed_task.planned_site_map_root, current_root
+                        );
+                        result.status_updates.push(result.message.clone());
+                        self.set_task_status(id, TaskStatus::Blocked(result));
+                        continue;
+                    }
                     let handle = spawn_live_worker(
                         WorkerAssignment {
                             task,
@@ -323,26 +367,15 @@ impl OrchestratorPanel {
                         mediator.clone(),
                         weight_root,
                     );
-                    reg.statuses.insert(id, TaskStatus::Running);
+                    self.set_task_status(id, TaskStatus::Running);
                     self.running_workers.insert(id, handle);
-                }
-                Ok(current_root) => {
-                    let mut result = WorkerResult::new(&task);
-                    result.success = false;
-                    result.message = format!(
-                        "stale routed plan: planned SiteMap root {:016x} but current root is {:016x}",
-                        routed_task.planned_site_map_root,
-                        current_root
-                    );
-                    result.status_updates.push(result.message.clone());
-                    reg.statuses.insert(id, TaskStatus::Blocked(result));
                 }
                 Err(err) => {
                     let mut result = WorkerResult::new(&task);
                     result.success = false;
                     result.message = format!("failed to open site map for freshness check: {err}");
                     result.status_updates.push(result.message.clone());
-                    reg.statuses.insert(id, TaskStatus::Blocked(result));
+                    self.set_task_status(id, TaskStatus::Blocked(result));
                 }
             }
         }

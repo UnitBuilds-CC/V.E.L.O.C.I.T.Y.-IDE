@@ -1,6 +1,6 @@
 //! Topological scheduling of tasks.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use super::blueprint::TaskGraph;
 use super::TaskId;
@@ -73,6 +73,82 @@ pub fn detect_cycle(graph: &TaskGraph) -> bool {
         }
     }
     false
+}
+
+/// One edge whose dependency points back at a node already on the DFS path.
+///
+/// `detect_cycle` can say a plan is impossible but not *which* claim makes it
+/// impossible, which left the panel with a single "repair": discard the plan
+/// and load a canned example. This walks the graph with an explicit stack
+/// (deep plans do not grow the OS stack) in ascending task-id order, so the
+/// same plan always yields the same answer.
+fn find_back_edge(graph: &TaskGraph) -> Option<(TaskId, TaskId)> {
+    const WHITE: u8 = 0;
+    const GREY: u8 = 1;
+    const BLACK: u8 = 2;
+
+    let mut color: HashMap<TaskId, u8> = graph.tasks.keys().map(|id| (*id, WHITE)).collect();
+    let mut roots: Vec<TaskId> = color.keys().cloned().collect();
+    roots.sort_by_key(|id| id.0);
+
+    for root in roots {
+        if color.get(&root) != Some(&WHITE) {
+            continue;
+        }
+        color.insert(root, GREY);
+        let mut stack: Vec<(TaskId, usize)> = vec![(root, 0)];
+        while let Some((node, dep_idx)) = stack.pop() {
+            let deps = graph
+                .tasks
+                .get(&node)
+                .map(|task| task.dependencies.as_slice())
+                .unwrap_or(&[]);
+            let Some(&dep) = deps.get(dep_idx) else {
+                color.insert(node, BLACK);
+                continue;
+            };
+            stack.push((node, dep_idx + 1));
+            match color.get(&dep).copied().unwrap_or(BLACK) {
+                // Dependency of a missing task: it can lead nowhere, so it
+                // cannot close a cycle.
+                GREY => return Some((node, dep)),
+                WHITE => {
+                    color.insert(dep, GREY);
+                    stack.push((dep, 0));
+                }
+                _ => {}
+            }
+        }
+    }
+    None
+}
+
+/// Drop the back edges that make a plan unschedulable, keeping every task.
+///
+/// Returns the `(task, dependency)` pairs that were removed, in the order they
+/// were found. Callers should surface them: a plan that had to lose a
+/// dependency is not the plan the user wrote, and quietly editing it in place
+/// is exactly the kind of silent fix this codebase keeps having to walk back.
+pub fn break_cycles(graph: &mut TaskGraph) -> Vec<(TaskId, TaskId)> {
+    let edge_budget: usize = graph
+        .tasks
+        .values()
+        .map(|task| task.dependencies.len())
+        .sum::<usize>()
+        + 1;
+    let mut removed = Vec::new();
+    // Each iteration deletes a distinct edge, so this terminates in at most
+    // `edge_budget` rounds; the bound just stops a logic slip from spinning.
+    while removed.len() < edge_budget {
+        let Some((node, dep)) = find_back_edge(graph) else {
+            break;
+        };
+        if let Some(task) = graph.tasks.get_mut(&node) {
+            task.dependencies.retain(|d| *d != dep);
+        }
+        removed.push((node, dep));
+    }
+    removed
 }
 
 #[cfg(test)]
@@ -158,5 +234,68 @@ mod tests {
         let p = plan(&g);
         let total: usize = p.phases.iter().map(|phase| phase.len()).sum();
         assert_eq!(total, 9);
+    }
+
+    #[test]
+    fn break_cycles_keeps_every_task_and_restores_a_plan() {
+        let mut g = TaskGraph::default();
+        g.add(TaskId(1), "A", "", vec![], vec![TaskId(3)], None);
+        g.add(TaskId(2), "B", "", vec![], vec![TaskId(1)], None);
+        g.add(TaskId(3), "C", "", vec![], vec![TaskId(2)], None);
+        assert!(detect_cycle(&g));
+
+        let removed = break_cycles(&mut g);
+        assert_eq!(removed.len(), 1, "one back edge closes the loop");
+        assert!(!detect_cycle(&g));
+        assert_eq!(g.tasks.len(), 3, "repairing a cycle must not delete work");
+        let total: usize = plan(&g).phases.iter().map(Vec::len).sum();
+        assert_eq!(total, 3, "the repaired plan schedules every task");
+    }
+
+    #[test]
+    fn break_cycles_on_dag_changes_nothing() {
+        let mut g = linear_graph();
+        let before = g
+            .tasks
+            .iter()
+            .map(|(id, t)| (*id, t.dependencies.clone()))
+            .collect::<Vec<_>>();
+        assert!(break_cycles(&mut g).is_empty());
+        let after = g
+            .tasks
+            .iter()
+            .map(|(id, t)| (*id, t.dependencies.clone()))
+            .collect::<Vec<_>>();
+        assert_eq!(before, after);
+    }
+
+    #[test]
+    fn break_cycles_removes_self_dependency() {
+        let mut g = TaskGraph::default();
+        g.add(TaskId(1), "Loop", "", vec![], vec![TaskId(1)], None);
+        let removed = break_cycles(&mut g);
+        assert_eq!(removed, vec![(TaskId(1), TaskId(1))]);
+        assert!(g.get(TaskId(1)).unwrap().dependencies.is_empty());
+    }
+
+    #[test]
+    fn break_cycles_separates_two_independent_loops() {
+        let mut g = TaskGraph::default();
+        g.add(TaskId(1), "A", "", vec![], vec![TaskId(2)], None);
+        g.add(TaskId(2), "B", "", vec![], vec![TaskId(1)], None);
+        g.add(TaskId(3), "C", "", vec![], vec![TaskId(4)], None);
+        g.add(TaskId(4), "D", "", vec![], vec![TaskId(3)], None);
+        assert_eq!(break_cycles(&mut g).len(), 2);
+        assert!(!detect_cycle(&g));
+        assert_eq!(plan(&g).phases.iter().map(Vec::len).sum::<usize>(), 4);
+    }
+
+    #[test]
+    fn break_cycles_ignores_dependency_on_a_missing_task() {
+        // A dangling id is not a cycle: it has no edges of its own to follow.
+        let mut g = TaskGraph::default();
+        g.add(TaskId(1), "A", "", vec![], vec![TaskId(99)], None);
+        assert!(!detect_cycle(&g));
+        assert!(break_cycles(&mut g).is_empty());
     }
 }

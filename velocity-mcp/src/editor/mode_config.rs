@@ -29,17 +29,36 @@ pub struct RightPanel {
 
 /// Cohesive per-mode UI configuration. Eliminates scattered per-mode branching
 /// throughout the render loop.
+///
+/// **Which of these the app actually draws.** Three are live and three are not,
+/// and the difference matters: a command wired to a dead accessor appears to
+/// work (it sets a field) while changing nothing on screen, which is exactly how
+/// the Research Browser item lost its panel for a whole release cycle.
+///
+/// | accessor | rendered by |
+/// |---|---|
+/// | `right_panels` | `ui_render.rs`, the right sidebar |
+/// | `priority_categories`, `hidden_categories` | `actions.rs`, the command palette |
+/// | `left_tabs` | nothing -- the activity bar (`app_map::RAILS`) replaced it |
+/// | `toolbar_actions` | nothing -- the unified header replaced the toolbar row |
+/// | `bottom_layout` | nothing -- `bottom_panel.rs` owns its own tab list |
+///
+/// The three dead ones are left in place because the module they belong to is
+/// not itself dead: `sidebar_tabs.rs` also holds the content renderers and entry
+/// types (`BookmarkEntry`, `TargetEntry`, `AuditFinding`) the live dock panels
+/// call. Only the `SidebarTab`/`ToolbarAction` vocabularies are unread, so they
+/// are a separate removal. Do not wire new commands through them.
 pub trait ModeConfig: Send + Sync {
-    /// Left sidebar tabs for this mode.
+    /// Left sidebar tabs for this mode. NOT RENDERED; see the trait doc.
     fn left_tabs(&self) -> &[SidebarTab];
 
     /// Right sidebar panels for this mode.
     fn right_panels(&self) -> &[RightPanel];
 
-    /// Toolbar action buttons for this mode.
+    /// Toolbar action buttons for this mode. NOT RENDERED; see the trait doc.
     fn toolbar_actions(&self) -> &[ToolbarAction];
 
-    /// Bottom panel layout for this mode.
+    /// Bottom panel layout for this mode. NOT RENDERED; see the trait doc.
     fn bottom_layout(&self) -> BottomPanelLayout;
 
     /// Filter predicate for the command palette: returns the list of command

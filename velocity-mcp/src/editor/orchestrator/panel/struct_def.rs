@@ -1,4 +1,5 @@
 use super::super::types::*;
+use super::authoring::{ExecutionDefaults, TaskDraft};
 use crate::automation::{AgentTaskKind, RoutedSubAgentTask};
 use crate::orchestrator::blueprint::TaskGraph;
 use crate::orchestrator::registry::{OrchestratorRegistry, TaskStatus};
@@ -18,6 +19,36 @@ pub struct OrchestratorPanel {
     pub runtime_status: String,
     pub execution_running: bool,
     pub running_workers: HashMap<TaskId, Box<dyn WorkerHandle>>,
+    /// What each task actually runs with: provider, model, execution contract,
+    /// and the SiteMap root it was planned against. Routed plans fill this from
+    /// the router; hand-authored tasks are filled in at dispatch by
+    /// [`OrchestratorPanel::bind_unbound_tasks`](super::authoring::OrchestratorPanel::bind_unbound_tasks).
+    /// Keyed by task id, because the previous positional lookup
+    /// (`task_id - 2`) returned `None` for anything the model did not create.
+    pub bindings: HashMap<TaskId, RoutedSubAgentTask>,
+    /// Task kind the author chose, per hand-authored task. Presence in this map
+    /// is also what marks a task as hand-authored rather than routed.
+    pub authored_kinds: HashMap<TaskId, AgentTaskKind>,
+    /// Provider/model a hand-authored task runs on, synced from the app.
+    pub defaults: ExecutionDefaults,
+    /// The inline add-task form.
+    pub draft: TaskDraft,
+    /// Highest task id ever issued, so ids are never reused within a session.
+    pub last_issued_task_id: u64,
+    /// The synthetic task that reconciles a routed plan. It is a bookkeeping
+    /// node rather than a unit of work, so it must never be given a binding.
+    pub reconcile_root: Option<TaskId>,
+    /// Set by the panel when the user asks to route a goal from inside it, so
+    /// the app can run the planner on the next pass. Same reason `checkpoint_action`
+    /// exists on the bottom panel: the panel cannot reach the app, and the app
+    /// cannot borrow the panel while it is drawing.
+    pub route_request: Option<String>,
+    /// Inline "route a goal" box: whether it is open, and the goal being typed.
+    pub goal_input_open: bool,
+    pub goal_draft: String,
+    /// What the last cycle repair actually changed, shown until the next plan edit
+    /// so a repair is auditable instead of a silent graph swap.
+    pub repair_report: String,
 }
 
 impl Default for OrchestratorPanel {
@@ -28,7 +59,11 @@ impl Default for OrchestratorPanel {
 
 impl OrchestratorPanel {
     pub fn new() -> Self {
-        let graph = TaskGraph::example_game();
+        // Empty on purpose. This used to open on `TaskGraph::example_game()`, a
+        // nine-task demo blueprint with no execution bindings: Execute started
+        // nothing, the plan was not the user's, and the only way to get an empty
+        // slate was to break the graph and repair it.
+        let graph = TaskGraph::default();
         let registry = OrchestratorRegistry::new(&graph);
         Self {
             graph,
@@ -41,6 +76,16 @@ impl OrchestratorPanel {
             runtime_status: "Idle".to_string(),
             execution_running: false,
             running_workers: HashMap::new(),
+            bindings: HashMap::new(),
+            authored_kinds: HashMap::new(),
+            defaults: ExecutionDefaults::default(),
+            draft: TaskDraft::default(),
+            last_issued_task_id: 0,
+            reconcile_root: None,
+            route_request: None,
+            goal_input_open: false,
+            goal_draft: String::new(),
+            repair_report: String::new(),
         }
     }
 
@@ -73,10 +118,38 @@ impl OrchestratorPanel {
         self.runtime_status = "Plan ready".to_string();
         self.execution_running = false;
         self.running_workers.clear();
+        // A re-route replaces the plan wholesale: bindings for tasks that no
+        // longer exist would otherwise be handed to whatever id is reused next.
+        self.bindings.clear();
+        self.authored_kinds.clear();
+        self.reconcile_root = Some(self.graph.root);
+        for (idx, task) in tasks.iter().enumerate() {
+            self.bindings.insert(TaskId(idx as u64 + 2), task.clone());
+        }
+        self.last_issued_task_id = self
+            .graph
+            .tasks
+            .keys()
+            .map(|id| id.0)
+            .max()
+            .unwrap_or(self.last_issued_task_id);
     }
 
     pub fn selected_policy_kind(&self) -> AgentTaskKind {
         self.policy_editor.kind
+    }
+
+    /// Is there any task a worker could be pointed at?
+    ///
+    /// A routed graph always contains the reconcile node, which is bookkeeping
+    /// rather than work, so counting `graph.tasks` would report a plan that
+    /// cannot launch anything -- and, from the other direction, a hand-authored
+    /// plan with no routed goal counted as nothing at all.
+    pub fn has_dispatchable_work(&self) -> bool {
+        self.graph
+            .tasks
+            .keys()
+            .any(|id| Some(*id) != self.reconcile_root)
     }
 
     pub fn dashboard_snapshot(&self) -> OrchestratorDashboardSnapshot {
@@ -84,6 +157,7 @@ impl OrchestratorPanel {
         let has_dependency_cycle = scheduler::detect_cycle(&self.graph);
         let retryable_blocked_tasks = self.retryable_blocked_task_count();
         let has_runtime_activity = has_routed_plan
+            || self.has_dispatchable_work()
             || self.execution_running
             || !self.running_workers.is_empty()
             || self.runtime_status != "Idle"
@@ -110,9 +184,13 @@ impl OrchestratorPanel {
             execution_running: self.execution_running,
             has_routed_plan,
             has_dependency_cycle,
-            can_launch_routed_tasks: has_routed_plan
+            can_launch_routed_tasks: self.has_dispatchable_work()
                 && !has_dependency_cycle
-                && !self.execution_running,
+                && !self.execution_running
+                // Launching from Mission Control must respect the same reasons
+                // the panel states next to its Execute button, or the two
+                // surfaces disagree about whether work can start.
+                && self.execution_blocker().is_none(),
             can_reset_runtime: has_runtime_activity,
             active_workers: self.running_workers.len(),
             retryable_blocked_tasks,
@@ -126,7 +204,7 @@ impl OrchestratorPanel {
                 .and_then(|registry| registry.statuses.get(&task.id))
                 .cloned()
                 .unwrap_or(TaskStatus::Pending);
-            let routed = routed_task_for_id(&self.routed_plan, task.id);
+            let routed = self.binding_for(task.id);
             let (
                 status_label,
                 outputs,

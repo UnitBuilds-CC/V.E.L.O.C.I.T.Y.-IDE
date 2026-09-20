@@ -1,3 +1,4 @@
+pub mod app_map;
 pub mod helpers;
 pub mod render;
 pub mod team_manager;

@@ -240,44 +240,378 @@ pub fn central_area_is_dock(tabs: &[Tab], active: Option<&TabId>, panel_requeste
         || (panel_requested && focused_tab_is_panel(tabs, active))
 }
 
-/// Panels the GUI control bridge can open by name.
+/// One dock panel the app can focus, plus how the user reaches it by hand.
+///
+/// The point of carrying the menu path is that it makes the table checkable:
+/// a panel that exists but appears in no menu and no command is dead weight a
+/// driver cannot reach, and the drift test says so at compile-of-CI time
+/// rather than during a manual click-through.
+#[derive(Clone, Debug, PartialEq)]
+pub struct PanelSpec {
+    /// Lowercase slug the GUI bridge and MCP tools take.
+    pub slug: &'static str,
+    pub kind: TabKind,
+    /// Top-menu route: `(menu, item)`, or `(menu, "")` for a top-level item.
+    /// `None` when the panel is only reachable through the activity bar or a
+    /// command palette entry.
+    pub menu: Option<(&'static str, &'static str)>,
+}
+
+impl PanelSpec {
+    /// Display label, read from [`Tab::title`] rather than restated here so the
+    /// tab bar and the app map can never disagree about a panel's name.
+    pub fn label(&self) -> String {
+        Tab {
+            id: TabId(0),
+            kind: self.kind.clone(),
+        }
+        .title()
+    }
+}
+
+/// Every panel the central dock can host, reachable by name from the GUI
+/// control bridge, the app map and `gui_navigate_to`.
 ///
 /// Before this, an external driver could move the activity bar but could not
 /// open a panel tab at all -- which also meant the Settings path had no way to
-/// be verified from outside the process.
-pub const BRIDGE_PANELS: &[(&str, TabKind)] = &[
-    ("settings", TabKind::Settings),
-    ("chat", TabKind::Chat),
-    ("output", TabKind::Output),
-    ("orchestrator", TabKind::Orchestrator),
-    ("mission", TabKind::MissionControl),
-    ("team", TabKind::TeamStudio),
-    ("usage", TabKind::Usage),
-    ("search", TabKind::Search),
-    ("graph", TabKind::Graph),
-    ("wiki", TabKind::Wiki),
-    ("agents", TabKind::Agents),
-    ("knowledge", TabKind::Knowledge),
-    ("workflows", TabKind::Workflows),
-    ("governance", TabKind::Governance),
-    ("changes", TabKind::Changes),
-    ("terminal", TabKind::Terminal),
-    ("debugger", TabKind::Debugger),
-    ("extensions", TabKind::Extensions),
+/// be verified from outside the process. The first 18 entries are that original
+/// set; the rest were reachable only by clicking through the top menus, which is
+/// exactly why a scripted sweep of "every button" was not possible.
+pub const ALL_PANELS: &[PanelSpec] = &[
+    // ── The set the bridge exposed from the start ──────────────────────────
+    PanelSpec {
+        slug: "settings",
+        kind: TabKind::Settings,
+        menu: Some(("Help", "")),
+    },
+    PanelSpec {
+        slug: "chat",
+        kind: TabKind::Chat,
+        menu: Some(("Navigate", "")),
+    },
+    PanelSpec {
+        slug: "output",
+        kind: TabKind::Output,
+        menu: Some(("Navigate", "")),
+    },
+    PanelSpec {
+        slug: "orchestrator",
+        kind: TabKind::Orchestrator,
+        menu: None,
+    },
+    PanelSpec {
+        slug: "mission",
+        kind: TabKind::MissionControl,
+        menu: None,
+    },
+    PanelSpec {
+        slug: "team",
+        kind: TabKind::TeamStudio,
+        menu: None,
+    },
+    PanelSpec {
+        slug: "usage",
+        kind: TabKind::Usage,
+        menu: Some(("Workspace", "")),
+    },
+    PanelSpec {
+        slug: "search",
+        kind: TabKind::Search,
+        menu: Some(("Navigate", "")),
+    },
+    PanelSpec {
+        slug: "graph",
+        kind: TabKind::Graph,
+        menu: Some(("Tools", "Knowledge")),
+    },
+    PanelSpec {
+        slug: "wiki",
+        kind: TabKind::Wiki,
+        menu: Some(("Tools", "Knowledge")),
+    },
+    PanelSpec {
+        slug: "agents",
+        kind: TabKind::Agents,
+        menu: Some(("Tools", "Agents")),
+    },
+    PanelSpec {
+        slug: "knowledge",
+        kind: TabKind::Knowledge,
+        menu: Some(("Tools", "Knowledge")),
+    },
+    PanelSpec {
+        slug: "workflows",
+        kind: TabKind::Workflows,
+        menu: Some(("Tools", "Automation")),
+    },
+    PanelSpec {
+        slug: "governance",
+        kind: TabKind::Governance,
+        menu: Some(("Tools", "Automation")),
+    },
+    PanelSpec {
+        slug: "changes",
+        kind: TabKind::Changes,
+        menu: Some(("Navigate", "")),
+    },
+    PanelSpec {
+        slug: "terminal",
+        kind: TabKind::Terminal,
+        menu: Some(("Navigate", "")),
+    },
+    PanelSpec {
+        slug: "debugger",
+        kind: TabKind::Debugger,
+        menu: Some(("Build", "")),
+    },
+    PanelSpec {
+        slug: "extensions",
+        kind: TabKind::Extensions,
+        menu: Some(("Workspace", "")),
+    },
+    // ── Reachable only from the top menus until now ────────────────────────
+    PanelSpec {
+        slug: "test-generator",
+        kind: TabKind::TestGenerator,
+        menu: Some(("Build", "")),
+    },
+    PanelSpec {
+        slug: "coverage",
+        kind: TabKind::Coverage,
+        menu: Some(("Build", "")),
+    },
+    PanelSpec {
+        slug: "pipeline",
+        kind: TabKind::Pipeline,
+        menu: Some(("Build", "")),
+    },
+    PanelSpec {
+        slug: "language-servers",
+        kind: TabKind::LanguageServers,
+        menu: Some(("Build", "")),
+    },
+    PanelSpec {
+        slug: "snippets",
+        kind: TabKind::Snippets,
+        menu: Some(("Build", "")),
+    },
+    PanelSpec {
+        slug: "inline-suggestions",
+        kind: TabKind::InlineSuggestions,
+        menu: Some(("Build", "")),
+    },
+    PanelSpec {
+        slug: "precomp-cache",
+        kind: TabKind::PrecompCache,
+        menu: Some(("Build", "")),
+    },
+    PanelSpec {
+        slug: "activity",
+        kind: TabKind::Activity,
+        menu: Some(("Tools", "Agents")),
+    },
+    PanelSpec {
+        slug: "background-agents",
+        kind: TabKind::BackgroundAgents,
+        menu: Some(("Tools", "Agents")),
+    },
+    PanelSpec {
+        slug: "live-orchestration",
+        kind: TabKind::LiveOrchestration,
+        menu: Some(("Tools", "Agents")),
+    },
+    PanelSpec {
+        slug: "queue",
+        kind: TabKind::Queue,
+        menu: Some(("Tools", "Agents")),
+    },
+    PanelSpec {
+        slug: "timeline",
+        kind: TabKind::Timeline,
+        menu: Some(("Tools", "Agents")),
+    },
+    PanelSpec {
+        slug: "metrics",
+        kind: TabKind::Metrics,
+        menu: Some(("Tools", "Agents")),
+    },
+    PanelSpec {
+        slug: "conflict-resolver",
+        kind: TabKind::ConflictResolver,
+        menu: Some(("Tools", "Agents")),
+    },
+    PanelSpec {
+        slug: "improvement-engine",
+        kind: TabKind::ImprovementEngine,
+        menu: Some(("Tools", "Agents")),
+    },
+    PanelSpec {
+        slug: "continuation-ledger",
+        kind: TabKind::ContinuationLedger,
+        menu: Some(("Tools", "Agents")),
+    },
+    PanelSpec {
+        slug: "semantic-search",
+        kind: TabKind::SemanticSearch,
+        menu: Some(("Tools", "Knowledge")),
+    },
+    PanelSpec {
+        slug: "bookmarks",
+        kind: TabKind::Bookmarks,
+        menu: Some(("Tools", "Knowledge")),
+    },
+    PanelSpec {
+        slug: "favorites",
+        kind: TabKind::Favorites,
+        menu: Some(("Tools", "Knowledge")),
+    },
+    PanelSpec {
+        slug: "agent-memory",
+        kind: TabKind::AgentMemory,
+        menu: Some(("Tools", "Knowledge")),
+    },
+    PanelSpec {
+        slug: "shared-memory",
+        kind: TabKind::SharedMemory,
+        menu: Some(("Tools", "Knowledge")),
+    },
+    PanelSpec {
+        slug: "persistent-memory",
+        kind: TabKind::PersistentMemory,
+        menu: Some(("Tools", "Knowledge")),
+    },
+    PanelSpec {
+        slug: "triggers",
+        kind: TabKind::Triggers,
+        menu: Some(("Tools", "Automation")),
+    },
+    PanelSpec {
+        slug: "flows",
+        kind: TabKind::Flows,
+        menu: Some(("Tools", "Automation")),
+    },
+    PanelSpec {
+        slug: "targets",
+        kind: TabKind::Targets,
+        menu: Some(("Tools", "Automation")),
+    },
+    PanelSpec {
+        slug: "logs",
+        kind: TabKind::Logs,
+        menu: Some(("Tools", "Automation")),
+    },
+    PanelSpec {
+        slug: "recordings",
+        kind: TabKind::Recordings,
+        menu: Some(("Tools", "Automation")),
+    },
+    PanelSpec {
+        slug: "voice",
+        kind: TabKind::Voice,
+        menu: Some(("Tools", "Automation")),
+    },
+    PanelSpec {
+        slug: "multimodal",
+        kind: TabKind::Multimodal,
+        menu: Some(("Tools", "Automation")),
+    },
+    PanelSpec {
+        slug: "audit",
+        kind: TabKind::AccessibilityAudit,
+        menu: Some(("Tools", "Automation")),
+    },
+    PanelSpec {
+        slug: "plugin-registry",
+        kind: TabKind::PluginRegistry,
+        menu: Some(("Workspace", "")),
+    },
+    PanelSpec {
+        slug: "skills",
+        kind: TabKind::SkillFiles,
+        menu: Some(("Workspace", "")),
+    },
+    PanelSpec {
+        slug: "collaboration",
+        kind: TabKind::Collaboration,
+        menu: Some(("Workspace", "")),
+    },
+    PanelSpec {
+        slug: "peers",
+        kind: TabKind::Peers,
+        menu: Some(("Workspace", "")),
+    },
 ];
 
-/// Resolve a bridge panel name. Case-insensitive; unknown names are `None`
-/// rather than a guess, so a typo surfaces instead of opening the wrong panel.
-pub fn panel_kind_from_name(name: &str) -> Option<TabKind> {
+/// Slugs the bridge and the app map accept. Aliases are listed here so a
+/// synonym never lives in a match arm nobody greps for.
+pub const PANEL_SLUG_ALIASES: &[(&str, &str)] = &[("live-activity", "activity")];
+
+/// Two different axes are both loosely called "panels", and collapsing them is
+/// what made the old bridge report the activity bar's category as the open tab.
+/// `NavigatePanel` selects one of these eight left-rail categories; `TogglePanel`
+/// opens one of [`ALL_PANELS`]. Four names (`search`, `chat`, `agents`,
+/// `knowledge`) appear on both axes and mean the rail section versus the dock
+/// tab respectively -- which is correct, since selecting the Chat rail shows its
+/// own sub-panels while `chat` puts the Chat tab in the centre.
+pub const ACTIVITY_CATEGORY_NAMES: &[&str] = &[
+    "files",
+    "search",
+    "git",
+    "chat",
+    "build",
+    "agents",
+    "knowledge",
+    "workspace",
+];
+
+/// Rail index for a category name. Case-insensitive; `None` for a typo.
+pub fn activity_category_index(name: &str) -> Option<usize> {
     let needle = name.trim().to_ascii_lowercase();
-    BRIDGE_PANELS
+    ACTIVITY_CATEGORY_NAMES
         .iter()
-        .find(|(slug, _)| *slug == needle.as_str())
-        .map(|(_, kind)| kind.clone())
+        .position(|candidate| *candidate == needle.as_str())
 }
 
+/// Category name for a rail index. Out-of-range reads as `"unknown"` rather
+/// than panicking, because this runs inside a state report a driver polls.
+pub fn activity_category_name(index: usize) -> &'static str {
+    ACTIVITY_CATEGORY_NAMES
+        .get(index)
+        .copied()
+        .unwrap_or("unknown")
+}
+
+/// Resolve a panel name to its [`PanelSpec`]. Case-insensitive, tolerant of
+/// surrounding whitespace; unknown names are `None` rather than a guess, so a
+/// typo surfaces instead of opening the wrong panel.
+pub fn panel_spec_from_name(name: &str) -> Option<&'static PanelSpec> {
+    let needle = name.trim().to_ascii_lowercase();
+    let needle = PANEL_SLUG_ALIASES
+        .iter()
+        .find(|(alias, _)| *alias == needle.as_str())
+        .map(|(_, target)| *target)
+        .unwrap_or(needle.as_str());
+    ALL_PANELS.iter().find(|spec| spec.slug == needle)
+}
+
+/// Resolve a bridge panel name to the tab kind to focus.
+pub fn panel_kind_from_name(name: &str) -> Option<TabKind> {
+    panel_spec_from_name(name).map(|spec| spec.kind.clone())
+}
+
+/// The reverse: the name a driver would use for a tab it can already see. Used
+/// by `gui_list_tabs` so a reported tab can be handed straight back to
+/// `gui_select_tab` without the caller reconstructing a slug.
+pub fn panel_slug_for_kind(kind: &TabKind) -> Option<&'static str> {
+    ALL_PANELS
+        .iter()
+        .find(|spec| std::mem::discriminant(&spec.kind) == std::mem::discriminant(kind))
+        .map(|spec| spec.slug)
+}
+
+/// Every name the bridge accepts, in table order.
 pub fn bridge_panel_names() -> Vec<&'static str> {
-    BRIDGE_PANELS.iter().map(|(name, _)| *name).collect()
+    ALL_PANELS.iter().map(|spec| spec.slug).collect()
 }
 
 /// Which tabs the central dock holds: open editors, the profile's primary
@@ -699,25 +1033,84 @@ mod tests {
     fn every_advertised_panel_name_resolves() {
         // The tool description is generated from this table, so a slug with no
         // working kind behind it would be advertised and then rejected.
-        assert!(!BRIDGE_PANELS.is_empty());
-        for (name, kind) in BRIDGE_PANELS {
+        assert!(!ALL_PANELS.is_empty());
+        for spec in ALL_PANELS {
+            let name = spec.slug;
             assert_eq!(
                 panel_kind_from_name(name).as_ref(),
-                Some(kind),
+                Some(&spec.kind),
                 "panel '{name}' is listed but does not resolve"
             );
             assert_eq!(
                 panel_kind_from_name(&name.to_uppercase()).as_ref(),
-                Some(kind),
+                Some(&spec.kind),
                 "lookup should be case-insensitive for '{name}'"
             );
+            assert_eq!(
+                panel_kind_from_name(&format!("  {name}  ")).as_ref(),
+                Some(&spec.kind),
+                "lookup should tolerate surrounding whitespace for '{name}'"
+            );
             assert_eq!(*name, name.to_ascii_lowercase());
+            assert!(
+                !name.is_empty() && !name.contains(' '),
+                "slug '{name}' should be a non-empty, space-free token"
+            );
         }
         assert_eq!(
             bridge_panel_names().len(),
-            BRIDGE_PANELS.len(),
+            ALL_PANELS.len(),
             "the advertised list drifted from the table"
         );
+    }
+
+    #[test]
+    fn panel_table_has_no_duplicate_slugs_or_kinds() {
+        // Two slugs for one kind would make `gui_navigate_to` open the same
+        // panel under two names and the map would carry a node twice.
+        let mut slugs = std::collections::HashSet::new();
+        let mut kinds = std::collections::HashSet::new();
+        for spec in ALL_PANELS {
+            assert!(slugs.insert(spec.slug), "duplicate panel slug");
+            assert!(
+                kinds.insert(std::mem::discriminant(&spec.kind)),
+                "panel '{}' shares a kind with an earlier entry",
+                spec.slug
+            );
+        }
+    }
+
+    /// Document kinds are opened by path, not by panel name, and `Tab::title`
+    /// falls back to "untitled"/"NDA Document" for them -- so if one leaked in,
+    /// the bridge would advertise a label no tab ever shows.
+    #[test]
+    fn panel_table_excludes_document_kinds() {
+        for spec in ALL_PANELS {
+            assert!(
+                !matches!(spec.kind, TabKind::Editor { .. } | TabKind::NdaDoc { .. }),
+                "document kind leaked into the panel table at '{}'",
+                spec.slug
+            );
+            assert!(!spec.label().is_empty());
+            assert_ne!(spec.label(), "untitled");
+        }
+    }
+
+    /// Aliases exist so a natural name keeps working, but they must actually
+    /// land on a real slug rather than silently resolving to nothing.
+    #[test]
+    fn every_alias_points_at_a_listed_panel() {
+        for (alias, target) in PANEL_SLUG_ALIASES {
+            assert!(
+                ALL_PANELS.iter().any(|s| s.slug == *target),
+                "alias '{alias}' points at unknown panel '{target}'"
+            );
+            assert_eq!(
+                panel_spec_from_name(alias).map(|s| s.slug),
+                Some(*target),
+                "alias '{alias}' does not resolve to '{target}'"
+            );
+        }
     }
 
     #[test]
@@ -725,6 +1118,79 @@ mod tests {
         assert!(panel_kind_from_name("settingz").is_none());
         assert!(panel_kind_from_name("").is_none());
         assert!(panel_kind_from_name("editor").is_none());
+        assert!(panel_kind_from_name("nda").is_none());
+    }
+
+    /// `gui_list_tabs` reports a slug per panel tab and `gui_select_tab` takes
+    /// one back, so the two directions have to be inverses.
+    #[test]
+    fn panel_kinds_round_trip_through_slugs() {
+        for spec in ALL_PANELS {
+            assert_eq!(
+                panel_slug_for_kind(&spec.kind),
+                Some(spec.slug),
+                "{} does not slug back to itself",
+                spec.slug
+            );
+        }
+        // Document kinds are opened by path and have no slug; a caller must get
+        // `None` rather than some unrelated panel's name.
+        assert_eq!(
+            panel_slug_for_kind(&TabKind::Editor {
+                path: None,
+                buffer_id: TabId(1)
+            }),
+            None
+        );
+        assert_eq!(panel_slug_for_kind(&TabKind::NdaDoc { path: None }), None);
+    }
+
+    #[test]
+    fn activity_rail_lookup_round_trips_through_index_and_name() {
+        for (i, name) in ACTIVITY_CATEGORY_NAMES.iter().enumerate() {
+            assert_eq!(activity_category_index(name), Some(i));
+            assert_eq!(activity_category_index(&name.to_uppercase()), Some(i));
+            assert_eq!(activity_category_index(&format!("  {name}  ")), Some(i));
+            assert_eq!(activity_category_name(i), *name);
+        }
+        assert_eq!(activity_category_index("nope"), None);
+        // A dock panel is not a rail: `settings` is only ever a `TogglePanel`
+        // target, and silently treating it as a rail would move the strip
+        // somewhere the user never asked for.
+        assert_eq!(activity_category_index("settings"), None);
+        assert_eq!(activity_category_name(99), "unknown");
+    }
+
+    /// The original 18 slugs are what the MCP tool description advertised and
+    /// what any saved automation already spells; widening the table must not
+    /// retire one of them.
+    #[test]
+    fn the_first_bridge_panel_names_are_still_accepted() {
+        for name in [
+            "settings",
+            "chat",
+            "output",
+            "orchestrator",
+            "mission",
+            "team",
+            "usage",
+            "search",
+            "graph",
+            "wiki",
+            "agents",
+            "knowledge",
+            "workflows",
+            "governance",
+            "changes",
+            "terminal",
+            "debugger",
+            "extensions",
+        ] {
+            assert!(
+                panel_kind_from_name(name).is_some(),
+                "'{name}' used to resolve and no longer does"
+            );
+        }
     }
 
     /// `settings` is the entry the user was clicking; it has to resolve to the

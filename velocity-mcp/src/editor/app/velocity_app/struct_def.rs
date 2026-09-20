@@ -211,8 +211,8 @@ pub struct VelocityApp {
     pub provider_settings: WorkspaceProviderSettings,
     pub left_sidebar_visible: bool,
     pub left_sidebar_width: f32,
-    pub left_sidebar_tab: usize,
-    /// Activity bar selection (0=Files, 1=Search, 2=Git, 3=Chat, 4=Build, 5=Agents, 6=Knowledge, 7=Workspace)
+    /// Selected activity-bar rail, indexed into `app_map::RAILS` -- the same
+    /// table the strip renders and the GUI bridge validates names against.
     pub activity_bar_selection: usize,
     /// Sub-panel selection within each activity bar category
     pub activity_sub_panel: [usize; 8],
@@ -990,7 +990,6 @@ impl VelocityApp {
             provider_settings,
             left_sidebar_visible: true,
             left_sidebar_width: 240.0,
-            left_sidebar_tab: 0,
             activity_bar_selection: 0,
             activity_sub_panel: [0; 8],
             right_sidebar_visible: false,
@@ -1284,7 +1283,6 @@ impl VelocityApp {
             provider_settings: WorkspaceProviderSettings::default(),
             left_sidebar_visible: true,
             left_sidebar_width: 240.0,
-            left_sidebar_tab: 0,
             activity_bar_selection: 0,
             activity_sub_panel: [0; 8],
             right_sidebar_visible: false,
