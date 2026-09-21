@@ -179,9 +179,11 @@ macOS (`aarch64-apple-darwin`), generates a CycloneDX SBOM, and publishes a GitH
 whose assets are `velocity-linux.tar.gz`, `velocity-windows.zip` and `velocity-macos.tar.gz`.
 Each platform archive contains all four binaries:
 `velocity_ide`, `velocity_ide_gui`, `velocity_mcp`, `velocity-drone`. The SBOM is uploaded as
-a workflow artifact (90-day retention); on the `v2.5.0` release it did not reach the release
-asset list, so treat the workflow artifact as the copy of record until that is confirmed on
-a new tag.
+a workflow artifact (90-day retention) but does not yet appear on the published release: the
+file list used `artifacts/velocity-sbom/*.cdx.json` while `download-artifact` restores that
+artifact one directory deeper per crate, and a pattern matching nothing is skipped rather than
+reported. `v2.5.0` and `v2.6.0` were both published without it. Until the corrected pattern
+(`**/*.cdx.json`) reaches a tag, take the SBOM from the run's artifacts, not the release page.
 
 ```bash
 git tag -a v2.6.0 -m "V.E.L.O.C.I.T.Y. v2.6.0"

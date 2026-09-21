@@ -110,11 +110,17 @@ jobs:
       - name: Create Release
         uses: softprops/action-gh-release@v2
         with:
+          # download-artifact restores a multi-file artifact with its directory
+          # structure, so the SBOMs land one level deeper per crate
+          # (artifacts/velocity-sbom/velocity-mcp/velocity_mcp.cdx.json). The
+          # single-star pattern matched nothing and this action skips a pattern
+          # with no matches instead of failing, which is why v2.5.0 and v2.6.0
+          # both published three archives and no SBOM at all.
           files: |
             artifacts/velocity-linux/*.tar.gz
             artifacts/velocity-windows/*.zip
             artifacts/velocity-macos/*.tar.gz
-            artifacts/velocity-sbom/*.cdx.json
+            artifacts/velocity-sbom/**/*.cdx.json
           generate_release_notes: true
           draft: false
           prerelease: false

@@ -7,7 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-_Nothing recorded since [2.6.0]._
+_Nothing recorded since [2.6.0] except the fix below, which ships with the next tag._
+
+### Fixed
+- **The SBOM never reached a GitHub Release**: `release.yml` listed `artifacts/velocity-sbom/*.cdx.json`, but `download-artifact` restores a multi-file artifact with its directory structure intact, so the CycloneDX files land one level deeper - one directory per crate. `softprops/action-gh-release` skips a pattern that matches nothing instead of failing, so the job reported success while publishing three archives and no SBOM, on `v2.5.0` and `v2.6.0` alike. The pattern is now `**/*.cdx.json`.
 
 ## [2.6.0] - 2026-09-21
 
@@ -92,7 +95,7 @@ real provider key, which no job exercises.
 - **Prometheus metrics**: 421-line metrics module with 17 instruments (requests, tools, providers, agents, resources)
 - **OpenTelemetry tracing**: 300-line telemetry module with Pretty/JSON/Compact formats, file rotation, env config
 - **GUI integration tests**: 16 headless tests for tab lifecycle, command palette, MRU switcher, file tree, cross-module integration
-- **SBOM generation**: CycloneDX JSON SBOM generated in CI and attached to GitHub releases
+- **SBOM generation**: CycloneDX JSON SBOM generated in CI and uploaded as a workflow artifact. Attaching it to the release itself did not work - see the glob-depth fix under [Unreleased] - so no published release had ever carried one.
 - **cargo-deny policy**: License allowlist, advisory checks, dependency ban enforcement in CI
 - **Criterion benchmarks**: Benchmark scaffolding for NDA operations, tokenizer, and library metadata
 - **CONTRIBUTING.md**: Open-source contribution guidelines with architecture overview and code style rules
