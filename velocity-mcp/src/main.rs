@@ -10,7 +10,7 @@
 use std::env;
 use std::process;
 
-use velocity_mcp::{automation, compiler, protocol, shutdown};
+use velocity_mcp::{automation, compiler, protocol, shutdown, wa};
 
 /// Install a global panic hook that writes structured crash dumps and logs
 /// diagnostic context before the process exits. This ensures that any unhandled
@@ -76,6 +76,13 @@ fn chrono_like_timestamp() -> String {
 fn main() {
     // Install global panic hook for crash diagnostics
     install_panic_hook();
+
+    // This server spawns toolchain children (cargo, rustup, cmd) on the agent's
+    // behalf. If one fails to initialise, its default handling is a modal error
+    // box that blocks our wait for a human click -- and the stdio JSON-RPC loop
+    // behind it. The exit status and stderr already reach the caller, so the box
+    // is pure interruption; suppress it before anything is spawned.
+    let _ = wa::process_mgmt::suppress_child_error_dialogs();
 
     // Initialise structured logging (defaults to stderr, safe for stdio JSON-RPC).
     // Control verbosity via RUST_LOG env var, e.g. RUST_LOG=info or RUST_LOG=debug.

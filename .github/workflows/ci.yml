@@ -268,3 +268,92 @@ jobs:
           name: bench-results
           path: target/criterion/
           retention-days: 14
+
+  # ─── Live GUI Sweep (Windows desktop) ─────────────────────────────────────
+  # The only thing here that answers "have you actually pressed every button":
+  # it builds the real binary, starts it against a throwaway workspace and drives
+  # every control the running app itself reports, asserting on the follow-up
+  # state and on pixels. Everything else in this workflow runs on Linux, and the
+  # capture, the window handling and the bridge's Win32 side cannot be exercised
+  # there at all -- `cargo test` covers the handlers, not the frame they draw in.
+  gui-sweep:
+    name: GUI Sweep (Windows)
+    runs-on: windows-latest
+    needs: [clippy]
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Build the release binary
+        run: cargo build --release -p velocity-ide-gui
+
+      # Blocking: a sweep script that cannot parse has covered nothing, silently,
+      # for exactly as long as nobody ran it. Parsing costs four seconds.
+      - name: Sweep script parses
+        shell: pwsh
+        run: |
+          $errs = $null
+          [void][System.Management.Automation.Language.Parser]::ParseFile("$PWD/sweep_gui.ps1", [ref]$null, [ref]$errs)
+          if ($errs.Count -gt 0) {
+            $errs | ForEach-Object { "::error::sweep_gui.ps1:$($_.Extent.StartLineNumber) $($_.Message)" }
+            exit 1
+          }
+          'sweep_gui.ps1 parses'
+
+      - name: Launch the instance
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path 'target\gui-sweep-ci-workspace' | Out-Null
+          $started = Get-Date
+          Start-Process "$PWD\target\release\velocity_ide_gui.exe" `
+            -ArgumentList '--workspace', "$PWD\target\gui-sweep-ci-workspace" -WindowStyle Minimized
+          $token = "$PWD\target\gui-sweep-ci-workspace\.velocity\gui_control.token"
+          $deadline = (Get-Date).AddSeconds(90)
+          while ((Get-Date) -lt $deadline -and -not (Test-Path $token)) { Start-Sleep -Milliseconds 500 }
+          if (-not (Test-Path $token)) {
+            "::error::the instance never opened the control bridge. Either it cannot create a window on this runner (no GL-capable display) or startup has regressed."
+            Get-Process velocity_ide_gui -ErrorAction SilentlyContinue | Format-Table Id, Responding, StartTime
+            exit 1
+          }
+          "bridge token written after $([int]((Get-Date).Subtract($started).TotalSeconds))s"
+
+      # Not blocking yet, and deliberately so: this is the first run on a runner
+      # with no display adapter, so "the sweep failed" and "this VM cannot host an
+      # eframe window" are still distinguishable only by reading the log.
+      # Promotion criterion: drop continue-on-error once two consecutive runs
+      # finish with `failed 0` and a non-zero count of PASS lines in phase 13.
+      - name: Sweep every control
+        continue-on-error: true
+        shell: pwsh
+        run: |
+          .\sweep_gui.ps1 -AllowUnsafe `
+            -TokenFile "$PWD\target\gui-sweep-ci-workspace\.velocity\gui_control.token" `
+            -Report "$PWD\sweep-ci-report.txt"
+          "sweep exit code: $LASTEXITCODE"
+
+      - name: Report the counts
+        if: always()
+        shell: pwsh
+        run: |
+          if (-not (Test-Path "$PWD\sweep-ci-report.txt")) { '::warning::no sweep report was written'; exit 0 }
+          Get-Content "$PWD\sweep-ci-report.txt" | Select-String -Pattern 'passed \d+\s+failed|FAIL |SKIP |overlay on:|overlay off:' |
+            ForEach-Object { $_.Line } | Add-Content -Path $env:GITHUB_STEP_SUMMARY
+          Get-Content "$PWD\sweep-ci-report.txt" | Select-String -Pattern '^  FAIL' | ForEach-Object { "::warning::$($_.Line.Trim())" }
+
+      - name: Stop the instance
+        if: always()
+        shell: pwsh
+        run: Stop-Process -Name velocity_ide_gui -Force -ErrorAction SilentlyContinue
+
+      - name: Upload the sweep evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gui-sweep-report
+          path: |
+            sweep-ci-report.txt
+            target/gui-sweep-ci-workspace/sweep-*.png
+            target/gui-sweep-ci-workspace/sweep-*.rs
+          retention-days: 14
+          if-no-files-found: warn

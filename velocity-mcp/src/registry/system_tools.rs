@@ -1007,14 +1007,41 @@ pub fn handle_system_tool(
             root,
             crate::editor::gui_control::GuiCommand::DismissOverlays {},
         )?,
+        "gui_submit_dialog" => {
+            // Whatever is on screen asked for a path; this is the only way a
+            // caller can hand it one without reaching for somebody's keyboard.
+            let value = arguments["value"]
+                .as_str()
+                .ok_or_else(|| "gui_submit_dialog needs a 'value' string.".to_string())?
+                .to_string();
+            gui_call(
+                root,
+                crate::editor::gui_control::GuiCommand::SubmitDialog { value },
+            )?
+        }
         "gui_screenshot" => {
             // An absent path is the normal request -- "just show me the window"
             // -- and the GUI picks a timestamped name inside the workspace, so
             // the caller does not have to know where the app is allowed to write.
             let path = arguments["path"].as_str().unwrap_or("").to_string();
+            // Absent means "just take the picture"; present means the caller
+            // wants to know whether the screen moved, so the answer has to carry
+            // the diff rather than drop it on the floor. A wrong type is refused
+            // instead of read as absent -- silence here would look like a
+            // comparison that found no change.
+            let against = match arguments.get("against") {
+                None | Some(serde_json::Value::Null) => None,
+                Some(serde_json::Value::String(s)) => Some(s.clone()),
+                Some(other) => {
+                    return Err(format!(
+                        "gui_screenshot 'against' must be a path string, got {other}"
+                    )
+                    .into())
+                }
+            };
             gui_call(
                 root,
-                crate::editor::gui_control::GuiCommand::Screenshot { path },
+                crate::editor::gui_control::GuiCommand::Screenshot { path, against },
             )?
         }
 
@@ -1797,5 +1824,53 @@ mod tests {
         // Sealed envelope sets ENCRYPTED|RAW flags, so it is not a plain portable doc.
         assert!(velocity_browser::nda_portable::NdaPortableDoc::from_portable_bytes(&raw).is_err());
         let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// Every `gui_*` tool that is advertised has to reach a dispatch arm, and no
+    /// arm may reach a running IDE from a root that has no token.
+    ///
+    /// `all_advertised_tools_are_dispatchable` already walks the whole tool list
+    /// and fails on "Unknown tool", so the wiring half of this is deliberately
+    /// redundant. What earns a second test is the second assertion: a name in the
+    /// definition list with no arm here is not a compile error -- the `match` ends
+    /// in `_ => return Ok(None)` -- and a `gui_*` arm that answered happily with
+    /// no bridge in front of it would mean a unit test had driven somebody's live
+    /// editor. Two GUI tools have already been found in this crate written,
+    /// unit-tested and never wired.
+    ///
+    /// The probe root deliberately has no `.velocity/gui_control.token`: every arm
+    /// funnels through [`gui_call`], which loads the token before it touches the
+    /// socket, so the loop cannot reach a running IDE. That matters more than it
+    /// sounds, because this family includes `gui_quit`.
+    #[test]
+    fn every_advertised_gui_tool_reaches_a_handler() {
+        let root = std::env::temp_dir().join(format!(
+            "velocity_gui_dispatch_probe_{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        let advertised: Vec<String> = crate::registry::tool_definitions::system::get_system_tools()
+            .into_iter()
+            .map(|t| t.name)
+            .filter(|n| n.starts_with("gui_"))
+            .collect();
+        assert!(
+            advertised.len() >= 12,
+            "the gui_* family stopped being advertised; found {}: {advertised:?}",
+            advertised.len()
+        );
+        for name in &advertised {
+            match handle_system_tool(&root, name, &json!({})) {
+                Ok(None) => panic!(
+                    "{name} is advertised but handle_system_tool has no arm for it, so a caller \
+                     silently gets nothing back"
+                ),
+                // Nothing in this family may answer without the bridge, so a body
+                // here means a tool did local work the test did not sign up for.
+                Ok(Some(body)) => panic!("{name} handled a probe call with no bridge: {body}"),
+                Err(_) => {}
+            }
+        }
+        let _ = fs::remove_dir_all(&root);
     }
 }

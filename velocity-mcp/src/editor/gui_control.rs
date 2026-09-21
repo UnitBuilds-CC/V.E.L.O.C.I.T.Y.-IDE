@@ -57,7 +57,15 @@ pub enum GuiCommand {
     /// Capture the IDE's own window and save it to disk. An empty `path` picks
     /// a timestamped name under `<workspace>/.velocity/screenshots/`; a given
     /// path has to stay inside the workspace.
-    Screenshot { path: String },
+    Screenshot {
+        path: String,
+        /// A second image inside the workspace to compare the capture against,
+        /// so a caller can ask whether the screen actually changed instead of
+        /// only where its bytes landed. Optional with a default so an older MCP
+        /// binary that sends no such field still works against a newer GUI.
+        #[serde(default)]
+        against: Option<String>,
+    },
     /// Close the IDE.
     Quit {},
     /// Enumerate the command palette: label, category, shortcut and risk tier.
@@ -99,6 +107,14 @@ pub enum GuiCommand {
     /// a known state once something has been raised, since Escape is only heard
     /// by the overlay that currently owns the frame.
     DismissOverlays {},
+    /// Answer whichever path prompt is on screen -- the Open File or Save As
+    /// dialog -- with the value a person would have typed into its box, and
+    /// press its button. The completing half of `DismissOverlays`: without it a
+    /// driver can raise a prompt and stand it down but never get anything done
+    /// through one, which left the only tested path through those dialogs the
+    /// one that discards. The value is held to the workspace exactly as
+    /// `OpenFile`'s path is.
+    SubmitDialog { value: String },
 }
 
 /// Wrapper that includes the auth token alongside the command.
@@ -447,7 +463,16 @@ fn listener_loop(
             // Wake up the egui event loop so it processes the command immediately.
             egui_ctx.request_repaint();
 
-            match resp_rx.recv_timeout(std::time::Duration::from_secs(5)) {
+            // How long the bridge waits for the UI thread to run this command.
+            // It has to be longer than the slowest legitimate frame, not longer
+            // than an ideal one: on a machine doing real work (a compile, an
+            // antivirus scan of a fresh binary) the UI thread can take seconds to
+            // reach the head of the queue, and a short window answers "Timeout
+            // waiting for GUI response" to a healthy IDE -- which every driver
+            // reads as a crash, and which is unrecoverable-looking from the
+            // outside. Note this is a reply deadline, not a cancellation: a
+            // command that answers late has still been dispatched and still runs.
+            match resp_rx.recv_timeout(std::time::Duration::from_secs(REPLY_WINDOW_SECS)) {
                 Ok(resp) => {
                     let json = serde_json::to_string(&resp).unwrap_or_default();
                     let _ = writeln!(stream, "{}", json);
@@ -465,6 +490,18 @@ fn listener_loop(
         }
     }
 }
+
+/// Seconds the control bridge holds a command's socket open waiting for the UI
+/// thread to answer. It is the slowest legitimate frame, not the ideal one, that
+/// has to fit inside this window.
+///
+/// Anything talking to the bridge has to wait *longer* than it or the caller sees
+/// a dropped connection where the IDE never sent one: [`send_command`] uses
+/// [`REPLY_WINDOW_SECS`] plus slack, and `sweep_gui.ps1` defaults its own
+/// `-TimeoutMs` above that again. Keeping the three in one place is the point --
+/// they used to be 5, 10 and 20 seconds, so the IDE gave up answering before its
+/// own client did and reported a timeout as if it were a crash.
+const REPLY_WINDOW_SECS: u64 = 20;
 
 /// Constant-time byte comparison to prevent timing attacks on the auth token.
 fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
@@ -488,7 +525,7 @@ pub fn send_command(cmd: &GuiCommand, auth_token: &str) -> Result<GuiResponse, S
         .map_err(|_| "GUI is not running (cannot connect to control port 19821)".to_string())?;
 
     stream
-        .set_read_timeout(Some(std::time::Duration::from_secs(10)))
+        .set_read_timeout(Some(std::time::Duration::from_secs(REPLY_WINDOW_SECS + 10)))
         .map_err(|e| e.to_string())?;
 
     let auth_cmd = AuthenticatedCommand {
@@ -603,6 +640,17 @@ mod tests {
                 sub_tab: "orchestration".into(),
             },
             GuiCommand::DismissOverlays {},
+            GuiCommand::Screenshot {
+                path: "shots/now.png".into(),
+                against: None,
+            },
+            GuiCommand::Screenshot {
+                path: "shots/now.png".into(),
+                against: Some("shots/before.png".into()),
+            },
+            GuiCommand::SubmitDialog {
+                value: "notes/todo.md".into(),
+            },
         ];
         for command in cases {
             let envelope = AuthenticatedCommand {

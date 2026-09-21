@@ -717,6 +717,19 @@ fn process_ui_message(
             }
         }
         UiToAgentMessage::RunLocalBuild => {
+            // Pinned to a manifest that belongs to this workspace. With a bare
+            // `current_dir`, cargo walks *up* to whatever repository contains the
+            // folder, so pressing Build in a scratch directory inside a Rust repo
+            // silently compiled the whole repo -- minutes on every core, during
+            // which the control bridge reads as a dead IDE rather than a busy one.
+            let cargo_dir =
+                match crate::automation::build_runner::cargo_manifest_dir(workspace_root) {
+                    Ok(dir) => dir,
+                    Err(reason) => {
+                        refuse_local_cargo(ui_tx, "cargo check", &reason);
+                        return;
+                    }
+                };
             ui_tx
                 .send(AgentToUiMessage::StatusUpdate(
                     "Running local cargo check...".to_string(),
@@ -730,7 +743,7 @@ fn process_ui_message(
 
             let output = std::process::Command::new("cargo")
                 .arg("check")
-                .current_dir(workspace_root as &PathBuf)
+                .current_dir(&cargo_dir)
                 .output();
 
             match output {
@@ -773,10 +786,23 @@ fn process_ui_message(
                 }
             }
 
-            let _ = run_compilation_check(workspace_root);
+            // No second `run_compilation_check` here, as this used to end with:
+            // the press already ran the check above, and the repeat run discarded
+            // its result, so it bought nothing and cost another full compile.
             ui_tx.send(AgentToUiMessage::AgentFinished).ok();
         }
         UiToAgentMessage::RunLocalRun => {
+            // Same pinning as the build, and the hazard is sharper here: cargo
+            // would have walked up and *run* whatever binary the enclosing
+            // workspace defaults to, from inside the IDE.
+            let cargo_dir =
+                match crate::automation::build_runner::cargo_manifest_dir(workspace_root) {
+                    Ok(dir) => dir,
+                    Err(reason) => {
+                        refuse_local_cargo(ui_tx, "cargo run", &reason);
+                        return;
+                    }
+                };
             ui_tx
                 .send(AgentToUiMessage::StatusUpdate(
                     "Running local cargo run...".to_string(),
@@ -790,7 +816,7 @@ fn process_ui_message(
 
             let output = std::process::Command::new("cargo")
                 .arg("run")
-                .current_dir(workspace_root as &PathBuf)
+                .current_dir(&cargo_dir)
                 .output();
 
             match output {
@@ -839,10 +865,34 @@ fn process_ui_message(
     }
 }
 
+/// Tell the UI that a local cargo command was refused, and clear the "working"
+/// state exactly the way a finished one does: without `AgentFinished` the editor
+/// spinner never stops, so a refusal that returned early would leave the app
+/// looking permanently busy instead of permanently refusing.
+fn refuse_local_cargo(ui_tx: &Sender<AgentToUiMessage>, command: &str, reason: &str) {
+    ui_tx
+        .send(AgentToUiMessage::OutputToken(format!(
+            "\n$ {} refused: {}\n",
+            command, reason
+        )))
+        .ok();
+    ui_tx
+        .send(AgentToUiMessage::StatusUpdate(format!(
+            "Local {} refused: this workspace has no Cargo.toml",
+            command
+        )))
+        .ok();
+    ui_tx.send(AgentToUiMessage::AgentFinished).ok();
+}
+
 pub fn run_compilation_check(workspace_root: &std::path::Path) -> Result<(), String> {
+    // Called after agent edits to confirm the workspace still compiles, so a
+    // refusal has to read as a failure rather than as a check that passed --
+    // least of all a check that quietly passed on somebody's *other* project.
+    let cargo_dir = crate::automation::build_runner::cargo_manifest_dir(workspace_root)?;
     let output = std::process::Command::new("cargo")
         .arg("check")
-        .current_dir(workspace_root)
+        .current_dir(&cargo_dir)
         .output();
 
     match output {

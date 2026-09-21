@@ -355,6 +355,12 @@ fn install_panic_hook() {
 
 fn main() {
     install_panic_hook();
+    // The build watcher, agent executor and orchestrator all spawn toolchain
+    // children into this desktop session. A child that fails to initialise used
+    // to raise a modal "Application Error" box that stole focus and waited for a
+    // click, which is how an unattended sweep ends up frozen in front of the
+    // user. Set before the first spawn; children inherit the mode.
+    let _ = velocity_mcp::wa::process_mgmt::suppress_child_error_dialogs();
     env_logger::init();
     let _shutdown_flag = velocity_mcp::shutdown::install_shutdown_handlers();
 

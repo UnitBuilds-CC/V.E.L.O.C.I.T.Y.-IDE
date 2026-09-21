@@ -8,6 +8,60 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
+// ─── Child failure reporting ────────────────────────────────────────────────
+
+/// Kernel32 error-mode bit: do not show the critical-error dialog for this
+/// process or any child it creates.
+#[cfg(target_os = "windows")]
+pub const SEM_FAILCRITICALERRORS: u32 = 0x0001;
+
+// SAFETY: the declarations themselves cannot misbehave -- they are kernel32
+// error-handling accessors, `u32` in and `u32` out, with no pointer crossing the
+// boundary and nothing borrowing data that has a lifetime. `SetErrorMode` takes a
+// bitmask of documented `SEM_*` flags and returns the previous mode; `GetErrorMode`
+// takes nothing and returns the current mode. Each call site justifies its own
+// call below.
+#[cfg(target_os = "windows")]
+unsafe extern "system" {
+    fn SetErrorMode(u_mode: u32) -> u32;
+    fn GetErrorMode() -> u32;
+}
+
+/// Stop a child that cannot start from putting a modal dialog on the desktop.
+///
+/// The IDE spawns toolchain children constantly -- `cargo` and `rustup` from the
+/// agent executor and the build watcher, `cmd /C` from anything the orchestrator
+/// executes. When one of those fails to initialise at all (a DLL that will not
+/// load, `0xc0000142`), the loader raises a hard error and the default handling
+/// is a modal "Application Error" box: owned by no window, stealing focus, and
+/// waiting for a human click before the parent's own wait returns. That is both
+/// an obstacle and, for an unattended run, a hang.
+///
+/// The box adds nothing to what the app already knows. Every one of those spawns
+/// redirects stdio, so the exit status and stderr reach the Output panel and the
+/// caller can report the failure in place.
+///
+/// The mode is process-wide and children inherit it at creation, so one call at
+/// startup covers all of them. Returns the error mode in effect afterwards, so a
+/// caller can check the bit took rather than assume it; `None` on platforms with
+/// no such dialog to suppress.
+pub fn suppress_child_error_dialogs() -> Option<u32> {
+    #[cfg(target_os = "windows")]
+    {
+        // SAFETY: see the declarations above. The mask only ever adds
+        // SEM_FAILCRITICALERRORS, which is idempotent, and the previous mode is
+        // reported rather than restored -- this process is not a library that got
+        // asked to leave the desktop's error handling as it found it.
+        let _previous = unsafe { SetErrorMode(GetErrorMode() | SEM_FAILCRITICALERRORS) };
+        // SAFETY: no arguments, reads the process-wide mode just set. It is read
+        // back rather than trusted: a setter that silently failed leaves the modal
+        // one toolchain failure away, with no second signal that it ever happened.
+        Some(unsafe { GetErrorMode() })
+    }
+    #[cfg(not(target_os = "windows"))]
+    None
+}
+
 // ─── Process Model ───────────────────────────────────────────────────────────
 
 /// Information about a running process.
@@ -690,6 +744,26 @@ use native::{
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The suppression has to stick. A bit that silently failed to apply leaves
+    /// the modal one toolchain failure away, and there is no second signal that
+    /// it ever happened -- which is precisely the shape of the bug this covers.
+    #[test]
+    #[cfg(target_os = "windows")]
+    fn a_child_that_cannot_start_is_not_allowed_to_ask_a_human() {
+        let mode = suppress_child_error_dialogs().expect("windows reports an error mode");
+        assert_ne!(
+            mode & SEM_FAILCRITICALERRORS,
+            0,
+            "SetErrorMode did not take; mode is {mode:#06b}"
+        );
+    }
+
+    #[test]
+    #[cfg(not(target_os = "windows"))]
+    fn non_windows_platforms_have_nothing_to_suppress() {
+        assert_eq!(suppress_child_error_dialogs(), None);
+    }
 
     #[test]
     fn launch_config_builder() {

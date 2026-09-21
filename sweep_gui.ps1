@@ -26,7 +26,10 @@
      11  every modify-tier command, run for real
      11b the execute-tier commands that cost nothing to press
      12  the quick-open, go-to and find overlays, then dismissed
-     13  a pixel capture of the running window, read back off the disk
+     12b the path prompts answered instead of cancelled: a typed name, the file
+        it writes, and the answer that has to be refused
+     13  a pixel capture of the running window, read back off the disk and
+        compared against an earlier frame
 
     A mode refusal is treated as information, not a dead end: see Press. The
     gate says which profiles carry a command, so the sweep switches to one,
@@ -72,7 +75,10 @@ param(
     [string]$TokenFile = "$PSScriptRoot\target\gui-sweep-workspace\.velocity\gui_control.token",
     [string]$Report = "$PSScriptRoot\sweep_report.txt",
     [string]$StartIn = '',
-    [int]$TimeoutMs = 20000
+    # Has to outlast the bridge's own reply window (20 s, REPLY_WINDOW_SECS in
+    # gui_control.rs) or a slow frame reads as a socket that went away instead of
+    # a clean "Timeout waiting for GUI response" from the IDE.
+    [int]$TimeoutMs = 30000
 )
 
 $ErrorActionPreference = 'Stop'
@@ -140,20 +146,37 @@ function InstancePid() {
         Select-Object -First 1).OwningProcess
 }
 
+# ShowWindow / IsIconic, loaded once and shared. Split out of Set-InstanceWindow
+# because the capture phases also need to know whether the window is in the
+# taskbar *without* changing it: leaving the user's own editor minimised because
+# a sweep wanted a clean desktop is a side effect this script has no business
+# having.
+function Ensure-WindowApi() {
+    if ('SweepWin32.User32' -as [type]) { return $true }
+    try {
+        Add-Type -Namespace SweepWin32 -Name User32 -ErrorAction Stop -MemberDefinition @'
+[System.Runtime.InteropServices.DllImport("user32.dll")] public static extern bool ShowWindow(System.IntPtr hWnd, int nCmdShow);
+[System.Runtime.InteropServices.DllImport("user32.dll")] public static extern bool IsIconic(System.IntPtr hWnd);
+'@
+        return $true
+    } catch { return $false }
+}
+
+function InstanceIsMinimised([int]$procId) {
+    if (-not $procId) { return $false }
+    if (-not (Ensure-WindowApi)) { return $false }
+    $hwnd = (Get-Process -Id $procId -ErrorAction SilentlyContinue).MainWindowHandle
+    if (-not $hwnd -or $hwnd -eq [System.IntPtr]::Zero) { return $false }
+    return [SweepWin32.User32]::IsIconic($hwnd)
+}
+
 # Bring the instance's own window in from the taskbar, or push it back. Applied
 # only to the pid owning the bridge. Returns $false when no handle is available,
 # which callers report as "pixels not verified" rather than passing a capture
 # that was never taken.
 function Set-InstanceWindow([int]$procId, [switch]$Minimize) {
     if (-not $procId) { return $false }
-    if (-not ('SweepWin32.User32' -as [type])) {
-        try {
-            Add-Type -Namespace SweepWin32 -Name User32 -ErrorAction Stop -MemberDefinition @'
-[System.Runtime.InteropServices.DllImport("user32.dll")] public static extern bool ShowWindow(System.IntPtr hWnd, int nCmdShow);
-[System.Runtime.InteropServices.DllImport("user32.dll")] public static extern bool IsIconic(System.IntPtr hWnd);
-'@
-        } catch { return $false }
-    }
+    if (-not (Ensure-WindowApi)) { return $false }
     $hwnd = (Get-Process -Id $procId -ErrorAction SilentlyContinue).MainWindowHandle
     if (-not $hwnd -or $hwnd -eq [System.IntPtr]::Zero) { return $false }
     [void][SweepWin32.User32]::ShowWindow($hwnd, $(if ($Minimize) { 7 } else { 9 }))  # SW_MINIMIZE / SW_RESTORE
@@ -531,6 +554,100 @@ Check 'nothing transient is left up' ((Overlays).Count -eq 0) ((Overlays) -join 
 $d2 = Send 'DismissOverlays' @{}
 Check 'dismissing an already-clean app says so' ((Ok $d2) -and (@(foreach ($one in (Body $d2).closed) { $one }).Count -eq 0)) (Err $d2)
 
+# ── 12b. The path prompts, answered ────────────────────────────────────────
+Log '[12b] answering the path prompts rather than cancelling them'
+# Phase 8 raises each dialog and stands it down, which exercises the one button
+# that changes nothing. This is the other button: a value gets typed in, and the
+# assertions are about the file on disk and the tab that moved onto it, not about
+# the reply's success flag. Cancel and Confirm are separate code paths, and only
+# one of them had ever been driven on a live instance.
+$wsAbs = ''
+if ($AllowUnsafe) { try { $wsAbs = (Resolve-Path -LiteralPath $base.workspace_root).Path } catch { $wsAbs = '' } }
+if (-not $AllowUnsafe) {
+    Note 'dialog answers' 'pass -AllowUnsafe; these write files into the sweep workspace'
+} elseif (-not $wsAbs) {
+    Note 'dialog answers' "cannot resolve the instance workspace '$($base.workspace_root)' from here"
+} else {
+    $srcPath = Join-Path $wsAbs 'sweep-dialog-source.rs'
+    $dstPath = Join-Path $wsAbs 'sweep-dialog-copy.rs'
+    # One level above the workspace, which is exactly where a `..` in a prompt
+    # used to be able to land. Named distinctly so nothing else is ever a target.
+    $outPath = Join-Path (Split-Path -Parent $wsAbs) 'sweep-dialog-escaped.rs'
+    foreach ($stale in @($srcPath, $dstPath, $outPath)) {
+        if (((Split-Path -Leaf $stale) -like 'sweep-dialog-*') -and (Test-Path -LiteralPath $stale)) {
+            Remove-Item -LiteralPath $stale -Force
+        }
+    }
+    # Ascii rather than UTF8: PowerShell 5.1 puts a BOM in the latter, and the
+    # byte-for-byte comparison below is the proof that the loaded buffer really
+    # came off the disk.
+    $fixture = "fn sweep_dialog_marker() {}`n"
+    Set-Content -LiteralPath $srcPath -Value $fixture -NoNewline -Encoding Ascii
+    $srcBytes = [System.IO.File]::ReadAllBytes($srcPath)
+
+    $r = Send 'SubmitDialog' @{ value = 'anything.txt' }
+    Check 'an answer with no prompt up says so' (-not (Ok $r)) (Err $r)
+
+    $r = Send 'RunCommand' @{ label = 'Open File'; allow_unsafe = $true }
+    Check 'the open prompt is up' (Ok $r) (Err $r)
+    $r = Send 'SubmitDialog' @{ value = 'sweep-dialog-source.rs' }
+    Check 'answering it with a name inside the workspace opens that file' (Ok $r) (Err $r)
+    if (Ok $r) {
+        $ans = Body $r
+        Check '  ...naming the prompt it answered' ($ans.dialog -eq 'open file dialog') "dialog=$($ans.dialog)"
+        $resolved = ''
+        try { $resolved = (Resolve-Path -LiteralPath $ans.path).Path } catch { $resolved = '' }
+        Check '  ...at the file the driver wrote' ($resolved -eq $srcPath) "app=$($ans.path) driver=$srcPath"
+        # The read happens on a background thread and is applied on a later
+        # repaint, so the tab is polled for instead of assumed to be instant.
+        $seen = 0
+        for ($i = 0; $i -lt 20; $i++) {
+            $seen = @((Body (Send 'ListTabs' @{})).tabs | Where-Object { $_.path -like '*sweep-dialog-source.rs' }).Count
+            if ($seen -gt 0) { break }
+            Start-Sleep -Milliseconds 150
+        }
+        Check '  ...and a tab is showing it' ($seen -gt 0) 'no tab carries the opened path'
+        Check '  ...with nothing left to answer' ((Overlays).Count -eq 0) ((Overlays) -join ', ')
+    }
+
+    $r = Send 'RunCommand' @{ label = 'Save As'; allow_unsafe = $true }
+    Check 'the save prompt is up' (Ok $r) (Err $r)
+    $r = Send 'SubmitDialog' @{ value = '..\sweep-dialog-escaped.rs' }
+    $why = Err $r
+    Check 'an answer that walks out of the workspace is refused' (-not (Ok $r)) $why
+    Check '  ...by name, not by silence' ($why -match 'escapes workspace') $why
+    Check '  ...and nothing is written beside the workspace' (-not (Test-Path -LiteralPath $outPath)) "wrote $outPath"
+    Check '  ...the prompt stays up so the value can be corrected' ((Overlays).Count -gt 0) 'open_overlays is empty'
+    $r = Send 'SubmitDialog' @{ value = 'sweep-dialog-copy.rs' }
+    Check 'and the same prompt takes the corrected value' (Ok $r) (Err $r)
+    if (Ok $r) {
+        $ans = Body $r
+        Check '  ...written where the app says it wrote' (Test-Path -LiteralPath $ans.path) $ans.path
+        $copyBytes = @(try { [System.IO.File]::ReadAllBytes($ans.path) } catch { @() })
+        Check "  ...byte for byte the $($srcBytes.Length) B the open prompt loaded" ((@(Compare-Object $srcBytes $copyBytes -SyncWindow 0).Count -eq 0) -and ($copyBytes.Count -eq $srcBytes.Length)) "wrote=$($copyBytes.Count) expected=$($srcBytes.Length)"
+        $moved = @((Body (Send 'ListTabs' @{})).tabs | Where-Object { $_.path -like '*sweep-dialog-copy.rs' })
+        Check '  ...and the tab was re-pointed at the new name' ($moved.Count -gt 0) 'no tab carries the saved path'
+        Check '  ...leaving no prompt up' ((Overlays).Count -eq 0) ((Overlays) -join ', ')
+    }
+
+    # One value, two prompts: the handler has to refuse rather than guess which
+    # one it is feeding, since guessing wrong writes a file under a name nobody
+    # chose. Both raises have to land for the case to be worth asserting.
+    $ra = Send 'RunCommand' @{ label = 'Open File'; allow_unsafe = $true }
+    $rb = Send 'RunCommand' @{ label = 'Save As'; allow_unsafe = $true }
+    if (-not ((Ok $ra) -and (Ok $rb))) {
+        Note 'two prompts up' "could not raise both at once: $(Err $ra) / $(Err $rb)"
+    } else {
+        $r = Send 'SubmitDialog' @{ value = 'sweep-dialog-source.rs' }
+        $why = Err $r
+        Check 'one value for two prompts is refused' (-not (Ok $r)) $why
+        Check '  ...as ambiguous, with the way out named' ("$why" -match 'ambiguous') $why
+        $null = Send 'DismissOverlays' @{}
+    }
+    Check 'nothing is left up for the phases that read the screen' ((Overlays).Count -eq 0) ((Overlays) -join ', ')
+    Log "      evidence left in $wsAbs : $(Split-Path -Leaf $srcPath), $(Split-Path -Leaf $dstPath)"
+}
+
 # ── 13. Pixel capture ──────────────────────────────────────────────────────
 Log '[13] gui_screenshot'
 # The phase that turns "the state struct says X" into "the screen shows X", so
@@ -575,6 +692,101 @@ Check 'a capture path outside the workspace is refused' (-not (Ok $r)) (Err $r)
 Check '  ...and nothing was written beside the repo' (-not (Test-Path "$PSScriptRoot\sweep-escaped.png")) 'sweep-escaped.png exists'
 $r = Send 'Screenshot' @{ path = 'not-an-image.xyz' }
 Check 'an extension the encoder cannot write is refused' (-not (Ok $r)) (Err $r)
+
+# Does the picture respond to what the app is doing? A capture that always
+# succeeds and always says the same thing proves the encoder ran and nothing
+# else. So the overlay is put on screen and taken off again, and three things
+# have to be true of the pixels: raising it changes the frame, lowering it
+# changes the frame back, and the window then stops moving. Those are the claims
+# the comparator can actually support -- an absolute "within N% of the baseline"
+# cannot, because a toast stack expires down the right-hand column while the
+# sweep runs and a blinking caret moves the rest. Measured: two frames of a
+# quiescent window differ by 0.00%, two frames taken mid-sweep by 13.13%.
+$palette = @($navOverlay | Where-Object { $_.label -like 'Go to File*' }) | Select-Object -First 1
+if (-not (Ok $shot)) {
+    Note 'visual diff' 'no baseline capture to compare against'
+} elseif (-not $palette) {
+    Note 'visual diff' 'the palette has no quick-open entry to put on screen'
+} else {
+    $inst = InstancePid
+    $wasDown = InstanceIsMinimised $inst
+    if ($wasDown) { [void](Set-InstanceWindow $inst) }
+    Start-Sleep -Milliseconds 300
+    # The reference is captured here, seconds before the overlay appears, rather
+    # than reusing the frame this phase opened with: everything the write tier
+    # raised is still on screen at that point and starting to expire, and the
+    # diff would then be measuring the toast queue draining instead of the overlay.
+    $pre = Send 'Screenshot' @{ path = 'sweep-frame-before.png' }
+    $raised = if (Ok $pre) { Send 'RunCommand' @{ label = $palette.label } } else { $null }
+    if (-not (Ok $raised)) {
+        # Deliberately no mode switching here, unlike Press: a mode change
+        # redraws the whole window, and the diff would then be measuring that
+        # instead of the overlay.
+        if (-not (Ok $pre)) {
+            Note 'visual diff' "the reference frame could not be captured: $(Err $pre)"
+        } else {
+            Note 'visual diff' "cannot raise '$($palette.label)' from here: $(Err $raised)"
+        }
+    } else {
+        Start-Sleep -Milliseconds 300  # let the overlay reach a real frame
+        $with = Send 'Screenshot' @{ path = 'sweep-overlay-on.png'; against = 'sweep-frame-before.png' }
+        if (-not (Ok $with)) {
+            Note 'visual diff' "$(Err $with)"
+        } else {
+            $dv = (Body $with).visual_diff
+            $onPct = [double]$dv.diff_percentage
+            Check 'a capture compared against an earlier one reports a diff' ($null -ne $dv.diff_percentage) 'no visual_diff in the reply'
+            Check '  ...on a frame of the same size, so it is about content' ([bool]$dv.dimensions_match) "$($dv.against_size) vs $((Body $with).width)x$((Body $with).height)"
+            Log "      overlay on: $onPct% of $($dv.total_pixels) pixels, bounds $($dv.diff_bounds -join ', ')"
+            Check '  ...an overlay on screen changes the picture' ($onPct -gt 0.5) "only $onPct% differs"
+            Check '  ...without redrawing the entire window' ($onPct -lt 95.0) "$onPct% is the whole frame"
+            $null = Send 'DismissOverlays' @{}
+            Start-Sleep -Milliseconds 300
+            # Dismiss it, then wait for the window to stop moving before judging
+            # anything: a frame caught while the last of the write tier's output
+            # lands differs from its neighbour for reasons that have nothing to do
+            # with the overlay. Each pass re-captures against the pre-overlay frame
+            # and measures the app against itself, 300 ms later.
+            $back = $null
+            $driftPct = $null
+            $attempts = 0
+            for ($attempt = 1; $attempt -le 6; $attempt++) {
+                $attempts = $attempt
+                $gone = Send 'Screenshot' @{ path = 'sweep-overlay-off.png'; against = 'sweep-frame-before.png' }
+                if (-not (Ok $gone)) { $back = $null; break }
+                $back = (Body $gone).visual_diff
+                Start-Sleep -Milliseconds 300
+                $idle = Send 'Screenshot' @{ path = 'sweep-overlay-idle.png'; against = 'sweep-overlay-off.png' }
+                if (-not (Ok $idle)) { $driftPct = $null; break }
+                $driftPct = [double](Body $idle).visual_diff.diff_percentage
+                if ($driftPct -le 1.0) { break }
+                Log "      still moving: $driftPct% of the window in 300 ms, letting it settle"
+                Start-Sleep -Milliseconds 500
+            }
+            Check 'and taking the overlay off takes it out of the picture' ($null -ne $back) 'the post-overlay capture failed'
+            if ($null -ne $back) {
+                $offPct = [double]$back.diff_percentage
+                Log "      overlay off: $offPct% still differs from the pre-overlay frame, in $($back.diff_bounds -join ', ')"
+                Check '  ...the diff comes back down from the overlay' ($offPct -lt $onPct) "on=$onPct% off=$offPct%"
+                # The claim being made is that the app settles, which is measured
+                # against the app itself, not against a number picked to fit.
+                Check '  ...and the window comes to rest' ($driftPct -le 1.0) "still moving $driftPct% per 300 ms after $attempts attempt(s)"
+                Log "      it took $attempts attempt(s) to settle"
+                Check '  ...naming the reference it was measured against' ([string]$back.against -like '*sweep-frame-before.png') $back.against
+            }
+        }
+    }
+    # Back exactly as found: a run against somebody's live desktop must not
+    # end with their editor in the taskbar because the sweep wanted pixels.
+    if ($wasDown) { [void](Set-InstanceWindow $inst -Minimize) }
+}
+# The reference is resolved by the same rules as the save path, and a missing one
+# has to read as "no comparison made" rather than a diff against nothing.
+$bad = Send 'Screenshot' @{ path = 'sweep-diff-ref.png'; against = '..\..\someone-else.png' }
+Check 'a reference outside the workspace is refused' (-not (Ok $bad)) (Err $bad)
+Check '  ...naming the capture it did still write' ([string](Err $bad) -match 'sweep-diff-ref') (Err $bad)
+$miss = Send 'Screenshot' @{ path = 'sweep-diff-missing.png'; against = 'never-captured.png' }
+Check 'a reference that was never captured is refused, not compared as blank' (-not (Ok $miss)) (Err $miss)
 
 # ── summary ────────────────────────────────────────────────────────────────
 $final = Settled

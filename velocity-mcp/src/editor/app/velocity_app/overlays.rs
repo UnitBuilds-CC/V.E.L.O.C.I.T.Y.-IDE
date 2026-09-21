@@ -947,6 +947,81 @@ impl VelocityApp {
             });
     }
 
+    /// Answer the open-file prompt with the path it was given, and load it.
+    ///
+    /// Both prompts label their box "relative to workspace" and neither one used
+    /// to enforce that: `workspace_root.join(typed)` returns `typed` untouched
+    /// when it is absolute, and walks out of the tree when it holds `..`, so the
+    /// dialog would load -- and, on the save side, write -- anywhere on disk.
+    /// The bridge's own `OpenFile` command already refuses exactly that, which
+    /// made the prompt the weaker of two doors to the same file; a driver that
+    /// cannot pass `gui_open_file` can type the path into the dialog instead.
+    /// So the same rule now applies here, since a person typing a path and a
+    /// driver answering the prompt over the bridge are the same caller.
+    ///
+    /// Returns the file that was opened. On refusal the prompt stays up, because
+    /// a mistyped path is worth correcting rather than destroying; a caller that
+    /// has given up uses `dismiss_transient_ui`.
+    ///
+    /// Extracted from the render closure so the path that actually loads a
+    /// buffer is reachable without painting a frame and clicking a button.
+    pub fn submit_open_dialog(&mut self, typed: &str) -> Result<PathBuf, String> {
+        let typed = typed.trim();
+        if typed.is_empty() {
+            return Err("Nothing was typed into the Open File prompt.".to_string());
+        }
+        let resolved = crate::security::sanitize::sanitize_path(typed, &self.workspace_root)
+            .map_err(|e| format!("Cannot open {typed}: {e}"))?;
+        // Canonicalising is how containment is decided, but the verbatim prefix it
+        // hands back would end up in the tab title and every later path join.
+        let resolved = super::gui_commands::plain_windows_path(&resolved);
+        if !resolved.is_file() {
+            return Err(format!("{} is not a file.", resolved.display()));
+        }
+        self.open_editor(Some(resolved.clone()));
+        self.pending_open_path = None;
+        Ok(resolved)
+    }
+
+    /// Answer the save-as prompt with the path it was given, and write there.
+    ///
+    /// Confined to the workspace for the same reason as
+    /// [`Self::submit_open_dialog`], and this one is the harder case: the old
+    /// button wrote the buffer wherever the typed string pointed and then
+    /// re-pointed the tab at it, so a single prompt could move an editor's
+    /// on-disk home outside the project it belongs to.
+    ///
+    /// Unlike the button it replaces, a failed write leaves the prompt up: the
+    /// path is what the caller got wrong, so discarding it destroys their work.
+    pub fn submit_save_as_dialog(&mut self, typed: &str) -> Result<PathBuf, String> {
+        let typed = typed.trim();
+        if typed.is_empty() {
+            return Err("Nothing was typed into the Save As prompt.".to_string());
+        }
+        let id = self
+            .active_tab
+            .clone()
+            .ok_or_else(|| "No active editor to save".to_string())?;
+        let resolved = crate::security::sanitize::sanitize_path(typed, &self.workspace_root)
+            .map_err(|e| format!("Cannot save as {typed}: {e}"))?;
+        let resolved = super::gui_commands::plain_windows_path(&resolved);
+        if resolved.is_dir() {
+            return Err(format!("{} is a directory.", resolved.display()));
+        }
+        // `save_buffer_to` reports an OS failure in the status bar and as a toast,
+        // so the refusal only has to stop the tab being re-pointed at nothing.
+        if !self.save_buffer_to(&id, &resolved) {
+            return Err(format!("Could not write {}.", resolved.display()));
+        }
+        if let Some(tab) = self.tabs.iter_mut().find(|t| t.id == id) {
+            if let TabKind::Editor { ref mut path, .. } = tab.kind {
+                *path = Some(resolved.clone());
+            }
+        }
+        self.pending_save_as_path = None;
+        Ok(resolved)
+    }
+
     pub fn file_dialog_ui(&mut self, ctx: &egui::Context) {
         let mut open = self.pending_open_path.is_some();
         if !open {
@@ -1006,13 +1081,8 @@ impl VelocityApp {
                         ui.add_space(8.0);
                         ui.horizontal(|ui| {
                             if ui.button("Open").clicked() {
-                                let p = workspace_root.join(&path_string);
-                                if p.exists() && p.is_file() {
-                                    self.open_editor(Some(p));
-                                    self.pending_open_path = None;
-                                } else {
-                                    self.status_message =
-                                        format!("File not found: {}", p.display());
+                                if let Err(e) = self.submit_open_dialog(&path_string) {
+                                    self.status_message = e;
                                 }
                             }
                             if ui.button("Cancel").clicked() {
@@ -1188,15 +1258,8 @@ impl VelocityApp {
                 }
                 ui.horizontal(|ui| {
                     if ui.button("Save").clicked() {
-                        if let Some(id) = self.active_tab.clone() {
-                            let p = self.workspace_root.join(&path_string);
-                            self.save_buffer_to(&id, &p);
-                            if let Some(tab) = self.tabs.iter_mut().find(|t| t.id == id) {
-                                if let TabKind::Editor { ref mut path, .. } = tab.kind {
-                                    *path = Some(p);
-                                }
-                            }
-                            self.pending_save_as_path = None;
+                        if let Err(e) = self.submit_save_as_dialog(&path_string) {
+                            self.status_message = e;
                         }
                     }
                     if ui.button("Cancel").clicked() {

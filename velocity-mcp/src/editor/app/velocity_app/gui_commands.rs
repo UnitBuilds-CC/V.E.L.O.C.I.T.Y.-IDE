@@ -63,7 +63,7 @@ impl VelocityApp {
             GuiCommand::GetState {} => self.cmd_get_state(),
             GuiCommand::NavigatePanel { panel } => self.cmd_navigate_panel(panel),
             GuiCommand::TogglePanel { panel } => self.cmd_toggle_panel(panel),
-            GuiCommand::Screenshot { path } => self.cmd_screenshot(ctx, path),
+            GuiCommand::Screenshot { path, against } => self.cmd_screenshot(ctx, path, against),
             GuiCommand::Quit {} => self.cmd_quit(ctx),
             GuiCommand::ListCommands { category } => self.cmd_list_commands(category),
             GuiCommand::RunCommand {
@@ -76,6 +76,7 @@ impl VelocityApp {
             GuiCommand::SelectTab { tab } => self.cmd_select_tab(tab),
             GuiCommand::SelectSubTab { rail, sub_tab } => self.cmd_select_sub_tab(rail, sub_tab),
             GuiCommand::DismissOverlays {} => self.cmd_dismiss_overlays(),
+            GuiCommand::SubmitDialog { value } => self.cmd_submit_dialog(value),
         }
     }
 
@@ -274,7 +275,12 @@ impl VelocityApp {
     /// grab (a few hundred ms: PowerShell is spawned to do the copy). That is
     /// the same trade every other capture in this codebase makes, and it is
     /// what lets the shot show the frame as it was when the call arrived.
-    fn cmd_screenshot(&mut self, ctx: &egui::Context, path: String) -> GuiResponse {
+    fn cmd_screenshot(
+        &mut self,
+        ctx: &egui::Context,
+        path: String,
+        against: Option<String>,
+    ) -> GuiResponse {
         let now_ms = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_millis() as u64)
@@ -335,13 +341,73 @@ impl VelocityApp {
                 target.display()
             ));
         }
-        accepted(serde_json::json!({
+
+        // Optional second question: is this frame different from that one? The
+        // comparator has been in the tree since the desktop-automation work with
+        // no caller at all, which is another way of saying no capture had ever
+        // been checked against anything. A caller that asks is never left with a
+        // silent "no change" standing in for "no comparison".
+        let requested = against.as_deref().map(str::trim).unwrap_or("");
+        let comparison = if requested.is_empty() {
+            None
+        } else {
+            let reference = match resolve_screenshot_path(requested, &self.workspace_root, 0) {
+                Ok(target) => target,
+                Err(e) => {
+                    return refusal(format!(
+                        "{e} The capture was still written to {}.",
+                        target.display()
+                    ))
+                }
+            };
+            let before = match crate::wa::screenshot::load_captured_image(&reference) {
+                Some(image) => image,
+                None => {
+                    return refusal(format!(
+                        "Could not read {} as an image, so no comparison was made. The capture \
+                         is at {}.",
+                        reference.display(),
+                        target.display()
+                    ))
+                }
+            };
+            let config = crate::wa::screenshot::DiffConfig::default();
+            let diff = crate::wa::screenshot::compare_screenshots(&before, &shot, &config);
+            Some((
+                reference,
+                before,
+                diff,
+                config.channel_tolerance,
+                config.max_diff_percentage,
+            ))
+        };
+
+        let mut reply = serde_json::json!({
             "path": target.display().to_string(),
             "format": crate::wa::screenshot::image_format_for_path(&target),
             "width": shot.width,
             "height": shot.height,
             "captured_at_ms": shot.captured_at_ms,
-        }))
+        });
+        if let Some((reference, before, diff, channel_tolerance, max_diff_percentage)) = comparison
+        {
+            reply["visual_diff"] = serde_json::json!({
+                "against": reference.display().to_string(),
+                "against_size": [before.width, before.height],
+                // A resized window differs everywhere, which is not the same
+                // finding as a redrawn one; without this a driver cannot tell
+                // the two apart from the percentage alone.
+                "dimensions_match": before.width == shot.width && before.height == shot.height,
+                "diff_percentage": diff.diff_percentage,
+                "diff_pixel_count": diff.diff_pixel_count,
+                "total_pixels": diff.total_pixels,
+                "matches": diff.matches,
+                "diff_bounds": diff.diff_bounds,
+                "channel_tolerance": channel_tolerance,
+                "max_diff_percentage": max_diff_percentage,
+            });
+        }
+        accepted(reply)
     }
 
     /// Stand down every transient overlay: the route back to a known state for
@@ -360,6 +426,59 @@ impl VelocityApp {
         // held until the UI thread has run this handler, which is that frame.
         accepted(serde_json::json!({
             "closed": closed,
+            "state_after": self.ide_state(),
+        }))
+    }
+
+    /// Answer the path prompt that is on screen. See
+    /// [`Self::submit_open_dialog`] / [`Self::submit_save_as_dialog`] for what
+    /// the value has to satisfy; this handler only works out which prompt it
+    /// belongs to and reports the outcome.
+    fn cmd_submit_dialog(&mut self, value: String) -> GuiResponse {
+        let up = self.open_transient_ui();
+        let target = match (
+            self.pending_open_path.is_some(),
+            self.pending_save_as_path.is_some(),
+        ) {
+            (true, true) => {
+                // One value, two prompts asking for different things. Guessing
+                // which to feed would write a file under a name nobody chose.
+                return refusal(
+                    "Both the Open File and Save As prompts are on screen, so a single value \
+                     is ambiguous. DismissOverlays first, then raise just the one you mean."
+                        .to_string(),
+                );
+            }
+            (true, false) => "open file dialog",
+            (false, true) => "save as dialog",
+            (false, false) => {
+                return refusal(format!(
+                    "No path prompt is on screen to answer. Currently open: {}.",
+                    if up.is_empty() {
+                        "nothing".to_string()
+                    } else {
+                        up.join(", ")
+                    }
+                ));
+            }
+        };
+
+        let written = if target == "open file dialog" {
+            self.submit_open_dialog(&value)
+        } else {
+            self.submit_save_as_dialog(&value)
+        };
+        let written = match written {
+            Ok(path) => path,
+            // The prompt stays up after a refusal, so the driver can correct the
+            // value or stand it down; saying so here is what makes the next call
+            // obvious rather than guessed at.
+            Err(e) => return refusal(format!("{e} The {target} is still on screen.")),
+        };
+        self.status_message = format!("{}", written.display());
+        accepted(serde_json::json!({
+            "dialog": target,
+            "path": written.display().to_string(),
             "state_after": self.ide_state(),
         }))
     }
@@ -1588,6 +1707,26 @@ mod tests {
         app.active_tab.clone().expect("tab just pushed")
     }
 
+    /// Pump the frame loop's file-I/O drain until the read behind
+    /// [`VelocityApp::open_editor`] lands. That call never blocks the UI thread:
+    /// it spawns a reader whose result is applied by `poll_file_io_results` on
+    /// the next repaint, so a test wanting the bytes has to drive the same event
+    /// the app does rather than assume the call was synchronous.
+    fn await_file_load(app: &mut VelocityApp, id: &TabId) -> String {
+        for _ in 0..200 {
+            app.poll_file_io_results();
+            if !app.pending_file_loads.contains(id) {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        app.poll_file_io_results();
+        app.buffers
+            .get(id)
+            .map(|b| b.content().to_string())
+            .unwrap_or_default()
+    }
+
     #[test]
     fn the_tier_gate_holds_the_dialog_command_back_until_it_is_opted_into() {
         let (mut app, ctx) = harness();
@@ -1669,6 +1808,154 @@ mod tests {
             .any(|o| o == "save as dialog"));
     }
 
+    /// Both prompts are labelled "relative to workspace" and neither one used to
+    /// enforce it: `join` hands an absolute path straight back and `..` walks out
+    /// of the tree, so a prompt reached files that `gui_open_file` refuses. The
+    /// escape is checked as an absence of effect -- nothing written anywhere --
+    /// rather than as a particular complaint.
+    #[test]
+    fn a_prompt_refuses_a_value_that_leaves_the_workspace() {
+        let ws = tempfile::tempdir().unwrap();
+        let elsewhere = tempfile::tempdir().unwrap();
+        let outside_file = elsewhere.path().join("outside.txt");
+        std::fs::write(&outside_file, "not yours\n").unwrap();
+
+        let (mut app, _ctx) = harness();
+        app.workspace_root = ws.path().to_path_buf();
+        attach_editor(&mut app, "inside.txt");
+
+        for value in [
+            "../escaped.txt".to_string(),
+            outside_file.display().to_string(),
+        ] {
+            app.pending_open_path = Some(std::path::PathBuf::new());
+            let refused = app.submit_open_dialog(&value).unwrap_err();
+            assert!(refused.contains("escapes workspace"), "{value}: {refused}");
+            // A refusal that also closes the prompt would hide what went wrong.
+            assert!(app.pending_open_path.is_some(), "{value} closed the prompt");
+
+            app.pending_save_as_path = Some(std::path::PathBuf::new());
+            let refused = app.submit_save_as_dialog(&value).unwrap_err();
+            assert!(refused.contains("escapes workspace"), "{value}: {refused}");
+            assert!(
+                app.pending_save_as_path.is_some(),
+                "{value} closed the prompt"
+            );
+        }
+        // The whole run wrote no file: not into the workspace, and not next door
+        // to it either.
+        assert_eq!(std::fs::read_dir(ws.path()).unwrap().count(), 0);
+        assert_eq!(std::fs::read_dir(elsewhere.path()).unwrap().count(), 1);
+    }
+
+    /// The point of a prompt is what it does when it is answered, and until the
+    /// bridge could answer one that path was only reachable by painting a frame
+    /// and clicking a button -- so it had never been exercised at all.
+    #[test]
+    fn answering_the_save_prompt_writes_the_file_and_moves_the_tab_onto_it() {
+        let ws = tempfile::tempdir().unwrap();
+        let (mut app, ctx) = harness();
+        app.workspace_root = ws.path().to_path_buf();
+        let id = attach_editor(&mut app, "scratch.txt");
+        app.pending_save_as_path = Some(std::path::PathBuf::new());
+
+        let r = app.execute_gui_command(
+            GuiCommand::SubmitDialog {
+                value: "renamed.md".to_string(),
+            },
+            &ctx,
+        );
+        assert!(r.success, "{:?}", r.error);
+        assert_eq!(
+            r.data.as_ref().unwrap()["dialog"],
+            serde_json::json!("save as dialog")
+        );
+        let written = ws.path().join("renamed.md");
+        assert_eq!(std::fs::read_to_string(&written).unwrap(), "hello\n");
+        // The tab now points at the file it wrote, in the same plain form every
+        // other path in the app uses, and the buffer counts as saved.
+        assert!(
+            app.tab_path(&id).unwrap().ends_with("renamed.md"),
+            "{:?}",
+            app.tab_path(&id)
+        );
+        assert!(!app.buffers.get(&id).unwrap().is_dirty());
+        assert!(app.pending_save_as_path.is_none());
+        assert!(app.ide_state().open_overlays.is_empty());
+    }
+
+    #[test]
+    fn answering_the_open_prompt_loads_the_file_into_a_buffer() {
+        let ws = tempfile::tempdir().unwrap();
+        std::fs::write(ws.path().join("loadable.rs"), "fn main() {}\n").unwrap();
+        let (mut app, ctx) = harness();
+        app.workspace_root = ws.path().to_path_buf();
+        app.pending_open_path = Some(std::path::PathBuf::new());
+
+        let r = app.execute_gui_command(
+            GuiCommand::SubmitDialog {
+                value: "loadable.rs".to_string(),
+            },
+            &ctx,
+        );
+        assert!(r.success, "{:?}", r.error);
+        assert_eq!(
+            r.data.as_ref().unwrap()["dialog"],
+            serde_json::json!("open file dialog")
+        );
+        // Not merely a tab with a plausible name: the focused buffer holds the
+        // bytes that were on disk, arriving the way they do in the running app.
+        let active = app.active_tab.clone().expect("a tab is focused");
+        let (path, buffer_id) = {
+            let tab = app
+                .tabs
+                .iter()
+                .find(|t| t.id == active)
+                .expect("focused tab");
+            match &tab.kind {
+                TabKind::Editor {
+                    path: Some(p),
+                    buffer_id,
+                } => (p.clone(), buffer_id.clone()),
+                other => panic!("the prompt opened a non-editor tab: {other:?}"),
+            }
+        };
+        assert!(path.ends_with("loadable.rs"), "{path:?}");
+        assert_eq!(await_file_load(&mut app, &buffer_id), "fn main() {}\n");
+        assert!(app.pending_open_path.is_none());
+        assert!(app.ide_state().open_overlays.is_empty());
+    }
+
+    /// One value, one prompt. Two prompts is a contradiction to report, not a
+    /// coin to flip, and none is nothing to have answered.
+    #[test]
+    fn an_answer_means_something_only_when_exactly_one_prompt_is_up() {
+        let (mut app, ctx) = harness();
+        let none = app.execute_gui_command(
+            GuiCommand::SubmitDialog {
+                value: "a.txt".to_string(),
+            },
+            &ctx,
+        );
+        assert!(!none.success);
+        let err = none.error.unwrap();
+        assert!(err.contains("No path prompt"), "{err}");
+
+        app.pending_open_path = Some(std::path::PathBuf::new());
+        app.pending_save_as_path = Some(std::path::PathBuf::new());
+        let both = app.execute_gui_command(
+            GuiCommand::SubmitDialog {
+                value: "a.txt".to_string(),
+            },
+            &ctx,
+        );
+        assert!(!both.success);
+        let err = both.error.unwrap();
+        assert!(err.contains("ambiguous"), "{err}");
+        // Refusing the ambiguity does not resolve it by picking a victim.
+        assert!(app.pending_open_path.is_some() && app.pending_save_as_path.is_some());
+    }
+
     #[test]
     fn dismissing_closes_exactly_what_the_state_report_listed() {
         let (mut app, ctx) = harness();
@@ -1735,6 +2022,7 @@ mod tests {
         let r = app.execute_gui_command(
             GuiCommand::Screenshot {
                 path: "..\\elsewhere.png".to_string(),
+                against: None,
             },
             &ctx,
         );

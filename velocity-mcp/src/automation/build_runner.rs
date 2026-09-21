@@ -66,34 +66,60 @@ pub fn spawn_build_watcher(workspace_root: PathBuf, interval_secs: u64) {
     });
 }
 
+/// Why [`cargo_manifest_dir`] refuses, without the path in it. Kept on one line
+/// because it lands in `summary <text>` of the diagnostics NDA, where an
+/// embedded newline would corrupt the record.
+const NO_MANIFEST: &str = "has no Cargo.toml, and neither does any directory inside it, so there is no Rust project here to build; running cargo anyway would walk up to an enclosing repository and build that instead";
+
+/// The directory a cargo invocation may legitimately be pointed at, or a
+/// refusal explaining why there is none.
+///
+/// cargo finds a manifest by walking *up* out of its current directory, so
+/// running it in a folder that has no `Cargo.toml` of its own does not fail --
+/// it silently builds whichever ancestor project happens to contain the folder.
+/// The IDE lets any directory be opened as a workspace, so pressing `Build` in
+/// a scratch folder inside a Rust repo compiled the entire repo: every core,
+/// for minutes, on a program nobody asked it to build -- and while that ran the
+/// control bridge, which answers inside a fixed window, looked dead rather than
+/// busy. Pinning the invocation to a manifest inside the workspace turns that
+/// into a one-line refusal.
+pub fn cargo_manifest_dir(workspace_root: &std::path::Path) -> Result<PathBuf, String> {
+    if workspace_root.join("Cargo.toml").is_file() {
+        return Ok(workspace_root.to_path_buf());
+    }
+    // A member directory opened as its own workspace: `velocity-mcp` first so
+    // the common case is deterministic rather than whatever `read_dir` returns.
+    let member = workspace_root.join("velocity-mcp");
+    if member.join("Cargo.toml").is_file() {
+        return Ok(member);
+    }
+    if let Ok(entries) = std::fs::read_dir(workspace_root) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if entry.file_type().map(|t| t.is_dir()).unwrap_or(false)
+                && path.join("Cargo.toml").is_file()
+            {
+                return Ok(path);
+            }
+        }
+    }
+    Err(format!("{} {}", workspace_root.display(), NO_MANIFEST))
+}
+
 pub fn run_cargo_check(workspace_root: &std::path::Path) -> BuildDiagnostics {
     let mut diag = BuildDiagnostics {
         timestamp_ms: now_ms(),
         ..Default::default()
     };
 
-    let cargo_dir = if workspace_root.join("Cargo.toml").exists() {
-        workspace_root.to_path_buf()
-    } else if workspace_root
-        .join("velocity-mcp")
-        .join("Cargo.toml")
-        .exists()
-    {
-        workspace_root.join("velocity-mcp")
-    } else {
-        let mut found = workspace_root.to_path_buf();
-        if let Ok(entries) = std::fs::read_dir(workspace_root) {
-            for entry in entries.flatten() {
-                if entry.file_type().map(|t| t.is_dir()).unwrap_or(false) {
-                    let path = entry.path();
-                    if path.join("Cargo.toml").exists() {
-                        found = path;
-                        break;
-                    }
-                }
-            }
+    let cargo_dir = match cargo_manifest_dir(workspace_root) {
+        Ok(dir) => dir,
+        Err(reason) => {
+            diag.success = false;
+            diag.summary = reason.clone();
+            diag.errors.push(reason);
+            return diag;
         }
-        found
     };
 
     let output = match Command::new("cargo")
@@ -404,6 +430,57 @@ mod tests {
         assert_eq!(diag.summary, "No diagnostics available");
         assert!(!diag.success);
         assert!(diag.errors.is_empty());
+    }
+
+    /// The guard against "I pressed Build and it compiled a repository I never
+    /// opened". cargo walks up out of its working directory looking for a
+    /// manifest, so a manifest-less scratch folder is not a failed build -- it is
+    /// an unrelated project's build that takes minutes and says nothing about
+    /// this workspace. Refusing is the only correct answer.
+    #[test]
+    fn cargo_manifest_dir_refuses_a_folder_with_no_manifest() {
+        let tmp = tempfile::tempdir().unwrap();
+        let scratch = tmp.path().join("scratch");
+        std::fs::create_dir_all(&scratch).unwrap();
+
+        let err = cargo_manifest_dir(&scratch).unwrap_err();
+        assert!(err.contains("no Cargo.toml"), "{err}");
+        assert!(err.contains(&scratch.display().to_string()), "{err}");
+
+        // With a manifest present it resolves to the workspace itself, and a
+        // member-only layout resolves into the member -- never upward.
+        std::fs::write(tmp.path().join("Cargo.toml"), "[workspace]\n").unwrap();
+        assert_eq!(
+            cargo_manifest_dir(tmp.path()).unwrap(),
+            tmp.path().to_path_buf()
+        );
+
+        std::fs::remove_file(tmp.path().join("Cargo.toml")).unwrap();
+        std::fs::create_dir_all(scratch.join("my-crate")).unwrap();
+        std::fs::write(scratch.join("my-crate/Cargo.toml"), "[package]\n").unwrap();
+        assert_eq!(
+            cargo_manifest_dir(&scratch).unwrap(),
+            scratch.join("my-crate")
+        );
+    }
+
+    /// The refusal has to survive being written into the diagnostics record,
+    /// whose `summary <text>` lines are split on newlines by the reader. A
+    /// multi-line explanation would corrupt the file every subsequent read parses.
+    #[test]
+    fn refusal_without_a_manifest_does_not_run_cargo_and_stays_one_line() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(tmp.path().join(".velocity")).unwrap();
+
+        let diag = run_cargo_check(tmp.path());
+        assert!(!diag.success, "a manifest-less folder cannot be a pass");
+        assert!(diag.summary.contains("no Cargo.toml"), "{}", diag.summary);
+        assert!(!diag.summary.contains('\n'), "multi-line: {}", diag.summary);
+
+        write_diagnostics(tmp.path(), &diag).unwrap();
+        let back = read_latest_diagnostics(tmp.path());
+        assert_eq!(back.summary, diag.summary);
+        assert!(!back.success);
     }
 
     #[test]

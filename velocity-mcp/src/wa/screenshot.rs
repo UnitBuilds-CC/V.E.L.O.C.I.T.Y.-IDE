@@ -174,6 +174,37 @@ pub fn image_format_for_path(path: &Path) -> &'static str {
     }
 }
 
+/// Read a previously saved capture back into [`Screenshot`] pixels.
+///
+/// The diff engine and `check_assertion` either side of this -- they take two
+/// images and say how far apart they are -- but until now nothing could turn a
+/// capture on disk back into something they accept, so a caller could take a
+/// picture but never ask a question about it. That is the difference between a
+/// screenshot that proves the encoder ran and one that proves the app changed.
+///
+/// Returns `None` for an unreadable or unsupported file rather than guessing at
+/// pixels, so a missing reference reads as "no comparison made" instead of a
+/// diff against nothing.
+pub fn load_captured_image(path: &Path) -> Option<Screenshot> {
+    let img = image::open(path).ok()?.to_rgba8();
+    // Read before `into_raw` consumes the image; without real dimensions every
+    // comparison against another image reports a size mismatch and proves nothing.
+    let (width, height) = (img.width(), img.height());
+    let captured_at_ms = std::fs::metadata(path)
+        .and_then(|m| m.modified())
+        .ok()
+        .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0);
+    Some(Screenshot {
+        pixels: img.into_raw(),
+        width,
+        height,
+        captured_at_ms,
+        source: path.display().to_string(),
+    })
+}
+
 // ─── Visual Diff Engine ──────────────────────────────────────────────────────
 
 /// Result of comparing two screenshots.
@@ -708,6 +739,39 @@ mod tests {
         let shot = parse_capture_result(&json);
         assert_eq!((shot.width, shot.height), (3, 2));
         assert_eq!(shot.pixels.len(), 3 * 2 * 4);
+    }
+
+    /// The reader that makes the diff engine reachable from disk: a capture has
+    /// to come back as the pixels that went into it, at the size it claims.
+    #[test]
+    fn a_saved_capture_reads_back_as_the_pixels_it_was_written_from() {
+        let dir = tempfile::tempdir().unwrap();
+        let made = make_test_screenshot(6, 4, [10, 20, 30, 255]);
+        for format in ["png", "bmp"] {
+            let path = dir.path().join(format!("capture.{format}"));
+            made.save_to(&path).unwrap();
+            let loaded = load_captured_image(&path).expect("read the capture back");
+            assert_eq!(
+                (loaded.width, loaded.height),
+                (6, 4),
+                "{format} lost its dimensions"
+            );
+            assert_eq!(loaded.pixel_count(), 24, "{format}");
+            let diff = compare_screenshots(&made, &loaded, &DiffConfig::default());
+            assert!(diff.matches, "{format}: {}% differ", diff.diff_percentage);
+            assert_eq!(diff.diff_pixel_count, 0, "{format}");
+        }
+    }
+
+    /// A reference that cannot be read is "no comparison made", not a diff
+    /// against a blank image -- which would blame the app for a missing file.
+    #[test]
+    fn an_unreadable_capture_is_refused_rather_than_compared_as_blank() {
+        let dir = tempfile::tempdir().unwrap();
+        assert!(load_captured_image(&dir.path().join("never_written.png")).is_none());
+        let junk = dir.path().join("junk.png");
+        std::fs::write(&junk, b"not a png at all").unwrap();
+        assert!(load_captured_image(&junk).is_none());
     }
 
     #[test]

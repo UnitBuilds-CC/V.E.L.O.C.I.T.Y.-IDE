@@ -588,6 +588,17 @@ pub fn get_system_tools() -> Vec<Tool> {
             }),
         },
         Tool {
+            name: "gui_submit_dialog".to_string(),
+            description: "Answer the path prompt currently on screen in the running IDE -- the Open File or Save As dialog -- with the path a person would have typed into its box, and press the button. Completes rather than cancels: Save As writes the active buffer to the given workspace-relative path and re-points the tab at it, Open File loads it. Refused when both prompts are up (ambiguous which the value belongs to) or when the path resolves outside the workspace -- the containment rule gui_open_file enforces, though a workspace-relative name is accepted here because it is what the prompt's own label asks for. A refusal leaves the prompt open to be corrected; gui_dismiss_overlays stands it down. Reports the resolved path and the state after. Requires the GUI to be running.".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "value": { "type": "string", "description": "Path relative to the workspace root, e.g. notes/todo.md. Absolute paths and anything resolving outside the workspace are refused." }
+                },
+                "required": ["value"]
+            }),
+        },
+        Tool {
             name: "gui_dismiss_overlays".to_string(),
             description: "Close every transient overlay in the running IDE at once -- command palette, quick open, go-to-line/symbol, references, the tab and workspace switchers, the keyboard cheat-sheet, full diff, find/replace, and the in-app open/save-as/close prompts. Nothing is accepted on the way out: dialogs are cancelled, the same as their Cancel buttons, so no file is written. Escape only reaches the overlay holding the frame, so this is the route back for a driver that has lost track. Reports what it closed and the state after. Requires the GUI to be running.".to_string(),
             input_schema: json!({
@@ -597,11 +608,12 @@ pub fn get_system_tools() -> Vec<Tool> {
         },
         Tool {
             name: "gui_screenshot".to_string(),
-            description: "Capture the running IDE's own window to an image file and report its path and size, so a claim about the UI can be checked against pixels rather than only against what the app says it drew. The path must stay inside the workspace; omit it to get a timestamped PNG under <workspace>/.velocity/screenshots/. Refused while the window is minimised, because a capture of an off-screen window shows whatever is behind it. Requires the GUI to be running.".to_string(),
+            description: "Capture the running IDE's own window to an image file and report its path and size, so a claim about the UI can be checked against pixels rather than only against what the app says it drew. The path must stay inside the workspace; omit it to get a timestamped PNG under <workspace>/.velocity/screenshots/. Pass 'against' with an earlier capture in the workspace to also get how much of the frame changed between them (diff_percentage, diff_pixel_count, diff_bounds, dimensions_match), which is what turns two pictures into evidence that something happened. Refused while the window is minimised, because a capture of an off-screen window shows whatever is behind it. Requires the GUI to be running.".to_string(),
             input_schema: json!({
                 "type": "object",
                 "properties": {
-                    "path": { "type": "string", "description": "Where to write, absolute or relative to the workspace. Extension must be one of .png .jpg .jpeg .gif .webp .bmp -- anything else is refused rather than quietly written as PNG." }
+                    "path": { "type": "string", "description": "Where to write, absolute or relative to the workspace. Extension must be one of .png .jpg .jpeg .gif .webp .bmp -- anything else is refused rather than quietly written as PNG." },
+                    "against": { "type": "string", "description": "Optional path to a previous capture inside the workspace, in the same form as 'path'. Compared pixel-by-pixel and reported as visual_diff. Refused if it cannot be read as an image, rather than answered with a silent no-change." }
                 },
             }),
         },
