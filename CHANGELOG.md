@@ -7,8 +7,68 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-> Versions v2.0.0 through v2.4.0 shipped as pre-release zips (`velocity-v2.4.0-win-x64.zip`).
-> Cargo crate versions remain at `1.0.0` until the next formal semver release.
+_Nothing recorded since [2.6.0]._
+
+## [2.6.0] - 2026-09-21
+
+First tagged release since `v2.5.0` (2026-09-13) - 33 commits on `main` since that tag. The
+dominant theme is an honesty pass over the tool surface, followed by a full-surface sweep of
+the interface, followed by CI, where three jobs turned out never to have run at all. What was
+measured for this release, on `f6fedb9`: 10,047 library tests and 31 E2E assertions passing,
+`cargo fmt --all -- --check` and `cargo clippy --workspace --all-targets -- -D warnings` clean,
+`cargo deny check` and `cargo audit` both exit 0, line coverage 71.33% against the 45% floor
+(this release is the first in which that floor has actually been applied), and a 287-pass /
+0-fail / 8-skip command sweep driven against a live IDE on a Windows runner. Green CI proves
+the workspace builds, tests and lints; it does not prove a live agent conversation against a
+real provider key, which no job exercises.
+
+### Added
+- **Driver-pressable dialogs, and pixels that can be measured**: `gui_submit_dialog` answers the Open File / Save As prompt actually on screen and `DismissOverlays` stands the whole transient stack down, so an external driver can *complete* a dialog instead of only cancelling one - cancel and Confirm are separate code paths and only one had ever been driven. `gui_screenshot` takes an optional `against` reference and returns a `visual_diff` (percentage, pixel counts, bounding box, dimension match), so a claim about the screen can be measured rather than asserted (`43f65b1`, `8ecd575`).
+- **`gui-sweep` CI job**: drives `sweep_gui.ps1 -AllowUnsafe` against a real instance on `windows-latest` and publishes the report as an artifact. The blocking step is the script's own AST parse; the live sweep reports rather than fails, because a runner that cannot launch a window must not break an unrelated build, and the criterion for promoting it to blocking is written into the job (`8ecd575`).
+- **Every panel, tab and command drivable over the bridge**: 63 commands (37 navigation, 16 modify, 10 execute) across 8 activity rails, 34 sub-tabs, 52 dock panels, 52 tabs cycled and 63 palette entries. The Orchestrator can also author manual tasks rather than only execute prepared ones (`6a475ef`).
+- **`index_workspace` MCP tool** builds the site map for any workspace, and a `--workspace` flag sets the server's workspace root explicitly instead of inheriting the current directory (`a2ba737`, `112b953`).
+- **Audit-log wiring and runtime custom tool registration**: tool calls are recorded with their outcome, and tools registered after startup participate in dispatch (`57c7a5b`).
+- **Modules inherited from the standalone upstream V.E.L.O.C.I.T.Y.-MCP** were ported into the embedded server, which is only isolated modules rather than the whole upstream (`5257200`).
+
+### Changed
+- `run_command` drives PowerShell rather than `cmd.exe` on Windows, so quoting matches the shell callers actually mean (`7fb2805`).
+- The IDE starts on a configured provider instead of an unconfigured default, and panels the user asks for now appear (`6923340`).
+- Local cargo calls resolve a manifest inside the workspace or refuse with the reason; the bridge reply window is one named 20 s constant that both clients outlast; the sweep is required to prove itself on pixels (`8ecd575`).
+- The workspace's own rustfmt configuration applied to the crates that had never been formatted (`5d530dc`), and the remaining clippy lints in the `wa`, workflow and system-test modules cleared (`19365a4`).
+- The MCP sweep report canvas re-derived from the event stores rather than from what was remembered about the run (`46e6253`).
+
+### Fixed
+- **Tools that reported work they had not done (bugs #1-#54)**: a full MCP feature sweep, then the browser surface. Generated PowerShell now actually runs (`7adfd70`); the virtual-desktop, screenshot, process and tiling tools stopped inventing answers (`0ff134c`, `5553848`); native browser tools report what actually happened (`4b4001a`) and a persisted session resolves labels and URLs honestly (`eceb833`); failures are honest and errors readable (`70172cf`).
+- **A capture filter could be substituted rather than honoured**: window capture either applies the requested filter or refuses it, instead of quietly returning a different window (`80b2ac4`).
+- **The MCP drone client did not speak the drone's protocol** (`af4ddea`), **team import was brittle and sidecars unbounded** (`5ca7b55`), and **tool-call events left their outcome unresolved** (`d44a2a5`).
+- **`gui_quit` did not close the IDE** (`b503db6`), and **the footer status bar could overprint its own right-hand group** - the right group is now clamped to the space after the left pills and long status messages truncate with an ellipsis (`faed1f2`).
+- **The wiki HTML graph export panicked on non-ASCII page titles** (`1aca334`), and **a Windows-automation test gambled on a fixed sleep after killing a child** instead of waiting for the pid to disappear (`7d7e7fc`).
+- **Three CI jobs were failing because of the compiler, not their subject**: `env.RUSTC_WRAPPER: sccache` was set at workflow level, so every job ran rustc through a binary only three of them install. `cargo deny` reported `failed to fetch crates`, the quarantine job a `cargo metadata` failure, and the Windows GUI sweep a build failure - all of it `could not execute process sccache ... rustc -vV`, so the sweep had never actually swept in CI. The wrapper is now opted into per job, next to each job's `Install sccache` step (`5dfa47b`).
+- **The coverage job never started**: it referenced `zgosalvez/github-actions-report-code-coverage-change@v2`, which no longer resolves (`repository not found`), and GitHub fails a job at *Set up job* for that - so the threshold, the lcov artifact and Codecov had not run in any push. The dead action is gone and the summary `cargo llvm-cov` prints is written to the run page instead, behind `set -o pipefail` so a threshold miss cannot hide behind the pipe's exit status (`5dfa47b`).
+- **The dependency policy had never actually been read**: given a working rustc, `cargo deny` reported findings that were all real - eight sibling-crate path dependencies carrying no version requirement, which reads as a wildcard under `[bans] wildcards = "deny"`, plus `Apache-2.0 WITH LLVM-exception` (cranelift, via wasmer) and `0BSD` (enum-iterator, via wasmer-compiler) absent from `[licenses] allow`; an SPDX compound id does not match the bare `Apache-2.0` entry. The wildcards are now versioned and both licenses are allowed with the reasoning beside them (`8d12e2e`).
+- **The quarantine job read its own documentation as data**: `.config/flaky-quarantine.toml` has no active entries but shows a commented-out `filter = "..."` format example, and the step grepped for `filter = ` without skipping comments - so it asked nextest to run a test that does not exist and took exit 4 as a failure. Comments are excluded, the trailing `|` is stripped, and `--no-tests pass` keeps a stale entry stale rather than red (`8d12e2e`).
+- **Every E2E test failed under coverage, over a path**: `workspace_binary` resolved sibling binaries as `<workspace>/target/debug/<name>`, but `cargo llvm-cov` builds into `target/llvm-cov-target`, so all nine `mcp_stdio` tests died with `failed to spawn velocity_mcp` and the threshold was never computed. It now derives the profile directory from `current_exe()`, which holds for a relocated target dir and for `--release` alike (`8d12e2e`).
+- **The non-Windows target was made real rather than assumed**: off Windows the telemetry IPC was a single 100 us sleep with no-ops for `signal_*`, so the client read the reply slot before the server wrote it and reported `HMAC verification failed` - an authentication error standing in for a missing handshake. The state word is now polled within a bounded budget (`7adac14`).
+- **Five tests asserted Windows path syntax as though it were universal** - `..\..\x` is one ordinary file name on Unix, so a traversal-rejection test passed there by never attempting a traversal - and **six modules carried dead imports inside `cfg(not(windows))` arms a Windows clippy never compiles**, so `--target x86_64-unknown-linux-gnu` failed while the local check said clean (`7adac14`, `a1feefa`).
+- **`Build`/`Run` could compile a project you never opened**: cargo finds a manifest by walking *up*, so a folder with no `Cargo.toml` of its own inside a Rust project meant one palette press compiled - and for `Run`, tried to launch - that unrelated project on every core for minutes, during which the bridge timed out and the IDE read as hung. A second `cargo check` whose result was discarded is also gone (`8ecd575`).
+- **A failing child put a modal on the user's desktop**: a process that could not initialise raised the `0xc0000142` error box and waited for a click. Both `main()`s now set `SEM_FAILCRITICALERRORS` before the first spawn - deliberately not `SEM_NOGPFAULTERRORBOX`, which would hide the IDE's own crashes (`8ecd575`).
+- **A slow frame was reported as a dead IDE**: the bridge answered inside a fixed 5 s while its own clients waited 10 and 20, so a busy-but-alive app returned `Timeout waiting for GUI response` (`8ecd575`).
+- **`RUSTSEC-2026-0173` is now ignored in both configs**: `cargo-audit` grades `proc-macro-error2` as a warning while `cargo-deny`'s `unmaintained = "all"` grades it an error, and the two files had drifted to cover that (`f6fedb9`).
+
+### Security
+- **rustls 0.23.42 accepted TLS 1.3 handshake messages across encryption-level boundaries** (RUSTSEC-2026-0285, CVSS 5.3) and this project depends on rustls directly for the browser's TLS stack. Bumped to 0.23.45 (`5dfa47b`). **The published `v2.5.0` artifacts contain the vulnerable version**; this release is the fix. The `memmap2` 0.6.2 unsoundness that still warns is reached only through `wasmer` 5.0.6 as a compile-time dependency; removing it for real means a wasmer 5 -> 7 upgrade.
+- **An absolute path was rewritten rather than refused**: `resolve_workspace_path` trimmed a leading `/` or `\` off every path argument, so on Linux `write_file("/tmp/x")` reported success after creating `<workspace>/tmp/x` - a call that did something other than what it was asked, with the containment check never firing. Absolute and drive-relative (`C:foo`) inputs are now refused up front, by name, on every platform (`a1feefa`).
+- **A dialog answer could write outside the workspace**: `Save As` accepted `..\name.rs` and wrote beside the repository instead of inside the opened workspace. Path prompts now go through the same containment check as every other write, refuse by naming why, and stay open so the value can be corrected (`43f65b1`).
+- **Desktop automation is default-deny**: session control requires an explicit opt-in, and clipboard writes and program launches are gated on session consent rather than on the caller asserting it (`70172cf`, `2f76623`).
+
+## Pre-release zip history (v2.0.0 - v2.5.0)
+
+> `v2.0.0` through `v2.5.0` shipped as pre-release zips without their own sections, so the
+> entries below are their aggregate log. Two omissions are noted rather than papered over:
+> entries describing work dated 2026-09-15 or later fall inside the [2.6.0] window and are
+> summarised there (that overlap is deliberate - this block keeps the full root-cause prose),
+> and Cargo crate versions stay at `1.0.0` while release tags carry the product version, so a
+> `Cargo.toml` version field is not evidence of which release a binary came from.
 
 ### Added
 - **Driver-pressable dialogs**: `gui_submit_dialog` answers the Open File / Save As prompt that is on screen, and `DismissOverlays` stands the whole transient stack down, so an external driver can *complete* a dialog instead of only cancelling one — cancel and Confirm are separate code paths and only one had ever been driven. `gui_screenshot` takes an optional `against` reference and returns a `visual_diff` (percentage, pixel counts, bounding box, dimension match), which is what lets a claim about the screen be measured rather than asserted.
@@ -24,7 +84,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Full sub-panel implementations**: 19 sub-panels with real data bindings — file tree with filter, bookmarks, favorites, code graph, git changes with staged/unstaged summary, branches, commits, chat with model selector and thinking toggle, multimodal attachments, build controls, agent roster, mission metrics, wiki, NDA documents, plugin registry, skills with search, usage dashboard
 - **Theme overhaul**: Modernized 5 color palettes (Midnight, Daylight, Operator, Mission, High Contrast) with HSL-based IdePalette system, green accent (#22C55E) for Midnight
 - **GUI extraction**: Created `velocity-ide-gui` crate as standalone GUI launcher, separating UI from MCP server backend
-- **Comprehensive test suite**: Expanded to 9,600+ tests across all crates
+- **Comprehensive test suite**: Expanded to 10,000+ tests across all crates
 - **Provider failover tests**: 38 contract tests for serde, routing, and persistence
 - **NDA compiler tests**: 29 new tests for tokenizer and JIT compiler
 - **Orchestrator tests**: 13 orchestrator + 8 decompose contract tests
@@ -102,7 +162,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Build
 - Release build optimized: `strip = true`, `lto = "thin"`, `opt-level = "s"`, `codegen-units = 16`, `panic = "abort"`
-- All 9,600+ tests passing (zero failures)
+- All 10,047 library tests plus 31 E2E assertions passing (zero failures)
 - CI now includes: fmt, clippy, test, build, audit, deny, coverage, SBOM generation
 
 ## [1.0.0] - 2026-08-18
@@ -143,6 +203,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Drone dual-mode architecture (local + remote)
 - Browser engine with NDA support
 
-[Unreleased]: https://github.com/UnitBuilds/Velocity-IDE/compare/v1.0.0...HEAD
-[1.0.0]: https://github.com/UnitBuilds/Velocity-IDE/compare/v0.1.0...v1.0.0
-[0.1.0]: https://github.com/UnitBuilds/Velocity-IDE/releases/tag/v0.1.0
+[Unreleased]: https://github.com/UnitBuilds-CC/V.E.L.O.C.I.T.Y.-IDE/compare/v2.6.0...HEAD
+[2.6.0]: https://github.com/UnitBuilds-CC/V.E.L.O.C.I.T.Y.-IDE/compare/v2.5.0...v2.6.0
+[1.0.0]: https://github.com/UnitBuilds-CC/V.E.L.O.C.I.T.Y.-IDE/compare/v0.1.0...v1.0.0
+[0.1.0]: https://github.com/UnitBuilds-CC/V.E.L.O.C.I.T.Y.-IDE/releases/tag/v0.1.0

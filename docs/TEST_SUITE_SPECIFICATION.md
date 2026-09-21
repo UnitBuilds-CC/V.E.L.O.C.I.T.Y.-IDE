@@ -7,6 +7,16 @@
 
 ---
 
+## Current Standing (2026-09-21, v2.6.0)
+
+Both original targets above have been exceeded, and the numbers below are measured rather
+than planned: `cargo test --workspace --lib` reports **10,047 passing library tests** with
+zero failures, `velocity-e2e` adds **31 assertions** (4 ignored), and CI's coverage job
+measures **71.33% line coverage** (75.80% functions, 70.78% branches) against the 45% gate in
+`.github/workflows/ci.yml`. The Windows GUI sweep contributes 287 passing command
+assertions against a live instance. The ~1,275-test and ~65% figures are left as written
+because they are the 2026-08-25 plan, not the current state.
+
 ## Executive Summary
 
 This specification defines the comprehensive test suite for the Velocity codebase (~313k LOC). The test suite follows a pyramid strategy: unit tests at the base, component and contract tests in the middle, and E2E/GUI regression tests at the top.

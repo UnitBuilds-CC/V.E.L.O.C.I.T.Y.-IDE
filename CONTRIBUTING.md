@@ -18,8 +18,8 @@ Be respectful, constructive, and inclusive. Treat all contributors with dignity 
 ### Build from Source
 
 ```bash
-git clone https://github.com/UnitBuilds/Velocity-IDE.git
-cd Velocity-IDE
+git clone https://github.com/UnitBuilds-CC/V.E.L.O.C.I.T.Y.-IDE.git
+cd V.E.L.O.C.I.T.Y.-IDE
 
 # Build all crates
 cargo build --workspace
@@ -44,7 +44,7 @@ just test
 
 ```bash
 git clone https://github.com/YOUR-USERNAME/Velocity-IDE.git
-cd Velocity-IDE
+cd V.E.L.O.C.I.T.Y.-IDE
 ```
 
 ### 2. Create a Branch
@@ -164,7 +164,7 @@ cargo test --workspace -- --nocapture
 
 ## Reporting Issues
 
-Use the [issue templates](https://github.com/UnitBuilds/Velocity-IDE/issues/new/choose) to report:
+Use the [issue templates](https://github.com/UnitBuilds-CC/V.E.L.O.C.I.T.Y.-IDE/issues/new/choose) to report:
 - Bug reports
 - Feature requests
 - Security vulnerabilities (see [SECURITY.md](./SECURITY.md))

@@ -16,8 +16,8 @@ A premium, high-performance developer workspace and autonomous agentic environme
 
 ```bash
 # Clone the repository
-git clone https://github.com/UnitBuilds/Velocity-IDE.git
-cd Velocity-IDE
+git clone https://github.com/UnitBuilds-CC/V.E.L.O.C.I.T.Y.-IDE.git
+cd V.E.L.O.C.I.T.Y.-IDE
 
 # Build all crates
 cargo build --release
@@ -32,7 +32,7 @@ cargo run --release --bin velocity_mcp -- --mode stdio
 ### Run Tests
 
 ```bash
-# Run all 9,600+ tests
+# Run the full suite (10,047 library tests, plus E2E and integration tests)
 cargo test --workspace
 
 # Run with coverage
@@ -175,8 +175,8 @@ See [Deployment Guide](docs/DEPLOYMENT.md) for full configuration options.
 
 ## Support
 
-- **GitHub Issues:** [Report bugs](https://github.com/UnitBuilds/Velocity-IDE/issues)
-- **GitHub Discussions:** [Ask questions](https://github.com/UnitBuilds/Velocity-IDE/discussions)
+- **GitHub Issues:** [Report bugs](https://github.com/UnitBuilds-CC/V.E.L.O.C.I.T.Y.-IDE/issues)
+- **GitHub Discussions:** [Ask questions](https://github.com/UnitBuilds-CC/V.E.L.O.C.I.T.Y.-IDE/discussions)
 - **Email:** support@velocity-ide.com
 
 ## License

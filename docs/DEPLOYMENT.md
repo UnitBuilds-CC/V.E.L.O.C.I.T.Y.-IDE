@@ -51,8 +51,8 @@ This guide covers deploying Velocity IDE in various environments.
 ### 1. Clone Repository
 
 ```bash
-git clone https://github.com/UnitBuilds/Velocity-IDE.git
-cd Velocity-IDE
+git clone https://github.com/UnitBuilds-CC/V.E.L.O.C.I.T.Y.-IDE.git
+cd V.E.L.O.C.I.T.Y.-IDE
 ```
 
 ### 2. Install Dependencies
@@ -170,6 +170,29 @@ docker-compose up -d
 ---
 
 ## Production Deployment
+
+### 0. Tagged release (CI-built, preferred)
+
+Pushing a `v*.*.*` tag runs `.github/workflows/release.yml`, which builds the release
+binaries for Linux (`x86_64-unknown-linux-gnu`), Windows (`x86_64-pc-windows-msvc`) and
+macOS (`aarch64-apple-darwin`), generates a CycloneDX SBOM, and publishes a GitHub Release
+whose assets are `velocity-linux.tar.gz`, `velocity-windows.zip` and `velocity-macos.tar.gz`.
+Each platform archive contains all four binaries:
+`velocity_ide`, `velocity_ide_gui`, `velocity_mcp`, `velocity-drone`. The SBOM is uploaded as
+a workflow artifact (90-day retention); on the `v2.5.0` release it did not reach the release
+asset list, so treat the workflow artifact as the copy of record until that is confirmed on
+a new tag.
+
+```bash
+git tag -a v2.6.0 -m "V.E.L.O.C.I.T.Y. v2.6.0"
+git push origin v2.6.0
+```
+
+Tag the commit only once CI is green on it: the workflow does not re-run the test gates, so a
+tag pushed onto a red commit publishes unverified artifacts. Release notes are auto-generated
+from the commit list; `CHANGELOG.md` is the authoritative description of what changed. Cargo
+crate versions stay at `1.0.0` by policy, so the tag is the only place the product version is
+recorded - do not read `Cargo.toml` to decide what a user has installed.
 
 ### 1. Release Build
 
@@ -433,5 +456,5 @@ rustup update stable
 ## Support
 
 - **Documentation:** [README.md](../README.md)
-- **Issues:** [GitHub Issues](https://github.com/UnitBuilds/Velocity-IDE/issues)
-- **Discussions:** [GitHub Discussions](https://github.com/UnitBuilds/Velocity-IDE/discussions)
+- **Issues:** [GitHub Issues](https://github.com/UnitBuilds-CC/V.E.L.O.C.I.T.Y.-IDE/issues)
+- **Discussions:** [GitHub Discussions](https://github.com/UnitBuilds-CC/V.E.L.O.C.I.T.Y.-IDE/discussions)

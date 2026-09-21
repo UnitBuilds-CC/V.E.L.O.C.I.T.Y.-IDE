@@ -143,8 +143,8 @@ A complete guide to using the V.E.L.O.C.I.T.Y. Cognitive IDE — a native, GPU-a
 
 #### Pre-built Binary (Windows)
 
-1. Download the latest release from [GitHub Releases](https://github.com/UnitBuilds-CC/V.E.L.O.C.I.T.Y.-IDE/releases)
-2. Extract `velocity-v2.4.0-win-x64.zip` to a folder of your choice
+1. Download `velocity-windows.zip` from the latest [GitHub Releases](https://github.com/UnitBuilds-CC/V.E.L.O.C.I.T.Y.-IDE/releases) page (it is the Windows asset of the release; Linux and macOS ship as `.tar.gz`)
+2. Extract it to a folder of your choice - the archive holds `velocity_ide.exe`, `velocity_ide_gui.exe`, `velocity_mcp.exe` and `velocity-drone.exe`
 3. Run `velocity_ide_gui.exe`
 
 #### Build from Source

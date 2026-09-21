@@ -19,7 +19,7 @@ We take security vulnerabilities seriously. Please follow these guidelines:
 
 ### DO
 
-- Email security concerns to the maintainers via [GitHub Security Advisories](https://github.com/UnitBuilds/Velocity-IDE/security/advisories/new)
+- Email security concerns to the maintainers via [GitHub Security Advisories](https://github.com/UnitBuilds-CC/V.E.L.O.C.I.T.Y.-IDE/security/advisories/new)
 - Provide a detailed description including:
   - Type of vulnerability (e.g., buffer overflow, path traversal, injection)
   - Steps to reproduce or proof-of-concept
@@ -84,4 +84,4 @@ The following are considered out-of-scope for security reporting:
 
 ## Contact
 
-For security concerns, use [GitHub Security Advisories](https://github.com/UnitBuilds/Velocity-IDE/security/advisories/new) or contact the maintainers directly.
+For security concerns, use [GitHub Security Advisories](https://github.com/UnitBuilds-CC/V.E.L.O.C.I.T.Y.-IDE/security/advisories/new) or contact the maintainers directly.
