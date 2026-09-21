@@ -9,8 +9,14 @@ on:
 env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: 1
-  RUSTC_WRAPPER: sccache
   CARGO_INCREMENTAL: 0
+  # RUSTC_WRAPPER is deliberately not set here. It used to be `sccache`, which
+  # put that binary in front of rustc in every job -- including the ones that
+  # never install it. There cargo could not even launch the compiler
+  # (`could not execute process `sccache .../rustc -vV` (never executed)`), and
+  # cargo-deny reported that as "failed to fetch crates", which reads like a
+  # dependency problem and is nothing of the kind. Jobs that install sccache
+  # opt in to the wrapper individually; the rest compile without a cache.
 
 jobs:
   # ─── Format Check ───────────────────────────────────────────────────────
@@ -29,6 +35,8 @@ jobs:
   clippy:
     name: Clippy
     runs-on: ubuntu-latest
+    env:
+      RUSTC_WRAPPER: sccache
     steps:
       - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
@@ -48,6 +56,8 @@ jobs:
   test:
     name: Tests (shard ${{ matrix.shard }}/${{ matrix.total }})
     runs-on: ubuntu-latest
+    env:
+      RUSTC_WRAPPER: sccache
     strategy:
       fail-fast: false
       matrix:
@@ -157,6 +167,8 @@ jobs:
   build-release:
     name: Release Build
     runs-on: ubuntu-latest
+    env:
+      RUSTC_WRAPPER: sccache
     needs: [fmt, clippy, test-summary]
     steps:
       - uses: actions/checkout@v5
@@ -221,18 +233,18 @@ jobs:
       - name: Generate coverage (lcov for Codecov)
         run: cargo llvm-cov --workspace --lcov --output-path lcov.info
       - name: Enforce workspace coverage threshold
-        run: cargo llvm-cov --workspace --fail-under-lines 45
+        # The text summary doubles as the record of what this job measured, so
+        # it goes to the run page as well as the log. `pipefail` because the
+        # default shell here is `bash -e` without it, and a threshold failure
+        # reaching the end of a pipe must not be swallowed by `tee`'s status.
+        run: |
+          set -o pipefail
+          cargo llvm-cov --workspace --summary-only --fail-under-lines 45 | tee -a "$GITHUB_STEP_SUMMARY"
       - name: Upload coverage
         uses: codecov/codecov-action@v6
         with:
           files: lcov.info
           fail_ci_if_error: false
-      - name: Coverage trend comment (PR)
-        if: github.event_name == 'pull_request'
-        uses: zgosalvez/github-actions-report-code-coverage-change@v2
-        with:
-          coverage-files: lcov.info
-          artifact-name: code-coverage-report
 
   # ─── Benchmark Regression Detection ─────────────────────────────────────
   bench:
