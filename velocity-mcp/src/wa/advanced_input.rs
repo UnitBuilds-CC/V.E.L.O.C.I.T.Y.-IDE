@@ -443,11 +443,11 @@ pub fn execute_sequence(sequence: &InputSequence) -> InputExecutionResult {
     }
     #[cfg(not(target_os = "windows"))]
     {
-        return InputExecutionResult {
+        InputExecutionResult {
             success: false,
             events_sent: 0,
             detail: "Input execution requires Windows runtime".to_string(),
-        };
+        }
     }
 }
 

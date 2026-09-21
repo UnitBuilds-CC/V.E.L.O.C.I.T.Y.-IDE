@@ -3247,10 +3247,14 @@ mod tests {
             // refusal is "this platform cannot do it at all", which arrives before
             // consent is ever consulted. What has to hold everywhere is that the
             // caller gets a refusal carrying a reason - never a stub, and never an
-            // unexplained "no" that leaves the operator guessing which switch to flip.
+            // unexplained "no" that leaves the operator guessing which switch to
+            // flip. The reason is checked as a subject, not as a sentence: the
+            // helpers phrase it several ways ("Tray interaction requires Windows",
+            // "Virtual desktop operations require Windows 10/11"), and pinning one
+            // spelling would test the wording rather than the refusal.
+            let lower = out.to_lowercase();
             assert!(
-                out.contains("requires Windows")
-                    || out.contains(crate::wa::session_guard::ALLOW_ENV),
+                lower.contains("windows") || out.contains(crate::wa::session_guard::ALLOW_ENV),
                 "{tool} refused without saying why: {out}"
             );
         }

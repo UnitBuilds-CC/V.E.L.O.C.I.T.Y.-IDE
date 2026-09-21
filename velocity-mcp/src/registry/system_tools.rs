@@ -98,8 +98,30 @@ pub fn resolve_workspace_path(
     rel_path: &str,
     allow_create: bool,
 ) -> Result<PathBuf, Box<dyn Error>> {
-    let clean_rel = rel_path.trim_start_matches('/').trim_start_matches('\\');
-    let target = root.join(clean_rel);
+    // The parameter is contracted as workspace-relative and the schemas say so
+    // outright ("Absolute paths and anything resolving outside the workspace are
+    // refused"). The old code trimmed a leading separator instead, which quietly
+    // rewrote an absolute path into a relative one: on Unix `/tmp/x` became
+    // `<root>/tmp/x`, so a caller asking for one file was told "ok" about a
+    // different one. Refusing is also the only way the check means anything off
+    // Windows -- `join` substitutes the root for anything absolute, which is why
+    // the Windows side looked covered: it was caught downstream by the
+    // containment test, not here, and reported as an escape rather than the
+    // malformed input it is. The Component check covers what `is_absolute` calls
+    // relative on Windows: a drive-relative `C:foo` and a UNC root.
+    let given = Path::new(rel_path);
+    if given.is_absolute()
+        || matches!(
+            given.components().next(),
+            Some(std::path::Component::Prefix(_))
+        )
+    {
+        return Err(format!(
+            "Access Denied: {rel_path} is absolute; this tool takes a path relative to the workspace root"
+        )
+        .into());
+    }
+    let target = root.join(given);
 
     if allow_create {
         if let Some(parent) = target.parent() {

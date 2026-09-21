@@ -106,14 +106,13 @@ fn list_dir_rejects_parent_traversal() {
     assert!(result.is_err(), "should reject listing parent directory");
 }
 
-/// Absolute paths should be rejected (all paths must be relative to workspace).
+/// Absolute paths are rejected: every path here is relative to the workspace.
 ///
-/// Built from the temp dir rather than written as a literal `C:/Windows/...`:
-/// on Unix that string carries no drive meaning, so it is an ordinary relative
-/// component and the tool is right to accept it — the assertion fails while the
-/// genuinely absolute form goes untested. A path taken from `temp` is absolute
-/// on every platform, sits outside the workspace, and is writable, so a
-/// containment miss would really put a file there.
+/// The probe is built from the temp dir rather than written as a literal
+/// `C:/Windows/...`: that string carries no drive meaning on Unix, so it only
+/// tests the refusal on one of the two platforms this runs on. A path taken from
+/// `temp` is absolute everywhere, sits outside the workspace and is writable, so
+/// a containment miss would really put a file there.
 #[test]
 fn write_file_rejects_absolute_paths() {
     let (temp, root) = setup_root();
@@ -130,6 +129,53 @@ fn write_file_rejects_absolute_paths() {
 
     assert!(result.is_err(), "should reject absolute paths");
     assert!(!outside.exists(), "nothing written outside the workspace");
+}
+
+/// The rejection has to be a rejection rather than a rewrite.
+///
+/// `resolve_workspace_path` used to trim a leading separator off the supplied
+/// path, which silently relocated it: on Unix `/tmp/x` became `<root>/tmp/x`, so
+/// the call succeeded and wrote somewhere other than the path that was asked
+/// for. That is worse than an escape on the CI target, because it is invisible -
+/// the tool reports success and the containment check never fires.
+#[test]
+fn absolute_paths_are_refused_rather_than_re_rooted() {
+    let (temp, root) = setup_root();
+    let asked_for = temp.path().join("rewrite.txt");
+
+    let result = call_tool_in_workspace(
+        &root,
+        "write_file",
+        &json!({"relativeFilePath": asked_for.to_string_lossy(), "content": "x"}),
+    );
+    let err = result
+        .expect_err("an absolute path must come back as an error")
+        .to_string();
+    assert!(
+        err.contains("absolute"),
+        "refusal should name what was wrong, not just deny access: {err}"
+    );
+
+    // The old behaviour's tell: the same string, stripped to its innards, under
+    // the workspace root. If the resolver ever re-roots again, this file appears.
+    let stripped = asked_for.to_string_lossy().replace(['/', '\\'], "/");
+    let re_rooted = root.join(stripped.trim_start_matches('/'));
+    assert!(
+        !re_rooted.exists(),
+        "wrote {re_rooted:?} instead of refusing"
+    );
+
+    // Drive-relative forms are not absolute but are equally not workspace
+    // relative: `C:foo` resolves against the current directory on that drive.
+    #[cfg(windows)]
+    {
+        let drive_relative = call_tool_in_workspace(
+            &root,
+            "write_file",
+            &json!({"relativeFilePath": "Z:escape.txt", "content": "x"}),
+        );
+        assert!(drive_relative.is_err(), "drive-relative paths are refused");
+    }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
