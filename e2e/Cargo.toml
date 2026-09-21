@@ -13,9 +13,11 @@ serde_json = "1"
 tempfile = "3"
 
 # These deps ensure the binaries are built before E2E tests run.
-velocity-ide = { path = "../velocity-ide" }
-velocity-browser = { path = "../velocity-browser" }
-velocity_mcp = { path = "../velocity-mcp" }
+# The versions are explicit because a bare path dependency carries no
+# requirement at all, which `cargo deny` reports as a wildcard (`*`).
+velocity-ide = { path = "../velocity-ide", version = "1.0.0" }
+velocity-browser = { path = "../velocity-browser", version = "1.0.0" }
+velocity_mcp = { path = "../velocity-mcp", version = "1.0.0" }
 
 [lints]
 workspace = true

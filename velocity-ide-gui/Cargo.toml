@@ -11,8 +11,10 @@ name = "velocity_ide_gui"
 path = "src/main.rs"
 
 [dependencies]
-velocity_mcp = { path = "../velocity-mcp" }
-velocity-ide = { path = "../velocity-ide" }
+# Sibling crates: the version is spelled out because a bare path dependency
+# carries no requirement at all, which `cargo deny` reports as a wildcard (`*`).
+velocity_mcp = { path = "../velocity-mcp", version = "1.0.0" }
+velocity-ide = { path = "../velocity-ide", version = "1.0.0" }
 eframe = "0.35.0"
 egui = "0.35.0"
 egui_dock = "0.20"

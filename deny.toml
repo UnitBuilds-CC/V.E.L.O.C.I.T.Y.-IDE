@@ -18,6 +18,13 @@ unmaintained = "all"
 #   RUSTSEC-2026-0192 (ttf-parser): Linux-only deep transitive from winit.
 #   RUSTSEC-2024-0320 (yaml-rust): syntect 5.3.0 dep, unmaintained but stable.
 #   RUSTSEC-2026-0221 (event-listener): Unix-only deep transitive from zbus.
+#   RUSTSEC-2026-0173 (proc-macro-error2 2.0.1): reached only through
+#     wasmer-derive 5.0.6, a proc macro. It runs at compile time and is not
+#     linked into any shipped binary, so "unmaintained" carries no runtime
+#     exposure here. rustc already warns that the crate's code will be rejected
+#     by a future version of Rust, so the real removal is a wasmer 5 -> 7
+#     upgrade, which changes the WASM runtime surface and needs its own
+#     validation pass.
 ignore = [
     "RUSTSEC-2024-0437",
     "RUSTSEC-2026-0194",
@@ -27,13 +34,24 @@ ignore = [
     "RUSTSEC-2026-0192",
     "RUSTSEC-2024-0320",
     "RUSTSEC-2026-0221",
+    "RUSTSEC-2026-0173",
 ]
 
 [licenses]
 allow = [
     "MIT",
     "Apache-2.0",
+    # The LLVM exception is part of the SPDX id, so `Apache-2.0` above does not
+    # match it: cranelift (via wasmer) declares "Apache-2.0 WITH LLVM-exception",
+    # which grants an extra right to reuse the compiler's *output* without the
+    # Apache patent clause. Approved license for this project; deny rejects it
+    # only because the compound string was never listed.
+    "Apache-2.0 WITH LLVM-exception",
     "BSD-2-Clause",
+    # Zero-clause BSD: public-domain-equivalent, with no attribution condition
+    # at all (BSD-2-Clause above, which is allowed, has one). enum-iterator 0.7
+    # via wasmer-compiler declares it.
+    "0BSD",
     "BSD-3-Clause",
     "ISC",
     "Zlib",

@@ -34,8 +34,10 @@ env_logger = "0.11"
 tree-sitter = "0.20"
 libloading = "0.8"
 ctrlc = "3.4"
-velocity-ide = { path = "../velocity-ide" }
-velocity-browser = { path = "../velocity-browser" }
+# Sibling crates: the version is spelled out because a bare path dependency
+# carries no requirement at all, which `cargo deny` reports as a wildcard (`*`).
+velocity-ide = { path = "../velocity-ide", version = "1.0.0" }
+velocity-browser = { path = "../velocity-browser", version = "1.0.0" }
 thiserror = "2"
 dirs = "5"
 notify = "8"

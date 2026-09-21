@@ -103,7 +103,7 @@ impl Drop for McpStdioClient {
     }
 }
 
-/// Find the path to a workspace binary (built in debug mode).
+/// Find the path to a workspace binary (built in the same profile as this test).
 pub fn workspace_binary(name: &str) -> String {
     // When running via `cargo test`, CARGO_BIN_EXE_<name> is set
     // for workspace binaries. Fall back to a relative path.
@@ -111,6 +111,28 @@ pub fn workspace_binary(name: &str) -> String {
     if let Ok(path) = std::env::var(&env_var) {
         return path;
     }
+    let exe = if cfg!(windows) {
+        format!("{}.exe", name)
+    } else {
+        name.to_string()
+    };
+
+    // Ask the OS where this test executable is running from and walk up out of
+    // `deps/`: <target>/<profile>/deps/<test>-<hash> -> <target>/<profile>,
+    // which is where cargo placed the sibling binaries. Hardcoding
+    // `target/debug` instead broke any run whose target dir was relocated --
+    // `cargo llvm-cov` builds into `target/llvm-cov-target`, so under the
+    // coverage job every test in the suite failed to spawn its server.
+    if let Some(profile_dir) = std::env::current_exe().ok().and_then(|this| {
+        this.parent()
+            .and_then(|deps| deps.parent().map(|p| p.to_path_buf()))
+    }) {
+        let candidate = profile_dir.join(&exe);
+        if candidate.exists() {
+            return candidate.to_string_lossy().to_string();
+        }
+    }
+
     // Fallback: look relative to the workspace target dir
     let manifest_dir = env!("CARGO_MANIFEST_DIR");
     let target_dir = std::path::Path::new(manifest_dir)
@@ -118,10 +140,5 @@ pub fn workspace_binary(name: &str) -> String {
         .unwrap()
         .join("target")
         .join("debug");
-    let exe = if cfg!(windows) {
-        format!("{}.exe", name)
-    } else {
-        name.to_string()
-    };
     target_dir.join(exe).to_string_lossy().to_string()
 }

@@ -122,11 +122,20 @@ jobs:
           sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.1-dev libudev-dev
       - name: Run quarantined tests (if any)
         run: |
-          # Read filter expressions from quarantine list and run them
-          # If no quarantined tests, this is a no-op
-          QUARANTINE_FILTERS=$(grep 'filter = ' .config/flaky-quarantine.toml | sed 's/.*filter = "\(.*\)"/\1/' | tr '\n' '|' || true)
+          # Read filter expressions from the quarantine list and run them.
+          # The leading-# filter matters: the file documents its format with a
+          # commented-out `filter = "..."` example, and `grep` alone matched it.
+          # This job then ran a filter for a test that does not exist, which
+          # nextest reports as `error: no tests to run` (advisory exit code 4),
+          # so an empty quarantine list read as a failed job instead of the
+          # no-op its comment claims it is.
+          QUARANTINE_FILTERS=$(grep -v '^[[:space:]]*#' .config/flaky-quarantine.toml | grep 'filter = ' | sed 's/.*filter = "\(.*\)"/\1/' | tr '\n' '|' || true)
+          QUARANTINE_FILTERS="${QUARANTINE_FILTERS%|}"
           if [ -n "$QUARANTINE_FILTERS" ]; then
-            cargo nextest run --workspace --profile ci -E "test($QUARANTINE_FILTERS)"
+            # --no-tests pass: an entry whose test has since been renamed is
+            # stale bookkeeping, not a broken build (nextest's default is `fail`,
+            # which is the exit code 4 this job used to report).
+            cargo nextest run --workspace --profile ci --no-tests pass -E "test($QUARANTINE_FILTERS)"
           else
             echo "No quarantined tests to run."
           fi
