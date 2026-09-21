@@ -3203,10 +3203,21 @@ mod tests {
                 serde_json::json!(false),
                 "dismissing someone else's toasts is opt-in: {out}"
             );
-            assert!(
-                out.contains(crate::wa::session_guard::ALLOW_ENV),
-                "the refusal must name the switch: {out}"
-            );
+            if cfg!(windows) {
+                assert!(
+                    out.contains(crate::wa::session_guard::ALLOW_ENV),
+                    "the refusal must name the switch: {out}"
+                );
+            } else {
+                // The dismissal is a PowerShell UIAutomation pass, so off Windows
+                // the honest refusal is "this platform cannot do it", which is
+                // reached before consent is ever asked. What must not happen on
+                // either platform is a stub or a success nobody earned.
+                assert!(
+                    out.contains("requires Windows"),
+                    "unexpected refusal: {out}"
+                );
+            }
         }
     }
 
@@ -3226,10 +3237,23 @@ mod tests {
             .unwrap_or_else(|err| panic!("{tool} must refuse with a result, not error: {err}"))
             .unwrap_or_else(|| panic!("{tool} must produce output"));
         assert!(out.contains("\"success\":false"), "{tool} -> {out}");
-        assert!(
-            out.contains(crate::wa::session_guard::ALLOW_ENV),
-            "{tool} refused without naming the switch: {out}"
-        );
+        if cfg!(windows) {
+            assert!(
+                out.contains(crate::wa::session_guard::ALLOW_ENV),
+                "{tool} refused without naming the switch: {out}"
+            );
+        } else {
+            // These tools drive the interactive Windows session, so off Windows the
+            // refusal is "this platform cannot do it at all", which arrives before
+            // consent is ever consulted. What has to hold everywhere is that the
+            // caller gets a refusal carrying a reason - never a stub, and never an
+            // unexplained "no" that leaves the operator guessing which switch to flip.
+            assert!(
+                out.contains("requires Windows")
+                    || out.contains(crate::wa::session_guard::ALLOW_ENV),
+                "{tool} refused without saying why: {out}"
+            );
+        }
     }
 
     #[test]

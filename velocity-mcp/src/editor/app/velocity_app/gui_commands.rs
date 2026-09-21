@@ -1435,7 +1435,15 @@ mod tests {
             .join("velocity-escape-was-here.png");
         for raw in [
             "../outside.png".to_string(),
-            ".\\..\\outside.png".to_string(),
+            // Built from the running platform's separator. `\.\..\outside.png`
+            // is a single ordinary file name on Unix, where `\` does not separate
+            // directories, so there the resolver is right to accept it and the
+            // case worth catching is the one that really traverses.
+            format!(
+                ".{}..{}outside.png",
+                std::path::MAIN_SEPARATOR,
+                std::path::MAIN_SEPARATOR
+            ),
             neighbour.display().to_string(),
         ] {
             let err = resolve_screenshot_path(&raw, ws.path(), 1).unwrap_err();
@@ -2021,7 +2029,7 @@ mod tests {
         let before = app.status_message.clone();
         let r = app.execute_gui_command(
             GuiCommand::Screenshot {
-                path: "..\\elsewhere.png".to_string(),
+                path: format!("..{}elsewhere.png", std::path::MAIN_SEPARATOR),
                 against: None,
             },
             &ctx,

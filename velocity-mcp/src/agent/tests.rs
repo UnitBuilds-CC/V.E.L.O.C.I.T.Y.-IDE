@@ -150,10 +150,15 @@ fn writes_plaintext_sitemap_nda() {
         String::from_utf8(crate::agent::crypto::open(tmp.path(), b"sitemap", &raw)).unwrap();
     assert!(sitemap.starts_with("sitemap version 2\n"));
     assert!(sitemap.contains("entry_count 4\n"));
+    // The escaper doubles a backslash and has no reason to touch `/`, so the
+    // separator inside these records is whichever one the platform produced.
+    // Writing the Windows form as a literal asserts nothing on Unix, where the
+    // same tree is recorded as `src/nested`; deriving it keeps both honest.
+    let sep = encode_nda_text(std::path::MAIN_SEPARATOR_STR);
     assert!(sitemap.contains("\tdir\tsrc\t-"));
-    assert!(sitemap.contains("\tdir\tsrc\\\\nested\t-"));
-    assert!(sitemap.contains("\tfile\tsrc\\\\main.rs\t"));
-    assert!(sitemap.contains("\tfile\tsrc\\\\nested\\\\lib.rs\t"));
+    assert!(sitemap.contains(&format!("\tdir\tsrc{sep}nested\t-")));
+    assert!(sitemap.contains(&format!("\tfile\tsrc{sep}main.rs\t")));
+    assert!(sitemap.contains(&format!("\tfile\tsrc{sep}nested{sep}lib.rs\t")));
     assert!(!sitemap.contains("V.E.L.O.C.I.T.Y. Codebase Sitemap Registry"));
     assert!(!sitemap.contains("ignored.txt"));
 }

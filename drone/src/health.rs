@@ -76,7 +76,7 @@ fn boot_instant() -> Instant {
 fn current_memory_bytes() -> u64 {
     #[cfg(target_os = "linux")]
     {
-        return linux_rss_bytes();
+        linux_rss_bytes()
     }
 
     #[cfg(target_os = "windows")]
@@ -99,9 +99,9 @@ fn linux_rss_bytes() -> u64 {
     };
     for line in status.lines() {
         if let Some(rest) = line.strip_prefix("VmRSS:") {
-            // Value is in kB.
+            // Value is in kB. `split_whitespace` already skips the leading space
+            // after `VmRSS:`, so a `trim` in front of it is doing nothing.
             let kb = rest
-                .trim()
                 .split_whitespace()
                 .next()
                 .and_then(|n| n.parse::<u64>().ok())

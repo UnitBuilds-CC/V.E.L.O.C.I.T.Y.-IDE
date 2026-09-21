@@ -4,7 +4,6 @@
 //! system management and automation.
 
 use serde::{Deserialize, Serialize};
-use std::time::{SystemTime, UNIX_EPOCH};
 
 // ── Screen Capture ──
 
@@ -179,6 +178,10 @@ pub fn create_network_monitor() -> Box<dyn NetworkMonitor> {
 #[cfg(target_os = "windows")]
 mod windows_impl {
     use super::*;
+    // Inside the module rather than at file scope: nothing outside it stamps a
+    // timestamp, so a file-level import reads as dead code on every non-Windows
+    // target, where this whole module is cfg'd away.
+    use std::time::{SystemTime, UNIX_EPOCH};
 
     // ── Windows Screen Capture ──
 

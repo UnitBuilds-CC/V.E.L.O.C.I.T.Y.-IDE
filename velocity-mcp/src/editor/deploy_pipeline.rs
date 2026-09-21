@@ -644,7 +644,6 @@ fn detect_artifacts(stage: PipelineStage, workspace_root: &Path) -> Vec<String> 
 mod tests {
     use super::*;
     use std::path::PathBuf;
-    use std::time::Duration;
 
     #[test]
     fn pipeline_config_defaults() {
@@ -768,6 +767,10 @@ mod tests {
     #[cfg(windows)]
     #[test]
     fn run_command_args_times_out_hung_process() {
+        // Imported here, not at the top of the test module: this is the only test
+        // that names a timeout, and it exists only on Windows, so a module-level
+        // import is unused on every other target.
+        use std::time::Duration;
         let temp = tempfile::tempdir().unwrap();
         // `ping -n 30` runs ~30s; a 100ms budget must trip the timeout guard.
         let err = run_command_args_with_timeout(

@@ -107,21 +107,29 @@ fn list_dir_rejects_parent_traversal() {
 }
 
 /// Absolute paths should be rejected (all paths must be relative to workspace).
+///
+/// Built from the temp dir rather than written as a literal `C:/Windows/...`:
+/// on Unix that string carries no drive meaning, so it is an ordinary relative
+/// component and the tool is right to accept it — the assertion fails while the
+/// genuinely absolute form goes untested. A path taken from `temp` is absolute
+/// on every platform, sits outside the workspace, and is writable, so a
+/// containment miss would really put a file there.
 #[test]
 fn write_file_rejects_absolute_paths() {
-    let (_temp, root) = setup_root();
+    let (temp, root) = setup_root();
+    let outside = temp.path().join("sam.txt");
 
     let result = call_tool_in_workspace(
         &root,
         "write_file",
         &json!({
-            "relativeFilePath": "C:/Windows/System32/config/sam",
+            "relativeFilePath": outside.to_string_lossy(),
             "content": "malicious"
         }),
     );
 
     assert!(result.is_err(), "should reject absolute paths");
-    assert!(!std::path::Path::new("C:/Windows/System32/config/sam").exists());
+    assert!(!outside.exists(), "nothing written outside the workspace");
 }
 
 // ═══════════════════════════════════════════════════════════════════════════

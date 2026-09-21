@@ -304,6 +304,7 @@ impl ProcessManager {
         }
         #[cfg(not(target_os = "windows"))]
         {
+            let _ = config;
             LaunchResult {
                 success: false,
                 pid: None,
@@ -322,6 +323,7 @@ impl ProcessManager {
         }
         #[cfg(not(target_os = "windows"))]
         {
+            let _ = (pid, grace_timeout);
             false
         }
     }
@@ -334,6 +336,7 @@ impl ProcessManager {
         }
         #[cfg(not(target_os = "windows"))]
         {
+            let _ = pid;
             false
         }
     }
@@ -348,6 +351,7 @@ impl ProcessManager {
         }
         #[cfg(not(target_os = "windows"))]
         {
+            let _ = (pid, condition, timeout, start);
             WaitResult {
                 condition_met: false,
                 elapsed: Duration::ZERO,

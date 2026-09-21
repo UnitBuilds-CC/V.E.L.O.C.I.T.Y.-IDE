@@ -152,6 +152,7 @@ impl ClipboardManager {
         }
         #[cfg(not(target_os = "windows"))]
         {
+            let _ = text;
             ClipboardOpResult {
                 success: false,
                 operation: "write_text".into(),
@@ -175,7 +176,7 @@ impl ClipboardManager {
         }
         #[cfg(not(target_os = "windows"))]
         {
-            let _ = plain_fallback;
+            let _ = (html, plain_fallback);
             ClipboardOpResult {
                 success: false,
                 operation: "write_html".into(),
@@ -199,6 +200,7 @@ impl ClipboardManager {
         }
         #[cfg(not(target_os = "windows"))]
         {
+            let _ = paths;
             ClipboardOpResult {
                 success: false,
                 operation: "write_files".into(),

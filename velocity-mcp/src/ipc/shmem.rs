@@ -77,6 +77,29 @@ pub struct SharedMemoryBuffer {
     mmap: MmapMut,
 }
 
+/// How long [`SharedMemoryBuffer::wait_for_request`] watches for a request
+/// before handing control back to `listen`, which re-checks and loops.
+#[cfg(not(target_os = "windows"))]
+const REQUEST_WAIT_BUDGET: std::time::Duration = std::time::Duration::from_millis(50);
+
+/// How long a client waits for the server to move off the request side. The
+/// handler does real work between those two states, so this has to outlast a
+/// slow one rather than assume a fixed slice of time has passed.
+#[cfg(not(target_os = "windows"))]
+const RESPONSE_WAIT_BUDGET: std::time::Duration = std::time::Duration::from_millis(2_000);
+
+/// Poll `pending` until it goes false or the budget runs out. The Windows build
+/// blocks on named events instead; both mappings of one file back onto the same
+/// pages, so the state word is already the source of truth here and all that was
+/// missing is a reader that waits for it rather than sleeping and hoping.
+#[cfg(not(target_os = "windows"))]
+fn poll_while(budget: std::time::Duration, mut pending: impl FnMut() -> bool) {
+    let deadline = std::time::Instant::now() + budget;
+    while pending() && std::time::Instant::now() < deadline {
+        std::thread::sleep(std::time::Duration::from_micros(500));
+    }
+}
+
 impl SharedMemoryBuffer {
     #[cfg(target_os = "windows")]
     pub fn create_or_open<P: AsRef<Path>>(path: P) -> Result<Self, Box<dyn Error>> {
@@ -165,7 +188,10 @@ impl SharedMemoryBuffer {
 
     #[cfg(not(target_os = "windows"))]
     pub fn wait_for_request(&self) {
-        std::thread::sleep(std::time::Duration::from_micros(100));
+        // There is no event object to block on here, so the state word in the
+        // mapping is polled. Bounded, because `listen` treats a non-ready state
+        // as "loop again" and has to keep iterating on its own.
+        poll_while(REQUEST_WAIT_BUDGET, || self.get_state() != STATE_REQ_READY);
     }
 
     #[cfg(target_os = "windows")]
@@ -179,7 +205,8 @@ impl SharedMemoryBuffer {
 
     #[cfg(not(target_os = "windows"))]
     pub fn signal_response(&self) {
-        // No-op fallback
+        // Nothing to wake: the peer watches the state word, and the preceding
+        // `set_state` plus `flush` has already published the transition.
     }
 
     #[cfg(target_os = "windows")]
@@ -192,7 +219,7 @@ impl SharedMemoryBuffer {
 
     #[cfg(not(target_os = "windows"))]
     pub fn signal_request(&self) {
-        // No-op fallback
+        // As above - the write of STATE_REQ_READY is the notification.
     }
 
     #[cfg(target_os = "windows")]
@@ -206,7 +233,16 @@ impl SharedMemoryBuffer {
 
     #[cfg(not(target_os = "windows"))]
     pub fn wait_for_response(&self) {
-        std::thread::sleep(std::time::Duration::from_micros(100));
+        // The client has already published STATE_REQ_READY, so "answered" means
+        // the state has left the request side: a response is ready, or the
+        // server refused. A fixed sleep cannot stand in for that - the handler
+        // does real work, and reading early returns whatever the previous
+        // exchange left in the output buffer, which fails HMAC rather than
+        // showing up as a timeout.
+        poll_while(RESPONSE_WAIT_BUDGET, || {
+            let state = self.get_state();
+            state != STATE_RES_READY && state != STATE_ERROR
+        });
     }
 
     pub fn get_state(&self) -> u8 {

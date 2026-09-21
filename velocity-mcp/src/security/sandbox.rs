@@ -813,9 +813,24 @@ mod tests {
 
     #[test]
     fn test_capability_path_allowlisting() {
-        let caps = ProcessCapabilities::restricted().with_allowed_path("C:\\projects");
-        assert!(caps.is_path_allowed(Path::new("C:\\projects\\myfile.txt")));
-        assert!(!caps.is_path_allowed(Path::new("C:\\Windows\\System32")));
+        // Spelled for the platform running the test. `Path::starts_with` compares
+        // components and `\` is an ordinary character on Unix, so there
+        // `C:\projects\myfile.txt` is one component that can never sit under a
+        // `C:\projects` prefix and this asserts nothing real. The property — a
+        // path under an allowed root passes, one outside it does not — is
+        // identical on both.
+        let (allowed, inside, outside) = if cfg!(windows) {
+            (
+                "C:\\projects",
+                "C:\\projects\\myfile.txt",
+                "C:\\Windows\\System32",
+            )
+        } else {
+            ("/projects", "/projects/myfile.txt", "/usr/bin")
+        };
+        let caps = ProcessCapabilities::restricted().with_allowed_path(allowed);
+        assert!(caps.is_path_allowed(Path::new(inside)));
+        assert!(!caps.is_path_allowed(Path::new(outside)));
     }
 
     #[test]
