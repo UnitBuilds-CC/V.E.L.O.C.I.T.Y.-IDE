@@ -52,6 +52,15 @@
 #   Not compiled for win-x64 target. The unsoundness involves !Send tags
 #   crossing thread boundaries via StackSlot, which is not exercised in our
 #   Unix accessibility code paths.
+#
+# RUSTSEC-2026-0173 (proc-macro-error2 2.0.1):
+#   Transitive dep of wasmer 5.0.6 through wasmer-derive, which is a proc-macro
+#   crate: it runs at compile time and is not linked into any shipped binary, so
+#   the maintenance status carries no runtime exposure. cargo-audit already
+#   treats this as a warning rather than an error; it is listed here so that
+#   cargo-deny (whose `unmaintained = "all"` makes it an error) and this file
+#   stay in lockstep, as they do for every other entry above. Removing it for
+#   real means upgrading wasmer 5 -> 7, which changes the WASM runtime surface.
 ignore = [
     "RUSTSEC-2026-0194",
     "RUSTSEC-2026-0195",
@@ -61,4 +70,5 @@ ignore = [
     "RUSTSEC-2026-0192",
     "RUSTSEC-2024-0320",
     "RUSTSEC-2026-0221",
+    "RUSTSEC-2026-0173",
 ]
