@@ -11,13 +11,18 @@ _Nothing recorded since [2.6.1]._
 
 ## [2.6.1] - 2026-09-22
 
-No shipped source changed between `v2.6.0` and this tag - the delta is two documentation files
-and one workflow pattern, so the binaries here are the same code as `v2.6.0`'s, rebuilt. This
+No shipped source changed between `v2.6.0` and this tag - the delta is `.github/workflows/release.yml`, `installer.iss`, `CODE_SIGNING.md`, `CHANGELOG.md` and `docs/DEPLOYMENT.md`, no Rust at all - so the binaries here are the same code as `v2.6.0`'s, rebuilt. This
 release exists to attach the dependency inventory every earlier release silently omitted, and
-to prove the corrected pattern rather than merely assert it.
+to prove the corrected pattern rather than merely assert it. **It did:** release run 35720942795
+published nine assets - the three platform archives plus one `.cdx.json` per crate
+(`velocity-ide`, `velocity-ide-gui`, `velocity-mcp`, `velocity-browser`, `velocity-drone`,
+`velocity-e2e`) - where `v2.6.0` had published three. Worth noting from the same evidence: the
+`velocity-windows.zip` of `v2.6.1` has a different SHA-256 from `v2.6.0`'s despite identical
+shipped source, so builds here are not byte-reproducible and no one should treat a hash
+comparison across machines as a tamper test.
 
 ### Fixed
-- **The SBOM never reached a GitHub Release**: `release.yml` listed `artifacts/velocity-sbom/*.cdx.json`, but `download-artifact` restores a multi-file artifact with its directory structure intact, so the CycloneDX files land one level deeper - one directory per crate. `softprops/action-gh-release` skips a pattern that matches nothing instead of failing, so the job reported success while publishing three archives and no SBOM, on `v2.5.0` and `v2.6.0` alike. The pattern is now `**/*.cdx.json`, and `v2.6.1` is the first tag built from that correction - the previous sentence was unverified until this release ran.
+- **The SBOM never reached a GitHub Release**: `release.yml` listed `artifacts/velocity-sbom/*.cdx.json`, but `download-artifact` restores a multi-file artifact with its directory structure intact, so the CycloneDX files land one level deeper - one directory per crate. `softprops/action-gh-release` skips a pattern that matches nothing instead of failing, so the job reported success while publishing three archives and no SBOM, on `v2.5.0` and `v2.6.0` alike. The pattern is now `**/*.cdx.json`, and `v2.6.1` is the first tag built from that correction - verified by counting the assets on that release rather than by trusting the job's green tick.
 
 ## [2.6.0] - 2026-09-21
 

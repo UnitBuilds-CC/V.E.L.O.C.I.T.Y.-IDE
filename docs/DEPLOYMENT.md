@@ -178,19 +178,20 @@ binaries for Linux (`x86_64-unknown-linux-gnu`), Windows (`x86_64-pc-windows-msv
 macOS (`aarch64-apple-darwin`), generates a CycloneDX SBOM, and publishes a GitHub Release
 whose assets are `velocity-linux.tar.gz`, `velocity-windows.zip` and `velocity-macos.tar.gz`.
 Each platform archive contains all four binaries:
-`velocity_ide`, `velocity_ide_gui`, `velocity_mcp`, `velocity-drone`. The SBOM is uploaded as
-a workflow artifact (90-day retention) but does not yet appear on the published release: the
-file list used `artifacts/velocity-sbom/*.cdx.json` while `download-artifact` restores that
-artifact one directory deeper per crate, and a pattern matching nothing is skipped rather than
-reported. `v2.5.0` and `v2.6.0` were both published without it. Until the corrected pattern
-(`**/*.cdx.json`) reaches a tag, take the SBOM from the run's artifacts, not the release page.
+`velocity_ide`, `velocity_ide_gui`, `velocity_mcp`, `velocity-drone`. From `v2.6.1` onward the
+release also carries one CycloneDX `.cdx.json` per crate as a release asset.
 
 ```bash
 git tag -a v<x.y.z> -m "V.E.L.O.C.I.T.Y. v<x.y.z>"
 git push origin v<x.y.z>
 ```
 
-The current release is `v2.6.1`, the first tag built with the corrected SBOM glob.
+The current release is `v2.6.1`, the first built with the corrected SBOM glob. `v2.5.0` and
+`v2.6.0` went out with no SBOM at all: the asset list used
+`artifacts/velocity-sbom/*.cdx.json` while `download-artifact` restores a multi-file artifact
+one directory deeper, per crate, and a pattern that matches nothing is skipped without a word.
+A green *Create Release* job is therefore not evidence that anything was attached - count the
+assets with `gh release view <tag> --json assets` before believing a release is complete.
 
 Tag the commit only once CI is green on it: the workflow does not re-run the test gates, so a
 tag pushed onto a red commit publishes unverified artifacts. Release notes are auto-generated
