@@ -186,9 +186,11 @@ reported. `v2.5.0` and `v2.6.0` were both published without it. Until the correc
 (`**/*.cdx.json`) reaches a tag, take the SBOM from the run's artifacts, not the release page.
 
 ```bash
-git tag -a v2.6.0 -m "V.E.L.O.C.I.T.Y. v2.6.0"
-git push origin v2.6.0
+git tag -a v<x.y.z> -m "V.E.L.O.C.I.T.Y. v<x.y.z>"
+git push origin v<x.y.z>
 ```
+
+The current release is `v2.6.1`, the first tag built with the corrected SBOM glob.
 
 Tag the commit only once CI is green on it: the workflow does not re-run the test gates, so a
 tag pushed onto a red commit publishes unverified artifacts. Release notes are auto-generated

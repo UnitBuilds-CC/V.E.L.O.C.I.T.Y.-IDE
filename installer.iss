@@ -1,7 +1,7 @@
 ; ─────────────────────────────────────────────────────────────────────────
 ; V.E.L.O.C.I.T.Y. — Inno Setup Installer
 ; ─────────────────────────────────────────────────────────────────────────
-; Build with:  ISCC.exe /DMyAppVersion=2.6.0 /S"signtool=$qC:\Program Files (x86)\Windows Kits\10\bin\10.0.22621.0\x64\signtool.exe$q /f $q<certificate>$q /p $q<password>$q /tr http://timestamp.digicert.com /td sha256 /fd sha256 $f" installer.iss
+; Build with:  ISCC.exe /DMyAppVersion=2.6.1 /S"signtool=$qC:\Program Files (x86)\Windows Kits\10\bin\10.0.22621.0\x64\signtool.exe$q /f $q<certificate>$q /p $q<password>$q /tr http://timestamp.digicert.com /td sha256 /fd sha256 $f" installer.iss
 ;              ($f is required: Inno replaces it with the quoted name of each file to sign.)
 ; Or simply:   .\build_signed_installer.ps1 -CertPath <pfx> -CertPassword <secret>
 ; Unsigned:    .\build_release.ps1
@@ -11,7 +11,7 @@
 ; It must match the release tag with the leading "v" removed, because Cargo crate
 ; versions stay at 1.0.0 by policy and are not the product version.
 #ifndef MyAppVersion
-  #define MyAppVersion "2.6.0"
+  #define MyAppVersion "2.6.1"
 #endif
 
 #define MyAppName       "V.E.L.O.C.I.T.Y."

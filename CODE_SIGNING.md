@@ -18,7 +18,7 @@
 ## Building a Signed Installer
 
 `MyAppVersion` is the product version and must match the release tag with its `v` stripped -
-`2.6.0` for the current release. Cargo crate versions stay at `1.0.0` by policy, so the tag
+`2.6.1` for the current release. Cargo crate versions stay at `1.0.0` by policy, so the tag
 (and this define) are the only place the shipped version is recorded.
 
 ### Standard Certificate (PFX file)
@@ -30,7 +30,7 @@ $signtool = "C:\Program Files (x86)\Windows Kits\10\bin\10.0.22621.0\x64\signtoo
 
 # Build installer with signing
 & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" `
-    /DMyAppVersion=2.6.0 `
+    /DMyAppVersion=2.6.1 `
     /S"signtool=$signtool sign /f `"$certPath`" /p `"$certPassword`" /tr http://timestamp.digicert.com /td sha256 /fd sha256 `$f" `
     installer.iss
 ```
@@ -44,7 +44,7 @@ For EV certificates with hardware tokens, use the token's signing tool:
 $signtool = "C:\Program Files (x86)\Windows Kits\10\bin\10.0.22621.0\x64\signtool.exe"
 
 & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" `
-    /DMyAppVersion=2.6.0 `
+    /DMyAppVersion=2.6.1 `
     /S"signtool=$signtool sign /n `"Your Company Name`" /tr http://timestamp.digicert.com /td sha256 /fd sha256 `$f" `
     installer.iss
 ```

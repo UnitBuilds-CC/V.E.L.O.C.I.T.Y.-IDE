@@ -7,10 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-_Nothing recorded since [2.6.0] except the fix below, which ships with the next tag._
+_Nothing recorded since [2.6.1]._
+
+## [2.6.1] - 2026-09-22
+
+No shipped source changed between `v2.6.0` and this tag - the delta is two documentation files
+and one workflow pattern, so the binaries here are the same code as `v2.6.0`'s, rebuilt. This
+release exists to attach the dependency inventory every earlier release silently omitted, and
+to prove the corrected pattern rather than merely assert it.
 
 ### Fixed
-- **The SBOM never reached a GitHub Release**: `release.yml` listed `artifacts/velocity-sbom/*.cdx.json`, but `download-artifact` restores a multi-file artifact with its directory structure intact, so the CycloneDX files land one level deeper - one directory per crate. `softprops/action-gh-release` skips a pattern that matches nothing instead of failing, so the job reported success while publishing three archives and no SBOM, on `v2.5.0` and `v2.6.0` alike. The pattern is now `**/*.cdx.json`.
+- **The SBOM never reached a GitHub Release**: `release.yml` listed `artifacts/velocity-sbom/*.cdx.json`, but `download-artifact` restores a multi-file artifact with its directory structure intact, so the CycloneDX files land one level deeper - one directory per crate. `softprops/action-gh-release` skips a pattern that matches nothing instead of failing, so the job reported success while publishing three archives and no SBOM, on `v2.5.0` and `v2.6.0` alike. The pattern is now `**/*.cdx.json`, and `v2.6.1` is the first tag built from that correction - the previous sentence was unverified until this release ran.
 
 ## [2.6.0] - 2026-09-21
 
@@ -206,7 +213,8 @@ real provider key, which no job exercises.
 - Drone dual-mode architecture (local + remote)
 - Browser engine with NDA support
 
-[Unreleased]: https://github.com/UnitBuilds-CC/V.E.L.O.C.I.T.Y.-IDE/compare/v2.6.0...HEAD
+[Unreleased]: https://github.com/UnitBuilds-CC/V.E.L.O.C.I.T.Y.-IDE/compare/v2.6.1...HEAD
+[2.6.1]: https://github.com/UnitBuilds-CC/V.E.L.O.C.I.T.Y.-IDE/compare/v2.6.0...v2.6.1
 [2.6.0]: https://github.com/UnitBuilds-CC/V.E.L.O.C.I.T.Y.-IDE/compare/v2.5.0...v2.6.0
 [1.0.0]: https://github.com/UnitBuilds-CC/V.E.L.O.C.I.T.Y.-IDE/compare/v0.1.0...v1.0.0
 [0.1.0]: https://github.com/UnitBuilds-CC/V.E.L.O.C.I.T.Y.-IDE/releases/tag/v0.1.0
