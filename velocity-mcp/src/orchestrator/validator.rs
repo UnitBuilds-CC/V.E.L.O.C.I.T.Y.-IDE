@@ -38,12 +38,15 @@ impl ValidationReport {
 }
 
 /// Default checks: result reports success and produced scoped file changes.
+/// Read-only task kinds (Analysis, Planning) are exempt from the file-change
+/// requirement since their expected output is the model's textual response.
 pub fn validate(result: &WorkerResult) -> ValidationReport {
     if !result.success {
         return ValidationReport::fail(format!("Worker failed: {}", result.message));
     }
     let mut r = ValidationReport::ok();
-    if result.outputs.is_empty()
+    if !result.is_read_only
+        && result.outputs.is_empty()
         && result.created_files.is_empty()
         && result.deleted_files.is_empty()
     {
@@ -57,6 +60,10 @@ pub fn validate(result: &WorkerResult) -> ValidationReport {
 pub fn validate_with_workspace(result: &WorkerResult, workspace_root: &Path) -> ValidationReport {
     let base = validate(result);
     if !base.ok {
+        return base;
+    }
+    // Read-only tasks produce no file modifications, so cargo check is irrelevant.
+    if result.is_read_only {
         return base;
     }
 
@@ -103,6 +110,7 @@ mod tests {
             run_facts_path: None,
             wa_run_path: None,
             wa_run_id: None,
+            is_read_only: false,
         }
     }
 
@@ -117,6 +125,18 @@ mod tests {
             report.messages,
             vec!["Task produced no scoped file changes.".to_string()]
         );
+    }
+
+    #[test]
+    fn validate_accepts_read_only_result_without_file_changes() {
+        let mut result = worker_result();
+        result.outputs.clear();
+        result.is_read_only = true;
+        result.message = "Analysis via Qwen / qwen3.6-flash: The backend module handles...".to_string();
+
+        let report = validate(&result);
+        assert!(report.ok);
+        assert!(report.messages.is_empty());
     }
 
     #[test]

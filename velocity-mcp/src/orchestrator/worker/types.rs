@@ -43,6 +43,10 @@ pub struct WorkerResult {
     pub run_facts_path: Option<PathBuf>,
     pub wa_run_path: Option<String>,
     pub wa_run_id: Option<String>,
+    /// True for task kinds (Analysis, Planning) whose expected output is
+    /// textual rather than file modifications. The validator skips the
+    /// "no scoped file changes" check when this is set.
+    pub is_read_only: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -92,6 +96,7 @@ impl WorkerResult {
             run_facts_path: None,
             wa_run_path: None,
             wa_run_id: None,
+            is_read_only: false,
         }
     }
 }
@@ -204,6 +209,7 @@ pub struct ExecutionOutcome {
     pub status_updates: Vec<String>,
     pub attempts: Vec<WorkerAttempt>,
     pub message: String,
+    pub is_read_only: bool,
 }
 
 #[derive(Debug, Clone)]

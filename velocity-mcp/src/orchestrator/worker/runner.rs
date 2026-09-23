@@ -54,6 +54,7 @@ pub fn run_assignment(
         assignment.task.title
     );
     let mut result = WorkerResult::new(&task);
+    result.is_read_only = assignment.task_kind.is_read_only();
     let run_dir = assignment
         .workspace_root
         .join(".velocity")
@@ -219,10 +220,27 @@ pub fn execute_live_task(
             &assignment.workspace_root,
         )
         .map_err(|err| failed_execution(assignment, err))?;
-        let success =
-            !changed_files.is_empty() || !created_files.is_empty() || !deleted_files.is_empty();
+        // Read-only task kinds (Analysis, Planning) succeed when the model
+        // produced a textual response; file-modification kinds require changes.
+        let success = if assignment.task_kind.is_read_only() {
+            !subagent.transcript.trim().is_empty()
+                && !subagent.status_updates.iter().any(|s| {
+                    s.contains("error") || s.contains("Error") || s.contains("failed to call")
+                })
+        } else {
+            !changed_files.is_empty() || !created_files.is_empty() || !deleted_files.is_empty()
+        };
         let message = if success {
-            if assignment.task_kind == AgentTaskKind::DesktopAutomation {
+            if assignment.task_kind.is_read_only() {
+                // For read-only tasks, surface the model's response (truncated).
+                let snippet: String = subagent.transcript.chars().take(500).collect();
+                format!(
+                    "Analysis via {} / {}: {}",
+                    final_provider_label,
+                    final_model_label,
+                    snippet,
+                )
+            } else if assignment.task_kind == AgentTaskKind::DesktopAutomation {
                 format!(
                     "Desktop automation evidence captured: changed {}, created {}, deleted {} via {} / {}",
                     changed_files.len(),
@@ -281,6 +299,7 @@ pub fn execute_live_task(
                 status_updates,
                 attempts,
                 message,
+                is_read_only: assignment.task_kind.is_read_only(),
             };
             write_execution_artifacts(run_dir, &outcome)
                 .map_err(|err| failed_execution(assignment, err))?;
@@ -345,6 +364,8 @@ pub fn execute_live_task(
     } else if assignment.task_kind == AgentTaskKind::DesktopAutomation {
         "Desktop automation run finished without scoped file changes or captured WA evidence."
             .to_string()
+    } else if assignment.task_kind.is_read_only() {
+        "Model produced no textual response for read-only task.".to_string()
     } else {
         "No scoped file changes were produced by any provider-backed sub-agent route.".to_string()
     };
@@ -361,6 +382,7 @@ pub fn execute_live_task(
         status_updates: last_status_updates,
         attempts,
         message,
+        is_read_only: assignment.task_kind.is_read_only(),
     };
     write_execution_artifacts(run_dir, &outcome)
         .map_err(|err| failed_execution(assignment, err))?;
@@ -381,5 +403,6 @@ pub fn failed_execution(assignment: &WorkerAssignment, message: String) -> Execu
         status_updates: Vec::new(),
         attempts: Vec::new(),
         message,
+        is_read_only: assignment.task_kind.is_read_only(),
     }
 }

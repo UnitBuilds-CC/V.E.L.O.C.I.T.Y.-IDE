@@ -51,6 +51,13 @@ impl AgentTaskKind {
             _ => None,
         }
     }
+
+    /// Returns `true` for task kinds whose expected output is the model's
+    /// textual response rather than file modifications. The worker uses this
+    /// to decide whether "no scoped changes" means failure or success.
+    pub fn is_read_only(self) -> bool {
+        matches!(self, AgentTaskKind::Analysis | AgentTaskKind::Planning)
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

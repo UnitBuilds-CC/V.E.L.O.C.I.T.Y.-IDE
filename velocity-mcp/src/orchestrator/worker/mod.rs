@@ -235,6 +235,7 @@ mod tests {
                 message: "Changed 1 file".to_string(),
             }],
             message: "Changed 1, created 1, deleted 1 via Workers AI / Llama 3.1 8B".to_string(),
+            is_read_only: false,
         };
 
         write_execution_facts(workspace.path(), &outcome).unwrap();

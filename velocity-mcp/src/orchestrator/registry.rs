@@ -95,6 +95,7 @@ mod tests {
             run_facts_path: None,
             wa_run_path: None,
             wa_run_id: None,
+            is_read_only: false,
         }
     }
 

@@ -88,6 +88,7 @@ fn sample_result(task_id: TaskId, message: &str) -> WorkerResult {
         run_facts_path: None,
         wa_run_path: None,
         wa_run_id: None,
+        is_read_only: false,
     }
 }
 
