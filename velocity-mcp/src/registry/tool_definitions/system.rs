@@ -417,19 +417,9 @@ pub fn get_system_tools() -> Vec<Tool> {
             }),
         },
         // ── Multimodal ──────────────────────────────────────────────────────
-        Tool {
-            name: "generate_image".to_string(),
-            description: "Generate an image from a text prompt via Cloudflare Workers AI and save it into the workspace. Returns the saved path.".to_string(),
-            input_schema: json!({
-                "type": "object",
-                "properties": {
-                    "prompt": { "type": "string", "description": "Text prompt describing the desired image." },
-                    "model": { "type": "string", "description": "Optional Workers AI text-to-image model id. Defaults to stable-diffusion-xl." },
-                    "output": { "type": "string", "description": "Optional workspace-relative output path (e.g. generated/logo.png)." }
-                },
-                "required": ["prompt"]
-            }),
-        },
+        // generate_image is owned by the generation subsystem
+        // (registry::tool_definitions::generation), which infers the provider
+        // from the selected model (Cloudflare Workers AI vs native endpoints).
         Tool {
             name: "describe_image".to_string(),
             description: "Describe an image file. Vision-capable models can consume the image directly; returns an OCR text fallback for non-vision models plus mime and size.".to_string(),

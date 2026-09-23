@@ -1,6 +1,7 @@
 use super::browser_tools::handle_browser_tool;
 use super::custom_tools;
 use super::event_store;
+use super::generation_tools::handle_generation_tool;
 use super::system_tools::handle_system_tool;
 use super::team_tools::handle_team_tool;
 use super::wa_tools::handle_wa_tool;
@@ -229,6 +230,9 @@ fn try_builtin_tools(
         return Ok(Some(result));
     }
     if let Some(result) = handle_drone_tool(root, name, arguments)? {
+        return Ok(Some(result));
+    }
+    if let Some(result) = handle_generation_tool(root, name, arguments)? {
         return Ok(Some(result));
     }
     Ok(None)

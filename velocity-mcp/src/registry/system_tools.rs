@@ -923,13 +923,10 @@ pub fn handle_system_tool(
             let resp = crate::connectors::call_connector(root, id, &req)?;
             serde_json::to_string(&resp)?
         }
-        "generate_image" => {
-            let prompt = arguments["prompt"].as_str().ok_or("prompt is required")?;
-            let model = arguments["model"].as_str();
-            let out = arguments["output"].as_str();
-            let path = crate::editor::multimodal::generate_image(root, prompt, model, out)?;
-            format!("Saved generated image to {}", path.display())
-        }
+        // generate_image is dispatched by registry::generation_tools, which
+        // infers the provider (Cloudflare Workers AI vs native endpoint) from
+        // the selected model. It is intentionally absent here so the call falls
+        // through to that handler.
         "describe_image" => {
             let path_arg = arguments["path"].as_str().ok_or("path is required")?;
             let path = root.join(path_arg);

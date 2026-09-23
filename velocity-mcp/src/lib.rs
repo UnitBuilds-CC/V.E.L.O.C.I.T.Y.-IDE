@@ -26,6 +26,7 @@ pub mod compiler;
 pub mod connectors;
 pub mod editor;
 pub mod errors;
+pub mod generation;
 pub mod health;
 pub mod ipc;
 pub mod metrics;
