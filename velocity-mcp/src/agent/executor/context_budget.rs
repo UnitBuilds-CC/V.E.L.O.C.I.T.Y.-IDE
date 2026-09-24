@@ -4,10 +4,15 @@
 //! strategies to optimize token usage while preserving critical information.
 
 use super::super::models::ChatMessage;
-use super::utils::{compress_history, estimate_tokens};
+use super::utils::{compress_history, estimate_tokens, find_mission_anchor};
+use serde_json::Value;
 
-/// Default context budget (8k tokens) for unknown models.
-const DEFAULT_BUDGET_TOKENS: usize = 8_000;
+/// Default context budget (32k tokens) for unknown models.
+///
+/// Modern chat models universally ship 32k+ windows; an 8k default caused
+/// aggressive history shredding (and re-orientation doom loops) whenever a
+/// model id like `qwen3.7-plus` missed the pattern table below.
+const DEFAULT_BUDGET_TOKENS: usize = 32_000;
 
 /// Reserve tokens for model response (output generation).
 const RESERVED_OUTPUT_TOKENS: usize = 4_096;
@@ -173,12 +178,46 @@ pub const MODEL_BUDGETS: &[ModelContextBudget] = &[
         pattern: "qwen-2-5",
         max_tokens: 128_000,
     },
+    // Qwen family catch-all (qwen3.7-plus, qwen-plus, qwen-max, ...): 128k tokens
+    ModelContextBudget {
+        pattern: "qwen",
+        max_tokens: 128_000,
+    },
+    // Kimi K2 family: 128k tokens
+    ModelContextBudget {
+        pattern: "kimi",
+        max_tokens: 128_000,
+    },
+    // GLM family: 128k tokens
+    ModelContextBudget {
+        pattern: "glm",
+        max_tokens: 128_000,
+    },
+    // DeepSeek R1: 64k tokens
+    ModelContextBudget {
+        pattern: "deepseek-r1",
+        max_tokens: 64_000,
+    },
+    // Llama 3.2 variants: 128k tokens
+    ModelContextBudget {
+        pattern: "llama-3.2",
+        max_tokens: 128_000,
+    },
+    ModelContextBudget {
+        pattern: "llama-3-2",
+        max_tokens: 128_000,
+    },
+    // GPT-4.1: capped at 200k (safe under its 1M window)
+    ModelContextBudget {
+        pattern: "gpt-4.1",
+        max_tokens: 200_000,
+    },
 ];
 
 /// Look up the context budget (max tokens) for a given model identifier.
 ///
 /// Returns the max context window size in tokens for the model, or
-/// [`DEFAULT_BUDGET_TOKENS`] (8k) if the model is not recognized.
+/// [`DEFAULT_BUDGET_TOKENS`] (32k) if the model is not recognized.
 ///
 /// # Examples
 ///
@@ -187,7 +226,7 @@ pub const MODEL_BUDGETS: &[ModelContextBudget] = &[
 ///
 /// assert_eq!(get_model_budget("gpt-4o"), 128_000);
 /// assert_eq!(get_model_budget("claude-3.5-sonnet"), 200_000);
-/// assert_eq!(get_model_budget("unknown-model"), 8_000);
+/// assert_eq!(get_model_budget("unknown-model"), 32_000);
 /// ```
 pub fn get_model_budget(model: &str) -> usize {
     let model_lower = model.to_lowercase();
@@ -346,17 +385,22 @@ fn contains_code_blocks(content: &str) -> bool {
 /// budget-aware compression that:
 ///
 /// 1. Looks up the model's context budget
-/// 2. Estimates current token usage
-/// 3. If over budget, applies progressive compression:
+/// 2. Reserves space for the tool schemas that ride on every request
+/// 3. Estimates current token usage
+/// 4. If over budget, applies progressive compression:
 ///    - First: summarize older messages
 ///    - Then: drop old tool results (keep conclusions)
 ///    - Finally: truncate to fit
+///
+/// The first substantive user message (the mission brief) is always pinned
+/// verbatim regardless of budget pressure.
 ///
 /// # Arguments
 ///
 /// * `messages` - The full conversation history
 /// * `model` - The model identifier for budget lookup
 /// * `supports_tools` - Whether the model supports native tool calling
+/// * `tools` - The tool schemas that will be attached to the request
 ///
 /// # Returns
 ///
@@ -365,6 +409,7 @@ pub fn compress_history_with_budget(
     messages: &[ChatMessage],
     model: &str,
     supports_tools: bool,
+    tools: &[Value],
 ) -> Vec<ChatMessage> {
     // First apply base compression (cleans up malformed messages, etc.)
     let base_compressed = compress_history(messages, supports_tools);
@@ -373,16 +418,25 @@ pub fn compress_history_with_budget(
     let max_tokens = get_model_budget(model);
     let target_tokens = max_tokens.saturating_sub(RESERVED_OUTPUT_TOKENS);
 
+    // Tool schemas are sent with every request but are not part of the message
+    // history, so reserve their estimated cost before budgeting the conversation.
+    // Without this, a ~50k-token tool surface silently overflowed the window and
+    // the provider rejected otherwise-valid requests.
+    let tools_tokens = serde_json::to_string(tools)
+        .map(|s| estimate_tokens(&s) as usize)
+        .unwrap_or(0);
+    let history_target = target_tokens.saturating_sub(tools_tokens);
+
     // Estimate current usage
     let current_tokens = estimate_messages_tokens(&base_compressed);
 
     // If already within budget, return as-is
-    if current_tokens <= target_tokens {
+    if current_tokens <= history_target {
         return base_compressed;
     }
 
     // Need to compress further - apply budget-aware compression
-    apply_budget_compression(&base_compressed, target_tokens)
+    apply_budget_compression(&base_compressed, history_target)
 }
 
 /// Apply progressive budget compression to fit within target tokens.
@@ -426,13 +480,22 @@ fn apply_budget_compression(messages: &[ChatMessage], target_tokens: usize) -> V
     let mut result: Vec<ChatMessage> = Vec::new();
     let mut summaries: Vec<String> = Vec::new();
 
+    // The first substantive user message is the mission brief; pin it so the
+    // agent never loses its objective under budget pressure.
+    let anchor_idx = find_mission_anchor(messages);
+
     for ((orig_idx, msg), turn_dist) in non_system.iter().zip(turn_distances.iter()) {
-        let action = compression_action_for(msg, *orig_idx, total, *turn_dist);
+        let is_anchor = anchor_idx == Some(*orig_idx);
+        let action = if is_anchor {
+            CompressionAction::Preserve
+        } else {
+            compression_action_for(msg, *orig_idx, total, *turn_dist)
+        };
 
         match action {
             CompressionAction::Preserve => {
                 let msg_tokens = estimate_tokens(&msg.content) as usize;
-                if msg_tokens <= remaining_budget || result.is_empty() {
+                if msg_tokens <= remaining_budget || result.is_empty() || is_anchor {
                     result.push((*msg).clone());
                     remaining_budget = remaining_budget.saturating_sub(msg_tokens);
                 } else {
@@ -629,9 +692,21 @@ mod tests {
 
     #[test]
     fn test_unknown_model_default_budget() {
-        assert_eq!(get_model_budget("unknown-model"), 8_000);
-        assert_eq!(get_model_budget("some-random-model-v1"), 8_000);
-        assert_eq!(get_model_budget(""), 8_000);
+        assert_eq!(get_model_budget("unknown-model"), 32_000);
+        assert_eq!(get_model_budget("some-random-model-v1"), 32_000);
+        assert_eq!(get_model_budget(""), 32_000);
+    }
+
+    #[test]
+    fn test_qwen_family_catchall_budget() {
+        // qwen3.7-plus missed every specific pattern and fell to the tiny
+        // default, which shredded history and caused the re-orientation loop.
+        assert_eq!(get_model_budget("qwen3.7-plus"), 128_000);
+        assert_eq!(get_model_budget("qwen-plus-2025-04-28"), 128_000);
+        assert_eq!(get_model_budget("qwen3-max"), 128_000);
+        assert_eq!(get_model_budget("kimi-k2.7-code"), 128_000);
+        assert_eq!(get_model_budget("glm-4.6"), 128_000);
+        assert_eq!(get_model_budget("deepseek-r1-distill"), 64_000);
     }
 
     // ===== fits_budget tests =====
@@ -664,10 +739,10 @@ mod tests {
 
     #[test]
     fn test_fits_budget_unknown() {
-        // Unknown: 8k - 4096 reserved = 3_904 available
-        assert!(fits_budget("unknown", 3_904));
-        assert!(!fits_budget("unknown", 3_905));
-        assert!(!fits_budget("unknown", 8_000));
+        // Unknown: 32k - 4096 reserved = 27_904 available
+        assert!(fits_budget("unknown", 27_904));
+        assert!(!fits_budget("unknown", 27_905));
+        assert!(!fits_budget("unknown", 32_000));
     }
 
     #[test]
@@ -830,8 +905,8 @@ mod tests {
             },
         ];
 
-        // With unknown model (8k budget), small messages should fit
-        let compressed = compress_history_with_budget(&messages, "unknown-model", false);
+        // With unknown model (32k budget), small messages should fit
+        let compressed = compress_history_with_budget(&messages, "unknown-model", false, &[]);
         assert!(!compressed.is_empty());
         // System message should be preserved
         assert!(compressed.iter().any(|m| m.role == "system"));
@@ -857,7 +932,7 @@ mod tests {
         ];
 
         // With GPT-4o (128k budget), these messages easily fit
-        let compressed = compress_history_with_budget(&messages, "gpt-4o", false);
+        let compressed = compress_history_with_budget(&messages, "gpt-4o", false, &[]);
         assert_eq!(compressed.len(), 2);
     }
 
@@ -880,9 +955,105 @@ mod tests {
             },
         ];
 
-        let compressed = compress_history_with_budget(&messages, "gpt-3.5-turbo", false);
+        let compressed = compress_history_with_budget(&messages, "gpt-3.5-turbo", false, &[]);
         assert!(compressed
             .iter()
             .any(|m| m.role == "system" && m.content.contains("Important system instructions")));
+    }
+
+    #[test]
+    fn test_tool_schemas_count_toward_budget() {
+        // A wide, verbose tool surface must shrink the history budget even when
+        // the conversation itself would otherwise fit.
+        let mut messages = vec![ChatMessage {
+            role: "user".to_string(),
+            content: "Hello".to_string(),
+            name: None,
+            tool_call_id: None,
+            tool_calls: None,
+        }];
+        for i in 0..12 {
+            messages.push(ChatMessage {
+                role: "assistant".to_string(),
+                content: format!("Plain prose response number {} with nothing exotic.", i),
+                name: None,
+                tool_call_id: None,
+                tool_calls: None,
+            });
+            messages.push(ChatMessage {
+                role: "user".to_string(),
+                content: format!("Plain prose follow-up number {} with nothing exotic.", i),
+                name: None,
+                tool_call_id: None,
+                tool_calls: None,
+            });
+        }
+
+        let roomy = compress_history_with_budget(&messages, "gpt-3.5-turbo", true, &[]);
+        assert_eq!(roomy.len(), messages.len());
+
+        let huge_tool = serde_json::json!({
+            "type": "function",
+            "function": {
+                "name": "verbose_tool",
+                "description": "detailed description ".repeat(4_000),
+            },
+        });
+        let squeezed =
+            compress_history_with_budget(&messages, "gpt-3.5-turbo", true, &[huge_tool]);
+        assert!(
+            squeezed.len() < roomy.len(),
+            "tool schemas must reserve budget and force history compression"
+        );
+    }
+
+    #[test]
+    fn test_mission_anchor_survives_hard_budget() {
+        // Even when the budget forces aggressive truncation, the first
+        // substantive user message (the mission brief) must survive verbatim.
+        let mission = "Please carry out this multi-step mission carefully. ".repeat(20);
+        let messages = vec![
+            ChatMessage {
+                role: "system".to_string(),
+                content: "You are a helpful assistant.".to_string(),
+                name: None,
+                tool_call_id: None,
+                tool_calls: None,
+            },
+            ChatMessage {
+                role: "user".to_string(),
+                content: mission.clone(),
+                name: None,
+                tool_call_id: None,
+                tool_calls: None,
+            },
+            ChatMessage {
+                role: "assistant".to_string(),
+                content: "Working on it.".to_string(),
+                name: None,
+                tool_call_id: None,
+                tool_calls: None,
+            },
+            ChatMessage {
+                role: "assistant".to_string(),
+                content: "Still working.".to_string(),
+                name: None,
+                tool_call_id: None,
+                tool_calls: None,
+            },
+            ChatMessage {
+                role: "assistant".to_string(),
+                content: "Nearly done.".to_string(),
+                name: None,
+                tool_call_id: None,
+                tool_calls: None,
+            },
+        ];
+
+        // 10-token budget: everything non-essential must be summarized away.
+        let compressed = apply_budget_compression(&messages, 10);
+        assert!(compressed
+            .iter()
+            .any(|m| m.role == "user" && m.content == mission));
     }
 }

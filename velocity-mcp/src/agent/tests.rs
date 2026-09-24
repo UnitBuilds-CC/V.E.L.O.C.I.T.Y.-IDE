@@ -469,7 +469,7 @@ fn test_eager_merkle_compaction() {
     let mut long_content = String::new();
     long_content.push_str("fn test_function() {\n    println!(\"Hello\");\n}\nclass TestClass {}");
     for i in 0..100 {
-        long_content.push_str(&format!("\n// Dummy line padding number {} to ensure we are well above the one thousand character compaction threshold.", i));
+        long_content.push_str(&format!("\n// Dummy line padding number {} to ensure we are well above the four thousand character compaction threshold.", i));
     }
 
     let original_messages = vec![
@@ -587,4 +587,91 @@ fn test_compress_history_converts_orphan_tool_messages() {
         .contains("[Tool result for 'read_file']: Success output"));
     assert!(compressed[0].tool_call_id.is_none());
     assert!(compressed[0].name.is_none());
+}
+
+fn antigravity_prompt_with_docs() -> ChatMessage {
+    ChatMessage {
+        role: "system".to_string(),
+        content: "You are Antigravity, a high-performance agent running directly in V.E.L.O.C.I.T.Y.-IDE workspace. \
+                  Mode: Coder. Workspace: demo.\n\n\
+                  ## Available Tools\nCall tools using this exact syntax.\n### read_file\nReads a file.\n\n\
+                  ## Recalled Context (from past sessions)\n- [k1] remembered fact"
+            .to_string(),
+        name: None,
+        tool_call_id: None,
+        tool_calls: None,
+    }
+}
+
+#[test]
+fn test_compress_history_strips_inline_docs_for_native_tool_models() {
+    // For tool-capable models the schemas ride in the request's `tools` array,
+    // so the inline "## Available Tools" block must be stripped from the system
+    // prompt while the runtime-injected sections survive.
+    let messages = vec![antigravity_prompt_with_docs()];
+    let compressed = compress_history(&messages, true);
+    let sys = compressed.iter().find(|m| m.role == "system").unwrap();
+    assert!(!sys.content.contains("## Available Tools"));
+    assert!(sys.content.contains("Mode: Coder"));
+    assert!(sys.content.contains("## Recalled Context (from past sessions)"));
+    assert!(sys.content.contains("[k1] remembered fact"));
+}
+
+#[test]
+fn test_compress_history_rebuilds_inline_docs_for_inline_tool_models() {
+    // Models without native tool calling must keep receiving the full inline
+    // tool catalog in the system prompt.
+    let messages = vec![antigravity_prompt_with_docs()];
+    let compressed = compress_history(&messages, false);
+    let sys = compressed.iter().find(|m| m.role == "system").unwrap();
+    assert!(sys.content.contains("## Available Tools"));
+    // Fresh catalog content (built from the live registry), not the stale copy.
+    assert!(sys.content.contains("read_file"));
+    assert!(sys.content.contains("## Recalled Context (from past sessions)"));
+}
+
+#[test]
+fn test_mission_anchor_survives_base_truncation() {
+    // The first substantive user message carries the mission brief and must be
+    // preserved verbatim even when the history blows past the character budget
+    // and everything else collapses into the rolling summary.
+    let mission = "You must complete this exact mission: step one, do the thing; \
+                   step two, write the report file. Repeat neither from memory. "
+        .repeat(10);
+    let mut messages = vec![
+        ChatMessage {
+            role: "system".to_string(),
+            content: "You are a helpful assistant.".to_string(),
+            name: None,
+            tool_call_id: None,
+            tool_calls: None,
+        },
+        ChatMessage {
+            role: "user".to_string(),
+            content: mission.clone(),
+            name: None,
+            tool_call_id: None,
+            tool_calls: None,
+        },
+    ];
+    // Blow past the 200k-char base budget with plain filler.
+    for i in 0..12 {
+        messages.push(ChatMessage {
+            role: "assistant".to_string(),
+            content: format!("filler {} {}", i, "z".repeat(25_000)),
+            name: None,
+            tool_call_id: None,
+            tool_calls: None,
+        });
+    }
+
+    let compressed = compress_history(&messages, true);
+    assert!(
+        compressed.iter().any(|m| m.content == mission),
+        "mission brief must survive truncation verbatim"
+    );
+    assert!(
+        compressed.len() < messages.len(),
+        "filler should have been truncated away"
+    );
 }

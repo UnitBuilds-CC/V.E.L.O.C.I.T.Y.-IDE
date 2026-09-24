@@ -145,6 +145,7 @@ pub fn run_agent_reasoning_loop(
             message_history,
             &current_model,
             current_profile.supports_tools,
+            &cf_tools,
         );
 
         let request_body = build_request(

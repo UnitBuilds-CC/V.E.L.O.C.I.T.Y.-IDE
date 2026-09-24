@@ -266,12 +266,16 @@ pub fn run_agent_thread(
             history
         }
         None => {
-            let sys = format!(
+            let mut sys = String::from(
                 "You are Antigravity, a high-performance agent running directly in V.E.L.O.C.I.T.Y.-IDE workspace. \
                 You have direct local workspace access via tools. NEVER ask the user to paste code snippets, upload files, or provide repository links. \
-                Immediately call `list_dir`, `read_file`, or `grep_search` to inspect and review the workspace.\n\n{}",
-                build_inline_tool_docs()
+                Immediately call `list_dir`, `read_file`, or `grep_search` to inspect and review the workspace.",
             );
+            // Inline tool docs only for models that receive no native tool
+            // schemas; otherwise the same catalog ships twice per request.
+            if provider == AiProvider::OpenRouter || !selected_profile.supports_tools {
+                sys.push_str(&build_inline_tool_docs());
+            }
             vec![ChatMessage {
                 role: "system".to_string(),
                 content: sys,
@@ -609,12 +613,14 @@ fn process_ui_message(
             }
         }
         UiToAgentMessage::ClearHistory => {
-            let sys = format!(
+            let mut sys = String::from(
                 "You are Antigravity, a high-performance agent running directly in V.E.L.O.C.I.T.Y.-IDE workspace. \
                 You have direct local workspace access via tools. NEVER ask the user to paste code snippets, upload files, or provide repository links. \
-                Immediately call `list_dir`, `read_file`, or `grep_search` to inspect and review the workspace.\n\n{}",
-                build_inline_tool_docs()
+                Immediately call `list_dir`, `read_file`, or `grep_search` to inspect and review the workspace.",
             );
+            if *provider == AiProvider::OpenRouter || !selected_profile.supports_tools {
+                sys.push_str(&build_inline_tool_docs());
+            }
             *message_history = vec![ChatMessage {
                 role: "system".to_string(),
                 content: sys,

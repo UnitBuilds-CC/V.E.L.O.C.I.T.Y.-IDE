@@ -148,6 +148,60 @@ pub fn strip_think_tags(s: &str) -> String {
     out.trim().to_string()
 }
 
+/// Minimum length of a user message considered a substantive mission brief.
+/// The first such message is the task anchor and is pinned against eviction.
+pub const MISSION_MIN_CHARS: usize = 400;
+
+/// Detect the first substantive user message (the "mission brief"). Nudges,
+/// pleasantries and synthetic summary/tool-result messages do not qualify.
+pub fn find_mission_anchor(messages: &[ChatMessage]) -> Option<usize> {
+    messages.iter().position(|m| {
+        m.role == "user"
+            && m.name.is_none()
+            && m.tool_call_id.is_none()
+            && !m.content.starts_with("[Earlier")
+            && !m.content.starts_with("[Tool result for")
+            && m.content.chars().count() >= MISSION_MIN_CHARS
+    })
+}
+
+/// Strip the inline "## Available Tools" documentation block from the system
+/// prompt and re-append it only for models without native tool calling.
+///
+/// For tool-capable models the same schemas already ride along in the request's
+/// `tools` array, so the inline copy was pure duplication (it pushed the
+/// baseline request past 300 KB). Unlike the previous wholesale rebuild, this
+/// preserves the real base prompt plus the runtime-injected
+/// "## Previously Learned Patterns" / "## Recalled Context" sections.
+fn dedupe_inline_tool_docs(sys_msg: &mut ChatMessage, supports_tools: bool) {
+    const DOCS_MARKER: &str = "## Available Tools";
+    const TRAILING_SECTIONS: [&str; 2] = [
+        "## Previously Learned Patterns",
+        "## Recalled Context",
+    ];
+    if let Some(docs_start) = sys_msg.content.find(DOCS_MARKER) {
+        let rest = sys_msg.content[docs_start..].to_string();
+        let tail_rel = TRAILING_SECTIONS
+            .iter()
+            .filter_map(|marker| rest.find(marker))
+            .min()
+            .unwrap_or(rest.len());
+        let preserved_tail = rest[tail_rel..].trim_end().to_string();
+        let mut base = sys_msg.content[..docs_start].trim_end().to_string();
+        if !supports_tools {
+            base.push_str(&build_inline_tool_docs());
+        }
+        if !preserved_tail.is_empty() {
+            base.push_str("\n\n");
+            base.push_str(&preserved_tail);
+            base.push('\n');
+        }
+        sys_msg.content = base;
+    } else if !supports_tools {
+        sys_msg.content.push_str(&build_inline_tool_docs());
+    }
+}
+
 pub fn compress_history(messages: &[ChatMessage], supports_tools: bool) -> Vec<ChatMessage> {
     const VALID_ROLES: &[&str] = &[
         "system",
@@ -195,8 +249,7 @@ pub fn compress_history(messages: &[ChatMessage], supports_tools: bool) -> Vec<C
     let mut messages = messages;
     if let Some(sys_msg) = messages.iter_mut().find(|m| m.role == "system") {
         if sys_msg.content.starts_with("You are Antigravity") {
-            let clean_base = "You are Antigravity, a high-performance agent running directly in V.E.L.O.C.I.T.Y.-IDE workspace. You have direct local workspace access via tools. NEVER ask the user to paste code snippets, upload files, or provide repository links. Immediately call `list_dir`, `read_file`, or `grep_search` to inspect and review the workspace.";
-            sys_msg.content = format!("{}\n\n{}", clean_base, build_inline_tool_docs());
+            dedupe_inline_tool_docs(sys_msg, supports_tools);
         }
     }
 
@@ -211,7 +264,7 @@ pub fn compress_history(messages: &[ChatMessage], supports_tools: bool) -> Vec<C
             let has_subsequent_assistant_msg = messages[idx + 1..]
                 .iter()
                 .any(|msg| msg.role == "assistant");
-            if has_subsequent_assistant_msg && m_copy.content.len() > 1000 {
+            if has_subsequent_assistant_msg && m_copy.content.len() > 4_000 {
                 let tool_name = m_copy
                     .name
                     .clone()
@@ -320,7 +373,10 @@ pub fn compress_history(messages: &[ChatMessage], supports_tools: bool) -> Vec<C
         compressed.push(m_copy);
     }
 
-    const BUDGET: usize = 60_000;
+    // Character floor for the base pass. Model-aware trimming happens in the
+    // follow-up budget compression pass, so this only guards against pathological
+    // unbounded histories.
+    const BUDGET: usize = 200_000;
     let system: Vec<ChatMessage> = compressed
         .iter()
         .filter(|m| m.role == "system")
@@ -405,6 +461,16 @@ pub fn compress_history(messages: &[ChatMessage], supports_tools: bool) -> Vec<C
         }
     }
 
+    // Pin the task anchor: the first substantive user message carries the
+    // mission brief. Unlike tool results and chatter it must survive truncation
+    // verbatim — without it the agent loses its objective and re-orientates
+    // every turn.
+    let anchor: Option<ChatMessage> = if needs_truncation {
+        find_mission_anchor(&non_system).map(|idx| non_system[idx].clone())
+    } else {
+        None
+    };
+
     let mut tail: Vec<ChatMessage> = Vec::new();
     let mut used = 0usize;
     for m in non_system.iter().rev() {
@@ -448,7 +514,13 @@ pub fn compress_history(messages: &[ChatMessage], supports_tools: bool) -> Vec<C
     }
 
     let mut result = system;
-    // Insert the conversation summary before the recent messages if we created one
+    // Insert the pinned mission brief, then the conversation summary, then the
+    // recent tail (skip the anchor if the tail already carries it).
+    if let Some(anchor) = anchor {
+        if !tail.iter().any(|m| m.role == "user" && m.content == anchor.content) {
+            result.push(anchor);
+        }
+    }
     if let Some(summary) = summary_message {
         result.push(summary);
     }
