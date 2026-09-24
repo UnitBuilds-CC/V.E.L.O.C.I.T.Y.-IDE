@@ -73,20 +73,23 @@ impl ChatPanelState {
     }
 
     pub fn append_agent_token(&mut self, token: &str) {
-        if self.agent_active {
-            // An explicit turn boundary (user message, or a tool that just
-            // finished): the next agent text starts a fresh bubble.
-            self.agent_active = false;
-        } else if let Some(idx) = self.active_agent_bubble() {
-            // Reasoning models interleave thought deltas between content
-            // deltas. Append to the current turn's agent bubble instead of
-            // starting a new one for each interleaving, which would shatter
-            // a single sentence into mid-word fragments.
+        // One block per agent turn, the way most agentic systems show it:
+        // everything the model says before the next user message lands in a
+        // single bubble. A finished tool no longer starts a fresh bubble; it
+        // inserts a paragraph break in the turn's bubble instead. Interleaved
+        // reasoning deltas append verbatim, so content deltas split mid-word
+        // never shatter the sentence.
+        if let Some(idx) = self.active_agent_bubble() {
             if let Some(msg) = self.messages.get_mut(idx) {
+                if self.agent_active && !msg.content.is_empty() {
+                    msg.content.push_str("\n\n");
+                }
                 msg.content.push_str(token);
+                self.agent_active = false;
                 return;
             }
         }
+        self.agent_active = false;
         self.messages.push(UiChatMessage {
             role: ChatRole::Agent,
             content: token.to_string(),
@@ -781,24 +784,13 @@ fn render_message_bubble(ui: &mut egui::Ui, msg: &UiChatMessage, palette: IdePal
     };
 
     ui.with_layout(egui::Layout::top_down(align), |ui| {
-        ui.horizontal(|ui| {
-            ui.label(
-                egui::RichText::new(role_label)
-                    .small()
-                    .strong()
-                    .color(accent),
-            );
-            if ui
-                .small_button("Copy")
-                .on_hover_text("Copy message text to clipboard")
-                .clicked()
-            {
-                let raw_text = msg.content.trim();
-                let text = sanitize_display_text(raw_text);
-                ui.ctx().copy_text(text);
-            }
-        });
-        egui::Frame::new()
+        ui.label(
+            egui::RichText::new(role_label)
+                .small()
+                .strong()
+                .color(accent),
+        );
+        let frame_inner = egui::Frame::new()
             .fill(bg)
             .stroke(egui::Stroke::new(1.0, border))
             .corner_radius(egui::CornerRadius::same(12))
@@ -822,6 +814,32 @@ fn render_message_bubble(ui: &mut egui::Ui, msg: &UiChatMessage, palette: IdePal
                     render_markdown(ui, &text, palette);
                 }
             });
+        // Copy affordance: a quiet icon on the bubble's right edge that only
+        // appears while the bubble is hovered, keeping the transcript clean.
+        let frame_resp = frame_inner.response;
+        if frame_resp.hovered() {
+            let btn_size = 24.0;
+            let r = frame_resp.rect;
+            let icon_rect = egui::Rect::from_min_size(
+                egui::pos2(r.max.x - btn_size - 8.0, r.min.y + 8.0),
+                egui::vec2(btn_size, btn_size),
+            );
+            let btn = ui.put(
+                icon_rect,
+                egui::Button::new(egui::RichText::new(egui_phosphor::regular::COPY).size(13.0))
+                    .fill(palette.bg_primary)
+                    .stroke(egui::Stroke::new(1.0, palette.border))
+                    .corner_radius(egui::CornerRadius::same(6)),
+            );
+            if btn
+                .on_hover_text("Copy message text to clipboard")
+                .clicked()
+            {
+                let raw_text = msg.content.trim();
+                let text = sanitize_display_text(raw_text);
+                ui.ctx().copy_text(text);
+            }
+        }
     });
 }
 
@@ -1056,7 +1074,7 @@ mod tests {
     }
 
     #[test]
-    fn finished_tool_starts_fresh_agent_bubble() {
+    fn finished_tool_compacts_into_the_turn_block_with_a_break() {
         let mut chat = ChatPanelState::default();
         chat.append_agent_token("before tool");
         // ToolExecutionFinished raises the boundary flag.
@@ -1069,7 +1087,7 @@ mod tests {
             .filter(|m| m.role == ChatRole::Agent)
             .map(|m| m.content.as_str())
             .collect();
-        assert_eq!(agent_bubbles, vec!["before tool", "after tool"]);
+        assert_eq!(agent_bubbles, vec!["before tool\n\nafter tool"]);
     }
 
     #[test]
