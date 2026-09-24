@@ -2349,7 +2349,7 @@ A: Syntax highlighting for 28+ languages including Rust, Python, JavaScript, Typ
 - **Operational Runbook:** [docs/RUNBOOK.md](docs/RUNBOOK.md)
 - **GitHub Issues:** [Report bugs](https://github.com/UnitBuilds-CC/V.E.L.O.C.I.T.Y.-IDE/issues)
 - **GitHub Discussions:** [Ask questions](https://github.com/UnitBuilds-CC/V.E.L.O.C.I.T.Y.-IDE/discussions)
-- **Email:** support@velocity-ide.com
+- **Email:** support@unitbuilds.com
 
 ---
 

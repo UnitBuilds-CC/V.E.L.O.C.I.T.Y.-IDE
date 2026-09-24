@@ -494,4 +494,4 @@ sudo systemctl restart velocity-mcp
 - **Documentation:** [DEPLOYMENT.md](DEPLOYMENT.md)
 - **Architecture:** [README.md](../README.md)
 - **GitHub:** https://github.com/UnitBuilds-CC/V.E.L.O.C.I.T.Y.-IDE
-- **Support:** support@velocity-ide.com
+- **Support:** support@unitbuilds.com

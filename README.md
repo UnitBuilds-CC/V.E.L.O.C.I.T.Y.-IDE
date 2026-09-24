@@ -177,7 +177,7 @@ See [Deployment Guide](docs/DEPLOYMENT.md) for full configuration options.
 
 - **GitHub Issues:** [Report bugs](https://github.com/UnitBuilds-CC/V.E.L.O.C.I.T.Y.-IDE/issues)
 - **GitHub Discussions:** [Ask questions](https://github.com/UnitBuilds-CC/V.E.L.O.C.I.T.Y.-IDE/discussions)
-- **Email:** support@velocity-ide.com
+- **Email:** support@unitbuilds.com
 
 ## License
 
