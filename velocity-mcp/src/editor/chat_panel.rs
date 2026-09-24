@@ -73,28 +73,46 @@ impl ChatPanelState {
     }
 
     pub fn append_agent_token(&mut self, token: &str) {
-        let need_new = self.agent_active
-            || self
-                .messages
-                .last()
-                .map(|m| m.role != ChatRole::Agent)
-                .unwrap_or(true);
-
-        if need_new {
-            self.messages.push(UiChatMessage {
-                role: ChatRole::Agent,
-                content: String::new(),
-            });
+        if self.agent_active {
+            // An explicit turn boundary (user message, or a tool that just
+            // finished): the next agent text starts a fresh bubble.
             self.agent_active = false;
-        }
-        if let Some(last) = self.messages.last_mut() {
-            if last.role == ChatRole::Agent {
-                last.content.push_str(token);
+        } else if let Some(idx) = self.active_agent_bubble() {
+            // Reasoning models interleave thought deltas between content
+            // deltas. Append to the current turn's agent bubble instead of
+            // starting a new one for each interleaving, which would shatter
+            // a single sentence into mid-word fragments.
+            if let Some(msg) = self.messages.get_mut(idx) {
+                msg.content.push_str(token);
+                return;
             }
         }
+        self.messages.push(UiChatMessage {
+            role: ChatRole::Agent,
+            content: token.to_string(),
+        });
+    }
+
+    /// The agent bubble for the in-flight turn: the most recent Agent message
+    /// that is separated from the end of the list only by Thought bubbles.
+    /// A User bubble ends the turn, so the scan stops there.
+    fn active_agent_bubble(&self) -> Option<usize> {
+        for (back, msg) in self.messages.iter().rev().enumerate() {
+            match msg.role {
+                ChatRole::Agent => return Some(self.messages.len() - 1 - back),
+                ChatRole::User => return None,
+                ChatRole::Thought => continue,
+            }
+        }
+        None
     }
 
     pub fn append_thought_token(&mut self, token: &str) {
+        if token.is_empty() {
+            // Some providers emit empty reasoning deltas at segment
+            // boundaries; they would pile up as blank pill bubbles.
+            return;
+        }
         if let Some(last) = self.messages.last() {
             if last.role == ChatRole::Thought {
                 if let Some(last_mut) = self.messages.last_mut() {
@@ -1010,4 +1028,77 @@ fn flatten_content_parts(parts: &serde_json::Value) -> String {
         }
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn interleaved_thoughts_do_not_shatter_agent_turn() {
+        let mut chat = ChatPanelState::default();
+        chat.push_user("hello".into());
+        // Reasoning models alternate content and reasoning deltas; a single
+        // agent turn must still land in one bubble, not one bubble per delta.
+        chat.append_agent_token("and understand wh");
+        chat.append_thought_token("thinking hard");
+        chat.append_agent_token("at's been");
+        chat.append_thought_token("more thinking");
+        chat.append_agent_token(" done so far.");
+
+        let agent_bubbles: Vec<&str> = chat
+            .messages
+            .iter()
+            .filter(|m| m.role == ChatRole::Agent)
+            .map(|m| m.content.as_str())
+            .collect();
+        assert_eq!(agent_bubbles, vec!["and understand what's been done so far."]);
+    }
+
+    #[test]
+    fn finished_tool_starts_fresh_agent_bubble() {
+        let mut chat = ChatPanelState::default();
+        chat.append_agent_token("before tool");
+        // ToolExecutionFinished raises the boundary flag.
+        chat.agent_active = true;
+        chat.append_agent_token("after tool");
+
+        let agent_bubbles: Vec<&str> = chat
+            .messages
+            .iter()
+            .filter(|m| m.role == ChatRole::Agent)
+            .map(|m| m.content.as_str())
+            .collect();
+        assert_eq!(agent_bubbles, vec!["before tool", "after tool"]);
+    }
+
+    #[test]
+    fn user_message_ends_the_agent_turn() {
+        let mut chat = ChatPanelState::default();
+        chat.append_agent_token("first turn");
+        chat.append_thought_token("hmm");
+        chat.push_user("next question".into());
+        chat.agent_active = false; // force the scan path, not the flag path
+        chat.append_agent_token("second turn");
+
+        let agent_bubbles: Vec<&str> = chat
+            .messages
+            .iter()
+            .filter(|m| m.role == ChatRole::Agent)
+            .map(|m| m.content.as_str())
+            .collect();
+        assert_eq!(agent_bubbles, vec!["first turn", "second turn"]);
+    }
+
+    #[test]
+    fn empty_thought_tokens_are_dropped() {
+        let mut chat = ChatPanelState::default();
+        chat.append_thought_token("");
+        chat.append_agent_token("text");
+        chat.append_thought_token("");
+        assert_eq!(
+            chat.messages.iter().filter(|m| m.role == ChatRole::Thought).count(),
+            0
+        );
+    }
 }
