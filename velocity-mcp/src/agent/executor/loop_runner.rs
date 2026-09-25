@@ -55,6 +55,10 @@ pub fn run_agent_reasoning_loop(
     // Budget for same-provider retries on hard transport failures; bounded so
     // a permanently dead provider still terminates the run (as "blocked").
     let mut hard_fail_retries: u32 = 0;
+    // Budget for auto-continuations when the model announces an action but
+    // returns no tool call ("Let me fix X:" → turn ends). Bounded so a model
+    // that genuinely loops on announcements still terminates.
+    let mut auto_continuations: u32 = 0;
 
     // Phase 2: Workspace checkpointing for safe, reversible tool operations
     let mut checkpoint_mgr = CheckpointManager::new(workspace_root);
@@ -1470,6 +1474,27 @@ pub fn run_agent_reasoning_loop(
                     break;
                 }
             }
+        } else if unfinished_announced_turn(&assistant_content) && auto_continuations < 2 {
+            // The model ended its turn with an announcement ("Let me fix the
+            // test:") or an empty response instead of a tool call or a final
+            // summary. Historically this surfaced as "Agent finished" with the
+            // mission half-done. Nudge it to act, without user intervention.
+            auto_continuations += 1;
+            ui_tx
+                .send(AgentToUiMessage::StatusUpdate(format!(
+                    "Turn announced an action but made no tool call — auto-continuing ({}/2)...",
+                    auto_continuations
+                )))
+                .ok();
+            message_history.push(ChatMessage {
+                role: "user".to_string(),
+                content: "[System notice] Your previous response announced an action but contained no tool call, so nothing was executed and the turn ended. If work remains, make the tool calls now; if the mission is truly complete, reply with your final summary instead of another announcement.".to_string(),
+                name: None,
+                tool_call_id: None,
+                tool_calls: None,
+            });
+            loop_count = loop_count.saturating_sub(1);
+            continue;
         } else {
             write_handover_nda(workspace_root, "idle", loop_count, "completed", false);
             break;
@@ -1673,4 +1698,83 @@ fn gather_workspace_overview(workspace_root: &PathBuf) -> String {
     }
 
     overview
+}
+
+/// Returns true when a no-tool-call assistant turn looks unfinished rather
+/// than like a final summary: an empty response (stream returned nothing), a
+/// trailing colon/ellipsis ("Let me fix the test:"), or a last line that is
+/// itself an action announcement. The WASIX POC run ended twice this way —
+/// "Agent finished" while the mission was half-done.
+fn unfinished_announced_turn(content: &str) -> bool {
+    let trimmed = content.trim();
+    if trimmed.is_empty() {
+        return true;
+    }
+    if trimmed.ends_with(':')
+        || trimmed.ends_with('：')
+        || trimmed.ends_with("...")
+        || trimmed.ends_with('…')
+    {
+        return true;
+    }
+    if let Some(last_line) = trimmed.lines().rev().find(|l| !l.trim().is_empty()) {
+        let lower = last_line.trim_start().to_lowercase();
+        // "Let me know …" closings are normal final-summary prose, not intent.
+        if lower.starts_with("let me know") || lower.starts_with("let us know") {
+            return false;
+        }
+        const ANNOUNCEMENTS: [&str; 8] = [
+            "let me ",
+            "let's ",
+            "i'll ",
+            "i will ",
+            "i am going to ",
+            "i'm going to ",
+            "now i ",
+            "next, i ",
+        ];
+        if ANNOUNCEMENTS.iter().any(|p| lower.starts_with(p)) {
+            return true;
+        }
+    }
+    false
+}
+
+#[cfg(test)]
+mod tests {
+    use super::unfinished_announced_turn;
+
+    #[test]
+    fn empty_response_is_unfinished() {
+        assert!(unfinished_announced_turn(""));
+        assert!(unfinished_announced_turn("   \n "));
+    }
+
+    #[test]
+    fn trailing_colon_or_ellipsis_is_unfinished() {
+        assert!(unfinished_announced_turn("I see the issue. Let me fix the test to use unique data:"));
+        assert!(unfinished_announced_turn("Next steps…"));
+        assert!(unfinished_announced_turn("Running the tests now..."));
+        assert!(unfinished_announced_turn("修改说明："));
+    }
+
+    #[test]
+    fn announcement_last_line_is_unfinished() {
+        assert!(unfinished_announced_turn(
+            "Some analysis here.\n\nLet me write the benchmarks now."
+        ));
+        assert!(unfinished_announced_turn("I'll add the tests next."));
+        assert!(unfinished_announced_turn("Now I run cargo test."));
+    }
+
+    #[test]
+    fn genuine_final_summaries_are_finished() {
+        assert!(!unfinished_announced_turn(
+            "All 14 tests pass and the benchmarks show 3.2 µs per read. The implementation is complete."
+        ));
+        assert!(!unfinished_announced_turn(
+            "Summary: fork shares the offset, close is safe, reads serialize.\n\nLet me know if you want a follow-up."
+        ));
+        assert!(!unfinished_announced_turn("Done. The crate builds and all tests pass."));
+    }
 }
