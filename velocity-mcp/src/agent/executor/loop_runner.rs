@@ -1235,7 +1235,8 @@ pub fn run_agent_reasoning_loop(
                                 let diag = crate::automation::read_latest_diagnostics(
                                     &workspace_root_clone,
                                 );
-                                if !diag.success {
+                                // A skipped check (no Rust project) has nothing to gate on.
+                                if !diag.success && !diag.skipped {
                                     let file_str = lock_path.display().to_string();
                                     let rel_str = lock_path
                                         .strip_prefix(&workspace_root_clone)

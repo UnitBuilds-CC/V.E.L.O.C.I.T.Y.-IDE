@@ -117,6 +117,11 @@ pub enum GuiCommand {
     SubmitDialog { value: String },
     /// Send a chat message to the agent as if the user typed it and pressed Send.
     SendChatMessage { text: String },
+    /// Turn automatic approval of agent tool calls on or off for this workspace,
+    /// exactly as the chat panel's "Auto-approve" checkbox does, and persist it.
+    /// Test drivers and headless sweeps need this because without it every write
+    /// tool stalls on a pending approval the driver must babysit one by one.
+    SetAutoApprove { enabled: bool },
 }
 
 /// Wrapper that includes the auth token alongside the command.
@@ -174,6 +179,10 @@ pub struct IdeState {
     /// nothing is left.
     #[serde(default)]
     pub open_overlays: Vec<String>,
+    /// Whether agent tool calls are auto-approved for this workspace, so a
+    /// driver can confirm `SetAutoApprove` actually took effect.
+    #[serde(default)]
+    pub auto_approve: bool,
 }
 
 /// Handle for the GUI control listener. Holds the shutdown flag.
@@ -653,6 +662,11 @@ mod tests {
             GuiCommand::SubmitDialog {
                 value: "notes/todo.md".into(),
             },
+            GuiCommand::SendChatMessage {
+                text: "list the files".into(),
+            },
+            GuiCommand::SetAutoApprove { enabled: true },
+            GuiCommand::SetAutoApprove { enabled: false },
         ];
         for command in cases {
             let envelope = AuthenticatedCommand {

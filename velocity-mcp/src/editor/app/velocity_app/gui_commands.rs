@@ -78,6 +78,7 @@ impl VelocityApp {
             GuiCommand::DismissOverlays {} => self.cmd_dismiss_overlays(),
             GuiCommand::SubmitDialog { value } => self.cmd_submit_dialog(value),
             GuiCommand::SendChatMessage { text } => self.cmd_send_chat_message(text),
+            GuiCommand::SetAutoApprove { enabled } => self.cmd_set_auto_approve(enabled),
         }
     }
 
@@ -190,6 +191,7 @@ impl VelocityApp {
                 .into_iter()
                 .map(str::to_string)
                 .collect(),
+            auto_approve: self.auto_approve,
         }
     }
 
@@ -491,8 +493,20 @@ impl VelocityApp {
         }
         let prompt = self.chat.compose_and_take_prompt(&text);
         self.chat.push_user(text);
-        let _ = self.agent_tx.send(crate::agent::UiToAgentMessage::UserPrompt(prompt));
+        let _ = self
+            .agent_tx
+            .send(crate::agent::UiToAgentMessage::UserPrompt(prompt));
         accepted(serde_json::json!({"sent": true}))
+    }
+
+    fn cmd_set_auto_approve(&mut self, enabled: bool) -> GuiResponse {
+        // Same pairing the chat panel checkbox and the settings page use: the
+        // app-level flag gates agent_handlers' approval routing, the chat copy
+        // keeps the checkbox in sync, and the preference survives restarts.
+        self.auto_approve = enabled;
+        self.chat.auto_approve = enabled;
+        self.save_workspace_preferences();
+        accepted(serde_json::json!({"auto_approve": enabled}))
     }
 
     /// Quit the IDE. Sends a viewport Close command through the egui

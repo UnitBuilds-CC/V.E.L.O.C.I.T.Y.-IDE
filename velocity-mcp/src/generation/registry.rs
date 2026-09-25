@@ -178,7 +178,9 @@ pub struct GenerationRegistryFile {
 // ---------------------------------------------------------------------------
 
 fn registry_path(workspace_root: &Path) -> PathBuf {
-    workspace_root.join(".velocity").join("generation_models.json")
+    workspace_root
+        .join(".velocity")
+        .join("generation_models.json")
 }
 
 /// Load the merged registry: builtins overlaid by user-registered models.
@@ -229,17 +231,14 @@ pub fn save_registry(
             .map(|(id, spec)| (id, spec.clone()))
             .collect(),
     };
-    let json = serde_json::to_string_pretty(&file)
-        .map_err(|e| format!("serialize registry: {e}"))?;
+    let json =
+        serde_json::to_string_pretty(&file).map_err(|e| format!("serialize registry: {e}"))?;
     fs::write(&path, json).map_err(|e| format!("write registry: {e}"))?;
     Ok(())
 }
 
 /// Register a new model spec into the workspace registry.
-pub fn register_model(
-    workspace_root: &Path,
-    spec: GenerationModelSpec,
-) -> Result<String, String> {
+pub fn register_model(workspace_root: &Path, spec: GenerationModelSpec) -> Result<String, String> {
     let mut models = load_registry(workspace_root);
     let id = spec.model_id.clone();
     models.insert(id.clone(), spec);

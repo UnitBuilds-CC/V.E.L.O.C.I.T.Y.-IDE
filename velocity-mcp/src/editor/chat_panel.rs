@@ -1070,7 +1070,10 @@ mod tests {
             .filter(|m| m.role == ChatRole::Agent)
             .map(|m| m.content.as_str())
             .collect();
-        assert_eq!(agent_bubbles, vec!["and understand what's been done so far."]);
+        assert_eq!(
+            agent_bubbles,
+            vec!["and understand what's been done so far."]
+        );
     }
 
     #[test]
@@ -1115,7 +1118,10 @@ mod tests {
         chat.append_agent_token("text");
         chat.append_thought_token("");
         assert_eq!(
-            chat.messages.iter().filter(|m| m.role == ChatRole::Thought).count(),
+            chat.messages
+                .iter()
+                .filter(|m| m.role == ChatRole::Thought)
+                .count(),
             0
         );
     }

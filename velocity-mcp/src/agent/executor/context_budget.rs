@@ -999,8 +999,7 @@ mod tests {
                 "description": "detailed description ".repeat(4_000),
             },
         });
-        let squeezed =
-            compress_history_with_budget(&messages, "gpt-3.5-turbo", true, &[huge_tool]);
+        let squeezed = compress_history_with_budget(&messages, "gpt-3.5-turbo", true, &[huge_tool]);
         assert!(
             squeezed.len() < roomy.len(),
             "tool schemas must reserve budget and force history compression"

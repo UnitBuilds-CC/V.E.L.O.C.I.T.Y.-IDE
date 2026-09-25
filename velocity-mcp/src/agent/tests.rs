@@ -514,6 +514,125 @@ fn test_eager_merkle_compaction() {
 }
 
 #[test]
+fn prose_read_file_stub_gets_excerpt_not_fake_declarations() {
+    // read_file on a markdown doc that merely *mentions* code (a fenced
+    // "fn read_at" example) must not be summarised as a declaration index:
+    // the extracted "declarations" were prose artefacts the model then
+    // believed were real symbols.
+    let mut prose = String::from("# Storage Guide\n\nThis document explains the storage API.\n");
+    prose.push_str("```rust\nfn read_at(offset: u64) -> Vec<u8> { load(offset) }\n```\n");
+    while prose.len() < 5_000 {
+        prose.push_str("The layer above handles caching, durability and compaction.\n");
+    }
+
+    let messages = vec![
+        ChatMessage {
+            role: "assistant".to_string(),
+            content: "Let me read the guide.".to_string(),
+            name: None,
+            tool_call_id: None,
+            tool_calls: Some(serde_json::json!([{
+                "id": "call_doc",
+                "function": {
+                    "name": "read_file",
+                    "arguments": "{\"relativeFilePath\":\"docs/STORAGE.md\"}"
+                }
+            }])),
+        },
+        ChatMessage {
+            role: "tool".to_string(),
+            content: prose,
+            name: Some("read_file".to_string()),
+            tool_call_id: Some("call_doc".to_string()),
+            tool_calls: None,
+        },
+        ChatMessage {
+            role: "assistant".to_string(),
+            content: "Understood.".to_string(),
+            name: None,
+            tool_call_id: None,
+            tool_calls: None,
+        },
+    ];
+
+    let compressed = compress_history(&messages, true);
+    let stub = &compressed[1].content;
+    assert!(stub.contains("compressed to optimize context"), "{stub}");
+    assert!(!stub.contains("Parsed Declarations"), "prose must not fake a symbol index: {stub}");
+    assert!(!stub.contains("fn read_at"), "prose fence leaked into the stub: {stub}");
+    assert!(stub.contains("Excerpt: # Storage Guide"), "{stub}");
+    assert!(stub.contains("Call read_file again"), "{stub}");
+}
+
+#[test]
+fn code_read_file_stub_still_indexes_declarations() {
+    // The path check must not swallow the useful case: a real source file
+    // keeps its declaration index in the compressed stub.
+    let mut code = String::from("pub fn load_page(id: u64) -> Page {\n    fetch(id)\n}\n");
+    while code.len() < 5_000 {
+        code.push_str("fn helper_x() {\n    run();\n}\n");
+    }
+
+    let messages = vec![
+        ChatMessage {
+            role: "assistant".to_string(),
+            content: String::new(),
+            name: None,
+            tool_call_id: None,
+            tool_calls: Some(serde_json::json!([{
+                "id": "call_code",
+                "function": {
+                    "name": "read_file",
+                    "arguments": "{\"relativeFilePath\":\"src/pager.rs\"}"
+                }
+            }])),
+        },
+        ChatMessage {
+            role: "tool".to_string(),
+            content: code,
+            name: Some("read_file".to_string()),
+            tool_call_id: Some("call_code".to_string()),
+            tool_calls: None,
+        },
+        ChatMessage {
+            role: "assistant".to_string(),
+            content: "Done.".to_string(),
+            name: None,
+            tool_call_id: None,
+            tool_calls: None,
+        },
+    ];
+
+    let compressed = compress_history(&messages, true);
+    let stub = &compressed[1].content;
+    assert!(stub.contains("Parsed Declarations"), "code stub must keep the index: {stub}");
+    assert!(stub.contains("fn load_page") || stub.contains("fn helper_x"), "{stub}");
+}
+
+#[test]
+fn mid_slice_truncation_snaps_to_char_boundaries() {
+    // The >12k fallback cut at fixed byte offsets panicked whenever a
+    // multi-byte character happened to straddle the 6,000-byte mark.
+    let mut giant = "a".repeat(5_999);
+    giant.push('é'); // occupies bytes 5999..6001, straddling the head cut
+    giant.push_str(&"b".repeat(7_000));
+    assert!(giant.len() > 12_000);
+
+    let messages = vec![ChatMessage {
+        role: "tool".to_string(),
+        content: giant,
+        name: Some("read_file".to_string()),
+        tool_call_id: Some("call_giant_utf8".to_string()),
+        tool_calls: None,
+    }];
+
+    let compressed = compress_history(&messages, true);
+    assert!(compressed[0]
+        .content
+        .contains("Truncated middle output of 'read_file'"));
+}
+
+#[test]
 fn test_fallback_provider_resolution() {
     assert_eq!(
         fallback_provider(AiProvider::CloudflareWorkersAi),

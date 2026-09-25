@@ -51,7 +51,10 @@ enum ImageBackend {
 /// A model that resolves to a registered generation spec uses its native
 /// endpoint; everything else falls back to Cloudflare, preserving the
 /// pre-existing default behaviour.
-fn infer_image_backend(model_arg: Option<&str>, registry: &HashMap<String, GenerationModelSpec>) -> ImageBackend {
+fn infer_image_backend(
+    model_arg: Option<&str>,
+    registry: &HashMap<String, GenerationModelSpec>,
+) -> ImageBackend {
     match model_arg.and_then(|m| registry.get(m)) {
         Some(_) => ImageBackend::Native,
         None => ImageBackend::Cloudflare,
@@ -305,8 +308,11 @@ fn run_generation(
     parameters: Option<&Value>,
 ) -> String {
     let root_buf = root.to_path_buf();
-    let api_key =
-        crate::agent::executor::dispatch::resolve_api_key(&root_buf, "alibaba", "DASHSCOPE_API_KEY");
+    let api_key = crate::agent::executor::dispatch::resolve_api_key(
+        &root_buf,
+        "alibaba",
+        "DASHSCOPE_API_KEY",
+    );
     if api_key.trim().is_empty() {
         return json!({
             "success": false,
@@ -402,7 +408,10 @@ mod tests {
         let parsed: Value = serde_json::from_str(&out).unwrap();
         assert_eq!(parsed["success"], json!(true));
         let models = parsed["models"].as_array().unwrap();
-        let ids: Vec<&str> = models.iter().map(|m| m["model_id"].as_str().unwrap()).collect();
+        let ids: Vec<&str> = models
+            .iter()
+            .map(|m| m["model_id"].as_str().unwrap())
+            .collect();
         assert!(ids.contains(&"wan2.7-image"));
         assert!(ids.contains(&"happyhorse-1.1-t2v"));
     }
@@ -444,10 +453,7 @@ mod tests {
         let parsed: Value = serde_json::from_str(&out).unwrap();
         assert_eq!(parsed["success"], json!(false));
         assert!(
-            parsed["error"]
-                .as_str()
-                .unwrap()
-                .contains("required field"),
+            parsed["error"].as_str().unwrap().contains("required field"),
             "{out}"
         );
     }
@@ -479,9 +485,15 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let registry = load_registry(dir.path());
         // No model, a Cloudflare id, and an unknown id all route to Cloudflare.
-        assert_eq!(infer_image_backend(None, &registry), ImageBackend::Cloudflare);
         assert_eq!(
-            infer_image_backend(Some("@cf/stabilityai/stable-diffusion-xl-base-1.0"), &registry),
+            infer_image_backend(None, &registry),
+            ImageBackend::Cloudflare
+        );
+        assert_eq!(
+            infer_image_backend(
+                Some("@cf/stabilityai/stable-diffusion-xl-base-1.0"),
+                &registry
+            ),
             ImageBackend::Cloudflare
         );
         assert_eq!(

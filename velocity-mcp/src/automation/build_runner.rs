@@ -12,6 +12,11 @@ pub struct BuildDiagnostics {
     pub errors: Vec<String>,
     pub warnings: Vec<String>,
     pub summary: String,
+    /// The workspace holds no buildable project, so the check was not run.
+    /// This is "not applicable", not a failure: consumers that count errors
+    /// for badges, gates, or worker validation must treat it as neutral.
+    #[serde(default)]
+    pub skipped: bool,
 }
 
 pub fn diagnostics_path(workspace_root: &std::path::Path) -> PathBuf {
@@ -115,9 +120,12 @@ pub fn run_cargo_check(workspace_root: &std::path::Path) -> BuildDiagnostics {
     let cargo_dir = match cargo_manifest_dir(workspace_root) {
         Ok(dir) => dir,
         Err(reason) => {
+            // No Rust project is not a broken Rust project: record the reason
+            // in the summary, but emit zero errors and flag `skipped` so the
+            // badge, the write gate, and orchestrator validation stay neutral.
             diag.success = false;
-            diag.summary = reason.clone();
-            diag.errors.push(reason);
+            diag.skipped = true;
+            diag.summary = reason;
             return diag;
         }
     };
@@ -185,6 +193,7 @@ fn serialize_diagnostics_nda(diag: &BuildDiagnostics) -> String {
         "build-diagnostics version 2".to_string(),
         format!("timestamp_ms {}", diag.timestamp_ms),
         format!("success {}", diag.success),
+        format!("skipped {}", diag.skipped),
         format!("summary {}", encode_nda_text(&diag.summary)),
         format!("error_count {}", diag.errors.len()),
         format!("warning_count {}", diag.warnings.len()),
@@ -231,6 +240,7 @@ fn parse_diagnostics_nda(raw: &str) -> Option<BuildDiagnostics> {
         match key {
             "timestamp_ms" => diag.timestamp_ms = value.parse().ok()?,
             "success" => diag.success = value.parse().ok()?,
+            "skipped" => diag.skipped = value.parse().ok()?,
             "summary" => diag.summary = decode_nda_text(value),
             "error" => diag.errors.push(decode_nda_text(value)),
             "warning" => diag.warnings.push(decode_nda_text(value)),
@@ -310,6 +320,7 @@ mod tests {
             errors: vec!["error: failure".to_string()],
             warnings: vec!["warning: caution".to_string()],
             summary: "cargo check FAILED (1 errors, 1 warnings)".to_string(),
+            skipped: false,
         };
 
         write_diagnostics(tmp.path(), &diag).unwrap();
@@ -474,6 +485,8 @@ mod tests {
 
         let diag = run_cargo_check(tmp.path());
         assert!(!diag.success, "a manifest-less folder cannot be a pass");
+        assert!(diag.skipped, "a manifest-less folder must be neutral, not an error");
+        assert!(diag.errors.is_empty(), "skip must carry zero errors: {:?}", diag.errors);
         assert!(diag.summary.contains("no Cargo.toml"), "{}", diag.summary);
         assert!(!diag.summary.contains('\n'), "multi-line: {}", diag.summary);
 
@@ -481,6 +494,8 @@ mod tests {
         let back = read_latest_diagnostics(tmp.path());
         assert_eq!(back.summary, diag.summary);
         assert!(!back.success);
+        assert!(back.skipped, "skipped must survive the NDA round-trip");
+        assert!(back.errors.is_empty());
     }
 
     #[test]
@@ -491,6 +506,7 @@ mod tests {
             errors: vec![],
             warnings: vec!["warn1".to_string()],
             summary: "all good".to_string(),
+            skipped: false,
         };
         let serialized = serialize_diagnostics_nda(&diag);
         assert!(serialized.starts_with("build-diagnostics version 2\n"));

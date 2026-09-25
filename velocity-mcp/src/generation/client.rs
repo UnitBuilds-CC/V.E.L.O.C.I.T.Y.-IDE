@@ -163,9 +163,7 @@ fn post_request(
         req = req.set("X-DashScope-Async", "enable");
     }
 
-    let response = req
-        .send_json(body)
-        .map_err(describe_ureq_err)?;
+    let response = req.send_json(body).map_err(describe_ureq_err)?;
 
     response
         .into_json()
@@ -413,7 +411,11 @@ pub fn generate(
     // Step 3: extract the artifact URL.
     let remote_url = extract_artifact_url(&output);
 
-    let dir_id = if task_id.is_empty() { local_job_id() } else { task_id.clone() };
+    let dir_id = if task_id.is_empty() {
+        local_job_id()
+    } else {
+        task_id.clone()
+    };
     let local_path = match &remote_url {
         Some(url) => {
             let ext = spec.output_type.file_extension();
@@ -597,10 +599,16 @@ mod tests {
     #[test]
     fn builtin_image_is_sync_messages_video_is_async_prompt() {
         let builtins = GenerationModelSpec::builtins();
-        let img = builtins.iter().find(|s| s.model_id == "wan2.7-image").unwrap();
+        let img = builtins
+            .iter()
+            .find(|s| s.model_id == "wan2.7-image")
+            .unwrap();
         assert_eq!(img.mode, InvocationMode::Sync);
         assert_eq!(img.input_format, InputFormat::Messages);
-        assert_eq!(img.endpoint_path, "/api/v1/services/aigc/multimodal-generation/generation");
+        assert_eq!(
+            img.endpoint_path,
+            "/api/v1/services/aigc/multimodal-generation/generation"
+        );
         assert_eq!(img.output_type, OutputType::Image);
 
         let vid = builtins

@@ -236,9 +236,7 @@ pub fn execute_live_task(
                 let snippet: String = subagent.transcript.chars().take(500).collect();
                 format!(
                     "Analysis via {} / {}: {}",
-                    final_provider_label,
-                    final_model_label,
-                    snippet,
+                    final_provider_label, final_model_label, snippet,
                 )
             } else if assignment.task_kind == AgentTaskKind::DesktopAutomation {
                 format!(

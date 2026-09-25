@@ -71,7 +71,10 @@ pub fn validate_with_workspace(result: &WorkerResult, workspace_root: &Path) -> 
 }
 
 fn runtime_report(diag: BuildDiagnostics) -> ValidationReport {
-    if diag.success {
+    // A skipped check (no Rust project in the workspace) validates nothing:
+    // pass it through rather than failing every write worker over a missing
+    // Cargo.toml that nobody asked us to build.
+    if diag.success || diag.skipped {
         return ValidationReport::ok();
     }
 
@@ -132,7 +135,8 @@ mod tests {
         let mut result = worker_result();
         result.outputs.clear();
         result.is_read_only = true;
-        result.message = "Analysis via Qwen / qwen3.6-flash: The backend module handles...".to_string();
+        result.message =
+            "Analysis via Qwen / qwen3.6-flash: The backend module handles...".to_string();
 
         let report = validate(&result);
         assert!(report.ok);
@@ -169,5 +173,20 @@ mod tests {
                 "error: second".to_string(),
             ]
         );
+    }
+
+    #[test]
+    fn runtime_report_treats_skipped_check_as_neutral() {
+        // A non-Rust workspace yields success=false with skipped=true; it must
+        // not fail every write worker in the orchestrator.
+        let report = runtime_report(BuildDiagnostics {
+            success: false,
+            skipped: true,
+            summary: "workspace has no Cargo.toml".to_string(),
+            ..Default::default()
+        });
+
+        assert!(report.ok);
+        assert!(report.messages.is_empty());
     }
 }

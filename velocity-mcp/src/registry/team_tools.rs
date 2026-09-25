@@ -1442,8 +1442,9 @@ pub(crate) fn build_fallback_chain(
     if !chain.iter().any(|(p, _)| *p == AiProvider::LocalOllama) {
         let model = match &active {
             Some((AiProvider::LocalOllama, m)) => m.clone(),
-            _ => best_local_ollama_model()
-                .unwrap_or_else(|| crate::agent::provider::default_provider_model(AiProvider::LocalOllama)),
+            _ => best_local_ollama_model().unwrap_or_else(|| {
+                crate::agent::provider::default_provider_model(AiProvider::LocalOllama)
+            }),
         };
         chain.push((AiProvider::LocalOllama, model));
     }

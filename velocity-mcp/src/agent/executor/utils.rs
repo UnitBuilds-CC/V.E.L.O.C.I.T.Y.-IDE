@@ -199,6 +199,41 @@ fn dedupe_inline_tool_docs(sys_msg: &mut ChatMessage, supports_tools: bool) {
     }
 }
 
+/// The file a `read_file` tool result came from, recovered from the assistant
+/// message that issued the matching tool call. Returns `None` when the call
+/// carries no path (older transcripts, synthetic messages, inline-tool models
+/// whose tool_calls were already flattened).
+fn read_file_source_path(
+    messages: &[ChatMessage],
+    result_idx: usize,
+    tool_call_id: Option<&str>,
+) -> Option<String> {
+    let wanted_id = tool_call_id?;
+    for m in messages[..result_idx].iter().rev() {
+        let Some(calls) = m.tool_calls.as_ref().and_then(|v| v.as_array()) else {
+            continue;
+        };
+        for call in calls {
+            if call.get("id").and_then(|v| v.as_str()) != Some(wanted_id) {
+                continue;
+            }
+            let function = call.get("function")?;
+            if function.get("name").and_then(|v| v.as_str()) != Some("read_file") {
+                continue;
+            }
+            let raw = function.get("arguments").and_then(|v| v.as_str())?;
+            let args: serde_json::Value = serde_json::from_str(raw).ok()?;
+            for key in ["relativeFilePath", "path", "file_path"] {
+                if let Some(p) = args.get(key).and_then(|v| v.as_str()) {
+                    return Some(p.to_string());
+                }
+            }
+            return None;
+        }
+    }
+    None
+}
+
 pub fn compress_history(messages: &[ChatMessage], supports_tools: bool) -> Vec<ChatMessage> {
     const VALID_ROLES: &[&str] = &[
         "system",
@@ -276,10 +311,34 @@ pub fn compress_history(messages: &[ChatMessage], supports_tools: bool) -> Vec<C
                 let content_len = m_copy.content.len();
                 let content_hash = hash_str(&m_copy.content);
 
+                // A declaration index only earns its tokens when the payload
+                // is actual source code: read_file on a markdown doc used to
+                // harvest prose words into a fake "Parsed Declarations" list
+                // ("fn read_at" from a code fence), which misled the model.
+                // The originating tool call names the file, so trust its
+                // extension; when it does not, fall back to the old behaviour.
+                let source_path =
+                    read_file_source_path(&messages, idx, m_copy.tool_call_id.as_deref());
+                let prose_document = source_path
+                    .as_deref()
+                    .map(|p| {
+                        matches!(
+                            std::path::Path::new(p)
+                                .extension()
+                                .and_then(|e| e.to_str())
+                                .map(|e| e.to_ascii_lowercase())
+                                .as_deref(),
+                            Some("md") | Some("markdown") | Some("txt") | Some("rst")
+                                | Some("adoc") | Some("log") | Some("csv")
+                        )
+                    })
+                    .unwrap_or(false);
+
                 let mut decls = Vec::new();
-                if tool_name == "read_file"
-                    || m_copy.content.contains("fn ")
-                    || m_copy.content.contains("class ")
+                if !prose_document
+                    && (tool_name == "read_file"
+                        || m_copy.content.contains("fn ")
+                        || m_copy.content.contains("class "))
                 {
                     for line in m_copy.content.lines() {
                         let line = line.trim();
@@ -306,7 +365,38 @@ pub fn compress_history(messages: &[ChatMessage], supports_tools: bool) -> Vec<C
                 }
 
                 let decl_summary = if decls.is_empty() {
-                    String::new()
+                    if tool_name == "read_file" {
+                        // Prose or structured data: a short verbatim excerpt
+                        // orients the model better than a hash alone. Fenced
+                        // code is skipped: quoting "fn foo" verbatim is how
+                        // prose docs got mistaken for a symbol index.
+                        let mut excerpt = String::new();
+                        let mut in_fence = false;
+                        for line in m_copy.content.lines() {
+                            let t = line.trim();
+                            if t.starts_with("```") {
+                                in_fence = !in_fence;
+                                continue;
+                            }
+                            if in_fence || t.is_empty() {
+                                continue;
+                            }
+                            if !excerpt.is_empty() {
+                                excerpt.push(' ');
+                            }
+                            excerpt.push_str(t);
+                            if excerpt.len() >= 140 {
+                                break;
+                            }
+                        }
+                        if excerpt.is_empty() {
+                            String::new()
+                        } else {
+                            format!("\nExcerpt: {} ...", excerpt)
+                        }
+                    } else {
+                        String::new()
+                    }
                 } else {
                     format!("\nParsed Declarations:\n  {}", decls.join("\n  "))
                 };
@@ -335,8 +425,18 @@ pub fn compress_history(messages: &[ChatMessage], supports_tools: bool) -> Vec<C
                     .name
                     .clone()
                     .unwrap_or_else(|| "unknown_tool".to_string());
-                let head = &m_copy.content[..6_000];
-                let tail_str = &m_copy.content[m_copy.content.len() - 6_000..];
+                // Snap to char boundaries: slicing at a fixed byte offset
+                // panics when the cut lands inside a multi-byte character.
+                let mut head_end = 6_000.min(m_copy.content.len());
+                while head_end > 0 && !m_copy.content.is_char_boundary(head_end) {
+                    head_end -= 1;
+                }
+                let mut tail_start = m_copy.content.len().saturating_sub(6_000);
+                while tail_start < m_copy.content.len() && !m_copy.content.is_char_boundary(tail_start) {
+                    tail_start += 1;
+                }
+                let head = &m_copy.content[..head_end];
+                let tail_str = &m_copy.content[tail_start..];
                 m_copy.content = format!(
                     "{}\n\n[... Truncated middle output of '{}' ({} chars total) to optimize context budget ...]\n\n{}",
                     head, tool_name, m_copy.content.len(), tail_str
