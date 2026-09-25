@@ -8,6 +8,22 @@ use serde_json::{json, Value};
 use std::path::PathBuf;
 use std::time::Duration;
 
+/// Shared HTTP agent for provider calls whose response body is streamed.
+/// ureq's `.timeout()` sets a *total* deadline that also covers reading the
+/// body, so an SSE stream still emitting tokens after 60s gets killed mid
+/// tool-call — and the truncated JSON arguments then executed as real calls.
+/// This agent bounds only the connect and each individual socket read, so
+/// long reasoning streams can run as long as bytes keep arriving.
+pub(crate) fn stream_agent() -> &'static ureq::Agent {
+    static AGENT: std::sync::OnceLock<ureq::Agent> = std::sync::OnceLock::new();
+    AGENT.get_or_init(|| {
+        ureq::AgentBuilder::new()
+            .timeout_connect(Duration::from_secs(15))
+            .timeout_read(Duration::from_secs(300))
+            .build()
+    })
+}
+
 /// Resolve an API key by checking provider-settings.json first (where the
 /// Settings UI saves keys), then falling back to the environment variable.
 /// Provider settings are stored at the user-level config directory
@@ -84,8 +100,8 @@ pub fn execute_openrouter_request<'a>(
 
         while attempt < max_attempts {
             attempt += 1;
-            match ureq::post("https://openrouter.ai/api/v1/chat/completions")
-                .timeout(Duration::from_secs(60))
+            match stream_agent()
+                .post("https://openrouter.ai/api/v1/chat/completions")
                 .set("Authorization", &format!("Bearer {}", current_key))
                 .set("HTTP-Referer", "https://velocity-ide.local")
                 .set("X-Title", "Velocity Cognitive IDE")
@@ -192,8 +208,8 @@ pub fn execute_cloudflare_request<'a>(
         let max_attempts = 2;
         while attempt < max_attempts {
             attempt += 1;
-            match ureq::post(&api_url)
-                .timeout(Duration::from_secs(60))
+            match stream_agent()
+                .post(&api_url)
                 .set("Authorization", &format!("Bearer {}", account.token))
                 .set("Content-Type", "application/json")
                 .send_json(request_body)
@@ -256,8 +272,8 @@ pub fn execute_azure_request(
     let mut azure_response = None;
     while attempt < max_attempts {
         attempt += 1;
-        match ureq::post(&api_url)
-            .timeout(Duration::from_secs(60))
+        match stream_agent()
+            .post(&api_url)
             .set("api-key", &account.api_key)
             .set("Content-Type", "application/json")
             .send_json(request_body)
@@ -303,8 +319,8 @@ pub fn execute_ollama_request(
         .unwrap_or("http://localhost:11434");
     let label = account.map(|a| a.label.as_str()).unwrap_or("Local-Ollama");
     let api_url = ollama_chat_url(host);
-    match ureq::post(&api_url)
-        .timeout(Duration::from_secs(60))
+    match stream_agent()
+        .post(&api_url)
         .set("Content-Type", "application/json")
         .send_json(request_body)
     {
@@ -351,8 +367,8 @@ fn execute_openai_compatible_request(
 
     let max_attempts = 3u32;
     for attempt in 1..=max_attempts {
-        match ureq::post(api_url)
-            .timeout(Duration::from_secs(60))
+        match stream_agent()
+            .post(api_url)
             .set("Authorization", &format!("Bearer {}", api_key))
             .set("Content-Type", "application/json")
             .send_json(request_body)
@@ -602,8 +618,8 @@ pub fn execute_google_request(
     }
     let url =
         "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions".to_string();
-    match ureq::post(&url)
-        .timeout(Duration::from_secs(60))
+    match stream_agent()
+        .post(&url)
         .set("x-goog-api-key", &api_key)
         .set("Content-Type", "application/json")
         .send_json(request_body)
@@ -913,8 +929,8 @@ pub fn execute_anthropic_request(
             return None;
         }
     };
-    match ureq::post("https://api.anthropic.com/v1/messages")
-        .timeout(Duration::from_secs(120))
+    match stream_agent()
+        .post("https://api.anthropic.com/v1/messages")
         .set("x-api-key", &api_key)
         .set("anthropic-version", "2023-06-01")
         .set("Content-Type", "application/json")

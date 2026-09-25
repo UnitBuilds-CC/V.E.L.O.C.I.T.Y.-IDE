@@ -1212,6 +1212,77 @@ fn default_configured_provider(root: &Path) -> AiProvider {
         .unwrap_or(AiProvider::LocalOllama)
 }
 
+/// The model the user has actively selected in the IDE, read from
+/// `.velocity/workspace-preferences.json` (persisted by the chat panel).
+/// Dispatched members must inherit this instead of falling through to
+/// hardcoded per-provider defaults — a stale default like `qwen-max` 404s
+/// on current token-plan endpoints that no longer list the legacy model.
+fn workspace_active_model(root: &Path) -> Option<(AiProvider, String)> {
+    let contents =
+        std::fs::read_to_string(root.join(".velocity").join("workspace-preferences.json")).ok()?;
+    let stripped = contents.strip_prefix('\u{feff}').unwrap_or(&contents);
+    let prefs: Value = serde_json::from_str(stripped).ok()?;
+    let model = prefs["selected_model"].as_str()?.trim().to_string();
+    if model.is_empty() {
+        return None;
+    }
+    let provider = AiProvider::from_label(prefs["provider"].as_str()?)?;
+    Some((provider, model))
+}
+
+/// True when a model id advertises a parameter count below ~7B (e.g.
+/// `qwen2.5-coder:0.5b`, `llama3.2:1b`) or carries a known "toy" suffix
+/// (`phi3:mini`). Sub-7B models reliably fail agentic tool-use; if one
+/// serves a dispatch the result must be flagged, never a silent success.
+fn is_small_model(model: &str) -> bool {
+    let lower = model.to_lowercase();
+    let bytes = lower.as_bytes();
+    let mut largest_billions: Option<f64> = None;
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i].is_ascii_digit() {
+            let start = i;
+            while i < bytes.len() && (bytes[i].is_ascii_digit() || bytes[i] == b'.') {
+                i += 1;
+            }
+            // "7b", ":1.5b", "-70b-instruct" → size mention; reject "4o".
+            if i < bytes.len()
+                && bytes[i] == b'b'
+                && (i + 1 == bytes.len() || !bytes[i + 1].is_ascii_alphabetic())
+            {
+                if let Ok(v) = lower[start..i].parse::<f64>() {
+                    largest_billions = Some(largest_billions.map_or(v, |p| p.max(v)));
+                }
+            }
+        } else {
+            i += 1;
+        }
+    }
+    if let Some(v) = largest_billions {
+        return v < 7.0;
+    }
+    lower.contains("mini") || lower.contains("nano") || lower.contains("tiny")
+}
+
+/// Pick the most agentic-capable model currently pulled on the local Ollama
+/// server, preferring coder-tuned ones. The static default
+/// (`qwen2.5-coder:0.5b`) reliably produces confident garbage on agent
+/// tasks, so it must not be the automatic choice when something bigger is
+/// installed.
+fn best_local_ollama_model() -> Option<String> {
+    let models = crate::agent::provider::fetch_local_ollama_models(&[]).ok()?;
+    let mut ids: Vec<String> = models
+        .iter()
+        .map(|m| m.id.clone())
+        .filter(|id| !is_small_model(id))
+        .collect();
+    if ids.is_empty() {
+        return None;
+    }
+    ids.sort_by_key(|id| if id.contains("coder") { 0 } else { 1 });
+    Some(ids.remove(0))
+}
+
 /// Returns alternative models to try for a given provider when the primary model fails.
 /// Ordered by likelihood of success (free/cheap first, then larger models).
 fn fallback_models_for(provider: AiProvider, primary: &str) -> Vec<String> {
@@ -1256,12 +1327,14 @@ fn fallback_models_for(provider: AiProvider, primary: &str) -> Vec<String> {
             }
         }
         AiProvider::LocalOllama => {
+            // Ordered most→least capable: agentic tool-use degrades badly
+            // under ~7B, so the largest installed models are tried first.
             for m in &[
-                "qwen2.5-coder:1.5b",
                 "qwen2.5-coder:7b",
-                "llama3.2:1b",
                 "llama3.2:3b",
                 "phi3:mini",
+                "qwen2.5-coder:1.5b",
+                "llama3.2:1b",
             ] {
                 if *m != primary {
                     models.push(m.to_string());
@@ -1303,11 +1376,23 @@ pub(crate) fn build_fallback_chain(
     let is_configured =
         |p: AiProvider| -> bool { configured.iter().any(|(prov, yes)| *prov == p && *yes) };
 
+    // The model the user actually selected in the IDE wins over the static
+    // per-provider defaults for every chain entry on that provider — stale
+    // hardcoded names (e.g. "qwen-max") 404 on current token-plan endpoints
+    // that no longer list the legacy models.
+    let active = workspace_active_model(root);
+    let model_for = |p: AiProvider| -> String {
+        match &active {
+            Some((ap, m)) if *ap == p => m.clone(),
+            _ => crate::agent::provider::default_provider_model(p),
+        }
+    };
+
     let member_provider_configured = is_configured(member.provider);
 
     // 1. Member's own provider — only first if actually configured
     if member_provider_configured {
-        let default_model = crate::agent::provider::default_provider_model(member.provider);
+        let default_model = model_for(member.provider);
         let (_, model) = member.resolve_effective_provider_and_model(
             default_configured_provider(root),
             &default_model,
@@ -1318,14 +1403,14 @@ pub(crate) fn build_fallback_chain(
     // 2. Workspace default configured provider (if different from member's)
     let workspace_default = default_configured_provider(root);
     if workspace_default != member.provider || !member_provider_configured {
-        let model = crate::agent::provider::default_provider_model(workspace_default);
+        let model = model_for(workspace_default);
         chain.push((workspace_default, model));
     }
 
     // 3. Member's explicit fallback_provider — if configured and not already in chain
     if let Some(fallback) = member.fallback_provider {
         if fallback != member.provider && fallback != workspace_default && is_configured(fallback) {
-            let model = crate::agent::provider::default_provider_model(fallback);
+            let model = model_for(fallback);
             chain.push((fallback, model));
         }
     }
@@ -1338,22 +1423,28 @@ pub(crate) fn build_fallback_chain(
             && member.fallback_provider != Some(*provider)
             && !chain.iter().any(|(p, _)| *p == *provider)
         {
-            let model = crate::agent::provider::default_provider_model(*provider);
+            let model = model_for(*provider);
             chain.push((*provider, model));
         }
     }
 
     // 5. Member's original provider as last resort (even if unconfigured)
     if !member_provider_configured && !chain.iter().any(|(p, _)| *p == member.provider) {
-        let default_model = crate::agent::provider::default_provider_model(member.provider);
+        let default_model = model_for(member.provider);
         let (_, model) =
             member.resolve_effective_provider_and_model(workspace_default, &default_model);
         chain.push((member.provider, model));
     }
 
-    // 6. LocalOllama as final fallback (might be running even if not in settings)
+    // 6. LocalOllama as final fallback (might be running even if not in
+    // settings). Prefer the biggest model actually installed locally — the
+    // 0.5B static default only ever produced confident garbage.
     if !chain.iter().any(|(p, _)| *p == AiProvider::LocalOllama) {
-        let model = crate::agent::provider::default_provider_model(AiProvider::LocalOllama);
+        let model = match &active {
+            Some((AiProvider::LocalOllama, m)) => m.clone(),
+            _ => best_local_ollama_model()
+                .unwrap_or_else(|| crate::agent::provider::default_provider_model(AiProvider::LocalOllama)),
+        };
         chain.push((AiProvider::LocalOllama, model));
     }
 
@@ -1500,6 +1591,9 @@ fn team_dispatch(root: &Path, arguments: &Value) -> Result<String, Box<dyn Error
         .map(|(_, m)| m.clone())
         .unwrap_or_default();
     let mut attempt_log = Vec::new();
+    // Set when the winning attempt came from a sub-7B model: the result is
+    // returned, but flagged — never reported as a silent clean success.
+    let mut degraded_note: Option<String> = None;
     let dispatch_start = std::time::Instant::now();
     const MAX_DISPATCH_TIME: std::time::Duration = std::time::Duration::from_secs(90);
 
@@ -1542,16 +1636,24 @@ fn team_dispatch(root: &Path, arguments: &Value) -> Result<String, Box<dyn Error
                 || result.transcript.contains("exhausted or failed")
                 || is_provider_unavailable(&result.status_updates, &result.transcript);
 
+            let degraded_small = !has_error && is_small_model(try_model);
             attempt_log.push(json!({
                 "provider": provider.slug(),
                 "model": try_model,
                 "succeeded": !has_error,
+                "quality": if degraded_small { "degraded" } else { "ok" },
                 "status_count": result.status_updates.len(),
             }));
 
             if !has_error {
                 final_transcript = result.transcript;
                 provider_succeeded = true;
+                if degraded_small {
+                    degraded_note = Some(format!(
+                        "output was produced by small model '{}' (<7B parameters) \u{2014} treat as unreliable; configure a cloud provider or pull a larger local model",
+                        try_model
+                    ));
+                }
                 break;
             }
 
@@ -1580,6 +1682,13 @@ fn team_dispatch(root: &Path, arguments: &Value) -> Result<String, Box<dyn Error
         }
     }
 
+    // Prefix the transcript so an orchestrating agent reading only the
+    // result text still sees the quality warning.
+    if let Some(note) = &degraded_note {
+        final_transcript = format!("[QUALITY WARNING: {}]\n\n{}", note, final_transcript);
+        log::warn!("team_dispatch: degraded result — {}", note);
+    }
+
     // Build response
     let response = json!({
         "team": team.name,
@@ -1592,6 +1701,8 @@ fn team_dispatch(root: &Path, arguments: &Value) -> Result<String, Box<dyn Error
         },
         "provider": used_provider.slug(),
         "model": used_model,
+        "degraded": degraded_note.is_some(),
+        "degraded_reason": degraded_note,
         "fallback_attempts": attempt_log,
         "status_updates": all_status_updates,
         "transcript": final_transcript,
@@ -1677,4 +1788,64 @@ fn generate_wiki(root: &Path, arguments: &Value) -> Result<String, Box<dyn Error
     });
 
     Ok(serde_json::to_string_pretty(&response)?)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn is_small_model_flags_sub7b_toy_models() {
+        assert!(is_small_model("qwen2.5-coder:0.5b"));
+        assert!(is_small_model("qwen2.5-coder:1.5b"));
+        assert!(is_small_model("llama3.2:1b"));
+        assert!(is_small_model("phi3:mini"));
+        assert!(!is_small_model("qwen2.5-coder:7b"));
+        assert!(!is_small_model("llama-3.3-70b-versatile"));
+        assert!(!is_small_model("gpt-4o"));
+        assert!(!is_small_model("tencent/hy3:free"));
+        assert!(!is_small_model("deepseek-chat"));
+    }
+
+    #[test]
+    fn workspace_active_model_reads_selected_provider_and_model() {
+        let tmp = tempfile::tempdir().unwrap();
+        let vel = tmp.path().join(".velocity");
+        std::fs::create_dir_all(&vel).unwrap();
+        // Windows editors often prepend a UTF-8 BOM — parsing must survive it.
+        std::fs::write(
+            vel.join("workspace-preferences.json"),
+            "\u{feff}{\"selected_model\":\"qwen3-max-preview\",\"provider\":\"Alibaba Qwen\"}",
+        )
+        .unwrap();
+        let (provider, model) = workspace_active_model(tmp.path()).unwrap();
+        assert_eq!(provider, AiProvider::AlibabaQwen);
+        assert_eq!(model, "qwen3-max-preview");
+
+        // No preferences file → None, so callers fall through to defaults.
+        let empty = tempfile::tempdir().unwrap();
+        assert!(workspace_active_model(empty.path()).is_none());
+    }
+
+    #[test]
+    fn fallback_chain_inherits_active_workspace_model() {
+        let tmp = tempfile::tempdir().unwrap();
+        let vel = tmp.path().join(".velocity");
+        std::fs::create_dir_all(&vel).unwrap();
+        std::fs::write(
+            vel.join("workspace-preferences.json"),
+            "{\"selected_model\":\"qwen2.5-coder:14b\",\"provider\":\"Local Ollama\"}",
+        )
+        .unwrap();
+        let member: ExpertMember = serde_json::from_str("{}").unwrap();
+        let chain = build_fallback_chain(&member, tmp.path());
+        // Whatever else the chain contains, the LocalOllama entry must carry
+        // the IDE-selected model — not the 0.5B static default that produced
+        // silent garbage in the filesystem-proposal mission.
+        let ollama = chain
+            .iter()
+            .find(|(p, _)| *p == AiProvider::LocalOllama)
+            .expect("chain always ends with a LocalOllama entry");
+        assert_eq!(ollama.1, "qwen2.5-coder:14b");
+    }
 }

@@ -52,6 +52,9 @@ pub fn run_agent_reasoning_loop(
     let mut current_profile = profile.clone();
     let mut current_thinking = thinking && current_profile.supports_thinking;
     let mut fallback_attempts: usize = 0;
+    // Budget for same-provider retries on hard transport failures; bounded so
+    // a permanently dead provider still terminates the run (as "blocked").
+    let mut hard_fail_retries: u32 = 0;
 
     // Phase 2: Workspace checkpointing for safe, reversible tool operations
     let mut checkpoint_mgr = CheckpointManager::new(workspace_root);
@@ -466,6 +469,7 @@ pub fn run_agent_reasoning_loop(
                         _ => default_model_info(&current_model),
                     };
                     current_thinking = thinking && current_profile.supports_thinking;
+                    hard_fail_retries = 0; // fresh provider earns its own retries
 
                     ui_tx
                         .send(AgentToUiMessage::StatusUpdate(format!(
@@ -480,6 +484,23 @@ pub fn run_agent_reasoning_loop(
                         .send(AgentToUiMessage::ProviderChanged(current_provider))
                         .ok();
 
+                    loop_count = loop_count.saturating_sub(1);
+                    continue;
+                }
+
+                // No other provider to move to. Transport failures are often
+                // transient (connection reset, TLS hiccup, upstream blip), so
+                // retry the same request with backoff before giving up.
+                if hard_fail_retries < 2 {
+                    hard_fail_retries += 1;
+                    ui_tx
+                        .send(AgentToUiMessage::StatusUpdate(format!(
+                            "Provider {} failed and no fallback provider is configured. Retrying same request in 5s (attempt {}/2)...",
+                            current_provider.label(),
+                            hard_fail_retries
+                        )))
+                        .ok();
+                    std::thread::sleep(std::time::Duration::from_secs(5));
                     loop_count = loop_count.saturating_sub(1);
                     continue;
                 }
@@ -522,6 +543,23 @@ pub fn run_agent_reasoning_loop(
                         "Anthropic request failed or ANTHROPIC_API_KEY missing."
                     }
                 };
+                // Record the failure honestly in the handover so the next
+                // session (and the UI) know the mission ended mid-flight
+                // rather than silently "finishing".
+                write_handover_nda(
+                    workspace_root,
+                    "blocked",
+                    loop_count,
+                    "provider unavailable",
+                    false,
+                );
+                ui_tx
+                    .send(AgentToUiMessage::StatusUpdate(format!(
+                        "Agent BLOCKED: {} ({}) could not fulfill the request after retries.",
+                        current_provider.label(),
+                        current_model
+                    )))
+                    .ok();
                 ui_tx
                     .send(AgentToUiMessage::OutputToken(format!(
                         "\n\nError: {err_msg}"
@@ -1011,12 +1049,39 @@ pub fn run_agent_reasoning_loop(
 
             let mut pending_ids = std::collections::HashSet::new();
             let mut tool_specs = Vec::new();
+            let mut truncated_calls = 0usize;
 
             for tc in tool_calls_arr {
                 let call_id = tc["id"].as_str().unwrap_or("").to_string();
                 let tool_name = tc["function"]["name"].as_str().unwrap_or("").to_string();
                 let args_str = tc["function"]["arguments"].as_str().unwrap_or("{}");
-                let arguments: Value = serde_json::from_str(args_str).unwrap_or(json!({}));
+                let arguments: Value = match serde_json::from_str(args_str) {
+                    Ok(v) => v,
+                    Err(_) => {
+                        // The stream died mid-arguments (socket timeout,
+                        // provider drop). Executing a truncated payload as `{}`
+                        // produced misleading tool errors and polluted history
+                        // — reject the call and tell the model exactly why.
+                        truncated_calls += 1;
+                        ui_tx
+                            .send(AgentToUiMessage::StatusUpdate(format!(
+                                "Tool call '{}' had incomplete JSON arguments (stream truncated) \u{2014} not executed.",
+                                tool_name
+                            )))
+                            .ok();
+                        message_history.push(ChatMessage {
+                            role: "tool".to_string(),
+                            content: format!(
+                                "Error: The arguments JSON for this '{}' call was incomplete or malformed (output likely cut off mid-stream) and the call was NOT executed. Re-issue the tool call with complete arguments; if the payload is very large, split it across multiple smaller write_file/apply_diff operations.",
+                                tool_name
+                            ),
+                            name: Some(tool_name.clone()),
+                            tool_call_id: Some(call_id),
+                            tool_calls: None,
+                        });
+                        continue;
+                    }
+                };
 
                 ui_tx
                     .send(AgentToUiMessage::StatusUpdate(format!(
@@ -1034,6 +1099,21 @@ pub fn run_agent_reasoning_loop(
 
                 pending_ids.insert(call_id.clone());
                 tool_specs.push((call_id, tool_name, arguments));
+            }
+
+            if tool_specs.is_empty() && truncated_calls > 0 {
+                // Every call in the batch was rejected for truncated
+                // arguments. Don't end the run — record the gap honestly and
+                // give the model another turn to re-issue them.
+                write_handover_nda(
+                    workspace_root,
+                    "tool_error",
+                    loop_count,
+                    "truncated tool-call arguments",
+                    false,
+                );
+                save_chatlogs_nda(workspace_root, message_history);
+                continue;
             }
 
             let mut resolved_approvals = std::collections::HashMap::new();
