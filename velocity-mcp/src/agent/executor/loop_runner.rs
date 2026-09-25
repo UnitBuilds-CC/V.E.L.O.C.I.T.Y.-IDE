@@ -1788,7 +1788,15 @@ fn unknown_tool_message(name: &str, all_names: &[String]) -> String {
         })
         .filter(|(s, _)| *s > 0)
         .collect();
-    scored.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| a.1.cmp(b.1)));
+    scored.sort_by(|a, b| {
+        b.0.cmp(&a.0)
+            // Live runs showed the alphabetical tiebreak burying the best
+            // substitutes: for `edit_file`, generic short names like
+            // write_file lost out to create_skill_file and gui_* tools.
+            // Prefer shorter (more general) names, then alphabetical.
+            .then_with(|| a.1.len().cmp(&b.1.len()))
+            .then_with(|| a.1.cmp(b.1))
+    });
     let mut suggestion = scored
         .iter()
         .take(6)
@@ -1895,5 +1903,26 @@ mod tests {
             .next()
             .unwrap_or("");
         assert!(first.starts_with("read_file"), "ranked list: {first}");
+    }
+
+    #[test]
+    fn real_registry_edit_file_suggestion_includes_write_file() {
+        // Live-run regression: the alphabetical tiebreak cut write_file out of
+        // the top six real candidates for edit_file, behind create_skill_file
+        // and gui_* tools.
+        let all: Vec<String> = crate::registry::tool_definitions::get_tools()
+            .iter()
+            .map(|t| t.name.clone())
+            .collect();
+        let msg = unknown_tool_message("edit_file", &all);
+        let list = msg
+            .split('[')
+            .nth(1)
+            .unwrap_or("")
+            .split(']')
+            .next()
+            .unwrap_or("");
+        assert!(list.contains("write_file"), "top candidates: {list}");
+        assert!(list.contains("read_file"), "top candidates: {list}");
     }
 }
