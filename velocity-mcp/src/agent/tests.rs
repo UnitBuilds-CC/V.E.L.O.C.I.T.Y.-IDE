@@ -613,7 +613,9 @@ fn test_compress_history_strips_inline_docs_for_native_tool_models() {
     let sys = compressed.iter().find(|m| m.role == "system").unwrap();
     assert!(!sys.content.contains("## Available Tools"));
     assert!(sys.content.contains("Mode: Coder"));
-    assert!(sys.content.contains("## Recalled Context (from past sessions)"));
+    assert!(sys
+        .content
+        .contains("## Recalled Context (from past sessions)"));
     assert!(sys.content.contains("[k1] remembered fact"));
 }
 
@@ -627,7 +629,28 @@ fn test_compress_history_rebuilds_inline_docs_for_inline_tool_models() {
     assert!(sys.content.contains("## Available Tools"));
     // Fresh catalog content (built from the live registry), not the stale copy.
     assert!(sys.content.contains("read_file"));
-    assert!(sys.content.contains("## Recalled Context (from past sessions)"));
+    assert!(sys
+        .content
+        .contains("## Recalled Context (from past sessions)"));
+}
+
+#[test]
+fn test_compress_history_dedupes_new_velocity_identity_prompt() {
+    // The shipped prompt no longer says "Antigravity"; dedupe must follow the
+    // new identity prefix (and still honour the legacy one, tested above).
+    let mut msg = antigravity_prompt_with_docs();
+    msg.content = msg.content.replace(
+        "You are Antigravity, a high-performance agent running directly in V.E.L.O.C.I.T.Y.-IDE workspace.",
+        "You are Velocity, the native AI agent of V.E.L.O.C.I.T.Y.-IDE, running directly in this workspace.");
+    let compressed = compress_history(&[msg], true);
+    let sys = compressed.iter().find(|m| m.role == "system").unwrap();
+    assert!(sys
+        .content
+        .starts_with("You are Velocity, the native AI agent"));
+    assert!(!sys.content.contains("## Available Tools"));
+    assert!(sys
+        .content
+        .contains("## Recalled Context (from past sessions)"));
 }
 
 #[test]

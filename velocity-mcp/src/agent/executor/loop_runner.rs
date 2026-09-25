@@ -1294,7 +1294,25 @@ pub fn run_agent_reasoning_loop(
                                 }
                                 res
                             }
-                            Err(e) => format!("Error executing tool: {:?}", e),
+                            Err(e) => {
+                                // A hallucinated tool name deserves better feedback
+                                // than `ToolNotFound("edit_file")`: the observed run
+                                // burned two separate turns guessing the same missing
+                                // tool. Naming the closest registered tools lets the
+                                // model self-correct on the very next call.
+                                if let Some(crate::errors::ToolError::ToolNotFound(missing)) =
+                                    e.downcast_ref::<crate::errors::ToolError>()
+                                {
+                                    let all_names: Vec<String> =
+                                        registry::tool_definitions::get_tools()
+                                            .iter()
+                                            .map(|t| t.name.clone())
+                                            .collect();
+                                    unknown_tool_message(missing, &all_names)
+                                } else {
+                                    format!("Error executing tool: {:?}", e)
+                                }
+                            }
                         };
 
                         // T1b: Release file lock after execution
@@ -1740,9 +1758,56 @@ fn unfinished_announced_turn(content: &str) -> bool {
     false
 }
 
+/// Render an unknown-tool failure for the model. Keeps the "Error executing
+/// tool" prefix so failure classification (any_error penalisation, event
+/// outcomes, in-band refusal detection) is unchanged; appends the closest
+/// registered tool names ranked by shared `_`-tokens and substring overlap.
+fn unknown_tool_message(name: &str, all_names: &[String]) -> String {
+    let lower = name.to_lowercase();
+    let tokens: Vec<&str> = lower
+        .split(['_', ' ', '-'])
+        .filter(|t| !t.is_empty())
+        .collect();
+    let mut scored: Vec<(u32, &String)> = all_names
+        .iter()
+        .map(|n| {
+            let ln = n.to_lowercase();
+            let mut score = 0u32;
+            if ln == lower {
+                score += 10;
+            }
+            for t in ln.split(['_', ' ', '-']).filter(|t| !t.is_empty()) {
+                if tokens.contains(&t) {
+                    score += 3;
+                }
+            }
+            if ln.contains(&lower) || lower.contains(&ln) {
+                score += 2;
+            }
+            (score, n)
+        })
+        .filter(|(s, _)| *s > 0)
+        .collect();
+    scored.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| a.1.cmp(b.1)));
+    let mut suggestion = scored
+        .iter()
+        .take(6)
+        .map(|(_, n)| n.as_str())
+        .collect::<Vec<_>>()
+        .join(", ");
+    if suggestion.is_empty() {
+        suggestion = "(no similar tools; re-check the registered tool list)".to_string();
+    }
+    format!(
+        "Error executing tool: ToolNotFound(\"{}\"). No such tool is registered. \
+         Closest available tools: [{}]. Use one of these registered tools instead.",
+        name, suggestion
+    )
+}
+
 #[cfg(test)]
 mod tests {
-    use super::unfinished_announced_turn;
+    use super::{unfinished_announced_turn, unknown_tool_message};
 
     #[test]
     fn empty_response_is_unfinished() {
@@ -1752,7 +1817,9 @@ mod tests {
 
     #[test]
     fn trailing_colon_or_ellipsis_is_unfinished() {
-        assert!(unfinished_announced_turn("I see the issue. Let me fix the test to use unique data:"));
+        assert!(unfinished_announced_turn(
+            "I see the issue. Let me fix the test to use unique data:"
+        ));
         assert!(unfinished_announced_turn("Next steps…"));
         assert!(unfinished_announced_turn("Running the tests now..."));
         assert!(unfinished_announced_turn("修改说明："));
@@ -1775,6 +1842,58 @@ mod tests {
         assert!(!unfinished_announced_turn(
             "Summary: fork shares the offset, close is safe, reads serialize.\n\nLet me know if you want a follow-up."
         ));
-        assert!(!unfinished_announced_turn("Done. The crate builds and all tests pass."));
+        assert!(!unfinished_announced_turn(
+            "Done. The crate builds and all tests pass."
+        ));
+    }
+
+    fn tool_names() -> Vec<String> {
+        [
+            "write_file",
+            "read_file",
+            "delete_file",
+            "run_command",
+            "grep_search",
+            "apply_diff",
+        ]
+        .iter()
+        .map(|s| s.to_string())
+        .collect()
+    }
+
+    #[test]
+    fn unknown_tool_error_names_closest_real_tools() {
+        // The observed hallucination: `edit_file` called twice across a run.
+        let msg = unknown_tool_message("edit_file", &tool_names());
+        assert!(msg.contains("write_file"), "must suggest file tools: {msg}");
+        assert!(msg.contains("read_file"));
+        assert!(msg.contains("edit_file"), "must echo the bad name");
+    }
+
+    #[test]
+    fn unknown_tool_message_keeps_failure_prefix() {
+        // Failure classification matches on this prefix (any_error, events).
+        let msg = unknown_tool_message("frobnicate", &tool_names());
+        assert!(msg.starts_with("Error executing tool"));
+    }
+
+    #[test]
+    fn unknown_tool_with_no_similar_names_still_recovers() {
+        let msg = unknown_tool_message("zzz_qxy", &tool_names());
+        assert!(msg.contains("no similar tools"), "{msg}");
+    }
+
+    #[test]
+    fn exact_substring_match_outranks_token_noise() {
+        // "read_file_content" hallucinated from read_file: read_file ranks first.
+        let msg = unknown_tool_message("read_file_content", &tool_names());
+        let first = msg
+            .split('[')
+            .nth(1)
+            .unwrap_or("")
+            .split(']')
+            .next()
+            .unwrap_or("");
+        assert!(first.starts_with("read_file"), "ranked list: {first}");
     }
 }

@@ -267,7 +267,7 @@ pub fn run_agent_thread(
         }
         None => {
             let mut sys = String::from(
-                "You are Antigravity, a high-performance agent running directly in V.E.L.O.C.I.T.Y.-IDE workspace. \
+                "You are Velocity, the native AI agent of V.E.L.O.C.I.T.Y.-IDE, running directly in this workspace. \
                 You have direct local workspace access via tools. NEVER ask the user to paste code snippets, upload files, or provide repository links. \
                 Immediately call `list_dir`, `read_file`, or `grep_search` to inspect and review the workspace.",
             );
@@ -587,7 +587,7 @@ fn process_ui_message(
                     vec![ChatMessage {
                         role: "system".to_string(),
                         content: format!(
-                            "You are Antigravity, a high-performance agent running directly in V.E.L.O.C.I.T.Y.-IDE. \
+                            "You are Velocity, the native AI agent of V.E.L.O.C.I.T.Y.-IDE. \
                             You have access to local workspace files and execution sandboxes via tools. \
                             Help the user program the workspace. Always output concise, correct, and high-quality responses.{}",
                             if use_inline { build_inline_tool_docs() } else { String::new() }
@@ -614,7 +614,7 @@ fn process_ui_message(
         }
         UiToAgentMessage::ClearHistory => {
             let mut sys = String::from(
-                "You are Antigravity, a high-performance agent running directly in V.E.L.O.C.I.T.Y.-IDE workspace. \
+                "You are Velocity, the native AI agent of V.E.L.O.C.I.T.Y.-IDE, running directly in this workspace. \
                 You have direct local workspace access via tools. NEVER ask the user to paste code snippets, upload files, or provide repository links. \
                 Immediately call `list_dir`, `read_file`, or `grep_search` to inspect and review the workspace.",
             );

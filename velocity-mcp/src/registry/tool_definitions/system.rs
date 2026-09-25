@@ -91,7 +91,19 @@ pub fn get_system_tools() -> Vec<Tool> {
         },
         Tool {
             name: "run_command".to_string(),
-            description: "Run a shell command inside the current workspace directory and capture its combined stdout and stderr output.".to_string(),
+            description: if cfg!(target_os = "windows") {
+                // Models default to bash-isms (&&, mkdir -p) and burn a turn on
+                // PowerShell parse errors; state the shell and its syntax.
+                "Run a shell command inside the current workspace directory and capture its combined stdout and stderr output. \
+                 On this machine the command executes in POWERSHELL: separate statements with ';' ('&&' is NOT valid), use \
+                 PowerShell syntax (e.g. 'New-Item -ItemType Directory -Force a, b', not 'mkdir -p a b'), and note that each \
+                 invocation starts fresh in the workspace root — carry 'cd <dir>; <command>' in one command."
+                    .to_string()
+            } else {
+                "Run a shell command inside the current workspace directory (POSIX sh) and capture its combined stdout and \
+                 stderr output. Each invocation starts fresh in the workspace root."
+                    .to_string()
+            },
             input_schema: json!({
                 "type": "object",
                 "properties": {

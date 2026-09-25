@@ -175,10 +175,7 @@ pub fn find_mission_anchor(messages: &[ChatMessage]) -> Option<usize> {
 /// "## Previously Learned Patterns" / "## Recalled Context" sections.
 fn dedupe_inline_tool_docs(sys_msg: &mut ChatMessage, supports_tools: bool) {
     const DOCS_MARKER: &str = "## Available Tools";
-    const TRAILING_SECTIONS: [&str; 2] = [
-        "## Previously Learned Patterns",
-        "## Recalled Context",
-    ];
+    const TRAILING_SECTIONS: [&str; 2] = ["## Previously Learned Patterns", "## Recalled Context"];
     if let Some(docs_start) = sys_msg.content.find(DOCS_MARKER) {
         let rest = sys_msg.content[docs_start..].to_string();
         let tail_rel = TRAILING_SECTIONS
@@ -248,7 +245,14 @@ pub fn compress_history(messages: &[ChatMessage], supports_tools: bool) -> Vec<C
 
     let mut messages = messages;
     if let Some(sys_msg) = messages.iter_mut().find(|m| m.role == "system") {
-        if sys_msg.content.starts_with("You are Antigravity") {
+        // Match the shipped identity prefixes (legacy "Antigravity" prompts can
+        // still arrive via restored chat logs) so dedupe applies to our own
+        // prompts without touching user-supplied system prompts.
+        if sys_msg.content.starts_with("You are Antigravity")
+            || sys_msg
+                .content
+                .starts_with("You are Velocity, the native AI agent")
+        {
             dedupe_inline_tool_docs(sys_msg, supports_tools);
         }
     }
@@ -307,12 +311,24 @@ pub fn compress_history(messages: &[ChatMessage], supports_tools: bool) -> Vec<C
                     format!("\nParsed Declarations:\n  {}", decls.join("\n  "))
                 };
 
+                // The recovery hint must be actionable for the tool that
+                // produced the output: site_map holds code symbols, not tool
+                // results, so telling the model to "query site_map" after a
+                // compressed run_command output sent it on a dead end.
+                let hint = match tool_name.as_str() {
+                    "read_file" => "Call read_file again to retrieve the full content.",
+                    "run_command" => {
+                        "Re-run the command to see this output again; it may have changed."
+                    }
+                    _ => "Query site_map to retrieve specific symbol details.",
+                };
+
                 m_copy.content = format!(
                     "[Tool output of '{}' compressed to optimize context budget.\n\
                      Merkle Hash: {:016x}\n\
                      Original Size: {} characters.{}\n\
-                     (This data was successfully read and processed in a previous turn. Query site_map to retrieve specific details.)]",
-                    tool_name, content_hash, content_len, decl_summary
+                     (This data was successfully read and processed in a previous turn. {})]",
+                    tool_name, content_hash, content_len, decl_summary, hint
                 );
             } else if m_copy.content.len() > 12_000 {
                 let tool_name = m_copy
@@ -517,7 +533,10 @@ pub fn compress_history(messages: &[ChatMessage], supports_tools: bool) -> Vec<C
     // Insert the pinned mission brief, then the conversation summary, then the
     // recent tail (skip the anchor if the tail already carries it).
     if let Some(anchor) = anchor {
-        if !tail.iter().any(|m| m.role == "user" && m.content == anchor.content) {
+        if !tail
+            .iter()
+            .any(|m| m.role == "user" && m.content == anchor.content)
+        {
             result.push(anchor);
         }
     }
