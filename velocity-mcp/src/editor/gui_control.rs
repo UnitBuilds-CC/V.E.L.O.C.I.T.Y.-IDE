@@ -115,6 +115,8 @@ pub enum GuiCommand {
     /// one that discards. The value is held to the workspace exactly as
     /// `OpenFile`'s path is.
     SubmitDialog { value: String },
+    /// Send a chat message to the agent as if the user typed it and pressed Send.
+    SendChatMessage { text: String },
 }
 
 /// Wrapper that includes the auth token alongside the command.

@@ -77,6 +77,7 @@ impl VelocityApp {
             GuiCommand::SelectSubTab { rail, sub_tab } => self.cmd_select_sub_tab(rail, sub_tab),
             GuiCommand::DismissOverlays {} => self.cmd_dismiss_overlays(),
             GuiCommand::SubmitDialog { value } => self.cmd_submit_dialog(value),
+            GuiCommand::SendChatMessage { text } => self.cmd_send_chat_message(text),
         }
     }
 
@@ -481,6 +482,17 @@ impl VelocityApp {
             "path": written.display().to_string(),
             "state_after": self.ide_state(),
         }))
+    }
+
+    fn cmd_send_chat_message(&mut self, text: String) -> GuiResponse {
+        let text = text.trim().to_string();
+        if text.is_empty() {
+            return refusal("Message text is empty.".to_string());
+        }
+        let prompt = self.chat.compose_and_take_prompt(&text);
+        self.chat.push_user(text);
+        let _ = self.agent_tx.send(crate::agent::UiToAgentMessage::UserPrompt(prompt));
+        accepted(serde_json::json!({"sent": true}))
     }
 
     /// Quit the IDE. Sends a viewport Close command through the egui
