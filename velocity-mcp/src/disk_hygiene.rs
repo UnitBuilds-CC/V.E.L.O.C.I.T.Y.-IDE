@@ -1078,4 +1078,173 @@ mod tests {
         assert_eq!(result.freed_bytes, 0);
         assert!(!result.rejected.is_empty());
     }
+
+    /// Windows has its own link flavor: a junction needs no privilege to
+    /// create and std reports it as a symlink, but the contract must hold
+    /// there too — a `target` that is really a doorway outside the workspace
+    /// is neither scanned nor deleted.
+    #[cfg(windows)]
+    #[test]
+    fn junctions_are_never_matched_or_deleted() {
+        let (_tmp, root) = fixture();
+        fs::write(root.join("Cargo.toml"), "").unwrap();
+        let outside = _tmp.path().join("outside");
+        fs::create_dir_all(outside.join("target")).unwrap();
+        fs::write(outside.join("target/precious.o"), "keep me").unwrap();
+        let made = std::process::Command::new("cmd")
+            .args(["/C", "mklink", "/J"])
+            .arg(root.join("target"))
+            .arg(outside.join("target"))
+            .output()
+            .map(|o| o.status.success())
+            .unwrap_or(false);
+        if !made {
+            // Boxes that refuse junction creation are covered by the unix
+            // symlink test above; the refusal path is the same code either way.
+            return;
+        }
+        let report = scan(&root);
+        assert!(
+            report.entries.iter().all(|e| e.relative_path != "target"),
+            "junction matched as an artifact: {:?}",
+            report.entries
+        );
+        let result = clean(&root, Some(&["target".to_string()]), false);
+        assert!(outside.join("target/precious.o").exists());
+        assert_eq!(result.freed_bytes, 0);
+        assert!(!result.rejected.is_empty());
+    }
+
+    #[test]
+    fn clean_rechecks_the_context_marker_at_deletion_time() {
+        // The report said Safe; then the Cargo.toml beside it vanished. The
+        // live re-classification inside `clean` must catch that and refuse.
+        let (_tmp, root) = fixture();
+        fs::write(root.join("Cargo.toml"), "").unwrap();
+        write_file(&root.join("target/debug/x.o"), 1024);
+        assert_eq!(scan(&root).entries[0].safety, Safety::Safe);
+        fs::remove_file(root.join("Cargo.toml")).unwrap();
+        let result = clean(&root, Some(&["target".to_string()]), false);
+        assert!(root.join("target").exists(), "deleted after its marker vanished");
+        assert_eq!(result.freed_bytes, 0);
+        assert!(
+            result.rejected.iter().any(|r| r.contains("classified review")),
+            "{:?}",
+            result.rejected
+        );
+    }
+
+    #[test]
+    fn contained_real_dir_refuses_hostile_paths() {
+        let (_tmp, root) = fixture();
+        let abs = root.join("target").to_string_lossy().into_owned();
+        let err = contained_real_dir(&root, &abs).unwrap_err();
+        assert!(err.contains("absolute"), "{err}");
+        assert!(contained_real_dir(&root, "../outside").is_err());
+        assert!(contained_real_dir(&root, "target/../../outside").is_err());
+        assert!(contained_real_dir(&root, "missing/dir").is_err());
+        fs::create_dir_all(root.join("real")).unwrap();
+        assert!(contained_real_dir(&root, "real").is_ok());
+    }
+
+    #[test]
+    fn a_file_named_target_is_not_an_artifact() {
+        let (_tmp, root) = fixture();
+        fs::write(root.join("Cargo.toml"), "").unwrap();
+        fs::write(root.join("target"), "I am a file, not a build directory").unwrap();
+        let report = scan(&root);
+        assert!(report.entries.is_empty(), "{:?}", report.entries);
+    }
+
+    #[test]
+    fn matched_trees_are_measured_not_walked_for_more_matches() {
+        // `node_modules` swallows everything below it: a `build/` inside a
+        // dependency must not surface as its own (deletable) row.
+        let (_tmp, root) = fixture();
+        write_file(&root.join("node_modules/pkg/package.json"), 2);
+        write_file(&root.join("node_modules/pkg/build/bundle.js"), 100);
+        let report = scan(&root);
+        assert_eq!(report.entries.len(), 1, "{:?}", report.entries);
+        let e = &report.entries[0];
+        assert_eq!(e.relative_path, "node_modules");
+        assert_eq!(e.size_bytes, 102);
+        assert_eq!(e.file_count, 2);
+    }
+
+    #[test]
+    fn matching_is_case_sensitive_except_dotnet_markers() {
+        // Conservative on purpose: tools write `target`, `node_modules`,
+        // `dist` in exact case, so a hand-made `Target` folder is content,
+        // not build output. The .NET marker check ignores case because
+        // `MyApp.SLN` is ordinary on Windows.
+        let (_tmp, root) = fixture();
+        fs::create_dir_all(root.join("Target")).unwrap();
+        fs::create_dir_all(root.join("NODE_MODULES")).unwrap();
+        fs::write(root.join("Cargo.toml"), "").unwrap();
+        let report = scan(&root);
+        assert!(report.entries.is_empty(), "{:?}", report.entries);
+        fs::create_dir_all(root.join("proj/obj")).unwrap();
+        fs::write(root.join("proj/MyApp.SLN"), "").unwrap();
+        assert_eq!(
+            classify("obj", &root.join("proj")).unwrap().safety,
+            Safety::Safe
+        );
+    }
+
+    #[test]
+    fn provenance_history_is_capped() {
+        let (_tmp, root) = fixture();
+        fs::write(root.join("Cargo.toml"), "").unwrap();
+        write_file(&root.join("target/seed.o"), 128 * 1024);
+        for round in 0..(MANIFEST_HISTORY_LIMIT + 5) {
+            write_file(&root.join(format!("target/f{round}.o")), 128 * 1024);
+            assert!(note_build_growth(&root, "cargo build").is_some(), "round {round}");
+        }
+        let manifest = load_manifest(&root);
+        assert_eq!(manifest.provenance.len(), MANIFEST_HISTORY_LIMIT);
+        // The oldest records were trimmed, newest kept.
+        assert!(manifest.provenance.last().unwrap().growth_bytes > 0);
+    }
+
+    #[test]
+    fn scan_of_a_missing_root_is_an_empty_report() {
+        let report = scan(Path::new("Z:/definitely/not/a/real/tree"));
+        assert!(report.entries.is_empty());
+        assert_eq!(report.total_reclaimable_bytes, 0);
+    }
+
+    #[test]
+    fn classifier_edges_hold_up() {
+        assert_eq!(classify_build_command("CARGO BUILD"), Some("cargo"));
+        assert_eq!(classify_build_command("cargo.exe build"), Some("cargo"));
+        assert_eq!(classify_build_command("pnpm install"), Some("js-package-manager"));
+        assert_eq!(classify_build_command("yarn add left-pad"), Some("js-package-manager"));
+        assert_eq!(classify_build_command("poetry install"), Some("python"));
+        assert_eq!(classify_build_command("ninja -C out"), Some("native-toolchain"));
+        assert_eq!(classify_build_command("docker build ."), None);
+        assert_eq!(classify_build_command("cargo"), None);
+        assert_eq!(classify_build_command(""), None);
+    }
+
+    #[test]
+    fn venv_and_wrangler_trees_clean_like_cargo_ones() {
+        let (_tmp, root) = fixture();
+        fs::write(root.join("requirements.txt"), "").unwrap();
+        write_file(&root.join(".venv/lib/site.py"), 512);
+        write_file(&root.join(".wrangler/cache/blob"), 256);
+        let report = scan(&root);
+        assert_eq!(report.total_reclaimable_bytes, 768, "{:?}", report.entries);
+        let result = clean(&root, None, false);
+        assert_eq!(result.freed_bytes, 768);
+        assert!(!root.join(".venv").exists());
+        assert!(!root.join(".wrangler/cache").exists());
+        assert!(root.join(".wrangler").exists(), "only the cache tree is removed");
+    }
+
+    #[test]
+    fn format_bytes_boundaries() {
+        assert_eq!(format_bytes(1023), "1023 B");
+        assert_eq!(format_bytes(1 << 10), "1.0 KiB");
+        assert_eq!(format_bytes((1 << 30) - 1), "1024.0 MiB");
+    }
 }
