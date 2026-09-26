@@ -578,14 +578,18 @@ fn process_ui_message(
                 write_sitemap_nda(workspace_root);
                 *expert_teams = load_expert_teams(workspace_root);
                 *message_history = load_chatlogs_nda(workspace_root).unwrap_or_else(|| {
-                    let use_inline = *provider == AiProvider::OpenRouter
-                        || !selected_profile.supports_tools;
+                    let use_inline =
+                        *provider == AiProvider::OpenRouter || !selected_profile.supports_tools;
                     vec![ChatMessage {
                         role: "system".to_string(),
                         content: format!(
                             "{}{}",
                             SYSTEM_PROMPT_BASE,
-                            if use_inline { build_inline_tool_docs() } else { String::new() }
+                            if use_inline {
+                                build_inline_tool_docs()
+                            } else {
+                                String::new()
+                            }
                         ),
                         name: None,
                         tool_call_id: None,

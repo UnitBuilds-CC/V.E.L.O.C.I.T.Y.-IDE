@@ -57,7 +57,11 @@ pub fn run_headless_subagent(request: HeadlessSubAgentRequest) -> HeadlessSubAge
         content: format!(
             "{}{}{}",
             SYSTEM_PROMPT_BASE,
-            if use_inline_tools { build_inline_tool_docs() } else { String::new() },
+            if use_inline_tools {
+                build_inline_tool_docs()
+            } else {
+                String::new()
+            },
             precomp_context
         ),
         name: None,

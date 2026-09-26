@@ -558,8 +558,14 @@ fn prose_read_file_stub_gets_excerpt_not_fake_declarations() {
     let compressed = compress_history(&messages, true);
     let stub = &compressed[1].content;
     assert!(stub.contains("compressed to optimize context"), "{stub}");
-    assert!(!stub.contains("Parsed Declarations"), "prose must not fake a symbol index: {stub}");
-    assert!(!stub.contains("fn read_at"), "prose fence leaked into the stub: {stub}");
+    assert!(
+        !stub.contains("Parsed Declarations"),
+        "prose must not fake a symbol index: {stub}"
+    );
+    assert!(
+        !stub.contains("fn read_at"),
+        "prose fence leaked into the stub: {stub}"
+    );
     assert!(stub.contains("Excerpt: # Storage Guide"), "{stub}");
     assert!(stub.contains("Call read_file again"), "{stub}");
 }
@@ -605,8 +611,14 @@ fn code_read_file_stub_still_indexes_declarations() {
 
     let compressed = compress_history(&messages, true);
     let stub = &compressed[1].content;
-    assert!(stub.contains("Parsed Declarations"), "code stub must keep the index: {stub}");
-    assert!(stub.contains("fn load_page") || stub.contains("fn helper_x"), "{stub}");
+    assert!(
+        stub.contains("Parsed Declarations"),
+        "code stub must keep the index: {stub}"
+    );
+    assert!(
+        stub.contains("fn load_page") || stub.contains("fn helper_x"),
+        "{stub}"
+    );
 }
 
 #[test]
@@ -780,7 +792,9 @@ fn test_system_prompt_base_carries_grounding_clause() {
     // inventing content and bless sparse-but-true output.
     assert!(SYSTEM_PROMPT_BASE.starts_with("You are Velocity, the native AI agent"));
     assert!(SYSTEM_PROMPT_BASE.contains("never invent structure"));
-    assert!(SYSTEM_PROMPT_BASE.contains("an accurate sparse summary beats a polished fabricated one"));
+    assert!(
+        SYSTEM_PROMPT_BASE.contains("an accurate sparse summary beats a polished fabricated one")
+    );
     // The old polish-pressure wording that encouraged padding must not return.
     assert!(!SYSTEM_PROMPT_BASE.contains("high-quality responses"));
     // The dedupe/legacy-accept marker matches the constant's prefix, so
@@ -792,7 +806,8 @@ fn test_system_prompt_base_carries_grounding_clause() {
         tool_call_id: None,
         tool_calls: None,
     };
-    sys.content.push_str("\n\n## Available Tools\n### read_file\nold copy\n");
+    sys.content
+        .push_str("\n\n## Available Tools\n### read_file\nold copy\n");
     let compressed = compress_history(&[sys], true);
     let out = compressed.iter().find(|m| m.role == "system").unwrap();
     assert!(!out.content.contains("## Available Tools"));

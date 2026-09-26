@@ -1132,13 +1132,26 @@ mod tests {
         // must get the pristine bytes back, whatever the file's line ending.
         let (dir, store) = open_store();
         store
-            .record("write_file", "Touched auth", None, None, None, vec!["auth.rs".into()])
+            .record(
+                "write_file",
+                "Touched auth",
+                None,
+                None,
+                None,
+                vec!["auth.rs".into()],
+            )
             .unwrap();
         store.mark_outcome(1, EventOutcome::Success, None).unwrap();
         for content in ["fn a() {}\n", "no trailing newline", "x"] {
             let enriched = enrich_read_response(dir.path(), "auth.rs", content);
-            assert_ne!(enriched, content, "enrich must change content when events exist");
-            assert!(enriched.contains("must never be copied"), "banner must label metadata");
+            assert_ne!(
+                enriched, content,
+                "enrich must change content when events exist"
+            );
+            assert!(
+                enriched.contains("must never be copied"),
+                "banner must label metadata"
+            );
             assert_eq!(strip_decision_trail(&enriched).as_deref(), Some(content));
         }
     }

@@ -1368,8 +1368,8 @@ impl VelocityApp {
     /// frame the overlay is open; results also land in the status line so the
     /// outcome is visible even if the overlay was dismissed mid-clean.
     pub fn handle_hygiene_events(&mut self) {
-        use crate::disk_hygiene::format_bytes;
         use super::substructs::HygieneEvent;
+        use crate::disk_hygiene::format_bytes;
         while let Ok(event) = self.hygiene.rx.try_recv() {
             match event {
                 HygieneEvent::ScanDone(report) => {

@@ -485,8 +485,15 @@ mod tests {
 
         let diag = run_cargo_check(tmp.path());
         assert!(!diag.success, "a manifest-less folder cannot be a pass");
-        assert!(diag.skipped, "a manifest-less folder must be neutral, not an error");
-        assert!(diag.errors.is_empty(), "skip must carry zero errors: {:?}", diag.errors);
+        assert!(
+            diag.skipped,
+            "a manifest-less folder must be neutral, not an error"
+        );
+        assert!(
+            diag.errors.is_empty(),
+            "skip must carry zero errors: {:?}",
+            diag.errors
+        );
         assert!(diag.summary.contains("no Cargo.toml"), "{}", diag.summary);
         assert!(!diag.summary.contains('\n'), "multi-line: {}", diag.summary);
 

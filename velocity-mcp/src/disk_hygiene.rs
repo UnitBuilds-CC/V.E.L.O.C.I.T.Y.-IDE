@@ -101,14 +101,14 @@ pub fn classify(dir_name: &str, parent: &Path) -> Option<Classification> {
             ))
         }
         ".venv" | "venv" => {
-            let present =
-                parent.join("pyproject.toml").is_file() || parent.join("requirements.txt").is_file();
+            let present = parent.join("pyproject.toml").is_file()
+                || parent.join("requirements.txt").is_file();
             return Some(Classification::gated(
                 "venv",
                 dir_name,
                 "pyproject.toml or requirements.txt",
                 present,
-            ))
+            ));
         }
         "Debug" | "obj" => {
             return Some(Classification::gated(
@@ -158,7 +158,9 @@ fn now_unix() -> i64 {
 }
 
 fn system_time_unix(t: SystemTime) -> Option<i64> {
-    t.duration_since(UNIX_EPOCH).ok().map(|d| d.as_secs() as i64)
+    t.duration_since(UNIX_EPOCH)
+        .ok()
+        .map(|d| d.as_secs() as i64)
 }
 
 /// One artifact tree found by the scan.
@@ -370,7 +372,10 @@ pub fn save_manifest(root: &Path, manifest: &HygieneManifest) -> std::io::Result
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
     }
-    fs::write(path, serde_json::to_string_pretty(manifest).unwrap_or_default())
+    fs::write(
+        path,
+        serde_json::to_string_pretty(manifest).unwrap_or_default(),
+    )
 }
 
 /// Replace the manifest's per-tree snapshot with this scan's results,
@@ -423,7 +428,9 @@ fn contained_real_dir(root: &Path, rel: &str) -> Result<PathBuf, String> {
     if !meta.is_dir() {
         return Err("not a directory".into());
     }
-    let root_canon = root.canonicalize().map_err(|e| format!("cannot resolve root: {e}"))?;
+    let root_canon = root
+        .canonicalize()
+        .map_err(|e| format!("cannot resolve root: {e}"))?;
     let abs_canon = abs
         .canonicalize()
         .map_err(|e| format!("cannot resolve path: {e}"))?;
@@ -454,7 +461,9 @@ pub fn clean(root: &Path, selected: Option<&[String]>, dry_run: bool) -> CleanRe
                     Some(e) if e.safety == Safety::Safe => chosen.push(e),
                     Some(e) => result.rejected.push(format!(
                         "'{p}' is classified review and cannot be cleaned: {}",
-                        e.reason.clone().unwrap_or_else(|| "not an auto-cleanable tree".into())
+                        e.reason
+                            .clone()
+                            .unwrap_or_else(|| "not an auto-cleanable tree".into())
                     )),
                     None => result.rejected.push(format!(
                         "'{p}' is not a recognized build-artifact tree; refusing to delete"
@@ -520,8 +529,9 @@ pub fn clean(root: &Path, selected: Option<&[String]>, dry_run: bool) -> CleanRe
 
     if !dry_run && result.freed_bytes > 0 {
         let mut manifest = load_manifest(root);
-        manifest.bytes_reclaimed_total =
-            manifest.bytes_reclaimed_total.saturating_add(result.freed_bytes);
+        manifest.bytes_reclaimed_total = manifest
+            .bytes_reclaimed_total
+            .saturating_add(result.freed_bytes);
         for p in &deleted_paths {
             manifest.entries.remove(p);
         }
@@ -622,7 +632,11 @@ pub fn note_build_growth(root: &Path, command: &str) -> Option<String> {
     let store = crate::registry::event_store::EventStore::open(root);
     let affected: Vec<String> = details.iter().map(|d| d.path.clone()).collect();
     if let Ok(seq) = store.record("disk_hygiene", &summary, None, None, None, affected) {
-        let _ = store.mark_outcome(seq, crate::registry::event_store::EventOutcome::Success, None);
+        let _ = store.mark_outcome(
+            seq,
+            crate::registry::event_store::EventOutcome::Success,
+            None,
+        );
     }
     let pressure = check_disk_pressure(root)
         .map(|p| format!(" {p}"))
@@ -666,7 +680,12 @@ pub fn check_disk_pressure(root: &Path) -> Option<String> {
         .filter(|e| e.safety == Safety::Safe)
         .map(|e| e.size_bytes)
         .sum();
-    let largest = manifest.entries.values().map(|e| e.size_bytes).max().unwrap_or(0);
+    let largest = manifest
+        .entries
+        .values()
+        .map(|e| e.size_bytes)
+        .max()
+        .unwrap_or(0);
     pressure_message(drive_free_space(root), reclaimable, largest)
 }
 
@@ -779,8 +798,14 @@ mod tests {
             .find(|e| e.relative_path == "app/target")
             .expect("target dir should be matched");
         assert_eq!(e.safety, Safety::Review);
-        assert!(e.reason.as_deref().is_some_and(|r| r.contains("Cargo.toml")));
-        assert_eq!(review.total_reclaimable_bytes, 0, "review rows are not reclaimable");
+        assert!(e
+            .reason
+            .as_deref()
+            .is_some_and(|r| r.contains("Cargo.toml")));
+        assert_eq!(
+            review.total_reclaimable_bytes, 0,
+            "review rows are not reclaimable"
+        );
 
         fs::write(root.join("app/Cargo.toml"), "[package]\n").unwrap();
         let with = scan(&root);
@@ -859,7 +884,11 @@ mod tests {
         fs::write(root.join("a/b/c/d/e/Cargo.toml"), "").unwrap();
         fs::write(root.join("a1/b/c/d/e/f/Cargo.toml"), "").unwrap();
         let report = scan(&root);
-        let paths: Vec<&str> = report.entries.iter().map(|e| e.relative_path.as_str()).collect();
+        let paths: Vec<&str> = report
+            .entries
+            .iter()
+            .map(|e| e.relative_path.as_str())
+            .collect();
         assert!(paths.contains(&"a/b/c/d/e/target"), "{paths:?}");
         assert!(!paths.contains(&"a1/b/c/d/e/f/target"), "{paths:?}");
     }
@@ -896,7 +925,10 @@ mod tests {
         assert!(root.join("Cargo.toml").exists());
         assert_eq!(result.freed_bytes, 2048);
         assert_eq!(result.rejected.len(), 3, "{:?}", result.rejected);
-        assert!(result.rejected.iter().any(|r| r.contains("docs/build") && r.contains("review")));
+        assert!(result
+            .rejected
+            .iter()
+            .any(|r| r.contains("docs/build") && r.contains("review")));
         assert!(result.rejected.iter().any(|r| r.contains("../outside")));
         assert!(result.rejected.iter().any(|r| r.contains("never/scanned")));
     }
@@ -961,7 +993,10 @@ mod tests {
 
     #[test]
     fn build_command_classifier() {
-        assert_eq!(classify_build_command("cargo build --release"), Some("cargo"));
+        assert_eq!(
+            classify_build_command("cargo build --release"),
+            Some("cargo")
+        );
         assert_eq!(classify_build_command("cargo check"), Some("cargo"));
         assert_eq!(
             classify_build_command("npm install left-pad"),
@@ -971,7 +1006,10 @@ mod tests {
             classify_build_command("npm run build"),
             Some("js-package-manager")
         );
-        assert_eq!(classify_build_command("pip install -r x.txt"), Some("python"));
+        assert_eq!(
+            classify_build_command("pip install -r x.txt"),
+            Some("python")
+        );
         assert_eq!(classify_build_command("dotnet build App"), Some("dotnet"));
         assert_eq!(classify_build_command("make -j8"), Some("native-toolchain"));
         assert_eq!(
@@ -1125,10 +1163,16 @@ mod tests {
         assert_eq!(scan(&root).entries[0].safety, Safety::Safe);
         fs::remove_file(root.join("Cargo.toml")).unwrap();
         let result = clean(&root, Some(&["target".to_string()]), false);
-        assert!(root.join("target").exists(), "deleted after its marker vanished");
+        assert!(
+            root.join("target").exists(),
+            "deleted after its marker vanished"
+        );
         assert_eq!(result.freed_bytes, 0);
         assert!(
-            result.rejected.iter().any(|r| r.contains("classified review")),
+            result
+                .rejected
+                .iter()
+                .any(|r| r.contains("classified review")),
             "{:?}",
             result.rejected
         );
@@ -1198,7 +1242,10 @@ mod tests {
         write_file(&root.join("target/seed.o"), 128 * 1024);
         for round in 0..(MANIFEST_HISTORY_LIMIT + 5) {
             write_file(&root.join(format!("target/f{round}.o")), 128 * 1024);
-            assert!(note_build_growth(&root, "cargo build").is_some(), "round {round}");
+            assert!(
+                note_build_growth(&root, "cargo build").is_some(),
+                "round {round}"
+            );
         }
         let manifest = load_manifest(&root);
         assert_eq!(manifest.provenance.len(), MANIFEST_HISTORY_LIMIT);
@@ -1217,10 +1264,19 @@ mod tests {
     fn classifier_edges_hold_up() {
         assert_eq!(classify_build_command("CARGO BUILD"), Some("cargo"));
         assert_eq!(classify_build_command("cargo.exe build"), Some("cargo"));
-        assert_eq!(classify_build_command("pnpm install"), Some("js-package-manager"));
-        assert_eq!(classify_build_command("yarn add left-pad"), Some("js-package-manager"));
+        assert_eq!(
+            classify_build_command("pnpm install"),
+            Some("js-package-manager")
+        );
+        assert_eq!(
+            classify_build_command("yarn add left-pad"),
+            Some("js-package-manager")
+        );
         assert_eq!(classify_build_command("poetry install"), Some("python"));
-        assert_eq!(classify_build_command("ninja -C out"), Some("native-toolchain"));
+        assert_eq!(
+            classify_build_command("ninja -C out"),
+            Some("native-toolchain")
+        );
         assert_eq!(classify_build_command("docker build ."), None);
         assert_eq!(classify_build_command("cargo"), None);
         assert_eq!(classify_build_command(""), None);
@@ -1238,7 +1294,10 @@ mod tests {
         assert_eq!(result.freed_bytes, 768);
         assert!(!root.join(".venv").exists());
         assert!(!root.join(".wrangler/cache").exists());
-        assert!(root.join(".wrangler").exists(), "only the cache tree is removed");
+        assert!(
+            root.join(".wrangler").exists(),
+            "only the cache tree is removed"
+        );
     }
 
     #[test]

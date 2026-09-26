@@ -348,8 +348,13 @@ pub fn compress_history(messages: &[ChatMessage], supports_tools: bool) -> Vec<C
                                 .and_then(|e| e.to_str())
                                 .map(|e| e.to_ascii_lowercase())
                                 .as_deref(),
-                            Some("md") | Some("markdown") | Some("txt") | Some("rst")
-                                | Some("adoc") | Some("log") | Some("csv")
+                            Some("md")
+                                | Some("markdown")
+                                | Some("txt")
+                                | Some("rst")
+                                | Some("adoc")
+                                | Some("log")
+                                | Some("csv")
                         )
                     })
                     .unwrap_or(false);
@@ -452,7 +457,9 @@ pub fn compress_history(messages: &[ChatMessage], supports_tools: bool) -> Vec<C
                     head_end -= 1;
                 }
                 let mut tail_start = m_copy.content.len().saturating_sub(6_000);
-                while tail_start < m_copy.content.len() && !m_copy.content.is_char_boundary(tail_start) {
+                while tail_start < m_copy.content.len()
+                    && !m_copy.content.is_char_boundary(tail_start)
+                {
                     tail_start += 1;
                 }
                 let head = &m_copy.content[..head_end];

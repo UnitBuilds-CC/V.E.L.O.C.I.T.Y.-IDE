@@ -184,9 +184,15 @@ fn disk_hygiene_tool_schemas() {
         .iter()
         .find(|t| t.name == "clean_disk_artifacts")
         .expect("clean_disk_artifacts must be advertised");
-    assert_eq!(clean.input_schema["properties"]["dryRun"]["type"], "boolean");
+    assert_eq!(
+        clean.input_schema["properties"]["dryRun"]["type"],
+        "boolean"
+    );
     assert_eq!(clean.input_schema["properties"]["paths"]["type"], "array");
-    assert_eq!(clean.input_schema["properties"]["paths"]["items"]["type"], "string");
+    assert_eq!(
+        clean.input_schema["properties"]["paths"]["items"]["type"],
+        "string"
+    );
     // Nothing is required: with no arguments the tool must resolve to the
     // dry-run-everything behavior, never to an implicit destructive call.
     assert!(

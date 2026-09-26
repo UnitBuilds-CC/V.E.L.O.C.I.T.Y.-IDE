@@ -456,7 +456,11 @@ impl VelocityApp {
         let diag = read_latest_diagnostics(&self.workspace_root);
         // A skipped check (no Rust project in the workspace) is neutral:
         // it must not raise the error badge or the "Build failed" toast.
-        let count = if diag.success || diag.skipped { 0 } else { diag.errors.len() };
+        let count = if diag.success || diag.skipped {
+            0
+        } else {
+            diag.errors.len()
+        };
         if count != self.build_errors_count {
             if count == 0 {
                 self.toasts
