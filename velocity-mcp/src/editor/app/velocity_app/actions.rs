@@ -239,6 +239,13 @@ impl VelocityApp {
                 modes: &[],
             },
             Command {
+                label: "Clean Build Artifacts\u{2026}",
+                category: "Workspace",
+                shortcut: Some("Ctrl+Shift+K"),
+                action: |a| a.open_disk_hygiene(),
+                modes: &[],
+            },
+            Command {
                 label: "Review Changes",
                 category: "Panels",
                 shortcut: None,
@@ -1329,5 +1336,98 @@ impl VelocityApp {
                 )));
             }
         }
+    }
+
+    // ─── Disk hygiene (Clean Build Artifacts…, Ctrl+Shift+K) ────────────────
+
+    /// Open the hygiene overlay and kick off a background scan. Opening is
+    /// non-destructive: nothing leaves the disk until the overlay's confirm
+    /// click, so the palette entry (and the bridge) can reach it freely.
+    pub fn open_disk_hygiene(&mut self) {
+        self.hygiene.open = true;
+        self.hygiene.confirming = false;
+        self.start_hygiene_scan();
+    }
+
+    /// Scan off the UI thread: a workspace can hold millions of artifact
+    /// files and the frame loop must never wait on that walk.
+    pub fn start_hygiene_scan(&mut self) {
+        if self.hygiene.scanning {
+            return;
+        }
+        self.hygiene.scanning = true;
+        let root = self.workspace_root.clone();
+        let tx = self.hygiene.tx.clone();
+        std::thread::spawn(move || {
+            let report = crate::disk_hygiene::scan_and_record(&root);
+            let _ = tx.send(super::substructs::HygieneEvent::ScanDone(report));
+        });
+    }
+
+    /// Drain completed background work into the overlay state. Called each
+    /// frame the overlay is open; results also land in the status line so the
+    /// outcome is visible even if the overlay was dismissed mid-clean.
+    pub fn handle_hygiene_events(&mut self) {
+        use crate::disk_hygiene::format_bytes;
+        use super::substructs::HygieneEvent;
+        while let Ok(event) = self.hygiene.rx.try_recv() {
+            match event {
+                HygieneEvent::ScanDone(report) => {
+                    self.hygiene.scanning = false;
+                    // Fresh scan: re-check every safe tree, drop stale picks.
+                    self.hygiene.checked = report
+                        .entries
+                        .iter()
+                        .filter(|e| e.safety == crate::disk_hygiene::Safety::Safe)
+                        .map(|e| e.relative_path.clone())
+                        .collect();
+                    self.hygiene.report = Some(report);
+                }
+                HygieneEvent::CleanDone(result) => {
+                    self.hygiene.cleaning = false;
+                    self.hygiene.confirming = false;
+                    let verb = if result.dry_run {
+                        "Would reclaim"
+                    } else {
+                        "Reclaimed"
+                    };
+                    let mut line = format!(
+                        "{verb} {} ({} files)",
+                        format_bytes(result.freed_bytes),
+                        crate::disk_hygiene::format_count(result.file_count)
+                    );
+                    if !result.rejected.is_empty() {
+                        line.push_str(&format!(" — refused: {}", result.rejected.join("; ")));
+                    }
+                    if !result.dry_run && result.freed_bytes > 0 {
+                        self.status_message = line.clone();
+                        self.toasts
+                            .push(crate::editor::toast::Toast::success(line.clone()));
+                    }
+                    self.hygiene.last_result = Some(line);
+                    // Refresh the table so removed trees disappear from it.
+                    self.start_hygiene_scan();
+                }
+            }
+        }
+    }
+
+    /// Reclaim (or dry-run) the checked trees on a background thread.
+    pub fn start_hygiene_clean(&mut self, dry_run: bool) {
+        if self.hygiene.cleaning || self.hygiene.scanning {
+            return;
+        }
+        let selected: Vec<String> = self.hygiene.checked.clone();
+        if selected.is_empty() {
+            self.hygiene.last_result = Some("Nothing selected to reclaim.".into());
+            return;
+        }
+        self.hygiene.cleaning = true;
+        let root = self.workspace_root.clone();
+        let tx = self.hygiene.tx.clone();
+        std::thread::spawn(move || {
+            let result = crate::disk_hygiene::clean(&root, Some(&selected), dry_run);
+            let _ = tx.send(super::substructs::HygieneEvent::CleanDone(result));
+        });
     }
 }

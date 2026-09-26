@@ -465,6 +465,22 @@ pub fn handle_system_tool(
             fs::remove_file(&full_path)?;
             format!("Success: File '{}' deleted successfully.", rel_path)
         }
+        // ── Disk Hygiene ─────────────────────────────────────────────────────
+        "scan_disk_artifacts" => {
+            let report = crate::disk_hygiene::scan_and_record(root);
+            serde_json::to_string_pretty(&report)?
+        }
+        "clean_disk_artifacts" => {
+            // Dry-run unless explicitly asked to delete; safe-only, always.
+            let dry_run = arguments["dryRun"].as_bool().unwrap_or(true);
+            let selected: Option<Vec<String>> = arguments["paths"].as_array().map(|arr| {
+                arr.iter()
+                    .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                    .collect()
+            });
+            let result = crate::disk_hygiene::clean(root, selected.as_deref(), dry_run);
+            serde_json::to_string_pretty(&result)?
+        }
         "grep_search" => {
             let query = arguments["query"].as_str().ok_or("query is required")?;
             let root_dir = root.to_path_buf();
@@ -569,14 +585,22 @@ pub fn handle_system_tool(
             let stderr = String::from_utf8_lossy(&output.stderr);
             let combined = format!("{}{}", stdout, stderr);
 
-            if combined.trim().is_empty() {
+            let mut outcome = if combined.trim().is_empty() {
                 format!(
                     "Command executed with exit code: {}",
                     output.status.code().unwrap_or(-1)
                 )
             } else {
                 combined
+            };
+            // Provenance hook: if this was a build-class command, measure what
+            // it cost the disk and say so next to the result. The growth event
+            // lands in the shared log, so the Decision Trail shows artifact
+            // growth beside the action that caused it.
+            if let Some(note) = crate::disk_hygiene::note_build_growth(root, cmd_str) {
+                outcome.push_str(&format!("\n[disk hygiene] {note}"));
             }
+            outcome
         }
         // ── Agent Checkpointing ─────────────────────────────────────────────
         "agent_checkpoint_create" => {

@@ -201,3 +201,61 @@ impl LspState {
         }
     }
 }
+
+// ─── Disk Hygiene overlay state ───────────────────────────────────────────────
+
+/// One completed background operation reported to the overlay. Scans and
+/// cleans run off the UI thread (same discipline as the file-tree build):
+/// a large workspace can hold millions of artifact files and the frame loop
+/// must never wait on the disk.
+#[derive(Debug)]
+pub enum HygieneEvent {
+    ScanDone(crate::disk_hygiene::HygieneReport),
+    CleanDone(crate::disk_hygiene::CleanResult),
+}
+
+/// State for the "Clean Build Artifacts..." overlay (Ctrl+Shift+K).
+/// Grouped as a sub-struct so the scan lifecycle, selection, and
+/// confirmation state live in one place instead of eight loose fields.
+pub struct DiskHygieneState {
+    /// Whether the overlay is on screen.
+    pub open: bool,
+    /// A background scan is in flight; the overlay shows "Scanning...".
+    pub scanning: bool,
+    /// A background clean is in flight (real delete or dry run).
+    pub cleaning: bool,
+    /// Reclaim was clicked and the button is waiting for its confirm click.
+    pub confirming: bool,
+    /// Most recent scan result, drives the table.
+    pub report: Option<crate::disk_hygiene::HygieneReport>,
+    /// Artifact trees the user checked; the cleanup target set.
+    pub checked: Vec<String>,
+    /// Last clean outcome rendered under the table ("Reclaimed 6.7 GiB ...").
+    pub last_result: Option<String>,
+    pub tx: crossbeam_channel::Sender<HygieneEvent>,
+    pub rx: crossbeam_channel::Receiver<HygieneEvent>,
+}
+
+impl Default for DiskHygieneState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl DiskHygieneState {
+    pub fn new() -> Self {
+        let (tx, rx) = crossbeam_channel::bounded(8);
+        Self {
+            open: false,
+            scanning: false,
+            cleaning: false,
+            confirming: false,
+            report: None,
+            checked: Vec::new(),
+            last_result: None,
+            tx,
+            rx,
+        }
+    }
+}
+

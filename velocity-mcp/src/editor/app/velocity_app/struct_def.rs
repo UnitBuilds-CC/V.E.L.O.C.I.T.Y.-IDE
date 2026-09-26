@@ -23,7 +23,9 @@ use crate::usage::{
 };
 
 use super::super::types::*;
-use super::substructs::{GovernanceState, LspState, PeerCollabState, WorkflowAppState};
+use super::substructs::{
+    DiskHygieneState, GovernanceState, LspState, PeerCollabState, WorkflowAppState,
+};
 use crate::agent::AiProvider;
 use crate::editor::theme::{apply_theme, AppearanceSettings, IdePalette, WorkspaceProfile};
 
@@ -159,6 +161,9 @@ pub struct VelocityApp {
     pub command_palette: CommandPalette,
     /// When true, the keybinding cheat-sheet overlay is shown (toggled with F1).
     pub show_shortcuts: bool,
+    /// "Clean Build Artifacts..." overlay state (Ctrl+Shift+K): background
+    /// scan/clean lifecycle, selection, and confirmation. See [`DiskHygieneState`].
+    pub hygiene: DiskHygieneState,
     pub quick_open: QuickOpen,
     pub mru: MruSwitcher,
     /// Stack of recently closed editor file paths for Ctrl+Shift+T reopen.
@@ -944,6 +949,7 @@ impl VelocityApp {
                 just_opened: false,
             },
             show_shortcuts: false,
+            hygiene: DiskHygieneState::new(),
             quick_open: QuickOpen {
                 open: false,
                 query: String::new(),
@@ -1211,6 +1217,12 @@ impl VelocityApp {
         let snippets_path = app.workspace_root.join(".velocity").join("snippets.json");
         app.snippet_collection =
             crate::editor::snippets::SnippetCollection::load_from_file(&snippets_path);
+        // Low-disk sentinel: one free-space probe plus the cached manifest,
+        // no walk. Nags in the status line when the drive is filling up or a
+        // tracked artifact tree got huge; never deletes anything by itself.
+        if let Some(nag) = crate::disk_hygiene::check_disk_pressure(&app.workspace_root) {
+            app.status_message = nag;
+        }
         app
     }
 
@@ -1251,6 +1263,7 @@ impl VelocityApp {
             command_output: String::new(),
             command_palette: CommandPalette::default(),
             show_shortcuts: false,
+            hygiene: DiskHygieneState::new(),
             quick_open: QuickOpen::default(),
             mru: MruSwitcher::default(),
             closed_editor_paths: Vec::new(),

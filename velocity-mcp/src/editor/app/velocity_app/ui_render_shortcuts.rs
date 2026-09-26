@@ -97,6 +97,10 @@ impl VelocityApp {
                 self.toggle_orchestrator();
             } else if cmd && shift && i.key_pressed(egui::Key::F) {
                 self.toggle_search();
+            } else if cmd && shift && i.key_pressed(egui::Key::K) {
+                // Disk hygiene overlay (opens read-only; deletion needs the
+                // overlay's own confirm click).
+                self.open_disk_hygiene();
             } else if cmd && i.key_pressed(egui::Key::Comma) {
                 self.toggle_settings();
             } else if cmd && shift && i.key_pressed(egui::Key::I) {

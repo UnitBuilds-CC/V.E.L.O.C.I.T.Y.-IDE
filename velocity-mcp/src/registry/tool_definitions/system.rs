@@ -143,6 +143,27 @@ pub fn get_system_tools() -> Vec<Tool> {
                 "required": ["relativeFilePath"]
             }),
         },
+        // ── Disk Hygiene ─────────────────────────────────────────────────────
+        Tool {
+            name: "scan_disk_artifacts".to_string(),
+            description: "Scan the workspace for build-artifact trees (cargo target/, node_modules/, __pycache__, venvs, dist/build/.next caches, .NET obj) and report each tree's reclaimable size, safety class, and the drive's free space. Updates the persisted hygiene manifest.".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {}
+            }),
+        },
+        Tool {
+            name: "clean_disk_artifacts".to_string(),
+            description: "Delete known-safe build-artifact trees to reclaim disk space. ONLY trees that scan_disk_artifacts classifies as 'safe' (artifact name plus its context manifest, e.g. a target/ beside a Cargo.toml) can be removed; review-classified and unknown paths are always refused. Defaults to a dry run that reports sizes without deleting — pass dryRun=false to actually reclaim.".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "dryRun": { "type": "boolean", "description": "Report what would be freed without deleting (default: true)." },
+                    "paths": { "type": "array", "items": { "type": "string" }, "description": "Workspace-relative artifact trees to remove. Must be a subset of the safe entries from scan_disk_artifacts. Omit to target all safe trees." }
+                },
+                "required": []
+            }),
+        },
         // ── Agent Checkpointing ─────────────────────────────────────────────
         Tool {
             name: "agent_checkpoint_create".to_string(),

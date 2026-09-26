@@ -24,6 +24,7 @@ pub mod agent;
 pub mod automation;
 pub mod compiler;
 pub mod connectors;
+pub mod disk_hygiene;
 pub mod editor;
 pub mod errors;
 pub mod generation;

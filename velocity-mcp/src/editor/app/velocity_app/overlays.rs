@@ -263,6 +263,276 @@ impl VelocityApp {
         self.show_shortcuts = open;
     }
 
+    /// "Clean Build Artifacts…" overlay (Ctrl+Shift+K): lists every recognized
+    /// build-artifact tree, pre-checks the safe ones, shows review-classified
+    /// trees disabled with their reason, and reclaims the selection behind a
+    /// one-step confirm. Scanning and cleaning run on background threads; this
+    /// render pass only drains their results, so a huge tree never blocks a
+    /// frame.
+    pub fn disk_hygiene_ui(&mut self, ctx: &egui::Context) {
+        if !self.hygiene.open {
+            return;
+        }
+        self.handle_hygiene_events();
+        if self.hygiene.scanning || self.hygiene.cleaning {
+            // Keep polling the channel while work is in flight.
+            ctx.request_repaint();
+        }
+        let palette = self.palette();
+        // Selection total, computed up front so the confirm button can name
+        // the exact amount it is about to delete.
+        let selected_bytes: u64 = self
+            .hygiene
+            .report
+            .as_ref()
+            .map(|r| {
+                r.entries
+                    .iter()
+                    .filter(|e| self.hygiene.checked.contains(&e.relative_path))
+                    .map(|e| e.size_bytes)
+                    .sum()
+            })
+            .unwrap_or(0);
+        let busy = self.hygiene.scanning || self.hygiene.cleaning;
+        let mut open = true;
+        let mut toggle: Option<String> = None;
+        let mut want_dry = false;
+        let mut want_confirm_arm = false;
+        let mut want_reclaim = false;
+        let mut want_disarm = false;
+
+        egui::Area::new(egui::Id::new("disk_hygiene_overlay_area"))
+            .order(egui::Order::Foreground)
+            .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
+            .show(ctx, |ui| {
+                egui::Frame::popup(ui.style())
+                    .fill(ui.visuals().code_bg_color)
+                    .stroke(ui.visuals().window_stroke)
+                    .inner_margin(egui::Margin::same(16))
+                    .corner_radius(egui::CornerRadius::same(12))
+                    .show(ui, |ui| {
+                        ui.set_width(640.0);
+                        ui.horizontal(|ui| {
+                            ui.heading("Clean Build Artifacts");
+                            ui.with_layout(
+                                egui::Layout::right_to_left(egui::Align::Center),
+                                |ui| {
+                                    let close = egui::RichText::new(egui_phosphor::regular::X)
+                                        .font(crate::editor::theme::icon_font_id(13.0));
+                                    if ui.button(close).clicked() {
+                                        open = false;
+                                    }
+                                },
+                            );
+                        });
+                        if let Some(report) = &self.hygiene.report {
+                            let reclaimable =
+                                crate::disk_hygiene::format_bytes(report.total_reclaimable_bytes);
+                            let free = crate::disk_hygiene::format_bytes(report.free_space_bytes);
+                            let safe_count = report
+                                .entries
+                                .iter()
+                                .filter(|e| e.safety == crate::disk_hygiene::Safety::Safe)
+                                .count();
+                            ui.label(
+                                egui::RichText::new(format!(
+                                    "Reclaimable {reclaimable} in {safe_count} tree(s) · Free: {free}"
+                                ))
+                                .small()
+                                .color(palette.text_muted),
+                            );
+                        } else {
+                            ui.label(
+                                egui::RichText::new("Scanning workspace for artifact trees...")
+                                    .small()
+                                    .color(palette.text_muted),
+                            );
+                        }
+                        ui.add_space(6.0);
+                        ui.separator();
+                        egui::ScrollArea::vertical()
+                            .max_height(340.0)
+                            .auto_shrink([false, false])
+                            .show(ui, |ui| {
+                            let Some(report) = &self.hygiene.report else {
+                                return;
+                            };
+                            if report.entries.is_empty() {
+                                ui.label(
+                                    egui::RichText::new(
+                                        "No build-artifact trees found in this workspace.",
+                                    )
+                                    .italics()
+                                    .color(palette.text_muted),
+                                );
+                                return;
+                            }
+                            for entry in &report.entries {
+                                let is_safe =
+                                    entry.safety == crate::disk_hygiene::Safety::Safe;
+                                ui.horizontal(|ui| {
+                                    if is_safe {
+                                        let mut checked =
+                                            self.hygiene.checked.contains(&entry.relative_path);
+                                        if ui
+                                            .checkbox(
+                                                &mut checked,
+                                                egui::RichText::new(&entry.relative_path)
+                                                    .monospace()
+                                                    .size(12.0),
+                                            )
+                                            .changed()
+                                        {
+                                            toggle = Some(entry.relative_path.clone());
+                                        }
+                                        ui.with_layout(
+                                            egui::Layout::right_to_left(egui::Align::Center),
+                                            |ui| {
+                                                ui.label(
+                                                    egui::RichText::new(
+                                                        crate::disk_hygiene::format_bytes(
+                                                            entry.size_bytes,
+                                                        ),
+                                                    )
+                                                    .size(11.0)
+                                                    .color(palette.text),
+                                                );
+                                            },
+                                        );
+                                    } else {
+                                        // Review rows are display-only: the
+                                        // reason is the whole point of them.
+                                        ui.add_enabled_ui(false, |ui| {
+                                            let mut never = false;
+                                            ui.checkbox(
+                                                &mut never,
+                                                egui::RichText::new(&entry.relative_path)
+                                                    .monospace()
+                                                    .size(12.0),
+                                            );
+                                        });
+                                        ui.with_layout(
+                                            egui::Layout::right_to_left(egui::Align::Center),
+                                            |ui| {
+                                                ui.label(
+                                                    egui::RichText::new(
+                                                        entry
+                                                            .reason
+                                                            .as_deref()
+                                                            .unwrap_or("review only"),
+                                                    )
+                                                    .size(10.0)
+                                                    .color(palette.text_muted),
+                                                );
+                                            },
+                                        );
+                                    }
+                                });
+                            }
+                            });
+                        if let Some(line) = &self.hygiene.last_result {
+                            ui.add_space(4.0);
+                            ui.label(
+                                egui::RichText::new(line)
+                                    .small()
+                                    .color(palette.accent),
+                            );
+                        }
+                        ui.add_space(8.0);
+                        ui.separator();
+                        ui.horizontal(|ui| {
+                            if busy {
+                                ui.spinner();
+                                ui.label(
+                                    egui::RichText::new(if self.hygiene.scanning {
+                                        "Scanning..."
+                                    } else {
+                                        "Working..."
+                                    })
+                                    .small()
+                                    .color(palette.text_muted),
+                                );
+                                return;
+                            }
+                            if self.hygiene.confirming {
+                                let total =
+                                    crate::disk_hygiene::format_bytes(selected_bytes);
+                                if ui
+                                    .add(
+                                        egui::Button::new(
+                                            egui::RichText::new(format!(
+                                                "Confirm: delete {total}"
+                                            ))
+                                            .strong(),
+                                        )
+                                        .fill(palette.error),
+                                    )
+                                    .clicked()
+                                {
+                                    want_reclaim = true;
+                                }
+                                if ui.button("Cancel").clicked() {
+                                    want_disarm = true;
+                                }
+                            } else {
+                                let has_selection = !self.hygiene.checked.is_empty()
+                                    && self.hygiene.report.is_some();
+                                if ui
+                                    .add_enabled(
+                                        has_selection,
+                                        egui::Button::new("Dry run"),
+                                    )
+                                    .clicked()
+                                {
+                                    want_dry = true;
+                                }
+                                if ui
+                                    .add_enabled(
+                                        has_selection && selected_bytes > 0,
+                                        egui::Button::new(egui::RichText::new(format!(
+                                            "Reclaim {}",
+                                            crate::disk_hygiene::format_bytes(selected_bytes)
+                                        )))
+                                        .fill(palette.accent),
+                                    )
+                                    .clicked()
+                                {
+                                    want_confirm_arm = true;
+                                }
+                            }
+                        });
+                    });
+            });
+
+        // Apply the clicks collected during render (the closure only borrows
+        // `self` immutably; state changes live here).
+        if let Some(path) = toggle {
+            if let Some(pos) = self.hygiene.checked.iter().position(|p| *p == path) {
+                self.hygiene.checked.remove(pos);
+            } else {
+                self.hygiene.checked.push(path);
+            }
+        }
+        if want_dry {
+            self.start_hygiene_clean(true);
+        }
+        if want_confirm_arm {
+            self.hygiene.confirming = true;
+        }
+        if want_disarm {
+            self.hygiene.confirming = false;
+        }
+        if want_reclaim {
+            self.hygiene.confirming = false;
+            self.start_hygiene_clean(false);
+        }
+        if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
+            open = false;
+            self.hygiene.confirming = false;
+        }
+        self.hygiene.open = open;
+    }
+
     /// Ctrl+P quick-open switcher: fuzzy-search workspace files and jump to them.
     pub fn quick_open_ui(&mut self, ctx: &egui::Context) {
         if !self.quick_open.open {
@@ -1421,6 +1691,9 @@ impl VelocityApp {
         if self.show_shortcuts {
             up.push("keyboard shortcuts");
         }
+        if self.hygiene.open {
+            up.push("disk hygiene");
+        }
         if self.show_full_diff {
             up.push("full diff");
         }
@@ -1479,6 +1752,10 @@ impl VelocityApp {
         self.goto_symbol_open = false;
         self.references_open = false;
         self.show_shortcuts = false;
+        // Standing down the hygiene overlay cancels it — same as its Cancel
+        // button or Escape: nothing is deleted on the way out, even mid-confirm.
+        self.hygiene.open = false;
+        self.hygiene.confirming = false;
         self.show_full_diff = false;
         self.pending_open_path = None;
         self.pending_save_as_path = None;

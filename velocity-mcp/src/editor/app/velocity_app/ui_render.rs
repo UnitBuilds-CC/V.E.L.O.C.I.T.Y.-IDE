@@ -2068,6 +2068,7 @@ impl eframe::App for VelocityApp {
         self.save_as_dialog_ui(&ctx);
         self.confirm_close_dialog_ui(&ctx);
         self.shortcuts_overlay_ui(&ctx);
+        self.disk_hygiene_ui(&ctx);
         self.full_diff_ui(&ctx);
         self.toasts.ui(&ctx, palette);
     }

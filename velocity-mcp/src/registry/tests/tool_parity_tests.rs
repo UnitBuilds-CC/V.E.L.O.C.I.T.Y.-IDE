@@ -161,6 +161,47 @@ fn no_duplicate_tool_names() {
     );
 }
 
+/// Schema snapshot for the disk-hygiene pair: the safety story depends on
+/// `clean_disk_artifacts` defaulting to a dry run and exposing the `paths`
+/// subset selector, and on `scan_disk_artifacts` taking no arguments. If
+/// either shape changes, this test must change deliberately.
+#[test]
+fn disk_hygiene_tool_schemas() {
+    let tools = get_tools();
+    let scan = tools
+        .iter()
+        .find(|t| t.name == "scan_disk_artifacts")
+        .expect("scan_disk_artifacts must be advertised");
+    assert_eq!(scan.input_schema["type"], "object");
+    assert!(
+        scan.input_schema["properties"]
+            .as_object()
+            .is_none_or(|p| p.is_empty()),
+        "scan_disk_artifacts should take no arguments"
+    );
+
+    let clean = tools
+        .iter()
+        .find(|t| t.name == "clean_disk_artifacts")
+        .expect("clean_disk_artifacts must be advertised");
+    assert_eq!(clean.input_schema["properties"]["dryRun"]["type"], "boolean");
+    assert_eq!(clean.input_schema["properties"]["paths"]["type"], "array");
+    assert_eq!(clean.input_schema["properties"]["paths"]["items"]["type"], "string");
+    // Nothing is required: with no arguments the tool must resolve to the
+    // dry-run-everything behavior, never to an implicit destructive call.
+    assert!(
+        clean.input_schema["required"]
+            .as_array()
+            .is_none_or(|r| r.is_empty()),
+        "clean_disk_artifacts must not require arguments"
+    );
+    // The handler itself must agree with the schema promise: default dry_run.
+    assert!(
+        clean.description.contains("dry run"),
+        "clean_disk_artifacts description must document the dry-run default"
+    );
+}
+
 /// Tool categories should be represented (system, browser, team, WA).
 #[test]
 fn tool_categories_are_represented() {

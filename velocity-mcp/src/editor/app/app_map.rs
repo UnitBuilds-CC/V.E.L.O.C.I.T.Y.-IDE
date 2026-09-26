@@ -878,6 +878,9 @@ pub fn command_risk(category: &str, label: &str) -> CommandRisk {
         "Deploy Pipeline",
         "Voice Commands",
         "Research Browser",
+        // Opening the hygiene overlay only scans; nothing is deleted without
+        // the overlay's own confirm click, which the bridge cannot reach.
+        "Clean Build Artifacts\u{2026}",
         "Go to Definition",
         "Find All References",
         "Show Hover Info",
