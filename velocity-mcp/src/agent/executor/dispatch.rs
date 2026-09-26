@@ -13,13 +13,17 @@ use std::time::Duration;
 /// body, so an SSE stream still emitting tokens after 60s gets killed mid
 /// tool-call — and the truncated JSON arguments then executed as real calls.
 /// This agent bounds only the connect and each individual socket read, so
-/// long reasoning streams can run as long as bytes keep arriving.
+/// long reasoning streams can run as long as bytes keep arriving. The read
+/// bound is 90 s, not 300 s: a healthy stream emits bytes every few seconds,
+/// so silence that long means the connection is dead — and a 300 s bound let
+/// one frozen read stall an entire turn for five minutes before the retry
+/// path ever engaged.
 pub(crate) fn stream_agent() -> &'static ureq::Agent {
     static AGENT: std::sync::OnceLock<ureq::Agent> = std::sync::OnceLock::new();
     AGENT.get_or_init(|| {
         ureq::AgentBuilder::new()
             .timeout_connect(Duration::from_secs(15))
-            .timeout_read(Duration::from_secs(300))
+            .timeout_read(Duration::from_secs(90))
             .build()
     })
 }

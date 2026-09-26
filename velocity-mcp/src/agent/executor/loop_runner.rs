@@ -59,6 +59,11 @@ pub fn run_agent_reasoning_loop(
     // returns no tool call ("Let me fix X:" → turn ends). Bounded so a model
     // that genuinely loops on announcements still terminates.
     let mut auto_continuations: u32 = 0;
+    // MoA router is attempted once per mission: it failed, timed out, or was
+    // unavailable → don't pay the health check (and risk the 120 s sync
+    // block) again on a later turn. Router interception of mid-mission
+    // turns was also producing text answers where tool calls were due.
+    let mut router_gave_up = false;
 
     // Phase 2: Workspace checkpointing for safe, reversible tool operations
     let mut checkpoint_mgr = CheckpointManager::new(workspace_root);
@@ -110,6 +115,11 @@ pub fn run_agent_reasoning_loop(
             break;
         }
         loop_count += 1;
+        // Per-turn latency telemetry: without this, "the agent feels slow"
+        // is unfalsifiable — provider time, tool time, and idle overhead all
+        // blur together. Reported in the status line so any run's transcript
+        // shows where the wall-clock actually went.
+        let turn_start = std::time::Instant::now();
         ui_tx
             .send(AgentToUiMessage::StatusUpdate(format!(
                 "Querying {} (Turn {})\u{2026}",
@@ -175,11 +185,15 @@ pub fn run_agent_reasoning_loop(
         );
 
         // ─── Velocity Router MoA Dispatch ─────────────────────────────────────
-        // If the router is enabled and available, try routing through the MoA
-        // orchestrator first. If it succeeds, we handle the response and skip
-        // direct provider dispatch. If it fails, we fall through to direct.
+        // First turn only, and only while the router has not already given up
+        // this mission: an alive-but-slow router that blocks 120 s per attempt
+        // must not stall every subsequent tool-loop turn.
         let router_handled = if let Some(router_cfg) = router_settings {
-            if router_cfg.enabled && !router_cfg.api_key.trim().is_empty() {
+            if !router_gave_up
+                && loop_count == 1
+                && router_cfg.enabled
+                && !router_cfg.api_key.trim().is_empty()
+            {
                 // Check router health (cached after first check)
                 let router_available = router_client::is_router_available()
                     || router_client::refresh_router_availability(&router_cfg.url);
@@ -307,6 +321,7 @@ pub fn run_agent_reasoning_loop(
                                     )))
                                     .ok();
                                 router_client::mark_router_unavailable();
+                                router_gave_up = true;
                                 false
                             }
                         }
@@ -821,6 +836,10 @@ pub fn run_agent_reasoning_loop(
                 }
             }
         }
+
+        // Stream closed (or Anthropic body consumed): everything up to here
+        // is provider latency — connect, prefill, and token generation.
+        let provider_ms = turn_start.elapsed().as_millis();
 
         if !suppressing && streamed_len <= assistant_content.len() {
             let mut flush_start = streamed_len;
@@ -1360,6 +1379,21 @@ pub fn run_agent_reasoning_loop(
                 }
             }
 
+            // Turn latency is now visible: model time versus tool time.
+            {
+                let total_ms = turn_start.elapsed().as_millis();
+                let tool_ms = total_ms.saturating_sub(provider_ms);
+                ui_tx
+                    .send(AgentToUiMessage::StatusUpdate(format!(
+                        "Turn {}: model {:.1}s + tools {:.1}s ({} call(s))",
+                        loop_count,
+                        provider_ms as f64 / 1000.0,
+                        tool_ms as f64 / 1000.0,
+                        thread_results.len()
+                    )))
+                    .ok();
+            }
+
             let mut any_success = false;
             let mut any_rejected = false;
             let mut any_error = false;
@@ -1383,11 +1417,14 @@ pub fn run_agent_reasoning_loop(
                     any_success = true;
                     // Phase 3: Remember successful tool usage
                     let mem_key = format!("tool:{}:success", tool_name);
-                    let summary = if tool_result.len() > 200 {
-                        &tool_result[..200]
-                    } else {
-                        &tool_result
-                    };
+                    // Byte 200 can land inside a multi-byte character (tool
+                    // results carry file content from real projects), which
+                    // panics the whole loop — snap to a char boundary.
+                    let mut cut = 200.min(tool_result.len());
+                    while cut > 0 && !tool_result.is_char_boundary(cut) {
+                        cut -= 1;
+                    }
+                    let summary = &tool_result[..cut];
                     memory.remember(
                         &mem_key,
                         &format!("{} -> {}", tool_name, summary),
@@ -1515,6 +1552,13 @@ pub fn run_agent_reasoning_loop(
             loop_count = loop_count.saturating_sub(1);
             continue;
         } else {
+            ui_tx
+                .send(AgentToUiMessage::StatusUpdate(format!(
+                    "Turn {}: model {:.1}s (final answer, no tool calls)",
+                    loop_count,
+                    provider_ms as f64 / 1000.0
+                )))
+                .ok();
             write_handover_nda(workspace_root, "idle", loop_count, "completed", false);
             break;
         }
