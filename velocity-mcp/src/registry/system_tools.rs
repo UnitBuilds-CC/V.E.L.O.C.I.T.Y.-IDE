@@ -400,7 +400,12 @@ pub fn handle_system_tool(
             let rel_path = arguments["relativeFilePath"]
                 .as_str()
                 .ok_or("relativeFilePath is required")?;
-            let content = arguments["content"].as_str().ok_or("content is required")?;
+            let raw_content = arguments["content"].as_str().ok_or("content is required")?;
+            // Models copy tool results verbatim: a Decision Trail block that
+            // read_file appended can reappear in the write payload. It is
+            // harness metadata, never intended file content, so strip it.
+            let stripped = crate::registry::event_store::strip_decision_trail(raw_content);
+            let content = stripped.as_deref().unwrap_or(raw_content);
 
             let scan_warning = scan_file_content(content);
 
@@ -415,6 +420,8 @@ pub fn handle_system_tool(
                     "Success: File written successfully. WARNING: Security scan warning triggered: [{}]. Please immediately correct this exposure in your next step.",
                     warn
                 )
+            } else if stripped.is_some() {
+                "Success: File written successfully. Note: a trailing Decision Trail annotation (harness metadata from a prior read_file result, not file content) was stripped before writing.".to_string()
             } else {
                 "Success: File written successfully".to_string()
             }

@@ -773,6 +773,32 @@ fn test_compress_history_dedupes_new_velocity_identity_prompt() {
 }
 
 #[test]
+fn test_system_prompt_base_carries_grounding_clause() {
+    // Regression for the fabricated-summary defect: a model with the full
+    // source verbatim in context still invented "file types, directories and
+    // structures" that were not in it. The shared prompt base must forbid
+    // inventing content and bless sparse-but-true output.
+    assert!(SYSTEM_PROMPT_BASE.starts_with("You are Velocity, the native AI agent"));
+    assert!(SYSTEM_PROMPT_BASE.contains("never invent structure"));
+    assert!(SYSTEM_PROMPT_BASE.contains("an accurate sparse summary beats a polished fabricated one"));
+    // The old polish-pressure wording that encouraged padding must not return.
+    assert!(!SYSTEM_PROMPT_BASE.contains("high-quality responses"));
+    // The dedupe/legacy-accept marker matches the constant's prefix, so
+    // restored chat logs built from it keep getting per-request doc stripping.
+    let mut sys = ChatMessage {
+        role: "system".to_string(),
+        content: SYSTEM_PROMPT_BASE.to_string(),
+        name: None,
+        tool_call_id: None,
+        tool_calls: None,
+    };
+    sys.content.push_str("\n\n## Available Tools\n### read_file\nold copy\n");
+    let compressed = compress_history(&[sys], true);
+    let out = compressed.iter().find(|m| m.role == "system").unwrap();
+    assert!(!out.content.contains("## Available Tools"));
+}
+
+#[test]
 fn test_mission_anchor_survives_base_truncation() {
     // The first substantive user message carries the mission brief and must be
     // preserved verbatim even when the history blows past the character budget

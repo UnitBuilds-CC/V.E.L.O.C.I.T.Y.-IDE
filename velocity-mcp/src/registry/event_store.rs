@@ -443,9 +443,17 @@ fn recover_concatenated(input: &str) -> Vec<String> {
     fragments
 }
 
+/// Whole-line header of the harness-appended annotation block. Kept as a
+/// constant so the enricher and the write-side stripper can never drift.
+pub const DECISION_TRAIL_HEADER: &str = "── Decision Trail ──";
+/// Prefix of the banner line the enricher places before the header.
+pub const DECISION_TRAIL_BANNER: &str = "── End of file content.";
+
 /// Enrich a `read_file` response with a decision trail from the event store.
 /// Returns the original content with a `── Decision Trail ──` section appended
-/// (only if events exist for the file).
+/// (only if events exist for the file). The banner is deliberately explicit:
+/// fast models copy whole tool results back into file writes, and a live run
+/// leaked an unlabelled trail into the file itself.
 pub fn enrich_read_response(root: &Path, relative_path: &str, content: &str) -> String {
     let store = EventStore::open(root);
     let events = match store.query(Some(relative_path), None, 5) {
@@ -454,7 +462,9 @@ pub fn enrich_read_response(root: &Path, relative_path: &str, content: &str) -> 
     };
 
     let mut enriched = content.to_string();
-    enriched.push_str("\n\n── Decision Trail ──\n");
+    enriched.push_str(&format!(
+        "\n\n{DECISION_TRAIL_BANNER} The Decision Trail below is harness metadata appended to \nthis tool result by V.E.L.O.C.I.T.Y.; it is NOT part of the file and must never be copied\ninto a file write. ──\n{DECISION_TRAIL_HEADER}\n"
+    ));
     for event in events.iter().rev() {
         let outcome_tag = match event.outcome {
             EventOutcome::Success => "OK",
@@ -475,6 +485,53 @@ pub fn enrich_read_response(root: &Path, relative_path: &str, content: &str) -> 
         enriched.push('\n');
     }
     enriched
+}
+
+/// Remove a trailing decision-trail block that a model copied back into a
+/// `write_file` payload. A live run rewrote a file straight from the enriched
+/// `read_file` result and dragged the harness annotation into the file.
+///
+/// Deliberately conservative: it only strips when the header stands alone on
+/// its line, at least one trail entry follows, and nothing but trail entries
+/// follows it - so a source file merely mentioning the marker (this module
+/// does) or prose that reuses it mid-content is never cut.
+pub fn strip_decision_trail(content: &str) -> Option<String> {
+    let header_at = content.rfind(DECISION_TRAIL_HEADER)?;
+    let line_start = content[..header_at].rfind('\n').map(|i| i + 1).unwrap_or(0);
+    let line_end = content[header_at..]
+        .find('\n')
+        .map(|i| header_at + 1 + i)
+        .unwrap_or(content.len());
+    if content[line_start..line_end].trim() != DECISION_TRAIL_HEADER {
+        return None;
+    }
+    let mut entries = 0;
+    for line in content[line_end..].lines() {
+        if line.trim().is_empty() {
+            continue;
+        }
+        if !line.trim_start().starts_with("[#") {
+            return None;
+        }
+        entries += 1;
+    }
+    if entries == 0 {
+        return None;
+    }
+    // Extend the cut back over the banner line when the model copied it too.
+    let mut cut = line_start;
+    if let Some(b) = content[..line_start].rfind(DECISION_TRAIL_BANNER) {
+        if content[..b].rfind('\n').is_none_or(|n| n + 1 == b) {
+            cut = b;
+        }
+    }
+    let mut cleaned = content[..cut].to_string();
+    // The enricher always appends exactly one blank line before the banner;
+    // undo it so the original byte-ending of the file is preserved.
+    if cleaned.ends_with("\n\n") {
+        cleaned.truncate(cleaned.len() - 2);
+    }
+    Some(cleaned)
 }
 
 // ─── MCP tool handlers ──────────────────────────────────────────────────────
@@ -1067,6 +1124,47 @@ mod tests {
         let content = "fn main() {}";
         let enriched = enrich_read_response(dir.path(), "main.rs", content);
         assert_eq!(enriched, content);
+    }
+
+    #[test]
+    fn strip_decision_trail_round_trips_enriched_content() {
+        // A model that copies an enriched read result back into write_file
+        // must get the pristine bytes back, whatever the file's line ending.
+        let (dir, store) = open_store();
+        store
+            .record("write_file", "Touched auth", None, None, None, vec!["auth.rs".into()])
+            .unwrap();
+        store.mark_outcome(1, EventOutcome::Success, None).unwrap();
+        for content in ["fn a() {}\n", "no trailing newline", "x"] {
+            let enriched = enrich_read_response(dir.path(), "auth.rs", content);
+            assert_ne!(enriched, content, "enrich must change content when events exist");
+            assert!(enriched.contains("must never be copied"), "banner must label metadata");
+            assert_eq!(strip_decision_trail(&enriched).as_deref(), Some(content));
+        }
+    }
+
+    #[test]
+    fn strip_decision_trail_leaves_unrelated_content_alone() {
+        // In-prose mentions must never be cut - this module's own source
+        // contains the marker in doc comments and string literals.
+        assert!(strip_decision_trail("see `── Decision Trail ──` in docs").is_none());
+        // Header alone, or followed by non-trail prose, is not a copied trail.
+        assert!(strip_decision_trail("── Decision Trail ──\n").is_none());
+        assert!(strip_decision_trail("── Decision Trail ──\nintentional prose\n").is_none());
+        // A trail block that does not end the content is not stripped.
+        assert!(
+            strip_decision_trail("── Decision Trail ──\n  [#1] OK [read_file] x\nreal tail\n")
+                .is_none()
+        );
+        assert!(strip_decision_trail("").is_none());
+    }
+
+    #[test]
+    fn strip_decision_trail_handles_copy_without_banner() {
+        // Older/oblique copies may include the header and entries but not the
+        // banner line; the byte-ending of the original body is preserved.
+        let copied = "body text\n\n── Decision Trail ──\n  [#1] OK [read_file] Read x\n";
+        assert_eq!(strip_decision_trail(copied).as_deref(), Some("body text"));
     }
 
     #[test]

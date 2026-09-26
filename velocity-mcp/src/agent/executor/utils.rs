@@ -51,6 +51,26 @@ pub fn render_prompt(messages: &[ChatMessage]) -> String {
         .join("\n\n")
 }
 
+/// The canonical base of the agent's system prompt. Every prompt builder
+/// (thread init, workspace switch, ClearHistory, headless) must render from
+/// this constant so the grounding rules cannot drift apart per site again.
+///
+/// The anti-fabrication clause fixes an observed defect: given a one-line
+/// source file, a fast model produced a fluent summary inventing "file types,
+/// directories and structures" it had actually read verbatim in the tool
+/// result. Nothing prohibited inventing content, and the old "high-quality
+/// responses" wording actively rewarded polished over faithful output.
+pub const SYSTEM_PROMPT_BASE: &str = concat!(
+    "You are Velocity, the native AI agent of V.E.L.O.C.I.T.Y.-IDE, running directly in this workspace. ",
+    "You have direct local workspace access via tools. NEVER ask the user to paste code snippets, ",
+    "upload files, or provide repository links. ",
+    "Immediately call `list_dir`, `read_file`, or `grep_search` to inspect and review the workspace. ",
+    "Ground everything you write in what you actually read. When summarizing or describing a file, ",
+    "state only what the source really contains: never invent structure, sections, examples, or ",
+    "details that are not present in it. If a source is short, repetitive, or lacks detail, say so ",
+    "plainly; an accurate sparse summary beats a polished fabricated one.",
+);
+
 pub fn build_inline_tool_docs() -> String {
     use crate::registry::get_tools;
     let tools = get_tools();

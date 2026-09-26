@@ -2,7 +2,7 @@ use super::super::coordination::CoordinationBus;
 use super::super::models::*;
 use super::super::provider::*;
 use super::loop_runner::run_agent_reasoning_loop;
-use super::utils::build_inline_tool_docs;
+use super::utils::{build_inline_tool_docs, SYSTEM_PROMPT_BASE};
 use crate::editor::speculative_precomp::precompute_files;
 use crate::safety::SafeMutex;
 use crate::usage::{
@@ -55,9 +55,8 @@ pub fn run_headless_subagent(request: HeadlessSubAgentRequest) -> HeadlessSubAge
     let mut message_history = vec![ChatMessage {
         role: "system".to_string(),
         content: format!(
-            "You are Velocity, the native AI agent of V.E.L.O.C.I.T.Y.-IDE. \
-            You have access to local workspace files and execution sandboxes via tools. \
-            Help the user program the workspace. Always output concise, correct, and high-quality responses.{}{}",
+            "{}{}{}",
+            SYSTEM_PROMPT_BASE,
             if use_inline_tools { build_inline_tool_docs() } else { String::new() },
             precomp_context
         ),

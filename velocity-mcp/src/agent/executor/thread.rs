@@ -6,7 +6,7 @@ use super::dispatch::resolve_api_key;
 use super::dispatch::{alibaba_base_url, ALIBABA_DASHSCOPE_INTL_BASE_URL};
 use super::loop_runner::run_agent_reasoning_loop;
 use super::team_routing::try_route_team_prompt;
-use super::utils::{build_inline_tool_docs, send_usage_update};
+use super::utils::{build_inline_tool_docs, send_usage_update, SYSTEM_PROMPT_BASE};
 use crate::editor::expert_team::{load_expert_teams, ExpertTeam};
 use crate::safety::SafeMutex;
 use crate::usage::*;
@@ -266,11 +266,7 @@ pub fn run_agent_thread(
             history
         }
         None => {
-            let mut sys = String::from(
-                "You are Velocity, the native AI agent of V.E.L.O.C.I.T.Y.-IDE, running directly in this workspace. \
-                You have direct local workspace access via tools. NEVER ask the user to paste code snippets, upload files, or provide repository links. \
-                Immediately call `list_dir`, `read_file`, or `grep_search` to inspect and review the workspace.",
-            );
+            let mut sys = String::from(SYSTEM_PROMPT_BASE);
             // Inline tool docs only for models that receive no native tool
             // schemas; otherwise the same catalog ships twice per request.
             if provider == AiProvider::OpenRouter || !selected_profile.supports_tools {
@@ -587,9 +583,8 @@ fn process_ui_message(
                     vec![ChatMessage {
                         role: "system".to_string(),
                         content: format!(
-                            "You are Velocity, the native AI agent of V.E.L.O.C.I.T.Y.-IDE. \
-                            You have access to local workspace files and execution sandboxes via tools. \
-                            Help the user program the workspace. Always output concise, correct, and high-quality responses.{}",
+                            "{}{}",
+                            SYSTEM_PROMPT_BASE,
                             if use_inline { build_inline_tool_docs() } else { String::new() }
                         ),
                         name: None,
@@ -613,11 +608,7 @@ fn process_ui_message(
             }
         }
         UiToAgentMessage::ClearHistory => {
-            let mut sys = String::from(
-                "You are Velocity, the native AI agent of V.E.L.O.C.I.T.Y.-IDE, running directly in this workspace. \
-                You have direct local workspace access via tools. NEVER ask the user to paste code snippets, upload files, or provide repository links. \
-                Immediately call `list_dir`, `read_file`, or `grep_search` to inspect and review the workspace.",
-            );
+            let mut sys = String::from(SYSTEM_PROMPT_BASE);
             if *provider == AiProvider::OpenRouter || !selected_profile.supports_tools {
                 sys.push_str(&build_inline_tool_docs());
             }
