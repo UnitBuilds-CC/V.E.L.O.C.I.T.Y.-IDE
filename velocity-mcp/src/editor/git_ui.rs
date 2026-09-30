@@ -38,6 +38,30 @@ impl GitFileStatus {
             Self::Conflicted => "Conflicted",
         }
     }
+
+    /// Explorer decoration precedence: when a folder holds mixed statuses,
+    /// the most urgent one colors the folder (lower number wins).
+    pub fn priority(&self) -> u8 {
+        match self {
+            Self::Conflicted => 0,
+            Self::Modified => 1,
+            Self::Deleted => 2,
+            Self::Renamed => 3,
+            Self::Untracked => 4,
+            Self::Added => 5,
+        }
+    }
+
+    /// RGB for the explorer decoration color of this status (VS Code-like:
+    /// greens for new things, amber for edits, red for removals/conflicts).
+    pub fn decoration_rgb(&self) -> (u8, u8, u8) {
+        match self {
+            Self::Added | Self::Renamed | Self::Untracked => (129, 184, 90),
+            Self::Modified => (222, 179, 92),
+            Self::Deleted => (205, 92, 92),
+            Self::Conflicted => (224, 108, 117),
+        }
+    }
 }
 
 /// A file with git status.
@@ -114,32 +138,58 @@ impl GitState {
         self.entries.clear();
         if let Some(output) = run_git(root, &["status", "--porcelain=v1"]) {
             for line in output.lines() {
-                if line.len() < 4 {
-                    continue;
+                if let Some(entry) = parse_porcelain_line(line) {
+                    self.entries.push(entry);
                 }
-                let index_status = line.as_bytes()[0] as char;
-                let worktree_status = line.as_bytes()[1] as char;
-                let file_path = PathBuf::from(line[3..].trim());
-
-                let (status, staged) = match (index_status, worktree_status) {
-                    ('M', _) => (GitFileStatus::Modified, true),
-                    ('A', _) => (GitFileStatus::Added, true),
-                    ('D', _) => (GitFileStatus::Deleted, true),
-                    ('R', _) => (GitFileStatus::Renamed, true),
-                    (_, 'M') => (GitFileStatus::Modified, false),
-                    (_, 'D') => (GitFileStatus::Deleted, false),
-                    ('?', '?') => (GitFileStatus::Untracked, false),
-                    ('U', _) | (_, 'U') => (GitFileStatus::Conflicted, false),
-                    _ => continue,
-                };
-
-                self.entries.push(GitStatusEntry {
-                    path: file_path,
-                    status,
-                    staged,
-                });
             }
         }
+    }
+
+    /// Build the explorer decoration map: absolute path → status, with file
+    /// statuses bubbled up onto every ancestor directory (a folder takes its
+    /// most urgent child status). Pure function of `entries` so the tree can
+    /// color rows without any git calls.
+    pub fn decorations(
+        &self,
+        workspace_root: &Path,
+    ) -> std::collections::HashMap<PathBuf, GitFileStatus> {
+        use std::collections::HashMap;
+        let mut map: HashMap<PathBuf, GitFileStatus> = HashMap::new();
+        for entry in &self.entries {
+            let abs = workspace_root.join(&entry.path);
+            let best = match map.get(&abs).copied() {
+                Some(existing) => {
+                    if entry.status.priority() < existing.priority() {
+                        entry.status
+                    } else {
+                        existing
+                    }
+                }
+                None => entry.status,
+            };
+            map.insert(abs.clone(), best);
+            // Bubble onto ancestors up to (but not including) the workspace
+            // root; the root header is the project name, not a plain row.
+            let mut parent = abs.parent();
+            while let Some(p) = parent {
+                if p == workspace_root {
+                    break;
+                }
+                let fold = match map.get(p).copied() {
+                    Some(existing) => {
+                        if best.priority() < existing.priority() {
+                            best
+                        } else {
+                            existing
+                        }
+                    }
+                    None => best,
+                };
+                map.insert(p.to_path_buf(), fold);
+                parent = p.parent();
+            }
+        }
+        map
     }
 
     /// Stage a file.
@@ -277,6 +327,30 @@ impl GitState {
 
     pub fn unstaged_count(&self) -> usize {
         self.entries.iter().filter(|e| !e.staged).count()
+    }
+
+    /// Why the Commit button should be disabled, or `None` when a commit can
+    /// run. A commit needs both a non-empty message and at least one staged
+    /// file; surfacing the reason (instead of silently no-oping the button)
+    /// is what keeps the panel honest about what it will actually do.
+    pub fn commit_blocker(&self) -> Option<&'static str> {
+        if self.staged_count() == 0 {
+            Some("Stage changes to commit")
+        } else if self.commit_message.trim().is_empty() {
+            Some("Enter a commit message")
+        } else {
+            None
+        }
+    }
+
+    /// Status line for a stage / unstage toggle. Pure so the wording is
+    /// testable without spawning git.
+    pub fn stage_toggle_message(staged_now: bool) -> &'static str {
+        if staged_now {
+            "Staged 1 file"
+        } else {
+            "Unstaged 1 file"
+        }
     }
 }
 
@@ -426,6 +500,45 @@ pub fn render_recent_changes_timeline(
     }
 }
 
+/// Parse one `git status --porcelain=v1` line into an entry. Rename/copy
+/// lines carry both paths (`R  old -> new`); the destination is the one that
+/// exists on disk, so that is what gets decorated. Branch header and other
+/// non-file lines yield `None`.
+fn parse_porcelain_line(line: &str) -> Option<GitStatusEntry> {
+    if line.len() < 4 {
+        return None;
+    }
+    let index_status = line.as_bytes()[0] as char;
+    let worktree_status = line.as_bytes()[1] as char;
+    let raw = line[3..].trim();
+    let path_str = match raw.find(" -> ") {
+        Some(i) => raw[i + 4..].trim(),
+        None => raw,
+    };
+    // Git quotes paths containing unusual characters.
+    let path_str = path_str.strip_prefix('"').unwrap_or(path_str);
+    let path_str = path_str.strip_suffix('"').unwrap_or(path_str);
+    if path_str.is_empty() {
+        return None;
+    }
+    let (status, staged) = match (index_status, worktree_status) {
+        ('M', _) => (GitFileStatus::Modified, true),
+        ('A', _) => (GitFileStatus::Added, true),
+        ('D', _) => (GitFileStatus::Deleted, true),
+        ('R', _) => (GitFileStatus::Renamed, true),
+        (_, 'M') => (GitFileStatus::Modified, false),
+        (_, 'D') => (GitFileStatus::Deleted, false),
+        ('?', '?') => (GitFileStatus::Untracked, false),
+        ('U', _) | (_, 'U') => (GitFileStatus::Conflicted, false),
+        _ => return None,
+    };
+    Some(GitStatusEntry {
+        path: PathBuf::from(path_str),
+        status,
+        staged,
+    })
+}
+
 /// Run a git command and return stdout on success.
 fn run_git(cwd: &Path, args: &[&str]) -> Option<String> {
     let output = Command::new("git")
@@ -438,6 +551,14 @@ fn run_git(cwd: &Path, args: &[&str]) -> Option<String> {
     } else {
         None
     }
+}
+
+/// Case-insensitive substring match for branch filtering.
+pub fn branch_matches_filter(branch: &str, query: &str) -> bool {
+    if query.is_empty() {
+        return true;
+    }
+    branch.to_lowercase().contains(&query.to_lowercase())
 }
 
 #[cfg(test)]
@@ -486,5 +607,138 @@ mod tests {
         };
         assert_eq!(state.staged_count(), 2);
         assert_eq!(state.unstaged_count(), 1);
+    }
+
+    #[test]
+    fn porcelain_lines_parse_including_renames_and_noise() {
+        let e = parse_porcelain_line(" M src/main.rs").unwrap();
+        assert_eq!(
+            (e.path.to_str().unwrap(), e.status, e.staged),
+            ("src/main.rs", GitFileStatus::Modified, false)
+        );
+        let e = parse_porcelain_line("M  staged.txt").unwrap();
+        assert!(e.staged);
+        // Rename lines decorate the destination path, not the source.
+        let e = parse_porcelain_line("R  old/name.rs -> new/name.rs").unwrap();
+        assert_eq!(e.path, PathBuf::from("new/name.rs"));
+        assert_eq!(e.status, GitFileStatus::Renamed);
+        // Quoted paths lose their quotes; branch headers are ignored.
+        let e = parse_porcelain_line("?? \"weird dir/f.txt\"").unwrap();
+        assert_eq!(e.path, PathBuf::from("weird dir/f.txt"));
+        assert!(parse_porcelain_line("## main...origin/main").is_none());
+        assert!(parse_porcelain_line("").is_none());
+    }
+
+    #[test]
+    fn decorations_absolute_paths_bubble_to_parent_folders() {
+        let root = Path::new("/work/proj");
+        let state = GitState {
+            entries: vec![
+                GitStatusEntry {
+                    path: PathBuf::from("src/a.rs"),
+                    status: GitFileStatus::Modified,
+                    staged: false,
+                },
+                GitStatusEntry {
+                    path: PathBuf::from("src/b/c.rs"),
+                    status: GitFileStatus::Untracked,
+                    staged: false,
+                },
+            ],
+            ..Default::default()
+        };
+        let decos = state.decorations(root);
+        assert_eq!(
+            decos.get(&root.join("src/a.rs")),
+            Some(&GitFileStatus::Modified)
+        );
+        assert_eq!(
+            decos.get(&root.join("src/b/c.rs")),
+            Some(&GitFileStatus::Untracked)
+        );
+        // Folders inherit; the deeper folder keeps only its own child's state.
+        assert_eq!(
+            decos.get(&root.join("src/b")),
+            Some(&GitFileStatus::Untracked)
+        );
+        assert_eq!(decos.get(&root.join("src")), Some(&GitFileStatus::Modified));
+        // The workspace root itself is never decorated.
+        assert!(!decos.contains_key(root));
+    }
+
+    #[test]
+    fn folder_takes_most_urgent_child_status() {
+        let root = Path::new("/work");
+        let state = GitState {
+            entries: vec![
+                GitStatusEntry {
+                    path: PathBuf::from("docs/a.md"),
+                    status: GitFileStatus::Untracked,
+                    staged: false,
+                },
+                GitStatusEntry {
+                    path: PathBuf::from("docs/b.md"),
+                    status: GitFileStatus::Conflicted,
+                    staged: false,
+                },
+            ],
+            ..Default::default()
+        };
+        let decos = state.decorations(root);
+        assert_eq!(
+            decos.get(&root.join("docs")),
+            Some(&GitFileStatus::Conflicted)
+        );
+    }
+
+    #[test]
+    fn commit_blocker_requires_staged_and_message() {
+        // Nothing staged → blocked on staging, regardless of message.
+        let s = GitState {
+            entries: vec![GitStatusEntry {
+                path: PathBuf::from("a"),
+                status: GitFileStatus::Modified,
+                staged: false,
+            }],
+            commit_message: "work".into(),
+            ..Default::default()
+        };
+        assert_eq!(s.commit_blocker(), Some("Stage changes to commit"));
+        // Staged but blank message → blocked on the message.
+        let s = GitState {
+            entries: vec![GitStatusEntry {
+                path: PathBuf::from("a"),
+                status: GitFileStatus::Modified,
+                staged: true,
+            }],
+            commit_message: "   ".into(),
+            ..Default::default()
+        };
+        assert_eq!(s.commit_blocker(), Some("Enter a commit message"));
+        // Staged + message → ready.
+        let s = GitState {
+            entries: vec![GitStatusEntry {
+                path: PathBuf::from("a"),
+                status: GitFileStatus::Modified,
+                staged: true,
+            }],
+            commit_message: "fix: thing".into(),
+            ..Default::default()
+        };
+        assert_eq!(s.commit_blocker(), None);
+    }
+
+    #[test]
+    fn stage_toggle_message_reflects_new_state() {
+        assert_eq!(GitState::stage_toggle_message(true), "Staged 1 file");
+        assert_eq!(GitState::stage_toggle_message(false), "Unstaged 1 file");
+    }
+
+    #[test]
+    fn branch_matches_filter_case_insensitive_substring() {
+        assert!(branch_matches_filter("feature/Login", "login"));
+        assert!(branch_matches_filter("main", ""));
+        assert!(!branch_matches_filter("develop", "prod"));
+        assert!(branch_matches_filter("release/v2", "V2"));
     }
 }

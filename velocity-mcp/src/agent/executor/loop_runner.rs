@@ -10,7 +10,9 @@ use super::router_client::{
     self, AssignmentRequest, AssignmentStatus, ExecutionMode, ExecutionTier,
 };
 use super::thread::{apply_headless_control_messages, run_compilation_check};
-use super::utils::{build_request, estimate_tokens, sanitize_chat_token, send_usage_update};
+use super::utils::{
+    build_request, estimate_tokens, parse_dsml_tool_calls, sanitize_chat_token, send_usage_update,
+};
 use crate::registry;
 use crate::safety::SafeMutex;
 use crate::usage::{
@@ -59,6 +61,14 @@ pub fn run_agent_reasoning_loop(
     // returns no tool call ("Let me fix X:" → turn ends). Bounded so a model
     // that genuinely loops on announcements still terminates.
     let mut auto_continuations: u32 = 0;
+    // Write-pressure tracking: consecutive turns that ran a tool batch without
+    // touching a single file. The agent_eval re-run showed flash-class models
+    // spending the whole turn budget on read_file/list_dir/cargo-test auditing
+    // and never transitioning to writing. When the streak passes the threshold,
+    // inject a directive forcing the switch to writing (or, for a genuinely
+    // read-only mission, delivery of the final report instead of more reading).
+    let mut turns_since_write: u32 = 0;
+    let mut write_pressure_nudges: u32 = 0;
     // MoA router is attempted once per mission: it failed, timed out, or was
     // unavailable → don't pay the health check (and risk the 120 s sync
     // block) again on a later turn. Router interception of mid-mission
@@ -233,6 +243,7 @@ pub fn run_agent_reasoning_loop(
                             max_cost_usd: None,
                         };
 
+                        let router_started = std::time::Instant::now();
                         match router_client::submit_assignment(
                             &router_cfg.url,
                             &router_cfg.api_key,
@@ -240,7 +251,25 @@ pub fn run_agent_reasoning_loop(
                         ) {
                             Ok(response) => {
                                 if response.status == AssignmentStatus::Completed {
-                                    if let Some(assembled) = response.assembled_output {
+                                    // Plausibility gate: a real MoA pass fans out to
+                                    // several specialists and assembles their answers;
+                                    // it cannot finish in under three seconds. A
+                                    // "Completed" that fast is a cached or echoed
+                                    // assignment — in the Sept 2026 agent_eval run an
+                                    // instant response whose text mirrored an
+                                    // unrelated session ended the chat turn with zero
+                                    // model work. Ignore it and dispatch directly.
+                                    let elapsed = router_started.elapsed();
+                                    if elapsed < std::time::Duration::from_secs(3) {
+                                        ui_tx
+                                            .send(AgentToUiMessage::StatusUpdate(format!(
+                                                "MoA answered in {}ms — too fast to be a real synthesis; ignoring the cached response.",
+                                                elapsed.as_millis()
+                                            )))
+                                            .ok();
+                                        router_gave_up = true;
+                                        false
+                                    } else if let Some(assembled) = response.assembled_output {
                                         // Stream the assembled output to the UI
                                         ui_tx
                                             .send(AgentToUiMessage::OutputToken(
@@ -972,6 +1001,27 @@ pub fn run_agent_reasoning_loop(
                 assistant_content = clean2.trim().to_string();
             }
         }
+
+        // --- DSML (DeepSeek Markup Language) fallback parser ---
+        // Some DeepSeek-family models emit tool calls as structured text using
+        // the fullwidth-pipe delimiter U+FF5C instead of native function_call
+        // deltas. Without this the loop sees "final answer, no tool calls"
+        // and the worker makes zero progress. See `parse_dsml_tool_calls`.
+        if accumulated_tools.is_empty() {
+            let (cleaned, dsml_calls) = parse_dsml_tool_calls(&assistant_content);
+            if !dsml_calls.is_empty() {
+                for call in dsml_calls {
+                    accumulated_tools.push(ToolCallAccumulator {
+                        id: format!("dsml_{}", accumulated_tools.len()),
+                        name: call.name,
+                        arguments: serde_json::to_string(&call.arguments)
+                            .unwrap_or_else(|_| "{}".to_string()),
+                    });
+                }
+                assistant_content = cleaned;
+            }
+        }
+
         let final_tool_calls_value = if !accumulated_tools.is_empty() {
             let tc_json: Vec<Value> = accumulated_tools
                 .iter()
@@ -1187,6 +1237,12 @@ pub fn run_agent_reasoning_loop(
             let has_file_mod = tool_specs
                 .iter()
                 .any(|(_, name, _)| file_modifying.contains(&name.as_str()));
+            // run_command is "file-modifying" for checkpointing, but an agent that
+            // only re-rames cargo test is still auditing. The write-pressure streak
+            // counts only turns whose batch actually edited files.
+            let has_write = tool_specs.iter().any(|(_, name, _)| {
+                matches!(name.as_str(), "write_file" | "apply_diff" | "delete_file")
+            });
             if has_file_mod && checkpoint_mgr.enabled {
                 let label = format!("before tool batch (loop {})", loop_count);
                 if let Some(cp_id) = checkpoint_mgr.checkpoint(&label) {
@@ -1500,6 +1556,29 @@ pub fn run_agent_reasoning_loop(
                 write_handover_nda(workspace_root, "executing", loop_count, "batch ok", false);
             }
 
+            turns_since_write = if has_write { 0 } else { turns_since_write + 1 };
+            if should_nudge_write_pressure(
+                turns_since_write,
+                write_pressure_nudges,
+                loop_count + 1 < max_loops,
+            ) {
+                write_pressure_nudges += 1;
+                turns_since_write = 0;
+                ui_tx
+                    .send(AgentToUiMessage::StatusUpdate(format!(
+                        "No file edits for {} consecutive turns \u{2014} nudging implementation ({}/{})...",
+                        WRITE_PRESSURE_STREAK, write_pressure_nudges, MAX_WRITE_PRESSURE_NUDGES
+                    )))
+                    .ok();
+                message_history.push(ChatMessage {
+                    role: "user".to_string(),
+                    content: write_pressure_directive(),
+                    name: None,
+                    tool_call_id: None,
+                    tool_calls: None,
+                });
+            }
+
             save_chatlogs_nda(workspace_root, message_history);
         } else if sitemap_needed {
             ui_tx
@@ -1763,6 +1842,24 @@ fn gather_workspace_overview(workspace_root: &PathBuf) -> String {
     overview
 }
 
+/// Consecutive read-only turns after which the agent gets a hard directive to
+/// stop auditing and produce changes (or its final report).
+const WRITE_PRESSURE_STREAK: u32 = 5;
+/// Upper bound on injected directives so a stubborn model isn't shouted at
+/// every single turn for the rest of the run.
+const MAX_WRITE_PRESSURE_NUDGES: u32 = 3;
+
+/// Pure decision function behind the write-pressure nudge: fire when the
+/// read-only streak passes the threshold, the nudge budget isn't exhausted,
+/// and at least one more model turn remains to act on the directive.
+fn should_nudge_write_pressure(streak: u32, nudges_sent: u32, has_more_turns: bool) -> bool {
+    streak >= WRITE_PRESSURE_STREAK && nudges_sent < MAX_WRITE_PRESSURE_NUDGES && has_more_turns
+}
+
+fn write_pressure_directive() -> String {
+    "[System notice] You have spent several consecutive turns reading, listing and running diagnostics without editing a single file. You already have enough context: RE-ORIENT NOW. If this mission requires code changes, issue write_file / apply_diff / edit tool calls this turn instead of more exploration \u{2014} edit the current state of a file rather than re-reading it. If the mission is genuinely read-only, stop exploring and deliver your final report as plain text.".to_string()
+}
+
 /// Returns true when a no-tool-call assistant turn looks unfinished rather
 /// than like a final summary: an empty response (stream returned nothing), a
 /// trailing colon/ellipsis ("Let me fix the test:"), or a last line that is
@@ -1860,7 +1957,49 @@ fn unknown_tool_message(name: &str, all_names: &[String]) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{unfinished_announced_turn, unknown_tool_message};
+    use super::{
+        should_nudge_write_pressure, unfinished_announced_turn, unknown_tool_message,
+        write_pressure_directive, MAX_WRITE_PRESSURE_NUDGES, WRITE_PRESSURE_STREAK,
+    };
+
+    #[test]
+    fn write_pressure_nudge_fires_past_streak_within_budget() {
+        assert!(!should_nudge_write_pressure(
+            WRITE_PRESSURE_STREAK - 1,
+            0,
+            true
+        ));
+        assert!(should_nudge_write_pressure(WRITE_PRESSURE_STREAK, 0, true));
+        assert!(should_nudge_write_pressure(
+            WRITE_PRESSURE_STREAK + 3,
+            MAX_WRITE_PRESSURE_NUDGES - 1,
+            true
+        ));
+    }
+
+    #[test]
+    fn write_pressure_nudge_respects_budget_and_final_turn() {
+        // Nudge budget exhausted.
+        assert!(!should_nudge_write_pressure(
+            WRITE_PRESSURE_STREAK,
+            MAX_WRITE_PRESSURE_NUDGES,
+            true
+        ));
+        // Last turn: shouting at the model with no turns left to act is noise.
+        assert!(!should_nudge_write_pressure(
+            WRITE_PRESSURE_STREAK,
+            0,
+            false
+        ));
+    }
+
+    #[test]
+    fn write_pressure_directive_covers_both_mission_shapes() {
+        let directive = write_pressure_directive();
+        assert!(directive.contains("write_file"));
+        assert!(directive.contains("read-only"));
+        assert!(directive.starts_with("[System notice]"));
+    }
 
     #[test]
     fn empty_response_is_unfinished() {

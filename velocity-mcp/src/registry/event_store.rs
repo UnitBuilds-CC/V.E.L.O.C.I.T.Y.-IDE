@@ -35,6 +35,15 @@ use serde_json::json;
 use std::fs;
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
+use std::sync::{LazyLock, Mutex};
+
+/// Serializes the read-modify-write (`load_all` to pick the next sequence,
+/// then `append_event`) so concurrent writers — the orchestrator runs several
+/// worker threads in one process, and dispatch itself can overlap — cannot
+/// assign the same sequence number to two events.  The append syscall is
+/// already atomic (see `append_event`); this closes the *sequence* race, which
+/// is the shared-write conflict that matters for a monotonic decision trail.
+static APPEND_LOCK: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
 
 // ─── Event model ────────────────────────────────────────────────────────────
 
@@ -89,6 +98,56 @@ pub struct CodebaseEvent {
     /// Free-form metadata.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub metadata: Option<serde_json::Value>,
+}
+
+/// Tools that never mutate the codebase: reads, searches, GUI state polling and
+/// browser inspection.  They dominate the raw log and bury the decisions that
+/// actually matter, so the trail renderer demotes them below the fold.
+fn is_read_only_tool(tool: &str) -> bool {
+    const READ_ONLY: &[&str] = &[
+        "read_file",
+        "grep_search",
+        "search_",
+        "list_",
+        "glob",
+        "gui_get_state",
+        "gui_",
+        "browser_",
+        "event_history",
+        "event_timeline",
+        "event_context",
+        "use_skill",
+        "sitemap_query",
+        "view_",
+    ];
+    READ_ONLY.iter().any(|prefix| tool.starts_with(prefix))
+}
+
+impl CodebaseEvent {
+    /// Whether this event carries decision signal worth surfacing at the top
+    /// of a file's trail: a state change, a failure, a revert, a recorded
+    /// conflict / stale-plan / task-outcome, or any non read-only tool.
+    /// Read-only polling with no root transition is *noise*.
+    pub fn is_high_signal(&self) -> bool {
+        if self.outcome == EventOutcome::Failure || self.outcome == EventOutcome::Revert {
+            return true;
+        }
+        if let Some(md) = &self.metadata {
+            if md.get("shared_write_conflict").is_some()
+                || md.get("stale_plan").is_some()
+                || md.get("worker_task_outcome").is_some()
+            {
+                return true;
+            }
+        }
+        // A Merkle-root transition means the codebase actually changed.
+        if let (Some(before), Some(after)) = (&self.merkle_root_before, &self.merkle_root_after) {
+            if before != after {
+                return true;
+            }
+        }
+        !is_read_only_tool(&self.tool_name)
+    }
 }
 
 // ─── Event store ────────────────────────────────────────────────────────────
@@ -158,6 +217,40 @@ impl EventStore {
         outcome: EventOutcome,
         failure_reason: Option<String>,
     ) -> Result<u64, String> {
+        self.record_with_metadata(
+            tool_name,
+            description,
+            merkle_root_before,
+            merkle_root_after,
+            context,
+            affected_files,
+            outcome,
+            failure_reason,
+            None,
+        )
+    }
+
+    /// Append a new event carrying structured metadata (used for shared-write
+    /// conflicts, stale-plan rejections and worker task outcomes so the decision
+    /// trail is machine-queryable, not just human-readable). The whole
+    /// read-modify-write is serialized under [`APPEND_LOCK`] so concurrent
+    /// writers never collide on the sequence number.
+    #[allow(clippy::too_many_arguments)]
+    pub fn record_with_metadata(
+        &self,
+        tool_name: &str,
+        description: &str,
+        merkle_root_before: Option<String>,
+        merkle_root_after: Option<String>,
+        context: Option<String>,
+        affected_files: Vec<String>,
+        outcome: EventOutcome,
+        failure_reason: Option<String>,
+        metadata: Option<serde_json::Value>,
+    ) -> Result<u64, String> {
+        let _guard = APPEND_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         let events = self.load_all()?;
         let next_seq = events.last().map(|e| e.sequence + 1).unwrap_or(1);
 
@@ -177,11 +270,103 @@ impl EventStore {
             outcome,
             failure_reason,
             affected_files,
-            metadata: None,
+            metadata,
         };
 
         self.append_event(&event)?;
         Ok(next_seq)
+    }
+
+    /// Record that a *shared write* was rejected because another agent already
+    /// holds a lock over the same file/directory scope.  This is the durable
+    /// decision-trail artefact for the mediator's conflict resolution: without
+    /// it the history cannot explain why a worker never wrote, and future
+    /// agents repeat the same blocked attempt.
+    pub fn record_shared_write_conflict(
+        &self,
+        tool_name: &str,
+        description: &str,
+        conflict_kind: &str,
+        existing_agent: &str,
+        requested_agent: &str,
+        affected_files: Vec<String>,
+        contract: &str,
+    ) -> Result<u64, String> {
+        let metadata = json!({
+            "shared_write_conflict": true,
+            "conflict_kind": conflict_kind,
+            "existing_agent": existing_agent,
+            "requested_agent": requested_agent,
+            "mediation_contract": contract,
+        });
+        self.record_with_metadata(
+            tool_name,
+            description,
+            None,
+            None,
+            Some(format!(
+                "Shared-write conflict ({conflict_kind}): {requested_agent} blocked by {existing_agent}"
+            )),
+            affected_files,
+            EventOutcome::Failure,
+            Some(format!("conflict: {conflict_kind}")),
+            Some(metadata),
+        )
+    }
+
+    /// Record that a worker assignment was discarded because the site map had
+    /// moved on since the plan was made (the plan's Merkle root no longer
+    /// matches the live root).  Surfacing stale plans in history tells future
+    /// agents *why* an intended change never landed.
+    pub fn record_stale_plan(
+        &self,
+        description: &str,
+        planned_root: &str,
+        actual_root: &str,
+        affected_files: Vec<String>,
+    ) -> Result<u64, String> {
+        let metadata = json!({
+            "stale_plan": true,
+            "planned_site_map_root": planned_root,
+            "actual_site_map_root": actual_root,
+        });
+        self.record_with_metadata(
+            "worker_assignment",
+            description,
+            Some(actual_root.to_string()),
+            None,
+            Some(format!(
+                "Plan built against site-map root {planned_root} but the workspace is now {actual_root}; assignment discarded as stale."
+            )),
+            affected_files,
+            EventOutcome::Failure,
+            Some("stale plan".to_string()),
+            Some(metadata),
+        )
+    }
+
+    /// Record the final outcome of an orchestrator worker task so the decision
+    /// trail links site-map transitions to the agent that produced them.
+    pub fn record_task_outcome(
+        &self,
+        task_id: u64,
+        description: &str,
+        outcome: EventOutcome,
+        summary: &str,
+        affected_files: Vec<String>,
+    ) -> Result<u64, String> {
+        let metadata = json!({ "worker_task_outcome": true, "task_id": task_id });
+        self.record_with_metadata(
+            "worker_task",
+            description,
+            None,
+            None,
+            Some(summary.to_string()),
+            affected_files,
+            outcome,
+            None,
+            Some(metadata),
+        )
     }
 
     /// Update the outcome (and optional failure reason) of an existing event.
@@ -449,32 +634,97 @@ pub const DECISION_TRAIL_HEADER: &str = "── Decision Trail ──";
 /// Prefix of the banner line the enricher places before the header.
 pub const DECISION_TRAIL_BANNER: &str = "── End of file content.";
 
+/// Render one trail entry line. Every entry line begins with a bracketed
+/// marker (`[#seq]`, `[verdict]`, `[noise]`) so the write-side stripper can
+/// recognise the whole block without cutting legitimate prose.
+fn render_trail_entry(seq: u64, outcome_tag: &str, tool: &str, description: &str) -> String {
+    format!("  [#{seq}] {outcome_tag} [{tool}] {description}")
+}
+
+/// A one-line decisive summary placed at the top of a file's trail so an agent
+/// reading the file immediately learns its standing — how many changes landed,
+/// whether the latest attempt failed, and whether any shared-write conflicts
+/// were recorded — without parsing the whole log.
+pub fn file_verdict(events: &[CodebaseEvent]) -> String {
+    let signal: Vec<&CodebaseEvent> = events.iter().filter(|e| e.is_high_signal()).collect();
+    let count = |pred: &dyn Fn(&CodebaseEvent) -> bool| signal.iter().filter(|e| pred(e)).count();
+    let failures = count(&|e| e.outcome == EventOutcome::Failure);
+    let reverts = count(&|e| e.outcome == EventOutcome::Revert);
+    let successes = count(&|e| e.outcome == EventOutcome::Success);
+    let conflicts = count(&|e| {
+        e.metadata
+            .as_ref()
+            .is_some_and(|m| m.get("shared_write_conflict").is_some())
+    });
+
+    let mut parts = vec![format!("{successes} change(s) landed")];
+    if failures > 0 {
+        parts.push(format!("{failures} failure(s)"));
+    }
+    if conflicts > 0 {
+        parts.push(format!("{conflicts} shared-write conflict(s)"));
+    }
+    if reverts > 0 {
+        parts.push(format!("{reverts} revert(s)"));
+    }
+    let mut verdict = format!("[verdict] {}.", parts.join(", "));
+    if let Some(newest) = signal.iter().max_by_key(|e| e.sequence) {
+        verdict.push_str(&format!(
+            " Latest decision [#{}] {} [{}] {}",
+            newest.sequence,
+            newest.outcome.label(),
+            newest.tool_name,
+            newest.description
+        ));
+        if let Some(reason) = &newest.failure_reason {
+            verdict.push_str(&format!(" — {reason}"));
+        }
+        verdict.push('.');
+    }
+    verdict
+}
+
 /// Enrich a `read_file` response with a decision trail from the event store.
 /// Returns the original content with a `── Decision Trail ──` section appended
 /// (only if events exist for the file). The banner is deliberately explicit:
 /// fast models copy whole tool results back into file writes, and a live run
 /// leaked an unlabelled trail into the file itself.
+///
+/// The trail is *signal-first*: state changes, failures, conflicts and task
+/// outcomes are listed (newest first, capped), and read-only polling is folded
+/// into a single `[noise]` count so it cannot bury the decisions.
 pub fn enrich_read_response(root: &Path, relative_path: &str, content: &str) -> String {
     let store = EventStore::open(root);
-    let events = match store.query(Some(relative_path), None, 5) {
+    let events = match store.query(Some(relative_path), None, 40) {
         Ok(e) if !e.is_empty() => e,
         _ => return content.to_string(),
     };
+
+    // `query` yields newest-first; keep that order within each partition.
+    let signal: Vec<&CodebaseEvent> = events.iter().filter(|e| e.is_high_signal()).collect();
+    let noise = events.iter().filter(|e| !e.is_high_signal()).count();
+    if signal.is_empty() && noise == 0 {
+        return content.to_string();
+    }
 
     let mut enriched = content.to_string();
     enriched.push_str(&format!(
         "\n\n{DECISION_TRAIL_BANNER} The Decision Trail below is harness metadata appended to \nthis tool result by V.E.L.O.C.I.T.Y.; it is NOT part of the file and must never be copied\ninto a file write. ──\n{DECISION_TRAIL_HEADER}\n"
     ));
-    for event in events.iter().rev() {
+    enriched.push_str(&format!("  {}\n", file_verdict(&events)));
+
+    for event in signal.iter().take(8) {
         let outcome_tag = match event.outcome {
             EventOutcome::Success => "OK",
             EventOutcome::Failure => "FAIL",
             EventOutcome::Revert => "REVERT",
             EventOutcome::Pending => "?",
         };
-        enriched.push_str(&format!(
-            "  [#{}] {} [{}] {}",
-            event.sequence, outcome_tag, event.tool_name, event.description
+        enriched.push_str(&render_trail_entry(
+            event.sequence,
+            outcome_tag,
+            &event.tool_name,
+            &event.description,
         ));
         if let Some(ctx) = &event.context {
             enriched.push_str(&format!(" — {}", ctx));
@@ -483,6 +733,12 @@ pub fn enrich_read_response(root: &Path, relative_path: &str, content: &str) -> 
             enriched.push_str(&format!(" (failed: {})", reason));
         }
         enriched.push('\n');
+    }
+    if noise > 0 {
+        enriched.push_str(&format!(
+            "  [noise] {} read-only poll(s) folded (no codebase change)\n",
+            noise
+        ));
     }
     enriched
 }
@@ -510,7 +766,11 @@ pub fn strip_decision_trail(content: &str) -> Option<String> {
         if line.trim().is_empty() {
             continue;
         }
-        if !line.trim_start().starts_with("[#") {
+        let t = line.trim_start();
+        // Every trail line carries a bracketed marker: an event `[#seq]`, the
+        // `[verdict]` summary, or the folded `[noise]` count. Anything else is
+        // real content and stops the strip.
+        if !(t.starts_with("[#") || t.starts_with("[verdict]") || t.starts_with("[noise]")) {
             return None;
         }
         entries += 1;
@@ -532,6 +792,117 @@ pub fn strip_decision_trail(content: &str) -> Option<String> {
         cleaned.truncate(cleaned.len() - 2);
     }
     Some(cleaned)
+}
+
+/// Build a compact *prior decision history* brief for a set of scope files from
+/// the durable event store, meant for injection into an agent's first-attempt
+/// prompt.  This is the read-back half of the memory loop: the worker inherits
+/// past failures, shared-write conflicts and reverts on the exact files it is
+/// about to touch, instead of blindly re-running attempts that already failed
+/// in a prior session.  Read-only noise is excluded; only high-signal events
+/// surface.  Returns an empty string when there is nothing worth spending
+/// prompt budget on (so the caller can skip injection cleanly).
+pub fn history_brief(root: &Path, scope_files: &[String], max_lines: usize) -> String {
+    use std::collections::HashSet;
+    let store = EventStore::open(root);
+    let mut seen: HashSet<u64> = HashSet::new();
+    let mut collected: Vec<(u64, String)> = Vec::new();
+
+    for file in scope_files.iter().take(12) {
+        let events = match store.query(Some(file), None, 20) {
+            Ok(e) => e,
+            Err(_) => continue,
+        };
+        for ev in events {
+            if !ev.is_high_signal() || !seen.insert(ev.sequence) {
+                continue;
+            }
+            let mut line = format!(
+                "[#{}] {} [{}] {}",
+                ev.sequence,
+                ev.outcome.label().to_uppercase(),
+                ev.tool_name,
+                ev.description
+            );
+            if let Some(reason) = &ev.failure_reason {
+                line.push_str(&format!(" \u{2014} reason: {reason}"));
+            }
+            if let Some(ctx) = &ev.context {
+                line.push_str(&format!(" \u{2014} why: {ctx}"));
+            }
+            collected.push((ev.sequence, line));
+        }
+    }
+
+    if collected.is_empty() {
+        return String::new();
+    }
+    collected.sort_by_key(|entry| std::cmp::Reverse(entry.0));
+    let body = collected
+        .into_iter()
+        .take(max_lines)
+        .map(|(_, line)| format!("  {line}"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    format!(
+        "PRIOR DECISION HISTORY for this scope (from the workspace event store). Failures and \nconflicts below already happened in past sessions \u{2014} do not repeat an approach that failed \nwithout changing the strategy; if a shared-write conflict is listed, the scope was already held \nby another agent.\n{body}"
+    )
+}
+
+/// File sets that have actually collided in past shared-write conflicts.
+/// Every `shared_write_conflict` event's affected files are unioned into
+/// contention groups: files recorded together in one conflict belong to the
+/// same group, and merging is transitive across events. The conflict-aware
+/// scheduler uses the groups to serialize tasks whose declared scopes merely
+/// *touch the same hot area* even when the paths never overlap textually —
+/// semantic collisions the runtime mediator used to catch only after a wasted
+/// worker start. Paths are normalized (forward slashes, lowercase); groups of
+/// a single file are dropped because plain textual overlap already covers
+/// them. Returns nothing when the store is missing or holds no conflicts.
+pub fn conflict_file_groups(root: &Path) -> Vec<std::collections::HashSet<String>> {
+    fn norm(p: &str) -> String {
+        p.replace('\\', "/").trim_matches('/').to_lowercase()
+    }
+    let store = EventStore::open(root);
+    let Ok(events) = store.load_all() else {
+        return Vec::new();
+    };
+    let mut groups: Vec<std::collections::HashSet<String>> = Vec::new();
+    // Newest first; a bounded scan keeps the per-tick cost flat even in long
+    // histories — recent contention patterns are the ones that predict the
+    // next session's collisions.
+    for ev in events.iter().rev().take(2000) {
+        let is_conflict = ev
+            .metadata
+            .as_ref()
+            .and_then(|m| m.get("shared_write_conflict"))
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+        if !is_conflict {
+            continue;
+        }
+        let mut merged: std::collections::HashSet<String> = ev
+            .affected_files
+            .iter()
+            .map(|f| norm(f))
+            .filter(|f| !f.is_empty())
+            .collect();
+        if merged.is_empty() {
+            continue;
+        }
+        // Union every existing group this event's file set intersects.
+        let mut rest = std::mem::take(&mut groups);
+        for g in rest.drain(..) {
+            if g.iter().any(|f| merged.contains(f)) {
+                merged.extend(g);
+            } else {
+                groups.push(g);
+            }
+        }
+        groups.push(merged);
+    }
+    groups.retain(|g| g.len() > 1);
+    groups
 }
 
 // ─── MCP tool handlers ──────────────────────────────────────────────────────
@@ -1317,5 +1688,363 @@ mod tests {
                 .unwrap_or_else(|e| panic!("line did not parse cleanly: {e}"));
             assert!(ev.description.starts_with("desc "));
         }
+    }
+
+    // ── Decisive history: conflict / stale-plan / outcome recording ────────
+
+    #[test]
+    fn record_shared_write_conflict_tags_metadata_and_is_signal() {
+        let (_dir, store) = open_store();
+        let seq = store
+            .record_shared_write_conflict(
+                "worker_assignment",
+                "worker 'X' blocked",
+                "scope_overlap",
+                "task-1",
+                "task-2",
+                vec!["src/lib.rs".into()],
+                "MEDIATION CONTRACT: SCOPE OVERLAP",
+            )
+            .unwrap();
+        let ev = store.get(seq).unwrap().unwrap();
+        assert_eq!(ev.outcome, EventOutcome::Failure);
+        assert!(ev.is_high_signal());
+        let md = ev.metadata.expect("conflict must carry metadata");
+        assert_eq!(md["shared_write_conflict"], json!(true));
+        assert_eq!(md["conflict_kind"], json!("scope_overlap"));
+        assert_eq!(md["existing_agent"], json!("task-1"));
+        assert_eq!(md["requested_agent"], json!("task-2"));
+    }
+
+    #[test]
+    fn record_stale_plan_and_task_outcome() {
+        let (_dir, store) = open_store();
+        let seq = store
+            .record_stale_plan(
+                "worker 'Y' assignment discarded",
+                "000000000000aaaa",
+                "000000000000bbbb",
+                vec!["src/a.rs".into()],
+            )
+            .unwrap();
+        let ev = store.get(seq).unwrap().unwrap();
+        assert_eq!(ev.outcome, EventOutcome::Failure);
+        assert!(ev.is_high_signal());
+        assert_eq!(
+            ev.metadata.unwrap()["planned_site_map_root"],
+            json!("000000000000aaaa")
+        );
+
+        let seq2 = store
+            .record_task_outcome(
+                42,
+                "worker 'Z' finished",
+                EventOutcome::Success,
+                "all good",
+                vec!["src/z.rs".into()],
+            )
+            .unwrap();
+        let ev2 = store.get(seq2).unwrap().unwrap();
+        assert_eq!(ev2.outcome, EventOutcome::Success);
+        assert!(ev2.is_high_signal());
+        assert_eq!(ev2.metadata.unwrap()["task_id"], json!(42));
+    }
+
+    // ── Shared-write concurrency on the history file itself ────────────────
+
+    #[test]
+    fn concurrent_appends_are_sequence_unique_and_monotonic() {
+        // The literal "shared write" on the durable history: many worker
+        // threads append through one process. APPEND_LOCK must serialize the
+        // load_all -> append read-modify-write so no two events share a
+        // sequence and none is lost to a `}{` collision.
+        let dir = TempDir::new().unwrap();
+        let root = dir.path().to_path_buf();
+        let writers = 8;
+        let per_writer = 10;
+        let mut handles = Vec::new();
+        for w in 0..writers {
+            let root = root.clone();
+            handles.push(std::thread::spawn(move || {
+                let store = EventStore::open(&root);
+                for i in 0..per_writer {
+                    store
+                        .record(
+                            "write_file",
+                            &format!("writer {w} event {i}"),
+                            None,
+                            None,
+                            None,
+                            vec![],
+                        )
+                        .unwrap();
+                }
+            }));
+        }
+        for h in handles {
+            h.join().unwrap();
+        }
+
+        let store = EventStore::open(&root);
+        let events = store.load_all().unwrap();
+        assert_eq!(events.len(), writers * per_writer, "no event lost");
+        let mut seqs: Vec<u64> = events.iter().map(|e| e.sequence).collect();
+        seqs.sort_unstable();
+        let expected: Vec<u64> = (1..=(writers * per_writer) as u64).collect();
+        assert_eq!(seqs, expected, "sequences must be unique and dense");
+
+        // Every physical line must be a single, cleanly-parseable object (no
+        // interleaved `}{` fragments survived the concurrent writers).
+        let path = root.join(".velocity").join("events").join("events.jsonl");
+        let raw = fs::read_to_string(&path).unwrap();
+        assert_eq!(raw.lines().count(), writers * per_writer);
+        for line in raw.lines() {
+            serde_json::from_str::<CodebaseEvent>(line)
+                .unwrap_or_else(|e| panic!("torn line survived: {e}"));
+        }
+    }
+
+    // ── Signal-first trail + verdict ───────────────────────────────────────
+
+    #[test]
+    fn read_only_events_are_low_signal_and_folded() {
+        let (_dir, store) = open_store();
+        store
+            .record("gui_get_state", "poll ui", None, None, None, vec![])
+            .unwrap();
+        store.mark_outcome(1, EventOutcome::Success, None).unwrap();
+        let read = store.get(1).unwrap().unwrap();
+        assert!(!read.is_high_signal(), "gui polling must be noise");
+
+        store
+            .record(
+                "write_file",
+                "real change",
+                Some("aaaa".into()),
+                Some("bbbb".into()),
+                None,
+                vec![],
+            )
+            .unwrap();
+        let write = store.get(2).unwrap().unwrap();
+        assert!(write.is_high_signal(), "a root transition is signal");
+    }
+
+    #[test]
+    fn enrich_read_response_leads_with_verdict_and_folds_noise() {
+        let (dir, store) = open_store();
+        store
+            .record(
+                "write_file",
+                "Added auth module",
+                Some("aaaa".into()),
+                Some("bbbb".into()),
+                Some("Needed OAuth2".into()),
+                vec!["src/auth.rs".into()],
+            )
+            .unwrap();
+        store.mark_outcome(1, EventOutcome::Success, None).unwrap();
+        // Bury the signal under read-only noise on the same file.
+        for i in 0..6 {
+            store
+                .record(
+                    "read_file",
+                    &format!("poll {i}"),
+                    None,
+                    None,
+                    None,
+                    vec!["src/auth.rs".into()],
+                )
+                .unwrap();
+            store
+                .mark_outcome(2 + i, EventOutcome::Success, None)
+                .unwrap();
+        }
+
+        let enriched = enrich_read_response(dir.path(), "src/auth.rs", "fn authenticate() {}");
+        assert!(
+            enriched.contains("[verdict]"),
+            "trail must lead with verdict"
+        );
+        assert!(enriched.contains("Added auth module"), "signal surfaced");
+        assert!(
+            enriched.contains("read-only poll(s) folded"),
+            "noise folded into a count"
+        );
+        // The individual noise entries must NOT be listed verbatim.
+        assert!(
+            !enriched.contains("[read_file] poll 3"),
+            "folded noise should not leak as entries"
+        );
+        // Round-trip: stripping recovers the pristine body.
+        assert_eq!(
+            strip_decision_trail(&enriched).as_deref(),
+            Some("fn authenticate() {}")
+        );
+    }
+
+    #[test]
+    fn file_verdict_counts_conflicts_and_flags_latest_failure() {
+        let (_dir, store) = open_store();
+        store
+            .record_shared_write_conflict(
+                "worker_assignment",
+                "blocked",
+                "direct_line",
+                "task-1",
+                "task-2",
+                vec!["src/x.rs".into()],
+                "MEDIATION CONTRACT",
+            )
+            .unwrap();
+        store
+            .record(
+                "write_file",
+                "landed change",
+                Some("aaaa".into()),
+                Some("bbbb".into()),
+                None,
+                vec!["src/x.rs".into()],
+            )
+            .unwrap();
+        store.mark_outcome(2, EventOutcome::Success, None).unwrap();
+
+        let events = store.load_all().unwrap();
+        let verdict = file_verdict(&events);
+        assert!(verdict.starts_with("[verdict]"));
+        assert!(verdict.contains("1 shared-write conflict(s)"));
+        assert!(verdict.contains("1 change(s) landed"));
+    }
+
+    #[test]
+    fn history_brief_surfaces_failures_and_conflicts_and_skips_noise() {
+        // The memory loop's read-back half: a worker's first attempt must
+        // inherit past failures and shared-write conflicts for its scope,
+        // while read-only polling stays filtered out.
+        let (dir, store) = open_store();
+        store
+            .record(
+                "read_file",
+                "poll file",
+                None,
+                None,
+                None,
+                vec!["src/a.rs".into()],
+            )
+            .unwrap();
+        store.mark_outcome(1, EventOutcome::Success, None).unwrap();
+        store
+            .record_with_outcome(
+                "write_file",
+                "Tried caching",
+                None,
+                None,
+                Some("latency win".into()),
+                vec!["src/a.rs".into()],
+                EventOutcome::Failure,
+                Some("broke tests".into()),
+            )
+            .unwrap();
+        store
+            .record_shared_write_conflict(
+                "worker_assignment",
+                "worker blocked",
+                "scope_overlap",
+                "task-1",
+                "task-2",
+                vec!["src/a.rs".into()],
+                "MEDIATION CONTRACT",
+            )
+            .unwrap();
+
+        let brief = history_brief(dir.path(), &["src/a.rs".to_string()], 12);
+        assert!(brief.contains("PRIOR DECISION HISTORY"));
+        assert!(brief.contains("Tried caching"), "failure must surface");
+        assert!(brief.contains("broke tests"), "failure reason required");
+        assert!(brief.contains("worker blocked"), "conflict must surface");
+        assert!(!brief.contains("poll file"), "read-only noise excluded");
+        // Newest-first: the conflict (#3) precedes the failure (#2) in body.
+        let conflict_at = brief.find("worker blocked").unwrap();
+        let failure_at = brief.find("Tried caching").unwrap();
+        assert!(conflict_at < failure_at, "brief must be newest-first");
+
+        // A scope with no high-signal history yields an empty brief so the
+        // caller skips injection without burning prompt budget.
+        assert!(history_brief(dir.path(), &["src/untouched.rs".to_string()], 12).is_empty());
+    }
+
+    #[test]
+    fn conflict_file_groups_union_transitively_and_drop_singletons() {
+        let (dir, store) = open_store();
+        // Two multi-file conflicts sharing one file collapse into a single
+        // contention group (transitive merge).
+        store
+            .record_shared_write_conflict(
+                "worker_assignment",
+                "db collision",
+                "scope_overlap",
+                "task-1",
+                "task-2",
+                vec!["src/db/pool.rs".into(), "src/db/schema.rs".into()],
+                "c",
+            )
+            .unwrap();
+        store
+            .record_shared_write_conflict(
+                "worker_assignment",
+                "cache collision",
+                "semantic",
+                "task-3",
+                "task-4",
+                vec!["src/db/schema.rs".into(), "src/cache.rs".into()],
+                "c",
+            )
+            .unwrap();
+        // A single-file conflict adds nothing textual overlap wouldn't catch.
+        store
+            .record_shared_write_conflict(
+                "worker_assignment",
+                "file collision",
+                "direct_line",
+                "task-5",
+                "task-6",
+                vec!["README.md".into()],
+                "c",
+            )
+            .unwrap();
+        // Ordinary events never join a group.
+        store
+            .record(
+                "write_file",
+                "plain edit",
+                None,
+                None,
+                None,
+                vec!["src/x.rs".into()],
+            )
+            .unwrap();
+
+        let groups = conflict_file_groups(dir.path());
+        assert_eq!(groups.len(), 1, "one merged contention group");
+        assert_eq!(groups[0].len(), 3, "pool + schema + cache");
+        assert!(groups[0].contains("src/db/pool.rs"));
+        assert!(groups[0].contains("src/cache.rs"));
+    }
+
+    #[test]
+    fn conflict_file_groups_quiet_when_no_conflicts_recorded() {
+        let (dir, store) = open_store();
+        store
+            .record(
+                "write_file",
+                "edit",
+                None,
+                None,
+                None,
+                vec!["src/a.rs".into()],
+            )
+            .unwrap();
+        assert!(conflict_file_groups(dir.path()).is_empty());
+        assert!(conflict_file_groups(std::path::Path::new("nonexistent-workspace")).is_empty());
     }
 }

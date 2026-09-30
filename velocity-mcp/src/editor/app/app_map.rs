@@ -93,6 +93,11 @@ pub const RAILS: &[RailSpec] = &[
                 label: "Favorites",
                 icon: ph::STAR,
             },
+            SubTabSpec {
+                slug: "outline",
+                label: "Outline",
+                icon: ph::LIST_BULLETS,
+            },
         ],
     },
     RailSpec {
@@ -893,13 +898,25 @@ pub fn command_risk(category: &str, label: &str) -> CommandRisk {
         "Go Forward",
         "Find",
         "Find / Replace",
+        // Opens the terminal's find bar (and reveals the panel); like plain
+        // Find it only sets an open flag, never writes.
+        "Find in Terminal",
+        // Caret-only: jumps to an existing diff-marked line, edits nothing
+        // (same tier as Find despite living in the Edit category).
+        "Jump to Next Change",
+        "Jump to Previous Change",
+        // Also caret-only: lands on an already-reported problem, writes nothing.
+        "Go to Next Problem",
+        "Go to Previous Problem",
+        // In-memory toggle only: adds/removes a bookmark marker, no disk I/O.
+        "Toggle Bookmark on Line",
     ];
     if NAVIGATE.contains(&label) {
         return CommandRisk::Navigate;
     }
     match category {
         "Build" | "Agent" => CommandRisk::Execute,
-        "File" | "Edit" | "Workspace" => CommandRisk::Modify,
+        "File" | "Edit" | "Workspace" | "Git" => CommandRisk::Modify,
         "Panels" | "View" | "Knowledge" | "Automation" => CommandRisk::Navigate,
         // Unclassified category: assume the expensive tier rather than letting a
         // newly-added group become freely runnable.
@@ -1056,8 +1073,21 @@ mod tests {
         // sub-tab would silently index past what the render match arms handle.
         assert_eq!(RAILS.len(), 8);
         // 33 as originally inventoried, plus the `chat/browser` section that
-        // mounts the previously orphaned `browse_panel`.
-        assert_eq!(sub_tab_count(), 34);
+        // mounts the previously orphaned `browse_panel`, plus the `files/outline`
+        // section (the document-symbol Outline view).
+        assert_eq!(sub_tab_count(), 35);
+    }
+
+    #[test]
+    fn outline_subtab_is_registered_under_files() {
+        // The Outline view is a sub-tab of the Files rail, and its index is the
+        // arm `render_files_category` dispatches on (3 => render_outline_subpanel).
+        // A registration here without that arm — or vice-versa — draws an empty
+        // panel, so this locks the two ends of the wiring together.
+        let files = rail_from_name("files").expect("files rail exists");
+        assert_eq!(files.sub_tab_index("outline"), Some(3));
+        let sub = sub_tab(files.index(), 3).expect("outline sub-tab resolves");
+        assert_eq!(sub.label, "Outline");
     }
 
     fn sub_tab_count() -> usize {
@@ -1440,6 +1470,11 @@ mod tests {
             "Go Forward",
             "Find",
             "Find / Replace",
+            "Find in Terminal",
+            "Jump to Next Change",
+            "Jump to Previous Change",
+            "Go to Next Problem",
+            "Go to Previous Problem",
             "Go to File\u{2026}",
             "Go to Line\u{2026}",
             "Go to Symbol\u{2026}",

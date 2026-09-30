@@ -102,6 +102,11 @@ pub enum GuiCommand {
     SelectTab { tab: String },
     /// Pick a sub-tab within an activity-bar rail (`agents:orchestration`).
     SelectSubTab { rail: String, sub_tab: String },
+    /// Open a changed file's diff in the Git › Changes panel, the way clicking
+    /// its row does. `path` must name a file the working tree reports as
+    /// changed; a driver uses this to verify the diff viewer renders without
+    /// needing to hit an egui row by pixel.
+    SelectGitDiff { path: String },
     /// Close every transient overlay -- palettes, switchers, in-app dialogs and
     /// find/replace -- the way a run of Escape presses would. The route back to
     /// a known state once something has been raised, since Escape is only heard
@@ -267,6 +272,15 @@ pub fn validate_open_path(
         return Err(format!("Path {:?} is a directory, not a file.", canonical));
     }
 
+    // Hand back the canonical path without the Windows verbatim (`\\?\`) prefix.
+    // Tabs, status lines and saved preferences otherwise store a spelling no
+    // other opener produces, which shows the same file twice in the dock. The
+    // containment check above already ran against the canonical form, so this
+    // is cosmetic — but identity has to stay consistent for it.
+    let shown = canonical.to_string_lossy();
+    if let Some(stripped) = shown.strip_prefix(r"\\?\") {
+        return Ok(std::path::PathBuf::from(stripped));
+    }
     Ok(canonical)
 }
 
@@ -649,6 +663,9 @@ mod tests {
             GuiCommand::SelectSubTab {
                 rail: "agents".into(),
                 sub_tab: "orchestration".into(),
+            },
+            GuiCommand::SelectGitDiff {
+                path: "C:\\work\\src\\main.rs".into(),
             },
             GuiCommand::DismissOverlays {},
             GuiCommand::Screenshot {

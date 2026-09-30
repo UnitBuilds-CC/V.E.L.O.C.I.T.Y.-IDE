@@ -69,12 +69,13 @@ impl VelocityApp {
             GuiCommand::RunCommand {
                 label,
                 allow_unsafe,
-            } => self.cmd_run_command(label, allow_unsafe.unwrap_or(false)),
+            } => self.cmd_run_command(label, allow_unsafe.unwrap_or(false), ctx),
             GuiCommand::AppMap { from, to } => self.cmd_app_map(from, to),
-            GuiCommand::NavigateTo { target } => self.cmd_navigate_to(target),
+            GuiCommand::NavigateTo { target } => self.cmd_navigate_to(target, ctx),
             GuiCommand::ListTabs {} => self.cmd_list_tabs(),
             GuiCommand::SelectTab { tab } => self.cmd_select_tab(tab),
             GuiCommand::SelectSubTab { rail, sub_tab } => self.cmd_select_sub_tab(rail, sub_tab),
+            GuiCommand::SelectGitDiff { path } => self.cmd_select_git_diff(path),
             GuiCommand::DismissOverlays {} => self.cmd_dismiss_overlays(),
             GuiCommand::SubmitDialog { value } => self.cmd_submit_dialog(value),
             GuiCommand::SendChatMessage { text } => self.cmd_send_chat_message(text),
@@ -593,7 +594,12 @@ impl VelocityApp {
     /// to opt in to anything that writes, spawns or opens a dialog) and the mode
     /// filter the palette itself applies, so the bridge cannot reach a control
     /// the current workspace profile deliberately hid.
-    fn cmd_run_command(&mut self, label: String, allow_unsafe: bool) -> GuiResponse {
+    fn cmd_run_command(
+        &mut self,
+        label: String,
+        allow_unsafe: bool,
+        ctx: &egui::Context,
+    ) -> GuiResponse {
         let commands = self.commands();
         let cmd = match find_command(&commands, &label) {
             Some(cmd) => cmd,
@@ -608,6 +614,10 @@ impl VelocityApp {
         let action = cmd.action;
         let (label, category, shortcut) = (cmd.label, cmd.category, cmd.shortcut);
         action(self);
+        // Caret-needing actions only queue themselves (they run per frame in
+        // the shortcut handler); flush now so the reported status and
+        // state_after reflect this command, not the frame before it.
+        self.flush_queued_editor_actions(ctx);
         accepted(serde_json::json!({
             "command": label,
             "category": category,
@@ -687,7 +697,7 @@ impl VelocityApp {
     /// Move the UI to a node in the app map, walking there through the same
     /// entry points a click uses. Never runs anything tiered above `navigate`:
     /// a call named "go look at this" must not be able to build or save.
-    fn cmd_navigate_to(&mut self, target: String) -> GuiResponse {
+    fn cmd_navigate_to(&mut self, target: String, ctx: &egui::Context) -> GuiResponse {
         let mut map = AppMap::build();
         map.add_commands(&self.command_inventory());
         let node = match map.resolve(&target) {
@@ -739,7 +749,7 @@ impl VelocityApp {
                 self.focus_panel(kind);
                 accepted(serde_json::json!({ "arrived": id, "panel": title }))
             }
-            NavStep::RunCommand(label) => self.cmd_run_command(label, false),
+            NavStep::RunCommand(label) => self.cmd_run_command(label, false, ctx),
         };
         with_route(response, serde_json::json!(route))
     }
@@ -867,6 +877,42 @@ impl VelocityApp {
             "state_after": self.ide_state(),
         }))
     }
+
+    /// Open a changed file's diff in the Git › Changes panel, exactly as a row
+    /// click does. `path` must be absolute, inside the workspace, and match one
+    /// of the files git currently reports as changed.
+    fn cmd_select_git_diff(&mut self, path: String) -> GuiResponse {
+        let validated =
+            match crate::editor::gui_control::validate_open_path(&path, &self.workspace_root) {
+                Ok(p) => p,
+                Err(e) => return refusal(e),
+            };
+        self.git_state.refresh(&self.workspace_root);
+        // Porcelain reports repo-relative paths while `validated` is a canonical
+        // absolute one; resolve each entry the same way before comparing.
+        let Some(entry) = self
+            .git_state
+            .entries
+            .iter()
+            .find(|e| entry_abs_path(&self.workspace_root, &e.path) == validated)
+            .cloned()
+        else {
+            return refusal(format!(
+                "'{path}' is not a changed file. Changed: {:?}",
+                self.git_state
+                    .entries
+                    .iter()
+                    .map(|e| e.path.display().to_string())
+                    .collect::<Vec<_>>()
+            ));
+        };
+        self.load_scm_diff(&entry.path);
+        let label = self.scm_diff_label().unwrap_or_default();
+        accepted(serde_json::json!({
+            "diff_for": label,
+            "line_count": self.scm_diff_lines.len(),
+        }))
+    }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -877,6 +923,16 @@ impl VelocityApp {
 // context, which is the difference between asserting "the sweep reached
 // Settings" and asserting "the sweep could have".
 // ═══════════════════════════════════════════════════════════════════════════
+
+/// Resolve a porcelain-relative entry path against the workspace root, in the
+/// same canonical form `validate_open_path` hands back: symlinks followed, the
+/// Windows verbatim (`\\?\`) prefix stripped. Paths that no longer exist (a
+/// deleted file, a test fixture) come back joined but untouched, so the
+/// comparison simply fails rather than panicking.
+pub(crate) fn entry_abs_path(root: &std::path::Path, rel: &std::path::Path) -> std::path::PathBuf {
+    let joined = root.join(rel);
+    plain_windows_path(&joined.canonicalize().unwrap_or(joined))
+}
 
 /// Fold away what a driver does not type faithfully: surrounding whitespace,
 /// the `…` a label carries but a caller drops, and repeated internal spaces.
@@ -1394,6 +1450,32 @@ mod tests {
         let save = cmd("Save", "File", &[]);
         assert!(command_gate(&save, WorkspaceProfile::Coder, false).is_err());
         assert_eq!(command_gate(&save, WorkspaceProfile::Coder, true), Ok(()));
+    }
+
+    // ─── Which changed file a diff selection names ────────────────────────
+
+    /// Porcelain hands back `modified.txt` and the bridge validates a canonical
+    /// absolute path. If the two spellings of the same file do not meet, every
+    /// real selection is refused as "not a changed file".
+    #[test]
+    fn a_relative_entry_meets_the_canonical_absolute_path() {
+        let ws = tempfile::tempdir().unwrap();
+        std::fs::write(ws.path().join("modified.txt"), "x").unwrap();
+        let resolved = entry_abs_path(ws.path(), std::path::Path::new("modified.txt"));
+        let canonical = plain_windows_path(&ws.path().join("modified.txt").canonicalize().unwrap());
+        assert_eq!(resolved, canonical, "{resolved:?} vs {canonical:?}");
+        // A verbatim-free spelling, ready to equal what `validate_open_path`
+        // returns for the same file.
+        assert!(!resolved.display().to_string().starts_with(r"\\?\"));
+    }
+
+    #[test]
+    fn a_missing_entry_comes_back_joined_not_panicking() {
+        let ws = tempfile::tempdir().unwrap();
+        // Deleted files still have a porcelain entry; resolution must degrade
+        // to the joined path so the comparison simply misses.
+        let got = entry_abs_path(ws.path(), std::path::Path::new("gone.txt"));
+        assert_eq!(got, ws.path().join("gone.txt"));
     }
 
     // ─── Where a capture is allowed to land ───────────────────────────────
@@ -2065,5 +2147,984 @@ mod tests {
         // Refusing must not spawn the PowerShell grab, which is the expensive
         // and externally visible half of the call.
         assert_eq!(app.status_message, before);
+    }
+
+    #[test]
+    fn dropped_files_open_as_tabs_and_non_files_are_ignored() {
+        let ws = tempfile::tempdir().unwrap();
+        let (mut app, _ctx) = harness();
+        app.workspace_root = ws.path().to_path_buf();
+        let dropped = ws.path().join("dropped.txt");
+        std::fs::write(&dropped, "from the shell\n").unwrap();
+        let ghost = ws.path().join("no-longer-there.txt");
+
+        app.handle_dropped_paths(vec![dropped.clone(), ghost]);
+        // The stub starts with Chat + Output tabs, so count what the drop added.
+        assert_eq!(app.tabs.len(), 3, "only the real file should open");
+        assert!(app.status_message.contains("1 dropped file"));
+
+        // Dropping the same path again reuses the existing tab (open_editor
+        // dedupes), so repeated drops never pile up duplicates.
+        app.handle_dropped_paths(vec![dropped.clone()]);
+        assert_eq!(app.tabs.len(), 3);
+        assert!(
+            app.tabs.iter().any(|t| t.editor_path() == Some(&dropped)),
+            "a tab should point at the dropped file"
+        );
+    }
+
+    #[test]
+    fn auto_save_candidates_lists_only_dirty_path_backed_tabs() {
+        let ws = tempfile::tempdir().unwrap();
+        let (mut app, _ctx) = harness();
+        app.workspace_root = ws.path().to_path_buf();
+        let id = attach_editor(&mut app, "saved.txt");
+        assert!(app.auto_save_candidates().is_empty(), "clean tab");
+
+        // A dirty tab with a real path qualifies...
+        let b = app.buffers.get_mut(&id).unwrap();
+        b.content_mut().push('!');
+        b.mark_mutated_pub();
+        assert_eq!(app.auto_save_candidates().len(), 1);
+
+        // ...an untitled dirty tab does not: autosave must not invent names.
+        let ghost = TabId(9999);
+        let ghost_buf = crate::editor::buffer::EditorBuffer::new(None, "untitled".to_string());
+        app.buffers.insert(ghost.clone(), ghost_buf);
+        let gb = app.buffers.get_mut(&ghost).unwrap();
+        gb.content_mut().push('!');
+        gb.mark_mutated_pub();
+        app.tabs.push(Tab {
+            id: ghost,
+            kind: TabKind::Editor {
+                path: None,
+                buffer_id: TabId(9999),
+            },
+        });
+        let candidates = app.auto_save_candidates();
+        assert_eq!(candidates.len(), 1);
+        assert_eq!(candidates[0].1, app.tab_path(&id).unwrap().clone());
+    }
+
+    #[test]
+    fn auto_save_tick_writes_silently_and_respects_the_throttle() {
+        let ws = tempfile::tempdir().unwrap();
+        let (mut app, _ctx) = harness();
+        app.workspace_root = ws.path().to_path_buf();
+        let id = attach_editor(&mut app, "auto.txt");
+        let on_disk = ws.path().join("auto.txt");
+        let b = app.buffers.get_mut(&id).unwrap();
+        b.content_mut().push('1');
+        b.mark_mutated_pub();
+
+        // Disabled: the sweep leaves the dirty buffer alone.
+        app.auto_save_tick();
+        assert!(!on_disk.exists(), "disabled auto-save must not write");
+
+        app.auto_save = true;
+        let status_before = app.status_message.clone();
+        app.auto_save_tick();
+        assert_eq!(std::fs::read_to_string(&on_disk).unwrap(), "hello\n1");
+        assert!(!app.buffers.get(&id).unwrap().is_dirty());
+        assert_eq!(
+            app.status_message, status_before,
+            "autosave must save silently, without hijacking the status bar"
+        );
+
+        // A second edit inside the throttle window is not written yet...
+        let b = app.buffers.get_mut(&id).unwrap();
+        b.content_mut().push('2');
+        b.mark_mutated_pub();
+        app.auto_save_tick();
+        assert_eq!(
+            std::fs::read_to_string(&on_disk).unwrap(),
+            "hello\n1",
+            "throttle must hold writes back"
+        );
+
+        // ...but lands once the window passes.
+        app.last_auto_save = None;
+        app.auto_save_tick();
+        assert_eq!(std::fs::read_to_string(&on_disk).unwrap(), "hello\n12");
+    }
+
+    #[test]
+    fn format_on_save_toggle_flips_and_persists_to_the_prefs_file() {
+        let ws = tempfile::tempdir().unwrap();
+        let (mut app, _ctx) = harness();
+        app.workspace_root = ws.path().to_path_buf();
+        assert!(!app.format_on_save, "ships off");
+
+        app.toggle_format_on_save();
+        assert!(app.format_on_save);
+        assert!(app.status_message.contains("enabled"));
+        let prefs_path = ws
+            .path()
+            .join(".velocity")
+            .join("workspace-preferences.json");
+        let prefs =
+            std::fs::read_to_string(&prefs_path).expect("toggle must persist the preference");
+        assert!(prefs.contains("\"format_on_save\": true"), "{prefs}");
+
+        app.toggle_format_on_save();
+        assert!(!app.format_on_save);
+    }
+
+    #[test]
+    fn format_on_save_without_a_formatter_leaves_the_save_untouched() {
+        let ws = tempfile::tempdir().unwrap();
+        let (mut app, _ctx) = harness();
+        app.workspace_root = ws.path().to_path_buf();
+        let id = attach_editor(&mut app, "plain.rs");
+        let path = ws.path().join("plain.rs");
+        let b = app.buffers.get_mut(&id).unwrap();
+        b.content_mut().push('\n');
+        b.mark_mutated_pub();
+        app.format_on_save = true;
+
+        // No language server (and so no formatter) must not fail or alter the
+        // save -- the hook is a silent no-op and the bytes land as typed.
+        let status_before = app.status_message.clone();
+        assert!(app.save_buffer_to_with_feedback(&id, &path, false));
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "hello\n\n");
+        assert_eq!(app.status_message, status_before);
+    }
+
+    /// Seed the caret/selection a rendered editor would have on egui's live
+    /// `TextEditState`, so a menu action runs against the same state the
+    /// mouse-driven menu reads.
+    fn seed_caret(app: &VelocityApp, ctx: &egui::Context, start: usize, end: usize) {
+        let id = app.active_tab.clone().expect("attach_editor first");
+        let editor_id = crate::editor::code_editor::CodeEditor::textedit_id(&id);
+        let mut state = egui::widgets::text_edit::TextEditState::default();
+        state
+            .cursor
+            .set_char_range(Some(egui::text::CCursorRange::two(
+                egui::text::CCursor::new(start),
+                egui::text::CCursor::new(end),
+            )));
+        state.store(ctx, editor_id);
+    }
+
+    fn caret_of(app: &VelocityApp, ctx: &egui::Context) -> Option<(usize, usize)> {
+        let id = app.active_tab.clone()?;
+        let editor_id = crate::editor::code_editor::CodeEditor::textedit_id(&id);
+        egui::widgets::text_edit::TextEditState::load(ctx, editor_id)
+            .and_then(|s| s.cursor.char_range())
+            .map(|r| (usize::from(r.primary.index), usize::from(r.secondary.index)))
+    }
+
+    #[test]
+    fn editor_menu_cut_splices_the_selection_out_and_collapses_the_caret() {
+        let (mut app, ctx) = harness();
+        let id = attach_editor(&mut app, "cutme.rs");
+        app.buffers
+            .get_mut(&id)
+            .unwrap()
+            .update_content("hello world".to_string());
+        seed_caret(&app, &ctx, 0, 6);
+
+        app.run_editor_menu_action(&ctx, crate::editor::editor_menu::EditorMenuAction::Cut);
+        assert_eq!(app.buffers.get(&id).unwrap().content(), "world");
+        assert_eq!(caret_of(&app, &ctx), Some((0, 0)));
+        assert_eq!(app.status_message, "Cut");
+    }
+
+    #[test]
+    fn editor_menu_copy_without_a_selection_says_so_and_keeps_the_buffer() {
+        let (mut app, ctx) = harness();
+        let id = attach_editor(&mut app, "cp.rs");
+        app.buffers
+            .get_mut(&id)
+            .unwrap()
+            .update_content("keep me".to_string());
+        seed_caret(&app, &ctx, 4, 4);
+
+        app.run_editor_menu_action(&ctx, crate::editor::editor_menu::EditorMenuAction::Copy);
+        assert_eq!(app.buffers.get(&id).unwrap().content(), "keep me");
+        assert!(app.status_message.contains("nothing selected"));
+    }
+
+    #[test]
+    fn editor_menu_select_all_spans_the_whole_buffer_in_chars() {
+        let (mut app, ctx) = harness();
+        let id = attach_editor(&mut app, "sa.rs");
+        app.buffers
+            .get_mut(&id)
+            .unwrap()
+            .update_content("héllo 中".to_string());
+        seed_caret(&app, &ctx, 2, 2);
+
+        app.run_editor_menu_action(
+            &ctx,
+            crate::editor::editor_menu::EditorMenuAction::SelectAll,
+        );
+        // 7 characters (multi-byte counted once each), full span selected.
+        // egui anchors the selection at 0 (secondary) with the head at the
+        // end (primary), so the pair reads (7, 0).
+        assert_eq!(caret_of(&app, &ctx), Some((7, 0)));
+    }
+
+    #[test]
+    fn editor_menu_rename_opens_the_overlay_for_a_path_backed_buffer() {
+        let (mut app, ctx) = harness();
+        attach_editor(&mut app, "rename_me.rs");
+
+        app.run_editor_menu_action(&ctx, crate::editor::editor_menu::EditorMenuAction::Rename);
+        // Any file-backed buffer qualifies as a rename target — the overlay
+        // captures the cursor position up front, and the LSP server (when it
+        // answers) decides the edits at commit time.
+        assert!(app.rename_open);
+        assert!(app.rename_just_opened);
+    }
+
+    fn comp_item(
+        label: &str,
+        kind: crate::editor::completion::CompletionKind,
+        insert: &str,
+    ) -> crate::editor::completion::CompletionItem {
+        crate::editor::completion::CompletionItem {
+            label: label.to_string(),
+            kind,
+            detail: None,
+            documentation: None,
+            insert_text: insert.to_string(),
+            sort_key: 20,
+        }
+    }
+
+    #[test]
+    fn completion_commit_expands_snippet_and_parks_caret_at_the_stop() {
+        let (mut app, ctx) = harness();
+        let id = attach_editor(&mut app, "cb.rs");
+        app.buffers
+            .get_mut(&id)
+            .unwrap()
+            .update_content("fn main() { ".to_string());
+        seed_caret(&app, &ctx, 12, 12);
+        app.completion_state.open(
+            String::new(),
+            12,
+            vec![comp_item(
+                "println!",
+                crate::editor::completion::CompletionKind::Snippet,
+                "println!($0)",
+            )],
+        );
+
+        app.commit_selected_completion(&ctx);
+        // Raw snippet markers must never reach the buffer, and the caret lands
+        // inside the parens (char 21 of the 22-char result).
+        assert_eq!(
+            app.buffers.get(&id).unwrap().content(),
+            "fn main() { println!()"
+        );
+        assert_eq!(caret_of(&app, &ctx), Some((21, 21)));
+        assert!(!app.completion_state.active);
+        assert_eq!(app.status_message, "Completed: println!");
+    }
+
+    #[test]
+    fn completion_navigation_moves_the_selection_before_commit() {
+        let (mut app, ctx) = harness();
+        let id = attach_editor(&mut app, "nav.rs");
+        app.buffers
+            .get_mut(&id)
+            .unwrap()
+            .update_content("let x = ".to_string());
+        seed_caret(&app, &ctx, 8, 8);
+        app.completion_state.open(
+            String::new(),
+            8,
+            vec![
+                comp_item(
+                    "alpha",
+                    crate::editor::completion::CompletionKind::Function,
+                    "alpha",
+                ),
+                comp_item(
+                    "beta",
+                    crate::editor::completion::CompletionKind::Function,
+                    "beta",
+                ),
+            ],
+        );
+
+        app.completion_move(true);
+        app.completion_move(true);
+        assert_eq!(app.completion_state.selected, 0); // wraps past the end
+        app.completion_move(false);
+        assert_eq!(app.completion_state.selected, 1);
+
+        app.commit_selected_completion(&ctx);
+        // Non-snippet items insert their text verbatim with the caret after.
+        assert_eq!(app.buffers.get(&id).unwrap().content(), "let x = beta");
+        assert_eq!(caret_of(&app, &ctx), Some((12, 12)));
+    }
+
+    #[test]
+    fn completion_tick_refilters_as_typed_prefix_narrows_then_dismisses() {
+        let (mut app, ctx) = harness();
+        let id = attach_editor(&mut app, "tick.rs");
+        app.buffers
+            .get_mut(&id)
+            .unwrap()
+            .update_content("let x = al".to_string());
+        seed_caret(&app, &ctx, 10, 10);
+        app.completion_anchor_tab = Some(id.clone());
+        app.completion_state.open(
+            "a".to_string(),
+            8,
+            vec![
+                comp_item(
+                    "alpha",
+                    crate::editor::completion::CompletionKind::Function,
+                    "alpha",
+                ),
+                comp_item(
+                    "beta",
+                    crate::editor::completion::CompletionKind::Function,
+                    "beta",
+                ),
+            ],
+        );
+
+        app.completion_tick(&ctx);
+        assert!(app.completion_state.active);
+        // The caret-anchored prefix "al" narrows the list to alpha.
+        assert_eq!(app.completion_state.filtered.len(), 1);
+        assert_eq!(app.completion_state.prefix, "al");
+        assert_eq!(app.completion_state.prefix_start, 8);
+
+        // Typing past every match dismisses the popup entirely.
+        app.buffers
+            .get_mut(&id)
+            .unwrap()
+            .update_content("let x = az".to_string());
+        seed_caret(&app, &ctx, 10, 10);
+        app.completion_tick(&ctx);
+        assert!(!app.completion_state.active);
+    }
+
+    #[test]
+    fn completion_tick_dismisses_a_popup_anchored_in_another_tab() {
+        let (mut app, ctx) = harness();
+        let first = attach_editor(&mut app, "anchor.rs");
+        let active = attach_editor(&mut app, "other.rs");
+        assert_eq!(app.active_tab.as_ref(), Some(&active));
+        app.completion_anchor_tab = Some(first.clone());
+        app.completion_state.open(
+            String::new(),
+            0,
+            vec![comp_item(
+                "alpha",
+                crate::editor::completion::CompletionKind::Function,
+                "alpha",
+            )],
+        );
+
+        app.completion_tick(&ctx);
+        assert!(!app.completion_state.active);
+        assert_eq!(app.completion_anchor_tab, None);
+    }
+
+    fn hot_exit_now() -> i64 {
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs() as i64)
+            .unwrap_or(0)
+    }
+
+    /// Id of the editor tab open on `path`, the way `open_editor` creates it.
+    fn editor_tab(app: &VelocityApp, path: &std::path::Path) -> TabId {
+        app.tabs
+            .iter()
+            .find(|t| t.editor_path().map(|p| p.as_path()) == Some(path))
+            .map(|t| t.id.clone())
+            .expect("editor tab for path")
+    }
+
+    #[test]
+    fn hot_exit_session_captures_dirty_buffers_and_skips_clean_ones() {
+        let (mut app, _ctx) = harness();
+        let dirty = attach_editor(&mut app, "keep.rs");
+        app.buffers
+            .get_mut(&dirty)
+            .unwrap()
+            .update_content("unsaved edits".to_string());
+        // A second tab with untouched content must not appear in the session.
+        attach_editor(&mut app, "clean.rs");
+        let root =
+            std::env::temp_dir().join(format!("velocity_hot_exit_write_{}_a", std::process::id()));
+        app.workspace_root = root.clone();
+        app.active_tab = Some(dirty.clone());
+
+        app.write_hot_exit_session();
+
+        let session =
+            crate::editor::hot_exit::read_session(&crate::editor::hot_exit::session_path(&root))
+                .expect("session written for the dirty buffer");
+        assert_eq!(session.files.len(), 1);
+        assert_eq!(session.files[0].content, "unsaved edits");
+        assert_eq!(session.active_index, Some(0));
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn hot_exit_restore_reopens_unsaved_tabs_exactly_once() {
+        let (mut app, _ctx) = harness();
+        let root = std::env::temp_dir().join(format!(
+            "velocity_hot_exit_restore_{}_b",
+            std::process::id()
+        ));
+        let draft = root.join("draft.rs");
+        let session = crate::editor::hot_exit::build_session(
+            vec![crate::editor::hot_exit::HotExitFile {
+                path: Some(draft.clone()),
+                content: "my draft".to_string(),
+            }],
+            Some(0),
+            hot_exit_now(),
+        );
+        crate::editor::hot_exit::write_session(
+            &crate::editor::hot_exit::session_path(&root),
+            &session,
+        )
+        .expect("seed session file");
+        app.workspace_root = root.clone();
+        let before = app.tabs.len();
+
+        app.restore_hot_exit();
+
+        assert_eq!(app.tabs.len(), before + 1);
+        let buf = app
+            .buffers
+            .values()
+            .find(|b| b.path.as_deref() == Some(draft.as_path()))
+            .expect("restored buffer");
+        assert_eq!(buf.content(), "my draft");
+        // Dirty against disk, exactly as the user left it.
+        assert!(buf.is_dirty());
+        assert_eq!(app.active_tab.as_ref(), app.tabs.last().map(|t| &t.id));
+        assert!(app.status_message.contains("Restored 1"));
+        // Consumed: the file is gone and a second call changes nothing.
+        app.restore_hot_exit();
+        assert_eq!(app.tabs.len(), before + 1);
+        assert!(
+            crate::editor::hot_exit::read_session(&crate::editor::hot_exit::session_path(&root))
+                .is_none()
+        );
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn hot_exit_restore_overlays_a_preferences_reopened_tab() {
+        let (mut app, _ctx) = harness();
+        let root = std::env::temp_dir().join(format!(
+            "velocity_hot_exit_overlay_{}_c",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&root).expect("temp root");
+        let a_rs = root.join("a.rs");
+        std::fs::write(&a_rs, "disk version\n").expect("seed disk file");
+        // Emulate the real startup order: workspace preferences reopen the
+        // tab first (background disk read in flight); hot exit restores on
+        // the first frame. The rescue must overlay the reopened tab, not be
+        // dropped by an "already open" skip.
+        app.workspace_root = root.clone();
+        let before = app.tabs.len();
+        app.open_editor(Some(a_rs.clone()));
+        let session = crate::editor::hot_exit::build_session(
+            vec![crate::editor::hot_exit::HotExitFile {
+                path: Some(a_rs.clone()),
+                content: "unsaved work\n".to_string(),
+            }],
+            Some(0),
+            hot_exit_now(),
+        );
+        crate::editor::hot_exit::write_session(
+            &crate::editor::hot_exit::session_path(&root),
+            &session,
+        )
+        .expect("seed session");
+
+        app.restore_hot_exit();
+
+        assert_eq!(
+            app.tabs.len(),
+            before + 1,
+            "the rescue must not duplicate the tab"
+        );
+        assert!(app.status_message.contains("Restored 1"));
+        // Give the background reader time to send, then drain: the cancelled
+        // FileLoaded result must not clobber the rescued buffer.
+        std::thread::sleep(std::time::Duration::from_millis(150));
+        app.poll_file_io_results();
+        let tab_id = editor_tab(&app, &a_rs);
+        let buf = app.buffers.get(&tab_id).expect("tab keeps its buffer");
+        assert_eq!(buf.content(), "unsaved work\n");
+        assert!(buf.is_dirty(), "restored work stays dirty against disk");
+        assert_eq!(app.active_tab.as_ref(), Some(&tab_id));
+        assert!(app.pending_file_loads.is_empty());
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn hot_exit_restore_keeps_edits_made_after_launch() {
+        let (mut app, _ctx) = harness();
+        let root =
+            std::env::temp_dir().join(format!("velocity_hot_exit_newer_{}_d", std::process::id()));
+        std::fs::create_dir_all(&root).expect("temp root");
+        let a_rs = root.join("a.rs");
+        std::fs::write(&a_rs, "disk version\n").expect("seed disk file");
+        app.workspace_root = root.clone();
+        app.open_editor(Some(a_rs.clone()));
+        let tab_id = editor_tab(&app, &a_rs);
+        await_file_load(&mut app, &tab_id);
+        // Fresh edits typed in this session beat the stale rescue file.
+        app.buffers
+            .get_mut(&tab_id)
+            .expect("buffer")
+            .update_content("newer live edit".to_string());
+        let session = crate::editor::hot_exit::build_session(
+            vec![crate::editor::hot_exit::HotExitFile {
+                path: Some(a_rs.clone()),
+                content: "old rescue".to_string(),
+            }],
+            Some(0),
+            hot_exit_now(),
+        );
+        crate::editor::hot_exit::write_session(
+            &crate::editor::hot_exit::session_path(&root),
+            &session,
+        )
+        .expect("seed session");
+
+        app.restore_hot_exit();
+
+        assert_eq!(
+            app.buffers.get(&tab_id).expect("buffer").content(),
+            "newer live edit"
+        );
+        // The session is still consumed exactly once.
+        assert!(
+            crate::editor::hot_exit::read_session(&crate::editor::hot_exit::session_path(&root))
+                .is_none()
+        );
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn switching_workspaces_rescues_dirty_buffers_to_the_old_root_and_restores_the_new_session() {
+        let (mut app, _ctx) = harness();
+        let old_root =
+            std::env::temp_dir().join(format!("velocity_ws_switch_old_{}_e", std::process::id()));
+        let _ = std::fs::remove_dir_all(&old_root);
+        std::fs::create_dir_all(&old_root).expect("old root");
+        app.workspace_root = old_root.clone();
+        let id = attach_editor(&mut app, "carry.rs");
+        app.buffers
+            .get_mut(&id)
+            .unwrap()
+            .update_content("work in old workspace".to_string());
+
+        let new_root =
+            std::env::temp_dir().join(format!("velocity_ws_switch_new_{}_f", std::process::id()));
+        let _ = std::fs::remove_dir_all(&new_root);
+        std::fs::create_dir_all(&new_root).expect("new root");
+        let b_rs = new_root.join("b.rs");
+        let session = crate::editor::hot_exit::build_session(
+            vec![crate::editor::hot_exit::HotExitFile {
+                path: Some(b_rs.clone()),
+                content: "rescued in new".to_string(),
+            }],
+            Some(0),
+            hot_exit_now(),
+        );
+        crate::editor::hot_exit::write_session(
+            &crate::editor::hot_exit::session_path(&new_root),
+            &session,
+        )
+        .expect("seed new-root session");
+
+        app.switch_workspace_to(new_root.clone());
+
+        // The departing workspace got its own rescue file — not the new one.
+        let left = crate::editor::hot_exit::read_session(&crate::editor::hot_exit::session_path(
+            &old_root,
+        ))
+        .expect("dirty buffer captured under the old root");
+        assert_eq!(left.files[0].content, "work in old workspace");
+        // Old editor tabs are gone; the new workspace's rescued work is back.
+        assert_eq!(app.workspace_root, new_root);
+        assert!(
+            app.tabs
+                .iter()
+                .filter_map(|t| t.editor_path())
+                .all(|p| !p.starts_with(&old_root)),
+            "an old-workspace tab survived the switch"
+        );
+        let buf = app
+            .buffers
+            .values()
+            .find(|b| b.path.as_deref() == Some(b_rs.as_path()))
+            .expect("restored buffer in the new workspace");
+        assert_eq!(buf.content(), "rescued in new");
+        assert!(buf.is_dirty());
+        // The new root's session was consumed exactly once.
+        assert!(
+            crate::editor::hot_exit::read_session(&crate::editor::hot_exit::session_path(
+                &new_root
+            ))
+            .is_none()
+        );
+        let _ = std::fs::remove_dir_all(&old_root);
+        let _ = std::fs::remove_dir_all(&new_root);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn open_editor_dedupes_verbatim_and_plain_spellings_of_one_file() {
+        // The bridge canonicalizes to `\?C:\...`; the file tree and
+        // preferences spell the same file plainly. One file, one tab.
+        let (mut app, _ctx) = harness();
+        let root =
+            std::env::temp_dir().join(format!("velocity_ws_dedupe_{}_g", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).expect("root");
+        let plain = root.join("x.rs");
+        std::fs::write(&plain, "fn x() {}\n").expect("write");
+        app.workspace_root = root.clone();
+        app.open_editor(Some(plain.clone()));
+        app.open_editor(Some(std::path::PathBuf::from(format!(
+            "\\\\?\\{}",
+            plain.display()
+        ))));
+        let editor_tabs = app
+            .tabs
+            .iter()
+            .filter(|t| matches!(t.kind, TabKind::Editor { .. }))
+            .count();
+        assert_eq!(editor_tabs, 1, "verbatim spelling opened a duplicate tab");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn open_editor_gives_the_buffer_a_path_so_lsp_features_can_find_their_target() {
+        // Live probe v50 caught this: the async open left `buf.path` None, so
+        // `active_lsp_target()` bailed and every cursor-driven LSP feature —
+        // go-to-definition, hover, workspace/symbol — was silently dead for
+        // files opened through the normal flow. Unit tests never caught it
+        // because their helpers inject buffers pre-named, bypassing the open.
+        let (mut app, _ctx) = harness();
+        let root =
+            std::env::temp_dir().join(format!("velocity_ws_lsptarget_{}_i", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).expect("root");
+        let file = root.join("m.rs");
+        std::fs::write(&file, "fn m() {}\n").expect("write");
+        app.workspace_root = root.clone();
+        app.open_editor(Some(file.clone()));
+        let id = app.active_tab.clone().expect("tab just opened");
+        // The path is on the buffer from birth, before the disk read lands.
+        assert_eq!(
+            app.buffers.get(&id).unwrap().path.as_deref(),
+            Some(file.as_path())
+        );
+        await_file_load(&mut app, &id);
+        let (path, ext, content) = app.active_lsp_target().expect("LSP target after open");
+        assert_eq!(path, file);
+        assert_eq!(ext, "rs");
+        assert_eq!(content, "fn m() {}\n");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_symbol_jump_to_a_slash_spelled_path_reuses_the_open_tab() {
+        // v50 live probe: the merge layer spells entry paths `src/main.rs`
+        // while the tree opened `src\main.rs`; the jump re-opened the same
+        // file as a second tab because dedupe compared spellings, not
+        // separators-normalized identity.
+        let (mut app, _ctx) = harness();
+        let root =
+            std::env::temp_dir().join(format!("velocity_ws_sepdup_{}_j", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(root.join("src")).expect("src");
+        let back = root.join("src").join("main.rs");
+        std::fs::write(&back, "fn main() {}\n").expect("write");
+        app.workspace_root = root.clone();
+        app.open_editor(Some(back.clone()));
+        // The jump_to_symbol spelling: workspace_root joined onto the merge
+        // layer's slash-forward entry path. String-joined, because PathBuf
+        // would normalize the separators away and the test would pass for
+        // the wrong reason.
+        let mixed = std::path::PathBuf::from(format!(
+            "{}/src/main.rs",
+            back.parent().unwrap().parent().unwrap().display()
+        ));
+        assert!(
+            mixed.to_string_lossy().contains('/'),
+            "fixture must keep slash separators"
+        );
+        app.open_editor(Some(mixed));
+        let editor_tabs = app
+            .tabs
+            .iter()
+            .filter(|t| matches!(t.kind, TabKind::Editor { .. }))
+            .count();
+        assert_eq!(editor_tabs, 1, "slash spelling opened a duplicate tab");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn merge_workspace_symbols_puts_server_hits_first_and_drops_local_duplicates() {
+        // Sitemap entries carry no line; server hits win and contribute the
+        // exact (1-based) definition line, with root-relative display paths.
+        let root = std::path::Path::new("/ws");
+        let local: Vec<crate::editor::search::SymbolEntry> = [
+            ("compute", "src/lib.rs"),
+            ("solo", "src/solo.rs"),
+            ("outside", "src/outside.rs"),
+        ]
+        .iter()
+        .map(|(name, file)| crate::editor::search::SymbolEntry {
+            name: name.to_string(),
+            file: file.to_string(),
+            line: None,
+        })
+        .collect();
+        let lsp = vec![
+            crate::editor::lsp_client::LspWorkspaceSymbol {
+                name: "compute".to_string(),
+                path: root.join("src/lib.rs"),
+                line: Some(41), // 0-based from the server
+            },
+            crate::editor::lsp_client::LspWorkspaceSymbol {
+                name: "outside".to_string(),
+                // A server hit outside the workspace keeps its absolute
+                // spelling so the join still resolves it.
+                path: std::path::PathBuf::from("/elsewhere/outside.rs"),
+                line: None,
+            },
+        ];
+        let merged = crate::editor::search::merge_workspace_symbols(&local, &lsp, root);
+        assert_eq!(merged.len(), 4, "2 server hits + 2 unique local entries");
+        assert_eq!(merged[0].name, "compute");
+        assert_eq!(merged[0].file, "src/lib.rs", "root-relative display");
+        assert_eq!(merged[0].line, Some(42), "converted to 1-based");
+        assert_eq!(merged[1].name, "outside");
+        assert_eq!(merged[1].file, "/elsewhere/outside.rs");
+        assert_eq!(merged[2].name, "solo", "local entries follow, sorted");
+        assert_eq!(merged[3].name, "outside");
+        assert_eq!(merged[3].file, "src/outside.rs");
+    }
+
+    #[test]
+    fn jump_to_symbol_trusts_the_language_server_line_without_scanning() {
+        let (mut app, _ctx) = harness();
+        let root =
+            std::env::temp_dir().join(format!("velocity_ws_gotosym_{}_h", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).expect("root");
+        // The name appears nowhere in the file, so only the server's line
+        // can place the caret; a text scan would find nothing.
+        std::fs::write(root.join("ghost.rs"), "fn unrelated() {}\n\n\n\n\n\n\n\n\n").expect("w");
+        app.workspace_root = root.clone();
+        let entry = crate::editor::search::SymbolEntry {
+            name: "Ghostly".to_string(),
+            file: "ghost.rs".to_string(),
+            line: Some(9),
+        };
+        app.jump_to_symbol(&entry);
+        assert_eq!(app.pending_cursor_line, Some(9));
+        assert!(app.status_message.contains("Ghostly"));
+        assert!(!app.goto_symbol_open, "the jump dismisses the switcher");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn goto_change_jumps_caret_to_the_dirty_line() {
+        let (mut app, ctx) = harness();
+        let id = attach_editor(&mut app, "diff.rs"); // saved baseline: "hello\n"
+                                                     // Two added lines below the unchanged first line → marks [0, 1, 1].
+        app.buffers
+            .get_mut(&id)
+            .expect("buffer")
+            .update_content("hello\nworld\nagain".to_string());
+        app.current_cursor_line = 0;
+
+        app.goto_change(&ctx, true);
+        assert_eq!(app.current_cursor_line, 1);
+        assert!(app.status_message.contains("line 2"));
+        // Repeated presses cycle: next change, then wrap around to the first.
+        app.goto_change(&ctx, true);
+        assert_eq!(app.current_cursor_line, 2);
+        app.goto_change(&ctx, true);
+        assert_eq!(app.current_cursor_line, 1);
+        // And backward goes the other way.
+        app.goto_change(&ctx, false);
+        assert_eq!(app.current_cursor_line, 2);
+    }
+
+    #[test]
+    fn goto_change_on_a_clean_buffer_says_so() {
+        let (mut app, ctx) = harness();
+        attach_editor(&mut app, "clean.rs"); // content == saved → no marks
+        app.current_cursor_line = 0;
+
+        app.goto_change(&ctx, true);
+        assert!(app.status_message.contains("No unsaved changes"));
+        // The caret did not move.
+        assert_eq!(app.current_cursor_line, 0);
+    }
+
+    fn problem(file: &std::path::Path, line: usize) -> crate::editor::diagnostics::LspDiagnostic {
+        crate::editor::diagnostics::LspDiagnostic {
+            file: file.to_path_buf(),
+            line,
+            col: 0,
+            end_line: line,
+            end_col: 1,
+            severity: crate::editor::diagnostics::DiagnosticSeverity::Error,
+            message: format!("broken on line {line}"),
+            source: None,
+            code: None,
+        }
+    }
+
+    #[test]
+    fn goto_problem_cycles_the_caret_through_the_files_problems() {
+        let (mut app, _ctx) = harness();
+        let id = attach_editor(&mut app, "a.rs");
+        let path = app.tab_path(&id).cloned().expect("editor path");
+        app.lsp_state
+            .diagnostics
+            .update(vec![problem(&path, 12), problem(&path, 5)]);
+        app.current_cursor_line = 0;
+
+        app.goto_problem(true);
+        // Panel order is by line, so the first press lands on 5 (0-based),
+        // with the 1-based aim queued for the frame's caret move.
+        assert_eq!(app.current_cursor_line, 5);
+        assert_eq!(app.pending_cursor_line, Some(6));
+        assert!(
+            app.status_message.contains("a.rs:6"),
+            "{}",
+            app.status_message
+        );
+        app.goto_problem(true);
+        assert_eq!(app.current_cursor_line, 12);
+        // Past the last problem it wraps, so presses cycle rather than stall.
+        app.goto_problem(true);
+        assert_eq!(app.current_cursor_line, 5);
+        // And backward goes the other way.
+        app.goto_problem(false);
+        assert_eq!(app.current_cursor_line, 12);
+    }
+
+    #[test]
+    fn goto_problem_with_nothing_reported_says_so_and_stays() {
+        let (mut app, _ctx) = harness();
+        attach_editor(&mut app, "clean.rs");
+        app.current_cursor_line = 3;
+        app.pending_cursor_line = None;
+
+        app.goto_problem(true);
+        assert!(app.status_message.contains("No problems reported"));
+        assert_eq!(app.current_cursor_line, 3);
+        assert_eq!(app.pending_cursor_line, None);
+    }
+
+    #[test]
+    fn panel_jump_lands_the_caret_like_f8_does() {
+        // Clicking a Problems-panel row funnels through the same
+        // jump_to_diagnostic sink F8 uses: caret aimed, status reported.
+        let (mut app, _ctx) = harness();
+        let id = attach_editor(&mut app, "a.rs");
+        let path = app.tab_path(&id).cloned().expect("editor path");
+        app.current_cursor_line = 0;
+        app.pending_cursor_line = None;
+
+        app.jump_to_diagnostic(&problem(&path, 7));
+        assert_eq!(app.current_cursor_line, 7);
+        assert_eq!(app.pending_cursor_line, Some(8));
+        assert!(
+            app.status_message.contains("a.rs:8"),
+            "{}",
+            app.status_message
+        );
+        assert!(app.status_message.contains("broken on line 7"));
+    }
+
+    #[test]
+    fn ctrl_click_goto_aims_the_caret_at_the_clicked_offset() {
+        let (mut app, ctx) = harness();
+        let id = attach_editor(&mut app, "clickme.rs"); // "hello\n"
+        app.buffers
+            .get_mut(&id)
+            .expect("buffer")
+            .update_content("aaa\nbbbbb\ncc".to_string());
+        // Click inside "bbbbb" at char 6 → line 1, column 2.
+        app.ctrl_click_goto(&ctx, id.clone(), 6);
+        assert_eq!(app.active_tab.as_ref(), Some(&id));
+        assert_eq!(app.current_cursor_line, 1);
+        assert_eq!(app.current_cursor_col, 2);
+        // With no language server running the definition request degrades to
+        // its honest status — the wiring, not the jump target, is under test.
+        assert!(
+            app.status_message.contains("Definition"),
+            "unexpected status: {}",
+            app.status_message
+        );
+    }
+
+    #[test]
+    fn ctrl_click_goto_refocuses_the_clicked_editor_of_a_split() {
+        let (mut app, ctx) = harness();
+        let first = attach_editor(&mut app, "first.rs");
+        let second = attach_editor(&mut app, "second.rs"); // attach focuses this one
+        assert_eq!(app.active_tab.as_ref(), Some(&second));
+        // Clicking the *first* pane targets its buffer, not the active one.
+        app.buffers
+            .get_mut(&first)
+            .expect("buffer")
+            .update_content("x\nyy".to_string());
+        app.ctrl_click_goto(&ctx, first.clone(), 2); // on "yy"
+        assert_eq!(app.active_tab.as_ref(), Some(&first));
+        assert_eq!(app.current_cursor_line, 1);
+    }
+
+    #[test]
+    fn run_command_reports_post_action_state_for_queued_caret_actions() {
+        let (mut app, ctx) = harness();
+        let id = attach_editor(&mut app, "flush.rs"); // clean "hello\n"
+        app.buffers
+            .get_mut(&id)
+            .expect("buffer")
+            .update_content("hello changed\n".to_string());
+        // The palette action for this command only sets `queued_change_jump`;
+        // the bridge must flush it before answering, or the driver sees the
+        // status from before the command ran.
+        let resp = app.cmd_run_command("Jump to Next Change".to_string(), false, &ctx);
+        assert!(
+            resp.success,
+            "navigate-tier command refused: {:?}",
+            resp.error
+        );
+        let data = resp.data.expect("accepted payload");
+        assert_eq!(
+            data["status_message"].as_str(),
+            Some("Jumped to change on line 1"),
+            "status must reflect the flushed action"
+        );
+        assert_eq!(
+            data["state_after"]["focused_tab"].as_str(),
+            Some("flush.rs")
+        );
+        assert!(
+            app.queued_change_jump.is_none(),
+            "flush must drain the queue"
+        );
     }
 }

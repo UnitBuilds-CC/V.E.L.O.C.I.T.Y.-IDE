@@ -90,6 +90,15 @@ pub struct WorkspacePreferences {
     /// Path of the editor tab that was active last session.
     #[serde(default)]
     pub active_tab: Option<String>,
+    /// Persisted auto-save preference: silently write dirty, path-backed tabs
+    /// on a short throttle. Default-off via `#[serde(default)]`, which also
+    /// keeps preference files written before this field loadable.
+    #[serde(default)]
+    pub auto_save: bool,
+    /// Persisted format-on-save preference: route every save through the
+    /// language server's formatter before bytes hit the disk.
+    #[serde(default)]
+    pub format_on_save: bool,
 }
 
 impl WorkspacePreferences {
@@ -130,6 +139,8 @@ impl WorkspacePreferences {
                 .and_then(|id| app.tabs.iter().find(|t| &t.id == id))
                 .and_then(|t| t.editor_path())
                 .map(|p| p.to_string_lossy().to_string()),
+            auto_save: app.auto_save,
+            format_on_save: app.format_on_save,
         }
     }
 }
@@ -187,6 +198,19 @@ pub struct VelocityApp {
     pub goto_symbol_filtered: Vec<usize>,
     /// One-shot: force the go-to-symbol scroll view to the selected row.
     pub goto_symbol_scroll_to_selected: bool,
+    /// In-flight non-blocking `workspace/symbol` request: (language ext, id,
+    /// dispatch instant). Cleared when the answer lands or expires.
+    pub goto_symbol_lsp_pending: Option<(String, i64, std::time::Instant)>,
+    /// Query the last LSP request was dispatched for (no re-dispatch storms).
+    pub goto_symbol_lsp_dispatched: String,
+    /// When the go-to-symbol query last changed — the dispatch debounce clock.
+    pub goto_symbol_lsp_typing: Option<std::time::Instant>,
+    /// Streak of empty `workspace/symbol` answers — drives the retry backoff
+    /// (a still-loading server gets polled slower, never in a storm).
+    pub goto_symbol_lsp_retries: u32,
+    /// Why the language-server feed is empty ("still loading", "no provider")
+    /// — shown in the switcher instead of blaming the sitemap indexer.
+    pub goto_symbol_lsp_note: Option<String>,
     /// Back/forward navigation history (Alt+â† / Alt+â†’).
     pub nav_back: Vec<NavLocation>,
     pub nav_forward: Vec<NavLocation>,
@@ -287,10 +311,40 @@ pub struct VelocityApp {
 
     pub pending_open_path: Option<PathBuf>,
     pub pending_save_as_path: Option<PathBuf>,
+    /// Pending explorer name prompt (New File / New Folder / Rename).
+    pub file_entry_dialog: Option<crate::editor::file_ops::FileEntryDialog>,
+    /// Explorer entry awaiting an explicit delete confirmation.
+    pub pending_tree_delete: Option<PathBuf>,
+    /// When true, dirty tabs backed by a real path are saved automatically.
+    pub auto_save: bool,
+    /// When the auto-save sweep last ran, used to throttle it to ~2 seconds.
+    pub last_auto_save: Option<std::time::Instant>,
+    /// When true, every save path formats the buffer through the LSP
+    /// formatter before writing.
+    pub format_on_save: bool,
     /// Tab awaiting an unsaved-changes confirmation before it can close.
     pub pending_close_tab: Option<TabId>,
     pub show_full_diff: bool,
     pub build_errors_count: usize,
+    /// Per-file blame data cache: file path → one BlameLine per line.
+    pub blame_cache:
+        std::collections::HashMap<std::path::PathBuf, Vec<crate::editor::git_ui::BlameLine>>,
+    /// Receiver for an in-flight background blame computation.
+    pub blame_rx: Option<
+        std::sync::mpsc::Receiver<(std::path::PathBuf, Vec<crate::editor::git_ui::BlameLine>)>,
+    >,
+    /// The (path, line) most recently requested for blame, to avoid re-spawning.
+    pub blame_requested_for: Option<(std::path::PathBuf, usize)>,
+    /// Formatted blame annotation for the current caret line, shown in the status bar.
+    pub blame_annotation: Option<String>,
+    /// Git branch switcher overlay state.
+    pub branch_switcher_open: bool,
+    pub branch_list: Vec<String>,
+    pub branch_filter: String,
+    pub branch_selected: usize,
+    pub branch_just_opened: bool,
+    pub branch_creating: bool,
+    pub branch_new_name: String,
     pub gpu_name: String,
     pub search_query: String,
     pub search_hits: Vec<crate::editor::search::SearchHit>,
@@ -300,6 +354,12 @@ pub struct VelocityApp {
     pub search_count_label: String,
     /// Replacement text for the workspace find-and-replace panel.
     pub replace_query: String,
+    /// Matching toggles for workspace search & replace (case / whole word / regex),
+    /// mirroring the in-file find bar so what the panel shows is what gets replaced.
+    pub search_opts: crate::editor::search::SearchOptions,
+    /// "Files to include" glob list for workspace search & replace
+    /// (comma-separated; empty = all files).
+    pub search_include: String,
     /// Debounce timer: when the search query last changed (runs after a pause).
     pub search_pending_since: Option<Instant>,
     pub pending_cursor_line: Option<usize>,
@@ -307,12 +367,53 @@ pub struct VelocityApp {
     pub current_cursor_line: usize,
     /// Current cursor column in the active editor (updated during rendering).
     pub current_cursor_col: usize,
+    /// A whole-line edit requested from the command palette. The palette's
+    /// action signature carries no `egui::Context`, so it queues the op here and
+    /// the next shortcut pass (which has the context) applies it.
+    pub queued_line_op: Option<crate::editor::line_ops::LineOp>,
+    /// A toggle-comment requested from the command palette; like
+    /// [`queued_line_op`](Self::queued_line_op) it is applied on the next
+    /// shortcut pass, which is the first place with an `egui::Context`.
+    pub queued_toggle_comment: bool,
+    /// An indent/dedent requested from the command palette (`Some(true)` =
+    /// indent, `Some(false)` = dedent), applied on the next shortcut pass for
+    /// the same `egui::Context` reason as [`queued_line_op`](Self::queued_line_op).
+    pub queued_indent: Option<bool>,
+    /// A smart-expand/shrink-selection requested from the command palette
+    /// (`Some(true)` = expand, `Some(false)` = shrink), applied on the next
+    /// shortcut pass for the same `egui::Context` reason as
+    /// [`queued_line_op`](Self::queued_line_op).
+    pub queued_select: Option<bool>,
+    /// A change-jump requested from the palette (`Some(true)` = next, `Some(false)`
+    /// = previous) or from a chord; applied on the next shortcut pass, which has
+    /// the `egui::Context` the caret move needs.
+    pub queued_change_jump: Option<bool>,
+    /// A problem jump (F8 / Shift+F8, or the palette entries) queued for the
+    /// next shortcut pass, for the same reason as
+    /// [`queued_change_jump`](Self::queued_change_jump).
+    pub queued_problem_jump: Option<bool>,
     /// LSP find-references results popup state (I1).
     pub references_open: bool,
     /// References as (file path, 1-based line) for the results popup.
     pub references_results: Vec<(PathBuf, usize)>,
     /// Selected index in the references results popup.
     pub references_selected: usize,
+    /// LSP rename-symbol overlay (`textDocument/rename`): open flag, the
+    /// new-name input, a one-shot focus-request flag, and the 0-based
+    /// `(line, col)` captured when the overlay opened so the rename targets
+    /// the symbol the caret was on even if focus moves to the input field.
+    pub rename_open: bool,
+    pub rename_input: String,
+    pub rename_just_opened: bool,
+    pub rename_pos: (usize, usize),
+    /// LSP code-action overlay (`textDocument/codeAction`): open flag, the
+    /// actions the server offered for the captured `(line, col)`, and the
+    /// keyboard-highlighted entry. Applying an action routes the action's
+    /// `WorkspaceEdit` through the same multi-file apply path as rename.
+    pub code_actions_open: bool,
+    pub code_actions: Vec<crate::editor::lsp_client::LspCodeAction>,
+    pub code_action_selected: usize,
+    pub code_actions_pos: (usize, usize),
     pub file_tree: Option<FileNode>,
     pub last_tree_update: std::time::Instant,
     /// Last observed mtime of the workspace root (skips tree rebuilds when unchanged).
@@ -354,6 +455,31 @@ pub struct VelocityApp {
     // â”€â”€â”€ IDE Feature Integration State â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     /// Code completion popup state.
     pub completion_state: crate::editor::completion::CompletionState,
+    /// Set when the completion popup should open at the start of the next
+    /// frame (typing `.` with the editor focused, palette/dispatch triggers);
+    /// consumed by `completion_tick`.
+    pub completion_queued_trigger: bool,
+    /// Which buffer the open popup was triggered in; `completion_tick` closes
+    /// a popup whose anchor no longer matches the active tab (a switch away
+    /// must not leave a stale list offering the wrong buffer's matches).
+    pub completion_anchor_tab: Option<TabId>,
+    /// Hot exit: set once the pending `.velocity/hot-exit.json` session (if
+    /// any) has been consumed, so the restore runs exactly once at startup.
+    pub hot_exit_restored: bool,
+    /// Live LSP parameter hints (signature help) for the call the caret is
+    /// inside; `None` hides the overlay. Populated on `(`/`,` and cleared when
+    /// the caret leaves the parens or Escape is pressed.
+    pub signature_help: Option<crate::editor::lsp_client::LspSignatureHelp>,
+    /// Caret `(line, col)` at which we last auto-requested signature help, so
+    /// resting just after a `(`/`,` fires once instead of every frame.
+    pub sig_last_pos: Option<(usize, usize)>,
+    /// Live LSP call hierarchy: the callers (`incoming`) or callees (`outgoing`)
+    /// of the symbol the caret is on. `call_hierarchy_open` shows the overlay;
+    /// the direction flag picks the header label.
+    pub call_hierarchy_open: bool,
+    pub call_hierarchy_items: Vec<crate::editor::lsp_client::LspCallHierarchyItem>,
+    pub call_hierarchy_selected: usize,
+    pub call_hierarchy_incoming: bool,
     /// LSP client manager and diagnostics state.
     /// Groups lsp_manager and diagnostics into a focused sub-struct.
     pub lsp_state: LspState,
@@ -367,6 +493,10 @@ pub struct VelocityApp {
     pub keybindings_config: crate::editor::keybindings::KeybindingsConfig,
     /// Git integration state.
     pub git_state: crate::editor::git_ui::GitState,
+    /// Absolute path of the file whose diff the Changes panel is showing.
+    pub scm_diff_path: Option<std::path::PathBuf>,
+    /// Parsed, classified lines of the selected file's diff.
+    pub scm_diff_lines: Vec<crate::editor::diff_view::DiffLine>,
     /// OS-level file watcher for instant external change detection.
     pub file_watcher: Option<crate::editor::file_watcher::FileWatcher>,
     /// Extension registry.
@@ -587,6 +717,8 @@ impl VelocityApp {
         self.chat.show_thoughts = preferences.show_thoughts;
         self.chat.selected_model = self.selected_model.clone();
         self.chat.thinking_enabled = self.thinking_enabled;
+        self.auto_save = preferences.auto_save;
+        self.format_on_save = preferences.format_on_save;
 
         // Reopen last session's editor tabs (open_editor dedupes by path).
         for tab_path in &preferences.open_tabs {
@@ -600,7 +732,10 @@ impl VelocityApp {
             if let Some(id) = self
                 .tabs
                 .iter()
-                .find(|t| t.editor_path() == Some(&ap))
+                .find(|t| {
+                    t.editor_path()
+                        .is_some_and(|e| crate::editor::file_ops::same_editor_path(e, &ap))
+                })
                 .map(|t| t.id.clone())
             {
                 self.active_tab = Some(id);
@@ -979,6 +1114,11 @@ impl VelocityApp {
             goto_symbol_last_query: String::new(),
             goto_symbol_filtered: Vec::new(),
             goto_symbol_scroll_to_selected: false,
+            goto_symbol_lsp_pending: None,
+            goto_symbol_lsp_dispatched: String::new(),
+            goto_symbol_lsp_typing: None,
+            goto_symbol_lsp_retries: 0,
+            goto_symbol_lsp_note: None,
             nav_back: Vec::new(),
             nav_forward: Vec::new(),
             cached_site_map: None,
@@ -1050,9 +1190,25 @@ impl VelocityApp {
             provider: AiProvider::CloudflareWorkersAi,
             pending_open_path: None,
             pending_save_as_path: None,
+            file_entry_dialog: None,
+            pending_tree_delete: None,
+            auto_save: false,
+            last_auto_save: None,
+            format_on_save: false,
             pending_close_tab: None,
             show_full_diff: false,
             build_errors_count: 0,
+            blame_cache: std::collections::HashMap::new(),
+            blame_rx: None,
+            blame_requested_for: None,
+            blame_annotation: None,
+            branch_switcher_open: false,
+            branch_list: Vec::new(),
+            branch_filter: String::new(),
+            branch_selected: 0,
+            branch_just_opened: false,
+            branch_creating: false,
+            branch_new_name: String::new(),
             account_usage: Vec::new(),
             usage_date: String::new(),
             gpu_name,
@@ -1061,13 +1217,29 @@ impl VelocityApp {
             search_hit_cache: Vec::new(),
             search_count_label: String::new(),
             replace_query: String::new(),
+            search_opts: crate::editor::search::SearchOptions::default(),
+            search_include: String::new(),
             search_pending_since: None,
             pending_cursor_line: None,
             current_cursor_line: 0,
             current_cursor_col: 0,
+            queued_line_op: None,
+            queued_toggle_comment: false,
+            queued_indent: None,
+            queued_select: None,
+            queued_change_jump: None,
+            queued_problem_jump: None,
             references_open: false,
             references_results: Vec::new(),
             references_selected: 0,
+            rename_open: false,
+            rename_input: String::new(),
+            rename_just_opened: false,
+            rename_pos: (0, 0),
+            code_actions_open: false,
+            code_actions: Vec::new(),
+            code_action_selected: 0,
+            code_actions_pos: (0, 0),
             file_tree: None,
             last_tree_update: std::time::Instant::now(),
             last_tree_mtime: None,
@@ -1110,12 +1282,23 @@ impl VelocityApp {
             cancel_requested: false,
             // IDE Feature Integration
             completion_state: crate::editor::completion::CompletionState::default(),
+            completion_queued_trigger: false,
+            completion_anchor_tab: None,
+            hot_exit_restored: false,
+            signature_help: None,
+            sig_last_pos: None,
+            call_hierarchy_open: false,
+            call_hierarchy_items: Vec::new(),
+            call_hierarchy_selected: 0,
+            call_hierarchy_incoming: true,
             lsp_state: LspState::default(),
             terminal_state: crate::editor::terminal::TerminalState::new(80, 24),
             terminal_spawned: false,
             dap_client: None,
             keybindings_config: crate::editor::keybindings::KeybindingsConfig::default(),
             git_state: crate::editor::git_ui::GitState::default(),
+            scm_diff_path: None,
+            scm_diff_lines: Vec::new(),
             file_watcher: None,
             extension_registry: crate::editor::extensions::ExtensionRegistry::default(),
             minimap_config: crate::editor::minimap::MinimapConfig::default(),
@@ -1279,6 +1462,11 @@ impl VelocityApp {
             goto_symbol_last_query: String::new(),
             goto_symbol_filtered: Vec::new(),
             goto_symbol_scroll_to_selected: false,
+            goto_symbol_lsp_pending: None,
+            goto_symbol_lsp_dispatched: String::new(),
+            goto_symbol_lsp_typing: None,
+            goto_symbol_lsp_retries: 0,
+            goto_symbol_lsp_note: None,
             nav_back: Vec::new(),
             nav_forward: Vec::new(),
             cached_site_map: None,
@@ -1343,9 +1531,25 @@ impl VelocityApp {
             provider: AiProvider::CloudflareWorkersAi,
             pending_open_path: None,
             pending_save_as_path: None,
+            file_entry_dialog: None,
+            pending_tree_delete: None,
+            auto_save: false,
+            last_auto_save: None,
+            format_on_save: false,
             pending_close_tab: None,
             show_full_diff: false,
             build_errors_count: 0,
+            blame_cache: std::collections::HashMap::new(),
+            blame_rx: None,
+            blame_requested_for: None,
+            blame_annotation: None,
+            branch_switcher_open: false,
+            branch_list: Vec::new(),
+            branch_filter: String::new(),
+            branch_selected: 0,
+            branch_just_opened: false,
+            branch_creating: false,
+            branch_new_name: String::new(),
             account_usage: Vec::new(),
             usage_date: String::new(),
             gpu_name: String::new(),
@@ -1354,13 +1558,29 @@ impl VelocityApp {
             search_hit_cache: Vec::new(),
             search_count_label: String::new(),
             replace_query: String::new(),
+            search_opts: crate::editor::search::SearchOptions::default(),
+            search_include: String::new(),
             search_pending_since: None,
             pending_cursor_line: None,
             current_cursor_line: 0,
             current_cursor_col: 0,
+            queued_line_op: None,
+            queued_toggle_comment: false,
+            queued_indent: None,
+            queued_select: None,
+            queued_change_jump: None,
+            queued_problem_jump: None,
             references_open: false,
             references_results: Vec::new(),
             references_selected: 0,
+            rename_open: false,
+            rename_input: String::new(),
+            rename_just_opened: false,
+            rename_pos: (0, 0),
+            code_actions_open: false,
+            code_actions: Vec::new(),
+            code_action_selected: 0,
+            code_actions_pos: (0, 0),
             file_tree: None,
             last_tree_update: std::time::Instant::now(),
             last_tree_mtime: None,
@@ -1385,12 +1605,23 @@ impl VelocityApp {
             current_agent_task_id: 0,
             cancel_requested: false,
             completion_state: Default::default(),
+            completion_queued_trigger: false,
+            completion_anchor_tab: None,
+            hot_exit_restored: false,
+            signature_help: None,
+            sig_last_pos: None,
+            call_hierarchy_open: false,
+            call_hierarchy_items: Vec::new(),
+            call_hierarchy_selected: 0,
+            call_hierarchy_incoming: true,
             lsp_state: LspState::default(),
             terminal_state: crate::editor::terminal::TerminalState::new(80, 24),
             terminal_spawned: false,
             dap_client: None,
             keybindings_config: Default::default(),
             git_state: Default::default(),
+            scm_diff_path: None,
+            scm_diff_lines: Vec::new(),
             file_watcher: None,
             extension_registry: Default::default(),
             minimap_config: Default::default(),

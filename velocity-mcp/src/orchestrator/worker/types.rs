@@ -99,6 +99,43 @@ impl WorkerResult {
             is_read_only: false,
         }
     }
+
+    /// A failure result for a worker whose thread vanished before reporting.
+    /// Carries no task borrow, so handles holding only a `TaskId` can synthesize
+    /// it.
+    pub fn detached(task_id: TaskId) -> Self {
+        let message = "worker thread exited without reporting a result".to_string();
+        Self {
+            success: false,
+            task_id,
+            status_updates: vec![message.clone()],
+            message,
+            ..Self::empty(task_id)
+        }
+    }
+
+    fn empty(task_id: TaskId) -> Self {
+        Self {
+            success: true,
+            task_id,
+            outputs: Vec::new(),
+            duration: Duration::ZERO,
+            message: String::new(),
+            provider_label: String::new(),
+            model_label: String::new(),
+            transcript: String::new(),
+            status_updates: Vec::new(),
+            attempts: Vec::new(),
+            created_files: Vec::new(),
+            deleted_files: Vec::new(),
+            out_of_scope_created_files: Vec::new(),
+            run_summary_path: None,
+            run_facts_path: None,
+            wa_run_path: None,
+            wa_run_id: None,
+            is_read_only: false,
+        }
+    }
 }
 
 /// Abstract handle for launching and polling a worker task.
@@ -114,11 +151,21 @@ pub struct LiveWorkerHandle {
     pub control_tx: CrossbeamSender<crate::agent::UiToAgentMessage>,
     pub cancel_sent: bool,
     pub progress: Arc<std::sync::Mutex<HeadlessSubAgentProgress>>,
+    /// Kept so a detached worker channel can still be reported against the
+    /// task it was launched for (the task itself lives in the panel graph).
+    pub task_id: TaskId,
 }
 
 impl WorkerHandle for LiveWorkerHandle {
     fn poll(&mut self) -> Option<WorkerResult> {
-        self.rx.try_recv().ok()
+        match self.rx.try_recv() {
+            Ok(result) => Some(result),
+            Err(mpsc::TryRecvError::Empty) => None,
+            // The worker thread died without sending a result (a panic in
+            // `run_assignment` drops the sender). Without this arm the poll
+            // returns `None` forever and the task sits in Running unstopped.
+            Err(mpsc::TryRecvError::Disconnected) => Some(WorkerResult::detached(self.task_id)),
+        }
     }
 
     fn cancel(&mut self) -> bool {

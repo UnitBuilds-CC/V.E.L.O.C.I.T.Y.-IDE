@@ -6,6 +6,7 @@ use crate::automation::instruction_registry::AgentTaskKind;
 use crate::automation::mediator::MediatorArena;
 use crate::automation::task_router::RoutedModelRoute;
 use crate::editor::continuation_ledger::ContinuationLedger;
+use crate::registry::event_store::{EventOutcome, EventStore};
 use crossbeam_channel::unbounded;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -22,6 +23,7 @@ pub fn spawn_live_worker(
     let (control_tx, control_rx) = unbounded();
     let progress = Arc::new(std::sync::Mutex::new(HeadlessSubAgentProgress::default()));
     let progress_for_thread = progress.clone();
+    let task_id = assignment.task.id;
     std::thread::spawn(move || {
         let result = run_assignment(
             assignment,
@@ -37,6 +39,7 @@ pub fn spawn_live_worker(
         control_tx,
         cancel_sent: false,
         progress,
+        task_id,
     })
 }
 
@@ -81,6 +84,15 @@ pub fn run_assignment(
             site_map.root()
         );
         result.status_updates.push(result.message.clone());
+        // Surface the rejection in durable history so a future agent learns
+        // *why* this intended change never landed, rather than repeating it.
+        let store = EventStore::open(&assignment.workspace_root);
+        let _ = store.record_stale_plan(
+            &format!("worker '{}' assignment discarded", task.title),
+            &format!("{:016x}", assignment.planned_site_map_root),
+            &format!("{:016x}", site_map.root()),
+            task.scope.clone(),
+        );
         return result;
     }
 
@@ -92,10 +104,22 @@ pub fn run_assignment(
         task.id,
     ) {
         Ok(locked_scopes) => locked_scopes,
-        Err(message) => {
+        Err(conflict) => {
             result.success = false;
             result.duration = start.elapsed();
-            result.message = message;
+            result.message = conflict.contract.clone();
+            // Record the shared-write conflict into the decision trail: this is
+            // the artefact that makes conflict resolution auditable/learnable.
+            let store = EventStore::open(&assignment.workspace_root);
+            let _ = store.record_shared_write_conflict(
+                "worker_assignment",
+                &format!("worker '{}' blocked by shared-write conflict", task.title),
+                conflict.kind,
+                &conflict.existing_agent,
+                &conflict.requested_agent,
+                conflict.files,
+                &conflict.contract,
+            );
             return result;
         }
     };
@@ -150,6 +174,22 @@ pub fn run_assignment(
         }
     }
 
+    // Close the loop: record the terminal outcome of the worker task so the
+    // decision trail links site-map transitions to the agent that produced
+    // them and read-only history noise no longer buries the result.
+    let store = EventStore::open(&assignment.workspace_root);
+    let _ = store.record_task_outcome(
+        task.id.0,
+        &format!("worker '{}' finished", task.title),
+        if result.success {
+            EventOutcome::Success
+        } else {
+            EventOutcome::Failure
+        },
+        &result.message,
+        result.outputs.clone(),
+    );
+
     result
 }
 
@@ -192,19 +232,71 @@ pub fn execute_live_task(
     let mut last_transcript = String::new();
     let mut final_provider_label = assignment.provider_label.clone();
     let mut final_model_label = assignment.model_label.clone();
+    // Continuation ledger from the immediately-failed route, fed into the next
+    // attempt's prompt. Without this, every fallback retry re-disclosed the
+    // workspace from zero and burned its whole turn budget re-auditing — the
+    // exact failure the agent_eval run exhibited (3 attempts, "No scoped
+    // changes" ×3).
+    let mut carry_forward: Option<String> = None;
+    // Modification kinds get a slightly larger budget than the default 15:
+    // with the ledger in hand, the extra turns go to edits and build fixes
+    // rather than exploration. Read-only kinds keep the default.
+    let attempt_max_turns = if assignment.task_kind.is_read_only() {
+        None
+    } else {
+        Some(20)
+    };
+
+    // Memory loop: read the durable decision history back into the first
+    // attempt. Past failures, shared-write conflicts and reverts on this
+    // task's scope files are prepended to the instructions, so the worker
+    // inherits what already happened instead of blindly re-running attempts
+    // that failed in an earlier session. Empty brief -> untouched instructions.
+    let memory_brief = crate::registry::event_store::history_brief(
+        &assignment.workspace_root,
+        &assignment.task.scope,
+        12,
+    );
+    // Skills loop: workspace markdown skills (.velocity/skills/*.md) activate
+    // against this task by trigger keywords in the task text or globs over
+    // the scope files; matched bodies are inlined, the rest demote to a
+    // use_skill-able index. No skills -> no change to instructions.
+    let skills_block = crate::registry::skills::skills_brief(
+        &assignment.workspace_root,
+        &format!("{} {}", assignment.task.title, assignment.instructions),
+        &assignment.task.scope,
+        6000,
+    );
+    let mut base_instructions = assignment.instructions.clone();
+    if !memory_brief.is_empty() {
+        log::info!(
+            "worker: injecting prior decision history ({} scope entries) into '{}'",
+            assignment.task.scope.len(),
+            assignment.task.title
+        );
+        base_instructions = format!("{base_instructions}\n\n{memory_brief}");
+    }
+    if !skills_block.is_empty() {
+        log::info!(
+            "worker: injecting project skills into '{}'",
+            assignment.task.title
+        );
+        base_instructions = format!("{base_instructions}\n\n{skills_block}");
+    }
 
     for route in routes {
         let route_start = Instant::now();
+        let prompt = attempt_prompt(&base_instructions, carry_forward.as_deref());
         let subagent = run_headless_subagent(HeadlessSubAgentRequest {
             workspace_root: assignment.workspace_root.clone(),
             provider: route.provider,
             model: route.model_id.clone(),
             thinking: route.thinking,
-            prompt: assignment.instructions.clone(),
+            prompt,
             cancel_rx: Some(cancel_rx.clone()),
             progress: Some(progress.clone()),
             scoped_files: assignment.scoped_files.clone(),
-            max_turns: None,
+            max_turns: attempt_max_turns,
         });
         last_status_updates = subagent.status_updates.clone();
         last_transcript = subagent.transcript.clone();
@@ -347,7 +439,11 @@ pub fn execute_live_task(
             "continuation_ledger_attempt_{}.txt",
             attempts.len()
         ));
-        let _ = fs::write(&ledger_path, ledger.continuation_prompt());
+        let ledger_prompt = ledger.continuation_prompt();
+        let _ = fs::write(&ledger_path, &ledger_prompt);
+        // Hand the next route the map of what was already learned and changed
+        // instead of making it rediscover everything.
+        carry_forward = Some(ledger_prompt);
     }
 
     let cancelled = last_status_updates
@@ -402,5 +498,44 @@ pub fn failed_execution(assignment: &WorkerAssignment, message: String) -> Execu
         attempts: Vec::new(),
         message,
         is_read_only: assignment.task_kind.is_read_only(),
+    }
+}
+
+/// Prompt for one fallback route: plain instructions on the first attempt,
+/// then the previous attempt's continuation ledger appended so the new model
+/// resumes from what was already learned and edited instead of re-auditing
+/// the workspace from zero.
+fn attempt_prompt(instructions: &str, ledger_prompt: Option<&str>) -> String {
+    let Some(ledger_prompt) = ledger_prompt else {
+        return instructions.to_string();
+    };
+    format!(
+        "{instructions}\n\n# Continuation from the previous attempt\n{ledger_prompt}\n\n\
+         The previous attempt ended without completing this mission. Do NOT re-read files it already \
+         examined or repeat its exploration \u{2014} trust the ledger above and check the current file \
+         state only where the ledger is unclear. Prioritize actual file edits (write_file / apply_diff) \
+         over further auditing, and complete the mission starting from the workspace's current state."
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::attempt_prompt;
+
+    #[test]
+    fn first_attempt_prompt_is_plain_instructions() {
+        let prompt = attempt_prompt("Refactor the parser.", None);
+        assert_eq!(prompt, "Refactor the parser.");
+    }
+
+    #[test]
+    fn retry_prompt_appends_ledger_and_write_first_directive() {
+        let ledger = "## Mission\nGoal: Refactor the parser.\n\n## Completed Edits\n- src/parser.rs \u{2014} split lexer";
+        let prompt = attempt_prompt("Refactor the parser.", Some(ledger));
+        assert!(prompt.starts_with("Refactor the parser."));
+        assert!(prompt.contains("# Continuation from the previous attempt"));
+        assert!(prompt.contains("## Completed Edits"));
+        assert!(prompt.contains("Do NOT re-read files"));
+        assert!(prompt.contains("Prioritize actual file edits"));
     }
 }

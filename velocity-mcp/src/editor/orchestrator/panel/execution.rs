@@ -1,11 +1,22 @@
 use super::super::types::*;
-use super::struct_def::OrchestratorPanel;
+use super::struct_def::{OrchestratorPanel, WorkerWatchdog};
 use crate::automation::resolve_weight_root;
 use crate::orchestrator::registry::{OrchestratorRegistry, TaskStatus};
 use crate::orchestrator::validator;
 use crate::orchestrator::worker::{spawn_live_worker, WorkerAssignment, WorkerResult};
 use crate::orchestrator::TaskId;
 use std::path::Path;
+use std::time::Duration;
+
+/// How long a worker may produce zero progress events before the watchdog
+/// asks it to stop. Generous on purpose: a slow reasoning model can spend
+/// minutes inside one turn, but it emits at least a status event per turn.
+const WORKER_STALL_TIMEOUT: Duration = Duration::from_secs(10 * 60);
+/// Wall-clock ceiling for one worker regardless of activity.
+const WORKER_HARD_TIMEOUT: Duration = Duration::from_secs(90 * 60);
+/// Grace between the watchdog's cancel request and failing the task outright
+/// (the thread may never observe the cancel; the UI must not wait on it).
+const WORKER_CANCEL_GRACE: Duration = Duration::from_secs(60);
 
 impl OrchestratorPanel {
     pub fn execute_routed_tasks(
@@ -77,6 +88,7 @@ impl OrchestratorPanel {
             let _ = handle.cancel();
         }
         self.running_workers.clear();
+        self.worker_watchdog.clear();
         if let Some(reg) = &mut self.registry {
             for status in reg.statuses.values_mut() {
                 *status = TaskStatus::Pending;
@@ -168,6 +180,7 @@ impl OrchestratorPanel {
             }
         }
         self.running_workers.clear();
+        self.worker_watchdog.clear();
         self.execution_running = retried > 0;
         self.runtime_status = if retried > 0 {
             format!("Retrying {retried} blocked task(s)")
@@ -197,6 +210,7 @@ impl OrchestratorPanel {
         }
         reg.statuses.insert(task_id, TaskStatus::Pending);
         self.running_workers.remove(&task_id);
+        self.worker_watchdog.remove(&task_id);
         self.execution_running = true;
         self.runtime_status = format!("Retrying task {}", task_id.0);
         self.poll_live_workers(workspace_root, mediator);
@@ -216,6 +230,7 @@ impl OrchestratorPanel {
         reg.statuses.insert(task_id, TaskStatus::Pending);
         reg.outputs.remove(&task_id);
         self.running_workers.remove(&task_id);
+        self.worker_watchdog.remove(&task_id);
         self.execution_running = !self.running_workers.is_empty();
         self.runtime_status = format!("Reset task {} to pending", task_id.0);
         true
@@ -306,7 +321,83 @@ impl OrchestratorPanel {
         propagate_blocked_dependents(&self.graph, reg);
         complete_reconcile_root(&mut self.graph, reg);
 
-        let ready_ids = reg.ready_ids(&self.graph);
+        // ─── Worker watchdog ──────────────────────────────────────────────
+        // A worker thread can stay alive and simply stop doing anything (a
+        // provider stream that trickles forever, a tool that never returns).
+        // The Sept 2026 agent_eval run left two tasks stuck in `Running` with
+        // no progress and no path out. Cancel a hung worker, then fail the
+        // task after a grace period so one stall cannot hold the plan open.
+        let running_ids: Vec<TaskId> = self.running_workers.keys().copied().collect();
+        self.worker_watchdog
+            .retain(|id, _| running_ids.contains(id));
+        let now = std::time::Instant::now();
+        let mut timed_out: Vec<(TaskId, String)> = Vec::new();
+        for id in &running_ids {
+            let Some(handle) = self.running_workers.get_mut(id) else {
+                continue;
+            };
+            let event_count = handle.snapshot().events.len();
+            let watchdog = self
+                .worker_watchdog
+                .entry(*id)
+                .or_insert_with(|| WorkerWatchdog::new(event_count));
+            if event_count > watchdog.last_event_count {
+                watchdog.last_event_count = event_count;
+                watchdog.last_activity = now;
+            }
+            if watchdog.reason.is_none() {
+                let silent = now.duration_since(watchdog.last_activity);
+                let total = now.duration_since(watchdog.started);
+                if silent > WORKER_STALL_TIMEOUT {
+                    watchdog.reason = Some(format!("no progress for {}s", silent.as_secs()));
+                } else if total > WORKER_HARD_TIMEOUT {
+                    watchdog.reason = Some(format!("exceeded {}s hard limit", total.as_secs()));
+                }
+            }
+            if let Some(reason) = watchdog.reason.clone() {
+                match watchdog.cancel_sent_at {
+                    None => {
+                        handle.cancel();
+                        watchdog.cancel_sent_at = Some(now);
+                        log::warn!("watchdog: cancelling task {} ({})", id.0, reason);
+                    }
+                    Some(at) if now.duration_since(at) > WORKER_CANCEL_GRACE => {
+                        timed_out.push((*id, reason));
+                    }
+                    Some(_) => {}
+                }
+            }
+        }
+        for (id, reason) in timed_out {
+            self.running_workers.remove(&id);
+            self.worker_watchdog.remove(&id);
+            let Some(task) = self.graph.tasks.get(&id).cloned() else {
+                continue;
+            };
+            let mut result = WorkerResult::new(&task);
+            result.success = false;
+            result.message = format!("worker hung: {reason}; cancelled by watchdog");
+            result.status_updates.push(result.message.clone());
+            // `reg` is live here; write the field directly rather than through
+            // `set_task_status`, which would reborrow the whole panel.
+            reg.statuses.insert(id, TaskStatus::Failed(result));
+        }
+
+        // Conflict-aware dispatch wave: among the ready tasks, keep only a
+        // set that cannot collide — no textual scope overlap and no shared
+        // historical conflict group from the durable event store. Deferred
+        // tasks reappear on a later tick once the contested scope frees up,
+        // instead of racing into a mediator rejection and a recorded
+        // shared-write-conflict failure.
+        let ready_ids = {
+            let all_ready = reg.ready_ids(&self.graph);
+            if all_ready.len() > 1 {
+                let groups = crate::registry::event_store::conflict_file_groups(workspace_root);
+                reg.ready_ids_conflict_aware(&self.graph, &groups)
+            } else {
+                all_ready
+            }
+        };
         // From here on the panel is borrowed whole, so every registry write goes
         // through `set_task_status` rather than `reg`.
         // Hand-authored tasks have no router-produced binding; give every task

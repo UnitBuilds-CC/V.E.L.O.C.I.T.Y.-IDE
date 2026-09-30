@@ -744,7 +744,10 @@ impl VelocityApp {
                                     .file_name()
                                     .map(|n| n.to_string_lossy().to_string())
                                     .unwrap_or_else(|| project_path.to_string_lossy().to_string());
-                                let is_current = project_path == self.workspace_root;
+                                let is_current = crate::editor::file_ops::same_editor_path(
+                                    &project_path,
+                                    &self.workspace_root,
+                                );
                                 let selected = row == self.workspace_switcher_selected;
 
                                 ui.horizontal(|ui| {
@@ -765,10 +768,7 @@ impl VelocityApp {
                                     if resp.clicked() {
                                         // Switch to this project.
                                         if !is_current {
-                                            self.save_workspace_preferences();
-                                            self.workspace_root = project_path.clone();
-                                            self.restore_workspace_preferences();
-                                            self.status_message = format!("Switched to {}", name);
+                                            self.switch_workspace_to(project_path.clone());
                                         }
                                         switcher_open = false;
                                     }
@@ -781,14 +781,12 @@ impl VelocityApp {
                     if ui.input(|i| i.key_pressed(egui::Key::Enter)) {
                         if project_count > 0 {
                             let selected = self.workspace_switcher_selected;
-                            let is_current =
-                                self.projects.get(selected) == Some(&self.workspace_root);
+                            let is_current = self.projects.get(selected).is_some_and(|p| {
+                                crate::editor::file_ops::same_editor_path(p, &self.workspace_root)
+                            });
                             if !is_current {
                                 if let Some(path) = self.projects.get(selected).cloned() {
-                                    self.save_workspace_preferences();
-                                    self.workspace_root = path;
-                                    self.restore_workspace_preferences();
-                                    self.status_message = "Switched workspace".to_string();
+                                    self.switch_workspace_to(path);
                                 }
                             }
                         }
@@ -960,6 +958,384 @@ impl VelocityApp {
         }
     }
 
+    /// LSP call-hierarchy overlay: lists the callers (incoming) or callees
+    /// (outgoing) of the symbol under the caret, labelled by function name and
+    /// site. Arrow keys move the selection, Enter (or a click) opens the chosen
+    /// site in the editor, Escape dismisses — the same interaction contract as
+    /// the references panel, but preserving each node's name.
+    pub fn call_hierarchy_ui(&mut self, ctx: &egui::Context) {
+        if !self.call_hierarchy_open {
+            return;
+        }
+        let palette = self.palette();
+        let area = egui::Area::new(egui::Id::new("call_hierarchy_area"))
+            .order(egui::Order::Foreground)
+            .anchor(egui::Align2::CENTER_TOP, egui::Vec2::new(0.0, 80.0));
+
+        let mut open = self.call_hierarchy_open;
+        let mut chosen: Option<usize> = None;
+        let count = self.call_hierarchy_items.len();
+        self.call_hierarchy_selected = self.call_hierarchy_selected.min(count.saturating_sub(1));
+
+        if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
+            open = false;
+        } else if ctx.input(|i| i.key_pressed(egui::Key::ArrowDown)) {
+            if count > 0 {
+                self.call_hierarchy_selected = (self.call_hierarchy_selected + 1) % count;
+            }
+        } else if ctx.input(|i| i.key_pressed(egui::Key::ArrowUp)) {
+            if count > 0 {
+                self.call_hierarchy_selected = (self.call_hierarchy_selected + count - 1) % count;
+            }
+        } else if ctx.input(|i| i.key_pressed(egui::Key::Enter)) {
+            chosen = Some(self.call_hierarchy_selected);
+            open = false;
+        }
+
+        let title = if self.call_hierarchy_incoming {
+            "Incoming Calls"
+        } else {
+            "Outgoing Calls"
+        };
+        let incoming = self.call_hierarchy_incoming;
+        let glyph = if incoming { "\u{21B0}" } else { "\u{21B1}" };
+        let items = self.call_hierarchy_items.clone();
+        let selected = self.call_hierarchy_selected;
+        area.show(ctx, |ui| {
+            egui::Frame::popup(ui.style())
+                .fill(ui.visuals().code_bg_color)
+                .stroke(ui.visuals().window_stroke)
+                .inner_margin(egui::Margin::same(10))
+                .corner_radius(egui::CornerRadius::same(12))
+                .show(ui, |ui| {
+                    ui.set_width(560.0);
+                    ui.label(
+                        egui::RichText::new(format!("{title} ({count})"))
+                            .size(13.0)
+                            .strong()
+                            .color(palette.accent),
+                    );
+                    ui.add_space(4.0);
+                    egui::ScrollArea::vertical()
+                        .max_height(320.0)
+                        .show(ui, |ui| {
+                            for (idx, item) in items.iter().enumerate() {
+                                let site = format!("{}:{}", item.file.display(), item.line + 1);
+                                let label = format!("{}  \u{2014}  {}", item.name, site);
+                                let is_sel = idx == selected;
+                                let mut clicked = false;
+                                ui.horizontal(|ui| {
+                                    ui.colored_label(
+                                        if is_sel {
+                                            palette.accent
+                                        } else {
+                                            palette.text_muted
+                                        },
+                                        glyph,
+                                    );
+                                    if ui.selectable_label(is_sel, &label).clicked() {
+                                        clicked = true;
+                                    }
+                                });
+                                if clicked {
+                                    chosen = Some(idx);
+                                    open = false;
+                                }
+                            }
+                        });
+                });
+        });
+
+        self.call_hierarchy_open = open;
+        if let Some(idx) = chosen {
+            if let Some(item) = self.call_hierarchy_items.get(idx).cloned() {
+                self.push_nav_location();
+                self.open_editor(Some(item.file));
+                self.pending_cursor_line = Some(item.line + 1);
+            }
+        }
+    }
+
+    /// F2 LSP rename-symbol overlay: type the new name; Enter (or the Rename
+    /// button) applies the server's workspace edit across every touched file,
+    /// Escape (or Cancel) aborts. Focus jumps to the input on open.
+    pub fn rename_ui(&mut self, ctx: &egui::Context) {
+        if !self.rename_open {
+            return;
+        }
+        let palette = self.palette();
+        let area = egui::Area::new(egui::Id::new("rename_area"))
+            .order(egui::Order::Foreground)
+            .anchor(egui::Align2::CENTER_TOP, egui::Vec2::new(0.0, 80.0));
+
+        let mut commit = false;
+        let mut cancel = false;
+        area.show(ctx, |ui| {
+            egui::Frame::popup(ui.style())
+                .fill(ui.visuals().code_bg_color)
+                .stroke(ui.visuals().window_stroke)
+                .inner_margin(egui::Margin::same(10))
+                .corner_radius(egui::CornerRadius::same(12))
+                .show(ui, |ui| {
+                    ui.set_width(420.0);
+                    ui.label(
+                        egui::RichText::new("Rename symbol")
+                            .size(13.0)
+                            .strong()
+                            .color(palette.accent),
+                    );
+                    ui.add_space(4.0);
+                    let response = ui.add(
+                        egui::TextEdit::singleline(&mut self.rename_input)
+                            .hint_text("new symbol name")
+                            .desired_width(420.0),
+                    );
+                    if self.rename_just_opened {
+                        response.request_focus();
+                        self.rename_just_opened = false;
+                    }
+                    ui.add_space(6.0);
+                    ui.horizontal(|ui| {
+                        if ui
+                            .add(egui::Button::new(
+                                egui::RichText::new("Rename").color(palette.accent),
+                            ))
+                            .clicked()
+                        {
+                            commit = true;
+                        }
+                        if ui.button("Cancel").clicked() {
+                            cancel = true;
+                        }
+                    });
+                });
+        });
+
+        if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
+            cancel = true;
+        }
+        let entered = ctx.input(|i| i.key_pressed(egui::Key::Enter));
+        if commit || entered {
+            self.commit_rename();
+        } else if cancel {
+            self.rename_open = false;
+            self.status_message = "Rename cancelled".into();
+        }
+    }
+
+    /// Alt+Enter LSP code-action popup: list the quick fixes/refactorings the
+    /// server offers for the caret line. Arrow keys navigate, Enter (or a
+    /// click) applies the selected action's workspace edit, Escape closes.
+    pub fn code_actions_ui(&mut self, ctx: &egui::Context) {
+        if !self.code_actions_open {
+            return;
+        }
+        let palette = self.palette();
+        let area = egui::Area::new(egui::Id::new("code_actions_area"))
+            .order(egui::Order::Foreground)
+            .anchor(egui::Align2::CENTER_TOP, egui::Vec2::new(0.0, 80.0));
+
+        let mut open = self.code_actions_open;
+        let mut chosen: Option<usize> = None;
+        let count = self.code_actions.len();
+        self.code_action_selected = self.code_action_selected.min(count.saturating_sub(1));
+
+        if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
+            open = false;
+        } else if ctx.input(|i| i.key_pressed(egui::Key::ArrowDown)) {
+            if count > 0 {
+                self.code_action_selected = (self.code_action_selected + 1) % count;
+            }
+        } else if ctx.input(|i| i.key_pressed(egui::Key::ArrowUp)) {
+            if count > 0 {
+                self.code_action_selected = (self.code_action_selected + count - 1) % count;
+            }
+        } else if ctx.input(|i| i.key_pressed(egui::Key::Enter)) {
+            chosen = Some(self.code_action_selected);
+            open = false;
+        }
+
+        let entries: Vec<(String, String, bool)> = self
+            .code_actions
+            .iter()
+            .map(|a| {
+                let has_edit = a.edit.as_ref().is_some_and(|e| !e.is_empty());
+                // `via_command` marks actions resolved by running a server
+                // command (they still apply, just through executeCommand).
+                (
+                    a.title.clone(),
+                    a.kind.clone(),
+                    !has_edit && a.command.is_some(),
+                )
+            })
+            .collect();
+        let selected = self.code_action_selected;
+        area.show(ctx, |ui| {
+            egui::Frame::popup(ui.style())
+                .fill(ui.visuals().code_bg_color)
+                .stroke(ui.visuals().window_stroke)
+                .inner_margin(egui::Margin::same(10))
+                .corner_radius(egui::CornerRadius::same(12))
+                .show(ui, |ui| {
+                    ui.set_width(520.0);
+                    ui.label(
+                        egui::RichText::new(format!("Code Actions ({count})"))
+                            .size(13.0)
+                            .strong()
+                            .color(palette.accent),
+                    );
+                    ui.add_space(4.0);
+                    egui::ScrollArea::vertical()
+                        .max_height(320.0)
+                        .show(ui, |ui| {
+                            for (idx, (title, kind, via_command)) in entries.iter().enumerate() {
+                                let is_sel = idx == selected;
+                                // Command-only actions run via
+                                // `workspace/executeCommand`; tag them so the
+                                // user knows applying one does a server round-trip.
+                                let label = format!(
+                                    "{}{}",
+                                    title,
+                                    if *via_command {
+                                        format!("  [{kind} \u{00b7} server command]")
+                                    } else {
+                                        String::new()
+                                    }
+                                );
+                                let mut clicked = false;
+                                ui.horizontal(|ui| {
+                                    ui.colored_label(
+                                        if is_sel {
+                                            palette.accent
+                                        } else {
+                                            palette.text_muted
+                                        },
+                                        "\u{1F4A1}",
+                                    );
+                                    if ui.selectable_label(is_sel, &label).clicked() {
+                                        clicked = true;
+                                    }
+                                });
+                                if clicked {
+                                    chosen = Some(idx);
+                                    open = false;
+                                }
+                            }
+                        });
+                });
+        });
+
+        self.code_actions_open = open;
+        if let Some(idx) = chosen {
+            self.code_action_selected = idx.min(count.saturating_sub(1));
+            self.apply_selected_code_action();
+        }
+    }
+
+    /// Render the live LSP parameter-hint popup for the call the caret sits
+    /// inside. Self-dismisses: it clears once the caret leaves the call's
+    /// parentheses (the closing `)` is typed, the buffer changes, or the user
+    /// hits Escape), so it never lingers as stale chrome. The active parameter
+    /// is emphasized inside the monospace signature label; overloads are paged
+    /// by the server and shown as an `i/n` badge.
+    pub fn signature_help_ui(&mut self, ctx: &egui::Context) {
+        if self.signature_help.is_none() {
+            return;
+        }
+
+        // Recompute whether the caret is still inside an unclosed call. If the
+        // user closed the parens or moved away, drop the hint.
+        let still_inside = self
+            .active_tab
+            .as_ref()
+            .and_then(|id| self.buffers.get(id).map(|b| b.content().to_owned()))
+            .map(|content| {
+                let off = crate::editor::line_ops::offset_of_line_col(
+                    &content,
+                    self.current_cursor_line,
+                    self.current_cursor_col,
+                );
+                let before: String = content.chars().take(off).collect();
+                crate::editor::lsp_client::caret_inside_parens(&before)
+            })
+            .unwrap_or(false);
+        if !still_inside || ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
+            self.signature_help = None;
+            return;
+        }
+
+        let palette = self.palette();
+        let Some(help) = self.signature_help.clone() else {
+            return;
+        };
+        let Some(sig) = help.active().cloned() else {
+            return;
+        };
+        let active_param = help.active_param_label().map(|s| s.to_string());
+        let total = help.signatures.len();
+        let idx = help.active_signature;
+
+        let area = egui::Area::new(egui::Id::new("signature_help_area"))
+            .order(egui::Order::Foreground)
+            .anchor(egui::Align2::CENTER_BOTTOM, egui::Vec2::new(0.0, -48.0));
+        area.show(ctx, |ui| {
+            egui::Frame::popup(ui.style())
+                .fill(ui.visuals().code_bg_color)
+                .stroke(ui.visuals().window_stroke)
+                .inner_margin(egui::Margin::same(8))
+                .corner_radius(egui::CornerRadius::same(8))
+                .show(ui, |ui| {
+                    ui.horizontal(|ui| {
+                        let label = &sig.label;
+                        let highlight = active_param
+                            .as_deref()
+                            .filter(|p| !p.is_empty())
+                            .and_then(|p| label.find(p));
+                        match highlight {
+                            Some(pos) => {
+                                let plen = active_param.as_deref().unwrap_or("").len();
+                                let end = (pos + plen).min(label.len());
+                                ui.label(
+                                    egui::RichText::new(&label[..pos])
+                                        .monospace()
+                                        .color(palette.text),
+                                );
+                                ui.label(
+                                    egui::RichText::new(&label[pos..end])
+                                        .monospace()
+                                        .strong()
+                                        .color(palette.accent),
+                                );
+                                ui.label(
+                                    egui::RichText::new(&label[end..])
+                                        .monospace()
+                                        .color(palette.text),
+                                );
+                            }
+                            None => {
+                                ui.label(
+                                    egui::RichText::new(label).monospace().color(palette.text),
+                                );
+                            }
+                        }
+                        if total > 1 {
+                            ui.separator();
+                            ui.colored_label(palette.text_muted, format!("{}/{}", idx + 1, total));
+                        }
+                    });
+                    let doc = sig.documentation.trim();
+                    if !doc.is_empty() {
+                        ui.add_space(2.0);
+                        ui.label(
+                            egui::RichText::new(doc)
+                                .size(11.0)
+                                .color(palette.text_muted),
+                        );
+                    }
+                });
+        });
+    }
+
     /// Ctrl+Shift+O go-to-symbol switcher: fuzzy-search sitemap symbols and jump
     /// to the file/line that defines the selected one.
     pub fn goto_symbol_ui(&mut self, ctx: &egui::Context) {
@@ -973,6 +1349,10 @@ impl VelocityApp {
             .anchor(egui::Align2::CENTER_TOP, egui::Vec2::new(0.0, 80.0));
 
         let query = self.goto_symbol_query.to_lowercase();
+        // Feed in language-server symbols: debounced `workspace/symbol`
+        // dispatch + non-blocking polling; a merge rewrites the entry list
+        // and forces the re-filter below in the same frame.
+        self.update_goto_symbol_lsp(&query, ctx);
         // Recompute the filtered index list only when the query changes, instead of
         // cloning + lowercasing every entry on every frame.
         if self.goto_symbol_last_query != query {
@@ -1021,11 +1401,18 @@ impl VelocityApp {
                     if filtered.is_empty() {
                         ui.add_space(18.0);
                         ui.vertical_centered(|ui| {
-                            let msg = if self.goto_symbol_entries.is_empty() {
-                                "No symbols indexed yet \u{2014} run the indexer first"
-                            } else {
-                                "No matching symbols"
-                            };
+                            // An empty list has three honest explanations:
+                            // the language server is still loading or has no
+                            // provider (its note), or the sitemap is empty.
+                            let note = self.goto_symbol_lsp_note.clone();
+                            let msg = note.unwrap_or_else(|| {
+                                if self.goto_symbol_entries.is_empty() {
+                                    "No symbols indexed yet \u{2014} run the indexer first"
+                                } else {
+                                    "No matching symbols"
+                                }
+                                .to_string()
+                            });
                             ui.label(egui::RichText::new(msg).color(palette.text_muted));
                         });
                         ui.add_space(18.0);
@@ -1322,6 +1709,8 @@ impl VelocityApp {
                         );
                         ui.add_space(2.0);
                         let tree = build_file_tree(&workspace_root);
+                        let decorations = self.git_state.decorations(&workspace_root);
+                        let mut tree_actions = Vec::new();
                         egui::ScrollArea::vertical()
                             .max_width(220.0)
                             .show(ui, |ui| {
@@ -1331,8 +1720,13 @@ impl VelocityApp {
                                     &workspace_root,
                                     &mut path_string,
                                     palette,
+                                    &mut tree_actions,
+                                    &decorations,
                                 );
                             });
+                        if !tree_actions.is_empty() {
+                            self.run_tree_actions(ctx, tree_actions);
+                        }
                     });
                     ui.separator();
                     ui.vertical(|ui| {
@@ -1373,7 +1767,22 @@ impl VelocityApp {
         workspace_root: &Path,
         path_string: &mut String,
         palette: crate::editor::theme::IdePalette,
+        actions: &mut Vec<crate::editor::file_ops::TreeAction>,
+        decorations: &std::collections::HashMap<PathBuf, crate::editor::git_ui::GitFileStatus>,
     ) {
+        /// VS Code-style: a changed file (or folder) wears its status color.
+        fn deco_color(
+            decorations: &std::collections::HashMap<PathBuf, crate::editor::git_ui::GitFileStatus>,
+            path: &Path,
+        ) -> Option<egui::Color32> {
+            decorations.get(path).map(|s| {
+                egui::Color32::from_rgb(
+                    s.decoration_rgb().0,
+                    s.decoration_rgb().1,
+                    s.decoration_rgb().2,
+                )
+            })
+        }
         if node.is_dir {
             if let Some(children) = &node.children {
                 let dir_name = if node.path == workspace_root {
@@ -1385,11 +1794,13 @@ impl VelocityApp {
                 } else {
                     node.name.clone()
                 };
-                egui::CollapsingHeader::new(
+                let collapsing = egui::CollapsingHeader::new(
                     // No manual "▸": CollapsingHeader already paints its own
                     // disclosure triangle, and the U+25B8 glyph isn't covered by the
                     // bundled fonts, so the hand-added arrow rendered as a tofu box.
-                    egui::RichText::new(dir_name).size(10.0).color(palette.text),
+                    egui::RichText::new(dir_name)
+                        .size(10.0)
+                        .color(deco_color(decorations, &node.path).unwrap_or(palette.text)),
                 )
                 .default_open(node.path == workspace_root)
                 .show(ui, |ui| {
@@ -1400,9 +1811,19 @@ impl VelocityApp {
                             workspace_root,
                             path_string,
                             palette,
+                            actions,
+                            decorations,
                         );
                     }
                 });
+                let header = collapsing.header_response;
+                let header = match decorations.get(&node.path) {
+                    Some(status) => {
+                        header.on_hover_text(format!("Contains {} changes", status.label()))
+                    }
+                    None => header,
+                };
+                header.context_menu(|ui| Self::tree_context_menu(ui, &node.path, true, actions));
             }
         } else {
             let rel = node
@@ -1412,24 +1833,310 @@ impl VelocityApp {
                 .to_string_lossy()
                 .to_string();
             let icon = crate::editor::search::icon_for_path(&node.path);
-            if ui
-                .add(
-                    egui::Button::new(
-                        egui::RichText::new(format!("{} {}", icon, rel))
-                            .size(9.0)
-                            .color(palette.text),
-                    )
-                    .frame(false),
+            let file_color = deco_color(decorations, &node.path).unwrap_or(palette.text);
+            let resp = ui.add(
+                egui::Button::new(
+                    egui::RichText::new(format!("{} {}", icon, rel))
+                        .size(9.0)
+                        .color(file_color),
                 )
+                .frame(false),
+            );
+            if resp.clicked() {
+                *path_string = rel;
+            }
+            let resp = match decorations.get(&node.path) {
+                Some(status) => resp.on_hover_text(status.label()),
+                None => resp,
+            };
+            resp.context_menu(|ui| Self::tree_context_menu(ui, &node.path, false, actions));
+        }
+    }
+
+    /// Rows of the explorer right-click menu. Purely declarative: each entry
+    /// pushes a [`TreeAction`](crate::editor::file_ops::TreeAction) for
+    /// `render_file_tree_subpanel` to execute centrally (with dialogs and
+    /// confirmations) — the menu itself never touches the filesystem.
+    fn tree_context_menu(
+        ui: &mut egui::Ui,
+        path: &Path,
+        is_dir: bool,
+        actions: &mut Vec<crate::editor::file_ops::TreeAction>,
+    ) {
+        use crate::editor::file_ops::TreeAction;
+        let danger =
+            egui::RichText::new(format!("{} Delete\u{2026}", egui_phosphor::regular::TRASH))
+                .color(egui::Color32::from_rgb(205, 92, 92));
+        if is_dir {
+            if ui
+                .button(format!(
+                    "{} New File\u{2026}",
+                    egui_phosphor::regular::FILE_PLUS
+                ))
                 .clicked()
             {
-                *path_string = rel;
+                actions.push(TreeAction::NewFile(path.to_path_buf()));
+                ui.close();
+            }
+            if ui
+                .button(format!(
+                    "{} New Folder\u{2026}",
+                    egui_phosphor::regular::FOLDER_PLUS
+                ))
+                .clicked()
+            {
+                actions.push(TreeAction::NewFolder(path.to_path_buf()));
+                ui.close();
+            }
+            ui.separator();
+        }
+        if ui.button("Copy Path").clicked() {
+            actions.push(TreeAction::CopyPath(path.to_path_buf()));
+            ui.close();
+        }
+        if ui.button("Rename\u{2026}").clicked() {
+            actions.push(TreeAction::Rename(path.to_path_buf()));
+            ui.close();
+        }
+        if ui.button(danger).clicked() {
+            actions.push(TreeAction::Delete(path.to_path_buf()));
+            ui.close();
+        }
+    }
+
+    /// Execute the actions collected from explorer context menus (from both
+    /// the sidebar tree and the Open File dialog). Clipboard acts immediately;
+    /// naming acts open the entry dialog; delete opens a confirmation.
+    pub fn run_tree_actions(
+        &mut self,
+        ctx: &egui::Context,
+        actions: Vec<crate::editor::file_ops::TreeAction>,
+    ) {
+        use crate::editor::file_ops::{FileEntryDialog, TreeAction};
+        for action in actions {
+            match action {
+                TreeAction::CopyPath(p) => {
+                    ctx.copy_text(p.display().to_string());
+                    self.status_message = format!("Copied path: {}", p.display());
+                }
+                TreeAction::NewFile(_) | TreeAction::NewFolder(_) | TreeAction::Rename(_) => {
+                    self.file_entry_dialog = FileEntryDialog::for_action(&action);
+                }
+                TreeAction::Delete(p) => self.pending_tree_delete = Some(p),
             }
         }
     }
 
+    /// The name prompt behind New File / New Folder / Rename. Applies the
+    /// tested `file_ops` helpers; errors keep the dialog open with the typed
+    /// text so the user can fix the name in place.
+    pub fn file_entry_dialog_ui(&mut self, ctx: &egui::Context) {
+        use crate::editor::file_ops::{create_file_on_disk, create_folder_on_disk, rename_on_disk};
+        let Some(dialog) = self.file_entry_dialog.clone() else {
+            return;
+        };
+        let palette = self.palette();
+        let mut open = true;
+        let mut dismissed = false;
+        let mut value = dialog.value.clone();
+        let mut accept = false;
+        egui::Window::new(dialog.title())
+            .open(&mut open)
+            .resizable(false)
+            .collapsible(false)
+            .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
+            .show(ctx, |ui| {
+                let target = match &dialog.mode {
+                    crate::editor::file_ops::FileEntryMode::NewFile { dir }
+                    | crate::editor::file_ops::FileEntryMode::NewFolder { dir } => {
+                        format!("in {}", dir.display())
+                    }
+                    crate::editor::file_ops::FileEntryMode::Rename { path } => {
+                        format!("{}", path.display())
+                    }
+                };
+                ui.label(
+                    egui::RichText::new(&target)
+                        .size(9.0)
+                        .color(palette.text_muted),
+                );
+                let resp = ui.add_sized(
+                    [260.0, 0.0],
+                    egui::TextEdit::singleline(&mut value).hint_text("name"),
+                );
+                resp.request_focus();
+                let enter = ui.input(|i| i.key_pressed(egui::Key::Enter));
+                if ui.button("OK").clicked() || (enter && resp.has_focus()) {
+                    accept = true;
+                }
+                if ui.button("Cancel").clicked() {
+                    dismissed = true;
+                }
+            });
+        if dismissed {
+            open = false;
+        }
+        if accept {
+            let result = match &dialog.mode {
+                crate::editor::file_ops::FileEntryMode::NewFile { dir } => {
+                    create_file_on_disk(dir, &value).map(|_| None)
+                }
+                crate::editor::file_ops::FileEntryMode::NewFolder { dir } => {
+                    create_folder_on_disk(dir, &value).map(|_| None)
+                }
+                crate::editor::file_ops::FileEntryMode::Rename { path } => {
+                    rename_on_disk(path, &value).map(Some)
+                }
+            };
+            match result {
+                Ok(renamed_to) => {
+                    self.file_entry_dialog = None;
+                    self.request_tree_refresh();
+                    if let (Some(new), crate::editor::file_ops::FileEntryMode::Rename { path }) =
+                        (renamed_to, &dialog.mode)
+                    {
+                        self.reroute_tab_after_rename(path, &new);
+                    }
+                }
+                Err(e) => {
+                    // Keep the dialog open, preserving the typed text.
+                    if let Some(d) = &mut self.file_entry_dialog {
+                        d.value = value;
+                    }
+                    self.toasts.push(crate::editor::toast::Toast::error(e));
+                }
+            }
+        } else if !open {
+            self.file_entry_dialog = None;
+        }
+    }
+
+    /// After a successful rename, move any open (clean) tab from the old path
+    /// to the new one. Dirty tabs are left untouched — their unsaved buffer
+    /// still belongs to the old path until the user saves it.
+    fn reroute_tab_after_rename(&mut self, old: &Path, new: &Path) {
+        let affected: Vec<crate::editor::app::types::TabId> = self
+            .tabs
+            .iter()
+            .filter(|t| t.editor_path() == Some(&old.to_path_buf()))
+            .map(|t| t.id.clone())
+            .collect();
+        if affected.is_empty() {
+            return;
+        }
+        let mut reopened = false;
+        for id in affected {
+            if self.tab_is_dirty(&id) {
+                continue;
+            }
+            self.close_tab(&id);
+            reopened = true;
+        }
+        if reopened {
+            self.open_editor(Some(new.to_path_buf()));
+            self.rebuild_dock();
+        }
+    }
+
+    /// Explicit confirmation before any on-disk delete; also closes clean
+    /// editor tabs that pointed at the removed entry.
+    pub fn confirm_tree_delete_ui(&mut self, ctx: &egui::Context) {
+        use crate::editor::file_ops::delete_on_disk;
+        let Some(path) = self.pending_tree_delete.clone() else {
+            return;
+        };
+        let palette = self.palette();
+        let name = path
+            .file_name()
+            .map(|n| n.to_string_lossy().to_string())
+            .unwrap_or_else(|| path.display().to_string());
+        let mut open = true;
+        let mut dismissed = false;
+        let mut confirm = false;
+        egui::Window::new(format!("Delete {name}?"))
+            .open(&mut open)
+            .resizable(false)
+            .collapsible(false)
+            .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
+            .show(ctx, |ui| {
+                ui.label(
+                    egui::RichText::new(format!("{}", path.display()))
+                        .monospace()
+                        .size(9.0)
+                        .color(palette.text_muted),
+                );
+                ui.label(
+                    egui::RichText::new(
+                        "This removes the entry from disk (folders recursively), not the OS trash.",
+                    )
+                    .size(10.0)
+                    .color(palette.text),
+                );
+                ui.horizontal(|ui| {
+                    if ui
+                        .add(egui::Button::new(
+                            egui::RichText::new("Delete")
+                                .color(egui::Color32::from_rgb(205, 92, 92)),
+                        ))
+                        .clicked()
+                    {
+                        confirm = true;
+                    }
+                    if ui.button("Cancel").clicked() {
+                        dismissed = true;
+                    }
+                });
+            });
+        if dismissed {
+            open = false;
+        }
+        if confirm {
+            match delete_on_disk(&path, &self.workspace_root) {
+                Ok(()) => {
+                    // Close clean tabs on the deleted path so no editor points
+                    // at a ghost. Dirty tabs stay (unsaved work is the user's).
+                    let affected: Vec<crate::editor::app::types::TabId> = self
+                        .tabs
+                        .iter()
+                        .filter(|t| {
+                            t.editor_path()
+                                .map(|p| {
+                                    p.as_path() == path.as_path()
+                                        || (path.is_dir() && p.starts_with(&path))
+                                })
+                                .unwrap_or(false)
+                        })
+                        .map(|t| t.id.clone())
+                        .collect();
+                    let mut any = false;
+                    for id in affected {
+                        if !self.tab_is_dirty(&id) {
+                            self.close_tab(&id);
+                            any = true;
+                        }
+                    }
+                    if any {
+                        self.rebuild_dock();
+                    }
+                    self.toasts
+                        .push(crate::editor::toast::Toast::success(format!(
+                            "Deleted {name}"
+                        )));
+                    self.request_tree_refresh();
+                }
+                Err(e) => {
+                    self.toasts.push(crate::editor::toast::Toast::error(e));
+                }
+            }
+            self.pending_tree_delete = None;
+        } else if !open {
+            self.pending_tree_delete = None;
+        }
+    }
+
     /// Render a file tree node with a case-insensitive filter. Directories are
-    /// expanded only if they (or their descendants) contain a match.
+    /// expanded only if they (or their descendants) contain a match. Filtered
+    /// rows get the same right-click menu as the unfiltered tree.
     pub(crate) fn render_file_tree_node_filtered(
         ui: &mut egui::Ui,
         node: &FileNode,
@@ -1437,6 +2144,8 @@ impl VelocityApp {
         path_string: &mut String,
         palette: crate::editor::theme::IdePalette,
         filter: &str,
+        actions: &mut Vec<crate::editor::file_ops::TreeAction>,
+        decorations: &std::collections::HashMap<PathBuf, crate::editor::git_ui::GitFileStatus>,
     ) {
         let filter_lower = filter.to_lowercase();
         Self::render_file_tree_node_filtered_inner(
@@ -1446,6 +2155,8 @@ impl VelocityApp {
             path_string,
             palette,
             &filter_lower,
+            actions,
+            decorations,
         );
     }
 
@@ -1456,6 +2167,8 @@ impl VelocityApp {
         path_string: &mut String,
         palette: crate::editor::theme::IdePalette,
         filter_lower: &str,
+        actions: &mut Vec<crate::editor::file_ops::TreeAction>,
+        decorations: &std::collections::HashMap<PathBuf, crate::editor::git_ui::GitFileStatus>,
     ) -> bool {
         if node.is_dir {
             if let Some(children) = &node.children {
@@ -1468,6 +2181,8 @@ impl VelocityApp {
                         path_string,
                         palette,
                         filter_lower,
+                        actions,
+                        decorations,
                     ) {
                         any_child_matched = true;
                     }
@@ -1485,19 +2200,29 @@ impl VelocityApp {
             let name_lower = node.name.to_lowercase();
             if name_lower.contains(filter_lower) || rel.to_lowercase().contains(filter_lower) {
                 let icon = crate::editor::search::icon_for_path(&node.path);
-                if ui
-                    .add(
-                        egui::Button::new(
-                            egui::RichText::new(format!("{} {}", icon, rel))
-                                .size(9.0)
-                                .color(palette.text),
-                        )
-                        .frame(false),
+                let status = decorations.get(&node.path);
+                let text_color = status
+                    .map(|s| {
+                        let (r, g, b) = s.decoration_rgb();
+                        egui::Color32::from_rgb(r, g, b)
+                    })
+                    .unwrap_or(palette.text);
+                let resp = ui.add(
+                    egui::Button::new(
+                        egui::RichText::new(format!("{} {}", icon, rel))
+                            .size(9.0)
+                            .color(text_color),
                     )
-                    .clicked()
-                {
+                    .frame(false),
+                );
+                if resp.clicked() {
                     *path_string = rel;
                 }
+                let resp = match status {
+                    Some(status) => resp.on_hover_text(status.label()),
+                    None => resp,
+                };
+                resp.context_menu(|ui| Self::tree_context_menu(ui, &node.path, false, actions));
                 true
             } else {
                 false
@@ -1688,6 +2413,12 @@ impl VelocityApp {
         if self.references_open {
             up.push("references");
         }
+        if self.rename_open {
+            up.push("rename symbol");
+        }
+        if self.code_actions_open {
+            up.push("code actions");
+        }
         if self.show_shortcuts {
             up.push("keyboard shortcuts");
         }
@@ -1751,6 +2482,8 @@ impl VelocityApp {
         self.goto_line_open = false;
         self.goto_symbol_open = false;
         self.references_open = false;
+        self.rename_open = false;
+        self.code_actions_open = false;
         self.show_shortcuts = false;
         // Standing down the hygiene overlay cancels it — same as its Cancel
         // button or Escape: nothing is deleted on the way out, even mid-confirm.
@@ -1768,5 +2501,170 @@ impl VelocityApp {
             }
         }
         closed
+    }
+
+    /// Git branch switcher overlay: filterable list of branches with
+    /// keyboard navigation, Enter to checkout, and 'n' to create new.
+    pub fn branch_switcher_ui(&mut self, ctx: &egui::Context) {
+        if !self.branch_switcher_open {
+            return;
+        }
+        let palette = self.palette();
+        let area = egui::Area::new(egui::Id::new("branch_switcher_area"))
+            .order(egui::Order::Foreground)
+            .anchor(egui::Align2::CENTER_TOP, egui::Vec2::new(0.0, 100.0));
+
+        let mut open = self.branch_switcher_open;
+        let mut checkout: Option<String> = None;
+        let mut create: Option<String> = None;
+
+        area.show(ctx, |ui| {
+            egui::Frame::popup(ui.style())
+                .fill(ui.visuals().code_bg_color)
+                .stroke(ui.visuals().window_stroke)
+                .inner_margin(egui::Margin::same(10))
+                .corner_radius(egui::CornerRadius::same(12))
+                .show(ui, |ui| {
+                    ui.set_width(320.0);
+
+                    if self.branch_creating {
+                        // ── Create-new-branch mode ──
+                        ui.label(
+                            egui::RichText::new("Create new branch")
+                                .size(13.0)
+                                .strong()
+                                .color(palette.accent),
+                        );
+                        ui.add_space(4.0);
+                        let resp = ui.add(
+                            egui::TextEdit::singleline(&mut self.branch_new_name)
+                                .hint_text("Branch name\u{2026}")
+                                .desired_width(300.0),
+                        );
+                        if self.branch_just_opened {
+                            resp.request_focus();
+                            self.branch_just_opened = false;
+                        }
+                        if ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+                            create = Some(self.branch_new_name.trim().to_string());
+                            open = false;
+                        } else if ui.input(|i| i.key_pressed(egui::Key::Escape)) {
+                            // Go back to list mode.
+                            self.branch_creating = false;
+                            self.branch_just_opened = true;
+                        }
+                    } else {
+                        // ── Branch list mode ──
+                        ui.label(
+                            egui::RichText::new("Switch Branch")
+                                .size(13.0)
+                                .strong()
+                                .color(palette.accent),
+                        );
+                        ui.add_space(4.0);
+                        let resp = ui.add(
+                            egui::TextEdit::singleline(&mut self.branch_filter)
+                                .hint_text("Filter branches\u{2026}")
+                                .desired_width(300.0),
+                        );
+                        if self.branch_just_opened {
+                            resp.request_focus();
+                            self.branch_just_opened = false;
+                        }
+                        ui.add_space(4.0);
+
+                        let visible = self.visible_branches();
+                        // Clamp selection.
+                        if self.branch_selected >= visible.len() {
+                            self.branch_selected = visible.len().saturating_sub(1);
+                        }
+
+                        let max_items = 12;
+                        let scroll_offset = self.branch_selected.saturating_sub(max_items - 1);
+                        let window =
+                            &visible[scroll_offset..(scroll_offset + max_items).min(visible.len())];
+
+                        for (i, name) in window.iter().enumerate() {
+                            let abs_idx = scroll_offset + i;
+                            let is_sel = abs_idx == self.branch_selected;
+                            let text = if is_sel {
+                                egui::RichText::new(name.as_str())
+                                    .size(12.0)
+                                    .strong()
+                                    .color(palette.text)
+                            } else {
+                                egui::RichText::new(name.as_str())
+                                    .size(12.0)
+                                    .color(palette.text_muted)
+                            };
+                            let row = ui.add(egui::Label::new(text).selectable(false));
+                            if is_sel {
+                                let rect = row.rect;
+                                ui.painter().rect_filled(
+                                    egui::Rect::from_min_size(
+                                        egui::pos2(rect.min.x - 4.0, rect.min.y),
+                                        egui::vec2(ui.available_width() + 8.0, rect.height()),
+                                    ),
+                                    3.0,
+                                    palette.accent.gamma_multiply(0.15),
+                                );
+                            }
+                            if row.clicked() {
+                                checkout = Some(name.clone());
+                                open = false;
+                            }
+                        }
+
+                        // Keyboard navigation.
+                        if ui.input(|i| i.key_pressed(egui::Key::ArrowDown)) {
+                            self.branch_selected =
+                                (self.branch_selected + 1).min(visible.len().saturating_sub(1));
+                        }
+                        if ui.input(|i| i.key_pressed(egui::Key::ArrowUp)) {
+                            self.branch_selected = self.branch_selected.saturating_sub(1);
+                        }
+                        if ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+                            if let Some(name) = visible.get(self.branch_selected) {
+                                checkout = Some(name.clone());
+                                open = false;
+                            }
+                        }
+                        if ui.input(|i| i.key_pressed(egui::Key::Escape)) {
+                            open = false;
+                        }
+                        // 'n' opens create-new mode (only when filter is empty so
+                        // typing 'n' in the filter still works).
+                        if self.branch_filter.is_empty()
+                            && ui.input(|i| i.key_pressed(egui::Key::N))
+                        {
+                            self.branch_creating = true;
+                            self.branch_just_opened = true;
+                            self.branch_new_name.clear();
+                        }
+                    }
+
+                    // Hint line.
+                    ui.add_space(4.0);
+                    ui.label(
+                        egui::RichText::new("↑↓ navigate · Enter checkout · n new · Esc close")
+                            .size(10.0)
+                            .color(palette.text_muted),
+                    );
+                });
+        });
+
+        if let Some(name) = checkout {
+            self.branch_selected = self
+                .branch_list
+                .iter()
+                .position(|b| b == &name)
+                .unwrap_or(0);
+            self.do_checkout_branch();
+        }
+        if let Some(name) = create {
+            self.branch_new_name = name;
+            self.do_create_branch();
+        }
+        self.branch_switcher_open = open;
     }
 }

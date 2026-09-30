@@ -10,11 +10,10 @@
 //!   * character classes `[abc]`, ranges `[a-z]`, negation `[^...]`
 //!   * class shorthands `\d \D \w \W \s \S` (also usable inside `[...]`)
 //!   * anchors `^` and `$` (line-anchored: match at start/end of any line)
-//!   * grouping `( ... )` and alternation `a|b`
+//!   * grouping `( ... )` and alternation `a|b`, with capture groups exposed
+//!     through [`Regex::find_all_caps`] for `$1`-style replacement expansion
+//!   * non-capturing groups `(?: ... )`
 //!   * greedy quantifiers `*`, `+`, `?`, `{n}`, `{n,}`, `{n,m}`
-//!
-//! Capturing is not exposed — Find & Replace only needs whole-match spans, so
-//! the replacement is inserted literally.
 
 use std::collections::HashSet;
 
@@ -94,6 +93,9 @@ enum Ast {
     End,
     Concat(Vec<Ast>),
     Alt(Vec<Ast>),
+    /// A capturing group with its 0-based index; compiles to bracketing
+    /// [`Inst::Save`] marks around the body.
+    Group(usize, Box<Ast>),
     Repeat {
         node: Box<Ast>,
         min: usize,
@@ -108,6 +110,9 @@ struct Parser {
     chars: Vec<char>,
     pos: usize,
     classes: Vec<CharClass>,
+    /// Number of capturing groups seen so far; groups are numbered by their
+    /// opening parenthesis, left to right (standard regex semantics).
+    n_groups: usize,
 }
 
 impl Parser {
@@ -116,6 +121,7 @@ impl Parser {
             chars: pattern.chars().collect(),
             pos: 0,
             classes: Vec::new(),
+            n_groups: 0,
         }
     }
 
@@ -256,20 +262,34 @@ impl Parser {
             Some('(') => {
                 self.bump();
                 // Support non-capturing group prefix (?:...) transparently.
+                let mut capturing = true;
                 if self.peek() == Some('?') {
                     let save = self.pos;
                     self.bump();
                     if self.peek() == Some(':') {
                         self.bump();
+                        capturing = false;
                     } else {
                         self.pos = save;
                     }
                 }
+                // Number the group at its opening paren (before parsing the
+                // body), so nested groups keep standard left-to-right numbering.
+                let gi = if capturing {
+                    let g = self.n_groups;
+                    self.n_groups += 1;
+                    Some(g)
+                } else {
+                    None
+                };
                 let inner = self.parse_alt()?;
                 if self.bump() != Some(')') {
                     return Err("unclosed group".to_string());
                 }
-                Ok(inner)
+                match gi {
+                    Some(g) => Ok(Ast::Group(g, Box::new(inner))),
+                    None => Ok(inner),
+                }
             }
             Some('[') => self.parse_class(),
             Some('.') => {
@@ -393,6 +413,9 @@ enum Inst {
     Jmp(usize),
     /// Try `x` first (greedy), then fall back to `y`.
     Split(usize, usize),
+    /// Record the current position into capture slot `usize` (group start/end
+    /// marks come in 2k / 2k+1 pairs).
+    Save(usize),
     Match,
 }
 
@@ -402,6 +425,7 @@ pub struct Regex {
     insts: Vec<Inst>,
     classes: Vec<CharClass>,
     case_insensitive: bool,
+    n_groups: usize,
 }
 
 struct Compiler {
@@ -460,6 +484,11 @@ impl Compiler {
                     self.insts[j] = Inst::Jmp(end);
                 }
             }
+            Ast::Group(i, inner) => {
+                self.emit(Inst::Save(2 * i));
+                self.compile(inner);
+                self.emit(Inst::Save(2 * i + 1));
+            }
             Ast::Repeat { node, min, max } => {
                 self.compile_repeat(node, *min, *max);
             }
@@ -513,23 +542,42 @@ impl Regex {
             insts: compiler.insts,
             classes: parser.classes,
             case_insensitive,
+            n_groups: parser.n_groups,
         })
     }
 
-    /// Attempt a match anchored at char index `start`; returns the end char
-    /// index on success.
-    fn run_at(&self, chars: &[char], start: usize) -> Option<usize> {
-        let mut stack: Vec<(usize, usize)> = vec![(0, start)];
+    /// Core backtracking execution. When `capture` is set, [`Inst::Save`]
+    /// records positions into per-path capture slots: every stack entry
+    /// carries a log checkpoint, and the slot state is rolled back on branch
+    /// switch so a group keeps the spans of the path that actually completed.
+    /// The `(pc, pos)` dead-state memo stays valid with captures: whether a
+    /// continuation reaches Match depends only on `(pc, pos)`, never on what
+    /// earlier groups on the path recorded.
+    fn exec(
+        &self,
+        chars: &[char],
+        start: usize,
+        capture: bool,
+    ) -> Option<(usize, Vec<Option<usize>>)> {
+        let mut caps: Vec<Option<usize>> = vec![None; if capture { self.n_groups * 2 } else { 0 }];
+        let mut log: Vec<(usize, Option<usize>)> = Vec::new();
+        // Stack entries: (pc, pos, capture-log checkpoint).
+        let mut stack: Vec<(usize, usize, usize)> = vec![(0, start, 0)];
         // Memoize dead `(pc, pos)` states: behaviour depends only on that pair,
         // so a state that failed once can never succeed later.
         let mut dead: HashSet<(usize, usize)> = HashSet::new();
-        while let Some((mut pc, mut pos)) = stack.pop() {
+        while let Some((mut pc, mut pos, mark)) = stack.pop() {
+            // Undo saves from the previously explored branch.
+            while log.len() > mark {
+                let (slot, prev) = log.pop().unwrap();
+                caps[slot] = prev;
+            }
             loop {
                 if !dead.insert((pc, pos)) {
                     break;
                 }
                 match &self.insts[pc] {
-                    Inst::Match => return Some(pos),
+                    Inst::Match => return Some((pos, caps)),
                     Inst::Char(c) => {
                         if pos < chars.len() && char_eq(*c, chars[pos], self.case_insensitive) {
                             pc += 1;
@@ -573,9 +621,16 @@ impl Regex {
                     Inst::Jmp(x) => {
                         pc = *x;
                     }
+                    Inst::Save(slot) => {
+                        if capture {
+                            log.push((*slot, caps[*slot]));
+                            caps[*slot] = Some(pos);
+                        }
+                        pc += 1;
+                    }
                     Inst::Split(x, y) => {
                         // Explore `x` first (greedy); `y` is the fallback.
-                        stack.push((*y, pos));
+                        stack.push((*y, pos, log.len()));
                         pc = *x;
                     }
                 }
@@ -587,6 +642,20 @@ impl Regex {
     /// Find all non-overlapping, left-to-right matches in `text`. Returns byte
     /// spans `(start, end)` suitable for slicing the original string.
     pub fn find_all(&self, text: &str) -> Vec<(usize, usize)> {
+        self.scan(text, false)
+            .into_iter()
+            .map(|m| m.span())
+            .collect()
+    }
+
+    /// Like [`Self::find_all`] but also returns each match's capture-group
+    /// byte spans (indexed by group number; `None` for a group that the
+    /// winning path never executed, e.g. inside `(a)?`).
+    pub fn find_all_caps(&self, text: &str) -> Vec<RegexMatch> {
+        self.scan(text, self.n_groups > 0)
+    }
+
+    fn scan(&self, text: &str, capture: bool) -> Vec<RegexMatch> {
         let chars: Vec<char> = text.chars().collect();
         // char index -> byte offset (with a trailing entry for end-of-text).
         let mut byte_at = Vec::with_capacity(chars.len() + 1);
@@ -600,8 +669,25 @@ impl Regex {
         let mut out = Vec::new();
         let mut i = 0usize;
         while i <= chars.len() {
-            if let Some(end) = self.run_at(&chars, i) {
-                out.push((byte_at[i], byte_at[end]));
+            if let Some((end, caps)) = self.exec(&chars, i, capture) {
+                // With capture off the slot vec is empty: report all-groups
+                // `None` rather than indexing into it (`find_all` discards
+                // these spans anyway).
+                let groups: Vec<Option<(usize, usize)>> = if caps.is_empty() {
+                    vec![None; self.n_groups]
+                } else {
+                    (0..self.n_groups)
+                        .map(|g| match (caps[2 * g], caps[2 * g + 1]) {
+                            (Some(a), Some(e)) if e >= a => Some((byte_at[a], byte_at[e])),
+                            _ => None,
+                        })
+                        .collect()
+                };
+                out.push(RegexMatch {
+                    start: byte_at[i],
+                    end: byte_at[end],
+                    groups,
+                });
                 if end > i {
                     i = end;
                 } else {
@@ -612,6 +698,25 @@ impl Regex {
             }
         }
         out
+    }
+}
+
+/// One match of a pattern in a haystack, with its capture-group byte spans.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RegexMatch {
+    /// Byte offset where the whole match starts.
+    pub start: usize,
+    /// Byte offset where the whole match ends (exclusive).
+    pub end: usize,
+    /// Per-group byte spans, indexed by capture-group number (group 1 is
+    /// `groups[0]`). `None` when the winning path skipped the group.
+    pub groups: Vec<Option<(usize, usize)>>,
+}
+
+impl RegexMatch {
+    /// The whole-match span, matching `find_all`'s tuple shape.
+    pub fn span(&self) -> (usize, usize) {
+        (self.start, self.end)
     }
 }
 
@@ -651,6 +756,65 @@ mod tests {
     fn alternation_and_group() {
         assert_eq!(spans("cat|dog", "a cat and a dog", false).len(), 2);
         assert_eq!(spans("(ab)+", "ababab x ab", false).len(), 2);
+    }
+
+    #[test]
+    fn capture_groups_record_spans() {
+        // Two groups swap around in the input: spans follow each match.
+        let re = Regex::compile(r"(\w+) (\w+)", false).unwrap();
+        let ms = re.find_all_caps("hi there bob joe");
+        assert_eq!(ms.len(), 2);
+        assert_eq!(ms[0].groups[0], Some((0, 2))); // "hi"
+        assert_eq!(ms[0].groups[1], Some((3, 8))); // "there"
+        assert_eq!(ms[1].groups[0], Some((9, 12))); // "bob"
+        assert_eq!(ms[1].groups[1], Some((13, 16))); // "joe"
+    }
+
+    #[test]
+    fn capture_groups_are_per_match_and_backtrack_clean() {
+        // Inside an alternation, only the winning branch's group has a span;
+        // a losing branch's partial saves must be rolled back.
+        let re = Regex::compile(r"(a)|(b)c", false).unwrap();
+        let ms = re.find_all_caps("ac bc");
+        assert_eq!(ms.len(), 2);
+        assert_eq!(ms[0].groups[0], Some((0, 1))); // "a" matched branch 1
+        assert_eq!(ms[0].groups[1], None);
+        assert_eq!(ms[1].groups[0], None);
+        assert_eq!(ms[1].groups[1], Some((3, 4))); // "b" matched branch 2
+    }
+
+    #[test]
+    fn nested_group_numbering_is_by_open_paren() {
+        // Group order: outer `(a(b))?` is 1, inner `(b)` is 2.
+        let re = Regex::compile(r"(x(y)?)z", false).unwrap();
+        let ms = re.find_all_caps("xyz xz");
+        assert_eq!(ms[0].groups[0], Some((0, 2))); // "xy"
+        assert_eq!(ms[0].groups[1], Some((1, 2))); // "y"
+                                                   // The optional inner group never ran on the second match.
+        assert_eq!(ms[1].groups[0], Some((4, 5))); // "x"
+        assert_eq!(ms[1].groups[1], None);
+    }
+
+    #[test]
+    fn non_capturing_groups_are_not_numbered() {
+        let re = Regex::compile(r"(?:a)+b(c)", false).unwrap();
+        let ms = re.find_all_caps("aabcz");
+        assert_eq!(ms.len(), 1);
+        // Only the one real capturing group exists.
+        assert_eq!(ms[0].groups.len(), 1);
+        assert_eq!(ms[0].groups[0], Some((3, 4)));
+    }
+
+    #[test]
+    fn find_all_matches_find_all_caps_spans() {
+        // The span-only fast path must agree with the capturing scan.
+        let re = Regex::compile(r"(a)(b)+", false).unwrap();
+        let text = "ab abab abb";
+        let plain = re.find_all(text);
+        let capped: Vec<_> = re.find_all_caps(text).iter().map(|m| m.span()).collect();
+        assert_eq!(plain, capped);
+        // "ab", then twice inside "abab", then "abb" (greedy `(b)+`).
+        assert_eq!(plain.len(), 4);
     }
 
     #[test]

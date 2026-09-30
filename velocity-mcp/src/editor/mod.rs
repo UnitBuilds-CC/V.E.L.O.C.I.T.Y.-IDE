@@ -45,6 +45,7 @@ pub mod sidebar_tabs;
 
 // IDE Core Editor Capabilities
 pub mod auto_indent;
+pub mod blame;
 pub mod bracket_match;
 pub mod breadcrumbs;
 pub mod browse_panel;
@@ -55,15 +56,20 @@ pub mod continuation_ledger;
 pub mod debugger;
 pub mod deploy_pipeline;
 pub mod diagnostics;
+pub mod diff_view;
+pub mod editor_menu;
 pub mod extensions;
+pub mod file_ops;
 pub mod file_watcher;
 pub mod find_replace;
 pub mod git_ui;
 pub mod governance;
+pub mod hot_exit;
 pub mod inline_suggestions;
 pub mod keybindings;
 pub mod knowledge_base;
 pub mod line_index;
+pub mod line_ops;
 pub mod live_orchestration;
 pub mod lsp_client;
 pub mod minimap;

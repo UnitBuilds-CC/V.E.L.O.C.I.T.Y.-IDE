@@ -441,6 +441,103 @@ fn stop_task_updates_runtime_status() {
 }
 
 #[test]
+fn watchdog_cancels_then_fails_a_hung_worker() {
+    // Mirrors the agent_eval failure mode: a worker thread that stays alive
+    // but stops making progress, leaving the task in `Running` unstopped.
+    let temp = tempfile::tempdir().unwrap();
+    let mediator = std::sync::Arc::new(crate::automation::mediator::MediatorArena::new());
+    let mut panel = OrchestratorPanel::new();
+    panel.graph = TaskGraph::default();
+    panel.graph.root = TaskId(2);
+    panel
+        .graph
+        .add(TaskId(2), "worker", "worker", vec![], vec![], None);
+    panel.registry = Some(OrchestratorRegistry::new(&panel.graph));
+    panel
+        .registry
+        .as_mut()
+        .unwrap()
+        .statuses
+        .insert(TaskId(2), TaskStatus::Running);
+    panel.running_workers.insert(
+        TaskId(2),
+        Box::new(StubWorkerHandle {
+            snapshot: WorkerThreadSnapshot::default(),
+            cancelled: false,
+            notes: Vec::new(),
+        }),
+    );
+
+    // Seed the watchdog as already stalled past WORKER_STALL_TIMEOUT (10 min).
+    let mut watchdog = super::panel::struct_def::WorkerWatchdog::new(0);
+    watchdog.last_activity = std::time::Instant::now() - std::time::Duration::from_secs(11 * 60);
+    panel.worker_watchdog.insert(TaskId(2), watchdog);
+
+    // First pass: the watchdog requests a cancel but gives the worker its
+    // grace period, so the task must still be Running.
+    panel.poll_live_workers(temp.path(), &mediator);
+    assert!(panel.running_workers.contains_key(&TaskId(2)));
+    assert!(matches!(
+        panel.registry.as_ref().unwrap().statuses.get(&TaskId(2)),
+        Some(TaskStatus::Running)
+    ));
+    assert!(panel
+        .worker_watchdog
+        .get(&TaskId(2))
+        .unwrap()
+        .reason
+        .is_some());
+
+    // Second pass with the cancel aged past WORKER_CANCEL_GRACE (60 s): the
+    // hung task is failed and its handle dropped.
+    panel
+        .worker_watchdog
+        .get_mut(&TaskId(2))
+        .unwrap()
+        .cancel_sent_at = Some(std::time::Instant::now() - std::time::Duration::from_secs(61));
+    panel.poll_live_workers(temp.path(), &mediator);
+    assert!(!panel.running_workers.contains_key(&TaskId(2)));
+    assert!(!panel.worker_watchdog.contains_key(&TaskId(2)));
+    match panel.registry.as_ref().unwrap().statuses.get(&TaskId(2)) {
+        Some(TaskStatus::Failed(result)) => {
+            assert!(!result.success);
+            assert!(result.message.contains("worker hung"), "{}", result.message);
+            assert!(result.message.contains("no progress"), "{}", result.message);
+        }
+        other => panic!("expected Failed, got {other:?}"),
+    }
+}
+
+#[test]
+fn detached_worker_channel_reports_failure() {
+    // A worker thread that panicked drops the result sender; polling the
+    // handle must synthesize a failure instead of returning None forever.
+    let (tx, rx) = std::sync::mpsc::channel::<WorkerResult>();
+    drop(tx);
+    let (control_tx, _control_rx) = crossbeam_channel::unbounded();
+    let mut handle = crate::orchestrator::worker::types::LiveWorkerHandle {
+        rx,
+        control_tx,
+        cancel_sent: false,
+        progress: std::sync::Arc::new(std::sync::Mutex::new(
+            crate::agent::HeadlessSubAgentProgress::default(),
+        )),
+        task_id: TaskId(9),
+    };
+
+    let result = handle
+        .poll()
+        .expect("a detached channel must report a result");
+    assert!(!result.success);
+    assert_eq!(result.task_id, TaskId(9));
+    assert!(
+        result.message.contains("without reporting"),
+        "{}",
+        result.message
+    );
+}
+
+#[test]
 fn reset_task_clears_outputs_and_running_handle() {
     let mut panel = OrchestratorPanel::new();
     panel.graph = TaskGraph::default();

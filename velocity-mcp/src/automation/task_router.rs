@@ -73,7 +73,10 @@ impl SiteMapTaskRouter {
             .get(&policy.instruction_template_id)
             .or_else(|| self.instruction_registry.for_kind(kind))
             .or_else(|| self.instruction_registry.templates().first());
-        let partitions = partition_files_by_policy(files, site_map, policy.decomposition_style);
+        let partitions = consolidate_partitions(
+            partition_files_by_policy(files, site_map, policy.decomposition_style),
+            MAX_ROUTED_TASKS,
+        );
         let ranked_models = rank_candidates(kind, catalogs);
 
         partitions
@@ -137,6 +140,47 @@ pub fn partition_files_by_policy(
         DecompositionStyle::CoupledComponents => partition_files_by_coupling(files, site_map),
         DecompositionStyle::SequentialPipeline => vec![files.to_vec()],
     }
+}
+
+/// Ceiling on routed tasks per plan. Above it a "plan" is really a file sweep:
+/// the Sept 2026 agent_eval run turned one goal into 13 one-file tasks, each
+/// rediscovering the workspace from scratch.
+pub const MAX_ROUTED_TASKS: usize = 8;
+
+/// Collapse an explosion of per-file partitions into module-sized ones.
+/// First groups by parent directory (a directory is the cheapest honest proxy
+/// for a semantic module when the SiteMap has no coupling edges), then merges
+/// the smallest groups until the ceiling is met. A plan already under the
+/// ceiling is returned untouched, so coupling-based splits are never undone.
+pub fn consolidate_partitions(
+    partitions: Vec<Vec<PathBuf>>,
+    max_tasks: usize,
+) -> Vec<Vec<PathBuf>> {
+    if partitions.len() <= max_tasks.max(1) {
+        return partitions;
+    }
+    let mut groups: Vec<(String, Vec<PathBuf>)> = Vec::new();
+    for partition in partitions {
+        let dir = partition
+            .first()
+            .and_then(|file| file.parent())
+            .map(canonicalize_scope_path)
+            .unwrap_or_else(|| ".".to_string());
+        match groups.iter_mut().find(|(group, _)| *group == dir) {
+            Some(entry) => entry.1.extend(partition),
+            None => groups.push((dir, partition)),
+        }
+    }
+    while groups.len() > max_tasks {
+        groups.sort_by_key(|group| std::cmp::Reverse(group.1.len()));
+        let (_, smallest) = groups.pop().expect("groups longer than max_tasks");
+        groups
+            .first_mut()
+            .expect("groups not empty")
+            .1
+            .extend(smallest);
+    }
+    groups.into_iter().map(|(_, files)| files).collect()
 }
 
 pub fn partition_files_by_coupling(files: &[PathBuf], site_map: &SiteMap) -> Vec<Vec<PathBuf>> {
@@ -647,5 +691,34 @@ mod tests {
         assert!(routes
             .iter()
             .all(|route| route.decomposition_style == DecompositionStyle::IsolatedFiles));
+    }
+
+    #[test]
+    fn consolidates_per_file_partitions_to_module_groups() {
+        // Twelve single-file partitions across three directories: the shape
+        // the agent_eval planner produced for one goal, one task per file.
+        let partitions: Vec<Vec<PathBuf>> = [
+            "src/a", "src/b", "src/c", "src/d", "src/e", "src/f", "src/g", "src/h", "src/i",
+            "fd_poc/x", "fd_poc/y", "docs/z",
+        ]
+        .iter()
+        .map(|path| vec![PathBuf::from(path)])
+        .collect();
+
+        let consolidated = consolidate_partitions(partitions, 2);
+        assert_eq!(consolidated.len(), 2);
+        let total: usize = consolidated.iter().map(|group| group.len()).sum();
+        assert_eq!(total, 12, "no file may be dropped by consolidation");
+        assert!(consolidated.iter().any(|group| group.len() >= 9));
+    }
+
+    #[test]
+    fn consolidation_is_a_noop_under_the_ceiling() {
+        let partitions = vec![
+            vec![PathBuf::from("src/a.rs")],
+            vec![PathBuf::from("src/b.rs")],
+        ];
+        let consolidated = consolidate_partitions(partitions.clone(), MAX_ROUTED_TASKS);
+        assert_eq!(consolidated, partitions);
     }
 }

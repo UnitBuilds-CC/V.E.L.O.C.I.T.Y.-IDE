@@ -15,6 +15,18 @@ use egui::RichText;
 impl VelocityApp {
     // ── Activity Bar Sub-Panels (full implementations) ──
 
+    /// Drop the cached tree and rebuild it in the background. Used by the
+    /// refresh button and after any on-disk change from the explorer menu.
+    pub fn request_tree_refresh(&mut self) {
+        self.file_tree = None;
+        let root = self.workspace_root.clone();
+        let tx = self.file_tree_tx.clone();
+        std::thread::spawn(move || {
+            let tree = super::super::helpers::build_file_tree(&root);
+            let _ = tx.send((tree, Some(std::time::SystemTime::now())));
+        });
+    }
+
     pub fn render_file_tree_subpanel(&mut self, ui: &mut egui::Ui, palette: IdePalette) {
         // Poll the background tree builder for updates.
         while let Ok((tree, _ts)) = self.file_tree_rx.try_recv() {
@@ -41,13 +53,7 @@ impl VelocityApp {
                     .on_hover_text("Refresh tree")
                     .clicked()
                 {
-                    self.file_tree = None;
-                    let root = self.workspace_root.clone();
-                    let tx = self.file_tree_tx.clone();
-                    std::thread::spawn(move || {
-                        let tree = super::super::helpers::build_file_tree(&root);
-                        let _ = tx.send((tree, Some(std::time::SystemTime::now())));
-                    });
+                    self.request_tree_refresh();
                 }
             });
         });
@@ -87,6 +93,8 @@ impl VelocityApp {
 
         if let Some(tree) = &self.file_tree {
             let mut path_string = String::new();
+            let mut tree_actions = Vec::new();
+            let decorations = self.git_state.decorations(&self.workspace_root);
             let filter = self.file_tree_filter.clone();
             egui::ScrollArea::vertical().show(ui, |ui| {
                 if filter.is_empty() {
@@ -96,6 +104,8 @@ impl VelocityApp {
                         &self.workspace_root,
                         &mut path_string,
                         palette,
+                        &mut tree_actions,
+                        &decorations,
                     );
                 } else {
                     // Render filtered tree
@@ -106,9 +116,16 @@ impl VelocityApp {
                         &mut path_string,
                         palette,
                         &filter,
+                        &mut tree_actions,
+                        &decorations,
                     );
                 }
             });
+            // Right-click menu requests execute centrally (with dialogs and
+            // confirmations), never inside the row renderer.
+            if !tree_actions.is_empty() {
+                self.run_tree_actions(ui.ctx(), tree_actions);
+            }
             // Clicking a file row only records its relative path (the renderer
             // has no `self`); open it here now that the borrow on `file_tree`
             // has ended. Previously this string was written and discarded, so
@@ -300,6 +317,110 @@ impl VelocityApp {
         }
     }
 
+    /// Document Outline for the active editor: a language-light list of the
+    /// file's top-level definitions, each row clickable to jump the caret to
+    /// its line. The sidebar counterpart of the breadcrumb's enclosing symbol —
+    /// it shows the whole-file structure at a glance, like the Outline view in
+    /// every major editor. Synchronous (keyword scan, no language server), so it
+    /// is populated the instant a file is open and works offline for any
+    /// language the keyword table covers.
+    pub fn render_outline_subpanel(&mut self, ui: &mut egui::Ui, palette: IdePalette) {
+        // Snapshot the symbols up front: reading `self.buffers` borrows `self`
+        // immutably, but a row click runs a `&mut self` jump, so the list is
+        // computed before the draw closure and the navigation happens after it
+        // (the same collect-then-run discipline as the editor context menu).
+        let active_symbols: Option<(String, Vec<crate::editor::search::FileSymbol>)> = self
+            .active_tab
+            .as_ref()
+            .and_then(|id| self.buffers.get(id))
+            .map(|buf| {
+                let label = buf
+                    .path
+                    .as_ref()
+                    .and_then(|p| p.file_name())
+                    .map(|n| n.to_string_lossy().to_string())
+                    .unwrap_or_else(|| "untitled".to_string());
+                (
+                    label,
+                    crate::editor::search::extract_file_symbols(buf.content()),
+                )
+            });
+
+        let Some((file_label, symbols)) = active_symbols else {
+            ui.add_space(16.0);
+            ui.vertical_centered(|ui| {
+                ui.label(
+                    RichText::new(egui_phosphor::regular::LIST_BULLETS)
+                        .size(24.0)
+                        .color(palette.text_muted.gamma_multiply(0.5)),
+                );
+                ui.add_space(ITEM_SPACING);
+                ui.label(
+                    RichText::new("Open a file to see its outline")
+                        .color(palette.text_muted)
+                        .size(FONT_SMALL),
+                );
+            });
+            return;
+        };
+
+        ui.horizontal(|ui| {
+            ui.label(
+                RichText::new(format!("{} · {} symbol(s)", file_label, symbols.len()))
+                    .size(FONT_SMALL)
+                    .color(palette.text_muted),
+            );
+        });
+        ui.add_space(ITEM_SPACING);
+
+        if symbols.is_empty() {
+            ui.add_space(12.0);
+            ui.label(
+                RichText::new("No top-level definitions found")
+                    .color(palette.text_muted)
+                    .size(FONT_SMALL),
+            );
+            return;
+        }
+
+        let mut jump_line: Option<usize> = None;
+        egui::ScrollArea::vertical().show(ui, |ui| {
+            for sym in &symbols {
+                ui.horizontal(|ui| {
+                    ui.label(
+                        RichText::new(sym.kind)
+                            .size(9.0)
+                            .color(palette.accent)
+                            .monospace(),
+                    );
+                    if ui
+                        .selectable_label(
+                            false,
+                            RichText::new(&sym.name)
+                                .size(FONT_SMALL)
+                                .color(palette.text),
+                        )
+                        .on_hover_text(format!("Go to line {}", sym.line))
+                        .clicked()
+                    {
+                        jump_line = Some(sym.line);
+                    }
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        ui.label(
+                            RichText::new(format!("{}", sym.line))
+                                .size(9.0)
+                                .color(palette.text_muted.gamma_multiply(0.7)),
+                        );
+                    });
+                });
+            }
+        });
+
+        if let Some(line) = jump_line {
+            self.jump_to_line_in_active(line);
+        }
+    }
+
     pub fn render_code_graph_subpanel(&mut self, ui: &mut egui::Ui, palette: IdePalette) {
         let _action = self.graph_view.ui(ui, &self.workspace_root, palette);
     }
@@ -408,6 +529,13 @@ impl VelocityApp {
             // ScrollArea swallows the panel's whole remaining height, pushing
             // the Commit / Stage All controls off the bottom edge.
             let list_height = (ui.available_height() - 130.0).max(80.0);
+            // The list borrows `git_state.entries` immutably, so a row's
+            // stage/unstage can't run git in-draw. Record the toggle and apply
+            // it once the ScrollArea has released the borrow.
+            let mut pending_toggle: Option<(std::path::PathBuf, bool)> = None;
+            // Likewise, selecting a file for its diff is deferred out of the
+            // loop so loading it can take `&mut self` freely.
+            let mut pending_diff: Option<std::path::PathBuf> = None;
             egui::ScrollArea::vertical()
                 .id_salt("git_changes_list_scroll")
                 .max_height(list_height)
@@ -425,19 +553,122 @@ impl VelocityApp {
                             crate::editor::git_ui::GitFileStatus::Conflicted => palette.error,
                             _ => palette.text_muted,
                         };
+                        let row_path = entry.path.clone();
+                        let row_staged = entry.staged;
                         ui.horizontal(|ui| {
                             ui.label(RichText::new(icon).size(FONT_SMALL).strong().color(color));
                             if entry.staged {
                                 ui.label(RichText::new("S").size(8.0).color(palette.accent));
                             }
-                            ui.label(
+                            let name_resp = ui.label(
                                 RichText::new(rel.display().to_string())
                                     .size(FONT_SMALL)
                                     .color(palette.text),
                             );
+                            // Click the file to open its diff below; the stage
+                            // button on the right handles itself.
+                            if name_resp.clicked() {
+                                pending_diff = Some(row_path.clone());
+                            }
+                            // Right-aligned stage / unstage toggle that runs the
+                            // real git command, so the panel does what it shows.
+                            ui.with_layout(
+                                egui::Layout::right_to_left(egui::Align::Center),
+                                |ui| {
+                                    let glyph = if row_staged {
+                                        egui_phosphor::regular::MINUS_CIRCLE
+                                    } else {
+                                        egui_phosphor::regular::PLUS_CIRCLE
+                                    };
+                                    let tip = if row_staged {
+                                        "Unstage Changes"
+                                    } else {
+                                        "Stage Changes"
+                                    };
+                                    if ui.small_button(glyph).on_hover_text(tip).clicked() {
+                                        pending_toggle = Some((row_path, row_staged));
+                                    }
+                                },
+                            );
                         });
                     }
                 });
+            if let Some((path, was_staged)) = pending_toggle {
+                if was_staged {
+                    self.git_state.unstage_file(&self.workspace_root, &path);
+                } else {
+                    self.git_state.stage_file(&self.workspace_root, &path);
+                }
+                self.status_message =
+                    crate::editor::git_ui::GitState::stage_toggle_message(!was_staged).to_string();
+            }
+            if let Some(path) = pending_diff {
+                self.load_scm_diff(&path);
+            }
+
+            // Diff viewer: the selected file's changes, coloured add/delete.
+            if let Some(label) = self.scm_diff_label() {
+                ui.add_space(SECTION_SPACING);
+                ui.separator();
+                let mut close_clicked = false;
+                ui.horizontal(|ui| {
+                    ui.label(
+                        RichText::new(format!("Diff: {label}"))
+                            .size(FONT_SMALL)
+                            .strong()
+                            .color(palette.text),
+                    );
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if ui
+                            .small_button(egui_phosphor::regular::X)
+                            .on_hover_text("Close diff")
+                            .clicked()
+                        {
+                            close_clicked = true;
+                        }
+                    });
+                });
+                if close_clicked {
+                    self.scm_diff_path = None;
+                    self.scm_diff_lines.clear();
+                } else {
+                    egui::ScrollArea::vertical()
+                        .id_salt("scm_diff_scroll")
+                        .max_height(180.0)
+                        .show(ui, |ui| {
+                            for line in &self.scm_diff_lines {
+                                let (color, sign) = match line.kind {
+                                    crate::editor::diff_view::DiffLineKind::Add => {
+                                        (palette.success, "+")
+                                    }
+                                    crate::editor::diff_view::DiffLineKind::Delete => {
+                                        (palette.error, "-")
+                                    }
+                                    crate::editor::diff_view::DiffLineKind::HunkHeader => {
+                                        (palette.accent, "")
+                                    }
+                                    crate::editor::diff_view::DiffLineKind::Context => {
+                                        (palette.text_muted, " ")
+                                    }
+                                };
+                                let text = if matches!(
+                                    line.kind,
+                                    crate::editor::diff_view::DiffLineKind::HunkHeader
+                                ) {
+                                    line.text.clone()
+                                } else {
+                                    format!("{sign}{}", line.text)
+                                };
+                                ui.label(
+                                    RichText::new(text)
+                                        .size(FONT_CAPTION)
+                                        .monospace()
+                                        .color(color),
+                                );
+                            }
+                        });
+                }
+            }
 
             // Commit area
             ui.add_space(SECTION_SPACING);
@@ -450,14 +681,24 @@ impl VelocityApp {
                     .desired_width(ui.available_width()),
             );
             ui.horizontal(|ui| {
-                if primary_button(ui, palette, "Commit").clicked()
-                    && !self.git_state.commit_message.trim().is_empty()
-                {
-                    self.status_message =
-                        format!("Committing: {}", self.git_state.commit_message.trim());
-                    self.git_state.commit_message.clear();
+                // A commit needs a staged file and a message; the pure blocker
+                // says which, so the button explains itself instead of lying.
+                let blocker = self.git_state.commit_blocker();
+                let inner = ui.add_enabled_ui(blocker.is_none(), |ui| {
+                    primary_button(ui, palette, "Commit")
+                });
+                let commit_resp = match blocker {
+                    Some(why) => inner.response.on_hover_text(why),
+                    None => inner.response,
+                };
+                if commit_resp.clicked() {
+                    match self.git_state.commit(&self.workspace_root) {
+                        Ok(()) => self.status_message = "Committed changes".to_string(),
+                        Err(e) => self.status_message = format!("Commit failed: {e}"),
+                    }
                 }
                 if secondary_button(ui, palette, "Stage All").clicked() {
+                    self.git_state.stage_all(&self.workspace_root);
                     self.status_message = "All files staged".to_string();
                 }
             });

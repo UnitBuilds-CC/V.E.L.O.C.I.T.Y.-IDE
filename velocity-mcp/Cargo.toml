@@ -49,6 +49,9 @@ egui-phosphor = "0.13"
 epaint = "0.35.0"
 syntect = { version = "5.2", default-features = false, features = ["default-fancy"] }
 portable-pty = "0.9"
+# System clipboard *reads* (egui only exposes copy-to-clipboard). Already in
+# the tree via egui-winit; the image feature stays off -- we move text only.
+arboard = { version = "3.6", default-features = false }
 prometheus = "0.13"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }

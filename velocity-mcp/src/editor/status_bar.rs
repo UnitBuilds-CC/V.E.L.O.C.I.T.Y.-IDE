@@ -6,6 +6,7 @@ use eframe::egui::{self, Panel, Ui};
 pub struct StatusBarActions {
     pub clicked_mode: bool,
     pub clicked_build: bool,
+    pub clicked_branch: bool,
     pub clicked_position: bool,
     pub clicked_provider: bool,
     pub clicked_command_palette: bool,
@@ -24,6 +25,7 @@ impl StatusBar {
         mode: &str,
         provider_label: &str,
         model_label: &str,
+        blame: Option<&str>,
     ) -> StatusBarActions {
         let mut actions = StatusBarActions::default();
 
@@ -120,7 +122,15 @@ impl StatusBar {
                                 .font(crate::editor::theme::icon_font_id(11.0))
                                 .color(palette.text_muted),
                         );
-                        ui.label(egui::RichText::new(b).size(11.0).color(palette.text_muted));
+                        let branch_response =
+                            ui.label(egui::RichText::new(b).size(11.0).color(palette.text_muted));
+                        if branch_response.clicked() {
+                            actions.clicked_branch = true;
+                        }
+                        if branch_response.hovered() {
+                            ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+                        }
+                        branch_response.on_hover_text("Switch git branch");
                     }
 
                     if let Some((line, col)) = position {
@@ -137,6 +147,17 @@ impl StatusBar {
                             ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
                         }
                         pos_response.on_hover_text("Go to line");
+                    }
+
+                    // Git blame annotation for the current line (inline-blame-lite).
+                    if let Some(ann) = blame {
+                        ui.add_space(6.0);
+                        ui.label(
+                            egui::RichText::new(ann)
+                                .size(10.5)
+                                .italics()
+                                .color(palette.text_muted.gamma_multiply(0.85)),
+                        );
                     }
 
                     // ── Right group: provider/model + command palette, laid out

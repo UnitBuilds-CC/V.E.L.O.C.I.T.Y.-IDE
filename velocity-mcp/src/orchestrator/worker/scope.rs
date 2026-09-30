@@ -1,11 +1,32 @@
 use super::super::TaskId;
 use super::types::ScopedPaths;
-use crate::automation::mediator::MediatorArena;
+use crate::automation::mediator::{ConflictKind, MediatorArena};
 use std::collections::{BTreeSet, HashMap};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use velocity_ide::site_map::SiteMap;
+
+/// A structured shared-write conflict.  Returned by [`acquire_scope_locks`] so
+/// the runner can record *why* a worker was blocked (kind, the agent that
+/// already held the scope, the mediation contract) into the durable event
+/// history instead of discarding a bare error string.
+#[derive(Clone, Debug)]
+pub struct ScopeLockConflict {
+    pub kind: &'static str,
+    pub existing_agent: String,
+    pub requested_agent: String,
+    pub contract: String,
+    pub files: Vec<String>,
+}
+
+fn conflict_kind_label(kind: ConflictKind) -> &'static str {
+    match kind {
+        ConflictKind::DirectLine => "direct_line",
+        ConflictKind::ScopeOverlap => "scope_overlap",
+        ConflictKind::Semantic => "semantic",
+    }
+}
 
 pub fn acquire_scope_locks(
     workspace_root: &Path,
@@ -13,7 +34,7 @@ pub fn acquire_scope_locks(
     mediator: &Arc<MediatorArena>,
     site_map: &SiteMap,
     task_id: TaskId,
-) -> Result<Vec<PathBuf>, String> {
+) -> Result<Vec<PathBuf>, ScopeLockConflict> {
     let agent_id = format!("task-{}", task_id.0);
     let mut locked_scopes: Vec<PathBuf> = Vec::new();
     for entry in scope {
@@ -29,7 +50,21 @@ pub fn acquire_scope_locks(
             for locked in &locked_scopes {
                 mediator.release_lock(locked, &agent_id);
             }
-            return Err(mediator.resolve_conflict(&conflict));
+            let contract = mediator.resolve_conflict(&conflict);
+            let kind = conflict_kind_label(conflict.kind.clone());
+            let rel_file = conflict
+                .file_path
+                .strip_prefix(workspace_root)
+                .unwrap_or(&conflict.file_path)
+                .display()
+                .to_string();
+            return Err(ScopeLockConflict {
+                kind,
+                existing_agent: conflict.existing_lock.agent_id.clone(),
+                requested_agent: conflict.requested_lock.agent_id.clone(),
+                contract,
+                files: vec![rel_file],
+            });
         }
         locked_scopes.push(abs);
     }

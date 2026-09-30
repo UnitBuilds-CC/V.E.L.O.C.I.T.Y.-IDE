@@ -8,6 +8,36 @@ use crate::orchestrator::worker::WorkerHandle;
 use crate::orchestrator::TaskId;
 use std::collections::HashMap;
 
+/// Watchdog bookkeeping for one running worker. The agent_eval run of Sept
+/// 2026 left two workers in `Running` forever: their threads were alive but
+/// made no progress, and nothing in the panel ever looked at wall-clock time.
+/// This tracks when a worker started and when it last produced a progress
+/// event, so [`OrchestratorPanel::poll_live_workers`](super::execution::OrchestratorPanel::poll_live_workers)
+/// can cancel and then fail a hung task instead of waiting on it.
+pub struct WorkerWatchdog {
+    pub started: std::time::Instant,
+    pub last_activity: std::time::Instant,
+    pub last_event_count: usize,
+    /// When the watchdog first asked the worker to stop. After a grace period
+    /// the task is failed even if the thread never returns.
+    pub cancel_sent_at: Option<std::time::Instant>,
+    /// Why the stop was requested, surfaced in the failure message.
+    pub reason: Option<String>,
+}
+
+impl WorkerWatchdog {
+    pub fn new(event_count: usize) -> Self {
+        let now = std::time::Instant::now();
+        Self {
+            started: now,
+            last_activity: now,
+            last_event_count: event_count,
+            cancel_sent_at: None,
+            reason: None,
+        }
+    }
+}
+
 pub struct OrchestratorPanel {
     pub graph: TaskGraph,
     pub registry: Option<OrchestratorRegistry>,
@@ -19,6 +49,9 @@ pub struct OrchestratorPanel {
     pub runtime_status: String,
     pub execution_running: bool,
     pub running_workers: HashMap<TaskId, Box<dyn WorkerHandle>>,
+    /// Per-running-worker wall-clock tracking used to detect hung workers.
+    /// Entries live exactly as long as the corresponding `running_workers` entry.
+    pub worker_watchdog: HashMap<TaskId, WorkerWatchdog>,
     /// What each task actually runs with: provider, model, execution contract,
     /// and the SiteMap root it was planned against. Routed plans fill this from
     /// the router; hand-authored tasks are filled in at dispatch by
@@ -49,6 +82,14 @@ pub struct OrchestratorPanel {
     /// What the last cycle repair actually changed, shown until the next plan edit
     /// so a repair is auditable instead of a silent graph swap.
     pub repair_report: String,
+    /// Cached historical conflict groups that feed the plan *preview*, so the
+    /// phases shown match what conflict-aware dispatch will actually run.
+    /// Refreshed at most once per TTL (see
+    /// [`OrchestratorPanel::cached_conflict_groups`]) because the underlying
+    /// event-store read is disk-bound and `ui` runs on every repaint.
+    pub conflict_groups_cache: Vec<std::collections::HashSet<String>>,
+    /// When `conflict_groups_cache` was last recomputed.
+    pub conflict_groups_at: Option<std::time::Instant>,
 }
 
 impl Default for OrchestratorPanel {
@@ -76,6 +117,7 @@ impl OrchestratorPanel {
             runtime_status: "Idle".to_string(),
             execution_running: false,
             running_workers: HashMap::new(),
+            worker_watchdog: HashMap::new(),
             bindings: HashMap::new(),
             authored_kinds: HashMap::new(),
             defaults: ExecutionDefaults::default(),
@@ -86,6 +128,8 @@ impl OrchestratorPanel {
             goal_input_open: false,
             goal_draft: String::new(),
             repair_report: String::new(),
+            conflict_groups_cache: Vec::new(),
+            conflict_groups_at: None,
         }
     }
 

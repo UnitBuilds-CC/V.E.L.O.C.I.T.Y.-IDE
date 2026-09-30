@@ -674,6 +674,115 @@ pub fn compress_history(messages: &[ChatMessage], supports_tools: bool) -> Vec<C
     result
 }
 
+/// Extract the value of a `key="value"` attribute from an XML-like tag string.
+/// Returns `None` when the attribute is absent or malformed.
+/// Used by the DSML and inline-tool-call parsers in the agent loop.
+pub fn extract_quoted_attr(tag: &str, attr: &str) -> Option<String> {
+    let pattern = format!("{}=\"", attr);
+    let start = tag.find(&pattern)? + pattern.len();
+    let end = tag[start..].find('"')? + start;
+    Some(tag[start..end].to_string())
+}
+
+/// A tool call recovered from structured assistant text by a fallback parser.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ParsedToolCall {
+    pub name: String,
+    pub arguments: serde_json::Map<String, Value>,
+}
+
+/// Parse DSML (DeepSeek Markup Language) tool calls out of assistant text.
+/// Some DeepSeek-family models emit tool calls as structured text using the
+/// fullwidth-pipe delimiter U+FF5C instead of native function_call deltas:
+///
+/// ```text
+/// <｜DSML｜calls>
+/// <｜DSML｜ invoke name="read_file">
+/// <｜DSML｜ parameter name="relativeFilePath" string="true">TASK.md</｜DSML｜ parameter>
+/// </｜DSML｜ invoke>
+/// </｜DSML｜calls>
+/// ```
+///
+/// Without this parser the loop sees "final answer, no tool calls" and the
+/// worker makes zero progress (the primary failure of the Sept 2026
+/// agent_eval run). Returns the content with every DSML block stripped plus
+/// the calls in document order; an empty Vec when there is nothing to parse.
+pub fn parse_dsml_tool_calls(content: &str) -> (String, Vec<ParsedToolCall>) {
+    const DSML_DELIM: &str = "\u{FF5C}";
+    let dsml_invoke_open = format!("<{}DSML{} invoke", DSML_DELIM, DSML_DELIM);
+    let dsml_invoke_close = format!("</{}DSML{} invoke>", DSML_DELIM, DSML_DELIM);
+    let dsml_param_open = format!("<{}DSML{} parameter", DSML_DELIM, DSML_DELIM);
+    let dsml_param_close = format!("</{}DSML{} parameter>", DSML_DELIM, DSML_DELIM);
+    if !content.contains(&dsml_invoke_open) {
+        return (content.to_string(), Vec::new());
+    }
+    let mut calls = Vec::new();
+    let mut cleaned = String::new();
+    let mut rest = content;
+    while let Some(inv_start) = rest.find(&dsml_invoke_open) {
+        cleaned.push_str(&rest[..inv_start]);
+        // Extract function name from the invoke tag
+        let tag_end = rest[inv_start..]
+            .find('>')
+            .map(|p| inv_start + p)
+            .unwrap_or(rest.len());
+        let invoke_tag = &rest[inv_start..tag_end];
+        let fname = extract_quoted_attr(invoke_tag, "name").unwrap_or_default();
+        // Find the matching close tag
+        let body_start = (tag_end + 1).min(rest.len());
+        let inv_close_pos = rest[body_start..]
+            .find(&dsml_invoke_close)
+            .map(|p| body_start + p)
+            .unwrap_or(rest.len());
+        let invoke_body = &rest[body_start..inv_close_pos];
+        // Parse parameters
+        let mut args = serde_json::Map::new();
+        let mut param_rest = invoke_body;
+        while let Some(ps) = param_rest.find(&dsml_param_open) {
+            let after_ps = &param_rest[ps + dsml_param_open.len()..];
+            let key_tag_end = after_ps.find('>').unwrap_or(after_ps.len());
+            let key_tag = &after_ps[..key_tag_end];
+            let key = extract_quoted_attr(key_tag, "name").unwrap_or_default();
+            let val_start = (key_tag_end + 1).min(after_ps.len());
+            let val_end = after_ps[val_start..]
+                .find(&dsml_param_close)
+                .map(|e| val_start + e)
+                .unwrap_or(after_ps.len());
+            let val = after_ps[val_start..val_end].trim().to_string();
+            if !key.is_empty() {
+                args.insert(key, Value::String(val));
+            }
+            let next_from = (val_end + dsml_param_close.len()).min(after_ps.len());
+            param_rest = &after_ps[next_from..];
+        }
+        if !fname.is_empty() {
+            calls.push(ParsedToolCall {
+                name: fname,
+                arguments: args,
+            });
+        }
+        // Advance past the invoke close tag
+        rest = if inv_close_pos < rest.len() {
+            &rest[(inv_close_pos + dsml_invoke_close.len()).min(rest.len())..]
+        } else {
+            ""
+        };
+    }
+    cleaned.push_str(rest);
+    // Drop the surrounding calls wrapper tags so only prose remains. Models
+    // emit it with and without the space after the second delimiter.
+    let wrappers = [
+        format!("<{}DSML{} calls>", DSML_DELIM, DSML_DELIM),
+        format!("</{}DSML{} calls>", DSML_DELIM, DSML_DELIM),
+        format!("<{}DSML{}calls>", DSML_DELIM, DSML_DELIM),
+        format!("</{}DSML{}calls>", DSML_DELIM, DSML_DELIM),
+    ];
+    let cleaned = wrappers
+        .into_iter()
+        .fold(cleaned, |acc, wrapper| acc.replace(&wrapper, ""));
+    (cleaned.trim().to_string(), calls)
+}
+
 pub fn sanitize_chat_token(s: &str) -> String {
     let mut out = s.to_string();
     let tags = [
@@ -724,4 +833,81 @@ pub fn sanitize_chat_token(s: &str) -> String {
         i += 1;
     }
     result
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Render DSML markup from an ASCII sketch where `|` stands for the
+    /// fullwidth delimiter U+FF5C the models actually emit.
+    fn dsml(sketch: &str) -> String {
+        sketch.replace('|', "\u{FF5C}")
+    }
+
+    #[test]
+    fn parses_wellformed_dsml_invoke_block() {
+        // Shape captured byte-for-byte from the agent_eval task-8 transcript.
+        let content = dsml(
+            "Let me read the task.\n\n<|DSML| calls>\n<|DSML| invoke name=\"read_file\">\n<|DSML| parameter name=\"relativeFilePath\" string=\"true\">TASK.md</|DSML| parameter>\n</|DSML| invoke>\n</|DSML| calls>",
+        );
+        let (cleaned, calls) = parse_dsml_tool_calls(&content);
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].name, "read_file");
+        assert_eq!(
+            calls[0].arguments["relativeFilePath"],
+            Value::String("TASK.md".into())
+        );
+        assert_eq!(cleaned, "Let me read the task.");
+    }
+
+    #[test]
+    fn parses_multiple_invokes_in_document_order() {
+        let content = dsml(
+            "<|DSML| calls><|DSML| invoke name=\"list_dir\"><|DSML| parameter name=\"relativeDirPath\" string=\"true\">fd_poc</|DSML| parameter></|DSML| invoke><|DSML| invoke name=\"read_file\"><|DSML| parameter name=\"relativeFilePath\">a.md</|DSML| parameter></|DSML| invoke></|DSML| calls>",
+        );
+        let (cleaned, calls) = parse_dsml_tool_calls(&content);
+        assert_eq!(calls.len(), 2);
+        assert_eq!(calls[0].name, "list_dir");
+        assert_eq!(calls[1].name, "read_file");
+        assert_eq!(
+            calls[1].arguments["relativeFilePath"],
+            Value::String("a.md".into())
+        );
+        assert!(
+            !cleaned.contains("DSML"),
+            "markup must be stripped: {cleaned}"
+        );
+    }
+
+    #[test]
+    fn unclosed_invoke_still_yields_its_parameters() {
+        // Truncated stream: no close tag. Recovering the partial call beats
+        // reporting "no tool calls" and ending the turn.
+        let content = dsml(
+            "<|DSML| invoke name=\"read_file\"><|DSML| parameter name=\"relativeFilePath\">TASK.md",
+        );
+        let (_cleaned, calls) = parse_dsml_tool_calls(&content);
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].name, "read_file");
+        assert!(calls[0].arguments.contains_key("relativeFilePath"));
+    }
+
+    #[test]
+    fn plain_content_is_untouched() {
+        let content = "Just a final answer, no markup at all.";
+        let (cleaned, calls) = parse_dsml_tool_calls(content);
+        assert!(calls.is_empty());
+        assert_eq!(cleaned, content);
+    }
+
+    #[test]
+    fn extract_quoted_attr_rejects_malformed_tags() {
+        assert_eq!(
+            extract_quoted_attr(" name=\"x\"", "name").as_deref(),
+            Some("x")
+        );
+        assert_eq!(extract_quoted_attr(" name=", "name"), None);
+        assert_eq!(extract_quoted_attr("other=\"v\"", "name"), None);
+    }
 }

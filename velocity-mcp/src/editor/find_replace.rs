@@ -17,6 +17,10 @@ pub struct FindReplaceState {
     pub whole_word: bool,
     /// Indices (byte offsets) of all matches in the current buffer.
     pub matches: Vec<(usize, usize)>,
+    /// Capture-group byte spans per regex match, parallel to `matches`
+    /// (empty inner vecs in literal mode). Powers `$1`-style expansion in
+    /// the replacement field.
+    pub match_groups: Vec<Vec<Option<(usize, usize)>>>,
     /// Which match is currently focused (for F3 / Shift+F3 cycling).
     pub current_match: usize,
     /// Whether the replace field is shown (Ctrl+H vs Ctrl+F).
@@ -45,6 +49,7 @@ impl FindReplaceState {
     /// Recompute matches against `text`. Call when query or text changes.
     pub fn recompute_matches(&mut self, text: &str) {
         self.matches.clear();
+        self.match_groups.clear();
         if self.query.is_empty() {
             return;
         }
@@ -53,6 +58,9 @@ impl FindReplaceState {
             self.compute_regex_matches(text);
         } else {
             self.compute_literal_matches(text);
+            // Keep the group vec parallel to `matches` so index math upstream
+            // never has to special-case literal mode.
+            self.match_groups = vec![Vec::new(); self.matches.len()];
         }
 
         // Clamp current_match
@@ -70,11 +78,12 @@ impl FindReplaceState {
                 Ok(r) => r,
                 Err(_) => return,
             };
-        for (start, end) in regex.find_all(text) {
-            if self.whole_word && !self.is_whole_word(text, start, end) {
+        for m in regex.find_all_caps(text) {
+            if self.whole_word && !self.is_whole_word(text, m.start, m.end) {
                 continue;
             }
-            self.matches.push((start, end));
+            self.matches.push((m.start, m.end));
+            self.match_groups.push(m.groups);
         }
     }
 
@@ -142,15 +151,34 @@ impl FindReplaceState {
         }
     }
 
+    /// The replacement text for match `idx`, with `$0`–`$99` / `${n}`
+    /// capture-group references expanded in regex mode. Literal mode inserts
+    /// the replacement verbatim (a `$1` there is just "$1").
+    fn expanded_replacement(&self, text: &str, idx: usize) -> String {
+        if !self.use_regex {
+            return self.replacement.clone();
+        }
+        let Some(&(start, end)) = self.matches.get(idx) else {
+            return self.replacement.clone();
+        };
+        let groups: Vec<Option<&str>> = self
+            .match_groups
+            .get(idx)
+            .map(|g| g.iter().map(|o| o.map(|(a, b)| &text[a..b])).collect())
+            .unwrap_or_default();
+        crate::editor::search::expand_replacement(&self.replacement, &text[start..end], &groups)
+    }
+
     /// Replace the current match. Returns the new text.
     pub fn replace_current(&mut self, text: &str) -> String {
         if self.matches.is_empty() {
             return text.to_string();
         }
         let (start, end) = self.matches[self.current_match];
+        let replacement = self.expanded_replacement(text, self.current_match);
         let mut result = String::with_capacity(text.len());
         result.push_str(&text[..start]);
-        result.push_str(&self.replacement);
+        result.push_str(&replacement);
         result.push_str(&text[end..]);
         result
     }
@@ -162,9 +190,9 @@ impl FindReplaceState {
         }
         let mut result = String::with_capacity(text.len());
         let mut last_end = 0;
-        for &(start, end) in &self.matches {
+        for (idx, &(start, end)) in self.matches.iter().enumerate() {
             result.push_str(&text[last_end..start]);
-            result.push_str(&self.replacement);
+            result.push_str(&self.expanded_replacement(text, idx));
             last_end = end;
         }
         result.push_str(&text[last_end..]);
@@ -271,6 +299,20 @@ impl FindReplaceState {
     }
 }
 
+/// Convert a byte offset (as stored in [`FindReplaceState::matches`]) to a char
+/// index (as egui's `CCursor` expects): the number of chars that begin before
+/// `byte`. For a real char boundary (every match offset is one, since matches
+/// come from scanning the same string) this is the exact char index of the
+/// character at `byte`. It never panics on a non-boundary `byte` and clamps
+/// past the end, so it bridges find's byte-based offsets to the editor's
+/// char-based caret without assuming ASCII-only content.
+pub fn char_index_of_byte(content: &str, byte: usize) -> usize {
+    content
+        .char_indices()
+        .take_while(|&(b, _)| b < byte)
+        .count()
+}
+
 /// Actions the find/replace UI can request.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FindAction {
@@ -365,7 +407,11 @@ pub fn render_find_replace(
                 ui.horizontal(|ui| {
                     ui.add(
                         egui::TextEdit::singleline(&mut state.replacement)
-                            .hint_text("Replace with\u{2026}")
+                            .hint_text(if state.use_regex {
+                                "Replace with\u{2026} ($1 groups)"
+                            } else {
+                                "Replace with\u{2026}"
+                            })
                             .desired_width(200.0),
                     );
                     if ui.small_button("Replace").clicked() && !state.matches.is_empty() {
@@ -453,11 +499,54 @@ mod tests {
     }
 
     #[test]
+    fn regex_replace_expands_capture_groups() {
+        let mut state = FindReplaceState::default();
+        state.use_regex = true;
+        state.query = r"(\w+) (\w+)".to_string();
+        state.replacement = "$2 $1".to_string();
+        state.recompute_matches("hi there");
+        assert_eq!(state.matches.len(), 1);
+        assert_eq!(state.replace_all("hi there"), "there hi");
+        // Braced form and $0 (whole match) work too.
+        state.replacement = "[${0}] -> ${1}".to_string();
+        assert_eq!(state.replace_all("hi there"), "[hi there] -> hi");
+        // Replace-one uses the same expansion path.
+        state.replacement = "$2!".to_string();
+        assert_eq!(state.replace_current("hi there"), "there!");
+    }
+
+    #[test]
+    fn literal_replace_keeps_dollar_verbatim() {
+        let mut state = FindReplaceState::default();
+        state.query = "foo".to_string();
+        state.replacement = "$1".to_string();
+        state.recompute_matches("foo foo");
+        // No regex mode: `$1` is literal text, not a group reference.
+        assert_eq!(state.replace_all("foo foo"), "$1 $1");
+    }
+
+    #[test]
     fn regex_invalid_yields_no_matches() {
         let mut state = FindReplaceState::default();
         state.use_regex = true;
         state.query = "(unclosed".to_string();
         state.recompute_matches("unclosed text");
         assert!(state.matches.is_empty());
+    }
+
+    #[test]
+    fn char_index_of_byte_is_char_based_not_byte_based() {
+        // 'é' and 'ö' are 2 bytes but 1 char each.
+        let text = "héllo wörld";
+        // 'w' starts at byte 7 (h=1,é=2,l=1,l=1,o=1,space=1) but char index 6.
+        let byte_of_w = text.find('w').unwrap();
+        assert_eq!(byte_of_w, 7);
+        assert_eq!(char_index_of_byte(text, byte_of_w), 6);
+        assert_eq!(char_index_of_byte(text, 0), 0);
+        // A char boundary maps to the exact char index; the end maps to the
+        // total char count.
+        assert_eq!(char_index_of_byte(text, text.len()), text.chars().count());
+        // Past the end clamps to the total char count (never panics).
+        assert_eq!(char_index_of_byte(text, 999), text.chars().count());
     }
 }

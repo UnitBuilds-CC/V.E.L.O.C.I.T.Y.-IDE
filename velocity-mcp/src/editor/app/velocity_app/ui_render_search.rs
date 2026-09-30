@@ -5,6 +5,21 @@ use super::struct_def::VelocityApp;
 use eframe::egui;
 
 impl VelocityApp {
+    /// Run the workspace search with the current query and matching toggles,
+    /// refreshing the hit list. Shared by the Enter handler, the debounce tick,
+    /// the toggle buttons, and the suggested-query chips so every path honors
+    /// `search_opts` identically.
+    pub fn run_literal_search(&mut self) {
+        let hits = crate::editor::search::project_search(
+            &self.workspace_root,
+            &self.search_query,
+            100,
+            self.search_opts,
+            &self.search_include,
+        );
+        self.update_search_hits(hits);
+    }
+
     pub fn search_panel(&mut self, ui: &mut egui::Ui) {
         let palette = self.palette();
         ui.set_max_width(ui.available_width());
@@ -86,12 +101,57 @@ impl VelocityApp {
                             if self.semantic_search_active {
                                 self.run_semantic_search();
                             } else {
-                                self.update_search_hits(crate::editor::search::project_search(
-                                    &self.workspace_root,
-                                    &self.search_query,
-                                    100,
-                                ));
+                                self.run_literal_search();
                             }
+                        }
+                    });
+                    // Matching-mode toggles: same Aa / whole-word / regex semantics
+                    // as the in-file find bar. Clicking one re-runs the current query
+                    // immediately so results always reflect the visible mode.
+                    ui.horizontal(|ui| {
+                        let toggles: [(&str, bool, &str); 3] = [
+                            ("Aa", self.search_opts.case_sensitive, "Match case"),
+                            ("ab|", self.search_opts.whole_word, "Whole word"),
+                            (".*", self.search_opts.use_regex, "Regular expression"),
+                        ];
+                        for (idx, (label, active, hover)) in toggles.iter().enumerate() {
+                            let color = if *active { palette.accent } else { palette.text_muted };
+                            if ui
+                                .small_button(
+                                    egui::RichText::new(*label)
+                                        .monospace()
+                                        .size(10.0)
+                                        .color(color),
+                                )
+                                .on_hover_text(*hover)
+                                .clicked()
+                            {
+                                match idx {
+                                    0 => self.search_opts.case_sensitive = !self.search_opts.case_sensitive,
+                                    1 => self.search_opts.whole_word = !self.search_opts.whole_word,
+                                    _ => self.search_opts.use_regex = !self.search_opts.use_regex,
+                                }
+                                if !self.search_query.is_empty() && !self.semantic_search_active {
+                                    self.search_pending_since = None;
+                                    self.run_literal_search();
+                                }
+                            }
+                        }
+                    });
+                    // "Files to include" glob list (comma-separated): scopes both
+                    // the search walk and Replace All, re-running through the same
+                    // debounce path as the query field.
+                    ui.horizontal(|ui| {
+                        let resp = ui.add(
+                            egui::TextEdit::singleline(&mut self.search_include)
+                                .hint_text("files to include\u{2026} e.g. src/**, *.rs")
+                                .desired_width(ui.available_width() - 10.0),
+                        );
+                        if resp.changed()
+                            && !self.search_query.is_empty()
+                            && !self.semantic_search_active
+                        {
+                            self.search_pending_since = Some(std::time::Instant::now());
                         }
                     });
                     // Wrapping row with a reserve sized for the real button width: a
@@ -101,14 +161,18 @@ impl VelocityApp {
                     ui.horizontal_wrapped(|ui| {
                         ui.add(
                             egui::TextEdit::singleline(&mut self.replace_query)
-                                .hint_text("Replace with\u{2026}")
+                                .hint_text(if self.search_opts.use_regex {
+                                    "Replace with\u{2026} ($1 groups)"
+                                } else {
+                                    "Replace with\u{2026}"
+                                })
                                 .desired_width((ui.available_width() - 120.0).max(60.0)),
                         );
                         let can_replace = !self.search_query.is_empty();
                         if ui
                             .add_enabled(can_replace, egui::Button::new("Replace All"))
                             .on_hover_text(
-                                "Replace every case-sensitive match across the workspace",
+                                "Replace every match across the workspace, honoring the Aa / ab| / .* toggles above",
                             )
                             .clicked()
                         {
@@ -116,6 +180,8 @@ impl VelocityApp {
                                 &self.workspace_root,
                                 &self.search_query,
                                 &self.replace_query,
+                                self.search_opts,
+                                &self.search_include,
                             );
                             if summary.replacements > 0 {
                                 self.toasts
@@ -129,11 +195,7 @@ impl VelocityApp {
                                 ));
                             }
                             // Refresh results against the updated files.
-                            self.update_search_hits(crate::editor::search::project_search(
-                                &self.workspace_root,
-                                &self.search_query,
-                                100,
-                            ));
+                            self.run_literal_search();
                         }
                     });
                     // Run the debounced search once typing has settled (~250ms).
@@ -143,11 +205,7 @@ impl VelocityApp {
                             if self.semantic_search_active {
                                 self.run_semantic_search();
                             } else {
-                                self.update_search_hits(crate::editor::search::project_search(
-                                    &self.workspace_root,
-                                    &self.search_query,
-                                    100,
-                                ));
+                                self.run_literal_search();
                             }
                         } else {
                             ui.ctx()
@@ -173,13 +231,7 @@ impl VelocityApp {
                                         for query in suggested_queries {
                                             if ui.small_button(*query).clicked() {
                                                 self.search_query = (*query).to_string();
-                                                self.update_search_hits(
-                                                    crate::editor::search::project_search(
-                                                        &self.workspace_root,
-                                                        &self.search_query,
-                                                        100,
-                                                    ),
-                                                );
+                                                self.run_literal_search();
                                             }
                                         }
                                     });
@@ -223,9 +275,69 @@ impl VelocityApp {
                                         )
                                     })
                                     .collect();
+                                let mut prev_file: Option<std::path::PathBuf> = None;
                                 for (hit_idx, hit) in hits.iter().enumerate() {
                                     let (link_label, path_display, path_line, text_preview) =
                                         &display_data[hit_idx];
+                                    // Group by file: a header row whenever the path
+                                    // changes (the walk emits hits per file
+                                    // consecutively), carrying a per-file replace
+                                    // action so small scopes don't need "Replace All".
+                                    if prev_file.as_ref() != Some(&hit.path) {
+                                        prev_file = Some(hit.path.clone());
+                                        ui.horizontal(|ui| {
+                                            ui.label(
+                                                egui::RichText::new(hit
+                                                    .path
+                                                    .to_string_lossy()
+                                                    .replace('\\', "/"))
+                                                .size(10.0)
+                                                .strong()
+                                                .color(palette.accent),
+                                            );
+                                            // Same enable rule as "Replace All": the
+                                            // button is visible but inert until both
+                                            // fields have text, so the action stays
+                                            // discoverable while invalid.
+                                            let can_replace_file = !self.search_query.is_empty()
+                                                && !self.replace_query.is_empty();
+                                            if ui
+                                                .add_enabled(
+                                                    can_replace_file,
+                                                    egui::Button::new("Replace in file"),
+                                                )
+                                                .on_hover_text(
+                                                    "Replace every match in this file only",
+                                                )
+                                                .clicked()
+                                            {
+                                                let n = crate::editor::search::replace_in_file(
+                                                    &self.workspace_root,
+                                                    &hit.path,
+                                                    &self.search_query,
+                                                    &self.replace_query,
+                                                    self.search_opts,
+                                                );
+                                                if n > 0 {
+                                                    self.toasts.push(
+                                                        crate::editor::toast::Toast::success(
+                                                            format!(
+                                                                "Replaced {n} occurrence(s) in {}",
+                                                                hit.path.display()
+                                                            ),
+                                                        ),
+                                                    );
+                                                    self.run_literal_search();
+                                                } else {
+                                                    self.toasts.push(
+                                                        crate::editor::toast::Toast::info(
+                                                            "No matching occurrences in this file",
+                                                        ),
+                                                    );
+                                                }
+                                            }
+                                        });
+                                    }
                                     ui.group(|ui| {
                                         ui.set_max_width(ui.available_width());
                                         if ui.link(link_label).on_hover_text(path_display).clicked()

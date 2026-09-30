@@ -66,8 +66,71 @@ impl KeyBinding {
         self.ctrl == modifiers.ctrl
             && self.shift == modifiers.shift
             && self.alt == modifiers.alt
-            && self.key.to_lowercase() == format!("{:?}", key).to_lowercase()
+            && self.key_matches(key)
     }
+
+    /// Build a binding from a live egui key event plus modifier state. The key
+    /// half is the Debug name (`"A"`, `"F2"`, `"ArrowUp"`), which the
+    /// alias-aware [`Self::key_matches`] accepts alongside the symbol spellings
+    /// a person types into `keybindings.json` (`"Up"`, `","`, `"1"`).
+    pub fn from_egui(key: eframe::egui::Key, modifiers: &eframe::egui::Modifiers) -> Self {
+        Self {
+            key: format!("{:?}", key),
+            ctrl: modifiers.ctrl,
+            shift: modifiers.shift,
+            alt: modifiers.alt,
+        }
+    }
+
+    /// Whether this binding's key field names the given egui key, accepting
+    /// the Debug name and the common symbol/word aliases, case-insensitively.
+    fn key_matches(&self, key: eframe::egui::Key) -> bool {
+        let want = self.key.to_lowercase();
+        if want == format!("{:?}", key).to_lowercase() {
+            return true;
+        }
+        key_aliases(key)
+            .into_iter()
+            .any(|a| a.to_lowercase() == want)
+    }
+}
+
+/// Symbol/word aliases accepted in `keybindings.json` for keys whose Debug
+/// name differs from what a person would naturally type (arrows, digits,
+/// punctuation). Returned spellings are compared case-insensitively.
+fn key_aliases(key: eframe::egui::Key) -> Vec<&'static str> {
+    use eframe::egui::Key::*;
+    let aliases: &[&str] = match key {
+        ArrowUp => &["up"],
+        ArrowDown => &["down"],
+        ArrowLeft => &["left"],
+        ArrowRight => &["right"],
+        Backtick => &["`", "grave"],
+        Comma => &[","],
+        Period => &["."],
+        Slash => &["/"],
+        Backslash => &["backslash_key"],
+        Minus => &["-"],
+        Equals => &["=", "plus"],
+        Enter => &["return", "cr"],
+        Escape => &["esc"],
+        PageUp => &["prior"],
+        PageDown => &["next"],
+        Insert => &["ins"],
+        Delete => &["del"],
+        Num0 => &["0"],
+        Num1 => &["1"],
+        Num2 => &["2"],
+        Num3 => &["3"],
+        Num4 => &["4"],
+        Num5 => &["5"],
+        Num6 => &["6"],
+        Num7 => &["7"],
+        Num8 => &["8"],
+        Num9 => &["9"],
+        _ => &[],
+    };
+    aliases.to_vec()
 }
 
 /// A command that can be bound to a key.
@@ -122,6 +185,20 @@ impl KeybindingsConfig {
                 entry("edit.replace", "Ctrl+H", Some("editorFocus")),
                 entry("edit.find_next", "F3", Some("editorFocus")),
                 entry("edit.find_prev", "Shift+F3", Some("editorFocus")),
+                entry("edit.next_change", "Ctrl+Alt+J", None),
+                entry("edit.prev_change", "Ctrl+Alt+K", None),
+                entry("edit.next_problem", "F8", None),
+                entry("edit.prev_problem", "Shift+F8", None),
+                entry(
+                    "editor.select_expand",
+                    "Shift+Alt+Right",
+                    Some("editorFocus"),
+                ),
+                entry(
+                    "editor.select_shrink",
+                    "Shift+Alt+Left",
+                    Some("editorFocus"),
+                ),
                 entry("edit.indent", "Tab", Some("editorFocus")),
                 entry("edit.dedent", "Shift+Tab", Some("editorFocus")),
                 entry("edit.toggle_comment", "Ctrl+/", Some("editorFocus")),
@@ -149,10 +226,15 @@ impl KeybindingsConfig {
                 entry("view.toggle_extensions", "Ctrl+Shift+X", None),
                 entry("view.toggle_activity", "Ctrl+Shift+A", None),
                 entry("view.toggle_voice", "Ctrl+Shift+V", None),
-                entry("view.fold", "Ctrl+Shift+[", Some("editorFocus")),
-                entry("view.unfold", "Ctrl+Shift+]", Some("editorFocus")),
-                entry("view.fold_all", "Ctrl+K Ctrl+0", Some("editorFocus")),
-                entry("view.unfold_all", "Ctrl+K Ctrl+J", Some("editorFocus")),
+                // NOTE: code folding (`view.fold*`) is intentionally NOT
+                // advertised. The tested `code_folding` engine is ready, but
+                // the editor renders the whole document as one editable TextEdit
+                // whose cursor/undo state is offset-indexed into the full text;
+                // collapsing lines from that body would desynchronize them, so
+                // visual folding needs a per-line editor rewrite. We refuse to
+                // ship a shortcut that only moves a gutter marker while the
+                // lines stay put — a dead promise. The `every_default_keybinding_
+                // is_dispatchable` guard keeps the advertised set honest.
                 entry("view.word_wrap", "Alt+Z", Some("editorFocus")),
                 // Debug
                 entry("debug.start", "F5", None),
@@ -164,10 +246,18 @@ impl KeybindingsConfig {
                 entry("debug.continue", "F5", Some("debugActive")),
                 // Agent
                 entry("agent.request_inline_suggestion", "Ctrl+Shift+I", None),
+                // LSP refactoring engine (default chords also hardcoded; a user
+                // may rebind these to remap the command onto a different key).
+                entry("editor.rename_symbol", "F2", None),
+                entry("editor.code_actions", "Alt+Enter", None),
+                entry("editor.format_document", "Shift+Alt+F", None),
+                entry("editor.toggle_bookmark", "Ctrl+Shift+B", None),
                 // Build
                 entry("build.build", "Ctrl+B", None),
                 entry("build.run", "Ctrl+R", None),
                 entry("build.rollback_deploy", "Ctrl+Alt+R", None),
+                // Git
+                entry("git.switch_branch", "Ctrl+Shift+G", None),
                 // Workspace modes
                 entry("mode.coder", "Ctrl+1", None),
                 entry("mode.operator", "Ctrl+2", None),
@@ -216,6 +306,32 @@ impl KeybindingsConfig {
         }
         conflicts
     }
+
+    /// Whether a chord is a *user customization*: this config maps the exact
+    /// global-scope (no `when`) chord to a command the built-in defaults do not
+    /// map there identically. Stock chords deliberately return `None` so they
+    /// stay on the hardcoded dispatch chain — the intercept therefore fires
+    /// only for bindings a person actually added or rebound in the config file,
+    /// and a fresh/default install changes no editor behavior at all.
+    pub fn custom_command_for(&self, binding: &KeyBinding) -> Option<String> {
+        let cmd = self.command_for(binding, None)?;
+        if default_bindings()
+            .command_for(binding, None)
+            .is_some_and(|d| d == cmd)
+        {
+            None
+        } else {
+            Some(cmd.to_string())
+        }
+    }
+}
+
+/// The built-in default bindings as a lazily-built singleton, used to tell a
+/// user's customizations apart from the stock mappings.
+pub fn default_bindings() -> &'static KeybindingsConfig {
+    static DEFAULTS: std::sync::LazyLock<KeybindingsConfig> =
+        std::sync::LazyLock::new(KeybindingsConfig::defaults);
+    &DEFAULTS
 }
 
 fn entry(command: &str, binding: &str, when: Option<&str>) -> KeybindingEntry {
@@ -266,5 +382,60 @@ mod tests {
         let conflicts = config.conflicts();
         // Expect debug.start and debug.continue conflict on F5 (both have F5)
         assert!(conflicts.len() <= 1);
+    }
+
+    #[test]
+    fn alias_key_matches_live_egui_key() {
+        use eframe::egui::{Key, Modifiers};
+        // Word/symbol spellings a person types resolve to the Debug-named key.
+        assert!(KeyBinding::new("Up").matches(&Modifiers::NONE, Key::ArrowUp));
+        assert!(KeyBinding::new("Ctrl+1").matches(&Modifiers::CTRL, Key::Num1));
+        assert!(KeyBinding::new("Shift+F12").matches(&Modifiers::SHIFT, Key::F12));
+        assert!(KeyBinding::new("Esc").matches(&Modifiers::NONE, Key::Escape));
+        assert!(KeyBinding::new("Ctrl+`").matches(&Modifiers::CTRL, Key::Backtick));
+        // Wrong modifier state must not match, even with the right key.
+        assert!(!KeyBinding::new("Ctrl+1").matches(&Modifiers::NONE, Key::Num1));
+    }
+
+    #[test]
+    fn from_egui_round_trips_into_a_matching_binding() {
+        use eframe::egui::{Key, Modifiers};
+        let ctrl_shift = Modifiers::CTRL | Modifiers::SHIFT;
+        let chord = KeyBinding::from_egui(Key::S, &ctrl_shift);
+        // The live event reconstructs the same Ctrl+Shift+S a config would hold.
+        assert!(KeyBinding::new("Ctrl+Shift+S").matches(&ctrl_shift, Key::S));
+        assert!(chord.matches(&ctrl_shift, Key::S));
+    }
+
+    #[test]
+    fn stock_chord_is_not_a_customization() {
+        let cfg = KeybindingsConfig::defaults();
+        // Ctrl+S maps to its default command, so the intercept ignores it.
+        assert_eq!(cfg.custom_command_for(&KeyBinding::new("Ctrl+S")), None);
+    }
+
+    #[test]
+    fn rebound_chord_is_reported_as_a_customization() {
+        let mut cfg = KeybindingsConfig::defaults();
+        // Move file.save off Ctrl+S and onto Ctrl+K (a chord nothing else uses).
+        cfg.set_binding("file.save", KeyBinding::new("Ctrl+K"));
+        assert_eq!(
+            cfg.custom_command_for(&KeyBinding::new("Ctrl+K"))
+                .as_deref(),
+            Some("file.save")
+        );
+        // The abandoned default chord no longer maps to anything here.
+        assert_eq!(cfg.custom_command_for(&KeyBinding::new("Ctrl+S")), None);
+    }
+
+    #[test]
+    fn added_chord_is_reported_as_a_customization() {
+        let mut cfg = KeybindingsConfig::defaults();
+        cfg.bindings.push(entry("nav.back", "Ctrl+Alt+G", None));
+        assert_eq!(
+            cfg.custom_command_for(&KeyBinding::new("Ctrl+Alt+G"))
+                .as_deref(),
+            Some("nav.back")
+        );
     }
 }

@@ -69,6 +69,38 @@ impl OrchestratorRegistry {
             .map(|t| t.id)
             .collect()
     }
+
+    /// [`ready_ids`] narrowed to the first conflict-free wave: tasks are
+    /// considered in priority order and any task whose scope collides —
+    /// textual overlap, or both touching a shared historical conflict group
+    /// (see [`crate::registry::event_store::conflict_file_groups`]) — with an
+    /// already-accepted task is deferred to a later tick instead of racing it
+    /// and burning a mediator rejection. Tasks with no declared scope never
+    /// defer; runtime scope locks remain their safety net.
+    pub fn ready_ids_conflict_aware(
+        &self,
+        graph: &TaskGraph,
+        groups: &[std::collections::HashSet<String>],
+    ) -> Vec<TaskId> {
+        use super::scheduler::scopes_conflict;
+        let scope_of = |id: &TaskId| -> &[String] {
+            graph
+                .tasks
+                .get(id)
+                .map(|t| t.scope.as_slice())
+                .unwrap_or(&[])
+        };
+        let mut accepted: Vec<TaskId> = Vec::new();
+        for id in self.ready_ids(graph) {
+            if accepted
+                .iter()
+                .all(|a| !scopes_conflict(scope_of(a), scope_of(&id), groups))
+            {
+                accepted.push(id);
+            }
+        }
+        accepted
+    }
 }
 
 #[cfg(test)]
@@ -114,5 +146,59 @@ mod tests {
         let ready = registry.ready_ids(&graph);
         assert!(ready.contains(&TaskId(2)));
         assert!(ready.contains(&TaskId(3)));
+    }
+
+    #[test]
+    fn conflict_aware_ready_defers_scope_collisions() {
+        // Two undependent tasks over the same territory: only the
+        // higher-priority one may run this tick; the other defers.
+        let mut g = TaskGraph::default();
+        g.add(TaskId(1), "A", "", vec!["src/db/".into()], vec![], None);
+        g.add(
+            TaskId(2),
+            "B",
+            "",
+            vec!["src/db/pool.rs".into()],
+            vec![],
+            None,
+        );
+        g.tasks.get_mut(&TaskId(1)).unwrap().priority = 5;
+        let mut registry = OrchestratorRegistry::new(&g);
+        registry.statuses.insert(TaskId(1), TaskStatus::Pending);
+        registry.statuses.insert(TaskId(2), TaskStatus::Pending);
+        let wave = registry.ready_ids_conflict_aware(&g, &[]);
+        assert_eq!(wave, vec![TaskId(1)], "priority winner takes the scope");
+
+        // A historical conflict group defers tasks whose paths never
+        // overlap textually but share a contention hot area.
+        let mut g2 = TaskGraph::default();
+        g2.add(
+            TaskId(1),
+            "A",
+            "",
+            vec!["auth/login.rs".into()],
+            vec![],
+            None,
+        );
+        g2.add(
+            TaskId(2),
+            "B",
+            "",
+            vec!["store/session.rs".into()],
+            vec![],
+            None,
+        );
+        g2.tasks.get_mut(&TaskId(1)).unwrap().priority = 5;
+        let groups: Vec<std::collections::HashSet<String>> =
+            vec![std::collections::HashSet::from([
+                "auth/login.rs".to_string(),
+                "store/session.rs".to_string(),
+            ])];
+        let registry2 = OrchestratorRegistry::new(&g2);
+        assert_eq!(registry2.ready_ids_conflict_aware(&g2, &[]).len(), 2);
+        assert_eq!(
+            registry2.ready_ids_conflict_aware(&g2, &groups),
+            vec![TaskId(1)]
+        );
     }
 }

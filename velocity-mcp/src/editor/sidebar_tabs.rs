@@ -85,6 +85,36 @@ pub struct BookmarkEntry {
     pub label: String,
 }
 
+/// Toggle a bookmark at the given (file, line).
+/// If a bookmark already exists at that location it is removed; otherwise a new one is inserted
+/// (the list stays sorted by file then line). Returns `true` if removed, `false` if added.
+pub fn toggle_line_bookmark(
+    bookmarks: &mut Vec<BookmarkEntry>,
+    file: &Path,
+    line: usize,
+    label: &str,
+) -> bool {
+    if let Some(pos) = bookmarks
+        .iter()
+        .position(|b| b.file == file && b.line == line)
+    {
+        bookmarks.remove(pos);
+        true // removed
+    } else {
+        let entry = BookmarkEntry {
+            file: file.to_path_buf(),
+            line,
+            label: label.to_string(),
+        };
+        let insert_pos = bookmarks
+            .iter()
+            .position(|b| (b.file.as_path(), b.line) > (entry.file.as_path(), entry.line))
+            .unwrap_or(bookmarks.len());
+        bookmarks.insert(insert_pos, entry);
+        false // added
+    }
+}
+
 /// WCAG audit finding for the AccessibilityAudit tab.
 pub struct AuditFinding {
     pub severity: &'static str,
@@ -1030,5 +1060,54 @@ pub fn render_audit_content(ui: &mut egui::Ui, findings: &[AuditFinding], palett
                     ui.add_space(2.0);
                 }
             });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::Path;
+
+    #[test]
+    fn add_bookmark_to_empty_list() {
+        let mut bm = Vec::new();
+        let removed = toggle_line_bookmark(&mut bm, Path::new("a.rs"), 10, "fn main()");
+        assert!(!removed);
+        assert_eq!(bm.len(), 1);
+        assert_eq!(bm[0].line, 10);
+        assert_eq!(bm[0].label, "fn main()");
+    }
+
+    #[test]
+    fn toggle_removes_existing_bookmark() {
+        let mut bm = Vec::new();
+        toggle_line_bookmark(&mut bm, Path::new("a.rs"), 5, "x");
+        let removed = toggle_line_bookmark(&mut bm, Path::new("a.rs"), 5, "x");
+        assert!(removed);
+        assert!(bm.is_empty());
+    }
+
+    #[test]
+    fn bookmarks_stay_sorted() {
+        let mut bm = Vec::new();
+        toggle_line_bookmark(&mut bm, Path::new("b.rs"), 1, "second");
+        toggle_line_bookmark(&mut bm, Path::new("a.rs"), 20, "first_file");
+        toggle_line_bookmark(&mut bm, Path::new("a.rs"), 5, "early");
+        assert_eq!(bm[0].file, Path::new("a.rs"));
+        assert_eq!(bm[0].line, 5);
+        assert_eq!(bm[1].file, Path::new("a.rs"));
+        assert_eq!(bm[1].line, 20);
+        assert_eq!(bm[2].file, Path::new("b.rs"));
+    }
+
+    #[test]
+    fn different_lines_same_file_are_independent() {
+        let mut bm = Vec::new();
+        toggle_line_bookmark(&mut bm, Path::new("x.rs"), 1, "a");
+        toggle_line_bookmark(&mut bm, Path::new("x.rs"), 2, "b");
+        assert_eq!(bm.len(), 2);
+        toggle_line_bookmark(&mut bm, Path::new("x.rs"), 1, "a");
+        assert_eq!(bm.len(), 1);
+        assert_eq!(bm[0].line, 2);
     }
 }

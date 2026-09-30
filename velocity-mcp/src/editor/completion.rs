@@ -12,6 +12,10 @@ pub struct CompletionItem {
     pub label: String,
     pub kind: CompletionKind,
     pub detail: Option<String>,
+    /// Human-readable documentation for the item (plain / de-marked-up text),
+    /// shown for the highlighted row. Populated from the LSP `documentation`
+    /// field when present; `None` for locally-generated items.
+    pub documentation: Option<String>,
     /// Text to insert (may differ from label for snippets).
     pub insert_text: String,
     /// Sort priority (lower = higher in list).
@@ -155,6 +159,7 @@ pub fn rust_keywords() -> Vec<CompletionItem> {
             label: kw.to_string(),
             kind: CompletionKind::Keyword,
             detail: Some("keyword".to_string()),
+            documentation: None,
             insert_text: kw.to_string(),
             sort_key: 100,
         })
@@ -213,6 +218,7 @@ pub fn typescript_keywords() -> Vec<CompletionItem> {
             label: kw.to_string(),
             kind: CompletionKind::Keyword,
             detail: Some("keyword".to_string()),
+            documentation: None,
             insert_text: kw.to_string(),
             sort_key: 100,
         })
@@ -239,6 +245,7 @@ pub fn extract_local_identifiers(content: &str, current_word: &str) -> Vec<Compl
                 label: word.to_string(),
                 kind: CompletionKind::Variable,
                 detail: None,
+                documentation: None,
                 insert_text: word.to_string(),
                 sort_key: 50,
             });
@@ -270,6 +277,7 @@ pub fn from_sitemap_symbols(
                 label: s.name.clone(),
                 kind,
                 detail: Some(format!("in {}", s.file)),
+                documentation: None,
                 insert_text: s.name.clone(),
                 sort_key: 30,
             }
@@ -325,6 +333,86 @@ pub fn word_prefix_at(text: &str, cursor_offset: usize) -> (String, usize) {
     (prefix, start)
 }
 
+/// Char-indexed twin of [`word_prefix_at`]: the word prefix *ending at the
+/// caret* (not at end-of-buffer), as (prefix, prefix start in chars). This is
+/// what makes commit replace exactly what the user typed at the cursor.
+pub fn char_word_prefix_at(text: &str, caret_char: usize) -> (String, usize) {
+    let chars: Vec<char> = text.chars().take(caret_char).collect();
+    let start = chars
+        .iter()
+        .rposition(|c| !(c.is_alphanumeric() || *c == '_'))
+        .map(|i| i + 1)
+        .unwrap_or(0);
+    (chars[start..].iter().collect(), start)
+}
+
+/// Expand LSP snippet syntax into plain insertable text, returning the caret
+/// stop as a char offset into the result. Handles the subset servers actually
+/// emit: `$0`..`$9` bare stops, `${n}` stops, and `${n:default}` placeholders
+/// (the default text is kept; the stop sits at its start). A `\` before a
+/// non-alphanumeric escapes it. Nested placeholders are flattened (the inner
+/// markers are stripped, the text survives). Without any explicit stop the
+/// caret lands at the end. `println!($0)` → `("println!()", 9)`.
+pub fn expand_snippet_text(snippet: &str) -> (String, usize) {
+    let mut out = String::new();
+    let mut stops: Vec<(u32, usize)> = Vec::new();
+    let mut it = snippet.chars().peekable();
+    while let Some(c) = it.next() {
+        if c == '\\' {
+            match it.peek() {
+                Some(&n) if !n.is_alphanumeric() => {
+                    out.push(n);
+                    it.next();
+                }
+                _ => out.push(c),
+            }
+        } else if c == '$' {
+            if it.peek() == Some(&'{') {
+                it.next(); // consume '{'
+                let mut num = String::new();
+                let mut body = String::new();
+                let mut in_default = false;
+                for ch in it.by_ref() {
+                    match ch {
+                        '}' => break,
+                        ':' if !in_default && !num.is_empty() => in_default = true,
+                        d if !in_default && d.is_ascii_digit() => num.push(d),
+                        d => body.push(d),
+                    }
+                }
+                let offset = out.chars().count();
+                out.push_str(&body);
+                stops.push((num.parse().unwrap_or(u32::MAX), offset));
+            } else if it.peek().is_some_and(|d| d.is_ascii_digit()) {
+                let mut num = String::new();
+                while it.peek().is_some_and(|d| d.is_ascii_digit()) {
+                    num.push(it.next().unwrap());
+                }
+                stops.push((num.parse().unwrap_or(u32::MAX), out.chars().count()));
+            } else {
+                out.push('$');
+            }
+        } else {
+            out.push(c);
+        }
+    }
+    // Standard precedence: `$0` (the final tab stop) wins; otherwise the
+    // lowest-numbered stop; otherwise the caret stays at the end.
+    let caret = stops
+        .iter()
+        .find(|(n, _)| *n == 0)
+        .map(|(_, o)| *o)
+        .or_else(|| {
+            stops
+                .iter()
+                .filter(|(n, _)| *n != 0)
+                .min_by_key(|(n, _)| *n)
+                .map(|(_, o)| *o)
+        })
+        .unwrap_or_else(|| out.chars().count());
+    (out, caret)
+}
+
 /// Get the file extension from a path.
 pub fn extension_from_path(path: Option<&Path>) -> &str {
     path.and_then(|p| p.extension())
@@ -361,6 +449,18 @@ pub fn render_completion_popup(ui: &mut egui::Ui, state: &CompletionState, palet
                                         ui.colored_label(palette.text_muted, detail);
                                     }
                                 });
+                                // Expand the highlighted row's documentation, the
+                                // same progressive-disclosure the field leaders
+                                // use, so the list stays compact otherwise.
+                                if is_selected {
+                                    if let Some(doc) = &item.documentation {
+                                        ui.label(
+                                            egui::RichText::new(doc)
+                                                .small()
+                                                .color(palette.text_muted),
+                                        );
+                                    }
+                                }
                             });
                         }
                     }
@@ -377,6 +477,47 @@ mod tests {
         let (prefix, start) = word_prefix_at("let foo_bar = 1;", 11);
         assert_eq!(prefix, "foo_bar");
         assert_eq!(start, 4);
+    }
+
+    #[test]
+    fn char_prefix_tracks_caret_not_eof() {
+        assert_eq!(char_word_prefix_at("foo.bar", 7), ("bar".into(), 4));
+        assert_eq!(char_word_prefix_at("foo.", 4), (String::new(), 4));
+        assert_eq!(char_word_prefix_at("let x", 5), ("x".into(), 4));
+        assert_eq!(char_word_prefix_at("abc", 0), (String::new(), 0));
+        // Offsets count characters, not bytes.
+        assert_eq!(char_word_prefix_at("héllo", 5), ("héllo".into(), 0));
+    }
+
+    #[test]
+    fn snippet_expands_dollar_zero_stop() {
+        let (text, caret) = expand_snippet_text("println!($0)");
+        assert_eq!(text, "println!()");
+        assert_eq!(caret, 9); // caret inside the parens
+    }
+
+    #[test]
+    fn snippet_keeps_default_text_and_stops_at_its_start() {
+        let (text, caret) = expand_snippet_text("${1:foo}bar");
+        assert_eq!(text, "foobar");
+        assert_eq!(caret, 0);
+    }
+
+    #[test]
+    fn snippet_prefers_dollar_zero_over_earlier_stops() {
+        let (text, caret) = expand_snippet_text("a$1 b$0 c$2");
+        assert_eq!(text, "a b c");
+        assert_eq!(caret, 3); // the $0 position, not the first $1
+    }
+
+    #[test]
+    fn snippet_plain_text_is_untouched_and_caret_lands_at_end() {
+        let (text, caret) = expand_snippet_text("no stops here");
+        assert_eq!(text, "no stops here");
+        assert_eq!(caret, 13);
+        // A lone '$' before a letter is literal, not a stop.
+        let (text, _) = expand_snippet_text("a$b");
+        assert_eq!(text, "a$b");
     }
 
     #[test]
@@ -404,6 +545,7 @@ mod tests {
                 label: "shared".into(),
                 kind: CompletionKind::Function,
                 detail: Some("from lsp".into()),
+                documentation: None,
                 insert_text: "shared".into(),
                 sort_key: 20,
             },
@@ -411,6 +553,7 @@ mod tests {
                 label: "aaa_lsp".into(),
                 kind: CompletionKind::Variable,
                 detail: None,
+                documentation: None,
                 insert_text: "aaa_lsp".into(),
                 sort_key: 20,
             },
@@ -420,6 +563,7 @@ mod tests {
                 label: "shared".into(),
                 kind: CompletionKind::Type,
                 detail: Some("from sitemap".into()),
+                documentation: None,
                 insert_text: "shared".into(),
                 sort_key: 30,
             },
@@ -427,6 +571,7 @@ mod tests {
                 label: "zzz_local".into(),
                 kind: CompletionKind::Keyword,
                 detail: None,
+                documentation: None,
                 insert_text: "zzz_local".into(),
                 sort_key: 100,
             },

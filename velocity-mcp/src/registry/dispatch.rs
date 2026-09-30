@@ -2,6 +2,7 @@ use super::browser_tools::handle_browser_tool;
 use super::custom_tools;
 use super::event_store;
 use super::generation_tools::handle_generation_tool;
+use super::hooks;
 use super::system_tools::handle_system_tool;
 use super::team_tools::handle_team_tool;
 use super::wa_tools::handle_wa_tool;
@@ -33,6 +34,19 @@ pub fn call_tool_in_workspace(
         e
     })?;
 
+    // ── Lifecycle hook: pre_tool_use ──────────────────────────────────────
+    // Runs only after governance allowed the call; hooks can tighten, never
+    // loosen. A veto is recorded to the durable event store by the hook
+    // runner itself, so the decision trail explains why the tool never ran.
+    if let Some(reason) = hooks::run_pre_tool_hooks(&root, name, arguments) {
+        log::warn!(
+            "tool dispatch: pre_tool_use hook denied '{}': {}",
+            name,
+            reason
+        );
+        return Err(format!("denied by lifecycle hook: {reason}").into());
+    }
+
     let start = Instant::now();
 
     // Capture the site map Merkle root *before* the tool call so we can
@@ -61,6 +75,18 @@ pub fn call_tool_in_workspace(
                 start,
                 audit_outcome,
                 merkle_after.map(|r| format!("{:016x}", r)),
+            );
+            // ── Lifecycle hook: post_tool_use ─────────────────────────────
+            // Observational only: carries the in-band verdict so hook scripts
+            // can watch for the failures the handler itself reported.
+            hooks::run_post_tool_hooks(
+                &root,
+                name,
+                arguments,
+                match &refused {
+                    None => "success",
+                    Some(note) => note,
+                },
             );
             // ── Universal codebase event recording ─────────────────────
             // Every tool call is recorded in the event store, with the verdict

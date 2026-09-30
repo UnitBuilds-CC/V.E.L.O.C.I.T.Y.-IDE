@@ -138,6 +138,7 @@ impl VelocityApp {
             0 => self.render_file_tree_subpanel(ui, palette),
             1 => self.render_bookmarks_subpanel(ui, palette),
             2 => self.render_favorites_subpanel(ui, palette),
+            3 => self.render_outline_subpanel(ui, palette),
             _ => {}
         }
     }

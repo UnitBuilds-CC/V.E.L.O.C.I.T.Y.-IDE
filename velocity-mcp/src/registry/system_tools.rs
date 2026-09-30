@@ -924,6 +924,12 @@ pub fn handle_system_tool(
             .map_err(|e| -> Box<dyn Error> { e.into() })?,
         "event_attach_context" => super::event_store::handle_event_attach_context(root, arguments)
             .map_err(|e| -> Box<dyn Error> { e.into() })?,
+        // ── Markdown skills ─────────────────────────────────────────────────
+        // (list_skills already belongs to the team subsystem's .nda skills;
+        // knowledge .md skills are discovered via the injected PROJECT SKILLS
+        // index, so only the pull tool is routed here.)
+        "use_skill" => super::skills::handle_use_skill(root, arguments)
+            .map_err(|e| -> Box<dyn Error> { e.into() })?,
         // ── Workflows ───────────────────────────────────────────────────────
         "workflow_run" => {
             let id = arguments["id"].as_str().ok_or("id is required")?;

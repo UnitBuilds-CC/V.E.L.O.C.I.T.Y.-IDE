@@ -188,6 +188,25 @@ pub struct LspState {
     pub lsp_manager: Option<crate::editor::lsp_client::LspManager>,
     /// Aggregated diagnostics from LSP.
     pub diagnostics: crate::editor::diagnostics::DiagnosticsState,
+    /// Decoded semantic tokens per document, paired with the content hash they
+    /// were computed for. Filled by the non-blocking request/poll pipeline in
+    /// the render loop and consumed by the code editor to override syntect
+    /// colours with the language server's semantic view.
+    pub semantic_cache: std::collections::HashMap<
+        std::path::PathBuf,
+        (u64, Vec<crate::editor::lsp_client::LspSemanticToken>),
+    >,
+    /// An in-flight `semanticTokens/full` request:
+    /// (path, ext, request id, content-hash-at-request-time, when issued).
+    pub pending_semantic: Option<(std::path::PathBuf, String, i64, u64, std::time::Instant)>,
+    /// Cooldown marker for the last semantic-token request per (path, hash), so
+    /// a slow server isn't re-queried on every frame.
+    pub last_semantic_request: Option<(std::path::PathBuf, u64, std::time::Instant)>,
+    /// The last `window/showMessage` text surfaced as a toast. A server that
+    /// repeats the same status line (rust-analyzer re-emits "Failed to load
+    /// workspaces." on every scan) is deduped against this so it can't spam the
+    /// notification area.
+    pub last_message_toast: Option<String>,
 }
 
 impl LspState {
@@ -198,6 +217,10 @@ impl LspState {
                 workspace_root,
             )),
             diagnostics: crate::editor::diagnostics::DiagnosticsState::default(),
+            semantic_cache: std::collections::HashMap::new(),
+            pending_semantic: None,
+            last_semantic_request: None,
+            last_message_toast: None,
         }
     }
 }

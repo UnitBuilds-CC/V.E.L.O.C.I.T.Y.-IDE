@@ -391,6 +391,40 @@ impl VelocityApp {
         // Poll LSP servers for incoming diagnostics from language servers
         if let Some(ref mut lsp) = self.lsp_state.lsp_manager {
             lsp.poll_notifications();
+            // Feed the shared display state: gutter squiggles, inline
+            // popups, the Problems panel, and F8 navigation all read
+            // `lsp_state.diagnostics`, not the manager's private list.
+            // Clean-file sentinels are dropped in the sync (see
+            // `DiagnosticsState::sync_from_manager`).
+            self.lsp_state
+                .diagnostics
+                .sync_from_manager(&lsp.diagnostics);
+            // Surface server status notifications (`window/showMessage`) as
+            // toasts. These carry no file/location, so before this they were
+            // discarded outright — rust-analyzer's "Failed to load
+            // workspaces." never reached the user. Consecutive repeats of the
+            // same line are deduped against the last surfaced text.
+            for msg in std::mem::take(&mut lsp.messages) {
+                if self
+                    .lsp_state
+                    .last_message_toast
+                    .as_deref()
+                    .is_some_and(|last| last == msg.message)
+                {
+                    continue;
+                }
+                let toast = match msg.severity {
+                    crate::editor::lsp_client::DiagnosticSeverity::Error => {
+                        crate::editor::toast::Toast::error(msg.message.clone())
+                    }
+                    crate::editor::lsp_client::DiagnosticSeverity::Warning => {
+                        crate::editor::toast::Toast::warn(msg.message.clone())
+                    }
+                    _ => crate::editor::toast::Toast::info(msg.message.clone()),
+                };
+                self.lsp_state.last_message_toast = Some(msg.message);
+                self.toasts.push(toast);
+            }
             // If LSP has diagnostics, use those (they're more accurate/real-time)
             if !lsp.diagnostics.is_empty() {
                 let errors: Vec<String> = lsp

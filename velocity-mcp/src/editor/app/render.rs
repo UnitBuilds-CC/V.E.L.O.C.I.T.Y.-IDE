@@ -42,9 +42,52 @@ impl<'a> TabViewer for TabViewerImpl<'a> {
         egui_dock::tab_viewer::OnCloseResponse::Close
     }
 
+    fn context_menu(&mut self, ui: &mut egui::Ui, tab: &mut Self::Tab, _path: egui_dock::NodePath) {
+        // Only show the tab context menu for editor tabs.
+        if !matches!(tab.kind, TabKind::Editor { .. }) {
+            return;
+        }
+        let tab_id = tab.id.clone();
+        let tab_path = self.app.tab_path(&tab_id).cloned();
+
+        if ui.button("Close Tab").clicked() {
+            if self.app.tab_is_dirty(&tab_id) {
+                self.app.pending_close_tab = Some(tab_id.clone());
+            } else {
+                self.app.close_tab(&tab_id);
+            }
+            ui.close();
+        }
+        if ui.button("Close Other Tabs").clicked() {
+            self.app.active_tab = Some(tab_id.clone());
+            self.app.close_other_tabs();
+            ui.close();
+        }
+        if ui.button("Close All Tabs").clicked() {
+            self.app.close_all_tabs();
+            ui.close();
+        }
+        ui.separator();
+        if tab_path.is_some() && ui.button("Copy Path").clicked() {
+            if let Some(p) = &tab_path {
+                ui.ctx().copy_text(p.display().to_string());
+            }
+            ui.close();
+        }
+    }
+
     fn ui(&mut self, ui: &mut egui::Ui, tab: &mut Self::Tab) {
         match &mut tab.kind {
             TabKind::Editor { path, buffer_id } => {
+                // Actions collected from the editor right-click menu while it
+                // draws; run once the buffer borrow below is gone (the same
+                // collect-then-run shape as the explorer tree menu).
+                let mut menu_requests: Vec<crate::editor::editor_menu::EditorMenuAction> =
+                    Vec::new();
+                // A Ctrl/Cmd+click inside the editor resolves to a char offset in
+                // the widget; the jump itself runs after this closure, once the
+                // mutable buffer borrow is gone (same collect-then-run shape).
+                let mut ctrl_goto: Option<usize> = None;
                 if let Some(buf) = self.app.buffers.get_mut(buffer_id) {
                     egui::Frame::new().inner_margin(egui::Margin::same(4)).show(
                         ui,
@@ -66,6 +109,9 @@ impl<'a> TabViewer for TabViewerImpl<'a> {
 
                             // Main editor area with optional minimap
                             ui.horizontal_top(|ui| {
+                                // Captured from the editor after it lays out so the
+                                // minimap can draw the indicator at the real viewport.
+                                let mut editor_viewport: Option<(usize, usize)> = None;
                                 // Editor
                                 let editor_width = if self.app.show_minimap {
                                     ui.available_width() - self.app.minimap_config.width - 8.0
@@ -75,7 +121,11 @@ impl<'a> TabViewer for TabViewerImpl<'a> {
                                 ui.allocate_ui(
                                     egui::Vec2::new(editor_width, ui.available_height()),
                                     |ui| {
-                                        let mut editor = CodeEditor::new("code_editor");
+                                        // Per-buffer editor id so the ScrollArea (and the
+                                        // TextEdit) keep independent scroll/cursor state per
+                                        // file — the source of the "viewport disconnects on
+                                        // tab switch" symptom.
+                                        let mut editor = CodeEditor::new(buffer_id.clone());
                                         let locks = path
                                             .as_deref()
                                             .map(|p| self.app.mediator.get_locks_for_file(p))
@@ -95,21 +145,23 @@ impl<'a> TabViewer for TabViewerImpl<'a> {
                                             breakpoints: buf.breakpoints.clone(),
                                             collapsed_lines: buf.fold_state.collapsed_lines(),
                                             word_wrap: self.app.word_wrap,
-                                            visible_line_range: {
-                                                // Estimate visible line range from the UI clip rect
-                                                // and code font height for viewport-only gutter rendering.
-                                                let clip = ui.clip_rect();
-                                                let font_height =
-                                                    self.app.appearance.code_font_id().size;
-                                                let line_h = (font_height * 1.4).max(1.0); // approximate line height
-                                                let first_visible =
-                                                    (clip.top() / line_h).floor().max(0.0) as usize
-                                                        + 1;
-                                                let visible_count =
-                                                    (clip.height() / line_h).ceil() as usize + 2; // +2 for safety margin
-                                                let last_visible = first_visible + visible_count;
-                                                Some((first_visible, last_visible))
-                                            },
+                                            // LSP semantic overlay: use the decoded
+                                            // tokens only when they were computed for
+                                            // the buffer's *current* content, so a
+                                            // stale token stream never mis-colours
+                                            // edited text.
+                                            semantic_tokens: path
+                                                .as_ref()
+                                                .and_then(|p| {
+                                                    self.app.lsp_state.semantic_cache.get(p)
+                                                })
+                                                .filter(|(h, _)| {
+                                                    *h == crate::editor::code_editor::content_hash(
+                                                        buf.content(),
+                                                    )
+                                                })
+                                                .map(|(_, t)| t.clone())
+                                                .unwrap_or_default(),
                                         };
                                         let response = editor.show_enhanced(
                                             ui,
@@ -127,8 +179,125 @@ impl<'a> TabViewer for TabViewerImpl<'a> {
                                         if response.changed() {
                                             buf.mark_mutated_pub();
                                         }
+                                        editor_viewport = editor.last_viewport_lines;
+                                        ctrl_goto = editor.goto_request;
                                         if self.app.pending_cursor_line.is_some() {
                                             self.app.pending_cursor_line = None;
+                                        }
+
+                                        // Right-click anywhere in the editor: a real
+                                        // context menu. Menu rows only collect actions;
+                                        // execution happens after this closure, once the
+                                        // mutable buffer borrow is released.
+                                        {
+                                            use crate::editor::editor_menu::EditorMenuAction;
+                                            let menu_buffer_id = buffer_id.clone();
+                                            let menu_path = path.clone();
+                                            response.context_menu(|ui| {
+                                                let has_selection =
+                                                    egui::widgets::text_edit::TextEditState::load(
+                                                        ui.ctx(),
+                                                        crate::editor::code_editor::CodeEditor::textedit_id(
+                                                            &menu_buffer_id,
+                                                        ),
+                                                    )
+                                                    .and_then(|s| s.cursor.char_range())
+                                                    .is_some_and(|r| {
+                                                        r.primary.index != r.secondary.index
+                                                    });
+                                                let item = |label: &str,
+                                                                action,
+                                                                enabled: bool,
+                                                                ui: &mut egui::Ui,
+                                                                out: &mut Vec<EditorMenuAction>| {
+                                                    if ui
+                                                        .add_enabled(
+                                                            enabled,
+                                                            egui::Button::new(
+                                                                egui::RichText::new(label).size(13.0),
+                                                            ),
+                                                        )
+                                                        .clicked()
+                                                    {
+                                                        out.push(action);
+                                                        ui.close();
+                                                    }
+                                                };
+                                                item(
+                                                    "Cut",
+                                                    EditorMenuAction::Cut,
+                                                    has_selection,
+                                                    ui,
+                                                    &mut menu_requests,
+                                                );
+                                                item(
+                                                    "Copy",
+                                                    EditorMenuAction::Copy,
+                                                    has_selection,
+                                                    ui,
+                                                    &mut menu_requests,
+                                                );
+                                                item(
+                                                    "Paste",
+                                                    EditorMenuAction::Paste,
+                                                    true,
+                                                    ui,
+                                                    &mut menu_requests,
+                                                );
+                                                ui.separator();
+                                                item(
+                                                    "Select All",
+                                                    EditorMenuAction::SelectAll,
+                                                    true,
+                                                    ui,
+                                                    &mut menu_requests,
+                                                );
+                                                item(
+                                                    "Toggle Line Comment",
+                                                    EditorMenuAction::ToggleComment,
+                                                    true,
+                                                    ui,
+                                                    &mut menu_requests,
+                                                );
+                                                item(
+                                                    "Format Document",
+                                                    EditorMenuAction::FormatDocument,
+                                                    true,
+                                                    ui,
+                                                    &mut menu_requests,
+                                                );
+                                                item(
+                                                    "Code Actions...",
+                                                    EditorMenuAction::CodeActions,
+                                                    true,
+                                                    ui,
+                                                    &mut menu_requests,
+                                                );
+                                                item(
+                                                    "Go to Definition",
+                                                    EditorMenuAction::GoToDefinition,
+                                                    true,
+                                                    ui,
+                                                    &mut menu_requests,
+                                                );
+                                                item(
+                                                    "Rename Symbol...",
+                                                    EditorMenuAction::Rename,
+                                                    true,
+                                                    ui,
+                                                    &mut menu_requests,
+                                                );
+                                                ui.separator();
+                                                if let Some(p) = &menu_path {
+                                                    item(
+                                                        "Copy Path",
+                                                        EditorMenuAction::CopyPath(p.clone()),
+                                                        true,
+                                                        ui,
+                                                        &mut menu_requests,
+                                                    );
+                                                }
+                                            });
                                         }
 
                                         // Show inline diagnostic popup if cursor is on a diagnostic line.
@@ -162,15 +331,23 @@ impl<'a> TabViewer for TabViewerImpl<'a> {
                                                 color: palette.error,
                                             })
                                             .collect();
-                                    crate::editor::minimap::render_minimap(
+                                    // Real viewport from the editor's scroll state (fallback
+                                    // to the first screenful on the very first frame).
+                                    let (vp_start, vp_end) = editor_viewport.unwrap_or((0, 30));
+                                    let jump_line = crate::editor::minimap::render_minimap(
                                         ui,
                                         &buf.content,
                                         self.app.minimap_config,
-                                        0,  // viewport_start_line
-                                        30, // viewport_end_line
+                                        vp_start,
+                                        vp_end,
                                         &highlights,
                                         &palette,
                                     );
+                                    // Click-to-jump: scroll the editor to the clicked line
+                                    // next frame (pending_cursor_line is 1-based).
+                                    if let Some(line0) = jump_line {
+                                        self.app.pending_cursor_line = Some(line0 + 1);
+                                    }
                                 }
                             });
 
@@ -185,6 +362,21 @@ impl<'a> TabViewer for TabViewerImpl<'a> {
                             }
                         },
                     );
+                }
+                if !menu_requests.is_empty() {
+                    // Right-clicking focuses the editor the menu belongs to, so
+                    // every action below targets it like the keyboard ones do.
+                    self.app.active_tab = Some(buffer_id.clone());
+                    for action in menu_requests {
+                        self.app.run_editor_menu_action(ui.ctx(), action);
+                    }
+                }
+                if let Some(char_offset) = ctrl_goto {
+                    // The clicked editor owns the jump: focus it first so LSP
+                    // position resolution matches what the user aimed at.
+                    self.app.active_tab = Some(buffer_id.clone());
+                    self.app
+                        .ctrl_click_goto(ui.ctx(), buffer_id.clone(), char_offset);
                 }
             }
             TabKind::Chat => {

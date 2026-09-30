@@ -31,6 +31,15 @@ impl DiagnosticsState {
         }
     }
 
+    /// Replace the items with the manager's accumulated diagnostics, dropping
+    /// the empty-message "file is clean" sentinels `parse_publish_diagnostics`
+    /// emits for per-file cleanup in `LspManager::poll_notifications`. The
+    /// sentinel keeps its bookkeeping job inside the manager; it must never
+    /// reach squiggles, popups, the panel, or F8 cycling as a blank row.
+    pub fn sync_from_manager(&mut self, diagnostics: &[LspDiagnostic]) {
+        self.update(visible_diagnostics(diagnostics));
+    }
+
     pub fn error_count(&self) -> usize {
         self.items
             .iter()
@@ -85,6 +94,18 @@ impl DiagnosticsState {
             .iter()
             .filter(|d| d.file == path && d.line == line)
             .collect()
+    }
+
+    /// The problem F8/Shift+F8 should land on: the next (or previous) one in
+    /// panel order, honouring the active severity filter, wrapping at both
+    /// ends so repeated presses cycle the whole set.
+    pub fn problem_at(
+        &self,
+        current_file: Option<&std::path::Path>,
+        current_line: usize,
+        forward: bool,
+    ) -> Option<&LspDiagnostic> {
+        next_problem(&self.filtered_items(), current_file, current_line, forward)
     }
 
     /// Render an inline diagnostic popup at the given cursor position.
@@ -159,7 +180,9 @@ impl DiagnosticsState {
         true
     }
 
-    /// Render the problems panel.
+    /// Render the problems panel. Rows are clickable; the caller applies the
+    /// returned [`DiagnosticAction`] (the bottom panel hosts exactly one, so its
+    /// tab label already says "Problems" — no heading is drawn here).
     pub fn show_panel(
         &mut self,
         ui: &mut egui::Ui,
@@ -168,8 +191,6 @@ impl DiagnosticsState {
         let mut action = None;
 
         ui.horizontal(|ui| {
-            ui.heading("Problems");
-            ui.separator();
             let errors = self.error_count();
             let warnings = self.warning_count();
             ui.colored_label(palette.error, format!("\u{2716} {errors}"));
@@ -225,37 +246,74 @@ impl DiagnosticsState {
 
                 let resp = ui.selectable_label(*idx == current_selected, &label);
                 if resp.clicked() {
-                    action = Some(DiagnosticAction::Jump {
-                        file: diag.file.clone(),
-                        line: diag.line,
-                        col: diag.col,
-                    });
+                    self.selected = *idx;
+                    action = Some(DiagnosticAction::Jump { diag: diag.clone() });
                 }
             }
         });
-
-        if let Some(DiagnosticAction::Jump { ref file, line, .. }) = action {
-            // Update selected based on the clicked index
-            if let Some((idx, _)) = filtered
-                .iter()
-                .find(|(_, d)| &d.file == file && d.line == line)
-            {
-                self.selected = *idx;
-            }
-        }
 
         action
     }
 }
 
+/// The diagnostics the UI should show: every reported item except the
+/// clean-file sentinel (empty message) the manager parks per file.
+pub fn visible_diagnostics(diagnostics: &[LspDiagnostic]) -> Vec<LspDiagnostic> {
+    diagnostics
+        .iter()
+        .filter(|d| !d.message.is_empty())
+        .cloned()
+        .collect()
+}
+
 /// Actions from the diagnostics panel.
 #[derive(Debug, Clone)]
 pub enum DiagnosticAction {
-    Jump {
-        file: PathBuf,
-        line: usize,
-        col: usize,
-    },
+    /// The user clicked a problem row: open (if needed) and aim the caret
+    /// at the carried diagnostic, through the same sink F8 uses.
+    Jump { diag: LspDiagnostic },
+}
+
+/// Pick the next (or previous) problem relative to the caret, cycling through
+/// every file in panel order — path, then 0-based line, then column — and
+/// wrapping at both ends so repeated presses walk the whole set. A caret
+/// sitting *on* a problem does not re-select it: forward finds the first
+/// problem strictly after the caret line, backward the last strictly before.
+/// With no caret file at all (no editor open) the first/last problem is the
+/// landing spot for the respective direction. Pure: no state, no filesystem.
+pub fn next_problem<'a>(
+    items: &[&'a LspDiagnostic],
+    current_file: Option<&std::path::Path>,
+    current_line: usize,
+    forward: bool,
+) -> Option<&'a LspDiagnostic> {
+    if items.is_empty() {
+        return None;
+    }
+    let mut ordered: Vec<&LspDiagnostic> = items.to_vec();
+    ordered.sort_by(|a, b| (&a.file, a.line, a.col).cmp(&(&b.file, b.line, b.col)));
+    let Some(file) = current_file else {
+        return Some(if forward {
+            ordered[0]
+        } else {
+            ordered[ordered.len() - 1]
+        });
+    };
+    let pos = (file, current_line);
+    if forward {
+        ordered
+            .iter()
+            .find(|d| (d.file.as_path(), d.line) > pos)
+            .or_else(|| ordered.first())
+            .copied()
+    } else {
+        ordered
+            .iter()
+            .rev()
+            .find(|d| (d.file.as_path(), d.line) < pos)
+            .or_else(|| ordered.last())
+            .copied()
+    }
 }
 
 /// Inline diagnostic rendering data (for squiggles in the editor).
@@ -292,6 +350,7 @@ impl InlineDiagnostic {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::Path;
 
     #[test]
     fn diagnostics_counts() {
@@ -353,5 +412,113 @@ mod tests {
         ]);
         state.filter = DiagnosticFilter::ErrorsOnly;
         assert_eq!(state.filtered_items().len(), 1);
+    }
+
+    fn diag(file: &str, line: usize, severity: DiagnosticSeverity) -> LspDiagnostic {
+        LspDiagnostic {
+            file: PathBuf::from(file),
+            line,
+            col: 0,
+            end_line: line,
+            end_col: 1,
+            severity,
+            message: format!("{severity:?} on {file}:{line}"),
+            source: None,
+            code: None,
+        }
+    }
+
+    #[test]
+    fn next_problem_walks_files_in_order_and_wraps() {
+        let items = [
+            diag("b.rs", 3, DiagnosticSeverity::Error),
+            diag("a.rs", 10, DiagnosticSeverity::Warning),
+            diag("a.rs", 2, DiagnosticSeverity::Error),
+        ];
+        let refs: Vec<&LspDiagnostic> = items.iter().collect();
+        // Panel order is (file, line): a.rs:2, a.rs:10, b.rs:3.
+        let first = next_problem(&refs, None, 0, true).unwrap();
+        assert_eq!((first.file.clone(), first.line), (PathBuf::from("a.rs"), 2));
+        let second = next_problem(&refs, Some(Path::new("a.rs")), 2, true).unwrap();
+        assert_eq!(second.line, 10);
+        // Past the last problem it wraps to the first, so presses cycle.
+        let wrapped = next_problem(&refs, Some(Path::new("b.rs")), 3, true).unwrap();
+        assert_eq!(
+            (wrapped.file.clone(), wrapped.line),
+            (PathBuf::from("a.rs"), 2)
+        );
+        // Backward from the first wraps to the last.
+        let back = next_problem(&refs, Some(Path::new("a.rs")), 2, false).unwrap();
+        assert_eq!((back.file.clone(), back.line), (PathBuf::from("b.rs"), 3));
+    }
+
+    #[test]
+    fn a_caret_on_a_problem_moves_past_it() {
+        let items = [diag("a.rs", 5, DiagnosticSeverity::Error)];
+        let refs: Vec<&LspDiagnostic> = items.iter().collect();
+        // Strictly-after means F8 on the problem's own line advances (and
+        // wraps to the same single item), never re-selects in place.
+        let hit = next_problem(&refs, Some(Path::new("a.rs")), 5, true).unwrap();
+        assert_eq!(hit.line, 5);
+        // From a clean line before it, forward lands on the problem.
+        let hit = next_problem(&refs, Some(Path::new("a.rs")), 1, true).unwrap();
+        assert_eq!(hit.line, 5);
+    }
+
+    #[test]
+    fn problem_at_honours_the_panel_filter() {
+        let mut state = DiagnosticsState::default();
+        state.update(vec![
+            diag("a.rs", 1, DiagnosticSeverity::Warning),
+            diag("a.rs", 9, DiagnosticSeverity::Error),
+        ]);
+        state.filter = DiagnosticFilter::ErrorsOnly;
+        let hit = state.problem_at(Some(Path::new("a.rs")), 0, true).unwrap();
+        assert_eq!(hit.severity, DiagnosticSeverity::Error);
+        assert_eq!(hit.line, 9);
+        // With nothing left after the caret except filtered-out items, the
+        // wrap can only land on the error too.
+        let hit = state.problem_at(Some(Path::new("a.rs")), 9, true).unwrap();
+        assert_eq!(hit.line, 9);
+    }
+
+    #[test]
+    fn no_problems_is_no_target() {
+        assert!(next_problem(&[], None, 0, true).is_none());
+        let state = DiagnosticsState::default();
+        assert!(state
+            .problem_at(Some(Path::new("a.rs")), 3, false)
+            .is_none());
+    }
+
+    #[test]
+    fn sync_from_manager_drops_the_clean_file_sentinel() {
+        let mut state = DiagnosticsState::default();
+        let sentinel = LspDiagnostic {
+            file: PathBuf::from("clean.rs"),
+            line: 0,
+            col: 0,
+            end_line: 0,
+            end_col: 0,
+            severity: DiagnosticSeverity::Info,
+            message: String::new(),
+            source: None,
+            code: None,
+        };
+        let manager = vec![diag("a.rs", 4, DiagnosticSeverity::Error), sentinel.clone()];
+        state.sync_from_manager(&manager);
+        // Only the real problem reaches the UI: no blank row, no phantom
+        // Info count, and F8 cycles straight onto the error.
+        assert_eq!(state.items.len(), 1);
+        assert_eq!(state.error_count(), 1);
+        assert_eq!(state.warning_count(), 0);
+        let hit = state.problem_at(Some(Path::new("a.rs")), 0, true).unwrap();
+        assert_eq!(hit.line, 4);
+        // When the server cleans the file, the sentinel-only resync empties
+        // the list rather than parking a blank entry.
+        state.sync_from_manager(&[sentinel]);
+        assert!(state.items.is_empty());
+        assert_eq!(state.selected, 0);
+        assert!(state.problem_at(Some(Path::new("a.rs")), 0, true).is_none());
     }
 }

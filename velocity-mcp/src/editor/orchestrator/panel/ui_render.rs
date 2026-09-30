@@ -13,6 +13,27 @@ use std::collections::HashMap;
 use std::path::Path;
 
 impl OrchestratorPanel {
+    /// Return the workspace's historical conflict groups for the plan *preview*,
+    /// recomputing from the durable event store only when the cache has aged
+    /// past `CONFLICT_GROUPS_TTL`. The store scan is disk-bound and `ui` runs on
+    /// every repaint (plus a 100ms tick while workers run), so an uncached call
+    /// would re-read the whole event log per frame. Feeding these groups to
+    /// [`scheduler::plan_with_conflicts`] keeps the shown phases consistent with
+    /// what conflict-aware dispatch actually executes.
+    pub fn cached_conflict_groups(
+        &mut self,
+        workspace_root: &Path,
+    ) -> Vec<std::collections::HashSet<String>> {
+        const CONFLICT_GROUPS_TTL: std::time::Duration = std::time::Duration::from_millis(1000);
+        let age = self.conflict_groups_at.map(|t| t.elapsed());
+        if scheduler::conflict_cache_is_stale(age, CONFLICT_GROUPS_TTL) {
+            self.conflict_groups_cache =
+                crate::registry::event_store::conflict_file_groups(workspace_root);
+            self.conflict_groups_at = Some(std::time::Instant::now());
+        }
+        self.conflict_groups_cache.clone()
+    }
+
     pub fn ui(
         &mut self,
         ui: &mut Ui,
@@ -42,10 +63,18 @@ impl OrchestratorPanel {
                 // Header with status and primary actions
                 ui.horizontal(|ui| {
                     ui.heading(RichText::new("Orchestrator").color(palette.accent));
-                    ui.label(
-                        RichText::new(&self.runtime_status)
-                            .small()
-                            .color(palette.text_muted),
+                    // Truncate the status text so it can never run under the
+                    // right-aligned controls when the panel is narrowed.
+                    let status_max = (ui.available_width() - 220.0).max(0.0);
+                    let status_h = ui.text_style_height(&egui::TextStyle::Small);
+                    ui.add_sized(
+                        [status_max, status_h],
+                        egui::Label::new(
+                            RichText::new(&self.runtime_status)
+                                .small()
+                                .color(palette.text_muted),
+                        )
+                        .truncate(),
                     );
 
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -63,7 +92,8 @@ impl OrchestratorPanel {
                 let plan = if has_cycle {
                     scheduler::Plan::default()
                 } else {
-                    scheduler::plan(&self.graph)
+                    let groups = self.cached_conflict_groups(workspace_root);
+                    scheduler::plan_with_conflicts(&self.graph, &groups)
                 };
                 let bfs_order = if has_cycle {
                     Vec::new()
@@ -465,15 +495,23 @@ impl OrchestratorPanel {
         ui.group(|ui| {
             ui.horizontal(|ui| {
                 ui.label(RichText::new("New task").strong().color(palette.accent));
+                // Space to the right of "New task"; the right-aligned provider /
+                // model label truncates to it so it can't overlap the heading.
+                let runs_on_max = (ui.available_width() - 8.0).max(0.0);
+                let runs_on_h = ui.text_style_height(&egui::TextStyle::Small);
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    ui.label(
-                        RichText::new(format!(
-                            "Runs on {} / {}",
-                            self.defaults.provider.label(),
-                            self.defaults.model_label
-                        ))
-                        .small()
-                        .color(palette.text_muted),
+                    ui.add_sized(
+                        [runs_on_max, runs_on_h],
+                        egui::Label::new(
+                            RichText::new(format!(
+                                "Runs on {} / {}",
+                                self.defaults.provider.label(),
+                                self.defaults.model_label
+                            ))
+                            .small()
+                            .color(palette.text_muted),
+                        )
+                        .truncate(),
                     );
                 });
             });
@@ -599,7 +637,14 @@ impl OrchestratorPanel {
                             .small()
                             .color(palette.text_muted),
                     );
-                    ui.label(RichText::new(&task.title).small().strong());
+                    // Reserve room for the right-aligned status + Remove button so
+                    // a long title truncates instead of sliding underneath them.
+                    let title_max = (ui.available_width() - 130.0).max(0.0);
+                    let title_h = ui.text_style_height(&egui::TextStyle::Small);
+                    ui.add_sized(
+                        [title_max, title_h],
+                        egui::Label::new(RichText::new(&task.title).small().strong()).truncate(),
+                    );
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         if self.is_removable(task.id) && ui.small_button("Remove").clicked() {
                             remove = true;

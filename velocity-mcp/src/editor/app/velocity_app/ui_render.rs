@@ -11,6 +11,9 @@ use std::path::PathBuf;
 impl eframe::App for VelocityApp {
     fn on_exit(&mut self) {
         self.save_workspace_preferences();
+        // Hot exit: dirty buffers land in `.velocity/hot-exit.json` so a
+        // window close never silently discards unsaved work.
+        self.write_hot_exit_session();
     }
 
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
@@ -25,10 +28,29 @@ impl eframe::App for VelocityApp {
         // ─── Process GUI control commands from external processes ───────────
         let ctx = ui.ctx().clone();
         self.process_gui_commands(&ctx);
+        // Consume any hot-exit session from a previous run exactly once (the
+        // method self-guards); first frame, once the workspace root is set.
+        self.restore_hot_exit();
 
         self.apply_appearance(&ctx);
         let palette = self.palette();
         self.handle_agent_messages();
+        // ─── Repaint heartbeat ─────────────────────────────────────────────
+        // Background threads (agent executor, file-tree builder, model-catalog
+        // fetcher) deliver UI updates over channels and cannot wake the egui
+        // event loop themselves. Without a self-scheduled timer the window
+        // freezes on its last frame until the user touches the mouse. While
+        // any of that work is in flight, keep a cheap ~8 Hz heartbeat going;
+        // each flag is cleared by its own channel message, so the heartbeat
+        // stops by itself the frame the work completes.
+        if self.agent_active
+            || self.chat.agent_active
+            || self.tree_build_in_flight
+            || self.models_loading
+            || self.chat.models_loading
+        {
+            ctx.request_repaint_after(std::time::Duration::from_millis(120));
+        }
         self.handle_global_shortcuts(&ctx);
         self.mru_overlay_ui(&ctx);
         // Pick up any inline suggestion produced by the background model call.
@@ -37,10 +59,13 @@ impl eframe::App for VelocityApp {
         if let Some(lsp) = self.lsp_state.lsp_manager.as_mut() {
             lsp.poll_notifications();
         }
+        // update_diagnostics is the single writer of the bottom-panel error
+        // and warning counts (LSP branch and build-diagnostics fallback both
+        // set them); re-deriving them from one store every frame used to
+        // clobber the other store's values.
         self.update_diagnostics();
-        // Sync diagnostics counts to bottom panel
-        self.bottom_panel_state.error_count = self.lsp_state.diagnostics.error_count();
-        self.bottom_panel_state.warning_count = self.lsp_state.diagnostics.warning_count();
+        // Git blame: drain async results, format annotation for status bar.
+        self.update_blame();
         // Sync terminal output
         self.bottom_panel_state.terminal_output = self.command_output.clone();
         // Sync the model a hand-authored orchestrator task will run on. Done per
@@ -84,7 +109,30 @@ impl eframe::App for VelocityApp {
             for ev in &watcher_events {
                 self.reload_buffer_if_open(&ev.path);
             }
+            // Keep explorer git decorations current; the watcher debounces per
+            // path (300 ms), so this runs at most a few git invocations.
+            self.git_state.refresh(&self.workspace_root);
         }
+
+        // Files dragged from the OS shell onto the window: eframe surfaces the
+        // drop as paths on this frame's RawInput, we turn them into editor tabs.
+        let dropped: Vec<std::path::PathBuf> = ctx.input(|i| {
+            i.raw
+                .dropped_files
+                .iter()
+                .filter_map(|f| f.path.clone())
+                .collect()
+        });
+        if !dropped.is_empty() {
+            self.handle_dropped_paths(dropped);
+        }
+
+        // Auto-save sweep: no-op unless enabled, throttled internally.
+        self.auto_save_tick();
+
+        // Completion popup upkeep: fires queued (auto-)triggers and keeps an
+        // open popup anchored to the caret's current word as the user types.
+        self.completion_tick(&ctx);
 
         let now = std::time::Instant::now();
         // Only re-walk the workspace when its top-level mtime changes (a file/dir was
@@ -107,7 +155,11 @@ impl eframe::App for VelocityApp {
         let mut cursor_pos = None;
         if let Some(active_id) = &self.active_tab {
             if let Some(buf) = self.buffers.get(active_id) {
-                let editor_id = egui::Id::new("code_editor");
+                // Must match the id the live editor mints for this buffer
+                // (`CodeEditor::new(buffer_id)` in render.rs), or the caret
+                // read below silently returns nothing and every cursor-driven
+                // LSP action resolves against a stale line.
+                let editor_id = crate::editor::code_editor::CodeEditor::textedit_id(active_id);
                 if let Some(state) = egui::widgets::text_edit::TextEditState::load(&ctx, editor_id)
                 {
                     if let Some(cursor_range) = state.cursor.char_range() {
@@ -121,6 +173,10 @@ impl eframe::App for VelocityApp {
                 }
             }
         }
+
+        // Auto-request LSP parameter hints when the (now-fresh) caret sits just
+        // after a `(` or `,`.
+        self.maybe_trigger_signature_help();
 
         // Sync active buffer to LSP server when it has unsaved edits (throttled ~1s).
         let lsp_sync_due = self
@@ -140,6 +196,76 @@ impl eframe::App for VelocityApp {
                                     lsp.sync_document(ext, &path, content);
                                 }
                                 self.last_lsp_sync = Some(std::time::Instant::now());
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // ── Semantic-token highlight pipeline (non-blocking) ──────────────
+        // Poll any in-flight request into the cache, then issue a fresh one
+        // when the active document's current content isn't covered yet. All LSP
+        // calls here are non-blocking so a slow server never stalls the frame.
+        if let Some((spath, sext, sid, shash, started)) = self.lsp_state.pending_semantic.take() {
+            let resolved = self
+                .lsp_state
+                .lsp_manager
+                .as_mut()
+                .and_then(|lsp| lsp.take_semantic_tokens(&sext, sid));
+            match resolved {
+                Some(tokens) => {
+                    self.lsp_state.semantic_cache.insert(spath, (shash, tokens));
+                }
+                // Still pending: requeue unless the server is being slow.
+                None if started.elapsed() < std::time::Duration::from_secs(4) => {
+                    self.lsp_state.pending_semantic = Some((spath, sext, sid, shash, started));
+                }
+                None => {}
+            }
+        }
+        if self.lsp_state.pending_semantic.is_none() {
+            if let Some(active_id) = &self.active_tab {
+                if let Some(buf) = self.buffers.get(active_id) {
+                    if let Some(path) = buf.path.clone() {
+                        if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
+                            let ext = ext.to_string();
+                            let content = buf.content().to_string();
+                            let chash = crate::editor::code_editor::content_hash(&content);
+                            let covered = self
+                                .lsp_state
+                                .semantic_cache
+                                .get(&path)
+                                .map(|(h, _)| *h == chash)
+                                .unwrap_or(false);
+                            let cooling = self
+                                .lsp_state
+                                .last_semantic_request
+                                .as_ref()
+                                .map(|(p, h, t)| {
+                                    p == &path && *h == chash && t.elapsed().as_millis() < 400
+                                })
+                                .unwrap_or(false);
+                            if !covered && !cooling {
+                                let supports = self
+                                    .lsp_state
+                                    .lsp_manager
+                                    .as_mut()
+                                    .map(|lsp| lsp.supports_semantic_tokens(&ext))
+                                    .unwrap_or(false);
+                                if supports {
+                                    if let Some(lsp) = self.lsp_state.lsp_manager.as_mut() {
+                                        if let Some(id) =
+                                            lsp.request_semantic_tokens(&ext, &path, &content)
+                                        {
+                                            let now = std::time::Instant::now();
+                                            self.lsp_state.pending_semantic =
+                                                Some((path.clone(), ext, id, chash, now));
+                                            self.lsp_state.last_semantic_request =
+                                                Some((path, chash, now));
+                                        }
+                                    }
+                                }
                             }
                         }
                     }
@@ -1408,6 +1534,7 @@ impl eframe::App for VelocityApp {
             &self.cached_profile_label,
             self.provider.label(),
             model_name,
+            self.blame_annotation.as_deref(),
         );
 
         // Handle status bar click actions.
@@ -1427,6 +1554,9 @@ impl eframe::App for VelocityApp {
             // Open diagnostics (Problems tab in bottom panel).
             self.bottom_panel_state.collapsed = false;
             self.bottom_panel_state.active_tab = crate::editor::bottom_panel::TAB_PROBLEMS;
+        }
+        if sb_actions.clicked_branch {
+            self.open_branch_switcher();
         }
         if sb_actions.clicked_position {
             // Open go-to-line dialog.
@@ -1886,72 +2016,95 @@ impl eframe::App for VelocityApp {
                                 self.terminal_spawned = true;
                             }
                             self.terminal_state.show(ui, &palette);
+                            // Ctrl+clicked links (URLs / file:line) are resolved
+                            // here because only the app owns editor & browser.
+                            if let Some(link) = self.terminal_state.pending_link.take() {
+                                self.handle_terminal_link(link);
+                            }
                         }
                         crate::editor::bottom_panel::TAB_PROBLEMS => {
-                            // Problems tab
-                            let content_h = ui.available_height();
-                            egui::ScrollArea::vertical()
-                                .max_height(content_h)
-                                .show(ui, |ui| {
-                                    let ec = self.bottom_panel_state.error_count;
-                                    let wc = self.bottom_panel_state.warning_count;
-                                    if ec == 0 && wc == 0 {
-                                        ui.add_space(16.0);
-                                        ui.vertical_centered(|ui| {
-                                            ui.label(
-                                                egui::RichText::new(egui_phosphor::regular::CHECK)
+                            // Problems tab. Live language-server items render
+                            // through the shared DiagnosticsState panel: rows
+                            // are clickable and jump via the same sink F8
+                            // uses (it also owns the severity filter row).
+                            // With no LSP items, fall back to the build
+                            // diagnostics file's strings as plain rows.
+                            let has_lsp_items = !self.lsp_state.diagnostics.items.is_empty();
+                            if has_lsp_items {
+                                if let Some(crate::editor::diagnostics::DiagnosticAction::Jump {
+                                    diag,
+                                }) = self.lsp_state.diagnostics.show_panel(ui, &palette)
+                                {
+                                    self.jump_to_diagnostic(&diag);
+                                }
+                            } else {
+                                let content_h = ui.available_height();
+                                egui::ScrollArea::vertical()
+                                    .max_height(content_h)
+                                    .show(ui, |ui| {
+                                        let ec = self.bottom_panel_state.error_count;
+                                        let wc = self.bottom_panel_state.warning_count;
+                                        if ec == 0 && wc == 0 {
+                                            ui.add_space(16.0);
+                                            ui.vertical_centered(|ui| {
+                                                ui.label(
+                                                    egui::RichText::new(
+                                                        egui_phosphor::regular::CHECK,
+                                                    )
                                                     .size(22.0)
                                                     .color(palette.success),
-                                            );
-                                            ui.add_space(4.0);
-                                            ui.label(
-                                                egui::RichText::new("No problems detected")
-                                                    .size(12.0)
-                                                    .strong()
-                                                    .color(palette.text),
-                                            );
-                                            ui.add_space(2.0);
-                                            ui.label(
-                                                egui::RichText::new(
-                                                    "Your code is clean. Keep going!",
-                                                )
-                                                .size(10.0)
-                                                .color(palette.text_muted),
-                                            );
-                                        });
-                                    } else {
-                                        ui.horizontal(|ui| {
-                                            if ec > 0 {
-                                                ui.colored_label(
-                                                    palette.error,
-                                                    format!(
-                                                        "{} {} error(s)",
-                                                        egui_phosphor::regular::X,
-                                                        ec
-                                                    ),
+                                                );
+                                                ui.add_space(4.0);
+                                                ui.label(
+                                                    egui::RichText::new("No problems detected")
+                                                        .size(12.0)
+                                                        .strong()
+                                                        .color(palette.text),
+                                                );
+                                                ui.add_space(2.0);
+                                                ui.label(
+                                                    egui::RichText::new(
+                                                        "Your code is clean. Keep going!",
+                                                    )
+                                                    .size(10.0)
+                                                    .color(palette.text_muted),
+                                                );
+                                            });
+                                        } else {
+                                            ui.horizontal(|ui| {
+                                                if ec > 0 {
+                                                    ui.colored_label(
+                                                        palette.error,
+                                                        format!(
+                                                            "{} {} error(s)",
+                                                            egui_phosphor::regular::X,
+                                                            ec
+                                                        ),
+                                                    );
+                                                }
+                                                if wc > 0 {
+                                                    ui.colored_label(
+                                                        palette.warning,
+                                                        format!(
+                                                            "{} {} warning(s)",
+                                                            egui_phosphor::regular::WARNING,
+                                                            wc
+                                                        ),
+                                                    );
+                                                }
+                                            });
+                                            for msg in &self.bottom_panel_state.diagnostic_messages
+                                            {
+                                                ui.label(
+                                                    egui::RichText::new(msg)
+                                                        .monospace()
+                                                        .size(9.0)
+                                                        .color(palette.text),
                                                 );
                                             }
-                                            if wc > 0 {
-                                                ui.colored_label(
-                                                    palette.warning,
-                                                    format!(
-                                                        "{} {} warning(s)",
-                                                        egui_phosphor::regular::WARNING,
-                                                        wc
-                                                    ),
-                                                );
-                                            }
-                                        });
-                                        for msg in &self.bottom_panel_state.diagnostic_messages {
-                                            ui.label(
-                                                egui::RichText::new(msg)
-                                                    .monospace()
-                                                    .size(9.0)
-                                                    .color(palette.text),
-                                            );
                                         }
-                                    }
-                                });
+                                    });
+                            }
                         }
                         crate::editor::bottom_panel::TAB_DEBUG => {
                             // Debug tab
@@ -2061,12 +2214,19 @@ impl eframe::App for VelocityApp {
         self.quick_open_ui(&ctx);
         self.workspace_switcher_ui(&ctx);
         self.goto_line_ui(&ctx);
+        self.branch_switcher_ui(&ctx);
         self.goto_symbol_ui(&ctx);
         self.references_ui(&ctx);
+        self.call_hierarchy_ui(&ctx);
+        self.rename_ui(&ctx);
+        self.code_actions_ui(&ctx);
+        self.signature_help_ui(&ctx);
         self.suggestion_panel_ui(&ctx);
         self.file_dialog_ui(&ctx);
         self.save_as_dialog_ui(&ctx);
         self.confirm_close_dialog_ui(&ctx);
+        self.file_entry_dialog_ui(&ctx);
+        self.confirm_tree_delete_ui(&ctx);
         self.shortcuts_overlay_ui(&ctx);
         self.disk_hygiene_ui(&ctx);
         self.full_diff_ui(&ctx);

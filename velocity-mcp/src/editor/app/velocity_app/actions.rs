@@ -89,6 +89,13 @@ impl VelocityApp {
                 modes: &[],
             },
             Command {
+                label: "Close All Tabs",
+                category: "File",
+                shortcut: None,
+                action: |a| a.close_all_tabs(),
+                modes: &[],
+            },
+            Command {
                 label: "Reopen Closed Tab",
                 category: "File",
                 shortcut: Some("Ctrl+Shift+T"),
@@ -131,6 +138,27 @@ impl VelocityApp {
                 modes: &[],
             },
             Command {
+                label: "Go to Declaration",
+                category: "File",
+                shortcut: None,
+                action: |a| a.goto_declaration_at_cursor(),
+                modes: &[],
+            },
+            Command {
+                label: "Go to Type Definition",
+                category: "File",
+                shortcut: None,
+                action: |a| a.goto_type_definition_at_cursor(),
+                modes: &[],
+            },
+            Command {
+                label: "Go to Implementation",
+                category: "File",
+                shortcut: None,
+                action: |a| a.goto_implementation_at_cursor(),
+                modes: &[],
+            },
+            Command {
                 label: "Find All References",
                 category: "File",
                 shortcut: Some("Shift+F12"),
@@ -138,10 +166,164 @@ impl VelocityApp {
                 modes: &[],
             },
             Command {
+                label: "Show Incoming Calls",
+                category: "File",
+                shortcut: None,
+                action: |a| a.show_call_hierarchy(true),
+                modes: &[],
+            },
+            Command {
+                label: "Show Outgoing Calls",
+                category: "File",
+                shortcut: None,
+                action: |a| a.show_call_hierarchy(false),
+                modes: &[],
+            },
+            Command {
                 label: "Show Hover Info",
                 category: "File",
                 shortcut: None,
                 action: |a| a.show_hover_at_cursor(),
+                modes: &[],
+            },
+            Command {
+                label: "Format Document",
+                category: "File",
+                shortcut: Some("Shift+Alt+F"),
+                action: |a| a.format_document_via_lsp(),
+                modes: &[],
+            },
+            Command {
+                label: "Show Signature Help (Parameter Hints)",
+                category: "File",
+                shortcut: Some("Ctrl+Shift+Space"),
+                action: |a| a.request_signature_help(None),
+                modes: &[],
+            },
+            Command {
+                label: "Toggle Bookmark on Line",
+                category: "File",
+                shortcut: Some("Ctrl+Shift+B"),
+                action: |a| a.toggle_bookmark_current_line(),
+                modes: &[],
+            },
+            Command {
+                label: "Rename Symbol (LSP)",
+                category: "File",
+                shortcut: Some("F2"),
+                action: |a| a.open_rename_overlay(),
+                modes: &[],
+            },
+            Command {
+                label: "Refactor / Quick Fix (Code Actions)",
+                category: "File",
+                shortcut: Some("Alt+Enter"),
+                action: |a| a.open_code_actions_overlay(),
+                modes: &[],
+            },
+            Command {
+                label: "Duplicate Line",
+                category: "Edit",
+                shortcut: Some("Ctrl+Shift+D"),
+                action: |a| a.queued_line_op = Some(crate::editor::line_ops::LineOp::Duplicate),
+                modes: &[],
+            },
+            Command {
+                label: "Delete Line",
+                category: "Edit",
+                shortcut: Some("Ctrl+Shift+K"),
+                action: |a| a.queued_line_op = Some(crate::editor::line_ops::LineOp::Delete),
+                modes: &[],
+            },
+            Command {
+                label: "Move Line Up",
+                category: "Edit",
+                shortcut: Some("Alt+Up"),
+                action: |a| a.queued_line_op = Some(crate::editor::line_ops::LineOp::MoveUp),
+                modes: &[],
+            },
+            Command {
+                label: "Move Line Down",
+                category: "Edit",
+                shortcut: Some("Alt+Down"),
+                action: |a| a.queued_line_op = Some(crate::editor::line_ops::LineOp::MoveDown),
+                modes: &[],
+            },
+            Command {
+                label: "Toggle Line Comment",
+                category: "Edit",
+                shortcut: Some("Ctrl+/"),
+                action: |a| a.queued_toggle_comment = true,
+                modes: &[],
+            },
+            Command {
+                label: "Indent Lines",
+                category: "Edit",
+                shortcut: Some("Tab"),
+                action: |a| a.queued_indent = Some(true),
+                modes: &[],
+            },
+            Command {
+                label: "Dedent Lines",
+                category: "Edit",
+                shortcut: Some("Shift+Tab"),
+                action: |a| a.queued_indent = Some(false),
+                modes: &[],
+            },
+            Command {
+                label: "Jump to Next Change",
+                category: "Edit",
+                shortcut: Some("Ctrl+Alt+J"),
+                action: |a| a.queued_change_jump = Some(true),
+                modes: &[],
+            },
+            Command {
+                label: "Jump to Previous Change",
+                category: "Edit",
+                shortcut: Some("Ctrl+Alt+K"),
+                action: |a| a.queued_change_jump = Some(false),
+                modes: &[],
+            },
+            Command {
+                label: "Go to Next Problem",
+                category: "File",
+                shortcut: Some("F8"),
+                action: |a| a.queued_problem_jump = Some(true),
+                modes: &[],
+            },
+            Command {
+                label: "Go to Previous Problem",
+                category: "File",
+                shortcut: Some("Shift+F8"),
+                action: |a| a.queued_problem_jump = Some(false),
+                modes: &[],
+            },
+            Command {
+                label: "Expand Selection",
+                category: "Edit",
+                shortcut: Some("Shift+Alt+Right"),
+                action: |a| a.queued_select = Some(true),
+                modes: &[],
+            },
+            Command {
+                label: "Shrink Selection",
+                category: "Edit",
+                shortcut: Some("Shift+Alt+Left"),
+                action: |a| a.queued_select = Some(false),
+                modes: &[],
+            },
+            Command {
+                label: "Undo",
+                category: "Edit",
+                shortcut: Some("Ctrl+Z"),
+                action: |a| a.undo_active(),
+                modes: &[],
+            },
+            Command {
+                label: "Redo",
+                category: "Edit",
+                shortcut: Some("Ctrl+Shift+Z"),
+                action: |a| a.redo_active(),
                 modes: &[],
             },
             Command {
@@ -185,6 +367,49 @@ impl VelocityApp {
                 category: "Build",
                 shortcut: Some("Ctrl+R"),
                 action: |a| a.run_active(),
+                modes: &[WorkspaceProfile::Coder],
+            },
+            // Debugging (DAP)
+            Command {
+                label: "Start / Continue Debugging",
+                category: "Debug",
+                shortcut: Some("F5"),
+                action: |a| a.debug_start_or_continue(),
+                modes: &[WorkspaceProfile::Coder],
+            },
+            Command {
+                label: "Stop Debugging",
+                category: "Debug",
+                shortcut: Some("Shift+F5"),
+                action: |a| a.debug_stop(),
+                modes: &[WorkspaceProfile::Coder],
+            },
+            Command {
+                label: "Step Over",
+                category: "Debug",
+                shortcut: Some("F10"),
+                action: |a| a.debug_step_over(),
+                modes: &[WorkspaceProfile::Coder],
+            },
+            Command {
+                label: "Step Into",
+                category: "Debug",
+                shortcut: Some("F11"),
+                action: |a| a.debug_step_into(),
+                modes: &[WorkspaceProfile::Coder],
+            },
+            Command {
+                label: "Step Out",
+                category: "Debug",
+                shortcut: Some("Shift+F11"),
+                action: |a| a.debug_step_out(),
+                modes: &[WorkspaceProfile::Coder],
+            },
+            Command {
+                label: "Toggle Breakpoint",
+                category: "Debug",
+                shortcut: Some("F9"),
+                action: |a| a.toggle_breakpoint_current_line(),
                 modes: &[WorkspaceProfile::Coder],
             },
             // Automation
@@ -372,6 +597,17 @@ impl VelocityApp {
                 modes: &[],
             },
             Command {
+                label: "Find in Terminal",
+                category: "Edit",
+                shortcut: Some("Ctrl+F"),
+                action: |a| {
+                    a.bottom_panel_state.collapsed = false;
+                    a.bottom_panel_state.active_tab = crate::editor::bottom_panel::TAB_TERMINAL;
+                    a.terminal_state.open_find();
+                },
+                modes: &[],
+            },
+            Command {
                 label: "Request Inline Suggestion",
                 category: "Agent",
                 shortcut: Some("Ctrl+Shift+I"),
@@ -487,6 +723,20 @@ impl VelocityApp {
                 modes: &[],
             },
             Command {
+                label: "Toggle Auto Save",
+                category: "View",
+                shortcut: None,
+                action: |a| a.toggle_auto_save(),
+                modes: &[],
+            },
+            Command {
+                label: "Toggle Format On Save",
+                category: "Edit",
+                shortcut: None,
+                action: |a| a.toggle_format_on_save(),
+                modes: &[],
+            },
+            Command {
                 label: "Toggle History",
                 category: "View",
                 shortcut: None,
@@ -498,6 +748,13 @@ impl VelocityApp {
                 category: "View",
                 shortcut: None,
                 action: |a| a.reset_workspace_layout(),
+                modes: &[],
+            },
+            Command {
+                label: "Git: Switch Branch",
+                category: "Git",
+                shortcut: None,
+                action: |a| a.open_branch_switcher(),
                 modes: &[],
             },
         ]
@@ -708,9 +965,35 @@ impl VelocityApp {
         self.status_message = "Closed other tabs".into();
     }
 
+    /// Close every editor tab (keeps non-editor panels like Chat/Output).
+    pub fn close_all_tabs(&mut self) {
+        let removed: Vec<TabId> = self
+            .tabs
+            .iter()
+            .filter(|t| matches!(t.kind, TabKind::Editor { .. }))
+            .map(|t| t.id.clone())
+            .collect();
+        for id in &removed {
+            if let Some(path) = self.tab_path(id).cloned() {
+                self.push_closed_editor_path(path.clone());
+                if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
+                    if let Some(lsp) = self.lsp_state.lsp_manager.as_mut() {
+                        lsp.close_document(ext, &path);
+                    }
+                }
+            }
+            self.buffers.remove(id);
+        }
+        self.tabs.retain(|t| !removed.contains(&t.id));
+        self.active_tab = self.tabs.first().map(|t| t.id.clone());
+        self.rebuild_dock();
+        self.status_message = "Closed all editor tabs".into();
+    }
+
     /// Remember a closed editor file so it can be reopened with Ctrl+Shift+T.
     fn push_closed_editor_path(&mut self, path: PathBuf) {
-        self.closed_editor_paths.retain(|p| p != &path);
+        self.closed_editor_paths
+            .retain(|p| !crate::editor::file_ops::same_editor_path(p, &path));
         self.closed_editor_paths.push(path);
         if self.closed_editor_paths.len() > 20 {
             let excess = self.closed_editor_paths.len() - 20;
@@ -743,15 +1026,133 @@ impl VelocityApp {
         self.workspace_symbols =
             crate::editor::search::collect_workspace_symbols(&self.workspace_root);
         self.goto_symbol_entries = self.workspace_symbols.clone();
+        // Fresh session: no LSP request in flight, no debounce clock.
+        self.goto_symbol_lsp_pending = None;
+        self.goto_symbol_lsp_dispatched.clear();
+        self.goto_symbol_lsp_typing = None;
+        self.goto_symbol_lsp_retries = 0;
+        self.goto_symbol_lsp_note = None;
+    }
+
+    /// Language-server feed for the go-to-symbol switcher: once the typed
+    /// query settles briefly, dispatch a non-blocking `workspace/symbol`
+    /// request (gated on the server advertising the provider), poll the
+    /// answer on subsequent frames, and merge it into the entry list. No
+    /// capable server — or no answer within the budget — simply leaves the
+    /// sitemap-backed symbols in place; keystrokes never wait on the server.
+    pub fn update_goto_symbol_lsp(&mut self, query: &str, ctx: &egui::Context) {
+        // Poll the in-flight request first: it must land even after the
+        // query stops changing.
+        if let Some((pext, id, sent_at)) = self.goto_symbol_lsp_pending.clone() {
+            if sent_at.elapsed() > std::time::Duration::from_secs(3) {
+                // A hung answer must not mute the query forever: re-arm so
+                // the same text gets another chance after a backoff pause.
+                self.goto_symbol_lsp_pending = None;
+                self.goto_symbol_lsp_dispatched.clear();
+                self.goto_symbol_lsp_typing = Some(std::time::Instant::now());
+                self.goto_symbol_lsp_retries = self.goto_symbol_lsp_retries.saturating_add(1);
+                ctx.request_repaint_after(crate::editor::search::symbol_query_retry_delay(
+                    self.goto_symbol_lsp_retries,
+                ));
+            } else if let Some(results) = self
+                .lsp_state
+                .lsp_manager
+                .as_mut()
+                .and_then(|lsp| lsp.poll_workspace_symbols(&pext, id))
+            {
+                self.goto_symbol_lsp_pending = None;
+                if results.is_empty() {
+                    // A still-loading server (rust-analyzer before its crate
+                    // graph is ready) answers `[]` right away. That's "ask
+                    // again later", not "nothing exists" — re-arm with the
+                    // backoff below until real symbols arrive.
+                    self.goto_symbol_lsp_dispatched.clear();
+                    self.goto_symbol_lsp_typing = Some(std::time::Instant::now());
+                    self.goto_symbol_lsp_retries = self.goto_symbol_lsp_retries.saturating_add(1);
+                    // The retry needs a future frame that no keystroke will
+                    // ever provide (the user has stopped typing, the server
+                    // is still loading) — schedule the wake-up explicitly.
+                    ctx.request_repaint_after(crate::editor::search::symbol_query_retry_delay(
+                        self.goto_symbol_lsp_retries,
+                    ));
+                    self.goto_symbol_lsp_note =
+                        Some("Language server is still loading symbols\u{2026}".into());
+                } else {
+                    self.goto_symbol_lsp_retries = 0;
+                    self.goto_symbol_lsp_note = None;
+                    self.goto_symbol_entries = crate::editor::search::merge_workspace_symbols(
+                        &self.workspace_symbols,
+                        &results,
+                        &self.workspace_root,
+                    );
+                    // Sentinel forces the overlay to re-filter the merged
+                    // list next frame (no real query can compare equal).
+                    self.goto_symbol_last_query = "\u{0}".into();
+                    self.goto_symbol_selected = 0;
+                }
+            } else {
+                // Answer still in transit: keep the frames coming.
+                ctx.request_repaint();
+                return;
+            }
+        }
+        // Restart the debounce clock whenever the query changes.
+        if self.goto_symbol_last_query != query {
+            self.goto_symbol_lsp_typing = Some(std::time::Instant::now());
+            // Fresh text deserves a fresh (quick) chance.
+            self.goto_symbol_lsp_retries = 0;
+        }
+        let Some(paused) = self.goto_symbol_lsp_typing else {
+            return;
+        };
+        if query.is_empty() || query == self.goto_symbol_lsp_dispatched {
+            return;
+        }
+        let delay = crate::editor::search::symbol_query_retry_delay(self.goto_symbol_lsp_retries);
+        if paused.elapsed() < delay {
+            // Guarantee the debounce deadline gets a frame even if the user
+            // stops typing and no other event wakes the app.
+            ctx.request_repaint_after(delay - paused.elapsed());
+            return;
+        }
+        // The server is picked through the active editor's language; with no
+        // editor open there is nothing to ask, and the local list stands.
+        let Some((_, ext, _)) = self.active_lsp_target() else {
+            self.goto_symbol_lsp_note =
+                Some("Open a code file to search its language server".into());
+            return;
+        };
+        let dispatched = self
+            .lsp_state
+            .lsp_manager
+            .as_mut()
+            .and_then(|lsp| lsp.request_workspace_symbols(&ext, query));
+        // Mark the attempt even when it fails: a dead or incapable server
+        // must not be re-poked on every frame for the same query.
+        self.goto_symbol_lsp_dispatched = query.to_string();
+        if dispatched.is_none() {
+            // Say so honestly instead of blaming the user's indexer.
+            self.goto_symbol_lsp_note = Some(format!(
+                "Language server has no workspace-symbol provider for .{ext}"
+            ));
+        }
+        if let Some(id) = dispatched {
+            self.goto_symbol_lsp_pending = Some((ext, id, std::time::Instant::now()));
+            ctx.request_repaint();
+        }
     }
 
     /// Open the file defining `entry` and jump to the symbol's definition line.
     pub fn jump_to_symbol(&mut self, entry: &crate::editor::search::SymbolEntry) {
         self.push_nav_location();
         let abs = self.workspace_root.join(&entry.file);
-        let line = std::fs::read_to_string(&abs)
-            .ok()
-            .and_then(|content| crate::editor::search::find_definition_line(&content, &entry.name));
+        // Language-server entries carry the exact line; sitemap entries fall
+        // back to a text scan of the definition file.
+        let line = entry.line.or_else(|| {
+            std::fs::read_to_string(&abs).ok().and_then(|content| {
+                crate::editor::search::find_definition_line(&content, &entry.name)
+            })
+        });
         self.open_editor(Some(abs));
         if let Some(line) = line {
             self.pending_cursor_line = Some(line);
@@ -777,6 +1178,56 @@ impl VelocityApp {
         } else {
             self.status_message = format!("No definition found for \u{201c}{}\u{201d}", name);
         }
+    }
+
+    /// Move the caret to a 1-based `line` in the already-active editor and
+    /// record the jump on the back stack. Used by the Outline rows: the file is
+    /// open, so this is a pure in-buffer scroll (no `open_editor` round-trip).
+    pub fn jump_to_line_in_active(&mut self, line: usize) {
+        self.push_nav_location();
+        self.pending_cursor_line = Some(line);
+    }
+
+    /// Load and display a file's diff in the Changes panel. Untracked files
+    /// have no `git diff` body, so they are shown as an all-additions view of
+    /// their on-disk content; everything else uses the real unified diff.
+    /// Accepts either spelling — panel rows carry the porcelain-relative path,
+    /// external callers an absolute one — by resolving to the absolute form for
+    /// filesystem reads and the repo-relative form for the git pathspec.
+    pub fn load_scm_diff(&mut self, path: &std::path::Path) {
+        use crate::editor::diff_view;
+        let abs = if path.is_absolute() {
+            path.to_path_buf()
+        } else {
+            self.workspace_root.join(path)
+        };
+        let rel = abs
+            .strip_prefix(&self.workspace_root)
+            .unwrap_or(&abs)
+            .to_path_buf();
+        let lines = if self.is_untracked(&rel) {
+            let text = std::fs::read_to_string(&abs).unwrap_or_default();
+            diff_view::diff_from_sides(Some(&text), None)
+        } else {
+            self.git_state.diff_file(&self.workspace_root, &rel);
+            diff_view::parse_unified_diff(&self.git_state.diff_output.clone())
+        };
+        self.scm_diff_lines = lines;
+        self.scm_diff_path = Some(abs);
+    }
+
+    /// Header label for the open diff, or `None` when no file is selected.
+    pub fn scm_diff_label(&self) -> Option<String> {
+        self.scm_diff_path
+            .as_ref()
+            .map(|p| crate::editor::diff_view::diff_header_label(&self.workspace_root, p))
+    }
+
+    fn is_untracked(&self, path: &std::path::Path) -> bool {
+        self.git_state
+            .entries
+            .iter()
+            .any(|e| e.path == path && e.status == crate::editor::git_ui::GitFileStatus::Untracked)
     }
 
     /// Snapshot the active editor's file/line onto the back stack. Called before
@@ -936,7 +1387,7 @@ impl VelocityApp {
                 TabKind::Editor {
                     path: Some(tab_path),
                     ..
-                } if tab_path == p => Some(tab.id.clone()),
+                } if crate::editor::file_ops::same_editor_path(tab_path, p) => Some(tab.id.clone()),
                 _ => None,
             });
             if let Some(id) = existing {
@@ -954,7 +1405,12 @@ impl VelocityApp {
                 buffer_id: id.clone(),
             },
         };
-        let buf = EditorBuffer::default();
+        // The buffer carries its path from birth: `active_lsp_target()` reads
+        // it, and an async open that left it None silently muted every LSP
+        // feature — go-to-definition, hover, workspace/symbol — for any file
+        // opened through this path, not just the symbol switcher.
+        let mut buf = EditorBuffer::default();
+        buf.path = path.clone();
         if let Some(ref p) = path {
             // Spawn a background thread to read the file so the UI stays responsive.
             let tab_id = id.clone();
@@ -1025,6 +1481,7 @@ impl VelocityApp {
         let buf = if let Some(src_id) = active_buf_id {
             if let Some(src) = self.buffers.get(&src_id) {
                 let mut b = EditorBuffer::default();
+                b.path = src.path.clone();
                 b.load_text(src.content());
                 b.disk_mtime = src.disk_mtime;
                 b
@@ -1044,6 +1501,210 @@ impl VelocityApp {
         self.active_tab = Some(id.clone());
         self.touch_mru(&id);
         self.status_message = "Split editor view".to_string();
+    }
+
+    // ─── Hot exit: unsaved buffers survive a restart ────────────────────────
+
+    /// Capture every dirty editor buffer to `.velocity/hot-exit.json` so
+    /// closing the window never silently discards work. With nothing dirty
+    /// the file is removed instead — there is nothing left to rescue.
+    pub fn write_hot_exit_session(&self) {
+        use crate::editor::hot_exit;
+        let path = hot_exit::session_path(&self.workspace_root);
+        let mut files = Vec::new();
+        let mut active_index = None;
+        for tab in &self.tabs {
+            let TabKind::Editor { buffer_id, .. } = &tab.kind else {
+                continue;
+            };
+            let Some(buf) = self.buffers.get(buffer_id) else {
+                continue;
+            };
+            if !buf.is_dirty() {
+                continue;
+            }
+            if self.active_tab.as_ref() == Some(&tab.id) {
+                active_index = Some(files.len());
+            }
+            files.push(hot_exit::HotExitFile {
+                path: buf.path.clone(),
+                content: buf.content.clone(),
+            });
+        }
+        if files.is_empty() {
+            let _ = hot_exit::clear_session(&path);
+            return;
+        }
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs() as i64)
+            .unwrap_or(0);
+        let session = hot_exit::build_session(files, active_index, now);
+        let _ = hot_exit::write_session(&path, &session);
+    }
+
+    /// Reopen the previous session's unsaved tabs — marked dirty against the
+    /// bytes on disk, exactly as the user left them — on the first frame,
+    /// once. The session file is consumed either way so a restore never
+    /// replays, and expired sessions are dropped rather than restored.
+    pub fn restore_hot_exit(&mut self) {
+        use crate::editor::hot_exit;
+        if self.hot_exit_restored {
+            return;
+        }
+        self.hot_exit_restored = true;
+        let path = hot_exit::session_path(&self.workspace_root);
+        let Some(session) = hot_exit::read_session(&path) else {
+            return;
+        };
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs() as i64)
+            .unwrap_or(0);
+        if hot_exit::is_expired(&session, now, hot_exit::RETENTION_DAYS) {
+            let _ = hot_exit::clear_session(&path);
+            return;
+        }
+        let mut restored = 0usize;
+        let mut active: Option<TabId> = None;
+        let mut last: Option<TabId> = None;
+        for (i, file) in session.files.iter().enumerate() {
+            // On a restart, workspace preferences reopen the last session's
+            // tabs (with an async disk read in flight) before this runs. The
+            // rescued buffer wins over that stale disk version: overlay it on
+            // the already-open tab and cancel its pending load. Skipping the
+            // file instead would silently discard unsaved work on every
+            // restart after the first.
+            let open = file.path.as_ref().and_then(|p| {
+                self.tabs.iter().find_map(|t| match &t.kind {
+                    TabKind::Editor {
+                        path: Some(tp),
+                        buffer_id,
+                        ..
+                    } if crate::editor::file_ops::same_editor_path(tp, p) => {
+                        Some((t.id.clone(), buffer_id.clone()))
+                    }
+                    _ => None,
+                })
+            });
+            if let Some((tab_id, buffer_id)) = open {
+                // Edits made since launch are newer than the rescue file;
+                // never clobber them. (A reopened tab is always clean at
+                // startup, so this only guards future refactors.)
+                if self.buffers.get(&buffer_id).is_some_and(|b| b.is_dirty()) {
+                    continue;
+                }
+                let path = file.path.as_ref().expect("open tab path");
+                self.pending_file_loads.remove(&buffer_id);
+                let (disk, mtime) = (
+                    std::fs::read_to_string(path).unwrap_or_default(),
+                    std::fs::metadata(path).and_then(|m| m.modified()).ok(),
+                );
+                if let Some(buf) = self.buffers.get_mut(&buffer_id) {
+                    *buf = EditorBuffer::new(Some(path.clone()), disk);
+                    buf.disk_mtime = mtime;
+                    buf.update_content(file.content.clone());
+                }
+                if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
+                    if let Some(lsp) = self.lsp_state.lsp_manager.as_mut() {
+                        lsp.sync_document(ext, path, &file.content);
+                    }
+                }
+                if session.active_index == Some(i) {
+                    active = Some(tab_id.clone());
+                }
+                last = Some(tab_id);
+                restored += 1;
+                continue;
+            }
+            let (disk, mtime) = match &file.path {
+                Some(p) => (
+                    std::fs::read_to_string(p).unwrap_or_default(),
+                    std::fs::metadata(p).and_then(|m| m.modified()).ok(),
+                ),
+                None => (String::new(), None),
+            };
+            let mut buf = EditorBuffer::new(file.path.clone(), disk);
+            buf.disk_mtime = mtime;
+            // Layering the unsaved content over the disk baseline marks the
+            // buffer dirty against disk — the tab comes back exactly as left,
+            // and Save writes the right bytes.
+            buf.update_content(file.content.clone());
+            let id = TabId::next(&mut self.tab_counter);
+            let tab = Tab {
+                id: id.clone(),
+                kind: TabKind::Editor {
+                    path: file.path.clone(),
+                    buffer_id: id.clone(),
+                },
+            };
+            if let Some(p) = &file.path {
+                if let Some(ext) = p.extension().and_then(|e| e.to_str()) {
+                    if let Some(lsp) = self.lsp_state.lsp_manager.as_mut() {
+                        lsp.sync_document(ext, p, &file.content);
+                    }
+                }
+            }
+            self.buffers.insert(id.clone(), buf);
+            self.tabs.push(tab.clone());
+            if let Some(dock) = self.dock_state.as_mut() {
+                dock.push_to_focused_leaf(tab);
+            }
+            self.touch_mru(&id);
+            restored += 1;
+            if session.active_index == Some(i) {
+                active = Some(id.clone());
+            }
+            last = Some(id);
+        }
+        if restored > 0 {
+            self.active_tab = active.or(last);
+            if let Some(id) = self.active_tab.clone() {
+                self.touch_mru(&id);
+            }
+            self.status_message =
+                format!("Restored {restored} unsaved file(s) from the previous session");
+        }
+        let _ = hot_exit::clear_session(&path);
+    }
+
+    /// Switch workspaces in place (the project switcher). Order matters:
+    /// the departing workspace's dirty buffers are captured to *its own*
+    /// hot-exit file before the root moves — otherwise the next exit would
+    /// journal them under the new root, or drop them on the floor. Then the
+    /// old workspace's editor tabs close and the new one's preferences
+    /// reopen, along with any rescued buffers it holds, so the UI lands
+    /// exactly where that workspace's last session left it.
+    pub fn switch_workspace_to(&mut self, path: PathBuf) {
+        if crate::editor::file_ops::same_editor_path(&path, &self.workspace_root) {
+            return;
+        }
+        self.write_hot_exit_session();
+        self.save_workspace_preferences();
+        let stale: Vec<TabId> = self
+            .tabs
+            .iter()
+            .filter(|t| matches!(t.kind, TabKind::Editor { .. }))
+            .map(|t| t.id.clone())
+            .collect();
+        for id in stale {
+            self.close_tab(&id);
+        }
+        self.rebuild_dock();
+        self.workspace_root = path;
+        self.status_message = format!(
+            "Switched to {}",
+            self.workspace_root
+                .file_name()
+                .map(|n| n.to_string_lossy().to_string())
+                .unwrap_or_else(|| self.workspace_root.display().to_string())
+        );
+        self.restore_workspace_preferences();
+        // The new root may hold unsaved work from when it was last open;
+        // a restore overwrites the status with "Restored N ..." so the
+        // rescue stays visible.
+        self.hot_exit_restored = false;
+        self.restore_hot_exit();
     }
 
     /// Ctrl+O: raise the file picker.
@@ -1098,6 +1759,10 @@ impl VelocityApp {
         path: &PathBuf,
         success_feedback: bool,
     ) -> bool {
+        // Format-on-save runs before the write so both the disk and the
+        // editor end up holding the formatted text; the success path below
+        // re-baselines the dirty flag via mark_saved as usual.
+        self.format_buffer_for_save(id, path);
         if let Some(buf) = self.buffers.get(id) {
             match std::fs::write(path, buf.content()) {
                 Ok(_) => {
@@ -1143,6 +1808,133 @@ impl VelocityApp {
                 "Failed to save: missing buffer",
             ));
             false
+        }
+    }
+
+    /// Files dropped onto the window from the OS shell arrive as paths; open
+    /// each real file as an editor tab. `open_editor` already dedupes by path
+    /// and routes `.nda` documents, so drops behave exactly like opening from
+    /// the explorer. Non-files (folders, vanished entries) are ignored.
+    pub fn handle_dropped_paths(&mut self, paths: Vec<PathBuf>) {
+        let mut opened = 0usize;
+        for path in paths {
+            if path.is_file() {
+                self.open_editor(Some(path));
+                opened += 1;
+            }
+        }
+        if opened > 0 {
+            self.rebuild_dock();
+            self.status_message = format!("Opened {opened} dropped file(s)");
+        }
+    }
+
+    /// Flip auto-save and persist the choice alongside the other workspace
+    /// preferences so a restart keeps the user's setting.
+    pub fn toggle_auto_save(&mut self) {
+        self.auto_save = !self.auto_save;
+        self.save_workspace_preferences();
+        self.status_message = format!(
+            "Auto-save {}",
+            if self.auto_save {
+                "enabled"
+            } else {
+                "disabled"
+            }
+        );
+    }
+
+    /// Tabs auto-save should write: dirty buffers on editor tabs that have a
+    /// real path on disk. Untitled buffers are skipped -- autosave must not
+    /// invent filenames or prompt mid-edit.
+    pub fn auto_save_candidates(&self) -> Vec<(TabId, PathBuf)> {
+        self.tabs
+            .iter()
+            .filter(|t| self.tab_is_dirty(&t.id))
+            .filter_map(|t| t.editor_path().cloned().map(|p| (t.id.clone(), p)))
+            .collect()
+    }
+
+    /// Per-frame auto-save sweep, throttled to one pass every two seconds.
+    /// Uses the same silent path as Ctrl+S (`success_feedback = false`) so
+    /// git status and LSP sync stay consistent without toast spam.
+    pub fn auto_save_tick(&mut self) {
+        if !self.auto_save {
+            return;
+        }
+        let due = self
+            .last_auto_save
+            .map(|t| t.elapsed() >= std::time::Duration::from_secs(2))
+            .unwrap_or(true);
+        if !due {
+            return;
+        }
+        self.last_auto_save = Some(std::time::Instant::now());
+        for (id, path) in self.auto_save_candidates() {
+            self.save_buffer_to_with_feedback(&id, &path, false);
+        }
+    }
+
+    /// Flip format-on-save and persist the choice with the other workspace
+    /// preferences.
+    pub fn toggle_format_on_save(&mut self) {
+        self.format_on_save = !self.format_on_save;
+        self.save_workspace_preferences();
+        self.status_message = format!(
+            "Format on save {}",
+            if self.format_on_save {
+                "enabled"
+            } else {
+                "disabled"
+            }
+        );
+    }
+
+    /// Format-on-save hook run by every save path (Ctrl+S, Save All,
+    /// auto-save) before bytes hit the disk: when enabled and the language
+    /// server answers with formatted text, the buffer is rewritten (through
+    /// the dirty/undo path, then re-baselined by the save) and the server is
+    /// fed the new text. Silent by design: no formatter, no change, no
+    /// message -- the save proceeds with whatever content is there.
+    pub fn format_buffer_for_save(&mut self, id: &TabId, path: &PathBuf) {
+        if !self.format_on_save {
+            return;
+        }
+        let Some(ext) = path
+            .extension()
+            .and_then(|e| e.to_str())
+            .map(str::to_string)
+        else {
+            return;
+        };
+        let Some(content) = self.buffers.get(id).map(|b| b.content().to_string()) else {
+            return;
+        };
+        let (tab_size, insert_spaces) = match self
+            .buffers
+            .get(id)
+            .map(|b| b.indent_style)
+            .unwrap_or_default()
+        {
+            crate::editor::auto_indent::IndentStyle::Tabs => (4, false),
+            crate::editor::auto_indent::IndentStyle::Spaces(w) => ((w as u64).max(1), true),
+        };
+        let formatted = match self.lsp_state.lsp_manager.as_mut() {
+            Some(lsp) => lsp.format_document(&ext, path, &content, tab_size, insert_spaces),
+            None => None,
+        };
+        if let Some(text) = formatted {
+            if text != content {
+                if let Some(buf) = self.buffers.get_mut(id) {
+                    // content_mut() marks the buffer mutated, so Ctrl+Z can
+                    // undo the formatter's rewrite; mark_saved() in the save
+                    // path then clears the flag against the new baseline.
+                    *buf.content_mut() = text.clone();
+                }
+                if let Some(lsp) = self.lsp_state.lsp_manager.as_mut() {
+                    lsp.sync_document(&ext, path, &text);
+                }
+            }
         }
     }
 
@@ -1294,8 +2086,17 @@ impl VelocityApp {
                 content,
                 mtime,
             } => {
-                self.pending_file_loads.remove(&tab_id);
+                // No pending marker means the load was cancelled — hot-exit
+                // restore overlaid rescued work onto this tab. Applying the
+                // disk version now would silently clobber the unsaved buffer.
+                if !self.pending_file_loads.remove(&tab_id) {
+                    return;
+                }
                 if let Some(buf) = self.buffers.get_mut(&tab_id) {
+                    // Re-assert the path even if the buffer was created by an
+                    // older code path — content and path must agree on which
+                    // file this buffer is.
+                    buf.path = Some(path.clone());
                     buf.load_text(&content);
                     buf.disk_mtime = mtime;
                 }
@@ -1311,7 +2112,9 @@ impl VelocityApp {
                 path,
                 error,
             } => {
-                self.pending_file_loads.remove(&tab_id);
+                if !self.pending_file_loads.remove(&tab_id) {
+                    return; // cancelled load: nothing to report
+                }
                 // Surface the underlying cause: "permission denied", "file not
                 // found" and "file locked" all need a different user response,
                 // so the reason has to reach the status line and the toast

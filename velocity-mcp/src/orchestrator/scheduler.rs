@@ -1,4 +1,4 @@
-//! Topological scheduling of tasks.
+//! Topological scheduling of tasks, conflict-aware at the scope level.
 
 use std::collections::{HashMap, HashSet};
 
@@ -11,26 +11,112 @@ pub struct Plan {
     pub phases: Vec<Vec<TaskId>>,
 }
 
-/// Build a phase-based execution plan so tasks in the same phase are independent.
-/// Within each phase, tasks are sorted by priority (highest first) so workers
-/// pick urgent work before lower-priority tasks.
+/// Normalize a scope/path entry for overlap comparison: forward slashes,
+/// no leading/trailing slashes, lowercase (workspace paths are matched
+/// case-insensitively on the target platforms).
+pub fn normalize_scope(entry: &str) -> String {
+    entry.replace('\\', "/").trim_matches('/').to_lowercase()
+}
+
+/// Whether two scope entries address the same territory: exact match after
+/// normalization, or one containing the other as a directory prefix.
+pub fn path_overlaps(a: &str, b: &str) -> bool {
+    let a = normalize_scope(a);
+    let b = normalize_scope(b);
+    if a.is_empty() || b.is_empty() {
+        return false;
+    }
+    a == b || a.starts_with(&format!("{b}/")) || b.starts_with(&format!("{a}/"))
+}
+
+/// Whether any scope entry touches a file in a (normalized) file group.
+fn touches_group(scope: &[String], group: &HashSet<String>) -> bool {
+    scope
+        .iter()
+        .any(|e| group.iter().any(|f| path_overlaps(e, f)))
+}
+
+/// Whether two declared scopes must not run concurrently. Two collision
+/// channels are considered:
+/// * textual scope overlap (one path contains the other, or they are equal);
+/// * a shared *historical conflict group* — sets of files that the durable
+///   event store recorded together in past shared-write conflicts, so two
+///   scopes touching the same group are serialized even when their declared
+///   paths never overlap (the semantic collisions the runtime mediator
+///   catches too late).
+///
+/// A task with no declared scope never conflicts here: the runtime scope
+/// locks and the mediator remain its safety net.
+pub fn scopes_conflict(a: &[String], b: &[String], groups: &[HashSet<String>]) -> bool {
+    if a.is_empty() || b.is_empty() {
+        return false;
+    }
+    if a.iter().any(|x| b.iter().any(|y| path_overlaps(x, y))) {
+        return true;
+    }
+    groups
+        .iter()
+        .any(|g| touches_group(a, g) && touches_group(b, g))
+}
+
+/// Greedily split one ready wave into conflict-free sub-waves, preserving
+/// the incoming (priority-descending) order: each task joins the earliest
+/// sub-wave it can share with nobody it collides with.
+pub fn split_conflict_free(
+    graph: &TaskGraph,
+    wave: &[TaskId],
+    groups: &[HashSet<String>],
+) -> Vec<Vec<TaskId>> {
+    let scope_of = |id: &TaskId| -> &[String] {
+        graph
+            .tasks
+            .get(id)
+            .map(|t| t.scope.as_slice())
+            .unwrap_or(&[])
+    };
+    let mut waves: Vec<Vec<TaskId>> = Vec::new();
+    for &id in wave {
+        let scope = scope_of(&id);
+        let target = waves.iter_mut().find(|w| {
+            !w.iter()
+                .any(|other| scopes_conflict(scope_of(other), scope, groups))
+        });
+        match target {
+            Some(w) => w.push(id),
+            None => waves.push(vec![id]),
+        }
+    }
+    waves
+}
+
+/// Build a phase-based execution plan so tasks in the same phase are
+/// independent both by dependency edges *and* by write scope: phases that
+/// would collide are split into sequential sub-phases, so the plan itself
+/// never schedules a shared-write race the mediator would have to reject at
+/// runtime. No conflict history is consulted; see [`plan_with_conflicts`].
 pub fn plan(graph: &TaskGraph) -> Plan {
+    plan_with_conflicts(graph, &[])
+}
+
+/// [`plan`] with historical conflict groups (as produced by
+/// [`crate::registry::event_store::conflict_file_groups`): file sets that
+/// conflicted in past sessions also get serialized.
+pub fn plan_with_conflicts(graph: &TaskGraph, groups: &[HashSet<String>]) -> Plan {
     let mut completed: HashSet<TaskId> = HashSet::new();
     let mut phases: Vec<Vec<TaskId>> = Vec::new();
 
     while completed.len() < graph.tasks.len() {
-        let mut ready: Vec<TaskId> = graph.ready(&completed).into_iter().map(|t| t.id).collect();
+        let ready: Vec<TaskId> = graph.ready(&completed).into_iter().map(|t| t.id).collect();
         if ready.is_empty() {
             break; // cycle or misconfiguration
         }
-        // Sort within each phase by priority (highest first).
-        ready.sort_by(|a, b| {
-            let pa = graph.tasks.get(a).map(|t| t.priority).unwrap_or(0);
-            let pb = graph.tasks.get(b).map(|t| t.priority).unwrap_or(0);
-            pb.cmp(&pa)
-        });
+        // graph.ready() already sorts by priority (highest first); splitting
+        // keeps that order, so the most urgent task owns the shared scope and
+        // lower-priority collisions queue behind it.
+        for wave in split_conflict_free(graph, &ready, groups) {
+            phases.push(wave);
+        }
         completed.extend(ready.iter().copied());
-        phases.push(ready);
     }
 
     Plan { phases }
@@ -39,6 +125,18 @@ pub fn plan(graph: &TaskGraph) -> Plan {
 /// Basic breadth-first ordering.
 pub fn bfs(graph: &TaskGraph) -> Vec<TaskId> {
     plan(graph).phases.into_iter().flatten().collect()
+}
+
+/// Whether a time-based cache of historical conflict groups should be
+/// recomputed. `age` is the time since the last refresh (`None` = never
+/// refreshed). Pure, so the plan-preview refresh cadence is unit-testable
+/// without wall-clock sleeps: the refresh itself is disk-bound and must not
+/// run on every UI repaint.
+pub fn conflict_cache_is_stale(age: Option<std::time::Duration>, ttl: std::time::Duration) -> bool {
+    match age {
+        None => true,
+        Some(a) => a >= ttl,
+    }
 }
 
 /// Find any strongly connected components / cycles.
@@ -297,5 +395,110 @@ mod tests {
         g.add(TaskId(1), "A", "", vec![], vec![TaskId(99)], None);
         assert!(!detect_cycle(&g));
         assert!(break_cycles(&mut g).is_empty());
+    }
+
+    #[test]
+    fn path_overlaps_covers_dirs_files_and_separator_cases() {
+        assert!(path_overlaps("src/db", "src/db/"));
+        assert!(path_overlaps("src/db/", "src/db/pool.rs"));
+        assert!(path_overlaps("src\\db\\pool.rs", "src/db/pool.rs"));
+        assert!(path_overlaps("SRC/DB", "src/db/pool.rs"));
+        assert!(!path_overlaps("src/database", "src/db"));
+        assert!(!path_overlaps("docs", "src/db"));
+        assert!(!path_overlaps("", "src"));
+    }
+
+    #[test]
+    fn plan_serializes_textually_overlapping_scopes() {
+        // Two independent tasks fighting over the same territory: the
+        // higher-priority one owns the phase, the collision queues behind it
+        // instead of scheduling a race the mediator would have to reject.
+        let mut g = TaskGraph::default();
+        g.add(
+            TaskId(1),
+            "Pool rewrite",
+            "",
+            vec!["src/db/".into()],
+            vec![],
+            None,
+        );
+        g.add(
+            TaskId(2),
+            "Schema tweak",
+            "",
+            vec!["src/db/schema.rs".into()],
+            vec![],
+            None,
+        );
+        g.tasks.get_mut(&TaskId(1)).unwrap().priority = 5;
+        g.tasks.get_mut(&TaskId(2)).unwrap().priority = 1;
+        let p = plan(&g);
+        assert_eq!(p.phases, vec![vec![TaskId(1)], vec![TaskId(2)]]);
+    }
+
+    #[test]
+    fn plan_keeps_independent_and_unscoped_tasks_parallel() {
+        let mut g = TaskGraph::default();
+        g.add(TaskId(1), "A", "", vec!["crates/a/".into()], vec![], None);
+        g.add(TaskId(2), "B", "", vec!["crates/b/".into()], vec![], None);
+        g.add(TaskId(3), "C", "", vec![], vec![], None);
+        let p = plan(&g);
+        assert_eq!(p.phases.len(), 1, "no collisions -> one parallel wave");
+        assert_eq!(p.phases[0].len(), 3);
+    }
+
+    #[test]
+    fn plan_with_conflict_groups_serializes_semantic_collisions() {
+        // Scopes that never overlap textually but both touch a file set that
+        // collided in a past session are split across phases by history.
+        let mut g = TaskGraph::default();
+        g.add(
+            TaskId(1),
+            "Auth fix",
+            "",
+            vec!["auth/login.rs".into()],
+            vec![],
+            None,
+        );
+        g.add(
+            TaskId(2),
+            "Session tweak",
+            "",
+            vec!["store/session.rs".into()],
+            vec![],
+            None,
+        );
+        g.tasks.get_mut(&TaskId(1)).unwrap().priority = 3;
+        g.tasks.get_mut(&TaskId(2)).unwrap().priority = 2;
+        let groups: Vec<HashSet<String>> = vec![HashSet::from([
+            "auth/login.rs".to_string(),
+            "store/session.rs".to_string(),
+        ])];
+        assert_eq!(plan(&g).phases.len(), 1, "without history they race");
+        let p = plan_with_conflicts(&g, &groups);
+        assert_eq!(p.phases, vec![vec![TaskId(1)], vec![TaskId(2)]]);
+    }
+
+    #[test]
+    fn conflict_cache_is_stale_gates_the_preview_refresh() {
+        use std::time::Duration;
+        let ttl = Duration::from_millis(1000);
+        // Never refreshed -> stale (must load).
+        assert!(conflict_cache_is_stale(None, ttl));
+        // Fresh under the TTL -> not stale (skip the disk read).
+        assert!(!conflict_cache_is_stale(
+            Some(Duration::from_millis(0)),
+            ttl
+        ));
+        assert!(!conflict_cache_is_stale(
+            Some(Duration::from_millis(999)),
+            ttl
+        ));
+        // At or past the TTL -> stale again.
+        assert!(conflict_cache_is_stale(
+            Some(Duration::from_millis(1000)),
+            ttl
+        ));
+        assert!(conflict_cache_is_stale(Some(Duration::from_secs(30)), ttl));
     }
 }

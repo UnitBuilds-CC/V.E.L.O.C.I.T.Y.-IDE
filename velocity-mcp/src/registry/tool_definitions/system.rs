@@ -421,6 +421,21 @@ pub fn get_system_tools() -> Vec<Tool> {
                 "required": ["sequence", "context"]
             }),
         },
+        // ── Markdown skills ─────────────────────────────────────────────────
+        // Discovery is free: worker instructions carry a PROJECT SKILLS index,
+        // and the team subsystem's list_skills covers the .nda executables
+        // stored beside these .md files. Only the pull step needs a tool.
+        Tool {
+            name: "use_skill".to_string(),
+            description: "Read the full markdown body of one workspace knowledge skill (.velocity/skills/*.md) by name. The PROJECT SKILLS block in your instructions and the on-demand index lines show which names exist; use this to pull the full guidance when a skill matters for the current task.".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "name": { "type": "string", "description": "Skill name (case-insensitive), as shown in the PROJECT SKILLS index." }
+                },
+                "required": ["name"]
+            }),
+        },
         // ── Workflows ───────────────────────────────────────────────────────
         Tool {
             name: "workflow_run".to_string(),

@@ -160,6 +160,42 @@ mod tests {
     }
 
     #[test]
+    fn acquire_scope_locks_returns_structured_shared_write_conflict() {
+        // Shared-write conflict resolution must produce a *structured* result
+        // (kind + which agents collided) so the runner can persist it into the
+        // decision trail instead of a bare string.
+        let workspace = tempdir().unwrap();
+        let workspace_root = workspace.path();
+        fs::create_dir_all(workspace_root.join("src")).unwrap();
+        let mediator = std::sync::Arc::new(MediatorArena::new());
+        let site_map = SiteMap::open(workspace_root, 0).unwrap();
+
+        let _locked = acquire_scope_locks(
+            workspace_root,
+            &["src".to_string()],
+            &mediator,
+            &site_map,
+            crate::orchestrator::TaskId(7),
+        )
+        .unwrap();
+
+        let conflict = acquire_scope_locks(
+            workspace_root,
+            &["src".to_string()],
+            &mediator,
+            &site_map,
+            crate::orchestrator::TaskId(8),
+        )
+        .unwrap_err();
+
+        assert_eq!(conflict.kind, "scope_overlap");
+        assert_eq!(conflict.existing_agent, "task-7");
+        assert_eq!(conflict.requested_agent, "task-8");
+        assert!(conflict.contract.contains("MEDIATION CONTRACT"));
+        assert!(!conflict.files.is_empty());
+    }
+
+    #[test]
     fn writes_execution_contract_as_nda() {
         let workspace = tempdir().unwrap();
         let assignment = WorkerAssignment {

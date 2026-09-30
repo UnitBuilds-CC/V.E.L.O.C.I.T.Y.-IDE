@@ -173,22 +173,41 @@ fn collect_workspace_routing_files_recursive(root: &Path, files: &mut Vec<PathBu
         if path.is_dir() {
             if matches!(
                 name.as_ref(),
-                ".git" | ".velocity" | "target" | "archive" | "node_modules"
+                ".git" | ".velocity" | "target" | "archive" | "node_modules" | "memory"
             ) {
                 continue;
             }
             collect_workspace_routing_files_recursive(&path, files, limit);
             continue;
         }
+        // Exclude lock files, generated artifacts, and dotfiles from routing scope.
+        if matches!(name.as_ref(), "Cargo.lock" | "go.sum" | "package-lock.json") {
+            continue;
+        }
+        if name.starts_with('.') {
+            continue;
+        }
         let include = path
             .extension()
             .and_then(|ext| ext.to_str())
-            .map(|ext| matches!(ext, "rs" | "go" | "toml" | "md" | "json" | "yml" | "yaml"))
-            .unwrap_or(false)
-            || matches!(
-                name.as_ref(),
-                "Cargo.lock" | "Cargo.toml" | "go.mod" | "go.sum"
-            );
+            .map(|ext| {
+                matches!(
+                    ext,
+                    "rs" | "go"
+                        | "toml"
+                        | "md"
+                        | "py"
+                        | "js"
+                        | "ts"
+                        | "c"
+                        | "h"
+                        | "cpp"
+                        | "java"
+                        | "yml"
+                        | "yaml"
+                )
+            })
+            .unwrap_or(false);
         if include {
             files.push(path);
         }
@@ -207,6 +226,10 @@ pub fn infer_task_kind_from_goal(goal: &str) -> AgentTaskKind {
     {
         AgentTaskKind::DesktopAutomation
     } else if lower.contains("refactor") {
+        AgentTaskKind::Refactor
+    } else if lower.contains("implement") || lower.contains("add ") || lower.contains("create ") {
+        // "implement", "add X", "create Y" are code-modification tasks even when
+        // they also mention tests (e.g. "implement shutdown and add tests").
         AgentTaskKind::Refactor
     } else if lower.contains("fix") || lower.contains("bug") || lower.contains("error") {
         AgentTaskKind::BugFix
