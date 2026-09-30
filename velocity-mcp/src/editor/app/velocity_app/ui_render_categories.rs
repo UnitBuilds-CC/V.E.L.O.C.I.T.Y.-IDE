@@ -180,6 +180,7 @@ impl VelocityApp {
             2 => self.render_pipeline_panel(ui),
             3 => self.render_debugger_panel(ui),
             4 => self.render_lsp_panel(ui),
+            5 => self.render_nodes_subpanel(ui, palette),
             _ => {}
         }
     }

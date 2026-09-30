@@ -1230,6 +1230,256 @@ impl VelocityApp {
         });
     }
 
+    /// Nodes sub-panel on the Build rail: every registered remote machine with
+    /// its effective status, and the three operations the panel owns - ping,
+    /// select as build target, forget. Below the list: an add-node form and a
+    /// run-any-command box for the current target.
+    ///
+    /// Ping, add, and remove go through the same `instance_*` tool handlers the
+    /// agent uses, so the GUI never grows a private dialect against the drone
+    /// protocol; network calls run on background threads and this frame only
+    /// reads the registry file (small, local).
+    pub fn render_nodes_subpanel(&mut self, ui: &mut egui::Ui, palette: IdePalette) {
+        use crate::agent::instance_tools::{instances_path, now_secs, wrap_for_work_dir};
+        use crate::agent::instances::{InstanceRegistry, InstanceStatus};
+
+        let registry = InstanceRegistry::load(&instances_path(&self.workspace_root));
+        let now = now_secs();
+
+        // ── Routing header: where Ctrl+B/CtrlR go right now ──
+        let target_name: Option<String> = self
+            .nodes
+            .target_id
+            .as_deref()
+            .and_then(|id| registry.get(id))
+            .map(|r| r.name.clone());
+        ui.horizontal(|ui| {
+            let (text, color) = match &target_name {
+                Some(n) => (format!("Builds route to: {n}"), palette.accent),
+                None => (
+                    "Builds route to: this machine".to_string(),
+                    palette.text_muted,
+                ),
+            };
+            ui.label(RichText::new(text).size(FONT_SMALL).color(color));
+            if target_name.is_some() && ui.small_button("Local").clicked() {
+                self.nodes.target_id = None;
+            }
+        });
+        ui.add_space(ITEM_SPACING);
+
+        // ── Node rows (collect-then-run: a click mutates `self`) ──
+        enum RowAction {
+            Ping(String),
+            Target(String),
+            Forget(String),
+        }
+        let mut actions: Vec<RowAction> = Vec::new();
+
+        if registry.instances.is_empty() {
+            ui.add_space(12.0);
+            ui.vertical_centered(|ui| {
+                ui.label(
+                    RichText::new(egui_phosphor::regular::SQUARES_FOUR)
+                        .size(22.0)
+                        .color(palette.text_muted.gamma_multiply(0.5)),
+                );
+                ui.add_space(4.0);
+                ui.label(
+                    RichText::new("No nodes registered")
+                        .size(FONT_SMALL)
+                        .strong()
+                        .color(palette.text),
+                );
+                ui.add_space(2.0);
+                ui.label(
+                    RichText::new("Add one below, or ask the agent to run instance_deploy.")
+                        .size(9.0)
+                        .color(palette.text_muted),
+                );
+            });
+        } else {
+            egui::ScrollArea::vertical()
+                .auto_shrink([false, false])
+                .max_height((ui.available_height() * 0.45).max(140.0))
+                .show(ui, |ui| {
+                    for rec in &registry.instances {
+                        let eff = rec.effective_status(now);
+                        let (icon, color) = match eff {
+                            InstanceStatus::Online => {
+                                (egui_phosphor::regular::CHECK, palette.success)
+                            }
+                            InstanceStatus::Degraded => {
+                                (egui_phosphor::regular::WARNING, palette.warning)
+                            }
+                            InstanceStatus::Offline => (egui_phosphor::regular::X, palette.error),
+                            InstanceStatus::Unknown => {
+                                (egui_phosphor::regular::QUESTION, palette.text_muted)
+                            }
+                        };
+                        let is_target = self.nodes.target_id.as_deref() == Some(rec.id.as_str());
+                        let pinging = self.nodes.pinging.iter().any(|p| p == &rec.id);
+                        ui.push_id(&rec.id, |ui| {
+                            ui.horizontal(|ui| {
+                                ui.label(RichText::new(icon).size(FONT_BODY).color(color));
+                                let title = if is_target {
+                                    format!("{} \u{2605}", rec.name)
+                                } else {
+                                    rec.name.clone()
+                                };
+                                ui.label(
+                                    RichText::new(title)
+                                        .size(FONT_SMALL)
+                                        .strong()
+                                        .color(palette.text),
+                                );
+                                if !rec.enabled {
+                                    ui.label(
+                                        RichText::new("disabled")
+                                            .size(9.0)
+                                            .color(palette.text_muted),
+                                    );
+                                }
+                            });
+                            ui.label(
+                                RichText::new(format!(
+                                    "{} · {} · {} · {} in flight",
+                                    rec.drone_addr,
+                                    rec.platform.label(),
+                                    eff.label(),
+                                    rec.in_flight
+                                ))
+                                .size(9.0)
+                                .color(palette.text_muted),
+                            );
+                            ui.horizontal(|ui| {
+                                let ping_label = if pinging { "Pinging..." } else { "Ping" };
+                                if ui
+                                    .add_enabled(
+                                        !pinging,
+                                        egui::Button::new(RichText::new(ping_label).size(9.0)),
+                                    )
+                                    .clicked()
+                                {
+                                    actions.push(RowAction::Ping(rec.id.clone()));
+                                }
+                                let target_label =
+                                    if is_target { "Targeted" } else { "Build here" };
+                                if ui
+                                    .add_enabled(
+                                        !is_target,
+                                        egui::Button::new(RichText::new(target_label).size(9.0)),
+                                    )
+                                    .clicked()
+                                {
+                                    actions.push(RowAction::Target(rec.id.clone()));
+                                }
+                                if ui
+                                    .button(RichText::new("Forget").size(9.0).color(palette.error))
+                                    .clicked()
+                                {
+                                    actions.push(RowAction::Forget(rec.id.clone()));
+                                }
+                            });
+                            ui.separator();
+                        });
+                    }
+                });
+        }
+
+        for action in actions {
+            match action {
+                RowAction::Ping(id) => self.ping_node(id),
+                RowAction::Target(id) => {
+                    self.nodes.target_id = Some(id.clone());
+                    self.nodes.status_line = format!("Builds will route to {id}.");
+                }
+                RowAction::Forget(id) => self.forget_node(&id),
+            }
+        }
+
+        // ── Add-node form ──
+        ui.add_space(ITEM_SPACING);
+        if ui
+            .button(
+                RichText::new(format!("{} Add node", egui_phosphor::regular::PLUS))
+                    .size(FONT_SMALL),
+            )
+            .clicked()
+        {
+            self.nodes.show_add = !self.nodes.show_add;
+        }
+        if self.nodes.show_add {
+            ui.add(
+                egui::TextEdit::singleline(&mut self.nodes.add_name)
+                    .hint_text("name")
+                    .desired_width(150.0),
+            );
+            ui.add(
+                egui::TextEdit::singleline(&mut self.nodes.add_addr)
+                    .hint_text("drone address host[:port]")
+                    .desired_width(150.0),
+            );
+            ui.add(
+                egui::TextEdit::singleline(&mut self.nodes.add_dir)
+                    .hint_text("work dir on the node")
+                    .desired_width(150.0),
+            );
+            ui.horizontal(|ui| {
+                if ui.button("Register").clicked() {
+                    self.add_node();
+                }
+                if ui.button("Cancel").clicked() {
+                    self.nodes.show_add = false;
+                }
+            });
+        }
+
+        // ── Run a command on the target (builds/tests/etc. beyond the routed
+        //    default) ──
+        ui.add_space(SECTION_SPACING);
+        ui.label(
+            RichText::new("Run on target")
+                .size(FONT_SMALL)
+                .strong()
+                .color(palette.text),
+        );
+        ui.add(
+            egui::TextEdit::singleline(&mut self.nodes.exec_cmd)
+                .hint_text("e.g. cargo test --release")
+                .desired_width(170.0),
+        );
+        let can_run = self.routed_node().is_some()
+            && !self.nodes.exec_busy
+            && !self.nodes.exec_cmd.trim().is_empty();
+        let run_label = if self.nodes.exec_busy {
+            "Running..."
+        } else {
+            "Run on node"
+        };
+        if ui
+            .add_enabled(
+                can_run,
+                egui::Button::new(RichText::new(run_label).size(FONT_SMALL)),
+            )
+            .clicked()
+        {
+            if let (Some(id), Some(node)) = (self.nodes.target_id.clone(), self.routed_node()) {
+                let cmd = wrap_for_work_dir(&node.work_dir, self.nodes.exec_cmd.trim()).to_string();
+                self.run_on_node(id, cmd, false);
+            }
+        }
+
+        if !self.nodes.status_line.is_empty() {
+            ui.add_space(ITEM_SPACING);
+            ui.label(
+                RichText::new(&self.nodes.status_line)
+                    .size(9.0)
+                    .color(palette.text_muted),
+            );
+        }
+    }
+
     pub fn render_build_subpanel(&mut self, ui: &mut egui::Ui, palette: IdePalette) {
         // Status indicator — only show after a build has been triggered
         let has_built = !self.status_message.is_empty();

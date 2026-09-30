@@ -6,6 +6,8 @@ pub mod coordination;
 pub mod crypto;
 pub mod drone_bridge;
 pub mod executor;
+pub mod instance_tools;
+pub mod instances;
 pub mod memory;
 pub mod memory_store;
 pub mod models;

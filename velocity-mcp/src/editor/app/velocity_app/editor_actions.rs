@@ -131,6 +131,21 @@ impl VelocityApp {
     }
 
     pub fn build_active(&mut self) {
+        // A targeted node runs the same cargo check remotely; with no target
+        // (or a stale one) nothing changes and the agent thread builds here.
+        if let Some(node) = self.routed_node() {
+            let cmd =
+                crate::agent::instance_tools::wrap_for_work_dir(&node.work_dir, "cargo check");
+            self.command_output.clear();
+            self.status_message = format!("Checking on {}...", node.name);
+            self.toasts.push(crate::editor::toast::Toast::info(format!(
+                "Build routed to {}...",
+                node.name
+            )));
+            self.agent_active = true;
+            self.run_on_node(node.id, cmd, true);
+            return;
+        }
         self.command_output.clear();
         self.status_message = "Running local build...".into();
         self.toasts
@@ -140,6 +155,18 @@ impl VelocityApp {
     }
 
     pub fn run_active(&mut self) {
+        if let Some(node) = self.routed_node() {
+            let cmd = crate::agent::instance_tools::wrap_for_work_dir(&node.work_dir, "cargo run");
+            self.command_output.clear();
+            self.status_message = format!("Running on {}...", node.name);
+            self.toasts.push(crate::editor::toast::Toast::info(format!(
+                "Execute routed to {}...",
+                node.name
+            )));
+            self.agent_active = true;
+            self.run_on_node(node.id, cmd, true);
+            return;
+        }
         self.command_output.clear();
         self.status_message = "Running local execute...".into();
         self.toasts

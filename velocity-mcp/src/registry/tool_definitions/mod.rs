@@ -1,6 +1,7 @@
 pub mod browser;
 pub mod drone;
 pub mod generation;
+pub mod instances;
 pub mod system;
 pub mod team;
 pub mod wa;
@@ -13,6 +14,7 @@ pub fn get_tools() -> Vec<Tool> {
     tools.extend(wa::get_wa_tools());
     tools.extend(team::get_team_tools());
     tools.extend(drone::get_drone_tools());
+    tools.extend(instances::get_instance_tools());
     tools.extend(generation::get_generation_tools());
     // Include dynamically registered custom tools.
     let root = std::env::current_dir().unwrap_or_default();

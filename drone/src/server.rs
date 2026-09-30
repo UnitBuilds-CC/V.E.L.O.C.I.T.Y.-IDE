@@ -55,8 +55,12 @@ fn parse_request(reader: &mut BufReader<&mut dyn IoRead>) -> Option<HttpRequest>
             if content_length > MAX_BODY_SIZE {
                 return None; // Reject oversized requests early.
             }
-        } else if let Some(val) = lower.strip_prefix("authorization:") {
-            auth_header = Some(val.trim().to_string());
+        } else if lower.starts_with("authorization:") {
+            // Take the value from the original line, not `lower`: a bearer
+            // token is case-significant, and the old code handed the
+            // lower-cased remainder downstream, where the exact-prefix
+            // strip matched nothing and every authenticated call 401'd.
+            auth_header = Some(trimmed["authorization:".len()..].trim().to_string());
         }
     }
 
@@ -124,8 +128,10 @@ fn route_request(
                 .auth_header
                 .as_deref()
                 .map(|h| {
-                    h.strip_prefix("Bearer ")
-                        .is_some_and(|t| constant_time_eq(t, token))
+                    // RFC 7235: the scheme name is case-insensitive; the
+                    // secret that follows it is not.
+                    let (scheme, secret) = h.split_once(' ').unwrap_or((h, ""));
+                    scheme.eq_ignore_ascii_case("bearer") && constant_time_eq(secret.trim(), token)
                 })
                 .unwrap_or(false);
             if !authorized {
@@ -506,6 +512,36 @@ mod tests {
         assert_eq!(req.method, "GET");
         assert_eq!(req.path, "/peer/health");
         assert!(req.body.is_empty());
+    }
+
+    /// Regression: the parser used to hand the *lower-cased* Authorization
+    /// value to the router, whose exact `"Bearer "` strip then matched
+    /// nothing - every authenticated drone call answered 401, which is what
+    /// a live buildbox deploy surfaced. Parsing preserves the value's case;
+    /// the scheme match is case-insensitive, the secret is not.
+    #[test]
+    fn bearer_header_case_survives_parsing_and_authenticates() {
+        let raw = b"GET /peer/identity HTTP/1.1\r\nHost: x\r\nAuthorization: BeArEr MiXeDcAsEsEcReT\r\n\r\n";
+        let mut cursor = std::io::Cursor::new(raw.as_slice());
+        let mut reader = BufReader::new(&mut cursor as &mut dyn IoRead);
+        let req = parse_request(&mut reader).unwrap();
+        assert_eq!(
+            req.auth_header.as_deref(),
+            Some("BeArEr MiXeDcAsEsEcReT"),
+            "header value must keep its original case"
+        );
+
+        let ws = std::env::temp_dir().join(format!("auth_case_{}", crate::core::now_secs()));
+        std::fs::create_dir_all(&ws).unwrap();
+        let identity = crate::core::DroneIdentity::new("AuthCase", 9191);
+        let core = DroneCore::new(identity, ws);
+        let (status, _) = route_request(&core, &req, Some("MiXeDcAsEsEcReT"));
+        assert_eq!(
+            status, 200,
+            "mixed-case scheme with the exact secret passes"
+        );
+        let (status, _) = route_request(&core, &req, Some("wrong-secret"));
+        assert_eq!(status, 401, "a wrong secret is still refused");
     }
 
     #[test]

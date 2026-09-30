@@ -209,6 +209,11 @@ pub const RAILS: &[RailSpec] = &[
                 label: "LSP",
                 icon: ph::PLUGS,
             },
+            SubTabSpec {
+                slug: "nodes",
+                label: "Nodes",
+                icon: ph::SQUARES_FOUR,
+            },
         ],
     },
     RailSpec {
@@ -1074,8 +1079,21 @@ mod tests {
         assert_eq!(RAILS.len(), 8);
         // 33 as originally inventoried, plus the `chat/browser` section that
         // mounts the previously orphaned `browse_panel`, plus the `files/outline`
-        // section (the document-symbol Outline view).
-        assert_eq!(sub_tab_count(), 35);
+        // section (the document-symbol Outline view), plus the `build/nodes`
+        // section (remote build-node panel).
+        assert_eq!(sub_tab_count(), 36);
+    }
+
+    #[test]
+    fn nodes_subtab_is_registered_under_build() {
+        // The Nodes panel is a sub-tab of the Build rail, and its index is the
+        // arm `render_build_category` dispatches on (5 => render_nodes_subpanel).
+        // A registration without that arm — or vice-versa — draws an empty
+        // panel, so this locks the two ends of the wiring together.
+        let build = rail_from_name("build").expect("build rail exists");
+        assert_eq!(build.sub_tab_index("nodes"), Some(5));
+        let sub = sub_tab(build.index(), 5).expect("nodes sub-tab resolves");
+        assert_eq!(sub.label, "Nodes");
     }
 
     #[test]

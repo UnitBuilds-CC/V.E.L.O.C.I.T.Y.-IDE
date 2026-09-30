@@ -7,6 +7,7 @@ use super::system_tools::handle_system_tool;
 use super::team_tools::handle_team_tool;
 use super::wa_tools::handle_wa_tool;
 use crate::agent::drone_bridge::handle_drone_tool;
+use crate::agent::instance_tools::handle_instance_tool;
 use crate::errors::ToolError;
 use crate::security::audit::{self, ToolAuditOutcome};
 use serde_json::Value;
@@ -256,6 +257,9 @@ fn try_builtin_tools(
         return Ok(Some(result));
     }
     if let Some(result) = handle_drone_tool(root, name, arguments)? {
+        return Ok(Some(result));
+    }
+    if let Some(result) = handle_instance_tool(root, name, arguments)? {
         return Ok(Some(result));
     }
     if let Some(result) = handle_generation_tool(root, name, arguments)? {

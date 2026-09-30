@@ -281,3 +281,72 @@ impl DiskHygieneState {
         }
     }
 }
+
+// ─── Build-nodes panel state ───────────────────────────────────────────────────────────
+
+/// One completed background node operation. Health pings and remote commands
+/// speak HTTP to machines that may be asleep or unplugged, so they never run
+/// on the UI thread; the panel only drains these results (same discipline as
+/// [`HygieneEvent`]).
+#[derive(Debug)]
+pub enum NodesEvent {
+    /// Ping finished; `summary` is the one-liner for the status row.
+    Pinged { id: String, summary: String },
+    /// A remote command finished. `text` lands in the command output pane;
+    /// `routed` marks a build/run that was redirected here from
+    /// `build_active`/`run_active`, so only those clear `agent_active`.
+    ExecDone {
+        id: String,
+        text: String,
+        ok: bool,
+        routed: bool,
+    },
+}
+
+/// State for the Build rail's Nodes sub-panel: which node builds route to,
+/// the add-node form, the run-a-command box, and in-flight markers.
+pub struct NodesState {
+    /// Id of the node that `build_active`/`run_active` route to; `None`
+    /// means "build on this machine", the historic behavior.
+    pub target_id: Option<String>,
+    /// Add-node form (revealed by the Add button, hidden after a save).
+    pub show_add: bool,
+    pub add_name: String,
+    pub add_addr: String,
+    pub add_dir: String,
+    /// Command text for "run on target".
+    pub exec_cmd: String,
+    /// Ids with a health ping in flight (row buttons show a spinner text).
+    pub pinging: Vec<String>,
+    /// A remote command is running (panel exec or a routed build).
+    pub exec_busy: bool,
+    /// Latest outcome line drawn under the node list.
+    pub status_line: String,
+    pub tx: crossbeam_channel::Sender<NodesEvent>,
+    pub rx: crossbeam_channel::Receiver<NodesEvent>,
+}
+
+impl Default for NodesState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl NodesState {
+    pub fn new() -> Self {
+        let (tx, rx) = crossbeam_channel::bounded(16);
+        Self {
+            target_id: None,
+            show_add: false,
+            add_name: String::new(),
+            add_addr: String::new(),
+            add_dir: String::new(),
+            exec_cmd: String::new(),
+            pinging: Vec::new(),
+            exec_busy: false,
+            status_line: String::new(),
+            tx,
+            rx,
+        }
+    }
+}

@@ -369,6 +369,13 @@ impl VelocityApp {
                 action: |a| a.run_active(),
                 modes: &[WorkspaceProfile::Coder],
             },
+            Command {
+                label: "Nodes: Remote Build Nodes",
+                category: "Build",
+                shortcut: Some("Ctrl+Alt+B"),
+                action: |a| a.open_nodes_panel(),
+                modes: &[],
+            },
             // Debugging (DAP)
             Command {
                 label: "Start / Continue Debugging",
@@ -2233,4 +2240,277 @@ impl VelocityApp {
             let _ = tx.send(super::substructs::HygieneEvent::CleanDone(result));
         });
     }
+
+    // ── Build nodes (Nodes panel + remote routing) ────────────────────────────
+
+    /// Reveal the Build rail's Nodes section (single writer for the rail
+    /// selection state, via `select_rail_section`).
+    pub fn open_nodes_panel(&mut self) {
+        self.select_rail_section("build", "nodes");
+    }
+
+    /// Drain completed background node operations into app state. Runs once per
+    /// frame rather than only while the panel is visible: a routed build must
+    /// report its outcome even if the user navigated away mid-run.
+    pub fn handle_nodes_events(&mut self, ctx: &egui::Context) {
+        use super::substructs::NodesEvent;
+        let mut woke = false;
+        while let Ok(event) = self.nodes.rx.try_recv() {
+            woke = true;
+            match event {
+                NodesEvent::Pinged { id, summary } => {
+                    self.nodes.pinging.retain(|p| p != &id);
+                    self.nodes.status_line = summary;
+                }
+                NodesEvent::ExecDone {
+                    id: _,
+                    text,
+                    ok,
+                    routed,
+                } => {
+                    self.nodes.exec_busy = false;
+                    if routed {
+                        self.agent_active = false;
+                        self.status_message = if ok {
+                            "Remote build finished".to_string()
+                        } else {
+                            "Remote build failed".to_string()
+                        };
+                        // Mirror the local build indicator from what the drone
+                        // actually reported.
+                        let errs = if ok {
+                            0
+                        } else {
+                            text.lines()
+                                .filter(|l| l.starts_with("error"))
+                                .count()
+                                .max(1)
+                        };
+                        self.build_errors_count = errs;
+                        if ok {
+                            self.toasts.push(crate::editor::toast::Toast::success(
+                                "Remote build finished",
+                            ));
+                        } else {
+                            self.toasts
+                                .push(crate::editor::toast::Toast::error("Remote build failed"));
+                        }
+                    } else {
+                        self.nodes.status_line = if ok {
+                            "Command finished on the node".into()
+                        } else {
+                            "Command failed on the node".into()
+                        };
+                    }
+                    self.command_output.push_str(&text);
+                    if !self.command_output.ends_with('\n') {
+                        self.command_output.push('\n');
+                    }
+                }
+            }
+        }
+        if woke || !self.nodes.pinging.is_empty() || self.nodes.exec_busy {
+            ctx.request_repaint_after(std::time::Duration::from_millis(250));
+        }
+    }
+
+    /// The routing target as a live record: it exists in the registry and is
+    /// eligible right now. `None` means "build here" - including when the id
+    /// was forgotten or the node went stale, which is safer than promising a
+    /// remote run that would fail.
+    pub fn routed_node(&self) -> Option<crate::agent::instances::InstanceRecord> {
+        let id = self.nodes.target_id.as_deref()?;
+        let registry = crate::agent::instances::InstanceRegistry::load(
+            &crate::agent::instance_tools::instances_path(&self.workspace_root),
+        );
+        let rec = registry.get(id)?;
+        if rec.eligible(crate::agent::instance_tools::now_secs()) {
+            Some(rec.clone())
+        } else {
+            None
+        }
+    }
+
+    /// Health-ping a node on a background thread through the same tool handler
+    /// the agent uses (`instance_ping`), so sightings persist and platforms get
+    /// adopted no matter who asked.
+    pub fn ping_node(&mut self, id: String) {
+        if self.nodes.pinging.iter().any(|p| p == &id) {
+            return;
+        }
+        self.nodes.pinging.push(id.clone());
+        let root = self.workspace_root.clone();
+        let tx = self.nodes.tx.clone();
+        std::thread::spawn(move || {
+            let args = serde_json::json!({ "id": &id });
+            let summary = match crate::agent::instance_tools::handle_instance_tool(
+                &root,
+                "instance_ping",
+                &args,
+            ) {
+                Ok(Some(out)) => {
+                    let v: serde_json::Value = serde_json::from_str(&out).unwrap_or_default();
+                    let name = v["instance"]["name"].as_str().unwrap_or(id.as_str());
+                    if v["success"].as_bool().unwrap_or(false) {
+                        let status = v["status"].as_str().unwrap_or("online");
+                        let env = v["drone"]["environment"].as_str().unwrap_or("");
+                        format!("{name}: {status} ({env})")
+                    } else {
+                        let err = v["error"].as_str().unwrap_or("unreachable");
+                        format!("{name}: offline - {err}")
+                    }
+                }
+                Ok(None) => format!("{id}: ping was not handled"),
+                Err(e) => format!("{id}: {e}"),
+            };
+            let _ = tx.send(super::substructs::NodesEvent::Pinged { id, summary });
+        });
+    }
+
+    /// Register the add-form node through `instance_add`, then ping it: a fresh
+    /// node has no sighting, and the panel should show its real state rather
+    /// than "unknown".
+    pub fn add_node(&mut self) {
+        let name = self.nodes.add_name.trim().to_string();
+        let addr = self.nodes.add_addr.trim().to_string();
+        let dir = self.nodes.add_dir.trim().to_string();
+        if name.is_empty() || addr.is_empty() {
+            self.nodes.status_line = "Name and drone address are required.".into();
+            return;
+        }
+        let args = serde_json::json!({
+            "name": name,
+            "drone_addr": addr,
+            "role": "buildbox",
+            "work_dir": dir,
+        });
+        match crate::agent::instance_tools::handle_instance_tool(
+            &self.workspace_root,
+            "instance_add",
+            &args,
+        ) {
+            Ok(Some(out)) => {
+                let v: serde_json::Value = serde_json::from_str(&out).unwrap_or_default();
+                let id = v["instance"]["id"].as_str().unwrap_or("").to_string();
+                self.nodes.add_name.clear();
+                self.nodes.add_addr.clear();
+                self.nodes.add_dir.clear();
+                self.nodes.show_add = false;
+                self.nodes.status_line = format!("Added {name}; pinging...");
+                if !id.is_empty() {
+                    self.ping_node(id);
+                }
+            }
+            Ok(None) => self.nodes.status_line = "Add was not handled.".into(),
+            Err(e) => self.nodes.status_line = format!("Add failed: {e}"),
+        }
+    }
+
+    /// Drop a node from the registry. If it was the routing target, routing
+    /// returns to local so Ctrl+B never keeps pointing at a dead id.
+    pub fn forget_node(&mut self, id: &str) {
+        let args = serde_json::json!({ "id": id });
+        match crate::agent::instance_tools::handle_instance_tool(
+            &self.workspace_root,
+            "instance_remove",
+            &args,
+        ) {
+            Ok(Some(_)) => {
+                if self.nodes.target_id.as_deref() == Some(id) {
+                    self.nodes.target_id = None;
+                }
+                self.nodes.status_line = format!("Forgot {id}.");
+            }
+            Ok(None) => self.nodes.status_line = "Remove was not handled.".into(),
+            Err(e) => self.nodes.status_line = format!("Remove failed: {e}"),
+        }
+    }
+
+    /// Run `command` on the node in the background: claim, submit, poll to a
+    /// terminal state, release. `routed` marks a build/run redirected from the
+    /// Build buttons (whose completion clears `agent_active`); direct panel
+    /// commands pass `false`.
+    pub fn run_on_node(&mut self, id: String, command: String, routed: bool) {
+        if self.nodes.exec_busy {
+            self.nodes.status_line = "A remote command is already running.".into();
+            return;
+        }
+        self.nodes.exec_busy = true;
+        self.nodes.status_line = format!("Running on {id}...");
+        let root = self.workspace_root.clone();
+        let tx = self.nodes.tx.clone();
+        std::thread::spawn(move || {
+            let (ok, text) = node_exec_blocking(&root, &id, &command);
+            let _ = tx.send(super::substructs::NodesEvent::ExecDone {
+                id,
+                text,
+                ok,
+                routed,
+            });
+        });
+    }
+}
+
+/// The blocking half of [`VelocityApp::run_on_node`]. Runs on a background
+/// thread and owns its registry touches outright - load, claim, execute,
+/// release - reloading the file at each step because an agent may be mutating
+/// the same registry while we wait on the node.
+fn node_exec_blocking(root: &std::path::Path, id: &str, command: &str) -> (bool, String) {
+    use crate::agent::drone_bridge::DroneClient;
+    use crate::agent::instance_tools::{drone_url_for, instances_path};
+    use crate::agent::instances::InstanceRegistry;
+
+    let path = instances_path(root);
+    let rec = match InstanceRegistry::load(&path).get(id) {
+        Some(r) => r.clone(),
+        None => return (false, format!("{id}: no longer registered.")),
+    };
+    let mut reg = InstanceRegistry::load(&path);
+    reg.claim(id);
+    let _ = reg.save_in_place();
+
+    let client = DroneClient::new(&drone_url_for(&rec.drone_addr), rec.auth_token.as_deref());
+    let header = format!("---- {} ({}) - {command}", rec.name, rec.drone_addr);
+    let mut ok = false;
+    let mut body = String::new();
+    match client.submit_task(command) {
+        Err(e) => body.push_str(&format!("submit failed: {e}\n")),
+        Ok(sub) => {
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(900);
+            loop {
+                match client.task_status(&sub.task_id) {
+                    Ok(st) => {
+                        if st.status != "pending" && st.status != "running" {
+                            let exit = st.effective_exit_code().unwrap_or(-1);
+                            ok = exit == 0;
+                            body.push_str(&format!("exit {exit}\n"));
+                            if let Some(so) = st.effective_stdout() {
+                                body.push_str(so);
+                            }
+                            if let Some(se) = st.effective_stderr() {
+                                if !se.trim().is_empty() {
+                                    body.push_str("\n[stderr]\n");
+                                    body.push_str(se);
+                                }
+                            }
+                            break;
+                        }
+                    }
+                    Err(e) => {
+                        body.push_str(&format!("status poll failed: {e}\n"));
+                        break;
+                    }
+                }
+                if std::time::Instant::now() >= deadline {
+                    body.push_str("timed out after 900s; the task may still be running there.\n");
+                    break;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(500));
+            }
+        }
+    }
+    let mut reg = InstanceRegistry::load(&path);
+    reg.release(id);
+    let _ = reg.save_in_place();
+    (ok, format!("{header}\n{body}\n"))
 }

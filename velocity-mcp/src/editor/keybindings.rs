@@ -256,6 +256,7 @@ impl KeybindingsConfig {
                 entry("build.build", "Ctrl+B", None),
                 entry("build.run", "Ctrl+R", None),
                 entry("build.rollback_deploy", "Ctrl+Alt+R", None),
+                entry("build.show_nodes", "Ctrl+Alt+B", None),
                 // Git
                 entry("git.switch_branch", "Ctrl+Shift+G", None),
                 // Workspace modes

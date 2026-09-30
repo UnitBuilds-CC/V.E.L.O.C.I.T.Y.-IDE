@@ -577,6 +577,7 @@ impl VelocityApp {
             "build.build" => self.build_active(),
             "build.run" => self.run_active(),
             "build.rollback_deploy" => self.rollback_deploy(),
+            "build.show_nodes" => self.open_nodes_panel(),
             // Agent
             "agent.request_inline_suggestion" => self.request_inline_suggestion(),
             "completion.trigger" => self.completion_queued_trigger = true,
@@ -681,6 +682,7 @@ pub(crate) const DISPATCH_HANDLED_COMMANDS: &[&str] = &[
     "build.build",
     "build.run",
     "build.rollback_deploy",
+    "build.show_nodes",
     // Agent
     "agent.request_inline_suggestion",
     "completion.trigger",

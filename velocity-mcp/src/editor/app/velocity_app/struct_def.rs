@@ -24,7 +24,7 @@ use crate::usage::{
 
 use super::super::types::*;
 use super::substructs::{
-    DiskHygieneState, GovernanceState, LspState, PeerCollabState, WorkflowAppState,
+    DiskHygieneState, GovernanceState, LspState, NodesState, PeerCollabState, WorkflowAppState,
 };
 use crate::agent::AiProvider;
 use crate::editor::theme::{apply_theme, AppearanceSettings, IdePalette, WorkspaceProfile};
@@ -175,6 +175,9 @@ pub struct VelocityApp {
     /// "Clean Build Artifacts..." overlay state (Ctrl+Shift+K): background
     /// scan/clean lifecycle, selection, and confirmation. See [`DiskHygieneState`].
     pub hygiene: DiskHygieneState,
+    /// Build-rail Nodes panel state: routing target, add-node form, and
+    /// in-flight pings/remote commands. See [`NodesState`].
+    pub nodes: NodesState,
     pub quick_open: QuickOpen,
     pub mru: MruSwitcher,
     /// Stack of recently closed editor file paths for Ctrl+Shift+T reopen.
@@ -1085,6 +1088,7 @@ impl VelocityApp {
             },
             show_shortcuts: false,
             hygiene: DiskHygieneState::new(),
+            nodes: NodesState::new(),
             quick_open: QuickOpen {
                 open: false,
                 query: String::new(),
@@ -1447,6 +1451,7 @@ impl VelocityApp {
             command_palette: CommandPalette::default(),
             show_shortcuts: false,
             hygiene: DiskHygieneState::new(),
+            nodes: NodesState::new(),
             quick_open: QuickOpen::default(),
             mru: MruSwitcher::default(),
             closed_editor_paths: Vec::new(),

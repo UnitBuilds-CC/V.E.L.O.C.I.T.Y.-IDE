@@ -66,6 +66,10 @@ impl eframe::App for VelocityApp {
         self.update_diagnostics();
         // Git blame: drain async results, format annotation for status bar.
         self.update_blame();
+        // Build nodes: drain background pings/remote command results. Must run
+        // every frame, not only while the Nodes panel is open - a routed build
+        // reports back whenever it lands.
+        self.handle_nodes_events(&ctx);
         // Sync terminal output
         self.bottom_panel_state.terminal_output = self.command_output.clone();
         // Sync the model a hand-authored orchestrator task will run on. Done per

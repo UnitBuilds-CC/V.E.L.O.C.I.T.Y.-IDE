@@ -358,6 +358,7 @@ fn mirror_worker_events_into_timeline_appends_only_new_events() {
         },
         show_shortcuts: false,
         hygiene: Default::default(),
+        nodes: Default::default(),
         quick_open: QuickOpen {
             open: false,
             query: String::new(),
@@ -682,6 +683,7 @@ fn clearing_worker_event_tracking_allows_replay_after_replan() {
         },
         show_shortcuts: false,
         hygiene: Default::default(),
+        nodes: Default::default(),
         quick_open: QuickOpen {
             open: false,
             query: String::new(),
