@@ -754,6 +754,9 @@ pub fn drive_free_space(path: &Path) -> u64 {
             Ok(c) => c,
             Err(_) => return 0,
         };
+        // SAFETY: `libc::statvfs` is a plain C struct of integer fields, for
+        // which the all-zero bit pattern is a valid value; it is then populated
+        // in place by the `statvfs(2)` call below.
         let mut stat: libc::statvfs = unsafe { std::mem::zeroed() };
         // SAFETY: `cpath` outlives the call and `stat` is a live struct.
         if unsafe { libc::statvfs(cpath.as_ptr(), &mut stat) } == 0 {
