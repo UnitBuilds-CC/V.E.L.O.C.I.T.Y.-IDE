@@ -86,6 +86,11 @@ windows = { version = "0.58", features = [
 [dev-dependencies]
 tempfile = "3"
 proptest = "1"
+criterion = { version = "0.5", features = ["html_reports"] }
+
+[[bench]]
+name = "concurrency_stress"
+harness = false
 
 [lints]
 workspace = true
