@@ -11,7 +11,9 @@ name = "velocity_serve"
 path = "src/main.rs"
 
 [dependencies]
-velocity_mcp = { path = "../velocity-mcp", default-features = false, features = ["full"] }
+# The version is spelled out because a bare path dependency carries no
+# requirement at all, which `cargo deny` reports as a wildcard (`*`).
+velocity_mcp = { path = "../velocity-mcp", version = "1.0.0", default-features = false, features = ["full"] }
 egui = "0.35"
 epaint = "0.35"
 image = { version = "0.24", default-features = false, features = ["png"] }
