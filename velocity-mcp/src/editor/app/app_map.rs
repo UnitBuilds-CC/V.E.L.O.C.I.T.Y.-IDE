@@ -67,7 +67,7 @@ impl RailSpec {
     }
 }
 
-/// The eight rails, in the order the strip draws them. This replaced an
+/// The nine rails, in the order the strip draws them. This replaced an
 /// anonymous tuple array built inside the render closure, which meant the
 /// bridge's copy of the names could (and did) drift from it.
 pub const RAILS: &[RailSpec] = &[
@@ -209,12 +209,19 @@ pub const RAILS: &[RailSpec] = &[
                 label: "LSP",
                 icon: ph::PLUGS,
             },
-            SubTabSpec {
-                slug: "nodes",
-                label: "Nodes",
-                icon: ph::SQUARES_FOUR,
-            },
         ],
+    },
+    RailSpec {
+        slug: "nodes",
+        label: "Nodes",
+        short_label: "Nodes",
+        icon: ph::SQUARES_FOUR,
+        shortcut: "Ctrl+Alt+B",
+        sub_tabs: &[SubTabSpec {
+            slug: "nodes",
+            label: "Nodes",
+            icon: ph::SQUARES_FOUR,
+        }],
     },
     RailSpec {
         slug: "agents",
@@ -1074,26 +1081,39 @@ mod tests {
 
     #[test]
     fn every_rail_has_exactly_the_sub_tabs_its_renderer_indexes() {
-        // `activity_sub_panel` is a fixed [usize; 8]; a ninth rail or a removed
+        // `activity_sub_panel` is a fixed [usize; 9]; a tenth rail or a removed
         // sub-tab would silently index past what the render match arms handle.
-        assert_eq!(RAILS.len(), 8);
+        assert_eq!(RAILS.len(), 9);
         // 33 as originally inventoried, plus the `chat/browser` section that
         // mounts the previously orphaned `browse_panel`, plus the `files/outline`
-        // section (the document-symbol Outline view), plus the `build/nodes`
-        // section (remote build-node panel).
+        // section (the document-symbol Outline view), plus the dedicated
+        // `nodes/nodes` rail (promoted out of Build so remote execution has
+        // a first-class home in the activity bar).
         assert_eq!(sub_tab_count(), 36);
     }
 
     #[test]
-    fn nodes_subtab_is_registered_under_build() {
-        // The Nodes panel is a sub-tab of the Build rail, and its index is the
-        // arm `render_build_category` dispatches on (5 => render_nodes_subpanel).
-        // A registration without that arm — or vice-versa — draws an empty
-        // panel, so this locks the two ends of the wiring together.
-        let build = rail_from_name("build").expect("build rail exists");
-        assert_eq!(build.sub_tab_index("nodes"), Some(5));
-        let sub = sub_tab(build.index(), 5).expect("nodes sub-tab resolves");
+    fn nodes_rail_is_dedicated_with_a_single_matching_subtab() {
+        // Nodes was promoted from a Build sub-tab to its own activity-bar rail
+        // so remote-execution routing is reachable in one click. The rail's
+        // slug must be `nodes`, its only sub-tab must also be `nodes` (so the
+        // render dispatch resolves), and Build must no longer claim it.
+        let nodes = rail_from_name("nodes").expect("nodes rail exists");
+        assert_eq!(
+            nodes.index(),
+            5,
+            "nodes rail must sit between build and agents"
+        );
+        assert_eq!(nodes.sub_tabs.len(), 1);
+        assert_eq!(nodes.sub_tab_index("nodes"), Some(0));
+        let sub = sub_tab(nodes.index(), 0).expect("nodes sub-tab resolves");
         assert_eq!(sub.label, "Nodes");
+        let build = rail_from_name("build").expect("build rail exists");
+        assert_eq!(
+            build.sub_tab_index("nodes"),
+            None,
+            "Build no longer owns Nodes"
+        );
     }
 
     #[test]

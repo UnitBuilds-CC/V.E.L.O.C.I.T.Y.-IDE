@@ -2,7 +2,7 @@
 //!
 //! Extracted verbatim from `ui_render.rs` (no logic changes).
 use super::struct_def::VelocityApp;
-use eframe::egui;
+use egui;
 
 impl VelocityApp {
     pub fn browse_panel(&mut self, ui: &mut egui::Ui) {

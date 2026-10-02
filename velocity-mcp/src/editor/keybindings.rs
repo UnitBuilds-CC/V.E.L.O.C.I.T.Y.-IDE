@@ -6,6 +6,7 @@
 use std::collections::HashMap;
 use std::path::Path;
 
+use egui;
 use serde::{Deserialize, Serialize};
 
 /// A keyboard shortcut.
@@ -62,7 +63,7 @@ impl KeyBinding {
     }
 
     /// Check if this keybinding matches an egui input event.
-    pub fn matches(&self, modifiers: &eframe::egui::Modifiers, key: eframe::egui::Key) -> bool {
+    pub fn matches(&self, modifiers: &egui::Modifiers, key: egui::Key) -> bool {
         self.ctrl == modifiers.ctrl
             && self.shift == modifiers.shift
             && self.alt == modifiers.alt
@@ -73,7 +74,7 @@ impl KeyBinding {
     /// half is the Debug name (`"A"`, `"F2"`, `"ArrowUp"`), which the
     /// alias-aware [`Self::key_matches`] accepts alongside the symbol spellings
     /// a person types into `keybindings.json` (`"Up"`, `","`, `"1"`).
-    pub fn from_egui(key: eframe::egui::Key, modifiers: &eframe::egui::Modifiers) -> Self {
+    pub fn from_egui(key: egui::Key, modifiers: &egui::Modifiers) -> Self {
         Self {
             key: format!("{:?}", key),
             ctrl: modifiers.ctrl,
@@ -84,7 +85,7 @@ impl KeyBinding {
 
     /// Whether this binding's key field names the given egui key, accepting
     /// the Debug name and the common symbol/word aliases, case-insensitively.
-    fn key_matches(&self, key: eframe::egui::Key) -> bool {
+    fn key_matches(&self, key: egui::Key) -> bool {
         let want = self.key.to_lowercase();
         if want == format!("{:?}", key).to_lowercase() {
             return true;
@@ -98,8 +99,8 @@ impl KeyBinding {
 /// Symbol/word aliases accepted in `keybindings.json` for keys whose Debug
 /// name differs from what a person would naturally type (arrows, digits,
 /// punctuation). Returned spellings are compared case-insensitively.
-fn key_aliases(key: eframe::egui::Key) -> Vec<&'static str> {
-    use eframe::egui::Key::*;
+fn key_aliases(key: egui::Key) -> Vec<&'static str> {
+    use egui::Key::*;
     let aliases: &[&str] = match key {
         ArrowUp => &["up"],
         ArrowDown => &["down"],
@@ -226,6 +227,8 @@ impl KeybindingsConfig {
                 entry("view.toggle_extensions", "Ctrl+Shift+X", None),
                 entry("view.toggle_activity", "Ctrl+Shift+A", None),
                 entry("view.toggle_voice", "Ctrl+Shift+V", None),
+                entry("view.toggle_minimap", "Ctrl+Shift+M", None),
+                entry("view.split_editor", "Ctrl+Backslash", None),
                 // NOTE: code folding (`view.fold*`) is intentionally NOT
                 // advertised. The tested `code_folding` engine is ready, but
                 // the editor renders the whole document as one editable TextEdit
@@ -236,6 +239,16 @@ impl KeybindingsConfig {
                 // lines stay put — a dead promise. The `every_default_keybinding_
                 // is_dispatchable` guard keeps the advertised set honest.
                 entry("view.word_wrap", "Alt+Z", Some("editorFocus")),
+                entry(
+                    "view.toggle_auto_indent",
+                    "Alt+Shift+Z",
+                    Some("editorFocus"),
+                ),
+                entry(
+                    "view.toggle_auto_close_brackets",
+                    "Alt+Shift+B",
+                    Some("editorFocus"),
+                ),
                 // Debug
                 entry("debug.start", "F5", None),
                 entry("debug.stop", "Shift+F5", None),
@@ -266,6 +279,10 @@ impl KeybindingsConfig {
                 entry("mode.accessibility", "Ctrl+4", None),
                 // Completion
                 entry("completion.trigger", "Ctrl+Space", Some("editorFocus")),
+                // Editor font zoom
+                entry("editor.zoom_in", "Ctrl+=", None),
+                entry("editor.zoom_out", "Ctrl+-", None),
+                entry("editor.zoom_reset", "Ctrl+0", None),
             ],
         }
     }
@@ -387,7 +404,7 @@ mod tests {
 
     #[test]
     fn alias_key_matches_live_egui_key() {
-        use eframe::egui::{Key, Modifiers};
+        use egui::{Key, Modifiers};
         // Word/symbol spellings a person types resolve to the Debug-named key.
         assert!(KeyBinding::new("Up").matches(&Modifiers::NONE, Key::ArrowUp));
         assert!(KeyBinding::new("Ctrl+1").matches(&Modifiers::CTRL, Key::Num1));
@@ -400,7 +417,7 @@ mod tests {
 
     #[test]
     fn from_egui_round_trips_into_a_matching_binding() {
-        use eframe::egui::{Key, Modifiers};
+        use egui::{Key, Modifiers};
         let ctrl_shift = Modifiers::CTRL | Modifiers::SHIFT;
         let chord = KeyBinding::from_egui(Key::S, &ctrl_shift);
         // The live event reconstructs the same Ctrl+Shift+S a config would hold.

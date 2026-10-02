@@ -1,5 +1,5 @@
 use crossbeam_channel::{Receiver, Sender};
-use eframe::egui;
+use egui;
 use egui_dock::DockState;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -67,6 +67,10 @@ pub struct SearchHitDisplay {
     pub link_label: String,
 }
 
+fn default_true() -> bool {
+    true
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WorkspacePreferences {
     pub appearance: AppearanceSettings,
@@ -99,6 +103,20 @@ pub struct WorkspacePreferences {
     /// language server's formatter before bytes hit the disk.
     #[serde(default)]
     pub format_on_save: bool,
+    /// Persisted auto-indent-on-Enter preference.
+    #[serde(default = "default_true")]
+    pub auto_indent: bool,
+    /// Persisted auto-close-brackets preference.
+    #[serde(default = "default_true")]
+    pub auto_close_brackets: bool,
+    /// Persisted trim-trailing-whitespace-on-save preference.
+    #[serde(default = "default_true")]
+    pub trim_trailing_ws: bool,
+    /// Which registered node Ctrl+B/Ctrl+R route builds and runs to; `None`
+    /// means "this machine". Persisted so a chosen remote buildbox stays the
+    /// target across restarts instead of silently falling back to local.
+    #[serde(default)]
+    pub build_target_id: Option<String>,
 }
 
 impl WorkspacePreferences {
@@ -141,6 +159,10 @@ impl WorkspacePreferences {
                 .map(|p| p.to_string_lossy().to_string()),
             auto_save: app.auto_save,
             format_on_save: app.format_on_save,
+            auto_indent: app.auto_indent_enabled,
+            auto_close_brackets: app.auto_close_brackets_enabled,
+            trim_trailing_ws: app.trim_trailing_ws_on_save,
+            build_target_id: app.nodes.target_id.clone(),
         }
     }
 }
@@ -247,7 +269,7 @@ pub struct VelocityApp {
     /// table the strip renders and the GUI bridge validates names against.
     pub activity_bar_selection: usize,
     /// Sub-panel selection within each activity bar category
-    pub activity_sub_panel: [usize; 8],
+    pub activity_sub_panel: [usize; 9],
     pub right_sidebar_visible: bool,
     pub right_sidebar_width: f32,
 
@@ -520,6 +542,12 @@ pub struct VelocityApp {
     pub show_breadcrumbs: bool,
     /// Whether word wrap is enabled.
     pub word_wrap: bool,
+    /// Whether auto-indent on Enter is enabled.
+    pub auto_indent_enabled: bool,
+    /// Whether auto-close brackets is enabled.
+    pub auto_close_brackets_enabled: bool,
+    /// Whether to trim trailing whitespace from every line on save.
+    pub trim_trailing_ws_on_save: bool,
     /// Browse panel state (web research sidebar).
     pub browse_state: crate::editor::browse_panel::BrowseState,
     /// Workspace checkpoint manager (git-stash rollback).
@@ -722,6 +750,26 @@ impl VelocityApp {
         self.chat.thinking_enabled = self.thinking_enabled;
         self.auto_save = preferences.auto_save;
         self.format_on_save = preferences.format_on_save;
+        self.auto_indent_enabled = preferences.auto_indent;
+        self.auto_close_brackets_enabled = preferences.auto_close_brackets;
+        self.trim_trailing_ws_on_save = preferences.trim_trailing_ws;
+
+        // Restore the routing target, but only while that node is still
+        // registered: a forgotten node must not linger as a phantom target the
+        // panel header can't resolve. `routed_node` would build local anyway,
+        // so dropping it here keeps the stored choice and the shown choice
+        // telling the same story.
+        let restored_target = preferences.build_target_id.as_deref().and_then(|id| {
+            let reg = crate::agent::instances::InstanceRegistry::load(
+                &crate::agent::instance_tools::instances_path(&self.workspace_root),
+            );
+            if reg.get(id).is_some() {
+                Some(id.to_string())
+            } else {
+                None
+            }
+        });
+        self.nodes.target_id = restored_target;
 
         // Reopen last session's editor tabs (open_editor dedupes by path).
         for tab_path in &preferences.open_tabs {
@@ -1029,6 +1077,7 @@ impl VelocityApp {
         }
     }
 
+    #[cfg(feature = "gui")]
     pub fn new(
         cc: &eframe::CreationContext<'_>,
         workspace_root: PathBuf,
@@ -1042,6 +1091,50 @@ impl VelocityApp {
         cc.egui_ctx.set_fonts(fonts);
         let appearance = AppearanceSettings::default();
         apply_theme(&cc.egui_ctx, appearance);
+        Self::build_app(
+            cc.egui_ctx.clone(),
+            workspace_root,
+            agent_tx,
+            agent_rx,
+            gpu_name,
+            mediator,
+        )
+    }
+
+    /// Headless constructor: same initialization without eframe's CreationContext.
+    /// Used by the serve binary to run VelocityApp without a native window.
+    pub fn new_headless(
+        ctx: &egui::Context,
+        workspace_root: PathBuf,
+        agent_tx: Sender<UiToAgentMessage>,
+        agent_rx: Receiver<AgentToUiMessage>,
+        gpu_name: String,
+        mediator: std::sync::Arc<crate::automation::mediator::MediatorArena>,
+    ) -> Self {
+        let mut fonts = egui::FontDefinitions::default();
+        let _ = crate::editor::theme::setup_fonts(&mut fonts);
+        ctx.set_fonts(fonts);
+        let appearance = AppearanceSettings::default();
+        apply_theme(ctx, appearance);
+        Self::build_app(
+            ctx.clone(),
+            workspace_root,
+            agent_tx,
+            agent_rx,
+            gpu_name,
+            mediator,
+        )
+    }
+
+    fn build_app(
+        egui_ctx: egui::Context,
+        workspace_root: PathBuf,
+        agent_tx: Sender<UiToAgentMessage>,
+        agent_rx: Receiver<AgentToUiMessage>,
+        gpu_name: String,
+        mediator: std::sync::Arc<crate::automation::mediator::MediatorArena>,
+    ) -> Self {
+        let appearance = AppearanceSettings::default();
 
         let mut tab_counter = 0u64;
         let chat = Tab {
@@ -1141,7 +1234,7 @@ impl VelocityApp {
             left_sidebar_visible: true,
             left_sidebar_width: 240.0,
             activity_bar_selection: 0,
-            activity_sub_panel: [0; 8],
+            activity_sub_panel: [0; 9],
             right_sidebar_visible: false,
             right_sidebar_width: 280.0,
             mode_layouts: HashMap::new(),
@@ -1313,6 +1406,9 @@ impl VelocityApp {
             show_minimap: true,
             show_breadcrumbs: true,
             word_wrap: false,
+            auto_indent_enabled: true,
+            auto_close_brackets_enabled: true,
+            trim_trailing_ws_on_save: true,
             browse_state: crate::editor::browse_panel::BrowseState::default(),
             checkpoint_manager: crate::editor::checkpoint::CheckpointManager::new(&workspace_root),
             agent_memory: crate::editor::agent_memory::AgentMemoryManager::new(&workspace_root),
@@ -1373,14 +1469,14 @@ impl VelocityApp {
         // Start the GUI control listener (TCP for external MCP/agent control)
         let auth_token = crate::editor::gui_control::load_or_generate_token(&workspace_root);
         let (cmd_rx, shutdown) =
-            crate::editor::gui_control::start_listener(cc.egui_ctx.clone(), auth_token);
+            crate::editor::gui_control::start_listener(egui_ctx.clone(), auth_token);
         app.gui_cmd_rx = Some(cmd_rx);
         app.gui_control_handle = Some(crate::editor::gui_control::GuiControlHandle { shutdown });
         // Don't create an untitled editor by default — show the welcome screen instead.
         // Users can open files or create new files via Ctrl+O / Ctrl+N.
         app.apply_workspace_profile(app.appearance.profile);
         app.restore_workspace_preferences();
-        app.apply_appearance(&cc.egui_ctx);
+        app.apply_appearance(&egui_ctx);
         app.task_timeline.clear();
         app.task_timeline
             .session_marker("IDE session ready", "agentic workspace initialized");
@@ -1490,7 +1586,7 @@ impl VelocityApp {
             left_sidebar_visible: true,
             left_sidebar_width: 240.0,
             activity_bar_selection: 0,
-            activity_sub_panel: [0; 8],
+            activity_sub_panel: [0; 9],
             right_sidebar_visible: false,
             right_sidebar_width: 280.0,
             mode_layouts: HashMap::new(),
@@ -1637,6 +1733,9 @@ impl VelocityApp {
             show_minimap: true,
             show_breadcrumbs: true,
             word_wrap: false,
+            auto_indent_enabled: true,
+            auto_close_brackets_enabled: true,
+            trim_trailing_ws_on_save: true,
             browse_state: Default::default(),
             checkpoint_manager: crate::editor::checkpoint::CheckpointManager::new(&workspace_root),
             agent_memory: crate::editor::agent_memory::AgentMemoryManager::new(&workspace_root),

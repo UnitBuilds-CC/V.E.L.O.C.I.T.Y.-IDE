@@ -4,7 +4,7 @@
 //! formatting utilities can be reused by each focused panel module without
 //! duplicating them. Behaviour is unchanged.
 
-use eframe::egui;
+use egui;
 use egui::RichText;
 
 use super::struct_def::VelocityApp;

@@ -1,7 +1,7 @@
 use crate::agent::{ModelInfo, UiToAgentMessage};
 use crate::editor::theme::IdePalette;
 use crossbeam_channel::Sender;
-use eframe::egui;
+use egui;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ChatRole {

@@ -3,7 +3,7 @@
 //! Shows connected peers, allows adding new peers, chat messaging,
 //! file transfer initiation, task delegation, and peer server control.
 
-use eframe::egui;
+use egui;
 use egui::RichText;
 
 use crate::agent::peer_link::{PeerCapability, TaskStatus, TransferDirection};

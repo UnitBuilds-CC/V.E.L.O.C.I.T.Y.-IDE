@@ -2,7 +2,7 @@
 //! keywords, and local identifiers.
 
 use crate::editor::theme::IdePalette;
-use eframe::egui;
+use egui;
 use std::collections::HashSet;
 use std::path::Path;
 

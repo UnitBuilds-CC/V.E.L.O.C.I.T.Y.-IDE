@@ -9,7 +9,7 @@ use crate::editor::task_timeline::{render_mission_activity_feed, render_task_tim
 use crate::editor::theme::{
     IdePalette, FONT_BODY, FONT_CAPTION, FONT_SMALL, ITEM_SPACING, SECTION_SPACING,
 };
-use eframe::egui;
+use egui;
 use egui::RichText;
 
 impl VelocityApp {
@@ -1263,7 +1263,7 @@ impl VelocityApp {
             };
             ui.label(RichText::new(text).size(FONT_SMALL).color(color));
             if target_name.is_some() && ui.small_button("Local").clicked() {
-                self.nodes.target_id = None;
+                self.set_build_target(None);
             }
         });
         ui.add_space(ITEM_SPACING);
@@ -1391,8 +1391,7 @@ impl VelocityApp {
             match action {
                 RowAction::Ping(id) => self.ping_node(id),
                 RowAction::Target(id) => {
-                    self.nodes.target_id = Some(id.clone());
-                    self.nodes.status_line = format!("Builds will route to {id}.");
+                    self.set_build_target(Some(id));
                 }
                 RowAction::Forget(id) => self.forget_node(&id),
             }
@@ -1410,26 +1409,56 @@ impl VelocityApp {
             self.nodes.show_add = !self.nodes.show_add;
         }
         if self.nodes.show_add {
-            ui.add(
+            // Stretch inputs to the panel width so hint text isn't truncated
+            // (the rail is resizable, so hard-coded pixel widths always end up
+            // either too narrow on a collapsed rail or wastefully short on a
+            // widened one).
+            ui.add_sized(
+                [ui.available_width(), 22.0],
                 egui::TextEdit::singleline(&mut self.nodes.add_name)
                     .hint_text("name")
-                    .desired_width(150.0),
+                    .desired_width(f32::INFINITY),
             );
-            ui.add(
+            ui.add_sized(
+                [ui.available_width(), 22.0],
                 egui::TextEdit::singleline(&mut self.nodes.add_addr)
-                    .hint_text("drone address host[:port]")
-                    .desired_width(150.0),
+                    .hint_text("drone address host:port")
+                    .desired_width(f32::INFINITY),
             );
-            ui.add(
-                egui::TextEdit::singleline(&mut self.nodes.add_dir)
-                    .hint_text("work dir on the node")
-                    .desired_width(150.0),
+            ui.add_sized(
+                [ui.available_width(), 22.0],
+                egui::TextEdit::singleline(&mut self.nodes.add_token)
+                    .hint_text("bearer token (optional)")
+                    .password(true)
+                    .desired_width(f32::INFINITY),
             );
+            // Work-dir row: text field + Browse button. The button opens a
+            // remote-directory modal that lists the drone's filesystem so
+            // the operator picks a path instead of typing one blind.
+            let browse_w = 62.0;
+            let field_w = (ui.available_width() - browse_w - ui.spacing().item_spacing.x).max(60.0);
             ui.horizontal(|ui| {
-                if ui.button("Register").clicked() {
+                ui.add_sized(
+                    [field_w, 22.0],
+                    egui::TextEdit::singleline(&mut self.nodes.add_dir)
+                        .hint_text("work dir on the node")
+                        .desired_width(field_w),
+                );
+                if ui
+                    .add_enabled(
+                        !self.nodes.add_addr.trim().is_empty(),
+                        egui::Button::new(RichText::new("Browse…").size(FONT_SMALL)),
+                    )
+                    .clicked()
+                {
+                    self.open_node_browser();
+                }
+            });
+            ui.horizontal(|ui| {
+                if ui.small_button("Register").clicked() {
                     self.add_node();
                 }
-                if ui.button("Cancel").clicked() {
+                if ui.small_button("Cancel").clicked() {
                     self.nodes.show_add = false;
                 }
             });
@@ -1444,10 +1473,11 @@ impl VelocityApp {
                 .strong()
                 .color(palette.text),
         );
-        ui.add(
+        ui.add_sized(
+            [ui.available_width(), 22.0],
             egui::TextEdit::singleline(&mut self.nodes.exec_cmd)
                 .hint_text("e.g. cargo test --release")
-                .desired_width(170.0),
+                .desired_width(f32::INFINITY),
         );
         let can_run = self.routed_node().is_some()
             && !self.nodes.exec_busy
@@ -1477,6 +1507,206 @@ impl VelocityApp {
                     .size(9.0)
                     .color(palette.text_muted),
             );
+        }
+    }
+
+    /// Cockpit-style remote-directory picker: a floating modal that lists the
+    /// drone's filesystem so the operator can pick a work-dir instead of
+    /// typing one. Called from `ui_render.rs` on every frame (guarded by
+    /// `browse_open`) so it can appear above any other panel.
+    pub fn render_node_browser(&mut self, ctx: &egui::Context) {
+        if !self.nodes.browse_open {
+            return;
+        }
+        let palette = self.palette();
+        let area = egui::Area::new(egui::Id::new("node_browser_area"))
+            .order(egui::Order::Foreground)
+            .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO);
+
+        // Collect-then-run: a click inside the closure mutates `self`, but
+        // egui's closure has already borrowed it. Actions are queued and
+        // applied after the area is drawn.
+        enum Nav {
+            Enter(String),
+            Up,
+            Go(String),
+            Refresh,
+            Select,
+            Cancel,
+        }
+        let mut action: Option<Nav> = None;
+
+        area.show(ctx, |ui| {
+            egui::Frame::popup(ui.style())
+                .fill(ui.visuals().code_bg_color)
+                .stroke(ui.visuals().window_stroke)
+                .inner_margin(egui::Margin::same(12))
+                .corner_radius(egui::CornerRadius::same(10))
+                .show(ui, |ui| {
+                    ui.set_width(460.0);
+                    ui.label(
+                        RichText::new("Select remote folder")
+                            .size(FONT_BODY)
+                            .strong()
+                            .color(palette.accent),
+                    );
+                    ui.label(
+                        RichText::new(format!("via {}", self.nodes.browse_addr))
+                            .size(9.0)
+                            .color(palette.text_muted),
+                    );
+                    ui.add_space(6.0);
+
+                    // Path bar: editable text + Go + Up + Refresh.
+                    ui.horizontal(|ui| {
+                        let resp = ui.add_sized(
+                            [300.0, 22.0],
+                            egui::TextEdit::singleline(&mut self.nodes.browse_input)
+                                .hint_text("/path/to/dir")
+                                .desired_width(300.0),
+                        );
+                        let enter = ui.input(|i| i.key_pressed(egui::Key::Enter));
+                        if (resp.lost_focus() && enter) || ui.small_button("Go").clicked() {
+                            action = Some(Nav::Go(self.nodes.browse_input.clone()));
+                        }
+                        if ui
+                            .add_enabled(
+                                self.nodes.browse_parent.is_some(),
+                                egui::Button::new(RichText::new("Up").size(FONT_SMALL)),
+                            )
+                            .clicked()
+                        {
+                            action = Some(Nav::Up);
+                        }
+                        if ui.small_button("Refresh").clicked() {
+                            action = Some(Nav::Refresh);
+                        }
+                    });
+
+                    // Name filter (client-side; the listing is already cached).
+                    ui.add_sized(
+                        [436.0, 20.0],
+                        egui::TextEdit::singleline(&mut self.nodes.browse_filter)
+                            .hint_text("filter names\u{2026}")
+                            .desired_width(436.0),
+                    );
+                    ui.add_space(4.0);
+
+                    if let Some(err) = &self.nodes.browse_error {
+                        ui.label(RichText::new(err).size(FONT_SMALL).color(palette.error));
+                        ui.add_space(4.0);
+                    }
+                    if self.nodes.browse_loading {
+                        ui.label(
+                            RichText::new("Loading\u{2026}")
+                                .size(FONT_SMALL)
+                                .color(palette.text_muted),
+                        );
+                    }
+                    if self.nodes.browse_truncated {
+                        ui.label(
+                            RichText::new(
+                                "Listing truncated at 500 entries — go deeper to narrow.",
+                            )
+                            .size(9.0)
+                            .color(palette.warning),
+                        );
+                    }
+
+                    let filter = self.nodes.browse_filter.to_lowercase();
+                    let entries = self.nodes.browse_entries.clone();
+                    egui::ScrollArea::vertical()
+                        .id_salt("node_browser_list")
+                        .auto_shrink([false, false])
+                        .max_height(280.0)
+                        .show(ui, |ui| {
+                            for e in entries.iter() {
+                                if !filter.is_empty() && !e.name.to_lowercase().contains(&filter) {
+                                    continue;
+                                }
+                                let icon = if e.is_dir {
+                                    egui_phosphor::regular::FOLDER_SIMPLE
+                                } else {
+                                    egui_phosphor::regular::FILE
+                                };
+                                let color = if e.is_dir {
+                                    palette.text
+                                } else {
+                                    palette.text_muted
+                                };
+                                let label = if e.is_dir {
+                                    format!("{}/", e.name)
+                                } else {
+                                    e.name.clone()
+                                };
+                                let btn = ui.add(
+                                    egui::Button::new(
+                                        RichText::new(format!("{icon}  {label}"))
+                                            .size(FONT_SMALL)
+                                            .color(color),
+                                    )
+                                    .fill(egui::Color32::TRANSPARENT),
+                                );
+                                if btn.clicked() && e.is_dir {
+                                    action = Some(Nav::Enter(e.path.clone()));
+                                } else if btn.hovered() && !e.is_dir {
+                                    btn.on_hover_text("Files are not selectable as work dirs");
+                                }
+                            }
+                            if entries.is_empty() && !self.nodes.browse_loading {
+                                ui.label(
+                                    RichText::new("(empty directory)")
+                                        .size(FONT_SMALL)
+                                        .italics()
+                                        .color(palette.text_muted),
+                                );
+                            }
+                        });
+
+                    ui.add_space(6.0);
+                    ui.separator();
+                    ui.label(
+                        RichText::new(format!("Current: {}", self.nodes.browse_path))
+                            .size(9.0)
+                            .color(palette.text_muted),
+                    );
+                    ui.horizontal(|ui| {
+                        if ui
+                            .button(
+                                RichText::new("Select this folder")
+                                    .strong()
+                                    .size(FONT_SMALL),
+                            )
+                            .clicked()
+                        {
+                            action = Some(Nav::Select);
+                        }
+                        if ui.small_button("Cancel").clicked() {
+                            action = Some(Nav::Cancel);
+                        }
+                    });
+                });
+        });
+
+        match action {
+            Some(Nav::Enter(p)) => self.request_browse_listing(p),
+            Some(Nav::Up) => {
+                if let Some(p) = self.nodes.browse_parent.clone() {
+                    self.request_browse_listing(p);
+                }
+            }
+            Some(Nav::Go(p)) => self.request_browse_listing(p),
+            Some(Nav::Refresh) => {
+                let p = self.nodes.browse_path.clone();
+                self.request_browse_listing(p);
+            }
+            Some(Nav::Select) => self.accept_node_browser(),
+            Some(Nav::Cancel) => self.close_node_browser(),
+            None => {}
+        }
+        // Escape closes the modal without selecting.
+        if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
+            self.close_node_browser();
         }
     }
 

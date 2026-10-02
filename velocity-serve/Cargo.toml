@@ -1,0 +1,24 @@
+[package]
+name = "velocity-serve"
+version = "1.0.0"
+edition = "2021"
+authors = ["UnitBuilds <ian@unitbuilds.com>"]
+description = "V.E.L.O.C.I.T.Y. IDE — Headless remote frame server"
+license = "LicenseRef-Proprietary"
+
+[[bin]]
+name = "velocity_serve"
+path = "src/main.rs"
+
+[dependencies]
+velocity_mcp = { path = "../velocity-mcp", default-features = false, features = ["full"] }
+egui = "0.35"
+epaint = "0.35"
+image = { version = "0.24", default-features = false, features = ["png"] }
+tiny_http = "0.12"
+crossbeam-channel = "0.5"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+clap = { version = "4", features = ["derive"] }
+log = "0.4"
+env_logger = "0.11"

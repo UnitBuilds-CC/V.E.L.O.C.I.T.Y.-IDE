@@ -1,6 +1,6 @@
 //! Diagnostics display — manages error/warning squiggles and the problems panel.
 
-use eframe::egui;
+use egui;
 use std::path::PathBuf;
 
 pub use crate::editor::lsp_client::{DiagnosticSeverity, LspDiagnostic};

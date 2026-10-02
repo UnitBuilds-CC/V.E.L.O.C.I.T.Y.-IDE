@@ -225,6 +225,33 @@ pub struct PairingResponse {
     pub drone_name: String,
 }
 
+/// One entry in a `FsListing`. Mirrors the drone's `handle_fs_list` response
+/// shape; `size` is 0 for directories because stat'ing a dir's total content
+/// size is expensive and the picker doesn't display it.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FsEntry {
+    pub name: String,
+    pub path: String,
+    #[serde(default)]
+    pub is_dir: bool,
+    #[serde(default)]
+    pub size: u64,
+}
+
+/// Response of `POST /peer/fs/list`. `parent` is `None` at filesystem roots
+/// (`/` on unix, `C:\` drive roots on Windows) so the picker can disable
+/// "Up" instead of trying to navigate past the top.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FsListing {
+    pub path: String,
+    #[serde(default)]
+    pub parent: Option<String>,
+    #[serde(default)]
+    pub entries: Vec<FsEntry>,
+    #[serde(default)]
+    pub truncated: bool,
+}
+
 // ── Drone Client ──
 
 /// HTTP client for communicating with a remote drone.
@@ -319,6 +346,46 @@ impl DroneClient {
             .into_json()
             .map_err(|e| format!("Failed to parse status response: {}", e))?;
         Ok(status)
+    }
+
+    /// POST /peer/fs/list — enumerate a directory on the drone.
+    ///
+    /// Empty `path` asks the drone for its workspace root; the picker uses
+    /// that as the "open at home" default. Non-2xx responses are surfaced
+    /// with the drone's `error` string when present so the operator sees
+    /// "not a directory" rather than a bare HTTP status code.
+    pub fn list_dir(&self, path: &str) -> Result<FsListing, Box<dyn Error>> {
+        let url = format!("{}/peer/fs/list", self.base_url);
+        let body = json!({ "path": path });
+        let mut req = ureq::post(&url).timeout(std::time::Duration::from_secs(self.timeout_secs));
+        if let Some(auth) = self.auth_header() {
+            req = req.set("Authorization", &auth);
+        }
+        // ureq 2.x surfaces 4xx/5xx as `Error::Status(_, response)` and
+        // the drone's `"error": "..."` payload is still on the response body.
+        // Read it so the picker can show "cannot open \"/nope\": ..." instead
+        // of a bare HTTP code.
+        let resp = match req.send_json(body) {
+            Ok(r) => r,
+            Err(ureq::Error::Status(code, resp)) => {
+                let val: Value = resp
+                    .into_json()
+                    .unwrap_or_else(|_| json!({ "error": format!("HTTP {code}") }));
+                let msg = val
+                    .get("error")
+                    .and_then(Value::as_str)
+                    .unwrap_or("listing failed")
+                    .to_string();
+                return Err(format!("{msg} (HTTP {code})").into());
+            }
+            Err(e) => return Err(format!("Directory listing failed: {e}").into()),
+        };
+        let val: Value = resp
+            .into_json()
+            .map_err(|e| format!("Failed to parse listing response: {e}"))?;
+        let listing: FsListing =
+            serde_json::from_value(val).map_err(|e| format!("Malformed listing payload: {e}"))?;
+        Ok(listing)
     }
 
     /// POST /peer/pair — initiate pairing.

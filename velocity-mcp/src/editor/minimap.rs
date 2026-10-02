@@ -10,7 +10,7 @@
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 
-use eframe::egui::{self, Color32, Rect, Sense, Vec2};
+use egui::{self, Color32, Rect, Sense, Vec2};
 
 /// An RGB colour tuple used in minimap colour data.
 pub type Rgb = (u8, u8, u8);

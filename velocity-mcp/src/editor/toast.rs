@@ -1,5 +1,5 @@
 use crate::editor::theme::IdePalette;
-use eframe::egui::{
+use egui::{
     self, Align2, Color32, CornerRadius, Frame, Id, Margin, Order, ProgressBar, RichText, Vec2,
 };
 use std::time::{Duration, Instant};

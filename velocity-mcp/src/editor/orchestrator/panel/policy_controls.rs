@@ -1,7 +1,7 @@
 use super::struct_def::OrchestratorPanel;
 use crate::automation::{AgentTaskKind, DecompositionStyle, InstructionRegistry};
 use crate::editor::theme::IdePalette;
-use eframe::egui;
+use egui;
 use egui::Ui;
 use std::path::Path;
 

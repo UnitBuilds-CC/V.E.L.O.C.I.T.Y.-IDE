@@ -5,9 +5,10 @@ use super::struct_def::{VelocityApp, LEFT_SIDEBAR_MAX_W, LEFT_SIDEBAR_MIN_W};
 use super::tier3_common::primary_button;
 use crate::editor::agent_ui_render::{render_agent_metrics, RenderSnapshot};
 use crate::editor::theme::FONT_CAPTION;
-use eframe::egui;
+use egui;
 use std::path::PathBuf;
 
+#[cfg(feature = "gui")]
 impl eframe::App for VelocityApp {
     fn on_exit(&mut self) {
         self.save_workspace_preferences();
@@ -17,6 +18,14 @@ impl eframe::App for VelocityApp {
     }
 
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        self.render_frame(ui);
+    }
+}
+
+impl VelocityApp {
+    /// Core render loop — called by `eframe::App::ui` (windowed) or directly
+    /// by the headless serve binary.
+    pub fn render_frame(&mut self, ui: &mut egui::Ui) {
         // ─── Frame-time profiling ───────────────────────────────────────────
         let frame_start = std::time::Instant::now();
         if let Some(last) = self.last_frame_instant {
@@ -1239,9 +1248,10 @@ impl eframe::App for VelocityApp {
                         2 => self.render_git_category(ui, palette),
                         3 => self.render_chat_category(ui, palette),
                         4 => self.render_build_category(ui, palette),
-                        5 => self.render_agents_category(ui, palette),
-                        6 => self.render_knowledge_category(ui, palette),
-                        7 => self.render_workspace_category(ui, palette),
+                        5 => self.render_nodes_category(ui, palette),
+                        6 => self.render_agents_category(ui, palette),
+                        7 => self.render_knowledge_category(ui, palette),
+                        8 => self.render_workspace_category(ui, palette),
                         _ => self.render_files_category(ui, palette),
                     }
                 });
@@ -2221,6 +2231,7 @@ impl eframe::App for VelocityApp {
         self.branch_switcher_ui(&ctx);
         self.goto_symbol_ui(&ctx);
         self.references_ui(&ctx);
+        self.render_node_browser(&ctx);
         self.call_hierarchy_ui(&ctx);
         self.rename_ui(&ctx);
         self.code_actions_ui(&ctx);

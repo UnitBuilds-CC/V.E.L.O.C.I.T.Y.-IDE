@@ -1,6 +1,6 @@
 use super::velocity_app::VelocityApp;
 use crate::editor::expert_team::{load_expert_teams, save_expert_teams, slugify, ExpertMember};
-use eframe::egui;
+use egui;
 use egui::RichText;
 
 impl VelocityApp {

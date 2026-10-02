@@ -8,7 +8,7 @@ use crate::editor::extensions::ExtensionState;
 use crate::editor::theme::{
     CARD_INNER_MARGIN, CARD_RADIUS, FONT_BODY, FONT_CAPTION, FONT_SMALL, ITEM_SPACING,
 };
-use eframe::egui;
+use egui;
 use egui::RichText;
 
 /// A deferred mutation captured while rendering the extensions list (avoids

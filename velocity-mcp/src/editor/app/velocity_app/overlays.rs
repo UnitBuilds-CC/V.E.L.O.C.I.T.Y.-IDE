@@ -1,4 +1,4 @@
-use eframe::egui;
+use egui;
 use std::path::{Path, PathBuf};
 
 use super::super::helpers::*;

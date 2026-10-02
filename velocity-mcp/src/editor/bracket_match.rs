@@ -212,4 +212,24 @@ mod tests {
         assert_eq!(auto_close_char('{'), Some('}'));
         assert_eq!(auto_close_char('a'), None);
     }
+
+    #[test]
+    fn skip_close_returns_true_when_cursor_before_match() {
+        // "()" cursor at 1: next char is ')' and user typed ')'
+        assert!(should_skip_close("()", 1, ')'));
+        // "{}" cursor at 1
+        assert!(should_skip_close("{}", 1, '}'));
+        // "[]" cursor at 1
+        assert!(should_skip_close("[]", 1, ']'));
+    }
+
+    #[test]
+    fn skip_close_returns_false_when_no_match() {
+        // Cursor at 1 in "(x)", next is 'x', typed is ')'
+        assert!(!should_skip_close("(x)", 1, ')'));
+        // Cursor at end of string
+        assert!(!should_skip_close("()", 2, ')'));
+        // Non-bracket char
+        assert!(!should_skip_close("ab", 1, 'a'));
+    }
 }

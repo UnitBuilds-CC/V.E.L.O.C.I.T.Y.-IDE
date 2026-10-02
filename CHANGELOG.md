@@ -7,7 +7,55 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-_Nothing recorded since [2.6.1]._
+_Nothing recorded since [2.8.0]._
+
+## [2.8.0] - 2026-10-02
+
+The release that turns remote build nodes from a registered-but-forgotten idea into something a
+headless driver can actually arm. Alongside the node registry and Nodes rail that landed on `main`
+as `9a55101`, this cut persists and exposes the build-routing target, gives drone nodes a browsable
+remote directory picker, adds a headless frame server, and closes two small editor gaps. Measured
+on the working tree at this tag: `cargo fmt --all -- --check` and
+`cargo clippy --workspace --all-targets -- -D warnings` clean, and `cargo test --workspace` green at
+roughly 10,700 passing tests with zero failures across every crate. Green here is Windows-only: as
+in prior releases, the Linux-target lint/behaviour, the coverage floor, `cargo deny`/`audit` and the
+live GUI sweep are proven by CI, not by this local run, and no job exercises a live agent
+conversation against a real provider key.
+
+### Added
+- **A remote build-node registry with a dedicated Nodes rail** (`9a55101`): register build machines (for example an idle Linux box) in a persisted `<workspace>/.velocity/instances.json`, drive real work over the drone, and route the IDE's own Build/Run at a chosen node. Entries survive restarts; `instance_*` MCP tools cover add/list/ping/deploy/pick/release.
+- **A browsable remote directory picker for drone nodes**: the drone exposes an authenticated `POST /peer/fs/list`, the Add-node form now collects the node's Bearer token, and an in-IDE browser lets the work directory be chosen by listing the remote machine instead of typed blind.
+- **`velocity-serve`, a headless frame server**: software-renders the IDE to PNG and serves it over HTTP - a browser thin-client long-polls `/frame` with frame coalescing, posts pointer/wheel/key/paste input to `/input`, and server-side clipboard copies are relayed through `/clipboard`.
+- **Two editor affordances**: a trim-trailing-whitespace command and Settings toggle that preserve CRLF endings (stripping only spaces and tabs), and word-occurrence highlighting that marks every instance of the identifier under the caret.
+
+### Changed
+- **Editor modules now import `egui` directly** instead of through `eframe`'s re-export, decoupling the UI code from the windowing layer.
+- The Nodes panel moved out of the Build rail into its own activity-bar rail, with inputs that stretch to the rail width rather than clipping their hint text.
+
+### Fixed
+- **The build-routing target was in-memory only**: which node Ctrl+B/Ctrl+R route to was settable only by a human clicking "Build here", was lost on restart (silently falling back to a local build), and could not be armed by a headless driver. It now persists to workspace preferences, `GetState` reports `build_target_id`/`build_target_name`, and a new `SetBuildTarget` bridge command arms or clears it (`null` means this machine) through the exact same shared `set_build_target` the panel buttons use, so a driver and a click cannot drift. A typo is refused rather than stored as a phantom, and a target whose node was since forgotten is dropped on restore instead of building local by surprise.
+
+## [2.7.0] - 2026-09-24
+
+> Backfilled: this release was tagged (`v2.7.0` -> `7299350`) without a changelog entry, so the
+> section below is reconstructed from the twenty commits between `v2.6.1` and the tag rather than
+> written at cut time. Treat the individual attributions as summarised, not per-verified.
+
+### Added
+- **Multimodal generation subsystem** wired to live-verified DashScope endpoints.
+- **`SendChatMessage` bridge command**, so an external driver can post to the agent chat programmatically.
+- **Disk-hygiene subsystem**: artifact tracking, provenance and a safe cleanup path (module + MCP tools + GUI overlay), hardened by 11 adversarial tests - junction refusal, deletion-time recheck, hostile paths, caps and case rules.
+- **Editor parity feature wave (v47-v62)**: a competitor-led pass closing editor gaps across the surface.
+
+### Changed
+- **The re-orientation "doom loop" ended**: agent turns that announce an action but make no tool call now auto-continue, and the underlying context-budget misconfiguration was corrected.
+- **Agent-loop latency hardened** with per-turn timing telemetry; turns compact into one block per turn with a hover copy affordance, and chat bubbles stop shattering as tokens interleave with thought deltas.
+- Unknown-tool suggestions rank by name generality rather than alphabetically; a neutral "no project open" build state and prose-aware stubs were added, and the control bridge can auto-approve.
+
+### Fixed
+- **Read-only Orchestrator tasks now succeed on textual output** instead of requiring a file change.
+- Four defects found reviewing the POC mission transcript, and four mission-killing defects found in the WASIX filesystem experiment.
+- A prompt grounding clause and decision-trail leak containment; support email corrected to `support@unitbuilds.com` across README, user guide and runbook.
 
 ## [2.6.1] - 2026-09-22
 
@@ -218,7 +266,9 @@ real provider key, which no job exercises.
 - Drone dual-mode architecture (local + remote)
 - Browser engine with NDA support
 
-[Unreleased]: https://github.com/UnitBuilds-CC/V.E.L.O.C.I.T.Y.-IDE/compare/v2.6.1...HEAD
+[Unreleased]: https://github.com/UnitBuilds-CC/V.E.L.O.C.I.T.Y.-IDE/compare/v2.8.0...HEAD
+[2.8.0]: https://github.com/UnitBuilds-CC/V.E.L.O.C.I.T.Y.-IDE/compare/v2.7.0...v2.8.0
+[2.7.0]: https://github.com/UnitBuilds-CC/V.E.L.O.C.I.T.Y.-IDE/compare/v2.6.1...v2.7.0
 [2.6.1]: https://github.com/UnitBuilds-CC/V.E.L.O.C.I.T.Y.-IDE/compare/v2.6.0...v2.6.1
 [2.6.0]: https://github.com/UnitBuilds-CC/V.E.L.O.C.I.T.Y.-IDE/compare/v2.5.0...v2.6.0
 [1.0.0]: https://github.com/UnitBuilds-CC/V.E.L.O.C.I.T.Y.-IDE/compare/v0.1.0...v1.0.0

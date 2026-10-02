@@ -1,7 +1,7 @@
 //! Workflows composer and governance policy panels, extracted from
 //! `tier3_panels.rs` to keep individual modules under the LOC target.
 
-use eframe::egui;
+use egui;
 use egui::RichText;
 
 use super::struct_def::VelocityApp;

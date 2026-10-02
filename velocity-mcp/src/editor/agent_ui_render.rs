@@ -5,7 +5,7 @@
 
 use crate::editor::agent_ui_state::*;
 use crate::editor::theme::IdePalette;
-use eframe::egui;
+use egui;
 
 /// Immutable snapshot for rendering (zero-copy reference)
 pub struct RenderSnapshot<'a> {

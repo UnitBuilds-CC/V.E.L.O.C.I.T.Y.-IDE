@@ -1325,11 +1325,11 @@ impl VelocityApp {
     /// Render the debug panel (call stack, variables, watches, toolbar).
     pub fn render_debug_panel(
         &mut self,
-        ui: &mut eframe::egui::Ui,
+        ui: &mut egui::Ui,
         palette: crate::editor::theme::IdePalette,
     ) {
         use crate::editor::debugger::DebugState;
-        use eframe::egui;
+        use egui;
 
         let state = self
             .dap_client

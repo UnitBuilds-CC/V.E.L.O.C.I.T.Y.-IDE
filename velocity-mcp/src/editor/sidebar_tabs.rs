@@ -6,7 +6,7 @@
 //! of content renderers `render.rs` calls.
 
 use crate::editor::theme::IdePalette;
-use eframe::egui;
+use egui;
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Sidebar Tab Data Context (real data passed from VelocityApp)

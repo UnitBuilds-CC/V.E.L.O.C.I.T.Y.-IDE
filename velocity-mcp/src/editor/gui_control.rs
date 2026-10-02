@@ -127,6 +127,12 @@ pub enum GuiCommand {
     /// Test drivers and headless sweeps need this because without it every write
     /// tool stalls on a pending approval the driver must babysit one by one.
     SetAutoApprove { enabled: bool },
+    /// Point Ctrl+B/Ctrl+R at a registered build node by id, or back at this
+    /// machine when `id` is null/empty -- the remote-routing twin of the Nodes
+    /// panel's "Build here"/"Local" buttons. The choice is persisted to
+    /// workspace preferences, so a headless driver can arm a routed build and it
+    /// survives a restart. Refused if `id` names no registered node.
+    SetBuildTarget { id: Option<String> },
 }
 
 /// Wrapper that includes the auth token alongside the command.
@@ -188,6 +194,16 @@ pub struct IdeState {
     /// driver can confirm `SetAutoApprove` actually took effect.
     #[serde(default)]
     pub auto_approve: bool,
+    /// Id of the node Ctrl+B/Ctrl+R currently route to, or `None` for this
+    /// machine. Lets a driver confirm `SetBuildTarget` took and read back the
+    /// persisted routing choice via `GetState`.
+    #[serde(default)]
+    pub build_target_id: Option<String>,
+    /// Display name of [`IdeState::build_target_id`] resolved against the
+    /// registry; `None` when routing local or when the id is no longer a
+    /// registered node (a stale target builds local, exactly as `routed_node`).
+    #[serde(default)]
+    pub build_target_name: Option<String>,
 }
 
 /// Handle for the GUI control listener. Holds the shutdown flag.

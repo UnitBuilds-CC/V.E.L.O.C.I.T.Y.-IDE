@@ -3,7 +3,7 @@
 //! Provides a circular buffer of task events with immutable snapshot rendering.
 
 use crate::editor::theme::IdePalette;
-use eframe::egui;
+use egui;
 use std::path::Path;
 use std::time::Instant;
 

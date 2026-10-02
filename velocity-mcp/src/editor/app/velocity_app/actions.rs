@@ -96,6 +96,13 @@ impl VelocityApp {
                 modes: &[],
             },
             Command {
+                label: "Revert File",
+                category: "File",
+                shortcut: None,
+                action: |a| a.revert_active_from_disk(),
+                modes: &[],
+            },
+            Command {
                 label: "Reopen Closed Tab",
                 category: "File",
                 shortcut: Some("Ctrl+Shift+T"),
@@ -370,8 +377,8 @@ impl VelocityApp {
                 modes: &[WorkspaceProfile::Coder],
             },
             Command {
-                label: "Nodes: Remote Build Nodes",
-                category: "Build",
+                label: "Open Nodes Panel",
+                category: "Nodes",
                 shortcut: Some("Ctrl+Alt+B"),
                 action: |a| a.open_nodes_panel(),
                 modes: &[],
@@ -744,6 +751,13 @@ impl VelocityApp {
                 modes: &[],
             },
             Command {
+                label: "Toggle Trim Trailing Whitespace On Save",
+                category: "Edit",
+                shortcut: None,
+                action: |a| a.toggle_trim_trailing_ws(),
+                modes: &[],
+            },
+            Command {
                 label: "Toggle History",
                 category: "View",
                 shortcut: None,
@@ -762,6 +776,76 @@ impl VelocityApp {
                 category: "Git",
                 shortcut: None,
                 action: |a| a.open_branch_switcher(),
+                modes: &[],
+            },
+            // Editor font zoom
+            Command {
+                label: "Increase Editor Font Zoom",
+                category: "View",
+                shortcut: Some("Ctrl+="),
+                action: |a| a.adjust_code_scale(0.1),
+                modes: &[],
+            },
+            Command {
+                label: "Decrease Editor Font Zoom",
+                category: "View",
+                shortcut: Some("Ctrl+-"),
+                action: |a| a.adjust_code_scale(-0.1),
+                modes: &[],
+            },
+            Command {
+                label: "Reset Editor Font Zoom",
+                category: "View",
+                shortcut: Some("Ctrl+0"),
+                action: |a| a.reset_code_scale(),
+                modes: &[],
+            },
+            Command {
+                label: "Toggle Minimap",
+                category: "View",
+                shortcut: Some("Ctrl+Shift+M"),
+                action: |a| {
+                    a.show_minimap = !a.show_minimap;
+                },
+                modes: &[],
+            },
+            Command {
+                label: "Toggle Auto Indent",
+                category: "View",
+                shortcut: None,
+                action: |a| {
+                    a.auto_indent_enabled = !a.auto_indent_enabled;
+                    a.save_workspace_preferences();
+                    a.status_message = format!(
+                        "Auto-indent {}",
+                        if a.auto_indent_enabled { "on" } else { "off" }
+                    );
+                },
+                modes: &[],
+            },
+            Command {
+                label: "Toggle Auto Close Brackets",
+                category: "View",
+                shortcut: None,
+                action: |a| {
+                    a.auto_close_brackets_enabled = !a.auto_close_brackets_enabled;
+                    a.save_workspace_preferences();
+                    a.status_message = format!(
+                        "Auto-close brackets {}",
+                        if a.auto_close_brackets_enabled {
+                            "on"
+                        } else {
+                            "off"
+                        }
+                    );
+                },
+                modes: &[],
+            },
+            Command {
+                label: "Split Editor",
+                category: "View",
+                shortcut: Some("Ctrl+\\"),
+                action: |a| a.split_editor(),
                 modes: &[],
             },
         ]
@@ -1770,6 +1854,7 @@ impl VelocityApp {
         // editor end up holding the formatted text; the success path below
         // re-baselines the dirty flag via mark_saved as usual.
         self.format_buffer_for_save(id, path);
+        self.trim_whitespace_for_save(id);
         if let Some(buf) = self.buffers.get(id) {
             match std::fs::write(path, buf.content()) {
                 Ok(_) => {
@@ -1851,6 +1936,25 @@ impl VelocityApp {
         );
     }
 
+    /// Adjust editor font zoom by `delta` (clamped 0.5..=3.0).
+    pub fn adjust_code_scale(&mut self, delta: f32) {
+        const MIN: f32 = 0.5;
+        const MAX: f32 = 3.0;
+        let next = (self.appearance.code_scale + delta).clamp(MIN, MAX);
+        if (next - self.appearance.code_scale).abs() > f32::EPSILON {
+            self.appearance.code_scale = next;
+            self.save_workspace_preferences();
+            self.status_message = format!("Font zoom {:.0}%", next * 100.0);
+        }
+    }
+
+    /// Reset editor font zoom to the default preset value.
+    pub fn reset_code_scale(&mut self) {
+        self.appearance.code_scale = 1.12;
+        self.save_workspace_preferences();
+        self.status_message = "Font zoom reset".to_string();
+    }
+
     /// Tabs auto-save should write: dirty buffers on editor tabs that have a
     /// real path on disk. Untitled buffers are skipped -- autosave must not
     /// invent filenames or prompt mid-edit.
@@ -1890,6 +1994,19 @@ impl VelocityApp {
         self.status_message = format!(
             "Format on save {}",
             if self.format_on_save {
+                "enabled"
+            } else {
+                "disabled"
+            }
+        );
+    }
+
+    pub fn toggle_trim_trailing_ws(&mut self) {
+        self.trim_trailing_ws_on_save = !self.trim_trailing_ws_on_save;
+        self.save_workspace_preferences();
+        self.status_message = format!(
+            "Trim trailing whitespace on save {}",
+            if self.trim_trailing_ws_on_save {
                 "enabled"
             } else {
                 "disabled"
@@ -1942,6 +2059,29 @@ impl VelocityApp {
                     lsp.sync_document(&ext, path, &text);
                 }
             }
+        }
+    }
+
+    /// Trim-trailing-whitespace-on-save hook: runs after format so the
+    /// formatter’s indentation is already in place and only the trailing
+    /// blanks are removed.  Silent: if the feature is off or the text is
+    /// already clean, nothing happens.
+    pub fn trim_whitespace_for_save(&mut self, id: &TabId) {
+        if !self.trim_trailing_ws_on_save {
+            return;
+        }
+        let trimmed = match self.buffers.get(id) {
+            Some(buf) => {
+                let result = crate::editor::trim_whitespace::trim_trailing_ws(buf.content());
+                if result == buf.content() {
+                    return; // no change, skip write-back
+                }
+                result
+            }
+            None => return,
+        };
+        if let Some(buf) = self.buffers.get_mut(id) {
+            *buf.content_mut() = trimmed;
         }
     }
 
@@ -2246,7 +2386,9 @@ impl VelocityApp {
     /// Reveal the Build rail's Nodes section (single writer for the rail
     /// selection state, via `select_rail_section`).
     pub fn open_nodes_panel(&mut self) {
-        self.select_rail_section("build", "nodes");
+        // Nodes was promoted to its own activity-bar rail so remote-execution
+        // routing is a first-class click, not buried under Build's sub-tabs.
+        self.select_rail_section("nodes", "nodes");
     }
 
     /// Drain completed background node operations into app state. Runs once per
@@ -2307,9 +2449,36 @@ impl VelocityApp {
                         self.command_output.push('\n');
                     }
                 }
+                NodesEvent::BrowseListed {
+                    requested_path,
+                    listing,
+                    error,
+                } => {
+                    // Discard stale responses: if the operator already
+                    // navigated elsewhere while this was in flight, honouring
+                    // the older reply would flicker the panel back.
+                    if self.nodes.browse_path != requested_path {
+                        continue;
+                    }
+                    self.nodes.browse_loading = false;
+                    if let Some(err) = error {
+                        self.nodes.browse_error = Some(err);
+                    } else if let Some(list) = listing {
+                        self.nodes.browse_error = None;
+                        self.nodes.browse_path = list.path.clone();
+                        self.nodes.browse_input = list.path.clone();
+                        self.nodes.browse_parent = list.parent.clone();
+                        self.nodes.browse_entries = list.entries;
+                        self.nodes.browse_truncated = list.truncated;
+                    }
+                }
             }
         }
-        if woke || !self.nodes.pinging.is_empty() || self.nodes.exec_busy {
+        if woke
+            || !self.nodes.pinging.is_empty()
+            || self.nodes.exec_busy
+            || self.nodes.browse_loading
+        {
             ctx.request_repaint_after(std::time::Duration::from_millis(250));
         }
     }
@@ -2374,16 +2543,22 @@ impl VelocityApp {
         let name = self.nodes.add_name.trim().to_string();
         let addr = self.nodes.add_addr.trim().to_string();
         let dir = self.nodes.add_dir.trim().to_string();
+        let token = self.nodes.add_token.trim().to_string();
         if name.is_empty() || addr.is_empty() {
             self.nodes.status_line = "Name and drone address are required.".into();
             return;
         }
-        let args = serde_json::json!({
+        let mut args = serde_json::json!({
             "name": name,
             "drone_addr": addr,
             "role": "buildbox",
             "work_dir": dir,
         });
+        // Only send the token when the operator typed one; an empty string
+        // would overwrite a stored token on a same-id re-add.
+        if !token.is_empty() {
+            args["auth_token"] = serde_json::Value::String(token);
+        }
         match crate::agent::instance_tools::handle_instance_tool(
             &self.workspace_root,
             "instance_add",
@@ -2395,6 +2570,7 @@ impl VelocityApp {
                 self.nodes.add_name.clear();
                 self.nodes.add_addr.clear();
                 self.nodes.add_dir.clear();
+                self.nodes.add_token.clear();
                 self.nodes.show_add = false;
                 self.nodes.status_line = format!("Added {name}; pinging...");
                 if !id.is_empty() {
@@ -2404,6 +2580,79 @@ impl VelocityApp {
             Ok(None) => self.nodes.status_line = "Add was not handled.".into(),
             Err(e) => self.nodes.status_line = format!("Add failed: {e}"),
         }
+    }
+
+    /// Open the remote-directory picker. Captures the current addr + token
+    /// from the Add form so subsequent edits don't yank the browse out from
+    /// under itself, then immediately requests the first listing (either the
+    /// work-dir the operator already typed, or the drone's workspace root).
+    pub fn open_node_browser(&mut self) {
+        let addr = self.nodes.add_addr.trim().to_string();
+        if addr.is_empty() {
+            self.nodes.status_line = "Enter a drone address before browsing.".into();
+            return;
+        }
+        self.nodes.browse_open = true;
+        self.nodes.browse_addr = addr;
+        self.nodes.browse_token = self.nodes.add_token.trim().to_string();
+        self.nodes.browse_error = None;
+        self.nodes.browse_filter.clear();
+        self.nodes.browse_entries.clear();
+        self.nodes.browse_parent = None;
+        self.nodes.browse_truncated = false;
+        let initial = self.nodes.add_dir.trim().to_string();
+        self.request_browse_listing(initial);
+    }
+
+    pub fn close_node_browser(&mut self) {
+        self.nodes.browse_open = false;
+        self.nodes.browse_loading = false;
+    }
+
+    /// Fire off a background listing request for `path`. Empty string means
+    /// "whatever the drone defaults to" (its workspace root). Sets
+    /// `browse_path` synchronously so the stale-response filter in the drain
+    /// loop matches the reply when it lands.
+    pub fn request_browse_listing(&mut self, path: String) {
+        use crate::agent::drone_bridge::DroneClient;
+        self.nodes.browse_path = path.clone();
+        self.nodes.browse_input = path.clone();
+        self.nodes.browse_loading = true;
+        self.nodes.browse_error = None;
+        let addr = self.nodes.browse_addr.clone();
+        let token = self.nodes.browse_token.clone();
+        let tx = self.nodes.tx.clone();
+        std::thread::spawn(move || {
+            let url = crate::agent::instance_tools::drone_url_for(&addr);
+            let client = DroneClient::new(&url, (!token.is_empty()).then_some(token.as_str()));
+            match client.list_dir(&path) {
+                Ok(listing) => {
+                    let requested_path = listing.path.clone();
+                    let _ = tx.send(super::substructs::NodesEvent::BrowseListed {
+                        requested_path,
+                        listing: Some(listing),
+                        error: None,
+                    });
+                }
+                Err(e) => {
+                    let _ = tx.send(super::substructs::NodesEvent::BrowseListed {
+                        requested_path: path,
+                        listing: None,
+                        error: Some(e.to_string()),
+                    });
+                }
+            }
+        });
+    }
+
+    /// Confirm the currently-browsed directory and copy it back into the
+    /// Add form's work-dir field. Called from the modal's "Select" button.
+    pub fn accept_node_browser(&mut self) {
+        let chosen = self.nodes.browse_path.clone();
+        if !chosen.is_empty() {
+            self.nodes.add_dir = chosen;
+        }
+        self.close_node_browser();
     }
 
     /// Drop a node from the registry. If it was the routing target, routing
@@ -2418,11 +2667,46 @@ impl VelocityApp {
             Ok(Some(_)) => {
                 if self.nodes.target_id.as_deref() == Some(id) {
                     self.nodes.target_id = None;
+                    // The forgotten node was the routing target: persist the
+                    // fallback to local so a restart does not resurrect it.
+                    self.save_workspace_preferences();
                 }
                 self.nodes.status_line = format!("Forgot {id}.");
             }
             Ok(None) => self.nodes.status_line = "Remove was not handled.".into(),
             Err(e) => self.nodes.status_line = format!("Remove failed: {e}"),
+        }
+    }
+
+    /// Point Ctrl+B/Ctrl+R at a registered node (`Some`) or back at this
+    /// machine (`None`), persisting the choice so it survives a restart. The
+    /// id must name a registered node: a typo is refused rather than stored as
+    /// a phantom target that would silently build local anyway. Shared by the
+    /// panel's "Build here"/"Local" buttons and the `SetBuildTarget` bridge
+    /// command, so a headless driver exercises the exact path a click does.
+    pub fn set_build_target(&mut self, id: Option<String>) -> bool {
+        match id.as_deref() {
+            None => {
+                self.nodes.target_id = None;
+                self.nodes.status_line = "Builds route to this machine.".into();
+                self.save_workspace_preferences();
+                true
+            }
+            Some(new_id) => {
+                let exists = crate::agent::instances::InstanceRegistry::load(
+                    &crate::agent::instance_tools::instances_path(&self.workspace_root),
+                )
+                .get(new_id)
+                .is_some();
+                if !exists {
+                    self.nodes.status_line = format!("No registered node '{new_id}'.");
+                    return false;
+                }
+                self.nodes.target_id = Some(new_id.to_string());
+                self.nodes.status_line = format!("Builds will route to {new_id}.");
+                self.save_workspace_preferences();
+                true
+            }
         }
     }
 

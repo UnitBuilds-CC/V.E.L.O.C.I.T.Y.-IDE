@@ -177,8 +177,8 @@ Pushing a `v*.*.*` tag runs `.github/workflows/release.yml`, which builds the re
 binaries for Linux (`x86_64-unknown-linux-gnu`), Windows (`x86_64-pc-windows-msvc`) and
 macOS (`aarch64-apple-darwin`), generates a CycloneDX SBOM, and publishes a GitHub Release
 whose assets are `velocity-linux.tar.gz`, `velocity-windows.zip` and `velocity-macos.tar.gz`.
-Each platform archive contains all four binaries:
-`velocity_ide`, `velocity_ide_gui`, `velocity_mcp`, `velocity-drone`. From `v2.6.1` onward the
+Each platform archive contains all five binaries:
+`velocity_ide`, `velocity_ide_gui`, `velocity_mcp`, `velocity-drone`, `velocity_serve`. From `v2.6.1` onward the
 release also carries one CycloneDX `.cdx.json` per crate as a release asset.
 
 ```bash
@@ -186,8 +186,8 @@ git tag -a v<x.y.z> -m "V.E.L.O.C.I.T.Y. v<x.y.z>"
 git push origin v<x.y.z>
 ```
 
-The current release is `v2.6.1`, the first built with the corrected SBOM glob. `v2.5.0` and
-`v2.6.0` went out with no SBOM at all: the asset list used
+The current release is `v2.8.0`. The corrected SBOM glob dates from `v2.6.1`, the first release
+built with it: `v2.5.0` and `v2.6.0` went out with no SBOM at all: the asset list used
 `artifacts/velocity-sbom/*.cdx.json` while `download-artifact` restores a multi-file artifact
 one directory deeper, per crate, and a pattern that matches nothing is skipped without a word.
 A green *Create Release* job is therefore not evidence that anything was attached - count the
@@ -214,6 +214,7 @@ Binaries are in `target/release/`:
 - `velocity_ide` — CLI entry point
 - `velocity_mcp` — MCP server (headless, stdio JSON-RPC)
 - `velocity-drone` — Autonomous drone agent
+- `velocity_serve` — Headless frame server (renders the IDE to PNG, served over HTTP)
 
 ### 2. Systemd Service (Linux)
 

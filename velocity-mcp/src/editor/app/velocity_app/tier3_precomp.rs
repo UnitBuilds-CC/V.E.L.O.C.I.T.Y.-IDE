@@ -4,7 +4,7 @@
 
 use super::struct_def::VelocityApp;
 use crate::editor::theme::FONT_CAPTION;
-use eframe::egui;
+use egui;
 use egui::RichText;
 
 impl VelocityApp {

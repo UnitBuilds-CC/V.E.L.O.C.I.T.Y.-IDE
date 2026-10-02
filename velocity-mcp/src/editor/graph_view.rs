@@ -5,7 +5,7 @@
 //! stays cheap even on large workspaces.
 
 use crate::editor::theme::IdePalette;
-use eframe::egui;
+use egui;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 

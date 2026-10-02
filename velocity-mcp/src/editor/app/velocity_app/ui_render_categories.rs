@@ -6,7 +6,7 @@
 use super::struct_def::VelocityApp;
 use crate::editor::app::app_map::{sub_tab, RailSpec, SubTabSpec, RAILS};
 use crate::editor::theme::IdePalette;
-use eframe::egui;
+use egui;
 
 impl VelocityApp {
     // ── Activity Bar Category Panels ──
@@ -180,13 +180,20 @@ impl VelocityApp {
             2 => self.render_pipeline_panel(ui),
             3 => self.render_debugger_panel(ui),
             4 => self.render_lsp_panel(ui),
-            5 => self.render_nodes_subpanel(ui, palette),
             _ => {}
         }
     }
 
+    pub(super) fn render_nodes_category(&mut self, ui: &mut egui::Ui, palette: IdePalette) {
+        // Dedicated activity-bar rail for remote build nodes. Only one sub-tab,
+        // so the render is just the subpanel with a header for the strip.
+        if self.render_rail_tabs(ui, palette, &RAILS[5]) == 0 {
+            self.render_nodes_subpanel(ui, palette);
+        }
+    }
+
     pub(super) fn render_agents_category(&mut self, ui: &mut egui::Ui, palette: IdePalette) {
-        match self.render_rail_tabs(ui, palette, &RAILS[5]) {
+        match self.render_rail_tabs(ui, palette, &RAILS[6]) {
             0 => self.render_activity_panel(ui),
             1 => self.render_agent_roster_subpanel(ui, palette),
             2 => self.render_live_orchestration_panel(ui),
@@ -198,7 +205,7 @@ impl VelocityApp {
     }
 
     pub(super) fn render_knowledge_category(&mut self, ui: &mut egui::Ui, palette: IdePalette) {
-        match self.render_rail_tabs(ui, palette, &RAILS[6]) {
+        match self.render_rail_tabs(ui, palette, &RAILS[7]) {
             0 => self.render_wiki_subpanel(ui, palette),
             1 => self.render_knowledge_panel(ui),
             2 => self.render_snippets_panel(ui),
@@ -208,7 +215,7 @@ impl VelocityApp {
     }
 
     pub(super) fn render_workspace_category(&mut self, ui: &mut egui::Ui, palette: IdePalette) {
-        match self.render_rail_tabs(ui, palette, &RAILS[7]) {
+        match self.render_rail_tabs(ui, palette, &RAILS[8]) {
             0 => self.render_extensions_panel(ui),
             1 => self.render_plugin_registry_subpanel(ui, palette),
             2 => self.render_skills_subpanel(ui, palette),

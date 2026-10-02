@@ -1,5 +1,5 @@
 use crate::editor::theme::IdePalette;
-use eframe::egui::{self, Panel, Ui};
+use egui::{self, Panel, Ui};
 
 /// Actions triggered by clicking status bar elements.
 #[derive(Default)]

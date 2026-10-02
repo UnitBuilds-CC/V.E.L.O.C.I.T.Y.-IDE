@@ -4,7 +4,7 @@
 //! coverage panel and runs workspace/LSP coverage analysis, surfacing results
 //! through the test-generator state on `VelocityApp`.
 
-use eframe::egui;
+use egui;
 use egui::RichText;
 
 use super::struct_def::VelocityApp;

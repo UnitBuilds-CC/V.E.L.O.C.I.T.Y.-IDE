@@ -3,7 +3,7 @@
 //! Provides a real pseudo-terminal (conpty on Windows, pty on Unix) for
 //! interactive shell sessions within the IDE.
 
-use eframe::egui;
+use egui;
 use std::collections::VecDeque;
 use std::io::{Read, Write};
 use std::sync::{Arc, Mutex};

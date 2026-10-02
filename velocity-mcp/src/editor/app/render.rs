@@ -5,7 +5,7 @@ use crate::editor::chat_panel::render_chat_panel;
 use crate::editor::code_editor::CodeEditor;
 use crate::editor::theme::{Density, ThemeVariant, WorkspaceProfile};
 use crate::editor::usage_panel::render_usage_panel;
-use eframe::egui;
+use egui;
 use egui_dock::TabViewer;
 
 pub struct TabViewerImpl<'a> {
@@ -132,6 +132,23 @@ impl<'a> TabViewer for TabViewerImpl<'a> {
                                             .unwrap_or_default();
                                         buf.refresh_diff_marks();
                                         let diff_marks = buf.diff_marks.clone();
+                                        // Word highlight: read the caret from the previous frame's
+                                        // TextEditState and compute occurrence ranges for the word under it.
+                                        let caret_for_hl = egui::widgets::text_edit::TextEditState::load(
+                                            ui.ctx(),
+                                            crate::editor::code_editor::CodeEditor::textedit_id(buffer_id),
+                                        )
+                                        .and_then(|s| s.cursor.char_range())
+                                        .map(|r| r.primary.index.0)
+                                        .unwrap_or(0);
+                                        let hl_ranges = if buf.content().len() < 500_000 {
+                                            crate::editor::word_highlight::find_word_occurrences(
+                                                buf.content(),
+                                                caret_for_hl,
+                                            )
+                                        } else {
+                                            Vec::new() // skip for very large files
+                                        };
                                         let options = crate::editor::code_editor::EditorOptions {
                                             cursor_offset: 0,
                                             diagnostic_lines: self
@@ -162,6 +179,10 @@ impl<'a> TabViewer for TabViewerImpl<'a> {
                                                 })
                                                 .map(|(_, t)| t.clone())
                                                 .unwrap_or_default(),
+                                            auto_indent: self.app.auto_indent_enabled,
+                                            indent_style: buf.indent_style,
+                                            auto_close_brackets: self.app.auto_close_brackets_enabled,
+                                            highlight_ranges: hl_ranges,
                                         };
                                         let response = editor.show_enhanced(
                                             ui,
@@ -1163,7 +1184,7 @@ impl<'a> TabViewerImpl<'a> {
                                     .add(
                                         egui::Slider::new(
                                             &mut self.app.appearance.code_scale,
-                                            0.85..=1.35,
+                                            0.5..=3.0,
                                         )
                                         .text("Code scale"),
                                     )
@@ -1194,7 +1215,28 @@ impl<'a> TabViewerImpl<'a> {
                                 &mut self.app.show_breadcrumbs,
                                 "Show breadcrumbs above editor",
                             );
-                            ui.checkbox(&mut self.app.word_wrap, "Word wrap in editor");
+                            let mut dirty = false;
+                            dirty |= ui
+                                .checkbox(&mut self.app.word_wrap, "Word wrap in editor")
+                                .changed();
+                            dirty |= ui
+                                .checkbox(&mut self.app.auto_indent_enabled, "Auto-indent on Enter")
+                                .changed();
+                            dirty |= ui
+                                .checkbox(
+                                    &mut self.app.auto_close_brackets_enabled,
+                                    "Auto-close brackets",
+                                )
+                                .changed();
+                            dirty |= ui
+                                .checkbox(
+                                    &mut self.app.trim_trailing_ws_on_save,
+                                    "Trim trailing whitespace on save",
+                                )
+                                .changed();
+                            if dirty {
+                                self.app.save_workspace_preferences();
+                            }
                         });
                     });
 

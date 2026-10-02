@@ -3,7 +3,7 @@
 //! Extracted verbatim from `ui_render.rs` (no logic changes).
 use super::super::types::*;
 use super::struct_def::VelocityApp;
-use eframe::egui;
+use egui;
 
 impl VelocityApp {
     /// Run any caret-needing editor action the command palette queued for this
@@ -509,9 +509,35 @@ impl VelocityApp {
             "view.toggle_activity" => self.toggle_activity(),
             "view.toggle_voice" => self.toggle_voice(),
             "view.split_editor" => self.split_editor(),
+            "view.toggle_minimap" => self.show_minimap = !self.show_minimap,
             "view.word_wrap" => self.word_wrap = !self.word_wrap,
+            "view.toggle_auto_indent" => {
+                self.auto_indent_enabled = !self.auto_indent_enabled;
+                self.save_workspace_preferences();
+                self.status_message = format!(
+                    "Auto-indent {}",
+                    if self.auto_indent_enabled {
+                        "on"
+                    } else {
+                        "off"
+                    }
+                );
+            }
+            "view.toggle_auto_close_brackets" => {
+                self.auto_close_brackets_enabled = !self.auto_close_brackets_enabled;
+                self.save_workspace_preferences();
+                self.status_message = format!(
+                    "Auto-close brackets {}",
+                    if self.auto_close_brackets_enabled {
+                        "on"
+                    } else {
+                        "off"
+                    }
+                );
+            }
             "view.toggle_auto_save" => self.toggle_auto_save(),
             "edit.toggle_format_on_save" => self.toggle_format_on_save(),
+            "edit.toggle_trim_trailing_ws" => self.toggle_trim_trailing_ws(),
             "view.toggle_terminal" => {
                 self.bottom_panel_state.collapsed = !self.bottom_panel_state.collapsed;
                 if !self.bottom_panel_state.collapsed {
@@ -581,6 +607,10 @@ impl VelocityApp {
             // Agent
             "agent.request_inline_suggestion" => self.request_inline_suggestion(),
             "completion.trigger" => self.completion_queued_trigger = true,
+            // Editor font zoom
+            "editor.zoom_in" => self.adjust_code_scale(0.1),
+            "editor.zoom_out" => self.adjust_code_scale(-0.1),
+            "editor.zoom_reset" => self.reset_code_scale(),
             // Debug
             "debug.toggle_breakpoint" => self.toggle_breakpoint_current_line(),
             "debug.start" => self.debug_start_or_continue(),
@@ -632,9 +662,13 @@ pub(crate) const DISPATCH_HANDLED_COMMANDS: &[&str] = &[
     "view.toggle_activity",
     "view.toggle_voice",
     "view.split_editor",
+    "view.toggle_minimap",
     "view.word_wrap",
+    "view.toggle_auto_indent",
+    "view.toggle_auto_close_brackets",
     "view.toggle_auto_save",
     "edit.toggle_format_on_save",
+    "edit.toggle_trim_trailing_ws",
     "view.toggle_terminal",
     "terminal.find",
     // Navigation
@@ -686,6 +720,10 @@ pub(crate) const DISPATCH_HANDLED_COMMANDS: &[&str] = &[
     // Agent
     "agent.request_inline_suggestion",
     "completion.trigger",
+    // Editor font zoom
+    "editor.zoom_in",
+    "editor.zoom_out",
+    "editor.zoom_reset",
     // Debug
     "debug.toggle_breakpoint",
     "debug.start",

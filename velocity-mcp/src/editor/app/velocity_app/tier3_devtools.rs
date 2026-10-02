@@ -5,7 +5,7 @@
 use super::struct_def::VelocityApp;
 use super::tier3_common::primary_button;
 use crate::editor::theme::{FONT_BODY, FONT_CAPTION, FONT_SMALL, ITEM_SPACING, SECTION_SPACING};
-use eframe::egui;
+use egui;
 use egui::RichText;
 
 impl VelocityApp {

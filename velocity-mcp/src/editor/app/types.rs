@@ -559,6 +559,7 @@ pub const ACTIVITY_CATEGORY_NAMES: &[&str] = &[
     "git",
     "chat",
     "build",
+    "nodes",
     "agents",
     "knowledge",
     "workspace",

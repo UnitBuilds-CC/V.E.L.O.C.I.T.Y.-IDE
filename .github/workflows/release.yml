@@ -52,6 +52,7 @@ jobs:
           cp target/${{ matrix.target }}/release/velocity_mcp dist/
           cp target/${{ matrix.target }}/release/velocity_ide_gui dist/
           cp target/${{ matrix.target }}/release/velocity-drone dist/
+          cp target/${{ matrix.target }}/release/velocity_serve dist/
           cd dist && tar -czf ../${{ matrix.artifact }}.tar.gz *
 
       - name: Prepare artifacts (Windows)
@@ -62,6 +63,7 @@ jobs:
           cp target/${{ matrix.target }}/release/velocity_mcp.exe dist/
           cp target/${{ matrix.target }}/release/velocity_ide_gui.exe dist/
           cp target/${{ matrix.target }}/release/velocity-drone.exe dist/
+          cp target/${{ matrix.target }}/release/velocity_serve.exe dist/
           cd dist && 7z a ../${{ matrix.artifact }}.zip *
 
       - name: Upload artifacts

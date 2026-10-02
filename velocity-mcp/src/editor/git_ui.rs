@@ -361,7 +361,7 @@ pub fn render_recent_changes_timeline(
     state: &GitState,
     palette: crate::editor::theme::IdePalette,
 ) {
-    use eframe::egui;
+    use egui;
 
     ui.label(
         egui::RichText::new("\u{23f1} Recent Changes Timeline")

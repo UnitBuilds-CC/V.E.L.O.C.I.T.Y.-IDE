@@ -4,7 +4,7 @@
 //! regex support, and replace-one / replace-all operations.
 
 use crate::editor::theme::IdePalette;
-use eframe::egui;
+use egui;
 
 /// State for the find/replace overlay within a single editor tab.
 #[derive(Debug, Clone, Default)]

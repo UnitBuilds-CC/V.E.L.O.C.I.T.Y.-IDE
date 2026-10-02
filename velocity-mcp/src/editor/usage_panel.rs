@@ -1,6 +1,6 @@
 use crate::editor::theme::IdePalette;
 use crate::usage::AccountUsageView;
-use eframe::egui;
+use egui;
 
 pub fn render_usage_panel(
     ui: &mut egui::Ui,

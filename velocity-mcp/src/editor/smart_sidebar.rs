@@ -4,7 +4,7 @@
 //! and presents actionable suggestions to the user.
 
 use crate::editor::theme::IdePalette;
-use eframe::egui;
+use egui;
 use std::time::Instant;
 
 /// Maximum sidebar entries

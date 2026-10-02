@@ -624,6 +624,104 @@ impl DroneCore {
             ),
         }
     }
+
+    /// List a directory on the drone's filesystem so the IDE can offer a
+    /// Cockpit-style work-dir picker instead of asking the operator to type
+    /// paths blind. Empty `requested` falls back to the drone's workspace
+    /// root. Auth is enforced upstream in `route_request`, so this handler
+    /// assumes the caller is already trusted — same threat model as
+    /// `/peer/task`, which runs arbitrary commands.
+    ///
+    /// Returns `(status, body)`. Cap entries at `MAX_FS_LIST_ENTRIES` so a
+    /// huge directory (say `/usr/share/doc`) cannot DoS the response.
+    pub fn handle_fs_list(&self, requested: &str) -> (u16, serde_json::Value) {
+        const MAX_FS_LIST_ENTRIES: usize = 500;
+
+        let base: PathBuf = if requested.is_empty() {
+            self.workspace.clone()
+        } else {
+            PathBuf::from(requested)
+        };
+        // Canonicalize resolves symlinks and rejects paths that don't exist;
+        // without it `read_dir` errors would leak raw OS strings to the client.
+        let dir = match base.canonicalize() {
+            Ok(p) => p,
+            Err(e) => {
+                return (
+                    404,
+                    serde_json::json!({ "error": format!("cannot open {requested:?}: {e}") }),
+                );
+            }
+        };
+        if !dir.is_dir() {
+            return (
+                400,
+                serde_json::json!({ "error": format!("{dir:?} is not a directory") }),
+            );
+        }
+        let read = match std::fs::read_dir(&dir) {
+            Ok(r) => r,
+            Err(e) => {
+                return (
+                    500,
+                    serde_json::json!({ "error": format!("read_dir failed: {e}") }),
+                );
+            }
+        };
+        let mut entries: Vec<serde_json::Value> = Vec::new();
+        let mut truncated = false;
+        for item in read.flatten() {
+            let name = item.file_name().to_string_lossy().to_string();
+            // `DirEntry::metadata()` does NOT follow symlinks on Unix (it is
+            // lstat-equivalent), so a symlink-to-directory would be reported
+            // as a non-dir and the picker couldn't enter it. Resolve the
+            // target with `fs::metadata` (which follows) so symlinked dirs
+            // are navigable; if that fails (broken link, or a race where the
+            // target vanished), fall back to lstat so the entry still shows
+            // rather than silently disappearing from the listing.
+            let md = match std::fs::metadata(item.path()) {
+                Ok(m) => m,
+                Err(_) => match item.metadata() {
+                    Ok(m) => m,
+                    Err(_) => continue,
+                },
+            };
+            let is_dir = md.is_dir();
+            let path = item.path().to_string_lossy().to_string();
+            entries.push(serde_json::json!({
+                "name": name,
+                "path": path,
+                "is_dir": is_dir,
+                "size": if is_dir { 0u64 } else { md.len() },
+            }));
+            if entries.len() >= MAX_FS_LIST_ENTRIES {
+                truncated = true;
+                break;
+            }
+        }
+        // Dirs first, then files, alphabetical within each group — matches
+        // what every file-picker does and makes scrolling predictable.
+        entries.sort_by(|a, b| {
+            let a_dir = a["is_dir"].as_bool().unwrap_or(false);
+            let b_dir = b["is_dir"].as_bool().unwrap_or(false);
+            b_dir.cmp(&a_dir).then_with(|| {
+                a["name"]
+                    .as_str()
+                    .unwrap_or("")
+                    .cmp(b["name"].as_str().unwrap_or(""))
+            })
+        });
+        let parent = dir.parent().map(|p| p.to_string_lossy().to_string());
+        (
+            200,
+            serde_json::json!({
+                "path": dir.to_string_lossy(),
+                "parent": parent,
+                "entries": entries,
+                "truncated": truncated,
+            }),
+        )
+    }
 }
 
 // ── Deployment Instructions ──
@@ -1000,5 +1098,88 @@ mod tests {
         let output = execute_deploy_instructions("run echo {file}", "/tmp/test.exe", &ws);
         assert!(output.contains("[run] echo /tmp/test.exe"));
         assert!(output.contains("exit: 0"));
+    }
+
+    #[test]
+    fn fs_list_defaults_to_workspace_root() {
+        let core = test_core();
+        // Drop a couple of entries into the workspace so the listing has
+        // something deterministic to see.
+        std::fs::create_dir_all(core.workspace.join("alpha")).unwrap();
+        std::fs::write(core.workspace.join("beta.txt"), b"hi").unwrap();
+        let (status, body) = core.handle_fs_list("");
+        assert_eq!(status, 200, "body was {body}");
+        let names: Vec<&str> = body["entries"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|e| e["name"].as_str())
+            .collect();
+        assert!(names.contains(&"alpha"), "missing dir: {names:?}");
+        assert!(names.contains(&"beta.txt"), "missing file: {names:?}");
+        // Dirs sort before files.
+        let ia = names.iter().position(|n| *n == "alpha").unwrap();
+        let ib = names.iter().position(|n| *n == "beta.txt").unwrap();
+        assert!(ia < ib, "dirs must sort ahead of files: {names:?}");
+    }
+
+    #[test]
+    fn fs_list_reports_missing_path_as_404() {
+        let core = test_core();
+        let bogus = core.workspace.join("nope-does-not-exist");
+        let (status, body) = core.handle_fs_list(bogus.to_str().unwrap());
+        assert_eq!(status, 404);
+        assert!(body["error"].as_str().unwrap().contains("cannot open"));
+    }
+
+    #[test]
+    fn fs_list_rejects_files_with_400() {
+        let core = test_core();
+        let file = core.workspace.join("plain.txt");
+        std::fs::write(&file, b"x").unwrap();
+        let (status, body) = core.handle_fs_list(file.to_str().unwrap());
+        assert_eq!(status, 400);
+        assert!(body["error"].as_str().unwrap().contains("not a directory"));
+    }
+
+    #[test]
+    fn fs_list_exposes_parent_for_up_navigation() {
+        let core = test_core();
+        let child = core.workspace.join("kid");
+        std::fs::create_dir_all(&child).unwrap();
+        let (status, body) = core.handle_fs_list(child.to_str().unwrap());
+        assert_eq!(status, 200);
+        // Parent of the child must be the workspace (canonicalised form).
+        let parent = body["parent"].as_str().unwrap();
+        let canon_ws = core.workspace.canonicalize().unwrap();
+        assert_eq!(PathBuf::from(parent), canon_ws);
+    }
+
+    #[test]
+    fn fs_list_follows_symlinked_directories() {
+        // A symlink that points at a directory must be reported as is_dir so
+        // the picker can navigate into it. `DirEntry::metadata()` alone would
+        // say "not a dir" (lstat semantics), which is the bug this guards.
+        let core = test_core();
+        let target = core.workspace.join("realdir");
+        std::fs::create_dir_all(&target).unwrap();
+        let link = core.workspace.join("linkdir");
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(&target, &link).unwrap();
+        #[cfg(windows)]
+        if std::os::windows::fs::symlink_dir(&target, &link).is_err() {
+            // Symlink creation needs privileges on Windows; skip rather than
+            // fail the whole suite in an unprivileged CI.
+            return;
+        }
+        let (status, body) = core.handle_fs_list(core.workspace.to_str().unwrap());
+        assert_eq!(status, 200);
+        let entry = body["entries"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|e| e["name"] == "linkdir")
+            .expect("symlink entry present");
+        assert_eq!(entry["is_dir"].as_bool(), Some(true), "symlink→dir");
     }
 }

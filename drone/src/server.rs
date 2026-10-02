@@ -232,6 +232,17 @@ fn route_request(
             Err(e) => (400, format!(r#"{{"error":"Invalid JSON: {e}"}}"#)),
         },
 
+        // Directory listing for the IDE's remote work-dir picker. POST (not
+        // GET-with-query) so paths with spaces, `+`, `%` and non-ASCII need
+        // no URL-encoding dance on either side of the wire.
+        ("POST", "/peer/fs/list") => {
+            let data: serde_json::Value =
+                serde_json::from_slice(&req.body).unwrap_or(serde_json::Value::Null);
+            let path = data["path"].as_str().unwrap_or("");
+            let (status, body) = core.handle_fs_list(path);
+            (status, body.to_string())
+        }
+
         // ── Fallback ──
         _ => (404, r#"{"error":"Not found"}"#.into()),
     }

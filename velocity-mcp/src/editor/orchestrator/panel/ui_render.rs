@@ -7,7 +7,7 @@ use crate::orchestrator::blueprint::Task;
 use crate::orchestrator::registry::TaskStatus;
 use crate::orchestrator::scheduler;
 use crate::orchestrator::TaskId;
-use eframe::egui;
+use egui;
 use egui::{RichText, ScrollArea, Stroke, Ui, Vec2};
 use std::collections::HashMap;
 use std::path::Path;

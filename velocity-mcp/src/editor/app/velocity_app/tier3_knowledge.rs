@@ -8,7 +8,7 @@ use crate::editor::theme::{
     CARD_INNER_MARGIN, CARD_RADIUS, FONT_BODY, FONT_CAPTION, FONT_SMALL, ITEM_SPACING,
     SECTION_SPACING,
 };
-use eframe::egui;
+use egui;
 use egui::RichText;
 
 impl VelocityApp {

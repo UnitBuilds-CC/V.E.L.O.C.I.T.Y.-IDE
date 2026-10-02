@@ -1,7 +1,7 @@
 use crate::editor::bracket_match::find_matching_bracket;
 use crate::editor::theme::AppearanceSettings;
-use eframe::egui;
-use eframe::egui::{Color32, Response, TextEdit, TextFormat};
+use egui;
+use egui::{Color32, Response, TextEdit, TextFormat};
 use std::collections::HashMap;
 use std::sync::LazyLock;
 use std::sync::{Arc, Mutex};
@@ -31,6 +31,8 @@ struct EditorCaches {
     galley_wrap: f32,
     /// Font hash `galley` was built for.
     galley_font: u64,
+    /// Highlight hash the galley was built for (busts cache when word highlights change).
+    galley_highlight: u64,
     /// Hash of the semantic-token overlay the spans were coloured for, so the
     /// cache busts when the language server's token stream arrives/changes even
     /// though the document text is unchanged.
@@ -233,6 +235,14 @@ pub struct EditorOptions {
     /// the editor reflects the language server's semantic view (types,
     /// parameters, deprecated members, …) rather than regex highlighting alone.
     pub semantic_tokens: Vec<crate::editor::lsp_client::LspSemanticToken>,
+    /// Whether auto-indent on Enter is enabled for this buffer.
+    pub auto_indent: bool,
+    /// Indentation style detected for this buffer (spaces or tabs, width).
+    pub indent_style: crate::editor::auto_indent::IndentStyle,
+    /// Whether auto-close brackets is enabled for this buffer.
+    pub auto_close_brackets: bool,
+    /// Character-index ranges to highlight (word under caret occurrences).
+    pub highlight_ranges: Vec<(usize, usize)>,
 }
 
 pub struct CodeEditor {
@@ -399,8 +409,18 @@ impl CodeEditor {
             cache.galley = None; // content changed → force a reshape
         }
 
+        // Bust galley when word highlights change (cursor moved to a new word).
+        let hl_hash = crate::editor::word_highlight::highlight_hash(&options.highlight_ranges);
+        if cache.galley_highlight != hl_hash {
+            cache.galley = None;
+            cache.galley_highlight = hl_hash;
+        }
+
+        let highlight_bg = palette.accent.linear_multiply(0.18);
+        let hl_ranges = &options.highlight_ranges;
+
         let mut layouter = |ui: &egui::Ui, _string: &dyn egui::TextBuffer, wrap_width: f32| {
-            // Return the cached galley when text, wrap width and font all match
+            // Return the cached galley when text, wrap width, font, and highlights all match
             // — this is the path taken on every idle frame (the big perf win).
             if let Some(g) = cache.galley.as_ref() {
                 if same_wrap(cache.galley_wrap, wrap_width) && cache.galley_font == font_hash {
@@ -408,18 +428,74 @@ impl CodeEditor {
                 }
             }
             let mut layout_job = egui::text::LayoutJob::default();
+            let mut char_pos: usize = 0;
             for (word, color) in cache.spans.iter() {
                 if word == "\n" {
                     layout_job.append("\n", 0.0, Default::default());
+                    char_pos += 1;
                     continue;
                 }
                 let egui_color = syntect_color_to_egui(*color);
-                let format = TextFormat {
-                    font_id: code_font.clone(),
-                    color: egui_color,
-                    ..Default::default()
-                };
-                layout_job.append(word.as_str(), 0.0, format);
+                let span_chars = word.chars().count();
+
+                if !crate::editor::word_highlight::span_overlaps(char_pos, span_chars, hl_ranges) {
+                    let format = TextFormat {
+                        font_id: code_font.clone(),
+                        color: egui_color,
+                        ..Default::default()
+                    };
+                    layout_job.append(word.as_str(), 0.0, format);
+                } else {
+                    // Split span at highlight boundaries.
+                    let mut sub = String::new();
+                    let mut was_hl: Option<bool> = None;
+                    for (i, ch) in word.chars().enumerate() {
+                        let is_hl = crate::editor::word_highlight::char_highlighted(
+                            char_pos + i,
+                            hl_ranges,
+                        );
+                        if Some(is_hl) != was_hl {
+                            if !sub.is_empty() {
+                                let bg = if was_hl.unwrap_or(false) {
+                                    highlight_bg
+                                } else {
+                                    Color32::TRANSPARENT
+                                };
+                                layout_job.append(
+                                    sub.as_str(),
+                                    0.0,
+                                    TextFormat {
+                                        font_id: code_font.clone(),
+                                        color: egui_color,
+                                        background: bg,
+                                        ..Default::default()
+                                    },
+                                );
+                                sub.clear();
+                            }
+                            was_hl = Some(is_hl);
+                        }
+                        sub.push(ch);
+                    }
+                    if !sub.is_empty() {
+                        let bg = if was_hl.unwrap_or(false) {
+                            highlight_bg
+                        } else {
+                            Color32::TRANSPARENT
+                        };
+                        layout_job.append(
+                            sub.as_str(),
+                            0.0,
+                            TextFormat {
+                                font_id: code_font.clone(),
+                                color: egui_color,
+                                background: bg,
+                                ..Default::default()
+                            },
+                        );
+                    }
+                }
+                char_pos += span_chars;
             }
             layout_job.wrap.max_width = wrap_width;
             let g = ui.fonts_mut(|f| f.layout_job(layout_job));
@@ -567,51 +643,61 @@ impl CodeEditor {
         if let Some(tl) = pending_line {
             scroll_area = scroll_area.vertical_scroll_offset(tl.saturating_sub(1) as f32 * line_h);
         }
+        // Snapshot byte-length before TextEdit mutates the buffer, so the
+        // auto-indent hook can detect a single '\n' insertion (Enter keypress).
+        let prev_len = text.len();
+
         let scroll_output = scroll_area.show(ui, |ui: &mut egui::Ui| {
-            ui.horizontal_top(|ui: &mut egui::Ui| {
-                // Line number gutter
-                ui.add(egui::Label::new(gutter_job).selectable(false));
+            let inner_resp = ui
+                .horizontal_top(|ui: &mut egui::Ui| {
+                    // Line number gutter
+                    ui.add(egui::Label::new(gutter_job).selectable(false));
 
-                // Vertical divider line
-                ui.add(egui::Separator::default().vertical());
+                    // Vertical divider line
+                    ui.add(egui::Separator::default().vertical());
 
-                // Code Editor TextEdit
-                let text_edit = TextEdit::multiline(text)
-                    .id(self.id)
-                    .code_editor()
-                    .desired_width(if options.word_wrap {
-                        // When word wrap is on, let the editor fill available width
-                        // so egui can break lines at the container boundary.
-                        ui.available_width()
-                    } else {
-                        f32::INFINITY
-                    })
-                    .layouter(&mut layouter);
+                    // Code Editor TextEdit
+                    let text_edit = TextEdit::multiline(text)
+                        .id(self.id)
+                        .code_editor()
+                        .desired_width(if options.word_wrap {
+                            // When word wrap is on, let the editor fill available width
+                            // so egui can break lines at the container boundary.
+                            ui.available_width()
+                        } else {
+                            f32::INFINITY
+                        })
+                        .layouter(&mut layouter);
 
-                // `show` (not `ui.add`) so the click→char resolution below can
-                // reuse the *same* laid-out galley and placement egui just used;
-                // the returned Response is exactly what `ui.add` would give.
-                let output = text_edit.show(ui);
-                let response = output.response.response;
-                // Ctrl/Cmd + left-click over the text: resolve the click through
-                // the galley exactly like egui's own caret placement
-                // (`pointer - inner_rect.min + text_offset + galley.rect.left()`,
-                // which for a multiline editor with `text_offset` folded into
-                // `galley_pos` reduces to the expression below), and hand the
-                // char offset to the app shell.
-                let ctrl_click = ui.input(|i| {
-                    i.modifiers.command && i.pointer.button_pressed(egui::PointerButton::Primary)
-                });
-                if ctrl_click && response.hovered() {
-                    if let Some(pos) = response.interact_pointer_pos() {
-                        let rel =
-                            pos - output.galley_pos + egui::vec2(output.galley.rect.left(), 0.0);
-                        self.goto_request = Some(output.galley.cursor_from_pos(rel).index.0);
+                    // `show` (not `ui.add`) so the click→char resolution below can
+                    // reuse the *same* laid-out galley and placement egui just used;
+                    // the returned Response is exactly what `ui.add` would give.
+                    let output = text_edit.show(ui);
+                    let response = output.response.response;
+                    // Ctrl/Cmd + left-click over the text: resolve the click through
+                    // the galley exactly like egui's own caret placement
+                    // (`pointer - inner_rect.min + text_offset + galley.rect.left()`,
+                    // which for a multiline editor with `text_offset` folded into
+                    // `galley_pos` reduces to the expression below), and hand the
+                    // char offset to the app shell.
+                    let ctrl_click = ui.input(|i| {
+                        i.modifiers.command
+                            && i.pointer.button_pressed(egui::PointerButton::Primary)
+                    });
+                    if ctrl_click && response.hovered() {
+                        if let Some(pos) = response.interact_pointer_pos() {
+                            let rel = pos - output.galley_pos
+                                + egui::vec2(output.galley.rect.left(), 0.0);
+                            self.goto_request = Some(output.galley.cursor_from_pos(rel).index.0);
+                        }
                     }
-                }
-                response
-            })
-            .inner
+                    response
+                })
+                .inner;
+            // Scroll-past-end padding: 10 blank lines below the last line so
+            // the caret can sit comfortably centred when editing near EOF.
+            ui.add_space(line_h * 10.0);
+            inner_resp
         });
 
         // Record the real viewport for the minimap indicator: derive first
@@ -630,6 +716,162 @@ impl CodeEditor {
         drop(cache_guard);
 
         let response = scroll_output.inner;
+
+        // ── Auto-indent on Enter ──────────────────────────────────────────────
+        // After egui's TextEdit processes the Enter key, the buffer gains a
+        // single '\n' byte and the caret lands just past it. Detect that
+        // pattern and insert the computed indentation, mirroring VS Code /
+        // Cursor / Zed behavior. Also handles closing-brace dedent.
+        if options.auto_indent && response.changed() {
+            let grew_by_one_newline = text.len() == prev_len + 1;
+            if grew_by_one_newline {
+                if let Some(state) =
+                    egui::widgets::text_edit::TextEditState::load(ui.ctx(), self.id)
+                {
+                    if let Some(range) = state.cursor.char_range() {
+                        let caret = range.primary.index.0;
+                        // Caret must be just after the newline char. Since '\n' is
+                        // 1 byte = 1 char, byte_offset(caret-1) is the newline.
+                        if caret > 0 {
+                            let newline_byte = text
+                                .char_indices()
+                                .nth(caret - 1)
+                                .map_or(caret - 1, |(b, _)| b);
+                            if text.as_bytes().get(newline_byte) == Some(&b'\n') {
+                                // Line above the newline → source for indent.
+                                let before = &text[..newline_byte];
+                                let current_line = before.rsplit('\n').next().unwrap_or(before);
+                                let indent = crate::editor::auto_indent::compute_newline_indent(
+                                    current_line,
+                                    options.indent_style,
+                                );
+                                if !indent.is_empty() {
+                                    let insert_byte = text
+                                        .char_indices()
+                                        .nth(caret)
+                                        .map_or(text.len(), |(b, _)| b);
+                                    text.insert_str(insert_byte, &indent);
+                                    // Advance caret past the inserted indent.
+                                    let new_caret = caret + indent.chars().count();
+                                    let mut s = egui::widgets::text_edit::TextEditState::load(
+                                        ui.ctx(),
+                                        self.id,
+                                    )
+                                    .unwrap_or_default();
+                                    s.cursor.set_char_range(Some(egui::text::CCursorRange::one(
+                                        egui::text::CCursor::new(new_caret),
+                                    )));
+                                    s.store(ui.ctx(), self.id);
+                                }
+                            }
+                        }
+                    } // close if let Some(range)
+                } // close if let Some(state)
+            } // close if grew_by_one_newline
+              // ── Closing-brace dedent ──
+              // User typed a closing bracket on an auto-indented line: if the
+              // line content (trimmed) is exactly that bracket, dedent by one level.
+            if !grew_by_one_newline && text.len() == prev_len + 1 {
+                if let Some(state) =
+                    egui::widgets::text_edit::TextEditState::load(ui.ctx(), self.id)
+                {
+                    if let Some(range) = state.cursor.char_range() {
+                        let caret = range.primary.index.0;
+                        if caret > 0 {
+                            let typed_byte = text
+                                .char_indices()
+                                .nth(caret - 1)
+                                .map_or(caret - 1, |(b, _)| b);
+                            let ch = text.as_bytes().get(typed_byte).copied();
+                            if matches!(ch, Some(b'}') | Some(b')') | Some(b']')) {
+                                // Get the full line
+                                let line_start =
+                                    text[..typed_byte].rfind('\n').map_or(0, |i| i + 1);
+                                let line_end = text[typed_byte + 1..]
+                                    .find('\n')
+                                    .map_or(text.len(), |i| typed_byte + 1 + i);
+                                let line = &text[line_start..line_end];
+                                if let Some(dedented) =
+                                    crate::editor::auto_indent::compute_closing_dedent(
+                                        line,
+                                        options.indent_style,
+                                    )
+                                {
+                                    let leading =
+                                        crate::editor::auto_indent::leading_whitespace(line);
+                                    if leading.len() > dedented.len() {
+                                        let remove = leading.len() - dedented.len();
+                                        text.replace_range(line_start..line_start + remove, "");
+                                        let new_caret =
+                                            caret.saturating_sub(remove).saturating_sub(0);
+                                        let mut s = egui::widgets::text_edit::TextEditState::load(
+                                            ui.ctx(),
+                                            self.id,
+                                        )
+                                        .unwrap_or_default();
+                                        s.cursor.set_char_range(Some(
+                                            egui::text::CCursorRange::one(
+                                                egui::text::CCursor::new(new_caret),
+                                            ),
+                                        ));
+                                        s.store(ui.ctx(), self.id);
+                                    }
+                                }
+                            }
+                        }
+                    } // close if let Some(range)
+                }
+            }
+        } // close if options.auto_indent
+
+        // ── Auto-close brackets + skip-over-close ──────────────────────────
+        // When a single opening bracket is typed, insert the matching closer
+        // and keep the caret between them. When a closing bracket is typed
+        // while the caret sits immediately before the matching auto-closed
+        // partner, skip over it rather than duplicating.
+        if options.auto_close_brackets && response.changed() && text.len() == prev_len + 1 {
+            if let Some(state) = egui::widgets::text_edit::TextEditState::load(ui.ctx(), self.id) {
+                if let Some(range) = state.cursor.char_range() {
+                    let caret = range.primary.index.0;
+                    if caret > 0 {
+                        let typed_byte = text
+                            .char_indices()
+                            .nth(caret - 1)
+                            .map_or(caret - 1, |(b, _)| b);
+                        let typed_ch = text.as_bytes()[typed_byte] as char;
+
+                        // --- Auto-close on opening bracket ---
+                        if let Some(closer) =
+                            crate::editor::bracket_match::auto_close_char(typed_ch)
+                        {
+                            let insert_byte = text
+                                .char_indices()
+                                .nth(caret)
+                                .map_or(text.len(), |(b, _)| b);
+                            text.insert(insert_byte, closer);
+                            // Caret stays at `caret` (between open and close).
+                            // No cursor adjustment needed — insert was AT caret.
+                        }
+                        // --- Skip-over-close ---
+                        else if matches!(typed_ch, ')' | ']' | '}' | '"' | '\'' | '`') {
+                            // After egui inserted `typed_ch` at caret-1, the
+                            // ORIGINAL auto-closed partner is now at caret.
+                            let after_byte = text
+                                .char_indices()
+                                .nth(caret)
+                                .map_or(text.len(), |(b, _)| b);
+                            if after_byte < text.len()
+                                && text.as_bytes()[after_byte] == typed_ch as u8
+                            {
+                                // Remove the duplicate partner.
+                                text.remove(after_byte);
+                                // Caret already correct (points past typed_ch).
+                            }
+                        }
+                    }
+                }
+            }
+        }
 
         // Bracket match highlight hint (shown as a subtle bar below editor)
         if let Some(bm) = bracket_match {

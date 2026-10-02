@@ -11,6 +11,7 @@ V.E.L.O.C.I.T.Y. is a Rust workspace (`resolver = "2"`) containing six crates:
 | `velocity-ide` | Compiler driver, AST engine, sandbox, site-map tooling |
 | `velocity-ide-gui` | Standalone GUI binary (egui/eframe workspace editor) |
 | `velocity-drone` | Drone protocol agent (local + remote dual-mode) |
+| `velocity-serve` | Headless frame server (software-renders the IDE to PNG over HTTP) |
 | `velocity-e2e` | End-to-end test harness |
 
 ## Directory Routes

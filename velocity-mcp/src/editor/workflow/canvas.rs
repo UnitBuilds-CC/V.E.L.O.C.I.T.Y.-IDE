@@ -5,7 +5,7 @@
 //! execution status. Each node represents a [`WorkflowStep`] and edges define
 //! the execution order (including conditional branching).
 
-use eframe::egui;
+use egui;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 

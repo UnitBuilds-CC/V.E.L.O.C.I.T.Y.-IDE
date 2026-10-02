@@ -9,7 +9,7 @@
 
 use std::path::{Path, PathBuf};
 
-use eframe::egui;
+use egui;
 use velocity_browser::nda_portable::{CommandKind, DisplayCommand, NdaPortableDoc};
 
 use crate::editor::theme::IdePalette;

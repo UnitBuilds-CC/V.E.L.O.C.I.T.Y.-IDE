@@ -86,7 +86,9 @@ pub mod speculative_precomp;
 pub mod terminal;
 pub mod test_generator;
 pub mod triggers;
+pub mod trim_whitespace;
 pub mod voice_commands;
+pub mod word_highlight;
 pub mod workflow;
 
 // GUI Control Bridge — external MCP/agent control of the running IDE

@@ -301,6 +301,16 @@ pub enum NodesEvent {
         ok: bool,
         routed: bool,
     },
+    /// A remote directory listing arrived from the browse worker thread.
+    /// Exactly one of `listing` / `error` is populated; the panel applies it
+    /// to `NodesState::browse_*` on the next frame.
+    BrowseListed {
+        /// Echoed so a stale response (from a cancelled browse) can be
+        /// discarded rather than overwriting the current path.
+        requested_path: String,
+        listing: Option<crate::agent::drone_bridge::FsListing>,
+        error: Option<String>,
+    },
 }
 
 /// State for the Build rail's Nodes sub-panel: which node builds route to,
@@ -314,6 +324,12 @@ pub struct NodesState {
     pub add_name: String,
     pub add_addr: String,
     pub add_dir: String,
+    /// Bearer token for the drone being added. Optional; the registry stores
+    /// `None` as "unauthenticated drone" and every authenticated call will
+    /// then 401. The Add form used to omit this field entirely, which made
+    /// the whole remote-execution path unusable without hand-editing
+    /// `instances.json`.
+    pub add_token: String,
     /// Command text for "run on target".
     pub exec_cmd: String,
     /// Ids with a health ping in flight (row buttons show a spinner text).
@@ -322,6 +338,30 @@ pub struct NodesState {
     pub exec_busy: bool,
     /// Latest outcome line drawn under the node list.
     pub status_line: String,
+    // ── Remote directory picker (Cockpit-style work-dir browser) ──
+    /// Modal is open.
+    pub browse_open: bool,
+    /// Address + token captured when the modal was opened, so an in-flight
+    /// listing keeps working even if the operator edits the Add form.
+    pub browse_addr: String,
+    pub browse_token: String,
+    /// Currently-displayed path on the drone (server-canonicalised).
+    pub browse_path: String,
+    /// Parent of `browse_path` for the "Up" button; `None` at a filesystem
+    /// root.
+    pub browse_parent: Option<String>,
+    /// Editable text field at the top of the modal ("go to this path").
+    pub browse_input: String,
+    /// Substring filter over entry names (case-insensitive).
+    pub browse_filter: String,
+    /// Last listing's entries, dirs-first (server already sorted them).
+    pub browse_entries: Vec<crate::agent::drone_bridge::FsEntry>,
+    /// Server-side 500-entry cap tripped; the modal shows a warning line.
+    pub browse_truncated: bool,
+    /// A listing request is in flight (rows greyed out, spinner text).
+    pub browse_loading: bool,
+    /// Last browse error, shown inline above the entry list.
+    pub browse_error: Option<String>,
     pub tx: crossbeam_channel::Sender<NodesEvent>,
     pub rx: crossbeam_channel::Receiver<NodesEvent>,
 }
@@ -341,10 +381,22 @@ impl NodesState {
             add_name: String::new(),
             add_addr: String::new(),
             add_dir: String::new(),
+            add_token: String::new(),
             exec_cmd: String::new(),
             pinging: Vec::new(),
             exec_busy: false,
             status_line: String::new(),
+            browse_open: false,
+            browse_addr: String::new(),
+            browse_token: String::new(),
+            browse_path: String::new(),
+            browse_parent: None,
+            browse_input: String::new(),
+            browse_filter: String::new(),
+            browse_entries: Vec::new(),
+            browse_truncated: false,
+            browse_loading: false,
+            browse_error: None,
             tx,
             rx,
         }

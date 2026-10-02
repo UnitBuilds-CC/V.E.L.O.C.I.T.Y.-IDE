@@ -122,6 +122,9 @@ Velocity-IDE/
 │   │   ├── src/
 │   │   ├── tests/
 │   │   └── Cargo.toml
+│   ├── velocity-serve/          # Headless frame server (IDE rendered to PNG over HTTP)
+│   │   ├── src/main.rs
+│   │   └── Cargo.toml
 │   ├── e2e/                     # End-to-End Integration Tests
 │   │   ├── src/
 │   │   ├── tests/

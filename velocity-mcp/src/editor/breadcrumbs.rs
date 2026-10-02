@@ -1,7 +1,7 @@
 //! Breadcrumb navigation — shows the file path segments and symbol hierarchy
 //! above the editor for quick navigation.
 
-use eframe::egui;
+use egui;
 use std::path::{Path, PathBuf};
 
 /// A single breadcrumb segment.

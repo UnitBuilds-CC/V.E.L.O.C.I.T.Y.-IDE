@@ -15,7 +15,7 @@ use crate::editor::app::velocity_app::actions::fuzzy_subsequence;
 use crate::editor::gui_control::{GuiCommand, GuiResponse, IdeState};
 use crate::editor::theme::WorkspaceProfile;
 use crate::wa::window_mgmt::WindowState;
-use eframe::egui;
+use egui;
 
 /// Shorthand for the refusal shape every guarded path returns.
 fn refusal(error: impl Into<String>) -> GuiResponse {
@@ -80,6 +80,7 @@ impl VelocityApp {
             GuiCommand::SubmitDialog { value } => self.cmd_submit_dialog(value),
             GuiCommand::SendChatMessage { text } => self.cmd_send_chat_message(text),
             GuiCommand::SetAutoApprove { enabled } => self.cmd_set_auto_approve(enabled),
+            GuiCommand::SetBuildTarget { id } => self.cmd_set_build_target(id),
         }
     }
 
@@ -171,6 +172,18 @@ impl VelocityApp {
         }
         .to_string();
 
+        // Resolve the routing target against the registry so a driver sees the
+        // node name it armed, not just an id, and a stale id reads back as
+        // local (matching what `routed_node` will actually do).
+        let build_target_id = self.nodes.target_id.clone();
+        let build_target_name = build_target_id.as_deref().and_then(|id| {
+            crate::agent::instances::InstanceRegistry::load(
+                &crate::agent::instance_tools::instances_path(&self.workspace_root),
+            )
+            .get(id)
+            .map(|r| r.name.clone())
+        });
+
         IdeState {
             open_files,
             active_file,
@@ -193,6 +206,8 @@ impl VelocityApp {
                 .map(str::to_string)
                 .collect(),
             auto_approve: self.auto_approve,
+            build_target_id,
+            build_target_name,
         }
     }
 
@@ -508,6 +523,27 @@ impl VelocityApp {
         self.chat.auto_approve = enabled;
         self.save_workspace_preferences();
         accepted(serde_json::json!({"auto_approve": enabled}))
+    }
+
+    /// Arm (or clear) the node Ctrl+B/Ctrl+R route to. Delegates to the same
+    /// `set_build_target` the panel buttons call, so a headless driver and a
+    /// human click cannot drift, and persists the choice to workspace prefs.
+    fn cmd_set_build_target(&mut self, id: Option<String>) -> GuiResponse {
+        let id = id.map(|s| s.trim().to_string()).filter(|s| !s.is_empty());
+        if !self.set_build_target(id.clone()) {
+            return refusal(format!(
+                "No registered node {:?}; list them with instance_list.",
+                id.as_deref().unwrap_or_default()
+            ));
+        }
+        let state = self.ide_state();
+        let target_name = state.build_target_name.clone();
+        accepted(serde_json::json!({
+            "target_id": state.build_target_id.clone(),
+            "target_name": target_name.clone(),
+            "routes_to": target_name.unwrap_or_else(|| "this machine".to_string()),
+            "state_after": state,
+        }))
     }
 
     /// Quit the IDE. Sends a viewport Close command through the egui
@@ -3126,5 +3162,140 @@ mod tests {
             app.queued_change_jump.is_none(),
             "flush must drain the queue"
         );
+    }
+
+    // ── Build-target routing over the bridge ──────────────────────────────
+    //
+    // The routing target used to be in-memory only: a driver could open the
+    // Nodes panel but never arm a routed build, and a restart silently fell
+    // back to local. These pin the fix -- the bridge can set it, it survives a
+    // restart, a typo is refused rather than stored as a phantom.
+
+    /// Register one node in a throwaway workspace so `set_build_target`'s
+    /// "must name a registered node" gate has something real to resolve.
+    fn register_buildbox(ws: &std::path::Path) -> String {
+        use crate::agent::instances::{
+            InstancePlatform, InstanceRecord, InstanceRegistry, InstanceRole,
+        };
+        let path = crate::agent::instance_tools::instances_path(ws);
+        let mut reg = InstanceRegistry::load(&path);
+        let rec = InstanceRecord::new(
+            "Build Box",
+            InstanceRole::Buildbox,
+            InstancePlatform::Linux,
+            "192.0.2.7:9191",
+        );
+        let id = rec.id.clone();
+        reg.upsert(rec).unwrap();
+        reg.save(&path).unwrap();
+        id
+    }
+
+    #[test]
+    fn setting_a_build_target_over_the_bridge_persists_across_a_restart() {
+        let ws = tempfile::tempdir().unwrap();
+        let id = register_buildbox(ws.path());
+
+        let (mut app, ctx) = harness();
+        app.workspace_root = ws.path().to_path_buf();
+        let r = app.execute_gui_command(
+            GuiCommand::SetBuildTarget {
+                id: Some(id.clone()),
+            },
+            &ctx,
+        );
+        assert!(r.success, "{:?}", r.error);
+        let data = r.data.expect("accepted payload");
+        assert_eq!(data["target_id"].as_str(), Some(id.as_str()));
+        assert_eq!(data["target_name"].as_str(), Some("Build Box"));
+        assert_eq!(data["routes_to"].as_str(), Some("Build Box"));
+        assert_eq!(app.nodes.target_id.as_deref(), Some(id.as_str()));
+
+        // A fresh app over the same workspace -- the cold-start path -- must
+        // read the choice back off disk, not default to local.
+        let (mut reopened, _ctx) = harness();
+        reopened.workspace_root = ws.path().to_path_buf();
+        reopened.restore_workspace_preferences();
+        assert_eq!(
+            reopened.nodes.target_id.as_deref(),
+            Some(id.as_str()),
+            "the routing target did not survive the restart"
+        );
+    }
+
+    #[test]
+    fn a_stale_build_target_is_dropped_on_restore_but_a_live_one_is_kept() {
+        let ws = tempfile::tempdir().unwrap();
+        let id = register_buildbox(ws.path());
+
+        let (mut app, ctx) = harness();
+        app.workspace_root = ws.path().to_path_buf();
+        let r = app.execute_gui_command(
+            GuiCommand::SetBuildTarget {
+                id: Some(id.clone()),
+            },
+            &ctx,
+        );
+        assert!(r.success, "{:?}", r.error);
+
+        // Forget the node, then restart: the persisted id now names nothing,
+        // so restore drops it to local rather than resurrecting a phantom that
+        // the panel header could not resolve.
+        let path = crate::agent::instance_tools::instances_path(ws.path());
+        let mut reg = crate::agent::instances::InstanceRegistry::load(&path);
+        reg.remove(&id);
+        reg.save(&path).unwrap();
+
+        let (mut reopened, _ctx) = harness();
+        reopened.workspace_root = ws.path().to_path_buf();
+        reopened.restore_workspace_preferences();
+        assert_eq!(
+            reopened.nodes.target_id, None,
+            "a forgotten node must not linger as a routing target"
+        );
+    }
+
+    #[test]
+    fn an_unknown_build_target_is_refused_and_a_blank_one_clears_to_local() {
+        let ws = tempfile::tempdir().unwrap();
+        let id = register_buildbox(ws.path());
+
+        let (mut app, ctx) = harness();
+        app.workspace_root = ws.path().to_path_buf();
+
+        // A typo is refused, not stored as a phantom that would build local anyway.
+        let bad = app.execute_gui_command(
+            GuiCommand::SetBuildTarget {
+                id: Some("no-such-node".to_string()),
+            },
+            &ctx,
+        );
+        assert!(!bad.success);
+        assert_eq!(
+            app.nodes.target_id, None,
+            "refused target must not be stored"
+        );
+
+        // Arm a real one, then clear it with null and with empty/whitespace --
+        // both mean "this machine" and must persist the fallback.
+        let ok = app.execute_gui_command(GuiCommand::SetBuildTarget { id: Some(id) }, &ctx);
+        assert!(ok.success, "{:?}", ok.error);
+
+        let cleared = app.execute_gui_command(GuiCommand::SetBuildTarget { id: None }, &ctx);
+        assert!(cleared.success, "{:?}", cleared.error);
+        assert_eq!(app.nodes.target_id, None);
+        assert_eq!(
+            cleared.data.unwrap()["routes_to"].as_str(),
+            Some("this machine")
+        );
+
+        let blank = app.execute_gui_command(
+            GuiCommand::SetBuildTarget {
+                id: Some("   ".to_string()),
+            },
+            &ctx,
+        );
+        assert!(blank.success, "{:?}", blank.error);
+        assert_eq!(app.nodes.target_id, None);
     }
 }

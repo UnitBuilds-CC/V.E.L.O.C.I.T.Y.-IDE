@@ -1,4 +1,4 @@
-use eframe::egui::{
+use egui::{
     self, Color32, CornerRadius, FontData, FontDefinitions, FontFamily, FontId, Style, TextStyle,
     Vec2, Visuals,
 };
