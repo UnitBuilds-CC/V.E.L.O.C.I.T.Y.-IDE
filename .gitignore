@@ -28,6 +28,11 @@ target/bench-results/
 # Stray dev artifacts (ad-hoc captures, tool output & shell-redirect typos - never tracked)
 $null
 commit_msg.txt
+
+# Local test/verification scratch dirs - regenerable, never committed
+.velocity_testing/
+.verify_tmp/
+scratch/
 browser_screenshot.png
 test_out.txt
 test_err.txt

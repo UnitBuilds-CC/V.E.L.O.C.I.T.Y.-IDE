@@ -287,6 +287,26 @@ fn parse_since(url: &str) -> u64 {
     0
 }
 
+/// Verify an `Authorization` header value presents exactly the expected bearer
+/// token. This is a full-segment equality check, deliberately NOT a prefix
+/// match: a value that merely *begins* with the real token (e.g. an attacker
+/// who has learned a prefix) must not authenticate, and an empty configured
+/// token must refuse everything rather than turning `"Bearer "` into a prefix
+/// that every `"Bearer …"` request satisfies. The scheme name is matched
+/// case-insensitively per RFC 7235.
+fn bearer_ok(header_value: &str, token: &str) -> bool {
+    if token.is_empty() {
+        return false;
+    }
+    let mut parts = header_value.splitn(2, ' ');
+    match (parts.next(), parts.next()) {
+        (Some(scheme), Some(presented)) => {
+            scheme.eq_ignore_ascii_case("bearer") && presented == token
+        }
+        _ => false,
+    }
+}
+
 // ─── Frame hub (shared latest frame + sequence + cursor + clipboard) ────────
 
 struct FrameHub {
@@ -658,6 +678,13 @@ fn main() {
     env_logger::init();
     let cli = Cli::parse();
 
+    // A blank --token would otherwise make every request authenticate under a
+    // prefix check; refuse to start rather than serve an unguarded control plane.
+    if cli.token.trim().is_empty() {
+        eprintln!("[velocity-serve] --token must be a non-empty secret");
+        std::process::exit(2);
+    }
+
     println!("[velocity-serve] Starting headless IDE frame server");
     println!("  Workspace : {}", cli.workspace.display());
     println!("  Port      : {}", cli.port);
@@ -727,9 +754,7 @@ fn main() {
             // All other endpoints require Bearer token
             let auth_ok = request.headers().iter().any(|h| {
                 h.field.to_string().eq_ignore_ascii_case("authorization")
-                    && h.value
-                        .to_string()
-                        .starts_with(&format!("Bearer {}", token))
+                    && bearer_ok(h.value.as_ref(), &token)
             });
             if !auth_ok {
                 let resp = Response::from_string("Unauthorized").with_status_code(401);
@@ -962,6 +987,19 @@ mod tests {
             })
             .collect();
         assert_eq!(pressed, vec![true, false]);
+    }
+
+    #[test]
+    fn bearer_requires_exact_token_not_a_prefix() {
+        assert!(bearer_ok("Bearer secret123", "secret123"));
+        assert!(bearer_ok("bearer secret123", "secret123")); // scheme is case-insensitive
+                                                             // A value that merely *begins* with the real token must not pass - this
+                                                             // is the whole point of moving off `starts_with`.
+        assert!(!bearer_ok("Bearer secret123GUESS", "secret123"));
+        assert!(!bearer_ok("Bearer sec", "secret123"));
+        assert!(!bearer_ok("Basic secret123", "secret123")); // wrong scheme
+        assert!(!bearer_ok("secret123", "secret123")); // no scheme at all
+        assert!(!bearer_ok("Bearer whatever", "")); // empty configured token refuses all
     }
 
     #[test]
