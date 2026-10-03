@@ -2,6 +2,20 @@
 
 A complete guide to using the V.E.L.O.C.I.T.Y. Cognitive IDE — a native, GPU-accelerated developer workspace with autonomous agentic capabilities built in pure Rust.
 
+> **Looking for a specific answer?** This guide is the narrative overview. The
+> **de-facto, exhaustive reference** — every panel, sub-panel, dropdown,
+> command, shortcut, and the full list of 291 agent tools, each cross-checked
+> against the source — lives in the split manual at
+> **[docs/manual/](docs/manual/README.md)**:
+>
+> - [Getting started](docs/manual/getting-started.md)
+> - [Interface & shell](docs/manual/ui-and-shell.md)
+> - [Editor surfaces](docs/manual/editor.md)
+> - [Panel reference (all panels)](docs/manual/panels-reference.md)
+> - [Settings & providers](docs/manual/settings-providers.md)
+> - [Keyboard shortcuts & commands](docs/manual/keyboard-and-commands.md)
+> - [MCP tool reference](docs/manual/mcp-tools.md)
+
 ---
 
 ## Table of Contents

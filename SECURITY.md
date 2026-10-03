@@ -58,6 +58,41 @@ Velocity IDE implements several security measures:
 - JIT compilation uses validated instruction sets only
 - Worker threads operate within defined boundaries
 
+### IPC Telemetry Channel (shared memory)
+
+The GUI `TelemetryServer` and the AST `TelemetryClient` exchange
+AST-triple updates through a memory-mapped file at
+`.velocity/telemetry_shmem.bin`, authenticated with HMAC-SHA256. Both sides
+share a single key constant (`velocity_mcp::ipc::IPC_TELEMETRY_HMAC_KEY`) so
+the handshake cannot drift.
+
+Threat model and current limitations (accepted, documented deliberately):
+
+- The channel is **local, same-user, same-project** IPC between two halves of
+  this application. It is not a network boundary and carries no untrusted
+  remote input.
+- The HMAC key is compiled into the binaries, so it authenticates *against a
+  party without the key*, not against another process owned by the same user.
+  A local attacker who can already read the workspace can also read the key.
+- Integrity is enforced by a flag byte in the shared region; a peer that
+  clears that flag is not required to present a valid tag. Hardening this to
+  always-verify (and moving to a per-session key the server generates and
+  hands the watcher out-of-band) is a known follow-up gated on redesigning the
+  wire format, which would break in-flight telemetry across version skew.
+
+If your threat model includes hostile same-user processes, run the IDE under a
+separate account or container so the `.velocity` directory is not reachable.
+
+### Resource-growth follow-ups (not security)
+
+Two caches accumulate entries over a long session and are bounded today only
+by the working set: `PeerManager::tasks` / `PeerManager::transfers` (completed
+delegations and finished file transfers are retained as history) and
+`SiteMap::string_dict` (unique identifier names, persisted to
+`dictionary.json`). A TTL/ring-buffer sweep for the former and a batched,
+pruned rewrite for the latter are tracked but not yet implemented; neither is
+reachable by untrusted input.
+
 ### Supply Chain Security
 
 - `cargo-deny` enforces license and advisory compliance
