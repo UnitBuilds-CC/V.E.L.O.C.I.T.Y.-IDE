@@ -513,6 +513,16 @@ impl SiteMap {
                 fs::remove_file(&path).with_context(|| format!("removing {}", path.display()))?;
             }
             self.snapshot_triples_cache.lock_safe().remove(&key);
+            // Prune AST-node triples that no longer back a live index entry.
+            // The node cache is a pure memo (collect_historical_triples
+            // recomputes and re-inserts on a miss), so dropping orphaned keys
+            // only costs a later recompute — and stops RAM growing forever
+            // across repeated file deletions, which previously never touched
+            // this map.
+            {
+                let mut nodes = self.node_triples_cache.lock_safe();
+                nodes.retain(|node_hash, _| self.index.contains_key(node_hash));
+            }
             self.recompute_root();
             // Auto-invalidate the predicate index since triples have changed
             self.invalidate_predicate_index();

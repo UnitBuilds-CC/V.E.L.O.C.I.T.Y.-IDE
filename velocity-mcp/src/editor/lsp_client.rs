@@ -2040,6 +2040,20 @@ fn lsp_stdout_reader(stdout: impl IoRead + Send + 'static, inbox: Arc<Mutex<LspI
                 if let Some(id) = json.get("id").and_then(|v| v.as_i64()) {
                     if let Ok(mut inbox) = inbox.lock() {
                         inbox.responses.insert(id, json);
+                        // Bound the response inbox. Requests that time out or
+                        // are abandoned are never taken by id, so their late
+                        // replies would accumulate forever across a long
+                        // session. Request ids are monotonic, so the smallest
+                        // ids are the oldest and safe to drop; halving on
+                        // overflow keeps the amortized cost near zero.
+                        const MAX_LSP_RESPONSES: usize = 512;
+                        if inbox.responses.len() > MAX_LSP_RESPONSES {
+                            let mut ids: Vec<i64> = inbox.responses.keys().copied().collect();
+                            ids.sort_unstable();
+                            for old_id in &ids[..ids.len() / 2] {
+                                inbox.responses.remove(old_id);
+                            }
+                        }
                     }
                 }
             }

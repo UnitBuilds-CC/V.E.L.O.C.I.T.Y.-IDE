@@ -55,7 +55,7 @@ pub fn spawn_ast_watcher(workspace_root: PathBuf, shmem_path: PathBuf) {
         );
 
         let mut loop_count: u32 = 0;
-        loop {
+        while !crate::shutdown::is_shutdown_requested() {
             let mut changed_files = Vec::new();
             let deleted_files = scan_directory(
                 &workspace_root,
@@ -87,7 +87,14 @@ pub fn spawn_ast_watcher(workspace_root: PathBuf, shmem_path: PathBuf) {
             }
 
             loop_count = loop_count.wrapping_add(1);
-            thread::sleep(Duration::from_millis(500));
+            // Interruptible idle: honor Ctrl+C / SIGTERM promptly instead of
+            // scanning the whole workspace from disk forever after a shutdown
+            // is requested. wait_for_shutdown returns true as soon as the flag
+            // is set, else after the 500ms interval elapses.
+            if crate::shutdown::wait_for_shutdown(Duration::from_millis(500)) {
+                println!("[watcher] Shutdown requested; stopping AST watcher.");
+                break;
+            }
         }
     });
 }

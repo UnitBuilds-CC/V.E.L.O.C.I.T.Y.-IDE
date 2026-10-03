@@ -30,11 +30,11 @@ pub fn run_login(args: LoginArgs) -> Result<()> {
 
     println!("\nVelocity Router configured:");
     println!("  URL:  {}", config.base_url);
-    println!(
-        "  Key:  {}...{}",
-        &config.api_key[..8],
-        &config.api_key[config.api_key.len().saturating_sub(4)..]
-    );
+    // Char-safe redaction: the key comes straight from `--key`, so a value
+    // shorter than the display window (or a multi-byte char on the boundary)
+    // must not panic the command.
+    let masked = crate::commands::mask_secret(&config.api_key);
+    println!("  Key:  {masked}");
     println!("\nSaved to ~/.velocity/config.toml\n");
 
     let client = VelocityClient::new(config);

@@ -89,11 +89,11 @@ pub fn run_providers(args: ProvidersArgs, json: bool) -> Result<()> {
             save_credentials(&creds)?;
             println!("\nProvider API key saved:");
             println!("  Provider:  {}", provider);
-            println!(
-                "  Key:       {}...{}",
-                &api_key[..4],
-                &api_key[api_key.len().saturating_sub(4)..]
-            );
+            // Char-safe redaction (see commands::mask_secret): the key is the
+            // raw `--api-key` value and is already persisted above, so a short
+            // or multi-byte key must not panic here.
+            let masked = crate::commands::mask_secret(api_key);
+            println!("  Key:       {masked}");
             if let Some(ref url) = args.base_url {
                 println!("  Base URL:  {}", url);
             }
