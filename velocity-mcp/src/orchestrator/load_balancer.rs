@@ -3,8 +3,10 @@
 //! Provides multiple scheduling strategies (least-loaded, weighted round-robin,
 //! affinity-first) and tracks per-worker statistics to make intelligent
 //! assignment decisions.
-
-#![allow(dead_code)]
+//!
+//! Wired into the Orchestrator dispatch wave as the admission gate: the panel
+//! registers one balancer slot per concurrent-worker seat, so `assign_task`
+//! both picks a seat and refuses to over-fill the plan when every seat is busy.
 
 use std::collections::HashMap;
 use std::time::Instant;
@@ -121,6 +123,15 @@ impl LoadBalancer {
         self.workers.remove(&id);
     }
 
+    /// Drop every worker and its accumulated statistics, resetting the pool
+    /// to empty.  Used when a runtime is torn down and task slots are being
+    /// force-released, so stale durations and success rates cannot bleed into
+    /// the next run's admission decisions.
+    pub fn reset(&mut self) {
+        self.workers.clear();
+        self.rr_counter = 0;
+    }
+
     // -- Task lifecycle -----------------------------------------------------
 
     /// Pick the best worker for a task of kind `task_kind` with the given
@@ -168,6 +179,15 @@ impl LoadBalancer {
     /// Get a reference to a specific worker's load data.
     pub fn get_worker_load(&self, worker_id: u64) -> Option<&WorkerLoad> {
         self.workers.get(&worker_id)
+    }
+
+    /// Ids of every registered worker, in ascending order. Lets a caller
+    /// reconcile the pool (grow/shrink the seat set) without reaching into
+    /// the internal map.
+    pub fn worker_ids(&self) -> Vec<u64> {
+        let mut ids: Vec<u64> = self.workers.keys().copied().collect();
+        ids.sort_unstable();
+        ids
     }
 
     /// Compute an overall health summary of the cluster.
@@ -666,6 +686,63 @@ mod tests {
         // Worker 1 is full; should go to worker 2.
         let id = lb.assign_task("x", 1).unwrap();
         assert_eq!(id, 2);
+    }
+
+    // -- orchestrator seat-pool admission -----------------------------------
+    // The Orchestrator dispatch wave registers one seat per concurrent-worker
+    // slot, each with capacity 1, and treats `assign_task` returning `None` as
+    // "at capacity, defer to the next tick". These lock that invariant in.
+
+    #[test]
+    fn capacity_one_seats_gate_admission() {
+        let seats = 3usize;
+        let mut lb = make_lb(BalanceStrategy::LeastLoaded);
+        for id in 0..seats as u64 {
+            lb.register_worker(id, 1, Vec::new());
+        }
+        let mut admitted = Vec::new();
+        for _ in 0..seats {
+            let seat = lb.assign_task("refactor", 1).expect("a seat is free");
+            lb.record_task_start(seat);
+            admitted.push(seat);
+        }
+        // Every seat holds one task: the pool must refuse, not over-fill.
+        assert!(
+            lb.assign_task("refactor", 1).is_none(),
+            "a saturated seat pool must refuse admission"
+        );
+        // Seats are handed out distinctly (no task doubles up on one seat).
+        for s in &admitted {
+            assert_eq!(admitted.iter().filter(|x| *x == s).count(), 1);
+        }
+        // Completing one task frees exactly its seat and re-opens admission.
+        let freed = admitted[1];
+        lb.record_task_complete(freed, 12.0, true);
+        let next = lb.assign_task("refactor", 1).expect("a seat just freed");
+        assert_eq!(next, freed, "the freed seat must be the one reused");
+        lb.record_task_start(next);
+        assert!(lb.assign_task("refactor", 1).is_none());
+    }
+
+    #[test]
+    fn reset_empties_pool_and_clears_statistics() {
+        let mut lb = make_lb(BalanceStrategy::LeastLoaded);
+        lb.register_worker(0, 1, vec![]);
+        lb.register_worker(1, 1, vec![]);
+        lb.record_task_start(0);
+        lb.record_task_complete(0, 5.0, true);
+        lb.reset();
+        assert!(lb.worker_ids().is_empty(), "reset must drop every seat");
+        assert_eq!(lb.cluster_health().total_workers, 0);
+    }
+
+    #[test]
+    fn worker_ids_are_sorted() {
+        let mut lb = make_lb(BalanceStrategy::LeastLoaded);
+        lb.register_worker(5, 1, vec![]);
+        lb.register_worker(2, 1, vec![]);
+        lb.register_worker(9, 1, vec![]);
+        assert_eq!(lb.worker_ids(), vec![2, 5, 9]);
     }
 
     // -- utilization helper -------------------------------------------------

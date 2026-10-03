@@ -19,6 +19,42 @@ const WORKER_HARD_TIMEOUT: Duration = Duration::from_secs(90 * 60);
 const WORKER_CANCEL_GRACE: Duration = Duration::from_secs(60);
 
 impl OrchestratorPanel {
+    /// Keep the balancer's seat pool aligned with `max_concurrent_workers`.
+    /// Seats are registered with capacity 1, so the pool doubles as an
+    /// admission counter: `assign_task` hands out a seat only while one is
+    /// free, and a full pool refuses new spawns until a running task releases.
+    /// Shrinking never unregisters a seat that still holds an in-flight task,
+    /// so those releases land on a seat that exists.
+    fn sync_seat_pool(&mut self) {
+        let desired = self.max_concurrent_workers.max(1) as u64;
+        // Make sure a seat exists for every slot up to the cap.
+        for id in 0..desired {
+            if self.load_balancer.get_worker_load(id).is_none() {
+                self.load_balancer.register_worker(id, 1, Vec::new());
+            }
+        }
+        // Retire seats past the cap only once they go idle, so lowering
+        // `max_concurrent_workers` mid-run never deletes the seat an
+        // in-flight task will report its completion against.
+        let stale: Vec<u64> = self
+            .load_balancer
+            .worker_ids()
+            .into_iter()
+            .filter(|id| {
+                *id >= desired
+                    && self
+                        .load_balancer
+                        .get_worker_load(*id)
+                        .is_some_and(|w| w.active_tasks == 0)
+            })
+            .collect();
+        for id in stale {
+            self.load_balancer.unregister_worker(id);
+        }
+    }
+}
+
+impl OrchestratorPanel {
     pub fn execute_routed_tasks(
         &mut self,
         workspace_root: &Path,
@@ -89,6 +125,10 @@ impl OrchestratorPanel {
         }
         self.running_workers.clear();
         self.worker_watchdog.clear();
+        // Seats force-released here must not carry their in-flight count into
+        // the next run; a reset pool starts admission from zero.
+        self.worker_seats.clear();
+        self.load_balancer.reset();
         if let Some(reg) = &mut self.registry {
             for status in reg.statuses.values_mut() {
                 *status = TaskStatus::Pending;
@@ -146,7 +186,11 @@ impl OrchestratorPanel {
         let retryable = self.retryable_blocked_task_count();
         let stale_plan = self.stale_plan_blocked_task_count();
         self.runtime_status = if self.execution_running {
-            format!("Running {} worker(s)", self.running_workers.len())
+            format!(
+                "Running {} of {} worker slot(s)",
+                self.running_workers.len(),
+                self.max_concurrent_workers
+            )
         } else if blocked > 0 && retryable == blocked {
             format!("Waiting for retry on {retryable} blocked task(s)")
         } else if blocked > 0 && stale_plan == blocked {
@@ -276,6 +320,17 @@ impl OrchestratorPanel {
 
         for (id, mut result) in finished_ids {
             self.running_workers.remove(&id);
+            // Release the seat via direct field access: `reg` (a mutable
+            // borrow of `self.registry`) is live through this loop, so a
+            // `&mut self` method call would collide with it. `worker_seats`
+            // and `load_balancer` are disjoint fields, so this is allowed.
+            if let Some(seat) = self.worker_seats.remove(&id) {
+                self.load_balancer.record_task_complete(
+                    seat,
+                    result.duration.as_secs_f64() * 1000.0,
+                    result.success,
+                );
+            }
             let outputs = task_result_outputs(&result);
             let report = validator::validate_with_workspace(&result, workspace_root);
             let reconciliation_error =
@@ -371,6 +426,13 @@ impl OrchestratorPanel {
         for (id, reason) in timed_out {
             self.running_workers.remove(&id);
             self.worker_watchdog.remove(&id);
+            // The thread may still be alive but its outcome is decided here,
+            // so the seat is released as a failure and the hang is recorded
+            // in the seat's statistics like any other completed task. Direct
+            // field access again: `reg` stays live through this loop.
+            if let Some(seat) = self.worker_seats.remove(&id) {
+                self.load_balancer.record_task_complete(seat, 0.0, false);
+            }
             let Some(task) = self.graph.tasks.get(&id).cloned() else {
                 continue;
             };
@@ -405,6 +467,7 @@ impl OrchestratorPanel {
         // root as of now, before the freshness check below compares to it.
         let _ = self.bind_unbound_tasks(workspace_root);
         let weight_root = resolve_weight_root(workspace_root);
+        self.sync_seat_pool();
         for id in ready_ids {
             if self.running_workers.contains_key(&id) {
                 continue;
@@ -440,6 +503,18 @@ impl OrchestratorPanel {
                         self.set_task_status(id, TaskStatus::Blocked(result));
                         continue;
                     }
+                    // Admission gate: take a seat before spawning. Every seat
+                    // busy means the plan is already running at capacity; the
+                    // task stays Pending and is re-offered on the next tick.
+                    // LeastLoaded spreads starts across seats so each one's
+                    // duration/success statistics stay comparable.
+                    let Some(seat) = self
+                        .load_balancer
+                        .assign_task(routed_task.task_kind.as_str(), task.estimated_weight)
+                    else {
+                        continue;
+                    };
+                    self.load_balancer.record_task_start(seat);
                     let handle = spawn_live_worker(
                         WorkerAssignment {
                             task,
@@ -459,6 +534,7 @@ impl OrchestratorPanel {
                         weight_root,
                     );
                     self.set_task_status(id, TaskStatus::Running);
+                    self.worker_seats.insert(id, seat);
                     self.running_workers.insert(id, handle);
                 }
                 Err(err) => {

@@ -2,6 +2,7 @@ use super::super::types::*;
 use super::authoring::{ExecutionDefaults, TaskDraft};
 use crate::automation::{AgentTaskKind, RoutedSubAgentTask};
 use crate::orchestrator::blueprint::TaskGraph;
+use crate::orchestrator::load_balancer::{BalanceStrategy, LoadBalancer};
 use crate::orchestrator::registry::{OrchestratorRegistry, TaskStatus};
 use crate::orchestrator::scheduler;
 use crate::orchestrator::worker::WorkerHandle;
@@ -49,6 +50,17 @@ pub struct OrchestratorPanel {
     pub runtime_status: String,
     pub execution_running: bool,
     pub running_workers: HashMap<TaskId, Box<dyn WorkerHandle>>,
+    /// Admission gate for the dispatch wave: one balancer seat per
+    /// concurrent-worker slot. A ready task only spawns while
+    /// [`LoadBalancer::assign_task`](crate::orchestrator::load_balancer::LoadBalancer::assign_task)
+    /// can hand out a free seat; the rest wait for a later tick instead of
+    /// firing every provider session in the plan at once.
+    pub load_balancer: LoadBalancer,
+    /// Upper bound on worker threads alive at the same time.
+    pub max_concurrent_workers: usize,
+    /// Balancer seat currently held by each running task, so completion can
+    /// release exactly the slot the task was admitted to.
+    pub worker_seats: HashMap<TaskId, u64>,
     /// Per-running-worker wall-clock tracking used to detect hung workers.
     /// Entries live exactly as long as the corresponding `running_workers` entry.
     pub worker_watchdog: HashMap<TaskId, WorkerWatchdog>,
@@ -99,6 +111,11 @@ impl Default for OrchestratorPanel {
 }
 
 impl OrchestratorPanel {
+    /// Sane default seat count for the admission gate: enough to keep a full
+    /// routed plan moving, few enough that a 30-task plan does not open 30
+    /// simultaneous provider sessions (rate limits, memory, mediator churn).
+    pub const DEFAULT_MAX_CONCURRENT_WORKERS: usize = 8;
+
     pub fn new() -> Self {
         // Empty on purpose. This used to open on `TaskGraph::example_game()`, a
         // nine-task demo blueprint with no execution bindings: Execute started
@@ -117,6 +134,9 @@ impl OrchestratorPanel {
             runtime_status: "Idle".to_string(),
             execution_running: false,
             running_workers: HashMap::new(),
+            load_balancer: LoadBalancer::new(BalanceStrategy::LeastLoaded),
+            max_concurrent_workers: Self::DEFAULT_MAX_CONCURRENT_WORKERS,
+            worker_seats: HashMap::new(),
             worker_watchdog: HashMap::new(),
             bindings: HashMap::new(),
             authored_kinds: HashMap::new(),

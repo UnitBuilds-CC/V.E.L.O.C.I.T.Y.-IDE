@@ -155,9 +155,13 @@ impl OrchestratorPanel {
                                 .color(palette.text_muted.gamma_multiply(0.6)),
                         );
                         ui.label(
-                            RichText::new(format!("Workers: {}", self.running_workers.len()))
-                                .small()
-                                .color(palette.accent),
+                            RichText::new(format!(
+                                "Workers: {} / {}",
+                                self.running_workers.len(),
+                                self.max_concurrent_workers
+                            ))
+                            .small()
+                            .color(palette.accent),
                         );
                     }
                 });
@@ -233,6 +237,29 @@ impl OrchestratorPanel {
                             }
                         });
                     }
+                });
+
+                // Concurrency cap: the admission gate keeps at most this many
+                // worker threads alive. Raised mid-run, the extra ready tasks
+                // are admitted on the next tick; lowered, in-flight workers
+                // finish normally and their seats retire once idle.
+                ui.add_space(4.0);
+                ui.horizontal(|ui| {
+                    ui.label(
+                        RichText::new("Max concurrent agents:")
+                            .small()
+                            .color(palette.text_muted),
+                    );
+                    ui.add(
+                        egui::DragValue::new(&mut self.max_concurrent_workers)
+                            .range(1..=32)
+                            .speed(1),
+                    )
+                    .on_hover_text(
+                        "Upper bound on worker threads at once. Ready tasks beyond \
+                         this wait for a free slot instead of opening a provider \
+                         session each.",
+                    );
                 });
 
                 // Stated in the open: a greyed-out Execute with no reason reads

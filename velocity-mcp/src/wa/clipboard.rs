@@ -1,4 +1,4 @@
-#![allow(dead_code)] // Reserved WA automation API surface; awaiting full MCP dispatch wiring.
+#![cfg_attr(not(windows), allow(dead_code))] // WA clipboard surface; dispatched via registry/wa_tools.rs.
 //! Clipboard management for Windows desktop automation.
 //!
 //! Provides read/write access to the system clipboard supporting text, image,

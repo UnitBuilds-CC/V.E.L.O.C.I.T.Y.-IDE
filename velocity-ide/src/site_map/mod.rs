@@ -1,8 +1,5 @@
-#![allow(dead_code)]
-
 pub mod kv;
 pub mod query_cache;
-pub mod query_engine;
 pub mod serialization;
 pub mod store;
 pub mod tests;

@@ -1,4 +1,4 @@
-#![allow(dead_code)] // Reserved WA automation API surface; awaiting full MCP dispatch wiring.
+#![cfg_attr(not(windows), allow(dead_code))] // WA process-management surface; dispatched via registry/wa_tools.rs.
 //! Process lifecycle management for Windows desktop automation.
 //!
 //! Provides process launching, termination, enumeration, and wait-for-exit
@@ -449,17 +449,6 @@ mod native {
         }
 
         processes
-    }
-
-    /// Check if a process is running by inspecting its exit code.
-    ///
-    /// Merely opening a handle (`OpenProcess`) is not sufficient: on Windows a
-    /// terminated process keeps its kernel object alive until every handle is
-    /// closed, so `OpenProcess` succeeds for zombies too. The reliable signal is
-    /// the exit code — it stays `STILL_ACTIVE` (259) only while the process is
-    /// actually running.
-    pub fn is_process_running_native(pid: u32) -> bool {
-        process_status_native(pid).running
     }
 
     /// Resolve a pid to an honest presence verdict.

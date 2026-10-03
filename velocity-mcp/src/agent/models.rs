@@ -39,7 +39,6 @@ pub enum UiToAgentMessage {
 
 #[derive(Debug, Clone)]
 pub enum AgentToUiMessage {
-    #[allow(dead_code)]
     ThoughtToken(String),
     OutputToken(String),
     RequestToolApproval {

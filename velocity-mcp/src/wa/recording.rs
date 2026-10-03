@@ -1,4 +1,4 @@
-#![allow(dead_code)] // Reserved WA automation API surface; awaiting full MCP dispatch wiring.
+#![cfg_attr(not(windows), allow(dead_code))] // WA input-recording surface; dispatched via registry/wa_tools.rs.
 //! Recording/Replay engine for Windows desktop automation.
 //!
 //! Records user interactions (clicks, keystrokes, focus changes) by polling the

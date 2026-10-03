@@ -1,4 +1,4 @@
-#![allow(dead_code)] // Reserved WA automation API surface; awaiting full MCP dispatch wiring.
+#![cfg_attr(not(windows), allow(dead_code))] // Cross-context browser↔desktop bridge; dispatched via registry/wa_tools.rs.
 //! Browser↔Desktop bridge for unified cross-context automation workflows.
 //!
 //! Coordinates between the velocity-browser CDP/WebSocket automation layer

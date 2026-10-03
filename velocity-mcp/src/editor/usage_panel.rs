@@ -215,32 +215,3 @@ fn format_tokens(n: u64) -> String {
         n.to_string()
     }
 }
-
-#[allow(dead_code)]
-pub fn render_usage_compact(
-    ui: &mut egui::Ui,
-    accounts: &[AccountUsageView],
-    palette: IdePalette,
-) -> bool {
-    let total_remaining: u32 = accounts.iter().map(|a| a.remaining).sum();
-    let total_limit: u32 = accounts.iter().map(|a| a.daily_limit).sum();
-    let available = accounts.iter().filter(|a| !a.exhausted).count();
-    let color = if available == 0 {
-        palette.error
-    } else if total_remaining < total_limit / 5 {
-        palette.warning
-    } else {
-        palette.success
-    };
-
-    ui.label(
-        egui::RichText::new(format!(
-            "{total_remaining}/{total_limit} req \u{00b7} {available} acct"
-        ))
-        .size(11.0)
-        .color(color)
-        .strong(),
-    )
-    .on_hover_text("Click to open Usage panel")
-    .clicked()
-}

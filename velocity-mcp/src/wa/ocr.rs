@@ -1,4 +1,4 @@
-#![allow(dead_code)] // Reserved WA automation API surface; awaiting full MCP dispatch wiring.
+#![cfg_attr(not(windows), allow(dead_code))] // WA OCR surface; dispatched via registry/wa_tools.rs.
 //! OCR/text recognition for Windows desktop automation.
 //!
 //! Provides text extraction from screen regions when UIAutomation tree

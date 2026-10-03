@@ -43,13 +43,6 @@ impl OrchestratorRegistry {
         })
     }
 
-    #[allow(dead_code)]
-    pub fn has_blocked(&self) -> bool {
-        self.statuses
-            .values()
-            .any(|s| matches!(s, TaskStatus::Blocked(_)))
-    }
-
     pub fn ready_ids(&self, graph: &TaskGraph) -> Vec<TaskId> {
         let completed: std::collections::HashSet<_> = self
             .statuses
