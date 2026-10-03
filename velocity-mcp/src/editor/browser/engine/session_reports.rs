@@ -440,7 +440,8 @@ pub fn browser_runtime_capture_report_internal(
     );
     let request_body = serde_json::to_string(&RuntimeCaptureApiRequest { url, timeout_ms })
         .map_err(|err| format!("serialise runtime capture request: {err}"))?;
-    let response = ureq::post(&endpoint)
+    let response = runtime_api_agent()
+        .post(&endpoint)
         .set("Content-Type", "application/json")
         .send_string(&request_body)
         .map_err(|err| format!("runtime capture request failed: {err}"))?;

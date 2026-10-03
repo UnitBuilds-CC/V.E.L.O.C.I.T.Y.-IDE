@@ -2,7 +2,8 @@ pub mod compiler;
 pub mod exec_page;
 pub mod optimizer;
 pub mod symbolic_loop;
-pub mod tests;
+#[cfg(test)]
+mod tests;
 pub mod types;
 pub mod vm_helpers;
 pub mod x86_emitter;

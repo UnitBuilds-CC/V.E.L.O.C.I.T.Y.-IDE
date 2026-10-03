@@ -71,8 +71,8 @@ pub fn nda_vec_add_inplace(x: &mut NdaVec, delta: &NdaVec) {
         return;
     }
 
-    const DECODE_TABLE: [i32; 4] = [-2, -1, 1, 2];
-    const ENCODE_TABLE: [u8; 9] = [0, 0, 0, 1, 2, 2, 3, 3, 3];
+    const DECODE_TABLE: [i32; 4] = super::tables::DECODE_TABLE;
+    const ENCODE_TABLE: [u8; 9] = super::tables::ENCODE_TABLE;
 
     for byte_idx in 0..bytes {
         let mut s_byte = 0u8;
@@ -172,8 +172,8 @@ pub fn rms_norm_nda(x: &NdaVec, w: &NdaVec, eps_shift: u32) -> NdaVec {
     let inv_rms_q14 = isqrt_inv_q14(mean_sq_eps);
 
     let mut prod_table = [0u8; 16];
-    const DECODE_TABLE: [i32; 4] = [-2, -1, 1, 2];
-    const ENCODE_TABLE: [u8; 9] = [0, 0, 0, 1, 2, 2, 3, 3, 3];
+    const DECODE_TABLE: [i32; 4] = super::tables::DECODE_TABLE;
+    const ENCODE_TABLE: [u8; 9] = super::tables::ENCODE_TABLE;
 
     for x_idx in 0..4 {
         let xv = DECODE_TABLE[x_idx] as i64;

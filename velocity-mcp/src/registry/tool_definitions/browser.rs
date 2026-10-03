@@ -10,7 +10,6 @@ pub fn get_browser_tools() -> Vec<Tool> {
                 "type": "object",
                 "properties": {
                     "url": { "type": "string", "description": "Absolute URL to navigate to and crawl." },
-                    "concurrency": { "type": "integer", "description": "Unused by the current static browser engine." },
                     "compact": { "type": "boolean", "description": "When true, return a structured crawl summary with persisted artifact paths instead of verbose multiline text." }
                 },
                 "required": ["url"]

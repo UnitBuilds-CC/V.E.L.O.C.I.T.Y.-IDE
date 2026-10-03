@@ -133,7 +133,7 @@ impl<'a> JitState<'a> {
     pub fn is_truthy(v: &NdaVec) -> bool {
         let mut sum: i64 = 0;
         let bytes = v.sign.len();
-        const DECODE_TABLE: [i32; 4] = [-2, -1, 1, 2];
+        const DECODE_TABLE: [i32; 4] = crate::nda_int::tables::DECODE_TABLE;
         for byte_idx in 0..bytes {
             let mut s_shift = v.sign[byte_idx];
             let mut e_shift = v.extra[byte_idx];

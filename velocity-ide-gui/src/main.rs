@@ -155,7 +155,7 @@ fn spawn_telemetry_server(
 ) {
     std::thread::spawn(move || {
         if let Ok(mut server) =
-            ipc::telemetry_share::TelemetryServer::open(&shmem_path, b"velocity_telemetry_v1")
+            ipc::telemetry_share::TelemetryServer::open(&shmem_path, ipc::IPC_TELEMETRY_HMAC_KEY)
         {
             println!("[server] Telemetry Server listening on shared memory segment.");
             let _ = server.listen(|req| match req {

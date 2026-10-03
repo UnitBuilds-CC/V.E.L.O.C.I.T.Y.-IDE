@@ -45,7 +45,7 @@ impl NdaVec {
         let mut sign = vec![0u8; bytes];
         let mut extra = vec![0u8; bytes];
 
-        const ENCODE_TABLE: [u8; 9] = [0, 0, 0, 1, 2, 2, 3, 3, 3];
+        const ENCODE_TABLE: [u8; 9] = super::tables::ENCODE_TABLE;
 
         for (i, &v) in data.iter().enumerate() {
             let clamped = v.clamp(-4, 4);

@@ -857,10 +857,14 @@ impl TerminalState {
                             self.find_just_opened = false;
                         }
                         ui.add_enabled_ui(found, |ui| {
-                            if ui.button("\u{25B2}").clicked() {
+                            if ui
+                                .button("\u{25B2}")
+                                .on_hover_text("Previous match")
+                                .clicked()
+                            {
                                 self.find_step(false);
                             }
-                            if ui.button("\u{25BC}").clicked() {
+                            if ui.button("\u{25BC}").on_hover_text("Next match").clicked() {
                                 self.find_step(true);
                             }
                         });

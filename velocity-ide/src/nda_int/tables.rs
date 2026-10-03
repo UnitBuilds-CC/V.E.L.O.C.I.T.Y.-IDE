@@ -1,3 +1,15 @@
+/// Canonical 2-bit codebook shared by the NDA encoder, decoder and JIT.
+///
+/// Encode: a magnitude clamped to `-4..=4` is offset by `+4` into `0..=8` and
+/// looked up here to yield the `(sign, extra)` code pair. Decode maps a 2-bit
+/// code index back to its signed magnitude. This was previously restated as a
+/// literal in seven places across `ops`, `nda_vec` and the `nda_jit` VM/types;
+/// a single divergence there is silent numeric corruption, so every site now
+/// aliases these two consts instead of re-declaring the array.
+pub const ENCODE_TABLE: [u8; 9] = [0, 0, 0, 1, 2, 2, 3, 3, 3];
+/// Inverse of [`ENCODE_TABLE`]: 2-bit code index `0..=3` -> signed magnitude.
+pub const DECODE_TABLE: [i32; 4] = [-2, -1, 1, 2];
+
 pub static DOT_4_LUT: [[i8; 256]; 256] = {
     let mut table = [[0i8; 256]; 256];
 
@@ -55,7 +67,7 @@ pub static DOT_4_LUT: [[i8; 256]; 256] = {
 
 pub static ADD_LUT_Q16: [u8; 65536] = {
     let mut table = [0u8; 65536];
-    let encode_table = [0, 0, 0, 1, 2, 2, 3, 3, 3];
+    let encode_table = ENCODE_TABLE;
 
     let mut key = 0;
     while key < 65536 {
@@ -111,7 +123,7 @@ pub static ADD_LUT_Q16: [u8; 65536] = {
             bit += 1;
         }
 
-        table[key] = (res_sign as u8) | ((res_extra as u8) << 4);
+        table[key] = res_sign | (res_extra << 4);
         key += 1;
     }
     table
@@ -119,7 +131,7 @@ pub static ADD_LUT_Q16: [u8; 65536] = {
 
 pub static SWIGLU_LUT_Q16: [u8; 65536] = {
     let mut table = [0u8; 65536];
-    let encode_table = [0, 0, 0, 1, 2, 2, 3, 3, 3];
+    let encode_table = ENCODE_TABLE;
 
     let mut key = 0;
     while key < 65536 {

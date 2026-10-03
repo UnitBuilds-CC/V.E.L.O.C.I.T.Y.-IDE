@@ -254,12 +254,16 @@ impl FindReplaceState {
             }
 
             // Toggles
-            let cs_btn = ui.selectable_label(self.case_sensitive, "Aa");
+            let cs_btn = ui
+                .selectable_label(self.case_sensitive, "Aa")
+                .on_hover_text("Match case");
             if cs_btn.clicked() {
                 self.case_sensitive = !self.case_sensitive;
                 action = FindAction::Recompute;
             }
-            let ww_btn = ui.selectable_label(self.whole_word, "W");
+            let ww_btn = ui
+                .selectable_label(self.whole_word, "W")
+                .on_hover_text("Whole words only");
             if ww_btn.clicked() {
                 self.whole_word = !self.whole_word;
                 action = FindAction::Recompute;
@@ -271,6 +275,7 @@ impl FindReplaceState {
                     egui::RichText::new(egui_phosphor::regular::X)
                         .font(crate::editor::theme::icon_font_id(11.0)),
                 )
+                .on_hover_text("Close")
                 .clicked()
             {
                 self.close();

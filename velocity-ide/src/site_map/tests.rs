@@ -170,7 +170,7 @@ fn round_trip_triple_node() {
 }
 
 #[test]
-fn test_graph_query_engine() {
+fn test_graph_query() {
     let dir = TempDir::new().unwrap();
     let mut sm = SiteMap::open(dir.path(), 0).unwrap();
 

@@ -357,4 +357,43 @@ mod tests {
         let result = client.send(&req);
         assert!(result.is_err(), "Should fail with wrong HMAC key");
     }
+
+    #[test]
+    fn test_production_ipc_key_roundtrips() {
+        // The GUI server and the watcher client both open the shared-memory
+        // channel with ipc::IPC_TELEMETRY_HMAC_KEY. This test exercises that
+        // exact key (not the TEST_KEY used by the other cases) so a change
+        // that breaks the real production channel is caught here.
+        let prod_key = crate::ipc::IPC_TELEMETRY_HMAC_KEY;
+        let file = NamedTempFile::new().unwrap();
+        let path = file.path().to_path_buf();
+        let path_clone = path.clone();
+
+        let _handle = thread::spawn(move || {
+            let mut server = TelemetryServer::open(&path_clone, prod_key).unwrap();
+            server
+                .listen(|req| match req {
+                    TelemetryRequest::AstUpdate { triples, .. } => TelemetryResponse {
+                        success: !triples.is_empty(),
+                        warning: None,
+                    },
+                    _ => TelemetryResponse {
+                        success: true,
+                        warning: None,
+                    },
+                })
+                .ok();
+        });
+
+        std::thread::sleep(Duration::from_millis(50));
+
+        let mut client = TelemetryClient::open(&path, prod_key).unwrap();
+        let res = client
+            .send(&TelemetryRequest::AstUpdate {
+                file_path: "src/lib.rs".to_string(),
+                triples: vec![(1, 2, 3)],
+            })
+            .expect("production key must authenticate both ends");
+        assert!(res.success);
+    }
 }

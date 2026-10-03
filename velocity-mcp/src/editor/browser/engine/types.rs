@@ -254,16 +254,34 @@ pub fn format_runtime_api_error(err: ureq::Error) -> String {
     }
 }
 
+/// Shared HTTP agent for browser runtime-API calls.
+///
+/// ureq 2.x has *no* timeout by default, so a hung runtime sidecar endpoint
+/// would park the calling thread forever inside the agent's tool-execution
+/// path with no operator-visible timeout or cancel. Bound connect/read/write
+/// the same way the provider path in `agent/executor/dispatch.rs` does.
+pub fn runtime_api_agent() -> &'static ureq::Agent {
+    static AGENT: std::sync::OnceLock<ureq::Agent> = std::sync::OnceLock::new();
+    AGENT.get_or_init(|| {
+        ureq::AgentBuilder::new()
+            .timeout_connect(std::time::Duration::from_secs(10))
+            .timeout_read(std::time::Duration::from_secs(60))
+            .timeout_write(std::time::Duration::from_secs(30))
+            .build()
+    })
+}
+
 pub fn runtime_api_request(
     method: &str,
     url: &str,
     body: Option<&serde_json::Value>,
 ) -> Result<serde_json::Value, String> {
+    let agent = runtime_api_agent();
     let response = match method {
-        "GET" => ureq::get(url).call().map_err(format_runtime_api_error)?,
-        "DELETE" => ureq::delete(url).call().map_err(format_runtime_api_error)?,
+        "GET" => agent.get(url).call().map_err(format_runtime_api_error)?,
+        "DELETE" => agent.delete(url).call().map_err(format_runtime_api_error)?,
         "POST" => {
-            let request = ureq::post(url).set("Content-Type", "application/json");
+            let request = agent.post(url).set("Content-Type", "application/json");
             match body {
                 Some(value) => {
                     let payload = serde_json::to_string(value)

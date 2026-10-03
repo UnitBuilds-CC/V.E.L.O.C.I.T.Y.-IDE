@@ -2,7 +2,8 @@ pub mod kv;
 pub mod query_cache;
 pub mod serialization;
 pub mod store;
-pub mod tests;
+#[cfg(test)]
+mod tests;
 pub mod types;
 pub mod verifier;
 

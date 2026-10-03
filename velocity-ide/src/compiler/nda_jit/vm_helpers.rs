@@ -47,7 +47,7 @@ pub fn add_vals(lhs: &JitVal, rhs: &JitVal) -> JitVal {
             if *l_s == 0 && *r_s == 0 {
                 JitVal::Scalar(l_v + r_v, 0)
             } else {
-                const ENCODE_TABLE: [u8; 9] = [0, 0, 0, 1, 2, 2, 3, 3, 3];
+                const ENCODE_TABLE: [u8; 9] = crate::nda_int::tables::ENCODE_TABLE;
                 let out_scale = (*l_s).max(*r_s);
                 let l_shift = (out_scale - *l_s).max(0) as u32;
                 let r_shift = (out_scale - *r_s).max(0) as u32;
@@ -343,7 +343,7 @@ pub fn apply_vec_op(op: VecOpKind, val: &JitVal) -> JitVal {
             JitVal::Vector(v) => {
                 let mut raw_sum = 0i32;
                 let bytes = v.sign.len();
-                const DECODE_TABLE: [i32; 4] = [-2, -1, 1, 2];
+                const DECODE_TABLE: [i32; 4] = crate::nda_int::tables::DECODE_TABLE;
                 for byte_idx in 0..bytes {
                     let mut s_shift = v.sign[byte_idx];
                     let mut e_shift = v.extra[byte_idx];

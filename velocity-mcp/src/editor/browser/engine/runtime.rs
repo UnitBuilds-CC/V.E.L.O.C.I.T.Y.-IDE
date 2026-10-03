@@ -633,7 +633,8 @@ pub fn browser_runtime_visual_capture(
 ) -> Result<String, String> {
     let api_base_resolved = resolve_browser_runtime_api_base(api_base);
     let endpoint = format!("{}/api/runtime/visual-artifact", api_base_resolved);
-    let response = ureq::post(&endpoint)
+    let response = runtime_api_agent()
+        .post(&endpoint)
         .set("Content-Type", "application/json")
         .send_string(&serde_json::json!({"url": url}).to_string())
         .map_err(format_runtime_api_error)?;
@@ -647,9 +648,25 @@ pub fn browser_runtime_visual_capture(
         .to_string();
     let mut reader = response.into_reader();
     let mut png = Vec::new();
-    reader
-        .read_to_end(&mut png)
-        .map_err(|err| format!("read runtime visual artifact response: {err}"))?;
+    // Bounded read: a buggy or malicious screenshot endpoint must not be able
+    // to OOM the IDE. into_reader() is a Box<dyn Read> so Read::take is not
+    // available; cap it explicitly instead.
+    const MAX_ARTIFACT_BYTES: usize = 32 * 1024 * 1024;
+    let mut chunk = [0u8; 65536];
+    loop {
+        let n = reader
+            .read(&mut chunk)
+            .map_err(|err| format!("read runtime visual artifact response: {err}"))?;
+        if n == 0 {
+            break;
+        }
+        png.extend_from_slice(&chunk[..n]);
+        if png.len() > MAX_ARTIFACT_BYTES {
+            return Err(format!(
+                "runtime visual artifact exceeds {MAX_ARTIFACT_BYTES} byte cap"
+            ));
+        }
+    }
     let artifact_id = runtime_visual_artifact_id(url);
     let png_path = browser_runtime_visual_png_path(workspace_root, &artifact_id);
     let metadata_path = browser_runtime_visual_metadata_path(workspace_root, &artifact_id);
