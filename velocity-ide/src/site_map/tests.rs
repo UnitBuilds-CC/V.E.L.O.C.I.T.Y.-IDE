@@ -809,3 +809,32 @@ fn all_strings_returns_registered() {
     assert!(all.values().any(|v| v == "hello"));
     assert!(all.values().any(|v| v == "world"));
 }
+
+#[test]
+fn string_cache_is_bounded_and_disk_stays_complete() {
+    use super::store::MAX_STRING_CACHE_SIZE;
+    let dir = TempDir::new().unwrap();
+    let sm = SiteMap::open(dir.path(), 0).unwrap();
+
+    // Register more unique strings than the RAM cache can hold.
+    let total = MAX_STRING_CACHE_SIZE + 50;
+    let owned: Vec<String> = (0..total).map(|i| format!("ident_{}", i)).collect();
+    let refs: Vec<&str> = owned.iter().map(|s| s.as_str()).collect();
+    let hashes = sm.register_strings_batch(&refs).unwrap();
+
+    // The hot RAM cache is capped; the oldest entries were evicted.
+    assert_eq!(sm.string_cache_len(), MAX_STRING_CACHE_SIZE);
+
+    // The first (evicted) string still resolves via the authoritative disk.
+    assert_eq!(sm.resolve_string(hashes[0]).as_deref(), Some("ident_0"));
+    // And the most-recent (still cached) one resolves too.
+    assert_eq!(
+        sm.resolve_string(hashes[total - 1]).as_deref(),
+        Some(owned[total - 1].as_str())
+    );
+
+    // all_strings reflects the complete on-disk dictionary, not the cache.
+    assert_eq!(sm.all_strings().len(), total);
+    // stats reports the authoritative count as well.
+    assert_eq!(sm.stats().string_dict_size, total);
+}

@@ -305,10 +305,14 @@ in …`.
 
 ### Workflows
 *Tools ▸ Automation ▸ Workflows; palette `Workflows`.*
-Sub-tabs **List** · **Visual** · **Templates** (coming soon) · **AI Generate**
-(inert). **List:** create workflows, reorder/delete steps, add tool/agent steps,
+Sub-tabs **List** · **Visual** · **Templates**. **List:** create workflows, reorder/delete steps, add tool/agent steps,
 view the last run. **Visual:** a node canvas (Agent/Tool/Connector/Condition),
 connect nodes via `from`/`to` combos, snapshots, and **▶ Run Workflow**.
+**Templates:** a gallery of built-in workflow templates grouped by category
+(Code Quality, Testing, Automation, Review, Deployment, Research); each card
+shows its step count and description with **Add to list** (instantiates the
+template into your workflow list, persisted to the workspace) and **Open in
+Visual** (loads it onto the node canvas for editing).
 
 ### Governance
 *Tools ▸ Automation ▸ Governance; Workspace rail sub-tab 5.*

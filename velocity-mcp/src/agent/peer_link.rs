@@ -289,6 +289,13 @@ pub struct PeerManager {
     pub tasks: HashMap<String, DelegatedTask>,
     /// Maximum messages to retain in inbox/outbox.
     pub max_messages: usize,
+    /// Cap on retained finished delegation history. Active (non-terminal)
+    /// tasks are never evicted, so this only bounds the history of work that
+    /// already Completed / Failed / Cancelled.
+    pub max_tasks: usize,
+    /// Cap on retained completed file-transfer history. In-flight transfers
+    /// (not yet `complete`) are never evicted.
+    pub max_transfers: usize,
     /// Port for the local peer API server (0 = disabled).
     pub listen_port: u16,
     /// Chunk size for file transfers (bytes).
@@ -307,9 +314,50 @@ impl PeerManager {
             transfers: HashMap::new(),
             tasks: HashMap::new(),
             max_messages: 200,
+            max_tasks: 200,
+            max_transfers: 200,
             listen_port: 0,
             chunk_size: 64 * 1024, // 64 KB chunks
             workspace_root: None,
+        }
+    }
+
+    /// Bound the history of finished delegations and completed transfers so a
+    /// long-running session cannot grow these maps without limit. Only terminal
+    /// entries are evicted (oldest first); in-flight work is never dropped. If
+    /// every entry is still active the map is left over the cap rather than
+    /// discarding live state. Called after each insert.
+    pub fn prune_history(&mut self) {
+        if self.tasks.len() > self.max_tasks {
+            let mut finished: Vec<(u64, String)> = self
+                .tasks
+                .iter()
+                .filter(|(_, t)| {
+                    matches!(
+                        t.status,
+                        TaskStatus::Completed | TaskStatus::Failed | TaskStatus::Cancelled
+                    )
+                })
+                .map(|(id, t)| (t.completed_at.unwrap_or(t.created_at), id.clone()))
+                .collect();
+            finished.sort();
+            let excess = self.tasks.len() - self.max_tasks;
+            for (_, id) in finished.into_iter().take(excess) {
+                self.tasks.remove(&id);
+            }
+        }
+        if self.transfers.len() > self.max_transfers {
+            let mut done: Vec<(u64, String)> = self
+                .transfers
+                .iter()
+                .filter(|(_, tr)| tr.complete)
+                .map(|(id, tr)| (tr.started_at, id.clone()))
+                .collect();
+            done.sort();
+            let excess = self.transfers.len() - self.max_transfers;
+            for (_, id) in done.into_iter().take(excess) {
+                self.transfers.remove(&id);
+            }
         }
     }
 
@@ -497,6 +545,7 @@ impl PeerManager {
         );
 
         self.tasks.insert(task_id.clone(), task);
+        self.prune_history();
         Ok(task_id)
     }
 
@@ -619,6 +668,7 @@ impl PeerManager {
         );
 
         self.transfers.insert(transfer_id.clone(), transfer);
+        self.prune_history();
         Ok(transfer_id)
     }
 
@@ -656,6 +706,7 @@ impl PeerManager {
             dest_path: None,
         };
         self.transfers.insert(transfer_id.to_string(), transfer);
+        self.prune_history();
     }
 
     /// Record a received chunk for an incoming transfer.
@@ -1356,5 +1407,102 @@ mod tests {
         assert!(!output.contains("[unknown directive]"));
         assert!(output.contains("[notify] Hello"));
         assert!(output.contains("[notify] End"));
+    }
+
+    fn finished_task(id: &str, status: TaskStatus, completed_at: u64) -> DelegatedTask {
+        DelegatedTask {
+            id: id.to_string(),
+            prompt: "p".to_string(),
+            attached_files: vec![],
+            instructions: "i".to_string(),
+            status,
+            progress: 100.0,
+            result: None,
+            error: None,
+            delegated_by: "local".to_string(),
+            peer_id: "p1".to_string(),
+            created_at: completed_at,
+            completed_at: Some(completed_at),
+        }
+    }
+
+    fn complete_transfer(id: &str, started_at: u64, complete: bool) -> FileTransfer {
+        FileTransfer {
+            id: id.to_string(),
+            filename: "f".to_string(),
+            total_size: 1,
+            sha256: "h".to_string(),
+            total_chunks: 1,
+            chunks_received: 1,
+            direction: TransferDirection::Outgoing,
+            peer_id: "p1".to_string(),
+            instructions: None,
+            started_at,
+            complete,
+            verified: false,
+            temp_path: String::new(),
+            dest_path: None,
+        }
+    }
+
+    #[test]
+    fn prune_history_caps_finished_and_keeps_active() {
+        let mut mgr = init_manager();
+        mgr.max_tasks = 3;
+        mgr.max_transfers = 2;
+
+        // One active (non-terminal) task that must survive eviction.
+        mgr.tasks.insert(
+            "active".to_string(),
+            finished_task("active", TaskStatus::Running, 100),
+        );
+        // Five finished tasks with increasing completion times.
+        for i in 0..5u64 {
+            mgr.tasks.insert(
+                format!("done-{i}"),
+                finished_task(&format!("done-{i}"), TaskStatus::Completed, i),
+            );
+        }
+        // Two in-flight transfers (not complete) plus three complete ones.
+        mgr.transfers
+            .insert("live-0".to_string(), complete_transfer("live-0", 10, false));
+        mgr.transfers
+            .insert("live-1".to_string(), complete_transfer("live-1", 11, false));
+        for i in 0..3u64 {
+            mgr.transfers.insert(
+                format!("xfer-{i}"),
+                complete_transfer(&format!("xfer-{i}"), i, true),
+            );
+        }
+
+        mgr.prune_history();
+
+        // Tasks: capped at max; the active one survives; oldest finished evicted.
+        assert_eq!(mgr.tasks.len(), 3);
+        assert!(mgr.tasks.contains_key("active"));
+        assert!(!mgr.tasks.contains_key("done-0"));
+        assert!(!mgr.tasks.contains_key("done-1"));
+        assert!(mgr.tasks.contains_key("done-4"));
+
+        // Transfers: capped at max; in-flight ones survive; oldest complete evicted.
+        assert_eq!(mgr.transfers.len(), 2);
+        assert!(mgr.transfers.contains_key("live-0"));
+        assert!(mgr.transfers.contains_key("live-1"));
+        assert!(!mgr.transfers.contains_key("xfer-0"));
+    }
+
+    #[test]
+    fn prune_history_leaves_active_only_over_cap() {
+        let mut mgr = init_manager();
+        mgr.max_tasks = 1;
+        // Every task is active: nothing may be evicted even past the cap.
+        for i in 0..4u64 {
+            mgr.tasks.insert(
+                format!("run-{i}"),
+                finished_task(&format!("run-{i}"), TaskStatus::Running, i),
+            );
+        }
+        mgr.prune_history();
+        assert_eq!(mgr.tasks.len(), 4);
     }
 }

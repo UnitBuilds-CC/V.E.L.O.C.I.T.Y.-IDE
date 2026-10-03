@@ -32,7 +32,7 @@ cargo run --release --bin velocity_mcp -- --mode stdio
 ### Run Tests
 
 ```bash
-# Run the full suite (10,047 library tests, plus E2E and integration tests)
+# Run the full suite (10,000+ library tests, plus E2E and integration tests)
 cargo test --workspace
 
 # Run with coverage
@@ -62,7 +62,7 @@ cargo llvm-cov --workspace --lcov
 
 ### 3. Native IDE & UI Layer (`velocity-ide-gui` & `velocity-mcp/src/editor`)
 - **GUI Framework**: Hardware-accelerated `egui` 0.35 interface with 5 modern HSL color palettes (Midnight, Daylight, Operator, Mission, High Contrast).
-- **Activity Bar System**: 8-category icon strip with 40+ navigable sub-panels — file tree with filter, git changes, chat with model selector, agent roster, wiki, NDA documents, plugin registry, skills, usage dashboard, and more.
+- **Activity Bar System**: 9-category icon strip (Files, Search, Git, Chat, Build, Nodes, Agents, Knowledge, Workspace) with 36 rail sub-tabs plus dozens of dockable panels — file tree with filter, git changes, chat with model selector, agent roster, wiki, NDA documents, plugin registry, skills, usage dashboard, and more.
 - **Wiki with Rebuild Index**: Compile all .rs files to populate the wiki's name dictionary, enabling proper file/symbol classification with real names instead of hex hashes.
 - **Memory-Efficient Design**: Lazy-loaded agent memory and knowledge base (deferred until first access), bounded collections, zero per-frame allocations where possible. Idle memory ~245 MB.
 - **Workspace File Tree & Symbol History Inspector**: Browse workspace files, declarations, and inspect chronological change histories with context rationale.
@@ -75,7 +75,7 @@ cargo llvm-cov --workspace --lcov
 |----------|--------|
 | `Ctrl+P` | Quick open (file search) |
 | `Ctrl+Shift+P` | Open command palette |
-| `Ctrl+Shift+F` | Open find/replace |
+| `Ctrl+Shift+F` | Toggle Search panel |
 | `Ctrl+G` | Go to line |
 | `Ctrl+Shift+O` | Go to symbol |
 | `Alt+←` / `Alt+→` | Navigate back/forward |

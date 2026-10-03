@@ -8,6 +8,21 @@ use std::collections::HashMap;
 
 // ─── Workflow AppState ────────────────────────────────────────────────────────
 
+/// Which view the Workflows panel currently shows. The panel used to expose a
+/// fourth "AI Generate" tab that was advertised but had no backing logic; it was
+/// removed rather than shipped as a dead button, so the natural-language
+/// workflow generator is not represented here.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum WorkflowTab {
+    /// Linear step composer (default).
+    #[default]
+    List,
+    /// Graph canvas editor.
+    Visual,
+    /// Gallery of built-in, source-verified workflow templates.
+    Templates,
+}
+
 /// Workflow composer registry state and all related UI draft fields.
 /// Extracted from VelocityApp to reduce god-struct complexity.
 #[derive(Debug, Clone, Default)]
@@ -30,10 +45,8 @@ pub struct WorkflowAppState {
     pub workflow_canvases: HashMap<String, crate::editor::workflow::canvas::WorkflowCanvas>,
     /// Id of the workflow currently open in the visual canvas editor.
     pub workflow_canvas_selected: Option<String>,
-    /// Whether the visual canvas editor is active (vs list composer).
-    pub workflow_visual_mode: bool,
-    /// AI generation prompt input for natural language workflow creation.
-    pub workflow_ai_prompt: String,
+    /// Which view the Workflows panel shows (list / visual / templates).
+    pub workflow_tab: WorkflowTab,
     /// Version history registry for workflows.
     pub workflow_versions: crate::editor::workflow::version::VersionRegistry,
 }
@@ -51,8 +64,7 @@ impl WorkflowAppState {
             workflow_last_run: None,
             workflow_canvases: HashMap::new(),
             workflow_canvas_selected: None,
-            workflow_visual_mode: false,
-            workflow_ai_prompt: String::new(),
+            workflow_tab: WorkflowTab::default(),
             workflow_versions: crate::editor::workflow::version::VersionRegistry::load(
                 workspace_root,
             ),

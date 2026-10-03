@@ -21,36 +21,44 @@ impl VelocityApp {
             palette.text_muted,
         );
 
-        // Mode tabs: List | Visual | Templates | AI Generate
+        // Mode tabs: List | Visual | Templates
+        use super::substructs::WorkflowTab;
         ui.horizontal(|ui| {
-            let list_btn = ui.selectable_label(
-                !self.workflow_state.workflow_visual_mode,
-                RichText::new("List").size(9.0),
-            );
+            let cur = self.workflow_state.workflow_tab;
+            let list_btn =
+                ui.selectable_label(cur == WorkflowTab::List, RichText::new("List").size(9.0));
             let visual_btn = ui.selectable_label(
-                self.workflow_state.workflow_visual_mode,
+                cur == WorkflowTab::Visual,
                 RichText::new("Visual").size(9.0),
             );
             let templates_btn = ui
-                .selectable_label(false, RichText::new("Templates").size(9.0))
-                .on_hover_text("Browse built-in workflow templates (coming soon)");
-            let ai_btn = ui
-                .selectable_label(false, RichText::new("AI Generate").size(9.0))
-                .on_hover_text("Describe a workflow and let the agent build it (coming soon)");
+                .selectable_label(
+                    cur == WorkflowTab::Templates,
+                    RichText::new("Templates").size(9.0),
+                )
+                .on_hover_text("Start a workflow from a built-in template");
             if list_btn.clicked() {
-                self.workflow_state.workflow_visual_mode = false;
+                self.workflow_state.workflow_tab = WorkflowTab::List;
             }
             if visual_btn.clicked() {
-                self.workflow_state.workflow_visual_mode = true;
+                self.workflow_state.workflow_tab = WorkflowTab::Visual;
             }
-            if templates_btn.clicked() { /* render templates inline below */ }
-            if ai_btn.clicked() { /* render AI generate inline below */ }
+            if templates_btn.clicked() {
+                self.workflow_state.workflow_tab = WorkflowTab::Templates;
+            }
         });
         ui.add_space(4.0);
 
-        if self.workflow_state.workflow_visual_mode {
-            self.render_workflow_visual(ui);
-            return;
+        match self.workflow_state.workflow_tab {
+            WorkflowTab::Visual => {
+                self.render_workflow_visual(ui);
+                return;
+            }
+            WorkflowTab::Templates => {
+                self.render_workflow_templates(ui);
+                return;
+            }
+            WorkflowTab::List => {}
         }
 
         // ── List mode (original) ──
@@ -428,6 +436,149 @@ impl VelocityApp {
                 )));
                 self.workflow_state.workflow_last_run = Some(runrec);
                 self.workflow_state.workflow_selected = Some(id);
+            }
+        }
+    }
+
+    /// Gallery of the built-in, source-tested workflow templates
+    /// (`velocity-mcp/src/editor/workflow/templates.rs`). Each card can be
+    /// dropped straight into the visual canvas or converted into a linear
+    /// list-composer workflow. This replaces the former inert
+    /// "Templates (coming soon)" tab.
+    pub fn render_workflow_templates(&mut self, ui: &mut egui::Ui) {
+        use super::substructs::WorkflowTab;
+        use crate::editor::workflow::canvas::CanvasNodeKind;
+        use crate::editor::workflow::templates::{all_templates, TemplateCategory};
+        let palette = self.palette();
+        Self::tier3_header(
+            ui,
+            "Workflow Templates",
+            "Start from a built-in, source-verified workflow.",
+            palette.accent,
+            palette.text_muted,
+        );
+
+        // Fixed category display order; empty categories are skipped.
+        let order = [
+            TemplateCategory::CodeQuality,
+            TemplateCategory::Testing,
+            TemplateCategory::Automation,
+            TemplateCategory::Review,
+            TemplateCategory::Deployment,
+            TemplateCategory::Research,
+        ];
+        let all = all_templates();
+        let mut open_visual: Option<&'static str> = None;
+        let mut add_list: Option<&'static str> = None;
+
+        egui::ScrollArea::vertical()
+            .id_salt("workflow_templates_scroll")
+            .show(ui, |ui| {
+                for cat in &order {
+                    let members: Vec<_> = all.iter().filter(|t| &t.category == cat).collect();
+                    if members.is_empty() {
+                        continue;
+                    }
+                    ui.add_space(4.0);
+                    ui.label(
+                        RichText::new(cat.label().to_uppercase())
+                            .small()
+                            .strong()
+                            .color(palette.accent),
+                    );
+                    for t in members {
+                        // Build once to count real steps (Start/End excluded).
+                        let preview = t.build("__preview", t.name);
+                        let step_count = preview
+                            .nodes
+                            .iter()
+                            .filter(|n| {
+                                !matches!(n.kind, CanvasNodeKind::Start | CanvasNodeKind::End)
+                            })
+                            .count();
+                        egui::Frame::new()
+                            .fill(palette.bg_secondary)
+                            .corner_radius(5.0)
+                            .inner_margin(8.0)
+                            .show(ui, |ui| {
+                                ui.horizontal(|ui| {
+                                    ui.label(
+                                        RichText::new(t.name)
+                                            .size(10.0)
+                                            .strong()
+                                            .color(palette.text),
+                                    );
+                                    ui.label(
+                                        RichText::new(format!("{step_count} step(s)"))
+                                            .size(8.0)
+                                            .color(palette.text_muted),
+                                    );
+                                    ui.with_layout(
+                                        egui::Layout::right_to_left(egui::Align::Center),
+                                        |ui| {
+                                            if ui
+                                                .small_button(
+                                                    RichText::new("Add to list").size(8.0),
+                                                )
+                                                .clicked()
+                                            {
+                                                add_list = Some(t.id);
+                                            }
+                                            if ui
+                                                .small_button(
+                                                    RichText::new("Open in Visual").size(8.0),
+                                                )
+                                                .clicked()
+                                            {
+                                                open_visual = Some(t.id);
+                                            }
+                                        },
+                                    );
+                                });
+                                ui.label(
+                                    RichText::new(t.description)
+                                        .size(9.0)
+                                        .color(palette.text_muted),
+                                );
+                            });
+                        ui.add_space(3.0);
+                    }
+                }
+            });
+
+        // Deferred mutations (clone workspace root so the closure isn't borrowing self).
+        let ws = self.workspace_root.clone();
+        if let Some(id) = open_visual {
+            if let Some(t) = all.iter().find(|t| t.id == id) {
+                let new_id = format!("wf-{}", crate::editor::triggers::now_secs());
+                let canvas = t.build(&new_id, t.name);
+                self.workflow_state
+                    .workflow_canvases
+                    .insert(new_id.clone(), canvas);
+                self.workflow_state.workflow_canvas_selected = Some(new_id);
+                self.workflow_state.workflow_tab = WorkflowTab::Visual;
+            }
+        }
+        if let Some(id) = add_list {
+            if let Some(t) = all.iter().find(|t| t.id == id) {
+                let new_id = format!("wf-{}", crate::editor::triggers::now_secs());
+                let canvas = t.build(&new_id, t.name);
+                match canvas.to_workflow() {
+                    Some(wf) => {
+                        self.workflow_state.workflows.add(wf);
+                        if let Err(e) = self.workflow_state.workflows.save(&ws) {
+                            Self::persist_err(&mut self.toasts, "workflows", &e);
+                        }
+                        self.workflow_state.workflow_selected = Some(new_id);
+                        self.toasts.push(crate::editor::toast::Toast::info(format!(
+                            "Added workflow from template '{}' \u{2014} edit steps below",
+                            t.name
+                        )));
+                    }
+                    None => self.toasts.push(crate::editor::toast::Toast::error(
+                        "Template could not be converted to a linear workflow",
+                    )),
+                }
             }
         }
     }

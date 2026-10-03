@@ -20,6 +20,12 @@ use serde::Serialize;
 /// Maximum number of token KV records kept in RAM.
 const MAX_KV_CACHE_SIZE: usize = 4096;
 
+/// Maximum number of registered strings kept in the in-RAM reverse-lookup
+/// cache. The on-disk `dictionary.json` is the authoritative, never-pruned
+/// store (persisted triple hashes must always resolve); this cap only bounds
+/// the hot RAM mirror, so long sessions cannot grow the map without limit.
+pub(crate) const MAX_STRING_CACHE_SIZE: usize = 4096;
+
 /// Persistent, content-addressed KV store.
 pub struct SiteMap {
     /// Root directory on disk.
@@ -38,8 +44,12 @@ pub struct SiteMap {
     snapshot_triples_cache: Mutex<HashMap<u64, Vec<VcTriple>>>,
     /// In-RAM cache for AST node triples.
     node_triples_cache: Mutex<HashMap<u64, Vec<VcTriple>>>,
-    /// In-RAM dictionary for registered strings.
+    /// In-RAM dictionary for registered strings. Bounded hot cache over the
+    /// authoritative on-disk `dictionary.json` (see `MAX_STRING_CACHE_SIZE`).
     string_dict: Mutex<HashMap<u64, String>>,
+    /// FIFO insertion order for `string_dict`, used to evict the oldest cached
+    /// strings once the RAM cache exceeds its cap.
+    string_dict_order: Mutex<VecDeque<u64>>,
     /// Predicate index: predicate_id -> list of triples with that predicate.
     /// Built lazily on first query and invalidated when snapshots change.
     predicate_index: Mutex<Option<HashMap<u16, Vec<VcTriple>>>>,
@@ -77,6 +87,7 @@ impl SiteMap {
             snapshot_triples_cache: Mutex::new(HashMap::new()),
             node_triples_cache: Mutex::new(HashMap::new()),
             string_dict: Mutex::new(HashMap::new()),
+            string_dict_order: Mutex::new(VecDeque::new()),
             predicate_index: Mutex::new(None),
         })
     }
@@ -630,10 +641,9 @@ impl SiteMap {
                     },
                 );
         let total_bytes: u64 = self.index.values().map(|e| e.size).sum();
-        let string_dict_size = {
-            let dict = self.string_dict.lock_safe();
-            dict.len()
-        };
+        // Report the authoritative on-disk count: the RAM mirror is a bounded
+        // cache that may be cold or partially evicted.
+        let string_dict_size = self.read_disk_dict().len();
         SiteMapStats {
             kv,
             nodes,
@@ -648,58 +658,99 @@ impl SiteMap {
         }
     }
 
-    pub fn register_string(&self, s: &str) -> Result<u64> {
-        let hash = self.hash_string(s);
-        let mut dict = self.string_dict.lock_safe();
+    /// Path to the authoritative on-disk string dictionary.
+    fn dict_path(&self) -> PathBuf {
+        self.base.join("dictionary.json")
+    }
 
-        if dict.is_empty() {
-            let dict_path = self.base.join("dictionary.json");
-            if dict_path.exists() {
-                if let Ok(raw) = fs::read_to_string(&dict_path) {
-                    if let Ok(loaded) = serde_json::from_str::<HashMap<String, String>>(&raw) {
-                        for (k_str, v_str) in loaded {
-                            if let Ok(k_num) = u64::from_str_radix(&k_str, 16) {
-                                dict.insert(k_num, v_str);
-                            }
-                        }
+    /// Read the complete on-disk dictionary. This is the source of truth for
+    /// hash → string reverse lookups and is never pruned, so every persisted
+    /// triple hash remains resolvable even after the RAM cache evicts entries.
+    fn read_disk_dict(&self) -> HashMap<u64, String> {
+        if let Ok(raw) = fs::read_to_string(self.dict_path()) {
+            if let Ok(loaded) = serde_json::from_str::<HashMap<String, String>>(&raw) {
+                let mut m = HashMap::with_capacity(loaded.len());
+                for (k_str, v_str) in loaded {
+                    if let Ok(k) = u64::from_str_radix(&k_str, 16) {
+                        m.insert(k, v_str);
                     }
+                }
+                return m;
+            }
+        }
+        HashMap::new()
+    }
+
+    /// Persist the complete dictionary to disk (hex-stringified keys).
+    fn write_disk_dict(&self, dict: &HashMap<u64, String>) {
+        let mut serializable = HashMap::with_capacity(dict.len());
+        for (k, v) in dict.iter() {
+            serializable.insert(format!("{:016x}", k), v.clone());
+        }
+        if let Ok(updated) = serde_json::to_string_pretty(&serializable) {
+            let _ = fs::write(self.dict_path(), updated);
+        }
+    }
+
+    /// Insert a string into the bounded RAM cache, evicting the oldest cached
+    /// entries once it exceeds `MAX_STRING_CACHE_SIZE`. Eviction only affects
+    /// RAM; the on-disk dictionary keeps every registered string.
+    fn cache_string(
+        &self,
+        dict: &mut HashMap<u64, String>,
+        order: &mut VecDeque<u64>,
+        hash: u64,
+        value: &str,
+    ) {
+        if let std::collections::hash_map::Entry::Vacant(e) = dict.entry(hash) {
+            e.insert(value.to_string());
+            order.push_back(hash);
+            while dict.len() > MAX_STRING_CACHE_SIZE {
+                match order.pop_front() {
+                    Some(old) => {
+                        dict.remove(&old);
+                    }
+                    None => break,
                 }
             }
         }
+    }
 
-        if let std::collections::hash_map::Entry::Vacant(e) = dict.entry(hash) {
+    pub fn register_string(&self, s: &str) -> Result<u64> {
+        let hash = self.hash_string(s);
+        // Merge into the authoritative on-disk dictionary so the reverse lookup
+        // survives RAM-cache eviction. Only rewrite the file for genuinely new
+        // strings.
+        let mut disk = self.read_disk_dict();
+        if let std::collections::hash_map::Entry::Vacant(e) = disk.entry(hash) {
             e.insert(s.to_string());
-            let dict_path = self.base.join("dictionary.json");
-            let mut serializable = HashMap::new();
-            for (k_num, v_str) in dict.iter() {
-                serializable.insert(format!("{:016x}", k_num), v_str.clone());
-            }
-            if let Ok(updated) = serde_json::to_string_pretty(&serializable) {
-                let _ = fs::write(&dict_path, updated);
-            }
+            self.write_disk_dict(&disk);
         }
+        // Warm the bounded hot cache.
+        let mut dict = self.string_dict.lock_safe();
+        let mut order = self.string_dict_order.lock_safe();
+        self.cache_string(&mut dict, &mut order, hash, s);
         Ok(hash)
     }
 
     pub fn resolve_string(&self, hash: u64) -> Option<String> {
-        let mut dict = self.string_dict.lock_safe();
-
-        if dict.is_empty() {
-            let dict_path = self.base.join("dictionary.json");
-            if dict_path.exists() {
-                if let Ok(raw) = fs::read_to_string(&dict_path) {
-                    if let Ok(loaded) = serde_json::from_str::<HashMap<String, String>>(&raw) {
-                        for (k_str, v_str) in loaded {
-                            if let Ok(k_num) = u64::from_str_radix(&k_str, 16) {
-                                dict.insert(k_num, v_str);
-                            }
-                        }
-                    }
-                }
+        // Fast path: the bounded RAM cache.
+        {
+            let dict = self.string_dict.lock_safe();
+            if let Some(v) = dict.get(&hash) {
+                return Some(v.clone());
             }
         }
-
-        dict.get(&hash).cloned()
+        // Cache miss: consult the complete on-disk dictionary and re-warm RAM.
+        let disk = self.read_disk_dict();
+        if let Some(v) = disk.get(&hash) {
+            let value = v.clone();
+            let mut dict = self.string_dict.lock_safe();
+            let mut order = self.string_dict_order.lock_safe();
+            self.cache_string(&mut dict, &mut order, hash, &value);
+            return Some(value);
+        }
+        None
     }
 
     pub fn hash_string(&self, s: &str) -> u64 {
@@ -783,40 +834,25 @@ impl SiteMap {
 
     /// Register multiple strings, writing dictionary.json only once.
     pub fn register_strings_batch(&self, strings: &[&str]) -> Result<Vec<u64>> {
-        let mut dict = self.string_dict.lock_safe();
-        if dict.is_empty() {
-            let dict_path = self.base.join("dictionary.json");
-            if dict_path.exists() {
-                if let Ok(raw) = fs::read_to_string(&dict_path) {
-                    if let Ok(loaded) = serde_json::from_str::<HashMap<String, String>>(&raw) {
-                        for (k_str, v_str) in loaded {
-                            if let Ok(k_num) = u64::from_str_radix(&k_str, 16) {
-                                dict.insert(k_num, v_str);
-                            }
-                        }
-                    }
-                }
-            }
-        }
+        let mut disk = self.read_disk_dict();
         let mut hashes = Vec::with_capacity(strings.len());
         let mut any_new = false;
         for s in strings {
             let hash = self.hash_string(s);
-            if let std::collections::hash_map::Entry::Vacant(e) = dict.entry(hash) {
+            if let std::collections::hash_map::Entry::Vacant(e) = disk.entry(hash) {
                 e.insert(s.to_string());
                 any_new = true;
             }
             hashes.push(hash);
         }
         if any_new {
-            let dict_path = self.base.join("dictionary.json");
-            let mut serializable = HashMap::new();
-            for (k_num, v_str) in dict.iter() {
-                serializable.insert(format!("{:016x}", k_num), v_str.clone());
-            }
-            if let Ok(updated) = serde_json::to_string_pretty(&serializable) {
-                let _ = fs::write(&dict_path, updated);
-            }
+            self.write_disk_dict(&disk);
+        }
+        // Warm the bounded RAM cache.
+        let mut dict = self.string_dict.lock_safe();
+        let mut order = self.string_dict_order.lock_safe();
+        for (hash, s) in hashes.iter().zip(strings.iter()) {
+            self.cache_string(&mut dict, &mut order, *hash, s);
         }
         Ok(hashes)
     }
@@ -857,24 +893,37 @@ impl SiteMap {
         Ok(keys)
     }
 
-    /// Resolve multiple string hashes at once (loads dictionary only once).
+    /// Resolve multiple string hashes at once (serves from the RAM cache and
+    /// reads the on-disk dictionary once for any evicted entries).
     pub fn resolve_strings_batch(&self, hashes: &[u64]) -> Vec<Option<String>> {
-        let mut dict = self.string_dict.lock_safe();
-        if dict.is_empty() {
-            let dict_path = self.base.join("dictionary.json");
-            if dict_path.exists() {
-                if let Ok(raw) = fs::read_to_string(&dict_path) {
-                    if let Ok(loaded) = serde_json::from_str::<HashMap<String, String>>(&raw) {
-                        for (k_str, v_str) in loaded {
-                            if let Ok(k_num) = u64::from_str_radix(&k_str, 16) {
-                                dict.insert(k_num, v_str);
-                            }
-                        }
+        let mut result: Vec<Option<String>> = Vec::with_capacity(hashes.len());
+        let mut miss = false;
+        {
+            let dict = self.string_dict.lock_safe();
+            for h in hashes {
+                match dict.get(h) {
+                    Some(v) => result.push(Some(v.clone())),
+                    None => {
+                        result.push(None);
+                        miss = true;
                     }
                 }
             }
         }
-        hashes.iter().map(|h| dict.get(h).cloned()).collect()
+        if miss {
+            let disk = self.read_disk_dict();
+            let mut dict = self.string_dict.lock_safe();
+            let mut order = self.string_dict_order.lock_safe();
+            for (h, slot) in hashes.iter().zip(result.iter_mut()) {
+                if slot.is_none() {
+                    if let Some(v) = disk.get(h) {
+                        *slot = Some(v.clone());
+                        self.cache_string(&mut dict, &mut order, *h, v);
+                    }
+                }
+            }
+        }
+        result
     }
 
     // ── Query helpers ─────────────────────────────────────────────────────────
@@ -892,24 +941,22 @@ impl SiteMap {
         entries
     }
 
-    /// Return all string dictionary entries.
+    /// Return all string dictionary entries. Reads the authoritative on-disk
+    /// dictionary (complete, never pruned) and folds in any RAM-cached entries.
     pub fn all_strings(&self) -> HashMap<u64, String> {
-        let mut dict = self.string_dict.lock_safe();
-        if dict.is_empty() {
-            let dict_path = self.base.join("dictionary.json");
-            if dict_path.exists() {
-                if let Ok(raw) = fs::read_to_string(&dict_path) {
-                    if let Ok(loaded) = serde_json::from_str::<HashMap<String, String>>(&raw) {
-                        for (k_str, v_str) in loaded {
-                            if let Ok(k_num) = u64::from_str_radix(&k_str, 16) {
-                                dict.insert(k_num, v_str);
-                            }
-                        }
-                    }
-                }
-            }
+        let mut all = self.read_disk_dict();
+        let dict = self.string_dict.lock_safe();
+        for (k, v) in dict.iter() {
+            all.entry(*k).or_insert_with(|| v.clone());
         }
-        dict.clone()
+        all
+    }
+
+    /// Introspection for tests: current size of the bounded in-RAM string
+    /// cache (not the authoritative on-disk count).
+    #[cfg(test)]
+    pub(crate) fn string_cache_len(&self) -> usize {
+        self.string_dict.lock_safe().len()
     }
 
     // ── Internal helpers ──────────────────────────────────────────────────────────

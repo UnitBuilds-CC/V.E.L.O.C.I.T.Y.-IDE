@@ -85,13 +85,14 @@ separate account or container so the `.velocity` directory is not reachable.
 
 ### Resource-growth follow-ups (not security)
 
-Two caches accumulate entries over a long session and are bounded today only
-by the working set: `PeerManager::tasks` / `PeerManager::transfers` (completed
-delegations and finished file transfers are retained as history) and
-`SiteMap::string_dict` (unique identifier names, persisted to
-`dictionary.json`). A TTL/ring-buffer sweep for the former and a batched,
-pruned rewrite for the latter are tracked but not yet implemented; neither is
-reachable by untrusted input.
+Two caches accumulate entries over a long session and are now bounded:
+`PeerManager::tasks` / `PeerManager::transfers` are capped at 200 finished
+each (`prune_history()` evicts the oldest Completed / Failed / Cancelled
+delegations and completed transfers; in-flight work is never dropped) and
+`SiteMap::string_dict` is a bounded (4096-entry, FIFO) hot cache over the
+authoritative on-disk `dictionary.json`, which stays complete so every
+persisted triple hash remains resolvable. Neither was ever reachable by
+untrusted input; the bounding is hygiene against unbounded session growth.
 
 ### Supply Chain Security
 
