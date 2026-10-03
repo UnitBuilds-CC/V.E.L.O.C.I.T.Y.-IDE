@@ -302,450 +302,445 @@ impl VelocityApp {
                 ui.horizontal(|ui| {
                     ui.spacing_mut().item_spacing.x = 6.0;
 
-                    if self.use_unified_header {
+                    ui.label(
+                        egui::RichText::new("VELOCITY")
+                            .strong()
+                            .color(palette.accent),
+                    );
+                    ui.separator();
+                    // A fixed set of compact menus avoids controls wrapping or moving when
+                    // profiles change, while every primary surface stays within two clicks.
+                    ui.menu_button("File", |ui| {
+                        if ui.button("New File  Ctrl+N").clicked() {
+                            self.open_editor(None);
+                            ui.close();
+                        }
+                        if ui.button("Open File\u{2026}  Ctrl+O").clicked() {
+                            self.open_file_dialog();
+                            ui.close();
+                        }
+                        if ui.button("Quick Open  Ctrl+P").clicked() {
+                            self.open_quick_open();
+                            ui.close();
+                        }
+                        ui.separator();
+                        if ui.button("Save  Ctrl+S").clicked() {
+                            self.save_active();
+                            ui.close();
+                        }
+                        if ui.button("Save All  Ctrl+Shift+S").clicked() {
+                            self.save_all();
+                            ui.close();
+                        }
+                    });
+                    ui.menu_button("Navigate", |ui| {
+                        // Command palette gets a visible home here (also surfaced in the
+                        // status bar and on the welcome screen) — UX audit #6.
+                        if ui.button("Command Palette  Ctrl+P").clicked() {
+                            self.open_command_palette();
+                            ui.close();
+                        }
+                        ui.separator();
+                        if ui.button("Chat  Ctrl+J").clicked() {
+                            self.focus_panel(TabKind::Chat);
+                            ui.close();
+                        }
+                        if ui.button("Search  Ctrl+Shift+F").clicked() {
+                            self.focus_panel(TabKind::Search);
+                            ui.close();
+                        }
+                        if ui
+                            .button("Research browser")
+                            .on_hover_text("Open the native browser and research workspace.")
+                            .clicked()
+                        {
+                            self.open_browse_workspace();
+                            ui.close();
+                        }
+                        if ui
+                            .button("Review changes")
+                            .on_hover_text("Inspect uncommitted work and recent Git history.")
+                            .clicked()
+                        {
+                            self.focus_panel(TabKind::Changes);
+                            ui.close();
+                        }
+                        ui.separator();
+                        if ui.button("Output  Ctrl+`").clicked() {
+                            self.focus_panel(TabKind::Output);
+                            ui.close();
+                        }
+                        if ui.button("Terminal").clicked() {
+                            self.focus_panel(TabKind::Terminal);
+                            ui.close();
+                        }
+                    });
+                    ui.menu_button("Build", |ui| {
+                        if ui.button("Build  Ctrl+B").clicked() {
+                            self.build_active();
+                            ui.close();
+                        }
+                        if ui.button("Run  Ctrl+R").clicked() {
+                            self.run_active();
+                            ui.close();
+                        }
+                        ui.separator();
+                        for (label, panel) in [
+                            ("Test generator", TabKind::TestGenerator),
+                            ("Test coverage", TabKind::Coverage),
+                            ("Deploy pipeline", TabKind::Pipeline),
+                            ("Debugger", TabKind::Debugger),
+                            ("Language servers", TabKind::LanguageServers),
+                        ] {
+                            if ui.button(label).clicked() {
+                                self.focus_panel(panel);
+                                ui.close();
+                            }
+                        }
+                        ui.separator();
                         ui.label(
-                            egui::RichText::new("VELOCITY")
-                                .strong()
-                                .color(palette.accent),
+                            egui::RichText::new("Advanced")
+                                .small()
+                                .color(palette.text_muted),
+                        );
+                        for (label, panel) in [
+                            ("Snippets", TabKind::Snippets),
+                            ("Inline suggestions", TabKind::InlineSuggestions),
+                            ("Build cache", TabKind::PrecompCache),
+                        ] {
+                            if ui.button(label).clicked() {
+                                self.focus_panel(panel);
+                                ui.close();
+                            }
+                        }
+                    });
+                    // Tools — merges the former Agents / Knowledge / Automate top-level
+                    // menus into submenus so the top bar stays compact (UX audit #4).
+                    ui.menu_button("Tools", |ui| {
+                        ui.menu_button("Agents", |ui| {
+                            for (label, panel) in [
+                                ("Live activity", TabKind::Activity),
+                                ("Agent roster", TabKind::Agents),
+                                ("Background agents", TabKind::BackgroundAgents),
+                                ("Orchestration", TabKind::LiveOrchestration),
+                                ("Task queue", TabKind::Queue),
+                                ("Timeline", TabKind::Timeline),
+                                ("Mission metrics", TabKind::Metrics),
+                                ("Conflict resolver", TabKind::ConflictResolver),
+                                ("Self-improvement", TabKind::ImprovementEngine),
+                                ("Session continuity", TabKind::ContinuationLedger),
+                            ] {
+                                if ui.button(label).clicked() {
+                                    self.focus_panel(panel);
+                                    ui.close();
+                                }
+                            }
+                        });
+                        ui.menu_button("Knowledge", |ui| {
+                            for (label, panel) in [
+                                ("Knowledge base", TabKind::Knowledge),
+                                ("Wiki", TabKind::Wiki),
+                                ("Code graph", TabKind::Graph),
+                                ("Semantic search", TabKind::SemanticSearch),
+                                ("Bookmarks", TabKind::Bookmarks),
+                                ("Favorites", TabKind::Favorites),
+                                ("Agent memory", TabKind::AgentMemory),
+                                ("Shared memory", TabKind::SharedMemory),
+                                ("Persistent memory", TabKind::PersistentMemory),
+                                ("Recent changes", TabKind::Changes),
+                            ] {
+                                if ui.button(label).clicked() {
+                                    self.focus_panel(panel);
+                                    ui.close();
+                                }
+                            }
+                        });
+                        ui.menu_button("Automation", |ui| {
+                            for (label, panel) in [
+                                ("Workflows", TabKind::Workflows),
+                                ("Triggers", TabKind::Triggers),
+                                ("Automation flows", TabKind::Flows),
+                                ("Targets", TabKind::Targets),
+                                ("Execution logs", TabKind::Logs),
+                                ("Recordings", TabKind::Recordings),
+                                ("Voice commands", TabKind::Voice),
+                                ("Multimodal", TabKind::Multimodal),
+                                ("Accessibility", TabKind::AccessibilityAudit),
+                                ("Governance", TabKind::Governance),
+                            ] {
+                                if ui.button(label).clicked() {
+                                    self.focus_panel(panel);
+                                    ui.close();
+                                }
+                            }
+                        });
+                    });
+                    ui.menu_button("Workspace", |ui| {
+                        ui.label(
+                            egui::RichText::new("Workspace tools")
+                                .small()
+                                .color(palette.text_muted),
                         );
                         ui.separator();
-                        // A fixed set of compact menus avoids controls wrapping or moving when
-                        // profiles change, while every primary surface stays within two clicks.
-                        ui.menu_button("File", |ui| {
-                            if ui.button("New File  Ctrl+N").clicked() {
-                                self.open_editor(None);
+                        for (label, panel) in [
+                            ("Extensions", TabKind::Extensions),
+                            ("Plugin registry", TabKind::PluginRegistry),
+                            ("Skills", TabKind::SkillFiles),
+                            ("Collaboration", TabKind::Collaboration),
+                            ("Peers", TabKind::Peers),
+                            ("Usage", TabKind::Usage),
+                        ] {
+                            if ui.button(label).clicked() {
+                                self.focus_panel(panel);
                                 ui.close();
                             }
-                            if ui.button("Open File\u{2026}  Ctrl+O").clicked() {
-                                self.open_file_dialog();
-                                ui.close();
-                            }
-                            if ui.button("Quick Open  Ctrl+P").clicked() {
-                                self.open_quick_open();
-                                ui.close();
-                            }
-                            ui.separator();
-                            if ui.button("Save  Ctrl+S").clicked() {
-                                self.save_active();
-                                ui.close();
-                            }
-                            if ui.button("Save All  Ctrl+Shift+S").clicked() {
-                                self.save_all();
-                                ui.close();
-                            }
-                        });
-                        ui.menu_button("Navigate", |ui| {
-                            // Command palette gets a visible home here (also surfaced in the
-                            // status bar and on the welcome screen) — UX audit #6.
-                            if ui.button("Command Palette  Ctrl+P").clicked() {
-                                self.open_command_palette();
-                                ui.close();
-                            }
-                            ui.separator();
-                            if ui.button("Chat  Ctrl+J").clicked() {
-                                self.focus_panel(TabKind::Chat);
-                                ui.close();
-                            }
-                            if ui.button("Search  Ctrl+Shift+F").clicked() {
-                                self.focus_panel(TabKind::Search);
-                                ui.close();
-                            }
+                        }
+                        ui.separator();
+                        if ui.button("New NDA document").clicked() {
+                            self.new_nda_document();
+                            ui.close();
+                        }
+                        if ui.button("Import active file to NDA").clicked() {
+                            self.import_file_to_nda();
+                            ui.close();
+                        }
+                        if ui.button("Open NDA browser viewer").clicked() {
+                            self.open_nda_viewer();
+                            ui.close();
+                        }
+                    });
+                    // Help menu
+                    ui.menu_button("Help", |ui| {
+                        if ui.button("Keyboard Shortcuts  F1").clicked() {
+                            self.show_shortcuts = true;
+                            ui.close();
+                        }
+                        ui.separator();
+                        if ui.button("Settings  Ctrl+,").clicked() {
+                            self.focus_panel(TabKind::Settings);
+                            ui.close();
+                        }
+                    });
+                    let active_mode = self.appearance.profile;
+                    // Zero-alloc: LayoutJob for the menu button label.
+                    let mut layouts_btn_job = egui::text::LayoutJob::default();
+                    layouts_btn_job.append(
+                        "Layouts: ",
+                        0.0,
+                        egui::TextFormat {
+                            font_id: egui::FontId::proportional(11.0),
+                            color: palette.accent,
+                            ..Default::default()
+                        },
+                    );
+                    layouts_btn_job.append(
+                        active_mode.glyph(),
+                        0.0,
+                        egui::TextFormat {
+                            font_id: crate::editor::theme::icon_font_id(12.0),
+                            color: palette.accent,
+                            ..Default::default()
+                        },
+                    );
+                    layouts_btn_job.append(
+                        " ",
+                        0.0,
+                        egui::TextFormat {
+                            font_id: egui::FontId::proportional(11.0),
+                            color: palette.accent,
+                            ..Default::default()
+                        },
+                    );
+                    layouts_btn_job.append(
+                        active_mode.short_label(),
+                        0.0,
+                        egui::TextFormat {
+                            font_id: egui::FontId::proportional(11.0),
+                            color: palette.accent,
+                            ..Default::default()
+                        },
+                    );
+                    layouts_btn_job.append(
+                        " ",
+                        0.0,
+                        egui::TextFormat {
+                            font_id: egui::FontId::proportional(11.0),
+                            color: palette.accent,
+                            ..Default::default()
+                        },
+                    );
+                    layouts_btn_job.append(
+                        egui_phosphor::regular::CARET_DOWN,
+                        0.0,
+                        egui::TextFormat {
+                            font_id: crate::editor::theme::icon_font_id(10.0),
+                            color: palette.accent,
+                            ..Default::default()
+                        },
+                    );
+                    ui.menu_button(layouts_btn_job, |ui| {
+                        ui.label(
+                            egui::RichText::new("Workspaces")
+                                .small()
+                                .color(palette.text_muted),
+                        );
+                        // Build and Mission are the product-level workspaces.
+                        // Specialized profiles remain available without competing
+                        // with the default mental model.
+                        for mode in [
+                            crate::editor::theme::WorkspaceProfile::Coder,
+                            crate::editor::theme::WorkspaceProfile::MissionControl,
+                        ] {
+                            let selected = mode == active_mode;
+                            let label = mode.short_label();
+                            // Zero-alloc: LayoutJob for selectable label.
+                            let mut mode_job = egui::text::LayoutJob::default();
+                            mode_job.append(
+                                mode.glyph(),
+                                0.0,
+                                egui::TextFormat {
+                                    font_id: crate::editor::theme::icon_font_id(12.0),
+                                    color: if selected {
+                                        palette.accent
+                                    } else {
+                                        palette.text
+                                    },
+                                    ..Default::default()
+                                },
+                            );
+                            mode_job.append(
+                                " ",
+                                0.0,
+                                egui::TextFormat {
+                                    font_id: egui::FontId::proportional(11.0),
+                                    color: if selected {
+                                        palette.accent
+                                    } else {
+                                        palette.text
+                                    },
+                                    ..Default::default()
+                                },
+                            );
+                            mode_job.append(
+                                label,
+                                0.0,
+                                egui::TextFormat {
+                                    font_id: egui::FontId::proportional(11.0),
+                                    color: if selected {
+                                        palette.accent
+                                    } else {
+                                        palette.text
+                                    },
+                                    ..Default::default()
+                                },
+                            );
+                            mode_job.append(
+                                "  ",
+                                0.0,
+                                egui::TextFormat {
+                                    font_id: egui::FontId::proportional(10.0),
+                                    color: palette.text_muted,
+                                    ..Default::default()
+                                },
+                            );
+                            mode_job.append(
+                                mode.shortcut_hint(),
+                                0.0,
+                                egui::TextFormat {
+                                    font_id: egui::FontId::proportional(10.0),
+                                    color: palette.text_muted,
+                                    ..Default::default()
+                                },
+                            );
                             if ui
-                                .button("Research browser")
-                                .on_hover_text("Open the native browser and research workspace.")
+                                .selectable_label(selected, mode_job)
+                                .on_hover_text(mode.description())
                                 .clicked()
                             {
-                                self.open_browse_workspace();
+                                self.set_work_mode(mode);
                                 ui.close();
                             }
+                        }
+                        ui.separator();
+                        ui.label(
+                            egui::RichText::new("Specialized layouts")
+                                .small()
+                                .color(palette.text_muted),
+                        );
+                        for mode in [
+                            crate::editor::theme::WorkspaceProfile::AutomationOperator,
+                            crate::editor::theme::WorkspaceProfile::Accessibility,
+                        ] {
+                            let selected = mode == active_mode;
+                            let label = mode.label();
+                            let mut mode_job = egui::text::LayoutJob::default();
+                            mode_job.append(
+                                mode.glyph(),
+                                0.0,
+                                egui::TextFormat {
+                                    font_id: crate::editor::theme::icon_font_id(12.0),
+                                    color: if selected {
+                                        palette.accent
+                                    } else {
+                                        palette.text
+                                    },
+                                    ..Default::default()
+                                },
+                            );
+                            mode_job.append(
+                                " ",
+                                0.0,
+                                egui::TextFormat {
+                                    font_id: egui::FontId::proportional(11.0),
+                                    color: if selected {
+                                        palette.accent
+                                    } else {
+                                        palette.text
+                                    },
+                                    ..Default::default()
+                                },
+                            );
+                            mode_job.append(
+                                label,
+                                0.0,
+                                egui::TextFormat {
+                                    font_id: egui::FontId::proportional(11.0),
+                                    color: if selected {
+                                        palette.accent
+                                    } else {
+                                        palette.text
+                                    },
+                                    ..Default::default()
+                                },
+                            );
+                            mode_job.append(
+                                "  ",
+                                0.0,
+                                egui::TextFormat {
+                                    font_id: egui::FontId::proportional(10.0),
+                                    color: palette.text_muted,
+                                    ..Default::default()
+                                },
+                            );
+                            mode_job.append(
+                                mode.shortcut_hint(),
+                                0.0,
+                                egui::TextFormat {
+                                    font_id: egui::FontId::proportional(10.0),
+                                    color: palette.text_muted,
+                                    ..Default::default()
+                                },
+                            );
                             if ui
-                                .button("Review changes")
-                                .on_hover_text("Inspect uncommitted work and recent Git history.")
+                                .selectable_label(selected, mode_job)
+                                .on_hover_text(mode.description())
                                 .clicked()
                             {
-                                self.focus_panel(TabKind::Changes);
+                                self.set_work_mode(mode);
                                 ui.close();
                             }
-                            ui.separator();
-                            if ui.button("Output  Ctrl+`").clicked() {
-                                self.focus_panel(TabKind::Output);
-                                ui.close();
-                            }
-                            if ui.button("Terminal").clicked() {
-                                self.focus_panel(TabKind::Terminal);
-                                ui.close();
-                            }
-                        });
-                        ui.menu_button("Build", |ui| {
-                            if ui.button("Build  Ctrl+B").clicked() {
-                                self.build_active();
-                                ui.close();
-                            }
-                            if ui.button("Run  Ctrl+R").clicked() {
-                                self.run_active();
-                                ui.close();
-                            }
-                            ui.separator();
-                            for (label, panel) in [
-                                ("Test generator", TabKind::TestGenerator),
-                                ("Test coverage", TabKind::Coverage),
-                                ("Deploy pipeline", TabKind::Pipeline),
-                                ("Debugger", TabKind::Debugger),
-                                ("Language servers", TabKind::LanguageServers),
-                            ] {
-                                if ui.button(label).clicked() {
-                                    self.focus_panel(panel);
-                                    ui.close();
-                                }
-                            }
-                            ui.separator();
-                            ui.label(
-                                egui::RichText::new("Advanced")
-                                    .small()
-                                    .color(palette.text_muted),
-                            );
-                            for (label, panel) in [
-                                ("Snippets", TabKind::Snippets),
-                                ("Inline suggestions", TabKind::InlineSuggestions),
-                                ("Build cache", TabKind::PrecompCache),
-                            ] {
-                                if ui.button(label).clicked() {
-                                    self.focus_panel(panel);
-                                    ui.close();
-                                }
-                            }
-                        });
-                        // Tools — merges the former Agents / Knowledge / Automate top-level
-                        // menus into submenus so the top bar stays compact (UX audit #4).
-                        ui.menu_button("Tools", |ui| {
-                            ui.menu_button("Agents", |ui| {
-                                for (label, panel) in [
-                                    ("Live activity", TabKind::Activity),
-                                    ("Agent roster", TabKind::Agents),
-                                    ("Background agents", TabKind::BackgroundAgents),
-                                    ("Orchestration", TabKind::LiveOrchestration),
-                                    ("Task queue", TabKind::Queue),
-                                    ("Timeline", TabKind::Timeline),
-                                    ("Mission metrics", TabKind::Metrics),
-                                    ("Conflict resolver", TabKind::ConflictResolver),
-                                    ("Self-improvement", TabKind::ImprovementEngine),
-                                    ("Session continuity", TabKind::ContinuationLedger),
-                                ] {
-                                    if ui.button(label).clicked() {
-                                        self.focus_panel(panel);
-                                        ui.close();
-                                    }
-                                }
-                            });
-                            ui.menu_button("Knowledge", |ui| {
-                                for (label, panel) in [
-                                    ("Knowledge base", TabKind::Knowledge),
-                                    ("Wiki", TabKind::Wiki),
-                                    ("Code graph", TabKind::Graph),
-                                    ("Semantic search", TabKind::SemanticSearch),
-                                    ("Bookmarks", TabKind::Bookmarks),
-                                    ("Favorites", TabKind::Favorites),
-                                    ("Agent memory", TabKind::AgentMemory),
-                                    ("Shared memory", TabKind::SharedMemory),
-                                    ("Persistent memory", TabKind::PersistentMemory),
-                                    ("Recent changes", TabKind::Changes),
-                                ] {
-                                    if ui.button(label).clicked() {
-                                        self.focus_panel(panel);
-                                        ui.close();
-                                    }
-                                }
-                            });
-                            ui.menu_button("Automation", |ui| {
-                                for (label, panel) in [
-                                    ("Workflows", TabKind::Workflows),
-                                    ("Triggers", TabKind::Triggers),
-                                    ("Automation flows", TabKind::Flows),
-                                    ("Targets", TabKind::Targets),
-                                    ("Execution logs", TabKind::Logs),
-                                    ("Recordings", TabKind::Recordings),
-                                    ("Voice commands", TabKind::Voice),
-                                    ("Multimodal", TabKind::Multimodal),
-                                    ("Accessibility", TabKind::AccessibilityAudit),
-                                    ("Governance", TabKind::Governance),
-                                ] {
-                                    if ui.button(label).clicked() {
-                                        self.focus_panel(panel);
-                                        ui.close();
-                                    }
-                                }
-                            });
-                        });
-                        ui.menu_button("Workspace", |ui| {
-                            ui.label(
-                                egui::RichText::new("Workspace tools")
-                                    .small()
-                                    .color(palette.text_muted),
-                            );
-                            ui.separator();
-                            for (label, panel) in [
-                                ("Extensions", TabKind::Extensions),
-                                ("Plugin registry", TabKind::PluginRegistry),
-                                ("Skills", TabKind::SkillFiles),
-                                ("Collaboration", TabKind::Collaboration),
-                                ("Peers", TabKind::Peers),
-                                ("Usage", TabKind::Usage),
-                            ] {
-                                if ui.button(label).clicked() {
-                                    self.focus_panel(panel);
-                                    ui.close();
-                                }
-                            }
-                            ui.separator();
-                            if ui.button("New NDA document").clicked() {
-                                self.new_nda_document();
-                                ui.close();
-                            }
-                            if ui.button("Import active file to NDA").clicked() {
-                                self.import_file_to_nda();
-                                ui.close();
-                            }
-                            if ui.button("Open NDA browser viewer").clicked() {
-                                self.open_nda_viewer();
-                                ui.close();
-                            }
-                        });
-                        // Help menu
-                        ui.menu_button("Help", |ui| {
-                            if ui.button("Keyboard Shortcuts  F1").clicked() {
-                                self.show_shortcuts = true;
-                                ui.close();
-                            }
-                            ui.separator();
-                            if ui.button("Settings  Ctrl+,").clicked() {
-                                self.focus_panel(TabKind::Settings);
-                                ui.close();
-                            }
-                        });
-                        let active_mode = self.appearance.profile;
-                        // Zero-alloc: LayoutJob for the menu button label.
-                        let mut layouts_btn_job = egui::text::LayoutJob::default();
-                        layouts_btn_job.append(
-                            "Layouts: ",
-                            0.0,
-                            egui::TextFormat {
-                                font_id: egui::FontId::proportional(11.0),
-                                color: palette.accent,
-                                ..Default::default()
-                            },
-                        );
-                        layouts_btn_job.append(
-                            active_mode.glyph(),
-                            0.0,
-                            egui::TextFormat {
-                                font_id: crate::editor::theme::icon_font_id(12.0),
-                                color: palette.accent,
-                                ..Default::default()
-                            },
-                        );
-                        layouts_btn_job.append(
-                            " ",
-                            0.0,
-                            egui::TextFormat {
-                                font_id: egui::FontId::proportional(11.0),
-                                color: palette.accent,
-                                ..Default::default()
-                            },
-                        );
-                        layouts_btn_job.append(
-                            active_mode.short_label(),
-                            0.0,
-                            egui::TextFormat {
-                                font_id: egui::FontId::proportional(11.0),
-                                color: palette.accent,
-                                ..Default::default()
-                            },
-                        );
-                        layouts_btn_job.append(
-                            " ",
-                            0.0,
-                            egui::TextFormat {
-                                font_id: egui::FontId::proportional(11.0),
-                                color: palette.accent,
-                                ..Default::default()
-                            },
-                        );
-                        layouts_btn_job.append(
-                            egui_phosphor::regular::CARET_DOWN,
-                            0.0,
-                            egui::TextFormat {
-                                font_id: crate::editor::theme::icon_font_id(10.0),
-                                color: palette.accent,
-                                ..Default::default()
-                            },
-                        );
-                        ui.menu_button(layouts_btn_job, |ui| {
-                            ui.label(
-                                egui::RichText::new("Workspaces")
-                                    .small()
-                                    .color(palette.text_muted),
-                            );
-                            // Build and Mission are the product-level workspaces.
-                            // Specialized profiles remain available without competing
-                            // with the default mental model.
-                            for mode in [
-                                crate::editor::theme::WorkspaceProfile::Coder,
-                                crate::editor::theme::WorkspaceProfile::MissionControl,
-                            ] {
-                                let selected = mode == active_mode;
-                                let label = mode.short_label();
-                                // Zero-alloc: LayoutJob for selectable label.
-                                let mut mode_job = egui::text::LayoutJob::default();
-                                mode_job.append(
-                                    mode.glyph(),
-                                    0.0,
-                                    egui::TextFormat {
-                                        font_id: crate::editor::theme::icon_font_id(12.0),
-                                        color: if selected {
-                                            palette.accent
-                                        } else {
-                                            palette.text
-                                        },
-                                        ..Default::default()
-                                    },
-                                );
-                                mode_job.append(
-                                    " ",
-                                    0.0,
-                                    egui::TextFormat {
-                                        font_id: egui::FontId::proportional(11.0),
-                                        color: if selected {
-                                            palette.accent
-                                        } else {
-                                            palette.text
-                                        },
-                                        ..Default::default()
-                                    },
-                                );
-                                mode_job.append(
-                                    label,
-                                    0.0,
-                                    egui::TextFormat {
-                                        font_id: egui::FontId::proportional(11.0),
-                                        color: if selected {
-                                            palette.accent
-                                        } else {
-                                            palette.text
-                                        },
-                                        ..Default::default()
-                                    },
-                                );
-                                mode_job.append(
-                                    "  ",
-                                    0.0,
-                                    egui::TextFormat {
-                                        font_id: egui::FontId::proportional(10.0),
-                                        color: palette.text_muted,
-                                        ..Default::default()
-                                    },
-                                );
-                                mode_job.append(
-                                    mode.shortcut_hint(),
-                                    0.0,
-                                    egui::TextFormat {
-                                        font_id: egui::FontId::proportional(10.0),
-                                        color: palette.text_muted,
-                                        ..Default::default()
-                                    },
-                                );
-                                if ui
-                                    .selectable_label(selected, mode_job)
-                                    .on_hover_text(mode.description())
-                                    .clicked()
-                                {
-                                    self.set_work_mode(mode);
-                                    ui.close();
-                                }
-                            }
-                            ui.separator();
-                            ui.label(
-                                egui::RichText::new("Specialized layouts")
-                                    .small()
-                                    .color(palette.text_muted),
-                            );
-                            for mode in [
-                                crate::editor::theme::WorkspaceProfile::AutomationOperator,
-                                crate::editor::theme::WorkspaceProfile::Accessibility,
-                            ] {
-                                let selected = mode == active_mode;
-                                let label = mode.label();
-                                let mut mode_job = egui::text::LayoutJob::default();
-                                mode_job.append(
-                                    mode.glyph(),
-                                    0.0,
-                                    egui::TextFormat {
-                                        font_id: crate::editor::theme::icon_font_id(12.0),
-                                        color: if selected {
-                                            palette.accent
-                                        } else {
-                                            palette.text
-                                        },
-                                        ..Default::default()
-                                    },
-                                );
-                                mode_job.append(
-                                    " ",
-                                    0.0,
-                                    egui::TextFormat {
-                                        font_id: egui::FontId::proportional(11.0),
-                                        color: if selected {
-                                            palette.accent
-                                        } else {
-                                            palette.text
-                                        },
-                                        ..Default::default()
-                                    },
-                                );
-                                mode_job.append(
-                                    label,
-                                    0.0,
-                                    egui::TextFormat {
-                                        font_id: egui::FontId::proportional(11.0),
-                                        color: if selected {
-                                            palette.accent
-                                        } else {
-                                            palette.text
-                                        },
-                                        ..Default::default()
-                                    },
-                                );
-                                mode_job.append(
-                                    "  ",
-                                    0.0,
-                                    egui::TextFormat {
-                                        font_id: egui::FontId::proportional(10.0),
-                                        color: palette.text_muted,
-                                        ..Default::default()
-                                    },
-                                );
-                                mode_job.append(
-                                    mode.shortcut_hint(),
-                                    0.0,
-                                    egui::TextFormat {
-                                        font_id: egui::FontId::proportional(10.0),
-                                        color: palette.text_muted,
-                                        ..Default::default()
-                                    },
-                                );
-                                if ui
-                                    .selectable_label(selected, mode_job)
-                                    .on_hover_text(mode.description())
-                                    .clicked()
-                                {
-                                    self.set_work_mode(mode);
-                                    ui.close();
-                                }
-                            }
-                        });
-                    } else {
-                        // `use_unified_header` is always true; this branch is kept
-                        // as a placeholder for a potential lightweight header mode.
-                    }
+                        }
+                    });
 
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         ui.spacing_mut().item_spacing.x = 2.0;

@@ -259,9 +259,6 @@ pub struct VelocityApp {
     pub appearance: AppearanceSettings,
     /// Last-applied appearance snapshot; used to avoid re-applying theme/style every frame.
     pub last_applied_appearance: Option<AppearanceSettings>,
-    /// When true the unified single-row header is used and the legacy toolbar
-    /// top panel is suppressed to avoid rendering a double header.
-    pub use_unified_header: bool,
     pub provider_settings: WorkspaceProviderSettings,
     pub left_sidebar_visible: bool,
     pub left_sidebar_width: f32,
@@ -1229,7 +1226,6 @@ impl VelocityApp {
             status_message: String::from("Ready"),
             appearance,
             last_applied_appearance: Some(appearance),
-            use_unified_header: true,
             provider_settings,
             left_sidebar_visible: true,
             left_sidebar_width: 240.0,
@@ -1581,7 +1577,6 @@ impl VelocityApp {
             status_message: String::new(),
             appearance: AppearanceSettings::default(),
             last_applied_appearance: None,
-            use_unified_header: true,
             provider_settings: WorkspaceProviderSettings::default(),
             left_sidebar_visible: true,
             left_sidebar_width: 240.0,

@@ -66,9 +66,19 @@ pub struct ToastQueue {
     toasts: Vec<Toast>,
 }
 
+/// Hard cap on simultaneously queued toasts. TTL pruning in [`ToastQueue::ui`]
+/// bounds steady state, but a burst of pushes *between* frames (e.g. a
+/// per-item failure loop) could otherwise grow the vec without limit; when the
+/// cap is exceeded the oldest toasts are dropped.
+const MAX_TOASTS: usize = 32;
+
 impl ToastQueue {
     pub fn push(&mut self, toast: Toast) {
         self.toasts.push(toast);
+        if self.toasts.len() > MAX_TOASTS {
+            let excess = self.toasts.len() - MAX_TOASTS;
+            self.toasts.drain(..excess);
+        }
     }
 
     pub fn ui(&mut self, ctx: &egui::Context, palette: IdePalette) {
@@ -165,6 +175,21 @@ mod tests {
         q.push(Toast::info("one"));
         q.push(Toast::warn("two"));
         assert_eq!(q.toasts.len(), 2);
+    }
+
+    #[test]
+    fn toast_queue_push_caps_burst_and_drops_oldest() {
+        let mut q = ToastQueue::default();
+        for i in 0..(MAX_TOASTS + 10) {
+            q.push(Toast::info(format!("t{i}")));
+        }
+        assert_eq!(q.toasts.len(), MAX_TOASTS, "vec must stay capped");
+        // Oldest ("t0".."t9") dropped; the most recent survives at the back.
+        assert_eq!(
+            q.toasts.last().unwrap().message,
+            format!("t{}", MAX_TOASTS + 9)
+        );
+        assert!(q.toasts.iter().all(|t| t.message != "t0"));
     }
 
     #[test]

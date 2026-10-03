@@ -17,7 +17,7 @@ and where it lives.
 
 ### 1.1 Top menu bar
 
-A single unified header (`use_unified_header` is always on). Leading
+A single unified header (the one supported layout). Leading
 **`VELOCITY`** wordmark in the accent colour, then these menus. Menu items
 *focus* a panel (they never toggle it off).
 
