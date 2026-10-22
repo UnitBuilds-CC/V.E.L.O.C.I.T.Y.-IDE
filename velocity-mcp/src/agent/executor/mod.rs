@@ -13,7 +13,10 @@ pub mod tool_executor;
 pub mod tracing;
 pub mod utils;
 
-pub use context_budget::{compress_history_with_budget, fits_budget, get_model_budget};
-pub use headless::run_headless_subagent;
+pub use context_budget::{
+    compress_history_to_window, compress_history_with_budget, declared_window, fits_budget,
+    get_model_budget,
+};
+pub use headless::{budget_left, run_headless_subagent, turn_ceiling_for, unattended_budget};
 pub use provider_router::{ProviderHealth, ProviderRouter};
 pub use thread::run_agent_thread;

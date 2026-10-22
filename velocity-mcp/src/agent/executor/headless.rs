@@ -11,7 +11,66 @@ use crate::usage::{
 };
 use std::sync::{Arc, Mutex};
 
+/// Wall-clock budget for a headless run nobody is watching.
+///
+/// Shared by every unattended caller (`team_dispatch`, workflow agent steps,
+/// orchestrator workers) so one knob bounds them all. An interactive session
+/// passes `None` instead — a human at the keyboard is the deadline there.
+///
+/// Overridable because repo-scale ports legitimately need longer than a
+/// single-file task, and finding that out should not require a rebuild.
+pub fn unattended_budget() -> std::time::Duration {
+    const DEFAULT_SECS: u64 = 900;
+    std::env::var("VELOCITY_DISPATCH_BUDGET_SECS")
+        .ok()
+        .and_then(|raw| raw.trim().parse::<u64>().ok())
+        // Zero or garbage falls back to the default: a zero budget would abort
+        // a run before it completed a single turn.
+        .filter(|secs| *secs > 0)
+        .map(std::time::Duration::from_secs)
+        .unwrap_or_else(|| std::time::Duration::from_secs(DEFAULT_SECS))
+}
+
+/// What is left of `total` once `elapsed` has been spent.
+///
+/// Pure so the arithmetic is testable without a clock. `None` means "nothing
+/// left — do not start another run", which is why callers must never forward
+/// `None` to [`HeadlessSubAgentRequest::budget`]: there it means the exact
+/// opposite ("no deadline"), and silently turning "out of time" into "run
+/// forever" is the bug this exists to prevent.
+pub fn budget_left(
+    total: std::time::Duration,
+    elapsed: std::time::Duration,
+) -> Option<std::time::Duration> {
+    total.checked_sub(elapsed).filter(|left| !left.is_zero())
+}
+
+/// How many turns one unattended attempt may take, from the seconds left to it.
+///
+/// Shared by every unattended dispatcher (`team_dispatch`, orchestrator
+/// workers) for the same reason [`unattended_budget`] is: a fixed count is a
+/// wall-clock cap in disguise, and which one it is depends on the model's speed.
+/// The 16 `team_dispatch` used was measured against `qwen3.6:35b-a3b` at
+/// 130-235 s a turn; a GPU-resident 7B answers in 1-6 s, and `lr7b_v6` hit 16
+/// having spent 46 of its 1200 seconds — stopped with a compile repair still
+/// unspent, one edit from a clean build. The budget is what should end an
+/// attempt, not the model's speed.
+///
+/// The floor keeps a slow model's behavior identical (the deadline stops it
+/// first), and the ceiling stops a run that only ever reads from running for the
+/// whole budget. The ~20 s per turn is the assumption behind both bounds: below
+/// it the count cannot bind, above it the deadline does.
+pub fn turn_ceiling_for(attempt_budget: std::time::Duration) -> usize {
+    (attempt_budget.as_secs() / 20).clamp(16, 48) as usize
+}
+
 pub fn run_headless_subagent(request: HeadlessSubAgentRequest) -> HeadlessSubAgentResult {
+    // Resolved once, here, so the deadline covers the whole run including
+    // pre-indexing — not just the turns. `checked_add` because an absurd budget
+    // must degrade to "no deadline" rather than panic on overflow.
+    let deadline = request
+        .budget
+        .and_then(|budget| std::time::Instant::now().checked_add(budget));
     let accounts = load_accounts(&request.workspace_root);
     let or_accounts = load_openrouter_accounts(&request.workspace_root);
     let azure_accounts = load_azure_accounts(&request.workspace_root);
@@ -169,7 +228,7 @@ pub fn run_headless_subagent(request: HeadlessSubAgentRequest) -> HeadlessSubAge
         }
     });
 
-    run_agent_reasoning_loop(
+    let outcome = run_agent_reasoning_loop(
         &request.workspace_root,
         &accounts,
         &or_accounts,
@@ -189,6 +248,8 @@ pub fn run_headless_subagent(request: HeadlessSubAgentRequest) -> HeadlessSubAge
         &CoordinationBus::new(),
         None, // Headless sub-agents use direct dispatch, not MoA router
         request.max_turns,
+        deadline,
+        request.requires_artifact,
     );
 
     drop(agent_event_tx);
@@ -199,5 +260,51 @@ pub fn run_headless_subagent(request: HeadlessSubAgentRequest) -> HeadlessSubAge
     HeadlessSubAgentResult {
         status_updates,
         transcript,
+        outcome,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::Duration;
+
+    #[test]
+    fn an_exhausted_budget_reads_as_none_so_callers_stop_instead_of_running_unbounded() {
+        let total = Duration::from_secs(10);
+        assert_eq!(
+            budget_left(total, Duration::from_secs(4)),
+            Some(Duration::from_secs(6))
+        );
+        // Exactly spent is `None` too: a zero-length budget handed to the loop
+        // would abort the run before its first turn, which looks like a model
+        // failure rather than a timeout.
+        assert_eq!(budget_left(total, total), None);
+        assert_eq!(budget_left(total, Duration::from_secs(11)), None);
+    }
+
+    #[test]
+    fn the_turn_ceiling_scales_with_the_seconds_left_to_the_attempt() {
+        // 16 was the fixed count `team_dispatch` used, calibrated on
+        // qwen3.6:35b-a3b at 130-235 s a turn; the worker's 20 had the same
+        // problem. lr7b_v6 ran a real budget on a GPU-resident 7B at 2-6 s a turn,
+        // stopped at the count with 1154 of its 1200 seconds unspent and a compile
+        // repair still owed — the budget, not the count, is what should end an
+        // attempt.
+        assert_eq!(turn_ceiling_for(Duration::from_secs(1200)), 48);
+        // The floor keeps a slow model's behavior identical: at 15 turns' worth of
+        // seconds the deadline stops that attempt before the count ever could.
+        assert_eq!(turn_ceiling_for(Duration::from_secs(300)), 16);
+        assert_eq!(turn_ceiling_for(Duration::from_secs(20)), 16);
+        // And the ceiling bounds the other direction — an hour of budget must not
+        // license a run that only ever reads files.
+        assert_eq!(turn_ceiling_for(Duration::from_secs(3600)), 48);
+    }
+
+    #[test]
+    fn the_unattended_budget_is_never_zero() {
+        // Whatever the environment says, the value returned must be usable as a
+        // deadline: zero would make every unattended run time out immediately.
+        assert!(!unattended_budget().is_zero());
     }
 }

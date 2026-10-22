@@ -4,10 +4,12 @@ pub mod collaboration;
 pub mod conflict_resolution;
 pub mod coordination;
 pub mod crypto;
+pub mod decision;
 pub mod drone_bridge;
 pub mod executor;
 pub mod instance_tools;
 pub mod instances;
+pub mod intent;
 pub mod memory;
 pub mod memory_store;
 pub mod models;
@@ -29,7 +31,9 @@ mod proptest_agent;
 #[cfg(test)]
 mod tests;
 
-pub use executor::{run_agent_thread, run_headless_subagent};
+pub use executor::{
+    budget_left, run_agent_thread, run_headless_subagent, turn_ceiling_for, unattended_budget,
+};
 pub use models::{
     AgentToUiMessage, AiProvider, ApiStyle, HeadlessSubAgentEventKind, HeadlessSubAgentProgress,
     HeadlessSubAgentRequest, ModelInfo, UiToAgentMessage,

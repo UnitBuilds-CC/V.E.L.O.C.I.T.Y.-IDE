@@ -96,6 +96,32 @@ pub fn run_assignment(
         return result;
     }
 
+    // System C §6.1: the orchestrator worker is the headless twin of the chat
+    // executor's write gate, so it must consult the *same* RBAC decision before
+    // taking any scope lock — otherwise a governed workspace's headless mission
+    // would bypass `require_write` and edit files an interactive run could not
+    // (spec §11 R-1). Governance is opt-in: an ungoverned workspace (every tempdir
+    // test) yields `governed() == false` and the gate is never consulted, while a
+    // governed one resolves the OS-login user's role — the same node identity §6.4
+    // uses — and a denial is already appended to the durable trail (INV-6).
+    {
+        let governor = crate::automation::Governor::open(&assignment.workspace_root);
+        if governor.governed() {
+            let os_user = std::env::var("USERNAME")
+                .or_else(|_| std::env::var("USER"))
+                .unwrap_or_else(|_| "operator".to_string());
+            let principal =
+                governor.principal_for_human(&os_user, crate::automation::NodeId::local());
+            if let Err(reason) = governor.require_write(&principal) {
+                result.success = false;
+                result.duration = start.elapsed();
+                result.message = reason.clone();
+                result.status_updates.push(reason);
+                return result;
+            }
+        }
+    }
+
     let locked_scopes = match acquire_scope_locks(
         &assignment.workspace_root,
         &task.scope,
@@ -230,6 +256,10 @@ pub fn execute_live_task(
     let mut attempts = Vec::new();
     let mut last_status_updates = Vec::new();
     let mut last_transcript = String::new();
+    // How the most recent route ended, as the loop reported it. Kept so the
+    // failure message below can distinguish "an operator stopped this" from
+    // "the model could not do it" without reading status-line prose.
+    let mut last_outcome = crate::agent::models::AgentLoopOutcome::default();
     let mut final_provider_label = assignment.provider_label.clone();
     let mut final_model_label = assignment.model_label.clone();
     // Continuation ledger from the immediately-failed route, fed into the next
@@ -238,14 +268,6 @@ pub fn execute_live_task(
     // exact failure the agent_eval run exhibited (3 attempts, "No scoped
     // changes" ×3).
     let mut carry_forward: Option<String> = None;
-    // Modification kinds get a slightly larger budget than the default 15:
-    // with the ledger in hand, the extra turns go to edits and build fixes
-    // rather than exploration. Read-only kinds keep the default.
-    let attempt_max_turns = if assignment.task_kind.is_read_only() {
-        None
-    } else {
-        Some(20)
-    };
 
     // Memory loop: read the durable decision history back into the first
     // attempt. Past failures, shared-write conflicts and reverts on this
@@ -284,9 +306,35 @@ pub fn execute_live_task(
         base_instructions = format!("{base_instructions}\n\n{skills_block}");
     }
 
+    // One budget for the whole route chain rather than one per route: a worker
+    // is unattended, so no single run may be unbounded and a failover chain may
+    // not multiply the ceiling by its own length.
+    let worker_start = Instant::now();
+    let worker_budget = crate::agent::unattended_budget();
+    let mut budget_spent = false;
+
     for route in routes {
         let route_start = Instant::now();
+        // `None` means the budget is gone, and forwarding `None` to the request
+        // would mean the opposite ("no deadline") — so this is the stop
+        // condition, not a default.
+        let Some(attempt_budget) = crate::agent::budget_left(worker_budget, worker_start.elapsed())
+        else {
+            budget_spent = true;
+            break;
+        };
         let prompt = attempt_prompt(&base_instructions, carry_forward.as_deref());
+        // Modification kinds get more turns than the loop's default 15: with the
+        // ledger in hand, the extra turns go to edits and build fixes rather than
+        // exploration. The count comes from the seconds this attempt actually has
+        // left, not from a constant — a fixed 20 was another wall-clock cap in
+        // disguise, binding early on a fast model and never on a slow one.
+        // Read-only kinds keep the loop's default.
+        let attempt_max_turns = if assignment.task_kind.is_read_only() {
+            None
+        } else {
+            Some(crate::agent::turn_ceiling_for(attempt_budget))
+        };
         let subagent = run_headless_subagent(HeadlessSubAgentRequest {
             workspace_root: assignment.workspace_root.clone(),
             provider: route.provider,
@@ -297,9 +345,15 @@ pub fn execute_live_task(
             progress: Some(progress.clone()),
             scoped_files: assignment.scoped_files.clone(),
             max_turns: attempt_max_turns,
+            budget: Some(attempt_budget),
+            // The worker already gates a file-modification task by diffing the
+            // filesystem (`detect_scoped_changes`), so it does not need the
+            // loop's in-run artifact gate too; keep the prior behaviour.
+            requires_artifact: false,
         });
         last_status_updates = subagent.status_updates.clone();
         last_transcript = subagent.transcript.clone();
+        last_outcome = subagent.outcome.clone();
         final_provider_label = route.provider.label().to_string();
         final_model_label = route.model_label.clone();
 
@@ -312,13 +366,16 @@ pub fn execute_live_task(
             &assignment.workspace_root,
         )
         .map_err(|err| failed_execution(assignment, err))?;
-        // Read-only task kinds (Analysis, Planning) succeed when the model
-        // produced a textual response; file-modification kinds require changes.
+        // Read-only task kinds (Analysis, Planning) succeed when the loop
+        // actually finished and said something; file-modification kinds require
+        // changes on disk.
         let success = if assignment.task_kind.is_read_only() {
-            !subagent.transcript.trim().is_empty()
-                && !subagent.status_updates.iter().any(|s| {
-                    s.contains("error") || s.contains("Error") || s.contains("failed to call")
-                })
+            // The loop's own structured outcome, not a substring hunt through
+            // its status lines. Scanning for "error" failed a run whenever the
+            // analysis merely *quoted* one — a build log, a compiler diagnostic
+            // it was asked to explain — and passed a run that blew its whole
+            // turn budget without ever producing an answer.
+            subagent.outcome.is_completed() && !subagent.transcript.trim().is_empty()
         } else {
             !changed_files.is_empty() || !created_files.is_empty() || !deleted_files.is_empty()
         };
@@ -446,10 +503,10 @@ pub fn execute_live_task(
         carry_forward = Some(ledger_prompt);
     }
 
-    let cancelled = last_status_updates
-        .iter()
-        .any(|update| update.contains("cancelled by operator"));
-    let message = if cancelled {
+    // Structured: the loop reports a cancellation as its own outcome variant,
+    // so this no longer depends on the exact wording of a status line.
+    let cancelled = last_outcome.is_cancelled();
+    let mut message = if cancelled {
         if assignment.task_kind == AgentTaskKind::DesktopAutomation {
             "desktop automation run cancelled before WA evidence was captured".to_string()
         } else {
@@ -463,6 +520,15 @@ pub fn execute_live_task(
     } else {
         "No scoped file changes were produced by any provider-backed sub-agent route.".to_string()
     };
+    if budget_spent {
+        // Say so explicitly: "no route produced changes" reads like a model
+        // problem, and the fix for a spent budget is a bigger budget or a
+        // smaller task, not a different provider.
+        message = format!(
+            "{message} (wall-clock budget of {}s spent)",
+            worker_budget.as_secs()
+        );
+    }
     let outcome = ExecutionOutcome {
         success: false,
         task_kind: assignment.task_kind,
@@ -513,8 +579,9 @@ fn attempt_prompt(instructions: &str, ledger_prompt: Option<&str>) -> String {
         "{instructions}\n\n# Continuation from the previous attempt\n{ledger_prompt}\n\n\
          The previous attempt ended without completing this mission. Do NOT re-read files it already \
          examined or repeat its exploration \u{2014} trust the ledger above and check the current file \
-         state only where the ledger is unclear. Prioritize actual file edits (write_file / apply_diff) \
-         over further auditing, and complete the mission starting from the workspace's current state."
+         state only where the ledger is unclear. Prioritize writing the files the mission \
+         needs (write_file replaces a whole file) over further auditing, and complete the \
+         mission starting from the workspace's current state."
     )
 }
 
@@ -536,6 +603,6 @@ mod tests {
         assert!(prompt.contains("# Continuation from the previous attempt"));
         assert!(prompt.contains("## Completed Edits"));
         assert!(prompt.contains("Do NOT re-read files"));
-        assert!(prompt.contains("Prioritize actual file edits"));
+        assert!(prompt.contains("Prioritize writing the files"));
     }
 }
