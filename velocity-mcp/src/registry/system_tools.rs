@@ -93,6 +93,107 @@ fn kill_process(pid: u32) {
     }
 }
 
+/// Clone a git repository into the workspace.
+///
+/// `git` is invoked *directly* (never through a shell), so a hostile URL cannot
+/// smuggle extra commands; the URL is additionally screened for shell
+/// metacharacters and required to carry a git scheme. The destination resolves
+/// strictly inside the workspace root and defaults to `.velocity/clones/<repo>`
+/// so a clone never clobbers tracked source. A non-empty existing destination is
+/// refused rather than overwritten.
+pub fn git_clone_impl(root: &Path, arguments: &Value) -> Result<String, Box<dyn Error>> {
+    let url = arguments["url"]
+        .as_str()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .ok_or("'url' is required")?;
+    let scheme_ok = url.starts_with("http://")
+        || url.starts_with("https://")
+        || url.starts_with("git://")
+        || url.starts_with("git@");
+    if !scheme_ok {
+        return Err("url must start with http://, https://, git:// or git@".into());
+    }
+    if url.chars().any(|c| {
+        matches!(
+            c,
+            ';' | '|' | '&' | '$' | '`' | '\n' | '\r' | '<' | '>' | '(' | ')'
+        )
+    }) {
+        return Err("url contains forbidden characters".into());
+    }
+
+    let repo_name = url
+        .trim_end_matches('/')
+        .trim_end_matches(".git")
+        .rsplit(['/', ':'])
+        .next()
+        .filter(|s| !s.is_empty() && *s != "." && *s != "..")
+        .ok_or("could not derive a repository name from url")?
+        .to_string();
+
+    let default_rel = format!(".velocity/clones/{repo_name}");
+    let rel_dest = arguments["dest"]
+        .as_str()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(|s| s.to_string())
+        .unwrap_or(default_rel);
+    let dest = resolve_workspace_path(root, &rel_dest, true)?;
+
+    let occupied = dest
+        .read_dir()
+        .map(|mut d| d.next().is_some())
+        .unwrap_or(false);
+    if occupied {
+        return Err(format!(
+            "destination '{}' already exists and is not empty",
+            dest.display()
+        )
+        .into());
+    }
+
+    let mut cmd = Command::new("git");
+    cmd.arg("clone");
+    if let Some(depth) = arguments["depth"].as_u64() {
+        cmd.arg("--depth").arg(depth.to_string());
+    }
+    if let Some(branch) = arguments["branch"]
+        .as_str()
+        .filter(|b| !b.trim().is_empty())
+    {
+        cmd.arg("--branch").arg(branch.trim());
+    }
+    cmd.arg(url);
+    // `dest` inherits the verbatim (`\\?\`) prefix from the canonicalized
+    // workspace root on Windows. Containment checks need it, but MSYS git
+    // rejects extended-length arguments outright — the crucible run died with
+    // "could not create work tree dir '\\?\C:\...': Invalid argument". Hand
+    // the child a plain drive path; the directory it names is identical.
+    cmd.arg(crate::registry::dispatch::strip_verbatim_prefix(&dest));
+    let output = cmd
+        .output()
+        .map_err(|e| format!("failed to run git: {e}"))?;
+
+    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+    let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+    let combined = format!("{stdout}\n{stderr}");
+    let combined = combined.trim();
+    let rel = dest
+        .strip_prefix(root)
+        .unwrap_or(&dest)
+        .to_string_lossy()
+        .replace('\\', "/");
+    Ok(serde_json::to_string_pretty(&json!({
+        "success": output.status.success(),
+        "url": url,
+        "repo_name": repo_name,
+        "path": rel,
+        "exit_code": output.status.code(),
+        "output": combined,
+    }))?)
+}
+
 pub fn resolve_workspace_path(
     root: &Path,
     rel_path: &str,
@@ -377,6 +478,407 @@ fn fetch_panel_data(root: &Path, arguments: &Value) -> Result<String, Box<dyn Er
     Ok(serde_json::to_string(&data)?)
 }
 
+/// Longest `read_file` window a ranged request returns, in lines.
+const MAX_READ_WINDOW_LINES: usize = 200;
+/// … and in characters of body text.
+///
+/// This is the cap that actually binds on real source. The history compressor
+/// rewrites any tool result over 4,000 characters as soon as an assistant
+/// message follows it (`compress_history`, agent/executor/utils.rs), which is
+/// the turn after the read — so a 200-line window of indented Rust (~9,000
+/// chars) would be elided before the model could copy from it and the range
+/// would buy nothing. Staying under the threshold is what makes the text
+/// survive long enough to become an `oldString`.
+const MAX_READ_WINDOW_CHARS: usize = 3_200;
+
+fn read_window_param(arguments: &Value, key: &str) -> Result<Option<usize>, String> {
+    match arguments.get(key) {
+        None => Ok(None),
+        Some(Value::Null) => Ok(None),
+        Some(v) => v.as_u64().map(|n| Some(n as usize)).ok_or(format!(
+            "`{key}` must be a positive whole number (1-based line)"
+        )),
+    }
+}
+
+/// A named slice of a file's lines, for `read_file` with `startLine`/`endLine`.
+///
+/// Without ranges the only thing a model can ask for is the whole file, and on a
+/// port big enough to matter the context budget elides most of the result it
+/// just received — which leaves `edit_file` unobtainable, since its `oldString`
+/// has to be copied verbatim, and pushes the model back onto a whole-file
+/// rewrite that its generation limit truncates. A bounded region is what makes
+/// targeted repair possible at all.
+pub(crate) fn read_line_range(
+    text: &str,
+    rel_path: &str,
+    start: Option<usize>,
+    end: Option<usize>,
+) -> Result<String, String> {
+    let total = text.lines().count();
+    let start = start.unwrap_or(1);
+    if start == 0 {
+        return Err("`startLine` is 1-based: pass 1 for the first line".to_string());
+    }
+    if total == 0 || start > total {
+        return Err(format!(
+            "`{rel_path}` has {total} line(s); `startLine` {start} is past its end"
+        ));
+    }
+    let requested = end.unwrap_or(total).min(total);
+    if requested < start {
+        return Err(format!(
+            "`endLine` {} is before `startLine` {start}; the range has to run downwards",
+            end.unwrap_or(total)
+        ));
+    }
+    let ceiling = requested.min(start + MAX_READ_WINDOW_LINES - 1);
+
+    let mut body: Vec<&str> = Vec::new();
+    let mut chars = 0usize;
+    let mut last = start;
+    for (i, line) in text.lines().enumerate() {
+        let n = i + 1;
+        if n < start {
+            continue;
+        }
+        if n > ceiling {
+            break;
+        }
+        // A single over-long line is still returned: an empty window would tell
+        // the model nothing about the region it asked for.
+        if !body.is_empty() && chars + line.len() + 1 > MAX_READ_WINDOW_CHARS {
+            break;
+        }
+        chars += line.len() + 1;
+        body.push(line);
+        last = n;
+    }
+
+    // The header has to be recognisable as metadata: a model that copies it
+    // into an `oldString` matches nothing and loses the edit.
+    let mut header = format!(
+        "Lines {start}-{last} of {total} in `{rel_path}`. Everything below is verbatim file \
+         content — this line is not part of it."
+    );
+    if last < requested {
+        header.push_str(&format!(
+            " This window is capped so the text survives your next turn; send `startLine` {} \
+             for the rest, and make the edit before re-reading.",
+            last + 1
+        ));
+    }
+    Ok(format!("{header}\n{}", body.join("\n")))
+}
+
+/// Whether a line is one of the loop's excerpt headers rather than file text.
+///
+/// Every repair directive pastes the error site under such a line
+/// (`--- src/budget_manager.rs:356..363 (verbatim from disk) ---`, and the five
+/// sibling shapes in `loop_runner`'s excerpt builders). The middle must be
+/// non-empty so a bare `---`, which is markdown's own rule and could legitimately
+/// sit inside a doc comment, is not mistaken for furniture.
+fn is_excerpt_header(line: &str) -> bool {
+    let Some(body) = line.strip_prefix("--- ") else {
+        return false;
+    };
+    !body.trim().is_empty() && body.trim_end().ends_with(" ---")
+}
+
+/// The excerpt-header line an `oldString` wrongly quotes, if it quotes one.
+///
+/// `lr7b_v6`'s repair turns copied the header into `oldString` *and* `newString`,
+/// producing a patch that can never match and burning a 10 s turn to be told
+/// "copy the text verbatim" — advice the turn had just tried to follow. Naming
+/// the exact line is what lets the next call differ. Checked only where the edit
+/// already matched nothing, so a file that genuinely carries such a line still
+/// edits normally.
+fn quoted_excerpt_header(needle: &str) -> Option<String> {
+    needle
+        .lines()
+        .map(str::trim)
+        .find(|line| is_excerpt_header(line))
+        .map(str::to_string)
+}
+
+/// What the file actually says where a refused `oldString` expected to find it.
+///
+/// "Copy the text verbatim, including the exact indentation" is true advice and
+/// useless on its own: it tells the model nothing about the indentation, so it
+/// regenerates the same guess and the batch is refused again, and one rejected
+/// edit voids every other edit in the call. Telling the two failure kinds apart
+/// is what makes the next call differ from this one — text that IS in the file
+/// under different leading spaces, which the tool now pastes back, versus text
+/// that is not in the file at all even ignoring whitespace, which no amount of
+/// re-guessing will land and which only a ranged `read_file` can settle.
+fn explain_refused_edit(hay: &str, needle: &str) -> String {
+    let probe = needle
+        .lines()
+        .map(|l| l.trim())
+        .find(|l| !l.is_empty())
+        .unwrap_or("");
+    // A first line of `}` or `});` exists everywhere; naming its sites would
+    // send the model after the wrong one.
+    if probe.chars().count() < 6 {
+        return String::new();
+    }
+    const SITES: usize = 3;
+    const MAX_WIDTH: usize = 4;
+    let lines: Vec<&str> = hay.lines().collect();
+    let sites: Vec<usize> = lines
+        .iter()
+        .enumerate()
+        .filter(|(_, l)| l.trim() == probe)
+        .map(|(i, _)| i)
+        .collect();
+    if sites.is_empty() {
+        return format!(
+            "Its first line, `{probe}`, appears nowhere in the file even with indentation \
+             ignored, so the text itself is wrong rather than merely mis-indented. Call \
+             read_file with `startLine` and `endLine` over that region and copy from what it \
+             returns; guessing a second time wastes the turn."
+        );
+    }
+    let shown = &sites[..sites.len().min(SITES)];
+    // The following line is the disambiguator: two identical openings are told
+    // apart by what comes next, and the pair is what makes a widened `oldString`
+    // unique. Repeat until the shown blocks differ from each other — a run of
+    // the same call with the same first argument (`create_budget(` / `100.0,`
+    // three times over) pasted three identical blocks and taught nothing.
+    let mut width = 2usize;
+    while width < MAX_WIDTH && !blocks_are_distinct(&lines, shown, width) {
+        width += 1;
+    }
+    let still_ambiguous = !blocks_are_distinct(&lines, shown, width);
+    let mut out = format!(
+        "Its first line, `{probe}`, IS in {} place(s) of the file under different leading \
+         whitespace. Each block below is verbatim file content, starting at the line number \
+         in its `[line N]` marker; copy from them, and treat every line of this message, \
+         markers included, as something that is not part of the file.",
+        sites.len()
+    );
+    for &i in shown {
+        let end = (i + width).min(lines.len());
+        out.push_str(&format!("\n[line {}]\n{}", i + 1, lines[i..end].join("\n")));
+    }
+    if still_ambiguous {
+        out.push_str(
+            " These sites are still identical line-for-line, so no `oldString` built from \
+             them alone is unique: read_file a wider region and anchor on text that differs.",
+        );
+    }
+    out
+}
+
+/// Whether every shown site, read for `width` lines from its opening, yields a
+/// block no other shown site yields.
+fn blocks_are_distinct(lines: &[&str], sites: &[usize], width: usize) -> bool {
+    let mut seen: Vec<String> = Vec::with_capacity(sites.len());
+    for &i in sites {
+        let end = (i + width).min(lines.len());
+        let block = lines[i..end].join("\n");
+        if seen.contains(&block) {
+            return false;
+        }
+        seen.push(block);
+    }
+    true
+}
+
+/// Where an over-fitting `oldString` actually matches, and what the file puts
+/// around each site.
+///
+/// "Widen it with the surrounding lines until it is unique" names no lines, so
+/// the model rebuilds the context from memory of a file it emitted a dozen
+/// minutes ago — and gateprobe2 showed what that costs: the same one-line needle
+/// sent twice for two different errors, refused twice with this same sentence,
+/// then guessed at an indentation and voided a third batch. The lines that make
+/// a site unique are in the file, so the tool hands them over instead of asking
+/// for them.
+fn explain_ambiguous_edit(hay: &str, needle: &str, hits: usize) -> String {
+    const SITES: usize = 3;
+    const BEFORE: usize = 2;
+    const AFTER: usize = 2;
+    let lines: Vec<&str> = hay.lines().collect();
+    let mut sites: Vec<(usize, usize)> = Vec::new();
+    let mut pos = 0usize;
+    while let Some(rel) = hay[pos..].find(needle) {
+        let abs = pos + rel;
+        let first = hay[..abs].matches('\n').count();
+        sites.push((first, first + needle.matches('\n').count()));
+        pos = abs + needle.len().max(1);
+        if sites.len() >= SITES {
+            break;
+        }
+    }
+    if sites.is_empty() {
+        return String::new();
+    }
+    let mut out = format!(
+        "It matches {} place(s){}. Each block below is verbatim file text at one of them, with a \
+         few lines either side: copy the lines under a `[line N]` marker — never the marker, which \
+         is not in the file — and widen until only the site you mean still matches.",
+        hits,
+        if hits > SITES {
+            format!(", of which the first {SITES} are shown")
+        } else {
+            String::new()
+        }
+    );
+    for (first, last) in sites {
+        let a = first.saturating_sub(BEFORE);
+        let b = (last + AFTER + 1).min(lines.len());
+        out.push_str(&format!("\n[line {}]\n{}", a + 1, lines[a..b].join("\n")));
+    }
+    out
+}
+
+/// How many `{` a piece of Rust source leaves open, ignoring the ones that live
+/// in comments, strings and char literals.
+///
+/// Only the *difference* between an `oldString` and its `newString` is ever
+/// used, so a file that starts unbalanced still reports correctly, and a doc
+/// comment with a code example in it cannot skew an edit that does not touch it.
+/// The skipping is what keeps the check honest: a refusal on `format!("{}", x)`
+/// or a comment that mentions a brace would make `edit_file` worse than the
+/// whole-file rewrite it exists to replace.
+pub(crate) fn brace_delta(src: &str) -> i32 {
+    let b = src.as_bytes();
+    let mut depth: i32 = 0;
+    let mut i = 0usize;
+    while i < b.len() {
+        match b[i] {
+            b'{' => {
+                depth += 1;
+                i += 1;
+            }
+            b'}' => {
+                depth -= 1;
+                i += 1;
+            }
+            b'/' if b.get(i + 1) == Some(&b'/') => {
+                i += 2;
+                while i < b.len() && b[i] != b'\n' {
+                    i += 1;
+                }
+            }
+            b'/' if b.get(i + 1) == Some(&b'*') => {
+                // Block comments nest in Rust; stopping at the first `*/` would
+                // re-expose the text a nested comment hides.
+                let mut level = 1usize;
+                i += 2;
+                while i < b.len() && level > 0 {
+                    if b[i] == b'/' && b.get(i + 1) == Some(&b'*') {
+                        level += 1;
+                        i += 2;
+                    } else if b[i] == b'*' && b.get(i + 1) == Some(&b'/') {
+                        level -= 1;
+                        i += 2;
+                    } else {
+                        i += 1;
+                    }
+                }
+            }
+            b'"' => {
+                // Raw strings declare their own terminator length with `#`s, so
+                // the prefix has to be recognised before the closing quote can
+                // be found.
+                match raw_string_hashes(b, i) {
+                    Some(hashes) => {
+                        let terminator = format!("\"{}", "#".repeat(hashes));
+                        i = match src[i + 1..].find(&terminator) {
+                            Some(rel) => i + 1 + rel + terminator.len(),
+                            None => b.len(),
+                        };
+                    }
+                    None => {
+                        i += 1;
+                        while i < b.len() {
+                            if b[i] == b'\\' {
+                                i += 2;
+                            } else if b[i] == b'"' {
+                                i += 1;
+                                break;
+                            } else {
+                                i += 1;
+                            }
+                        }
+                    }
+                }
+            }
+            b'\'' => {
+                i += char_literal_len(b, i).unwrap_or(1);
+            }
+            _ => i += 1,
+        }
+    }
+    depth
+}
+
+/// The length of the char literal starting at `quote`, or `None` when the quote
+/// starts a lifetime (`'a`, `'src`). Only the two shapes Rust allows are
+/// recognised, because treating a lifetime as an opening quote would swallow the
+/// code up to the next apostrophe — including its braces.
+fn char_literal_len(b: &[u8], quote: usize) -> Option<usize> {
+    let next = *b.get(quote + 1)?;
+    if next == b'\'' {
+        return None;
+    }
+    if next == b'\\' {
+        // `'\n'`, `'\''`, `'\x1A'`, `'\u{1F600}'` — the escape body is consumed
+        // by shape, because its own quote or braces must not be read as code.
+        let mut i = quote + 2;
+        if i < b.len() && b[i] == b'u' {
+            i += 1;
+            if i < b.len() && b[i] == b'{' {
+                while i < b.len() && b[i] != b'}' {
+                    i += 1;
+                }
+                i += 1;
+            }
+        } else if i < b.len() {
+            i += 1;
+            if b.get(i - 2) == Some(&b'x') {
+                while i < b.len() && b[i].is_ascii_hexdigit() {
+                    i += 1;
+                }
+            }
+        }
+        return if b.get(i) == Some(&b'\'') {
+            Some(i + 1 - quote)
+        } else {
+            None
+        };
+    }
+    if b.get(quote + 2) == Some(&b'\'') {
+        Some(3)
+    } else {
+        None
+    }
+}
+
+/// When the `"` at `quote` opens a raw string, the number of `#`s that must
+/// follow its closing quote (`r"…"`, `r#"…"#`, `br#"…"#`).
+fn raw_string_hashes(b: &[u8], quote: usize) -> Option<usize> {
+    let mut hashes = 0usize;
+    let mut letter = quote;
+    while letter > 0 && b[letter - 1] == b'#' {
+        hashes += 1;
+        letter -= 1;
+    }
+    if letter == 0 || b[letter - 1] != b'r' {
+        return None;
+    }
+    letter -= 1;
+    // The `r` has to begin a token. A byte-string raw prefix (`br"`/`rb"`) is
+    // the one letter allowed in front of it.
+    let preceded = |k: usize| k > 0 && (b[k - 1].is_ascii_alphanumeric() || b[k - 1] == b'_');
+    if preceded(letter) && !(matches!(b[letter - 1], b'b' | b'r') && preceded(letter - 1)) {
+        return None;
+    }
+    Some(hashes)
+}
+
 pub fn handle_system_tool(
     root: &Path,
     name: &str,
@@ -393,8 +895,16 @@ pub fn handle_system_tool(
                 .as_str()
                 .ok_or("relativeFilePath is required")?;
             let full_path = resolve_workspace_path(root, rel_path, false)?;
-
-            fs::read_to_string(full_path)?
+            let text = fs::read_to_string(full_path)?;
+            let start = read_window_param(arguments, "startLine")
+                .map_err(|e| -> Box<dyn Error> { e.into() })?;
+            let end = read_window_param(arguments, "endLine")
+                .map_err(|e| -> Box<dyn Error> { e.into() })?;
+            if start.is_none() && end.is_none() {
+                text
+            } else {
+                read_line_range(&text, rel_path, start, end)?
+            }
         }
         "write_file" => {
             let rel_path = arguments["relativeFilePath"]
@@ -413,18 +923,223 @@ pub fn handle_system_tool(
             if let Some(parent) = full_path.parent() {
                 fs::create_dir_all(parent)?;
             }
-            fs::write(full_path, content)?;
+            fs::write(&full_path, content)?;
 
-            if let Some(warn) = scan_warning {
+            // Rust gets a formatter pass now rather than at some later build
+            // step nobody runs: agent-written code is otherwise exactly as the
+            // model typed it. Non-Rust files and a missing rustfmt are no-ops,
+            // and the outcome is a note, never an error — the write succeeded.
+            let format_note = crate::automation::formatter::format_written_file(&full_path).note();
+
+            // `edit_file` and `delete_file` already name the path they acted on
+            // and `write_file` did not, so a 32 KB port written to a path the
+            // model never intended came back as an unqualified "success". The
+            // measured case is crucible run `convert22`: the task said
+            // 'rust_port/src/budget_manager.rs' and the model sent
+            // 'litellm_ws/rust_port/src/budget_manager.rs' — the workspace
+            // root's own name repeated inside itself — which
+            // `resolve_workspace_path` accepted as legitimately relative.
+            // Echoing the path back is the only signal in the conversation that
+            // a duplicated prefix ever existed.
+            let wrote_to = rel_path.replace('\\', "/");
+            let mut message = if let Some(warn) = scan_warning {
                 format!(
-                    "Success: File written successfully. WARNING: Security scan warning triggered: [{}]. Please immediately correct this exposure in your next step.",
+                    "Success: wrote {wrote_to}. WARNING: Security scan warning triggered: [{}]. Please immediately correct this exposure in your next step.",
                     warn
                 )
             } else if stripped.is_some() {
-                "Success: File written successfully. Note: a trailing Decision Trail annotation (harness metadata from a prior read_file result, not file content) was stripped before writing.".to_string()
+                format!(
+                    "Success: wrote {wrote_to}. Note: a trailing Decision Trail annotation (harness metadata from a prior read_file result, not file content) was stripped before writing."
+                )
             } else {
-                "Success: File written successfully".to_string()
+                format!("Success: wrote {wrote_to}")
+            };
+            if let Some(note) = format_note {
+                message.push_str(&format!(" {note}"));
             }
+            message
+        }
+        "edit_file" => {
+            let rel_path = arguments["relativeFilePath"]
+                .as_str()
+                .ok_or("relativeFilePath is required")?;
+            let edits = arguments["edits"]
+                .as_array()
+                .filter(|batch| !batch.is_empty())
+                .ok_or("edits must be a non-empty array of {oldString, newString} objects")?;
+            let full_path = resolve_workspace_path(root, rel_path, false)?;
+            let current = fs::read_to_string(&full_path)?;
+
+            // Apply the batch to an in-memory copy and write only if EVERY edit
+            // matched. A half-applied batch leaves the file in a state the model
+            // has never seen, so its next `oldString` guess is worse than the
+            // error it started from.
+            let mut working = current.clone();
+            let mut rejected: Vec<String> = Vec::new();
+            // Rust is the one language whose edits the agent loop grades with a
+            // compiler, and a batch that changes the file's brace balance cannot
+            // be anything but a mistake: `mod tests {` left open by a `newString`
+            // that dropped the `}`s its `oldString` matched. testgate2b is the
+            // cost — the edit applied cleanly, rustc reported an unclosed
+            // delimiter, and the 391s repair turn that followed made the file
+            // worse. Refusing at this point names the mistake for free.
+            let is_rust = rel_path.replace('\\', "/").ends_with(".rs");
+            let mut brace_drift: i32 = 0;
+            for (i, edit) in edits.iter().enumerate() {
+                let n = i + 1;
+                let Some(old) = edit["oldString"].as_str() else {
+                    rejected.push(format!("edit {n}: `oldString` must be a string"));
+                    continue;
+                };
+                if old.is_empty() {
+                    rejected.push(format!("edit {n}: `oldString` is empty"));
+                    continue;
+                }
+                let Some(new) = edit["newString"].as_str() else {
+                    // The schema declares newString required, and the pre-execution
+                    // validator only checks an array item's enums — so a missing
+                    // key reaches here. Deleting the matched text must be a
+                    // deliberate `newString: ""`, never an omitted field.
+                    rejected.push(format!(
+                        "edit {n}: `newString` is required (use \"\" to delete the matched text)"
+                    ));
+                    continue;
+                };
+                // A repair turn that hands back the text it was given applies
+                // cleanly and changes nothing, so "Success: applied 1 edit(s)
+                // (23886 -> 23886 bytes)" reads to the model as a fix while the
+                // compiler still reports the same error. Refusing costs one turn
+                // and tells it the patch it meant never left its context.
+                if new == old {
+                    rejected.push(format!(
+                        "edit {n}: its `newString` is byte-identical to its `oldString`, so this \
+                         edit would change no characters. The error is still in the file at that \
+                         line — write the replacement the error asks for."
+                    ));
+                    continue;
+                }
+                // Line endings are the one thing a model cannot see: read_file
+                // shows a CRLF file as plain newlines, and the text it copies
+                // back is the same content with whichever ending its tokenizer
+                // kept. Try both spellings of the needle before refusing — a
+                // false "not in the file" would make edit_file worse than the
+                // whole-file rewrite it exists to replace — then emit the
+                // replacement in the FILE's own endings so a patch cannot leave
+                // it mixed.
+                let crlf_file = current.contains("\r\n");
+                let exact = working.matches(old).count();
+                let (needle, hits) = if exact > 0 {
+                    (old.to_string(), exact)
+                } else {
+                    let variants = [old.replace("\r\n", "\n"), old.replace('\n', "\r\n")];
+                    match variants
+                        .into_iter()
+                        .find(|v| working.matches(v.as_str()).count() == 1)
+                    {
+                        Some(v) => {
+                            let n = working.matches(v.as_str()).count();
+                            (v, n)
+                        }
+                        None => (old.to_string(), 0),
+                    }
+                };
+                // Downgrade to LF first, then re-apply the file's own ending.
+                // Skipping the downgrade double-CRs a CRLF `newString` patched
+                // into a CRLF file — exactly the case where the model copies
+                // `read_file` text verbatim, which on a Windows checkout
+                // already carries the `\r`.
+                let repl = {
+                    let lf = new.replace("\r\n", "\n");
+                    if crlf_file {
+                        lf.replace('\n', "\r\n")
+                    } else {
+                        lf
+                    }
+                };
+                if hits == 0 {
+                    if let Some(header) = quoted_excerpt_header(&needle) {
+                        rejected.push(format!(
+                            "edit {n}: its `oldString` quotes the excerpt header `{header}`, \
+                             which is a label this message writes to show you the file — it is \
+                             not in {rel_path} and never will be. Re-issue the edit built only \
+                             from the lines inside the box under that header, indentation \
+                             included, with the header itself left out."
+                        ));
+                        continue;
+                    }
+                    let why = explain_refused_edit(&working, old);
+                    let mut msg = format!(
+                        "edit {n}: its `oldString` is not in {rel_path} \u{2014} copy the text \
+                         verbatim, including the exact indentation."
+                    );
+                    if !why.is_empty() {
+                        msg.push(' ');
+                        msg.push_str(&why);
+                    }
+                    rejected.push(msg);
+                } else if hits > 1 {
+                    let why = explain_ambiguous_edit(&working, &needle, hits);
+                    let mut msg = format!(
+                        "edit {n}: its `oldString` matches {hits} places in {rel_path} \u{2014} \
+                         widen it with the surrounding lines until it is unique."
+                    );
+                    if !why.is_empty() {
+                        msg.push(' ');
+                        msg.push_str(&why);
+                    }
+                    rejected.push(msg);
+                } else {
+                    if is_rust {
+                        brace_drift += brace_delta(&repl) - brace_delta(&needle);
+                    }
+                    working = working.replace(&needle, &repl);
+                }
+            }
+            if !rejected.is_empty() {
+                return Err(format!(
+                    "no edits were applied to {rel_path}; the file is unchanged:\n{}",
+                    rejected.join("\n")
+                )
+                .into());
+            }
+            if is_rust && brace_drift != 0 {
+                let (moved, glyph) = if brace_drift > 0 {
+                    (brace_drift, "block left open")
+                } else {
+                    (-brace_drift, "brace with no block to close")
+                };
+                return Err(format!(
+                    "no edits were applied to {rel_path}; the file is unchanged: this batch of \
+                     {} edit(s) would leave the file with {moved} more {glyph} than it has now. \
+                     That is never what a patch means. When an `oldString` matches a line that \
+                     closes a block, its `newString` has to repeat that closing brace and put the \
+                     new text around it, not in place of it. Re-issue the batch carrying every \
+                     delimiter the `oldString` matched.",
+                    edits.len()
+                )
+                .into());
+            }
+
+            let scan_warning = scan_file_content(&working);
+            fs::write(&full_path, &working)?;
+            let format_note = crate::automation::formatter::format_written_file(&full_path).note();
+
+            let mut message = format!(
+                "Success: applied {} edit(s) to {rel_path} ({} \u{2192} {} bytes).",
+                edits.len(),
+                current.len(),
+                working.len()
+            );
+            if let Some(warn) = scan_warning {
+                message = format!(
+                    "{message} WARNING: Security scan warning triggered: [{warn}]. \
+                     Please immediately correct this exposure in your next step."
+                );
+            }
+            if let Some(note) = format_note {
+                message.push_str(&format!(" {note}"));
+            }
+            message
         }
         "list_dir" => {
             let rel_path = arguments["relativeDirPath"]
@@ -501,6 +1216,12 @@ pub fn handle_system_tool(
                             let dir_name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
                             if dir_name == "node_modules"
                                 || dir_name == ".git"
+                                // The agent runtime's own state: repo clones it
+                                // made, chat logs, crash dumps. `.velocity/clones`
+                                // has held a full Rust port of the very library a
+                                // porting task was being graded on, so a model that
+                                // grepped found the answer beside its own work.
+                                || dir_name == ".velocity"
                                 || dir_name == "target"
                                 || dir_name == "dist"
                                 || dir_name == "build"
@@ -602,6 +1323,7 @@ pub fn handle_system_tool(
             }
             outcome
         }
+        "git_clone" => git_clone_impl(root, arguments)?,
         // ── Agent Checkpointing ─────────────────────────────────────────────
         "agent_checkpoint_create" => {
             let label = arguments["label"].as_str().ok_or("label is required")?;
@@ -931,16 +1653,65 @@ pub fn handle_system_tool(
         "use_skill" => super::skills::handle_use_skill(root, arguments)
             .map_err(|e| -> Box<dyn Error> { e.into() })?,
         // ── Workflows ───────────────────────────────────────────────────────
+        "workflow_list" => {
+            use crate::editor::workflow::WorkflowStep;
+            let reg = crate::editor::workflow::WorkflowRegistry::load(root);
+            let mut out = String::new();
+            if reg.workflows.is_empty() {
+                out.push_str("No saved workflows (create them in the Workflows panel).\n");
+            }
+            for wf in &reg.workflows {
+                let (mut t, mut c, mut a, mut f) = (0u32, 0u32, 0u32, 0u32);
+                for s in &wf.steps {
+                    match s {
+                        WorkflowStep::Tool { .. } | WorkflowStep::Connector { .. } => t += 1,
+                        WorkflowStep::Condition { .. } => c += 1,
+                        WorkflowStep::AgentTask { .. } => a += 1,
+                        WorkflowStep::ForEach { .. } => f += 1,
+                    }
+                }
+                out.push_str(&format!(
+                    "  - {} ({} step(s): T{} C{} A{} F{}): {}\n",
+                    wf.id,
+                    wf.steps.len(),
+                    t,
+                    c,
+                    a,
+                    f,
+                    wf.name
+                ));
+                // Same reference check the workflow_run guard applies: flag
+                // unregistered tools and connectors before a run fails on them.
+                if let Err(e) = crate::editor::company_org::validate_step_references(
+                    Some(root),
+                    "workflow",
+                    &wf.id,
+                    &wf.steps,
+                ) {
+                    out.push_str(&format!("      \u{26a0} {e}\n"));
+                }
+            }
+            out
+        }
         "workflow_run" => {
             let id = arguments["id"].as_str().ok_or("id is required")?;
             let reg = crate::editor::workflow::WorkflowRegistry::load(root);
-            match reg.get(id).cloned() {
-                Some(workflow) => {
-                    let run = workflow.execute(root);
-                    serde_json::to_string(&run)?
-                }
-                None => return Err(format!("Unknown workflow: {id}").into()),
-            }
+            let workflow = reg
+                .get(id)
+                .ok_or_else(|| format!("Unknown workflow: {id}"))?;
+            // Fail fast if any Tool step references a non-existent tool: a
+            // mid-run halt would leave partial side effects (and the engine
+            // only short-circuits on Condition failures, not on unknown
+            // tools). Mirrors the run_playbook guard.
+            crate::editor::company_org::validate_step_references(
+                Some(root),
+                "workflow",
+                id,
+                &workflow.steps,
+            )
+            .map_err(|e| -> Box<dyn Error> { e.into() })?;
+            let run = workflow.execute(root);
+            serde_json::to_string(&run)?
         }
         "connector_call" => {
             let id = arguments["id"].as_str().ok_or("id is required")?;
@@ -1831,6 +2602,40 @@ fn run_in_dll_sandbox(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn git_clone_validation_guards_run_before_any_network_call() {
+        let dir = std::env::temp_dir().join(format!("git_clone_test_{}", std::process::id()));
+        let _ = fs::create_dir_all(&dir);
+        let dir = fs::canonicalize(&dir).unwrap_or(dir);
+
+        // Missing url.
+        let err = git_clone_impl(&dir, &json!({})).unwrap_err().to_string();
+        assert!(err.contains("'url' is required"), "{err}");
+
+        // Non-git scheme is refused (so file:// and shell text never reach git).
+        let err = git_clone_impl(&dir, &json!({"url": "ftp://example.com/x.git"}))
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("must start with"), "{err}");
+
+        // Shell metacharacters are rejected out of hand.
+        let err = git_clone_impl(&dir, &json!({"url": "https://github.com/a/b; rm -rf /"}))
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("forbidden characters"), "{err}");
+
+        // A destination escaping the workspace is refused before git runs.
+        let err = git_clone_impl(
+            &dir,
+            &json!({"url": "https://github.com/a/b.git", "dest": "../evil"}),
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(!err.is_empty());
+
+        let _ = fs::remove_dir_all(&dir);
+    }
 
     #[test]
     fn native_convert_then_read_round_trips() {
