@@ -530,55 +530,235 @@ fn a_ranged_read_feeds_an_edit_file_call_that_lands() {
     assert!(after.contains("entry(k.to_string())"), "{after}");
 }
 
-/// A refused edit that only says "copy verbatim" sends the model back to the
-/// same guess of the indentation, and one refusal voids the whole batch. The
-/// file's own line has to be in the message for the next call to differ.
+/// `lr7b_v20` in full shape. The model's `oldString` is the file's own two lines
+/// with four fewer spaces on each and its `newString` is the correct E0308 fix,
+/// so the match is unique the moment indentation is ignored. The refusal already
+/// said as much — "IS in 1 place(s) of the file under different leading
+/// whitespace" — and pasted the file's own bytes under a `[line 358]` marker,
+/// and the `read_file` its advice sent the model to returned the same text again.
+/// It re-sent eight spaces ten times anyway. A model cannot count leading
+/// whitespace, so no refusal ends this loop; applying the one site it can have
+/// meant does.
 #[test]
-fn a_refused_edit_shows_the_files_own_indentation_of_the_line_it_missed() {
+fn an_oldstring_whose_only_fault_is_indentation_is_applied_at_the_one_site_it_matches() {
     let (_temp, root) = setup_root();
-    fs::write(
-        root.join("port.rs"),
-        "fn f() {\n        let entry = self.user_dict.entry(k);\n        drop(entry);\n}\n",
-    )
-    .unwrap();
+    let file = "\
+pub struct UpdateCostResult<'a> {
+    pub user_record: &'a Record,
+}
 
-    // Over-indenting is the failure a model actually hits: a needle with fewer
-    // leading spaces than the file is still a substring of the real line and
-    // edits fine, while one with more matches nothing and reads as "not in the
-    // file" even though the text is sitting right there.
+pub fn update_cost(record: &Record) -> UpdateCostResult<'_> {
+    let result_record = record;
+    UpdateCostResult {
+        user_record: result_record,
+    }
+}
+";
+    fs::write(root.join("port.rs"), file).unwrap();
+
+    let ok = call_tool_in_workspace(
+        &root,
+        "edit_file",
+        &json!({
+            "relativeFilePath": "port.rs",
+            "edits": [{
+                "oldString": "    user_record: result_record,\n}",
+                "newString": "    user_record: &result_record,\n}"
+            }],
+            "context": "fix E0308"
+        }),
+    )
+    .unwrap_or_else(|e| panic!("a uniquely-located mis-indent is not a refusal: {e}"));
+
+    let after = fs::read_to_string(root.join("port.rs")).unwrap();
+    assert!(
+        after.contains("        user_record: &result_record,"),
+        "the replacement lands at the FILE's eight spaces, not the four it was sent with: {after}"
+    );
+    assert!(
+        ok.contains("line 8") && ok.contains("ignoring leading whitespace"),
+        "and the success says it was re-indented, so the changed bytes are not a mystery: {ok}"
+    );
+    assert!(
+        ok.contains("4 whitespace character(s) shallower"),
+        "by how much, and which way: {ok}"
+    );
+    assert!(
+        !after.contains("user_record: result_record,"),
+        "the old text is gone — this applied, it did not merely refuse politely: {after}"
+    );
+}
+
+/// The rescue is licensed by uniqueness alone, so the moment a second site
+/// matches, applying either one is a guess. The shift here IS uniform — four
+/// spaces on every line — so nothing but the second site keeps this from being
+/// applied, and the refusal keeps the sites paste it had before, which is the
+/// answer that lets the model widen instead.
+#[test]
+fn a_mis_indented_oldstring_matching_two_sites_is_still_refused_with_both_pasted() {
+    let (_temp, root) = setup_root();
+    let file = "\
+fn a() {
+    mgr.record(
+        total_cost,
+    );
+}
+fn b() {
+    mgr.record(
+        total_cost,
+    );
+}
+";
+    fs::write(root.join("port.rs"), file).unwrap();
+
     let err = call_tool_in_workspace(
         &root,
         "edit_file",
         &json!({
             "relativeFilePath": "port.rs",
             "edits": [{
-                "oldString": "                let entry = self.user_dict.entry(k);",
-                "newString": "                let entry = self.user_dict.entry(k.to_string());"
+                "oldString": "mgr.record(\n    total_cost,\n);",
+                "newString": "mgr.record(\n    total_budget,\n);"
             }],
-            "context": "fix the key type"
+            "context": "widen"
         }),
     )
     .err()
     .map(|e| e.to_string())
-    .unwrap_or_else(|| "the mis-indented edit must be refused".to_string());
+    .unwrap_or_else(|| "two candidate sites must not be resolved by picking one".to_string());
 
+    assert!(err.contains("IS in 2 place(s)"), "{err}");
     assert!(
-        err.contains("        let entry = self.user_dict.entry(k);"),
-        "the refusal must hand back the file's own line, indentation and all: {err}"
-    );
-    assert!(
-        err.contains("different leading whitespace"),
-        "and name the failure the model can actually fix: {err}"
-    );
-    // The pair that follows is what turns a matched line into a UNIQUE one.
-    assert!(
-        err.contains("        drop(entry);"),
-        "the next line belongs in the window so the widened edit lands: {err}"
+        err.contains("[line 2]") && err.contains("[line 7]"),
+        "both sites, numbered: {err}"
     );
     assert_eq!(
         fs::read_to_string(root.join("port.rs")).unwrap(),
-        "fn f() {\n        let entry = self.user_dict.entry(k);\n        drop(entry);\n}\n",
+        file,
         "a refused batch leaves the file alone"
+    );
+}
+
+/// Uniformity is the other half of the licence. A needle indented by four extra
+/// spaces on its first line and two on its second is not the same block
+/// re-indented, it is a model that restructured the region, and shifting the
+/// replacement by one amount would be inventing an edit.
+#[test]
+fn a_mis_indented_oldstring_whose_lines_disagree_on_the_shift_is_refused() {
+    let (_temp, root) = setup_root();
+    let file = "fn a() {\n    mgr.record(\n        total_cost,\n    );\n}\n";
+    fs::write(root.join("port.rs"), file).unwrap();
+
+    let err = call_tool_in_workspace(
+        &root,
+        "edit_file",
+        &json!({
+            "relativeFilePath": "port.rs",
+            "edits": [{
+                "oldString": "        mgr.record(\n      total_cost,\n    );",
+                "newString": "        mgr.record(\n      total_budget,\n    );"
+            }],
+            "context": "widen"
+        }),
+    )
+    .err()
+    .map(|e| e.to_string())
+    .unwrap_or_else(|| "a non-uniform re-indent must not be applied".to_string());
+
+    assert!(
+        !err.contains("ignoring leading whitespace"),
+        "nothing was applied, so the success wording has no business here: {err}"
+    );
+    assert!(err.contains("different leading whitespace"), "{err}");
+    assert_eq!(
+        fs::read_to_string(root.join("port.rs")).unwrap(),
+        file,
+        "a refused batch leaves the file alone"
+    );
+}
+
+/// A rescued edit writes into the file's own bytes, so it has to keep their line
+/// endings. Emitting LF into a CRLF file would leave it mixed and every later
+/// verbatim `oldString` the model copies from `read_file` would fail to match.
+/// Not a `.rs` file, so no formatter stands between the splice and the assertion.
+#[test]
+fn an_indentation_rescue_keeps_the_files_own_line_endings() {
+    let (_temp, root) = setup_root();
+    let file = "begin\r\n    mgr.record(\r\n        total_cost,\r\n    );\r\nend\r\n";
+    fs::write(root.join("port.txt"), file).unwrap();
+
+    let ok = call_tool_in_workspace(
+        &root,
+        "edit_file",
+        &json!({
+            "relativeFilePath": "port.txt",
+            "edits": [{
+                "oldString": "mgr.record(\n    total_cost,\n);",
+                "newString": "mgr.record(\n    total_budget,\n);"
+            }],
+            "context": "rename the field"
+        }),
+    )
+    .unwrap_or_else(|e| panic!("a unique mis-indent in a CRLF file still applies: {e}"));
+
+    assert!(ok.contains("ignoring leading whitespace"), "{ok}");
+    let after = fs::read_to_string(root.join("port.txt")).unwrap();
+    assert!(
+        after.contains("        total_budget,\r\n"),
+        "the re-indented replacement carries CRLF like the rest of the file: {after:?}"
+    );
+    assert_eq!(
+        after.matches('\n').count(),
+        after.matches("\r\n").count(),
+        "no line is left half-converted: {after:?}"
+    );
+    assert!(
+        after.starts_with("begin\r\n") && after.ends_with("end\r\n"),
+        "only the matched span was touched: {after:?}"
+    );
+}
+
+/// Ordering: `already_applied_at` is a truer answer than the rescue. A
+/// `newString` that is already on disk means this change was made and the
+/// compiler is asking for a different one — applying the mis-indented
+/// `oldString` at the other site would write a second copy of a finished edit.
+/// The shift at that other site is a uniform four spaces, so nothing but the
+/// ordering keeps this from being applied.
+#[test]
+fn an_already_applied_change_is_not_rescued_into_a_second_site() {
+    let (_temp, root) = setup_root();
+    let file = "fn a() {\n    mgr.record(\n        &total_cost,\n    );\n}\n\
+                fn b() {\n      mgr.record(\n        total_cost,\n      );\n}\n";
+    fs::write(root.join("port.txt"), file).unwrap();
+
+    let err = call_tool_in_workspace(
+        &root,
+        "edit_file",
+        &json!({
+            "relativeFilePath": "port.txt",
+            "edits": [{
+                "oldString": "  mgr.record(\n    total_cost,\n  );",
+                "newString": "    mgr.record(\n        &total_cost,\n    );"
+            }],
+            "context": "fix E0308"
+        }),
+    )
+    .err()
+    .map(|e| e.to_string())
+    .unwrap_or_else(|| "an already-applied change is not something to redo".to_string());
+
+    assert!(
+        err.contains("already on disk"),
+        "the honest answer wins over the applicable one: {err}"
+    );
+    assert!(
+        err.contains("line 2"),
+        "and names where it already is: {err}"
+    );
+    assert_eq!(
+        fs::read_to_string(root.join("port.txt")).unwrap(),
+        file,
+        "and the second site is left alone"
     );
 }
 

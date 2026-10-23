@@ -832,6 +832,164 @@ fn near_miss_message(rel_path: &str, m: &NearMiss) -> String {
     )
 }
 
+/// A refused `oldString` that differs from exactly one place in the file by
+/// nothing but a uniform re-indent.
+#[derive(Debug, PartialEq)]
+struct IndentRescue {
+    /// Byte span the matched lines occupy in the haystack, terminators excluded.
+    start: usize,
+    end: usize,
+    /// 1-based file line the match starts at.
+    line: usize,
+    /// The one indentation adjustment every non-blank matched line shares.
+    extra: String,
+    /// Whether the file is deeper than the needle, so `extra` is added rather
+    /// than removed.
+    deepen: bool,
+}
+
+/// Byte offset of every line of `hay`, one entry per `split('\n')` segment, so
+/// a line's terminator length never has to be guessed.
+fn line_starts(hay: &str) -> Vec<usize> {
+    let mut starts = Vec::new();
+    let mut pos = 0usize;
+    for segment in hay.split('\n') {
+        starts.push(pos);
+        pos += segment.len() + 1;
+    }
+    starts
+}
+
+/// Line `k` of `hay` without its terminator, by byte offset rather than by
+/// re-splitting, so a rescued edit can be spliced back into the original bytes
+/// of a CRLF file.
+fn line_at<'a>(hay: &'a str, starts: &[usize], k: usize) -> &'a str {
+    let s = starts[k];
+    let e = if k + 1 < starts.len() {
+        starts[k + 1]
+    } else {
+        hay.len()
+    };
+    hay[s..e].trim_end_matches(['\r', '\n'])
+}
+
+/// The one place a needle's lines occur ignoring leading whitespace, when there
+/// is exactly one and the difference is a uniform re-indent.
+///
+/// `lr7b_v20` spent ten of its twenty-three turns, and the run, on this. The
+/// model's `oldString` was `        user_record: result_record,\n    }` — eight
+/// and four spaces — against a file that says twelve and eight, with a
+/// `newString` that was the correct E0308 fix. The refusal already knew the
+/// match was unique ("IS in 1 place(s) of the file under different leading
+/// whitespace"), pasted the file's own bytes under a `[line 358]` marker, and
+/// the `read_file` the advice sent it to returned the same text again. The
+/// model re-emitted eight spaces every single time. A 7B cannot count leading
+/// whitespace: it re-indents to the nesting level it expects, and no wording of
+/// a refusal can teach it otherwise, so the tenth replay was as doomed as the
+/// second.
+///
+/// Uniqueness is what makes applying this honest rather than a guess — one
+/// candidate site is the site the model meant — and the uniform-delta rule is
+/// what keeps it honest about the replacement. Blank lines are skipped because
+/// they carry no indentation to compare; a needle whose lines differ by
+/// *different* amounts is a model that restructured the block, and re-indenting
+/// that would be inventing an edit, so it declines and falls through to the
+/// sites paste.
+fn indent_rescue(hay: &str, needle: &str) -> Option<IndentRescue> {
+    // `}` and `});` are in every file. Uniqueness already rules out the usual
+    // ones, and a residue this short carries no evidence of intent.
+    const MIN_TRIMMED: usize = 8;
+    let want: Vec<&str> = needle.lines().collect();
+    let want_trim: Vec<&str> = want.iter().map(|l| l.trim()).collect();
+    if want_trim.iter().all(|l| l.is_empty()) {
+        return None;
+    }
+    if want_trim.iter().map(|l| l.chars().count()).sum::<usize>() < MIN_TRIMMED {
+        return None;
+    }
+    let starts = line_starts(hay);
+    let count = hay.lines().count();
+    let n = want.len();
+    if n == 0 || n > count {
+        return None;
+    }
+    let mut hits: Vec<usize> = Vec::new();
+    for i in 0..=(count - n) {
+        if (0..n).all(|k| line_at(hay, &starts, i + k).trim() == want_trim[k]) {
+            hits.push(i);
+            if hits.len() > 1 {
+                return None;
+            }
+        }
+    }
+    let i = *hits.first()?;
+
+    let mut extra: Option<(String, bool)> = None;
+    for k in 0..n {
+        if want_trim[k].is_empty() {
+            continue;
+        }
+        let nk = crate::editor::auto_indent::leading_whitespace(want[k]);
+        let fk = crate::editor::auto_indent::leading_whitespace(line_at(hay, &starts, i + k));
+        let found = if fk.starts_with(nk) {
+            (fk[nk.len()..].to_string(), true)
+        } else if nk.starts_with(fk) {
+            (nk[fk.len()..].to_string(), false)
+        } else {
+            // Tabs against spaces, or an indent that is not a prefix of the
+            // other: not a re-indent of the same block.
+            return None;
+        };
+        match &extra {
+            None => extra = Some(found),
+            Some(prev) if *prev == found => {}
+            Some(_) => return None,
+        }
+    }
+    let (extra, deepen) = extra.unwrap_or_default();
+    let tail_start = if i + n < starts.len() {
+        starts[i + n]
+    } else {
+        hay.len()
+    };
+    let matched = &hay[starts[i]..tail_start];
+    Some(IndentRescue {
+        start: starts[i],
+        end: starts[i] + matched.trim_end_matches(['\r', '\n']).len(),
+        line: i + 1,
+        extra,
+        deepen,
+    })
+}
+
+/// A replacement re-indented by the one adjustment the file's copy of the
+/// needle carries, so the rescued edit lands at the nesting level the file
+/// actually uses instead of the one the model guessed.
+fn reindent(new_lf: &str, extra: &str, deepen: bool) -> String {
+    let strip = extra.chars().count();
+    let out: Vec<String> = new_lf
+        .lines()
+        .map(|line| {
+            if line.trim().is_empty() {
+                return String::new();
+            }
+            if deepen {
+                return format!("{extra}{line}");
+            }
+            let ws = line.chars().take_while(|c| c.is_whitespace()).count();
+            let keep = ws.saturating_sub(strip);
+            let head: String = line.chars().take(keep).collect();
+            let tail: String = line.chars().skip(ws).collect();
+            format!("{head}{tail}")
+        })
+        .collect();
+    let mut joined = out.join("\n");
+    if new_lf.ends_with('\n') {
+        joined.push('\n');
+    }
+    joined
+}
+
 /// The line a `newString` already occupies verbatim, if it occupies one.
 ///
 /// This is the "already applied" case in its pure form: an earlier turn wrote
@@ -1200,6 +1358,7 @@ pub fn handle_system_tool(
             // error it started from.
             let mut working = current.clone();
             let mut rejected: Vec<String> = Vec::new();
+            let mut rescued: Vec<String> = Vec::new();
             // Rust is the one language whose edits the agent loop grades with a
             // compiler, and a batch that changes the file's brace balance cannot
             // be anything but a mistake: `mod tests {` left open by a `newString`
@@ -1320,6 +1479,43 @@ pub fn handle_system_tool(
                         rejected.push(format!("edit {n}: {}", near_miss_message(rel_path, &miss)));
                         continue;
                     }
+                    // Last resort before explaining, and the only one of these
+                    // answers that applies instead of refusing. A model cannot
+                    // count leading whitespace: `lr7b_v20` sent the same
+                    // eight-space `oldString` against a twelve-space file ten
+                    // times, and each refusal told it the truth — its lines were
+                    // in exactly one place, here they are verbatim — and it
+                    // re-guessed eight spaces anyway. One candidate site is the
+                    // site it meant, so apply it and say so.
+                    if let Some(r) = indent_rescue(&working, old) {
+                        let lf = reindent(&new.replace("\r\n", "\n"), &r.extra, r.deepen);
+                        let patch = if crlf_file {
+                            lf.replace('\n', "\r\n")
+                        } else {
+                            lf
+                        };
+                        if is_rust {
+                            brace_drift +=
+                                brace_delta(&patch) - brace_delta(&working[r.start..r.end]);
+                        }
+                        working = format!("{}{}{}", &working[..r.start], patch, &working[r.end..]);
+                        let how = if r.extra.is_empty() {
+                            "only its trailing whitespace differed".to_string()
+                        } else {
+                            format!(
+                                "your `oldString` was {} whitespace character(s) {} than the file",
+                                r.extra.chars().count(),
+                                if r.deepen { "shallower" } else { "deeper" }
+                            )
+                        };
+                        rescued.push(format!(
+                            "Edit {n} was applied at line {} after ignoring leading whitespace: \
+                             {how}, so its replacement was re-indented to match. The change is in \
+                             the file — do not re-send it.",
+                            r.line
+                        ));
+                        continue;
+                    }
                     let why = explain_refused_edit(&current, old);
                     let mut msg = format!(
                         "edit {n}: its `oldString` is not in {rel_path} \u{2014} copy the text \
@@ -1383,6 +1579,10 @@ pub fn handle_system_tool(
                 current.len(),
                 working.len()
             );
+            for note in &rescued {
+                message.push(' ');
+                message.push_str(note);
+            }
             if let Some(warn) = scan_warning {
                 message = format!(
                     "{message} WARNING: Security scan warning triggered: [{warn}]. \
@@ -3083,5 +3283,100 @@ mod tests {
         // short, so it arrives whole and the model can copy it.
         let msg = near_miss_message("src/port.rs", &miss);
         assert!(msg.contains("the file says `let target = 3;`"), "{msg}");
+    }
+
+    #[test]
+    fn an_indent_rescue_needs_one_site_and_one_shift() {
+        let hay = "begin\n    mgr.record(\n        total_cost,\n    );\nend\n";
+        let r =
+            indent_rescue(hay, "mgr.record(\n    total_cost,\n);").expect("one site, one shift");
+        assert_eq!(r.line, 2, "{r:?}");
+        assert_eq!(r.extra, "    ", "{r:?}");
+        assert!(r.deepen, "{r:?}");
+        assert_eq!(
+            &hay[r.start..r.end],
+            "    mgr.record(\n        total_cost,\n    );",
+            "the span is the matched lines and nothing else, so it splices cleanly: {r:?}"
+        );
+
+        // Two sites: applying either is a guess.
+        let twice = "    mgr.record(\n        total_cost,\n    );\n\
+                     other\n    mgr.record(\n        total_cost,\n    );\n";
+        assert_eq!(
+            indent_rescue(twice, "mgr.record(\n    total_cost,\n);"),
+            None
+        );
+
+        // One site, but the lines disagree about the shift: that is a
+        // restructured block, not the same block re-indented.
+        assert_eq!(
+            indent_rescue(hay, "    mgr.record(\n      total_cost,\n    );"),
+            None
+        );
+
+        // Tabs against spaces is not a shift either; one is not a prefix of the
+        // other, so there is no amount to move the replacement by.
+        let tabbed = "begin\n\t\tmgr.record(\n\t\t\ttotal_cost,\n\t\t);\nend\n";
+        assert_eq!(
+            indent_rescue(
+                tabbed,
+                "        mgr.record(\n            total_cost,\n        );"
+            ),
+            None
+        );
+
+        // Trivia is not evidence of intent, however unique it is.
+        assert_eq!(indent_rescue(hay, "    )\n    ;"), None);
+        assert_eq!(indent_rescue(hay, "\n\n"), None);
+        // A needle longer than the file cannot occur in it.
+        assert_eq!(indent_rescue("a\n", "a\nb\nc\nd\n"), None);
+    }
+
+    #[test]
+    fn an_indent_rescue_reports_a_shift_of_zero_when_only_trailing_space_differs() {
+        let hay = "begin\n    mgr.record(\n        total_cost,\n    );\nend\n";
+        let r = indent_rescue(hay, "    mgr.record(\n        total_cost,\n    );   ")
+            .expect("same indentation, trailing space only");
+        assert_eq!(r.extra, "", "{r:?}");
+        assert_eq!(
+            reindent("mgr.record(\n    total_budget,\n);", &r.extra, r.deepen),
+            "mgr.record(\n    total_budget,\n);",
+            "a zero shift leaves the replacement exactly as sent"
+        );
+    }
+
+    #[test]
+    fn an_indent_rescue_locates_a_span_in_a_crlf_file_by_byte() {
+        let hay = "begin\r\n    mgr.record(\r\n        total_cost,\r\n    );\r\nend\r\n";
+        let r =
+            indent_rescue(hay, "mgr.record(\n    total_cost,\n);").expect("endings are not text");
+        assert_eq!(
+            &hay[r.start..r.end],
+            "    mgr.record(\r\n        total_cost,\r\n    );",
+            "terminators stay outside the span so the splice cannot drop or double one: {r:?}"
+        );
+    }
+
+    #[test]
+    fn a_rescued_replacement_moves_by_the_files_indent_and_no_further() {
+        assert_eq!(
+            reindent("mgr.record(\n    total_budget,\n);", "    ", true),
+            "    mgr.record(\n        total_budget,\n    );"
+        );
+        assert_eq!(
+            reindent(
+                "    mgr.record(\n        total_budget,\n    );",
+                "    ",
+                false
+            ),
+            "mgr.record(\n    total_budget,\n);"
+        );
+        // A replacement line shallower than the shift cannot go negative.
+        assert_eq!(reindent("  mgr.record(", "        ", false), "mgr.record(");
+        // Blank lines carry no indentation, so they stay blank rather than
+        // collecting a stray run of spaces.
+        assert_eq!(reindent("a\n\n   \nb", "  ", true), "  a\n\n\n  b");
+        // A trailing newline is the model's, not the file's, and survives.
+        assert_eq!(reindent("a\n", "  ", true), "  a\n");
     }
 }
