@@ -1143,6 +1143,225 @@ fn chain_join_rescue(hay: &str, needle: &str) -> Option<ChainJoin> {
     })
 }
 
+/// A replacement with the lines it only copied from around its site removed.
+#[derive(Debug)]
+struct CopiedContext {
+    /// The replacement to write, in the file's own line endings.
+    text: String,
+    /// Lines dropped from its head, which the file already has above the site.
+    above: usize,
+    /// Lines dropped from its tail, which the file already has below the site.
+    below: usize,
+}
+
+/// What a replacement turned out to hold once the file's neighbours were read
+/// out of it.
+enum ContextTrim {
+    /// It repeated nothing from outside the span it replaces.
+    Keep,
+    /// It did, and this is what is left to write.
+    Trimmed(CopiedContext),
+    /// What is left cannot be written. `everything` says the replacement held
+    /// only lines the file carries around the site, so trimming it would delete
+    /// the matched text; otherwise what is left is the matched text itself, so
+    /// writing it would change nothing.
+    Unwritable { dropped: usize, everything: bool },
+}
+
+/// Take out of a replacement the lines that only repeat the file's own lines
+/// immediately outside the span it replaces.
+///
+/// `lr7b_v23` turn 4 matched thirteen lines — the `self.user_dict` chain and the
+/// `}` under it — and replaced them with sixteen whose first two were
+///
+/// ```text
+///         self.user_dict.insert(user, record);
+///         let _ = self.save_data();
+/// ```
+///
+/// which are lines 285 and 286 of the specimen, the two the file already carried
+/// immediately above the match. The splice wrote all four, rustc answered with
+/// `E0382: use of moved value: user` at 287:31 and `use of moved value: record`
+/// at 287:37, and the tool's own answer to the turn that caused them was
+/// "Success: applied 1 edit(s)" — nothing told the model to look. Turns 5 and 6
+/// tried to fix the pair and were refused, correctly, because
+/// `self.user_dict.insert(user, record);` by then matched two places and the
+/// ambiguity guard will not choose between them. Turns 7 to 9 were three
+/// byte-identical `read_file` calls of lines 285 to 287 and turn 10 produced no
+/// tool call, so one write took the run from two standing errors to four and then
+/// to nothing.
+///
+/// A model that copies its context into a replacement means the copy as context:
+/// it is saying where the change goes, because its `oldString` was too short to
+/// say that on its own. Dropping the copied part makes the short `oldString`
+/// behave like the longer one it should have sent, which is the change it asked
+/// for and not a second guess at it.
+///
+/// Two lines is the floor because one is a pattern a patch legitimately writes —
+/// a second `push`, a second closing brace — where two consecutive lines
+/// reproducing, in order, the two lines beside the span is a copy. A blank line
+/// fails a run rather than extending it: spacing between items is formatting the
+/// model may be choosing, not context it is quoting.
+fn trim_copied_context(hay: &str, start: usize, end: usize, patch: &str) -> ContextTrim {
+    const MIN_RUN: usize = 2;
+    let starts = line_starts(patch);
+    // `line_starts` counts the segment after a trailing newline, which is not a
+    // line of the replacement.
+    let total = starts.len() - usize::from(patch.ends_with('\n'));
+    if total < MIN_RUN {
+        return ContextTrim::Keep;
+    }
+    // The segment above `start` and the one below `end` are the partial lines the
+    // span begins and ends inside, not neighbours of it.
+    let above: Vec<&str> = hay[..start].split('\n').collect();
+    let above = &above[..above.len() - 1];
+    let below: Vec<&str> = hay[end..].split('\n').collect();
+    let below = &below[1..];
+
+    // The head run is the replacement's first lines against the file's last
+    // lines above the span, both in file order, so a run of `b` pairs
+    // `patch[j]` with `above[above.len() - b + j]`. Lengths are searched longest
+    // first: a run of three is a copy of three lines and not a copy of two that
+    // happens to be followed by a third.
+    let mut a = 0usize;
+    'head: for b in (MIN_RUN..=total.min(above.len())).rev() {
+        for j in 0..b {
+            let got = line_at(patch, &starts, j).trim();
+            if got.is_empty() || got != above[above.len() - b + j].trim() {
+                continue 'head;
+            }
+        }
+        a = b;
+        break;
+    }
+    // The tail run meets the file at the other end of the span, so it pairs the
+    // replacement's last lines with the file's first lines below the span.
+    let mut b = 0usize;
+    'tail: for k in (MIN_RUN..=(total - a).min(below.len())).rev() {
+        for j in 0..k {
+            let got = line_at(patch, &starts, total - k + j).trim();
+            if got.is_empty() || got != below[j].trim() {
+                continue 'tail;
+            }
+        }
+        b = k;
+        break;
+    }
+    if a + b == 0 {
+        return ContextTrim::Keep;
+    }
+    if a + b >= total {
+        return ContextTrim::Unwritable {
+            dropped: a + b,
+            everything: true,
+        };
+    }
+    let text = patch[starts[a]..tail_cut(&starts, total - b, patch.len())].to_string();
+    if text.trim() == hay[start..end].trim() {
+        return ContextTrim::Unwritable {
+            dropped: a + b,
+            everything: false,
+        };
+    }
+    ContextTrim::Trimmed(CopiedContext {
+        text,
+        above: a,
+        below: b,
+    })
+}
+
+/// Where to cut a replacement that gives up its last `keep_from` line, which is
+/// `patch.len()` when it has no trailing newline to cut at.
+fn tail_cut(starts: &[usize], keep_from: usize, len: usize) -> usize {
+    if keep_from < starts.len() {
+        starts[keep_from]
+    } else {
+        len
+    }
+}
+
+/// What dropping the copied lines tells the model, in the success message.
+///
+/// It has to be told. The replacement it sent is not the text that was written,
+/// and a model that believes its own payload went in verbatim will read the
+/// file back, see two lines missing from what it wrote, and send them again.
+fn copied_context_note(n: usize, c: &CopiedContext) -> String {
+    let what = match (c.above, c.below) {
+        (above, 0) => format!("{above} line(s) the file already has above the text it replaced"),
+        (0, below) => format!("{below} line(s) the file already has below the text it replaced"),
+        (above, below) => format!(
+            "{above} line(s) the file already has above the text it replaced and {below} below it"
+        ),
+    };
+    format!(
+        "Edit {n} was applied with {what} dropped from its `newString`: those lines sit \
+         immediately outside the text the edit replaced, so writing them again would have put \
+         them in the file twice. The change is in the file — do not re-send it."
+    )
+}
+
+/// The file a patch was written into, and what the patch turned out to be.
+#[derive(Debug)]
+struct Spliced {
+    /// The whole file with the patch spliced over the span.
+    working: String,
+    /// The patch as written. A brace-balance check has to read this rather than
+    /// the patch as sent: the lines dropped from it are braces too when they are
+    /// braces at all.
+    wrote: String,
+    /// What to tell the model about the drop, if there was one.
+    note: Option<String>,
+}
+
+/// Splice `patch` over `hay[start..end]`, dropping from it first the lines that
+/// only repeat the file's neighbours of that span.
+///
+/// The `Err` is the refusal for the batch's `rejected` list, worded as a reason
+/// rather than as a whole sentence so the caller can decide what it means to
+/// refuse one edit of many.
+fn splice_trimmed(
+    hay: &str,
+    start: usize,
+    end: usize,
+    patch: String,
+    n: usize,
+) -> Result<Spliced, String> {
+    let (patch, note) = match trim_copied_context(hay, start, end, &patch) {
+        ContextTrim::Keep => (patch, None),
+        ContextTrim::Trimmed(c) => {
+            let note = copied_context_note(n, &c);
+            (c.text, Some(note))
+        }
+        ContextTrim::Unwritable {
+            dropped,
+            everything,
+        } => {
+            return Err(if everything {
+                format!(
+                    "edit {n}: its `newString` is nothing but {dropped} line(s) the file already \
+                     carries immediately around the text this edit replaces, so writing it would \
+                     put those lines in the file twice and trimming them would delete the matched \
+                     text instead of changing it. Re-issue the edit carrying the change you mean \
+                     and no lines copied from around the site."
+                )
+            } else {
+                format!(
+                    "edit {n}: once the {dropped} line(s) its `newString` copies from the file \
+                     around the matched text are dropped, what is left is that text unchanged, so \
+                     this edit would change no characters. The error is still in the file at that \
+                     line — write the replacement the error asks for."
+                )
+            })
+        }
+    };
+    let working = [&hay[..start], patch.as_str(), &hay[end..]].concat();
+    Ok(Spliced {
+        working,
+        wrote: patch,
+        note,
+    })
+}
+
 /// The line a `newString` already occupies verbatim, if it occupies one.
 ///
 /// This is the "already applied" case in its pure form: an earlier turn wrote
@@ -1637,26 +1856,39 @@ pub fn handle_system_tool(
                         } else {
                             lf
                         };
-                        if is_rust {
-                            brace_drift +=
-                                brace_delta(&patch) - brace_delta(&working[r.start..r.end]);
-                        }
-                        working = format!("{}{}{}", &working[..r.start], patch, &working[r.end..]);
-                        let how = if r.extra.is_empty() {
-                            "only its trailing whitespace differed".to_string()
+                        let before = if is_rust {
+                            brace_delta(&working[r.start..r.end])
                         } else {
-                            format!(
-                                "your `oldString` was {} whitespace character(s) {} than the file",
-                                r.extra.chars().count(),
-                                if r.deepen { "shallower" } else { "deeper" }
-                            )
+                            0
                         };
-                        rescued.push(format!(
-                            "Edit {n} was applied at line {} after ignoring leading whitespace: \
-                             {how}, so its replacement was re-indented to match. The change is in \
-                             the file — do not re-send it.",
-                            r.line
-                        ));
+                        match splice_trimmed(&working, r.start, r.end, patch, n) {
+                            Ok(s) => {
+                                if is_rust {
+                                    brace_drift += brace_delta(&s.wrote) - before;
+                                }
+                                working = s.working;
+                                let how = if r.extra.is_empty() {
+                                    "only its trailing whitespace differed".to_string()
+                                } else {
+                                    format!(
+                                        "your `oldString` was {} whitespace character(s) {} than \
+                                         the file",
+                                        r.extra.chars().count(),
+                                        if r.deepen { "shallower" } else { "deeper" }
+                                    )
+                                };
+                                rescued.push(format!(
+                                    "Edit {n} was applied at line {} after ignoring leading \
+                                     whitespace: {how}, so its replacement was re-indented to \
+                                     match. The change is in the file — do not re-send it.",
+                                    r.line
+                                ));
+                                if let Some(note) = s.note {
+                                    rescued.push(note);
+                                }
+                            }
+                            Err(why) => rejected.push(why),
+                        }
                         continue;
                     }
                     // Nor can it reproduce where a formatter chose to wrap: v22
@@ -1677,20 +1909,33 @@ pub fn handle_system_tool(
                         } else {
                             lf
                         };
-                        if is_rust {
-                            brace_drift +=
-                                brace_delta(&patch) - brace_delta(&working[r.start..r.end]);
+                        let before = if is_rust {
+                            brace_delta(&working[r.start..r.end])
+                        } else {
+                            0
+                        };
+                        match splice_trimmed(&working, r.start, r.end, patch, n) {
+                            Ok(s) => {
+                                if is_rust {
+                                    brace_drift += brace_delta(&s.wrote) - before;
+                                }
+                                working = s.working;
+                                rescued.push(format!(
+                                    "Edit {n} was applied at line {} after ignoring its line \
+                                     breaks: the file wraps that code across {} lines and your \
+                                     `oldString` wrote it on {}, so the match was made on the code \
+                                     rather than on where the formatter wrapped it. The change is \
+                                     in the file — do not re-send it.",
+                                    r.line,
+                                    r.file_lines,
+                                    old.lines().count()
+                                ));
+                                if let Some(note) = s.note {
+                                    rescued.push(note);
+                                }
+                            }
+                            Err(why) => rejected.push(why),
                         }
-                        working = format!("{}{}{}", &working[..r.start], patch, &working[r.end..]);
-                        rescued.push(format!(
-                            "Edit {n} was applied at line {} after ignoring its line breaks: the \
-                             file wraps that code across {} lines and your `oldString` wrote it on \
-                             {}, so the match was made on the code rather than on where the \
-                             formatter wrapped it. The change is in the file — do not re-send it.",
-                            r.line,
-                            r.file_lines,
-                            old.lines().count()
-                        ));
                         continue;
                     }
                     if let Some(line) = superseded_site(&current, old, new) {
@@ -1729,10 +1974,29 @@ pub fn handle_system_tool(
                     }
                     rejected.push(msg);
                 } else {
-                    if is_rust {
-                        brace_drift += brace_delta(&repl) - brace_delta(&needle);
+                    // A `newString` that opens or closes by repeating the file's
+                    // own lines beside the site writes them a second time: v23's
+                    // turn 4 duplicated two lines and left the run with two E0382s
+                    // it never had, then died trying to undo them. The copy is
+                    // context, so it goes.
+                    let at = working.find(&needle).unwrap_or(0);
+                    let end = at + needle.len();
+                    let before = if is_rust { brace_delta(&needle) } else { 0 };
+                    match splice_trimmed(&working, at, end, repl, n) {
+                        Ok(s) => {
+                            if is_rust {
+                                brace_drift += brace_delta(&s.wrote) - before;
+                            }
+                            working = s.working;
+                            if let Some(note) = s.note {
+                                rescued.push(note);
+                            }
+                        }
+                        Err(why) => {
+                            rejected.push(why);
+                            continue;
+                        }
                     }
-                    working = working.replace(&needle, &repl);
                 }
             }
             if !rejected.is_empty() {
@@ -3708,6 +3972,234 @@ mod tests {
             &hay[r.start..r.end],
             "        self.user_dict\r\n            .values_mut()\r\n            .next()\r\n            .unwrap_or(&mut PersistedUserRecord {\r\n                total_budget: 0.0,\r\n                current_cost: 0.0,\r\n            })",
             "terminators stay outside the span, so a splice cannot drop or double one"
+        );
+    }
+
+    /// v23 turn 4's `oldString`: the chain as the file wraps it, and the `}`
+    /// under it so the site is unique.
+    const SITE_AND_BRACE: &str = "        self.user_dict\n            .values_mut()\n            .next()\n            .unwrap_or(&mut PersistedUserRecord {\n                total_budget: 0.0,\n                current_cost: 0.0,\n            })\n    }";
+
+    /// v23 turn 4's `newString`: the fix, opened by the two lines the file
+    /// already carries immediately above the site. Written verbatim, it puts
+    /// both in the file twice.
+    const PADDED_FIX: &str = "        self.user_dict.insert(user, record);\n        let _ = self.save_data();\n        let r = self.user_dict\n            .values_mut()\n            .next()\n            .unwrap_or(&mut PersistedUserRecord {\n                total_budget: 0.0,\n                current_cost: 0.0,\n            });\n        save(r)\n    }";
+
+    /// The same fix with no padding, which is what the splice has to leave
+    /// behind.
+    const THE_FIX: &str = "        let r = self.user_dict\n            .values_mut()\n            .next()\n            .unwrap_or(&mut PersistedUserRecord {\n                total_budget: 0.0,\n                current_cost: 0.0,\n            });\n        save(r)\n    }";
+
+    /// The one place `needle` occurs in `hay`, as the byte span a splice needs.
+    fn site_of(hay: &str, needle: &str) -> (usize, usize) {
+        let at = hay.find(needle).expect("a fixture holds its own site");
+        (at, at + needle.len())
+    }
+
+    #[test]
+    fn a_replacement_opening_with_the_files_own_lines_above_the_site_loses_them() {
+        let (start, end) = site_of(CHAINED_FILE, SITE_AND_BRACE);
+        let super::ContextTrim::Trimmed(c) =
+            super::trim_copied_context(CHAINED_FILE, start, end, PADDED_FIX)
+        else {
+            panic!("the two lines the file has above the site are context, not text to add");
+        };
+        assert_eq!(c.above, 2, "both of them, and no more: {c:?}");
+        assert_eq!(c.below, 0, "the `}}` under the site is the span's own");
+        assert_eq!(c.text, THE_FIX, "what is left is the change it meant");
+
+        // The point of dropping them is the file, not the message.
+        let (start, end) = site_of(CHAINED_FILE, SITE_AND_BRACE);
+        let s = super::splice_trimmed(CHAINED_FILE, start, end, PADDED_FIX.to_string(), 1)
+            .expect("the fix is still there to write");
+        assert_eq!(
+            s.working
+                .matches("self.user_dict.insert(user, record);")
+                .count(),
+            1,
+            "v23 wrote it twice and rustc answered with two E0382s: {}",
+            s.working
+        );
+        assert_eq!(s.wrote, THE_FIX, "the brace count reads what was written");
+        assert_eq!(
+            s.working,
+            format!(
+                "{}{THE_FIX}{}",
+                &CHAINED_FILE[..start],
+                &CHAINED_FILE[end..]
+            ),
+            "{}",
+            s.working
+        );
+    }
+
+    #[test]
+    fn a_replacement_closing_with_the_files_own_lines_below_the_site_loses_them() {
+        let hay = "fn f() {\n    let a = 1;\n    let b = 2;\n    let c = 3;\n    let d = 4;\n}\n";
+        let (start, end) = site_of(hay, "    let c = 3;");
+        let patch = "    let c = compute();\n    let d = 4;\n}";
+        let super::ContextTrim::Trimmed(c) = super::trim_copied_context(hay, start, end, patch)
+        else {
+            panic!("the two lines under the site are context too");
+        };
+        assert_eq!((c.above, c.below), (0, 2), "{c:?}");
+        assert_eq!(c.text, "    let c = compute();\n");
+    }
+
+    #[test]
+    fn one_repeated_line_is_the_models_to_write() {
+        // A second `push`, a second closing brace: one line repeated beside a
+        // site is a pattern a patch legitimately carries, so the floor is two.
+        let hay = "fn f() {\n    let a = 1;\n    let b = 2;\n}\n";
+        let (start, end) = site_of(hay, "    let b = 2;");
+        assert!(matches!(
+            super::trim_copied_context(hay, start, end, "    let a = 1;\n    let b = compute();"),
+            super::ContextTrim::Keep
+        ));
+        // Nor is a copy that is not at an edge: the run has to meet the span.
+        let hay = "fn f() {\n    let a = 1;\n    let b = 2;\n    let c = 3;\n    let d = 4;\n}\n";
+        let (start, end) = site_of(hay, "    let c = 3;");
+        assert!(matches!(
+            super::trim_copied_context(
+                hay,
+                start,
+                end,
+                "    let c = compute();\n    let a = 1;\n    let b = 2;"
+            ),
+            super::ContextTrim::Keep
+        ));
+    }
+
+    #[test]
+    fn a_blank_line_ends_a_copied_run_instead_of_joining_it() {
+        let hay = "fn f() {\n    let a = 1;\n\n    let b = 2;\n    let c = 3;\n}\n";
+        let (start, end) = site_of(hay, "    let c = 3;");
+        // The file's two lines above the site are a blank one and `let b = 2;`.
+        // Spacing between items is formatting a model may be choosing, so a run
+        // that has to cross a blank line is not a copy.
+        assert!(matches!(
+            super::trim_copied_context(hay, start, end, "\n    let b = 2;\n    let c = compute();"),
+            super::ContextTrim::Keep
+        ));
+    }
+
+    #[test]
+    fn a_replacement_of_nothing_but_context_is_refused_rather_than_written() {
+        let hay = "fn f() {\n    let a = 1;\n    let b = 2;\n    let c = 3;\n    let d = 4;\n}\n";
+        let (start, end) = site_of(hay, "    let c = 3;");
+        // Everything it says, the file says around the site. Writing it would
+        // duplicate two lines and trimming it would delete the matched one, and
+        // neither is a change the model asked for.
+        let super::ContextTrim::Unwritable {
+            dropped,
+            everything,
+        } = super::trim_copied_context(hay, start, end, "    let a = 1;\n    let b = 2;")
+        else {
+            panic!("there is nothing in it but the file's own lines");
+        };
+        assert_eq!((dropped, everything), (2, true));
+    }
+
+    #[test]
+    fn a_replacement_that_is_the_site_plus_its_context_changes_nothing() {
+        let hay = "fn f() {\n    let a = 1;\n    let b = 2;\n    let c = 3;\n    let d = 4;\n}\n";
+        let (start, end) = site_of(hay, "    let c = 3;");
+        let patch = "    let a = 1;\n    let b = 2;\n    let c = 3;\n    let d = 4;\n}";
+        let super::ContextTrim::Unwritable {
+            dropped,
+            everything,
+        } = super::trim_copied_context(hay, start, end, patch)
+        else {
+            panic!("once the four copied lines go, the site is left as it was");
+        };
+        assert_eq!((dropped, everything), (4, false));
+        // The refusal is the byte-identical one's, so a model replaying it gets
+        // the same answer it gets for sending its `oldString` back.
+        let why = super::splice_trimmed(hay, start, end, patch.to_string(), 1)
+            .expect_err("writing it would report a fix and change nothing");
+        assert!(
+            why.contains("would change no characters"),
+            "and it says so in the words the replay advice keys on: {why}"
+        );
+    }
+
+    #[test]
+    fn copied_context_is_dropped_in_a_crlf_file_without_touching_its_endings() {
+        let hay = CHAINED_FILE.replace('\n', "\r\n");
+        let needle = SITE_AND_BRACE.replace('\n', "\r\n");
+        let patch = PADDED_FIX.replace('\n', "\r\n");
+        let (start, end) = site_of(&hay, &needle);
+        let super::ContextTrim::Trimmed(c) = super::trim_copied_context(&hay, start, end, &patch)
+        else {
+            panic!("endings are not text, and the copy is the same either way");
+        };
+        assert_eq!((c.above, c.below), (2, 0), "{c:?}");
+        assert_eq!(c.text, THE_FIX.replace('\n', "\r\n"), "{:?}", c.text);
+        assert!(
+            !c.text.contains("\r\r\n"),
+            "a trimmed replacement is spliced into a file whose endings it already carries"
+        );
+    }
+
+    #[test]
+    fn a_replacement_that_dropped_nothing_is_not_reported_as_a_drop() {
+        // Nothing was copied, so there is nothing to say: a `Trimmed` with two zero
+        // counts would tell the model the tool rewrote its payload when it did
+        // not, and the no-op check under it would judge a replacement the guard
+        // never touched.
+        let hay = "fn f() {\n    let a = 1;\n    let c = 3;\n}\n";
+        let (start, end) = site_of(hay, "    let c = 3;");
+        assert!(matches!(
+            super::trim_copied_context(hay, start, end, "        let c = 3;\n        let d = 4;"),
+            super::ContextTrim::Keep
+        ));
+    }
+
+    #[test]
+    fn the_brace_count_reads_the_patch_as_written_not_as_sent() {
+        // The two lines this replacement copies from above its site carry a
+        // closing brace. Counted as sent, the batch looks like it drops a brace
+        // and is refused; counted as written, it is balanced.
+        let hay = "fn f() {\n    let a = {\n        1\n    };\n    let c = 3;\n}\n";
+        let (start, end) = site_of(hay, "    let c = 3;");
+        let sent = "        1\n    };\n    let c = compute();".to_string();
+        assert_eq!(
+            super::brace_delta(&sent),
+            -1,
+            "the copied `}}` is the whole reason the sent patch reads as unbalanced"
+        );
+        let s = super::splice_trimmed(hay, start, end, sent, 1)
+            .expect("the change is under the two copied lines");
+        assert_eq!(s.wrote, "    let c = compute();");
+        assert_eq!(
+            super::brace_delta(&s.wrote),
+            0,
+            "and the file keeps every brace it had: {}",
+            s.working
+        );
+        assert_eq!(
+            s.working,
+            format!("{}    let c = compute();{}", &hay[..start], &hay[end..])
+        );
+    }
+
+    #[test]
+    fn the_note_names_every_side_it_dropped() {
+        let hay = "fn f() {\n    let a = 1;\n    let b = 2;\n    let c = 3;\n    let d = 4;\n    let e = 5;\n}\n";
+        let (start, end) = site_of(hay, "    let c = 3;");
+        let patch = "    let a = 1;\n    let b = 2;\n    let c = compute();\n    let d = 4;\n    let e = 5;";
+        let s = super::splice_trimmed(hay, start, end, patch.to_string(), 2)
+            .expect("the change is between the two copies");
+        assert_eq!(s.wrote, "    let c = compute();\n");
+        let note = s.note.expect("a drop it does not report gets re-sent");
+        assert!(
+            note.contains(
+                "Edit 2 was applied with 2 line(s) the file already has above the text \
+                            it replaced and 2 below it"
+            ),
+            "{note}"
+        );
+        assert!(
+            note.contains("do not re-send it"),
+            "the model has to know the payload it sent is not what was written: {note}"
         );
     }
 }

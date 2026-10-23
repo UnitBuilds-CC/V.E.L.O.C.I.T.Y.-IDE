@@ -881,6 +881,245 @@ fn a_flattened_chain_in_a_file_with_no_such_grammar_is_not_rescued() {
     );
 }
 
+/// `lr7b_v23` turn 4 in full shape. The `oldString` matched thirteen lines and
+/// the `newString` opened with two the file already carried immediately above
+/// them, so the splice wrote those two twice and rustc answered with
+/// `E0382: use of moved value: user` and `use of moved value: record` — two
+/// errors the file did not have before the edit. The tool said "Success: applied
+/// 1 edit(s)", so nothing sent the model looking for them. Its next two turns
+/// tried to fix the pair and were refused because the duplicated line by then
+/// matched two places, its next three were byte-identical `read_file` calls, and
+/// its last produced no tool call at all.
+#[test]
+fn an_edit_whose_replacement_copies_the_lines_above_its_site_writes_them_once() {
+    let (_temp, root) = setup_root();
+    let file = "pub struct M;\n\nimpl M {\n    pub fn update(&mut self, user: &str, record: Record) {\n        self.user_dict.insert(user, record);\n        let _ = self.save_data();\n        let total = self.total_for(user);\n        save(total)\n    }\n}\n";
+    fs::write(root.join("port.rs"), file).unwrap();
+
+    let ok = call_tool_in_workspace(
+        &root,
+        "edit_file",
+        &json!({
+            "relativeFilePath": "port.rs",
+            "edits": [{
+                "oldString": "        let total = self.total_for(user);\n        save(total)",
+                "newString": "        self.user_dict.insert(user, record);\n        let _ = self.save_data();\n        let total = self.total_for(user);\n        let logged = save(total);\n        logged"
+            }],
+            "context": "fix E0308"
+        }),
+    )
+    .unwrap_or_else(|e| panic!("the site is unique and the change is in the payload: {e}"));
+
+    assert!(
+        ok.contains("2 line(s) the file already has above the text it replaced"),
+        "the payload it sent is not the text that was written, so it has to be told: {ok}"
+    );
+    assert!(
+        ok.contains("do not re-send it"),
+        "or it will send the two lines back: {ok}"
+    );
+    let after = fs::read_to_string(root.join("port.rs")).unwrap();
+    assert_eq!(
+        after
+            .matches("self.user_dict.insert(user, record);")
+            .count(),
+        1,
+        "v23 wrote this line twice and the run died on the E0382 that followed: {after}"
+    );
+    assert_eq!(
+        after.matches("let _ = self.save_data();").count(),
+        1,
+        "{after}"
+    );
+    assert!(after.contains("let logged = save(total);"), "{after}");
+    assert!(
+        !after.contains("\n        save(total)\n"),
+        "the change still went in: {after}"
+    );
+}
+
+/// What is left of a replacement once the file's own lines around the site are
+/// taken out of it can be nothing, and then there is no honest way to write it:
+/// untrimmed it duplicates every line it carries, trimmed it deletes the text it
+/// matched. Both are silent, and a silent write is what v23's turn 4 was.
+#[test]
+fn a_replacement_of_nothing_but_the_file_around_its_site_is_refused() {
+    let (_temp, root) = setup_root();
+    let file = "pub struct M;\n\nimpl M {\n    pub fn total(&self) -> f64 {\n        let a = self.a();\n        let b = self.b();\n        let c = self.c();\n        a + b + c\n    }\n}\n";
+    fs::write(root.join("port.rs"), file).unwrap();
+
+    let err = call_tool_in_workspace(
+        &root,
+        "edit_file",
+        &json!({
+            "relativeFilePath": "port.rs",
+            "edits": [{
+                "oldString": "        let c = self.c();",
+                "newString": "        let a = self.a();\n        let b = self.b();"
+            }]
+        }),
+    )
+    .err()
+    .map(|e| e.to_string())
+    .unwrap_or_else(|| "every line of it is the file's own".to_string());
+
+    assert!(
+        err.contains("nothing but 2 line(s) the file already carries"),
+        "{err}"
+    );
+    assert_eq!(
+        fs::read_to_string(root.join("port.rs")).unwrap(),
+        file,
+        "a refused batch leaves the file alone"
+    );
+}
+
+/// Unlike the rescues that forgive a flattened chain, this one needs no grammar:
+/// a line the file already has beside the span is a duplicate in any language.
+#[test]
+fn copied_context_is_dropped_from_a_file_with_no_rust_grammar_too() {
+    let (_temp, root) = setup_root();
+    let file = "def update(user, record):\n    user_dict[user] = record\n    save_data()\n    total = total_for(user)\n    return total\n";
+    fs::write(root.join("port.py"), file).unwrap();
+
+    let ok = call_tool_in_workspace(
+        &root,
+        "edit_file",
+        &json!({
+            "relativeFilePath": "port.py",
+            "edits": [{
+                "oldString": "    total = total_for(user)",
+                "newString": "    user_dict[user] = record\n    save_data()\n    total = total_for(user)\n    logged = save(total)"
+            }]
+        }),
+    )
+    .unwrap_or_else(|e| panic!("the site is unique: {e}"));
+
+    assert!(
+        ok.contains("2 line(s) the file already has above the text it replaced"),
+        "{ok}"
+    );
+    let after = fs::read_to_string(root.join("port.py")).unwrap();
+    assert_eq!(
+        after.matches("user_dict[user] = record").count(),
+        1,
+        "{after}"
+    );
+    assert!(after.contains("logged = save(total)"), "{after}");
+}
+
+/// A batch that changes the file's brace balance is refused, because that is
+/// never what a patch means. What has to be counted is the text the splice
+/// writes, not the text the model sent: the two lines this `newString` copies
+/// from above its site carry a closing brace, and they are exactly the part that
+/// does not get written.
+#[test]
+fn a_batch_is_not_refused_for_a_brace_only_the_copied_context_carried() {
+    let (_temp, root) = setup_root();
+    let file = "fn f() -> i32 {\n    let a = {\n        1\n    };\n    let c = 3;\n    a + c\n}\n";
+    fs::write(root.join("port.rs"), file).unwrap();
+
+    let ok = call_tool_in_workspace(
+        &root,
+        "edit_file",
+        &json!({
+            "relativeFilePath": "port.rs",
+            "edits": [{
+                "oldString": "    let c = 3;",
+                "newString": "        1\n    };\n    let c = compute();"
+            }]
+        }),
+    )
+    .unwrap_or_else(|e| panic!("the brace that unbalances the payload is never written: {e}"));
+
+    assert!(
+        !ok.contains("no block to close"),
+        "the sent payload reads as one brace short, the file is not: {ok}"
+    );
+    let after = fs::read_to_string(root.join("port.rs")).unwrap();
+    assert!(after.contains("let c = compute();"), "{after}");
+    assert!(
+        after.matches("let a = ").count() == 1 && after.matches("a + c").count() == 1,
+        "counting glyphs in source that carries them as text proves nothing: {after}"
+    );
+}
+
+/// Both rescues write through the same splice, so both have to drop the copied
+/// lines too — a flattened chain is the shape most likely to arrive with its
+/// context still attached, because the model is copying a region it just read.
+#[test]
+fn a_rescued_edit_drops_the_context_it_copied_as_well() {
+    let (_temp, root) = setup_root();
+    let file = "    pub fn update(&mut self, user: &str, record: Record) {\n        self.user_dict.insert(user, record);\n        let _ = self.save_data();\n        self.user_dict\n            .values_mut()\n            .next()\n            .unwrap_or(&mut Rec { a: 0.0 })\n    }\n";
+    fs::write(root.join("port.rs"), file).unwrap();
+
+    let ok = call_tool_in_workspace(
+        &root,
+        "edit_file",
+        &json!({
+            "relativeFilePath": "port.rs",
+            "edits": [{
+                "oldString": "        self.user_dict.values_mut().next().unwrap_or(&mut Rec { a: 0.0 })",
+                "newString": "        self.user_dict.insert(user, record);\n        let _ = self.save_data();\n        let r = self.user_dict.values_mut().next().unwrap_or(&mut Rec { a: 0.0 });\n        save(r)"
+            }]
+        }),
+    )
+    .unwrap_or_else(|e| panic!("the chain and the copy are both forgiven: {e}"));
+
+    assert!(ok.contains("ignoring its line breaks"), "{ok}");
+    assert!(
+        ok.contains("2 line(s) the file already has above the text it replaced"),
+        "the join is not the only thing this payload got wrong: {ok}"
+    );
+    let after = fs::read_to_string(root.join("port.rs")).unwrap();
+    assert_eq!(
+        after
+            .matches("self.user_dict.insert(user, record);")
+            .count(),
+        1,
+        "{after}"
+    );
+    assert!(after.contains("let r = self"), "{after}");
+    assert!(after.contains("save(r)"), "{after}");
+}
+
+/// The same through the indent rescue, where the replacement is re-indented
+/// before the copy is looked for — so the comparison has to be on the code and
+/// not on the whitespace, or the re-indented copy would slip past it.
+#[test]
+fn a_reindented_edit_drops_the_context_it_copied_as_well() {
+    let (_temp, root) = setup_root();
+    let file = "fn update(&mut self, k: &str) {\n        self.dict.insert(k, rec);\n        let _ = self.save();\n        let total = self.total(k);\n        save(total)\n}\n";
+    fs::write(root.join("port.rs"), file).unwrap();
+
+    let ok = call_tool_in_workspace(
+        &root,
+        "edit_file",
+        &json!({
+            "relativeFilePath": "port.rs",
+            "edits": [{
+                "oldString": "    let total = self.total(k);\n    save(total)",
+                "newString": "    self.dict.insert(k, rec);\n    let _ = self.save();\n    let total = self.total(k);\n    let logged = save(total);\n    logged"
+            }]
+        }),
+    )
+    .unwrap_or_else(|e| panic!("the shift and the copy are both forgiven: {e}"));
+
+    assert!(ok.contains("ignoring leading whitespace"), "{ok}");
+    assert!(
+        ok.contains("2 line(s) the file already has above the text it replaced"),
+        "{ok}"
+    );
+    let after = fs::read_to_string(root.join("port.rs")).unwrap();
+    assert_eq!(
+        after.matches("self.dict.insert(k, rec);").count(),
+        1,
+        "{after}"
+    );
+    assert_eq!(after.matches("let _ = self.save();").count(), 1, "{after}");
+    assert!(after.contains("let logged = save(total);"), "{after}");
+}
+
 /// `lr7b_v19` in full shape: the `oldString` is the file's own region with one
 /// extra character on its last line, and the `newString` is the correct fix for
 /// the error under repair. Refusing it as "not in the file" and pasting the
