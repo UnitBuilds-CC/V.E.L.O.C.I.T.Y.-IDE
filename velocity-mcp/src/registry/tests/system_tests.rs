@@ -945,6 +945,92 @@ fn a_loose_near_miss_still_defers_to_the_guess_that_the_site_moved() {
     );
 }
 
+/// `lr7b_v26` turns 5, 11 and 12. The model quoted eleven lines whose only fault
+/// was the first: it wrote `let result_record = self.user_dict` on one line where
+/// rustfmt had broken the file's into two, and every line after it was the file's
+/// own byte for byte. [`nearest_miss`] is a prefix run, so it scored zero, and the
+/// refusal fell through to "the text itself is wrong rather than merely
+/// mis-indented ... over that region" with no line number anywhere in it. The
+/// model obeyed by reading 289-304 three times — a window opening *below* the only
+/// two lines it was missing — and re-sent the same guess each time.
+///
+/// The `newString` carries one unique file line, so `superseded_site` has an
+/// anchor and would otherwise have answered first with a history nothing had
+/// caused.
+#[test]
+fn a_refused_edit_whose_head_is_wrong_but_whose_tail_stands_names_the_line() {
+    let (_temp, root) = setup_root();
+    let file = concat!(
+        "    fn create_budget(&mut self) {\n",
+        "        let _ = self.save_data();\n",
+        "        let result_record =\n",
+        "            self.user_dict\n",
+        "                .values_mut()\n",
+        "                .next()\n",
+        "                .unwrap_or(&mut PersistedUserRecord {\n",
+        "                    total_budget: 0.0,\n",
+        "                });\n",
+        "        self.user_dict\n",
+        "            .values_mut()\n",
+        "            .next()\n",
+        "            .unwrap_or(&mut *result_record)\n",
+        "    }\n",
+    );
+    fs::write(root.join("port.rs"), file).unwrap();
+    let old = concat!(
+        "        let result_record = self.user_dict\n",
+        "                .values_mut()\n",
+        "                .next()\n",
+        "                .unwrap_or(&mut PersistedUserRecord {\n",
+        "                    total_budget: 0.0,\n",
+        "                });\n",
+        "        self.user_dict\n",
+        "            .values_mut()\n",
+        "            .next()\n",
+        "            .unwrap_or(&mut *result_record)\n",
+        "    }\n",
+    );
+
+    let err = call_tool_in_workspace(
+        &root,
+        "edit_file",
+        &json!({
+            "relativeFilePath": "port.rs",
+            "edits": [{
+                "oldString": old,
+                "newString": "        let _ = self.save_data();\n        let result_record =\n            self.user_dict\n                .values_mut()\n                .next()\n                .unwrap_or(&mut PersistedUserRecord {\n                    total_budget: 0.0,\n                });\n    }"
+            }],
+            "context": "fix E0499"
+        }),
+    )
+    .err()
+    .map(|e| e.to_string())
+    .unwrap_or_else(|| "a head the formatter split is not a match".to_string());
+
+    assert!(
+        !err.contains("The text is gone"),
+        "the tail standing at one place is a reading of the file, and that outranks the guess \
+         about its history: {err}"
+    );
+    assert!(
+        err.contains("at line 5") && err.contains("Read from line 3"),
+        "the refusal has to carry a line number and not a region: {err}"
+    );
+    assert!(
+        err.contains("3| let result_record =") && err.contains("4| self.user_dict"),
+        "and quote the two lines the model joined, so it can copy them: {err}"
+    );
+    assert!(
+        !err.contains("appears nowhere in the file"),
+        "the fallback that named no location is the whole of the gap: {err}"
+    );
+    assert_eq!(
+        fs::read_to_string(root.join("port.rs")).unwrap(),
+        file,
+        "a refused batch leaves the file alone"
+    );
+}
+
 /// The join is licensed by Rust's grammar: a line whose first non-whitespace
 /// character is `.` cannot begin a statement there, so it continues the one
 /// above. In prose or markup a line can begin with a full stop and mean it, so

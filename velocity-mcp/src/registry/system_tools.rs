@@ -874,6 +874,172 @@ impl NearMiss {
     }
 }
 
+/// A refused `oldString` whose head is absent from the file but whose tail is
+/// present, complete, and in exactly one place.
+#[derive(Debug, PartialEq)]
+struct TailAnchor {
+    /// 1-based file line the needle's first present line sits on.
+    line: usize,
+    /// How many of the needle's non-blank lines were absent before it.
+    skipped: usize,
+    /// How many non-blank lines matched from there: the whole of the rest.
+    matched: usize,
+    /// How many non-blank lines the needle has.
+    total: usize,
+    /// What the model wrote on its last absent line.
+    wrote: String,
+    /// The file's own lines immediately above the match, numbered, which is where
+    /// the model's absent head belongs.
+    file_says: Vec<(usize, String)>,
+}
+
+/// The 1-based file line the run of `tail` starts at, scanning forward from the
+/// 0-based index `start` with blank lines skipped, or `None` if the run breaks
+/// or the file runs out.
+fn run_start(file: &[&str], start: usize, tail: &[&str]) -> Option<usize> {
+    let mut at = None;
+    let mut j = start;
+    for want in tail {
+        loop {
+            if j >= file.len() {
+                return None;
+            }
+            let line = file[j].trim();
+            j += 1;
+            if line.is_empty() {
+                continue;
+            }
+            if line != *want {
+                return None;
+            }
+            at.get_or_insert(j);
+            break;
+        }
+    }
+    at
+}
+
+/// Where the tail of a refused `needle` sits, when its head is not in the file.
+///
+/// [`nearest_miss`] is a prefix run, so a needle whose *first* line is wrong
+/// scores zero and falls through to [`explain_refused_edit`] however exactly the
+/// rest of it stands in the file. `lr7b_v26` lost turns 5, 11 and 12 to that. The
+/// model quoted fourteen lines whose only fault was the first: it wrote
+/// `let result_record = self.user_dict` on one line where rustfmt had broken the
+/// file's into `let result_record =` and `self.user_dict`, and the other thirteen
+/// were the file's own 289 to 302 byte for byte. The refusal answered that the
+/// text was "wrong rather than merely mis-indented" and told the model to
+/// `read_file` "that region" without naming one, so it read 289-304 three times —
+/// a window opening below the only two lines it was missing — and re-sent the same
+/// guess each time.
+///
+/// The tail must match complete and unique, and the head must be short and text
+/// the file has never held. A partial tail is a coincidence, an ambiguous one
+/// names nothing, a head that is somewhere in the file already has a home, and a
+/// long absent head means the model was quoting a different region than the one
+/// it landed in.
+fn tail_anchor(hay: &str, needle: &str) -> Option<TailAnchor> {
+    /// Absent head lines still worth looking past.
+    const MAX_SKIPPED: usize = 2;
+    /// A tail this short turns up anywhere by accident.
+    const MIN_TAIL: usize = 3;
+    const MAX_LINES: usize = 60;
+    let hay = hay.replace("\r\n", "\n");
+    let needle = needle.replace("\r\n", "\n");
+    let file: Vec<&str> = hay.lines().collect();
+    let want: Vec<&str> = needle
+        .lines()
+        .map(str::trim)
+        .filter(|l| !l.is_empty())
+        .take(MAX_LINES)
+        .collect();
+    if want.len() < MIN_TAIL + 1 {
+        return None;
+    }
+    // The head has to be text the file has never held. A needle whose own first
+    // line is standing somewhere in the file was aimed at that place, and a tail
+    // it happens to share with a second region says nothing about where its head
+    // belongs — the lines above that second site would be quoted as the home of a
+    // head that has one already, sending the model to a region it never quoted.
+    if file.iter().any(|l| l.trim() == want[0]) {
+        return None;
+    }
+    for skipped in 1..=MAX_SKIPPED.min(want.len() - MIN_TAIL) {
+        let tail = &want[skipped..];
+        let mut sites: Vec<usize> = Vec::new();
+        for i in 0..file.len() {
+            if let Some(at) = run_start(&file, i, tail) {
+                if !sites.contains(&at) {
+                    sites.push(at);
+                }
+            }
+        }
+        if sites.len() != 1 {
+            continue;
+        }
+        let first_matched = sites[0];
+        // Walk up from the line directly above the match — never the match's own
+        // first line — and keep one more line than were absent, so a head the
+        // formatter split across two lines is still shown whole.
+        let mut above: Vec<(usize, String)> = Vec::new();
+        let mut index = first_matched - 1;
+        while above.len() < skipped + 1 {
+            if index == 0 {
+                break;
+            }
+            index -= 1;
+            let line = file[index].trim();
+            if !line.is_empty() {
+                above.push((index + 1, clipped_line(line)));
+            }
+        }
+        above.reverse();
+        // A unique site at the very top of the file leaves no head room, and the
+        // next `skipped` would name a line as absent that the file plainly has —
+        // the line above the match, which is file line 1. A unique site settles
+        // how much of the head is missing, so this one is the answer or there is
+        // none.
+        if above.is_empty() {
+            return None;
+        }
+        return Some(TailAnchor {
+            line: first_matched,
+            skipped,
+            matched: tail.len(),
+            total: want.len(),
+            wrote: clipped_line(want[skipped - 1]),
+            file_says: above,
+        });
+    }
+    None
+}
+
+/// The refusal for a tail-anchored `oldString`: the head is the part that is not
+/// in the file, the tail is the file's own, and here is the line to read the head
+/// from. Naming the line is the whole of it — "read that region" is the advice
+/// `lr7b_v26` obeyed three times into a window that missed the divergence.
+fn tail_anchor_message(rel_path: &str, a: &TailAnchor) -> String {
+    let quoted = a
+        .file_says
+        .iter()
+        .map(|(line, text)| format!("    {line}| {text}"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    format!(
+        "its `oldString` is not in {rel_path}, but everything after its first {skipped} line(s) \
+         is: {matched} of its {total} non-blank lines are in the file in that order, at line \
+         {line}, and nowhere else. Your line {skipped}, `{wrote}`, is the last one that is not \
+         there. The file has this where yours has those:\n{quoted}\nRead from line {read_from} \
+         and copy that head from what it returns; the {matched} lines after it are already right.",
+        read_from = a.file_says[0].0,
+        skipped = a.skipped,
+        matched = a.matched,
+        total = a.total,
+        line = a.line,
+        wrote = a.wrote,
+    )
+}
+
 /// A refused `oldString` that differs from exactly one place in the file by
 /// nothing but a uniform re-indent.
 #[derive(Debug, PartialEq)]
@@ -1983,12 +2149,24 @@ pub fn handle_system_tool(
                     // Naming the one line that differs beats pasting the sites of
                     // the line that already matched: v19 re-sent the same call
                     // five times because the paste showed only its correct part.
-                    // It beats `superseded_site`'s history too, when the near miss
-                    // is tight enough to have found the site: a place still
-                    // standing with one line of it altered is not a place an
-                    // earlier write replaced. See `NearMiss::locates_the_site`.
+                    // Both it and the tail anchor beat `superseded_site`'s
+                    // history, when either has found the site: a place still
+                    // standing with the quoted text in it is not a place an
+                    // earlier write replaced, and that is a reading of the file
+                    // while the history is a guess about it. See
+                    // `NearMiss::locates_the_site`.
                     let miss = nearest_miss(&current, old);
-                    if !miss.as_ref().is_some_and(NearMiss::locates_the_site) {
+                    // The tail anchor answers the case the prefix run cannot: a
+                    // needle whose first line is wrong scores zero on every site
+                    // however exactly the rest of it stands in the file.
+                    let anchor = if miss.is_some() {
+                        None
+                    } else {
+                        tail_anchor(&current, old)
+                    };
+                    let located =
+                        miss.as_ref().is_some_and(NearMiss::locates_the_site) || anchor.is_some();
+                    if !located {
                         if let Some(line) = superseded_site(&current, old, new) {
                             rejected.push(format!(
                                 "edit {n}: its `oldString` is not in {rel_path}. {}",
@@ -1999,6 +2177,13 @@ pub fn handle_system_tool(
                     }
                     if let Some(miss) = miss {
                         rejected.push(format!("edit {n}: {}", near_miss_message(rel_path, &miss)));
+                        continue;
+                    }
+                    if let Some(anchor) = anchor {
+                        rejected.push(format!(
+                            "edit {n}: {}",
+                            tail_anchor_message(rel_path, &anchor)
+                        ));
                         continue;
                     }
                     let why = explain_refused_edit(&current, old);
@@ -3850,6 +4035,183 @@ mod tests {
         assert!(miss.at_eof, "{miss:?}");
         assert_eq!(miss.file_says, "the file ends", "{miss:?}");
         assert!(!miss.locates_the_site(), "{miss:?}");
+    }
+
+    /// The file the tail-anchor cases are built against: `lr7b_v26`'s
+    /// `create_budget` tail in miniature, where rustfmt broke
+    /// `let result_record = self.user_dict` across two lines.
+    const SPLIT_HEAD: &str = concat!(
+        "        let _ = self.save_data();\n",
+        "        let result_record =\n",
+        "            self.user_dict\n",
+        "                .values_mut()\n",
+        "                .next()\n",
+        "                .unwrap_or(&mut PersistedUserRecord {\n",
+        "                    total_budget: 0.0,\n",
+        "                });\n",
+        "        self.user_dict\n",
+        "            .values_mut()\n",
+        "            .next()\n",
+        "            .unwrap_or(&mut *result_record)\n",
+        "    }\n",
+    );
+
+    /// The `oldString` v26 sent on turns 5, 11 and 12: its first line is the
+    /// file's own two lines joined, and every line after it is the file's byte
+    /// for byte.
+    const JOINED_HEAD: &str = concat!(
+        "        let result_record = self.user_dict\n",
+        "                .values_mut()\n",
+        "                .next()\n",
+        "                .unwrap_or(&mut PersistedUserRecord {\n",
+        "                    total_budget: 0.0,\n",
+        "                });\n",
+        "        self.user_dict\n",
+        "            .values_mut()\n",
+        "            .next()\n",
+        "            .unwrap_or(&mut *result_record)\n",
+        "    }\n",
+    );
+
+    #[test]
+    fn a_head_the_formatter_split_is_named_by_the_tail_that_still_stands() {
+        // The prefix run scores nothing here — the needle's first line is in no
+        // file — which is why the refusal fell all the way through to
+        // `explain_refused_edit` and named no line at all.
+        assert!(nearest_miss(SPLIT_HEAD, JOINED_HEAD).is_none());
+
+        let a = tail_anchor(SPLIT_HEAD, JOINED_HEAD).expect("ten of eleven lines are the file's");
+        assert_eq!(a.line, 4, "the tail starts at the file's own line 4: {a:?}");
+        assert_eq!(a.skipped, 1, "{a:?}");
+        assert_eq!((a.matched, a.total), (10, 11), "{a:?}");
+        assert_eq!(a.wrote, "let result_record = self.user_dict", "{a:?}");
+        assert_eq!(
+            a.file_says,
+            vec![
+                (2, "let result_record =".to_string()),
+                (3, "self.user_dict".to_string())
+            ],
+            "both halves of the line the formatter split, and none of the match itself: {a:?}"
+        );
+    }
+
+    #[test]
+    fn the_tail_anchor_message_names_a_line_and_not_a_region() {
+        let a = tail_anchor(SPLIT_HEAD, JOINED_HEAD).expect("as above");
+        let msg = tail_anchor_message("src/port.rs", &a);
+        assert!(msg.contains("at line 4"), "{msg}");
+        assert!(msg.contains("Read from line 2"), "{msg}");
+        assert!(msg.contains("2| let result_record ="), "{msg}");
+        assert!(msg.contains("3| self.user_dict"), "{msg}");
+        assert!(
+            msg.contains("`let result_record = self.user_dict`"),
+            "the model has to see its own line to know which one to replace: {msg}"
+        );
+        // v26 read 289-304 three times on the strength of "over that region". A
+        // line number is the whole of the fix, so the vague form may not survive
+        // in the message that replaced it.
+        assert!(!msg.contains("that region"), "{msg}");
+    }
+
+    #[test]
+    fn the_tail_anchor_looks_past_blank_lines_and_crlf() {
+        let hay = "fn a() {\r\n\r\n    let head =\r\n        self.dict\r\n\r\n            .step();\r\n            .then();\r\n            .done();\r\n}\r\n";
+        let needle = "    let head = self.dict\n            .step();\n            .then();\n            .done();\n}\n";
+        let a = tail_anchor(hay, needle).expect("four of five lines are the file's");
+        assert_eq!(a.line, 6, "a blank line is not a line of the run: {a:?}");
+        assert_eq!(
+            a.file_says,
+            vec![(3, "let head =".to_string()), (4, "self.dict".to_string())],
+            "numbered as the file numbers them, blanks skipped: {a:?}"
+        );
+    }
+
+    #[test]
+    fn a_tail_that_stands_in_two_places_anchors_nothing() {
+        // Two sites name neither. Guessing between them sends the model to the
+        // wrong one with total confidence, which reads as an answer.
+        let hay = concat!(
+            "fn a() {\n",
+            "    head_one();\n",
+            "    .step()\n",
+            "    .then()\n",
+            "    .done()\n",
+            "}\n",
+            "fn b() {\n",
+            "    head_two();\n",
+            "    .step()\n",
+            "    .then()\n",
+            "    .done()\n",
+            "}\n",
+        );
+        let needle = "    WRONG();\n    .step()\n    .then()\n    .done()\n";
+        let found = tail_anchor(hay, needle);
+        assert!(found.is_none(), "{found:?}");
+    }
+
+    #[test]
+    fn a_tail_too_short_to_be_believed_anchors_nothing() {
+        // Three non-blank lines leave at most two standing, and two lines are in
+        // every file: not enough to say where the third belonged.
+        let hay = "fn a() {\n    let x = 1;\n    let y = 2;\n}\n";
+        let needle = "    let WRONG = 9;\n    let x = 1;\n    let y = 2;\n";
+        assert!(tail_anchor(hay, needle).is_none());
+    }
+
+    #[test]
+    fn a_head_too_long_to_have_been_mistaken_anchors_nothing() {
+        // Three absent lines above a tail that stands: the model was quoting a
+        // different region than the one it landed in, and the two lines the
+        // report would quote are not the three it is missing.
+        let hay = concat!(
+            "fn a() {\n",
+            "    let x = 1;\n",
+            "    let y = 2;\n",
+            "    .step()\n",
+            "    .then()\n",
+            "    .done()\n",
+            "}\n",
+        );
+        let needle =
+            "    one();\n    two();\n    three();\n    .step()\n    .then()\n    .done()\n";
+        assert!(tail_anchor(hay, needle).is_none());
+    }
+
+    #[test]
+    fn a_unique_tail_at_the_top_of_the_file_anchors_nothing() {
+        // There is no head room above line 1. Taking the next `skipped` instead
+        // would name the file's own first line as one the model invented, and a
+        // unique site already settles how much of the head is missing.
+        let hay = "    .step()\n    .then()\n    .done()\n}\n";
+        let needle = "    WRONG();\n    .step()\n    .then()\n    .done()\n}\n";
+        let found = tail_anchor(hay, needle);
+        assert!(found.is_none(), "{found:?}");
+    }
+
+    #[test]
+    fn a_head_that_stands_somewhere_else_gets_no_home_invented() {
+        // The needle's first line is in the file at line 2, so the edit was aimed
+        // there. Its tail also stands, uniquely, in a different function — and
+        // quoting the lines above *that* site as the head's home would send the
+        // model to a region it never quoted.
+        let hay = concat!(
+            "fn a() {\n",
+            "    let head = 1;\n",
+            "    save(head);\n",
+            "}\n",
+            "fn b() {\n",
+            "    .step()\n",
+            "    .then()\n",
+            "    .done()\n",
+            "}\n",
+        );
+        let needle = "    let head = 1;\n    WRONG();\n    .step()\n    .then()\n    .done()\n";
+        assert!(
+            nearest_miss(hay, needle).is_none(),
+            "one matched line of five is under the confidence floor"
+        );
+        let found = tail_anchor(hay, needle);
+        assert!(found.is_none(), "{found:?}");
     }
 
     #[test]
