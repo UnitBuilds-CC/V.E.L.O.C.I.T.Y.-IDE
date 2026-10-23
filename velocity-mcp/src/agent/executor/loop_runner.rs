@@ -307,6 +307,13 @@ pub fn run_agent_reasoning_loop(
     // pushed. Keeping the advice in the same armed state is what stops the
     // rebuilt turn from re-issuing the losing move it was just told about.
     let mut pending_repair_directive: Option<String> = None;
+    // The notice a tool-call-free turn owes the next one, held for the same reason
+    // `pending_repair_directive` is: nudging increments `auto_continuations`, which
+    // engages the exploration lock, which rebuilds a lean context that deletes the
+    // history message the nudge pushed. Without this the nudge is announced and
+    // then not said — `unarmed_nudge` measured a turn spent on a request
+    // byte-identical to the one the model had just answered with narration.
+    let mut pending_no_tool_call_notice: Option<String> = None;
     // Which file the failing compilation belongs to, recovered from the rustc
     // diagnostics. A repair turn may rewrite only this file, which is what makes
     // treating a fenced code block as its full content safe.
@@ -731,6 +738,9 @@ pub fn run_agent_reasoning_loop(
         // in `write_gate_diagnostics`, so a turn that never rebuilds loses
         // nothing.
         let armed_repair_directive = pending_repair_directive.take();
+        // Same single-use contract, and the same reason: the rebuild below may
+        // consume it, and a request that is never answered hands it back.
+        let carried_nudge_notice = pending_no_tool_call_notice.take();
         // A wrong-path refusal steers the same way an artifact nudge does: the
         // turn after it must be write-only with a lean context, or the model
         // re-reads the workspace and re-emits the same nested file.
@@ -859,13 +869,10 @@ pub fn run_agent_reasoning_loop(
                 turn_write_tools,
                 workspace_root,
             );
-            hist.push(ChatMessage {
-                role: "user".to_string(),
-                content: directive,
-                name: None,
-                tool_call_id: None,
-                tool_calls: None,
-            });
+            hist.extend(write_context_tail(
+                carried_nudge_notice.as_deref(),
+                &directive,
+            ));
             ui_tx
                 .send(AgentToUiMessage::StatusUpdate(format!(
                     "Reconstructed clean {}-message write context (from {} in history) to break the no-action loop",
@@ -1224,6 +1231,7 @@ pub fn run_agent_reasoning_loop(
                     // local's only remaining job, and the next turn re-takes it
                     // from `pending_repair_directive`.
                     pending_repair_directive = armed_repair_directive;
+                    pending_no_tool_call_notice = carried_nudge_notice;
                 }
                 let fallback = fallback_provider(current_provider);
                 let fallback_available = match fallback {
@@ -3220,6 +3228,40 @@ pub fn run_agent_reasoning_loop(
                         // bounds this loop.
                         continue;
                     }
+                    // No repair turn is left to arm — but nothing this turn wrote
+                    // is what got graded either. This branch is entered on
+                    // `sitemap_needed`, which the first write of a run sets and
+                    // nothing ever clears, so from then on every tool-call-free
+                    // turn lands here and never reaches
+                    // `decide_no_tool_call_ending`: the decision that exists for
+                    // exactly this turn. `lr7b_v25` paid for the bypass. Turn 5
+                    // emitted no call, the crate still had the one E0515 turns 3
+                    // and 4 had failed to move, the repair counter read 3/3, and
+                    // the run stopped — 23.7s into a 1200s budget, with
+                    // `auto_continuations` still at 0, so the single mechanism
+                    // that could have asked the model for the call it skipped was
+                    // never tried. Ask first. The bounds on asking are that
+                    // decision's own, and when they are spent this stops exactly
+                    // where it did before.
+                    wasted_turn_secs += provider_ms as u64 / 1000;
+                    if loop_count < max_loops
+                        && should_nudge_unarmed_validation(decide_no_tool_call_ending(
+                            markup_residue,
+                            content_was_empty,
+                            &assistant_content,
+                            auto_continuations,
+                            wasted_turn_secs,
+                            budget_secs,
+                        ))
+                    {
+                        auto_continuations += 1;
+                        let (status, notice) =
+                            no_tool_call_nudge(markup_residue, auto_continuations);
+                        ui_tx.send(AgentToUiMessage::StatusUpdate(status)).ok();
+                        deliver_nudge(&notice, message_history, &mut pending_no_tool_call_notice);
+                        loop_count = loop_count.saturating_sub(1);
+                        continue;
+                    }
                     outcome = ending.stopped(
                         loop_count,
                         "post-run validation failed",
@@ -3274,24 +3316,9 @@ pub fn run_agent_reasoning_loop(
                     // no parser could execute — the model INTENDED to act, so
                     // ending the run here is never correct.
                     auto_continuations += 1;
-                    ui_tx
-                        .send(AgentToUiMessage::StatusUpdate(format!(
-                            "Turn announced an action but made no tool call — auto-continuing ({}/{})...",
-                            auto_continuations, MAX_AUTO_CONTINUATIONS
-                        )))
-                        .ok();
-                    let notice = if markup_residue {
-                        "[System notice] Your previous response contained a tool call whose markup arrived truncated or malformed, so it could not be executed and nothing happened. Re-issue that tool call now as a clean, complete call with valid arguments.".to_string()
-                    } else {
-                        "[System notice] Your previous response announced an action but contained no tool call, so nothing was executed and the turn ended. If work remains, make the tool calls now; if the mission is truly complete, reply with your final summary instead of another announcement.".to_string()
-                    };
-                    message_history.push(ChatMessage {
-                        role: "user".to_string(),
-                        content: notice,
-                        name: None,
-                        tool_call_id: None,
-                        tool_calls: None,
-                    });
+                    let (status, notice) = no_tool_call_nudge(markup_residue, auto_continuations);
+                    ui_tx.send(AgentToUiMessage::StatusUpdate(status)).ok();
+                    deliver_nudge(&notice, message_history, &mut pending_no_tool_call_notice);
                     loop_count = loop_count.saturating_sub(1);
                     continue;
                 }
@@ -6901,6 +6928,97 @@ fn wasted_time_ends_the_run(wasted_secs: u64, budget_secs: u64) -> bool {
     budget_secs > 0 && wasted_secs * 5 >= budget_secs * 2
 }
 
+/// Whether a post-run validation that could not arm a repair turn should still
+/// ask the model for the tool call it skipped.
+///
+/// Only a nudge keeps the run alive, and the other three are each a reason not
+/// to. `FinalAnswer` means the turn was a real summary, so the build being red
+/// is the verdict and there is nothing left to ask for. `Stalled` and `Blocked`
+/// are the two bounds on asking — wall clock and count — so honouring them here
+/// is what keeps this from being a retry with no ceiling.
+fn should_nudge_unarmed_validation(decision: NoToolCallEnding) -> bool {
+    decision == NoToolCallEnding::Nudge
+}
+
+/// The re-prompt a tool-call-free turn earns, and the status line that says one
+/// was sent.
+///
+/// One helper for both sites that can nudge — the no-tool-call branch, and the
+/// post-run validation that a sticky `sitemap_needed` routes such a turn into —
+/// because the two must not drift: the same turn cannot mean "make the call now"
+/// at one site and "reply with your final summary" at the other. The count is the
+/// one AFTER this nudge, so the status line and the bound it is read against
+/// describe the same number.
+fn no_tool_call_nudge(markup_residue: bool, auto_continuations: u32) -> (String, String) {
+    let status = format!(
+        "Turn announced an action but made no tool call \u{2014} auto-continuing ({}/{})...",
+        auto_continuations, MAX_AUTO_CONTINUATIONS
+    );
+    let notice = if markup_residue {
+        "[System notice] Your previous response contained a tool call whose markup arrived \
+         truncated or malformed, so it could not be executed and nothing happened. Re-issue that \
+         tool call now as a clean, complete call with valid arguments."
+            .to_string()
+    } else {
+        "[System notice] Your previous response announced an action but contained no tool call, \
+         so nothing was executed and the turn ended. If work remains, make the tool calls now; if \
+         the mission is truly complete, reply with your final summary instead of another \
+         announcement."
+            .to_string()
+    };
+    (status, notice)
+}
+
+/// Hand a nudge to the next turn, into the history for a turn that keeps it and
+/// into the armed state for one that does not.
+///
+/// Both, because the nudge's own `auto_continuations += 1` is what engages the
+/// exploration lock on the following turn, and that lock rebuilds a lean context
+/// holding only the system prompt, the task, the last two tool exchanges and the
+/// directive. A nudge pushed to history alone is therefore deleted by the very
+/// turn it was meant to steer.
+fn deliver_nudge(
+    notice: &str,
+    message_history: &mut Vec<ChatMessage>,
+    carried: &mut Option<String>,
+) {
+    *carried = Some(notice.to_string());
+    message_history.push(ChatMessage {
+        role: "user".to_string(),
+        content: notice.to_string(),
+        name: None,
+        tool_call_id: None,
+        tool_calls: None,
+    });
+}
+
+/// The tail of a rebuilt lean write context: the nudge still owed, then the
+/// imperative directive.
+///
+/// The directive stays last whatever is carried with it. Its position is the part
+/// that was measured — it is the shape that flipped a probe from narration to an
+/// executed write — so a nudge is prepended rather than appended.
+fn write_context_tail(nudge_notice: Option<&str>, directive: &str) -> Vec<ChatMessage> {
+    let mut tail = Vec::with_capacity(2);
+    if let Some(notice) = nudge_notice {
+        tail.push(ChatMessage {
+            role: "user".to_string(),
+            content: notice.to_string(),
+            name: None,
+            tool_call_id: None,
+            tool_calls: None,
+        });
+    }
+    tail.push(ChatMessage {
+        role: "user".to_string(),
+        content: directive.to_string(),
+        name: None,
+        tool_call_id: None,
+        tool_calls: None,
+    });
+    tail
+}
+
 /// Validate a model's tool call against the tool's declared `inputSchema`
 /// BEFORE it runs. Models emit syntactically-valid calls whose arguments
 /// violate the contract: the observed convert run sent `write_file` with a
@@ -7288,28 +7406,29 @@ mod tests {
     use super::{
         arm_compile_repair, artifact_delivery_directive, call_identity, compile_repair_directive,
         correct_missing_crate_help, counts_as_artifact, decide_no_tool_call_ending,
-        declared_dependencies, declared_name, dependency_repair_rule, enclosing_fn_block,
-        error_code_recipes, existing_file_named_by_task, extract_fenced_code_block,
-        force_write_directive, gate_failure_label, grade_write, gutting_rewrite_refusal,
-        handover_for_outcome, hides_generation_tool, is_refusal, is_rustc_diagnostic_report,
-        is_test_failure_report, item_head_keyword, items_a_rewrite_would_delete,
-        missing_crate_help, note_refusal_repeat, off_target_refusal, parse_function_fragments,
-        read_of_named_target, remember_run_write, repair_api_context, repair_budget,
-        repair_error_excerpt, repeated_refusal_note, replay_advice, rust_item_names,
-        salvage_complete_calls, should_arm_write_repair, should_close_validate,
-        should_grade_tests_now, should_lock_exploration, should_note_unarmed_repair,
-        should_nudge_missing_artifact, should_nudge_write_pressure, should_rebuild_write_context,
-        should_refund_repair_attempt, should_refuse_gutting_rewrite, should_steer_wrong_path,
-        strip_tool_markup_residue, type_names_in_diagnostics, unfinished_announced_turn,
-        unknown_tool_message, validate_tool_call, wasted_time_ends_the_run,
-        write_context_directive, write_misses_named_target, write_pressure_directive,
-        writes_miss_named_target, wrong_path_directive, AgentLoopOutcome, AgentToUiMessage,
-        ArtifactSurface, ChatMessage, NoToolCallEnding, RunEnding, TestVerdict,
-        ToolCallAccumulator, WriteGrade, FILE_EDITING_TOOLS, MAX_ARTIFACT_NUDGES,
-        MAX_AUTO_CONTINUATIONS, MAX_COMPILE_REPAIR_TURNS, MAX_OFF_TARGET_REFUSALS,
-        MAX_REFUNDED_REPAIR_ATTEMPTS, MAX_SURFACE_REFUSALS, MAX_TEST_REPAIR_TURNS,
-        MAX_TRACKED_RUN_WRITES, MAX_UNARMED_REPAIR_NOTES, MAX_WRITE_PRESSURE_NUDGES,
-        MEDIA_GENERATION_TOOLS, ONE_ERROR_AT_A_TIME_NOTE, WRITE_PRESSURE_STREAK,
+        declared_dependencies, declared_name, deliver_nudge, dependency_repair_rule,
+        enclosing_fn_block, error_code_recipes, existing_file_named_by_task,
+        extract_fenced_code_block, force_write_directive, gate_failure_label, grade_write,
+        gutting_rewrite_refusal, handover_for_outcome, hides_generation_tool, is_refusal,
+        is_rustc_diagnostic_report, is_test_failure_report, item_head_keyword,
+        items_a_rewrite_would_delete, missing_crate_help, no_tool_call_nudge, note_refusal_repeat,
+        off_target_refusal, parse_function_fragments, read_of_named_target, remember_run_write,
+        repair_api_context, repair_budget, repair_error_excerpt, repeated_refusal_note,
+        replay_advice, rust_item_names, salvage_complete_calls, should_arm_write_repair,
+        should_close_validate, should_grade_tests_now, should_lock_exploration,
+        should_note_unarmed_repair, should_nudge_missing_artifact, should_nudge_unarmed_validation,
+        should_nudge_write_pressure, should_rebuild_write_context, should_refund_repair_attempt,
+        should_refuse_gutting_rewrite, should_steer_wrong_path, strip_tool_markup_residue,
+        type_names_in_diagnostics, unfinished_announced_turn, unknown_tool_message,
+        validate_tool_call, wasted_time_ends_the_run, write_context_directive, write_context_tail,
+        write_misses_named_target, write_pressure_directive, writes_miss_named_target,
+        wrong_path_directive, AgentLoopOutcome, AgentToUiMessage, ArtifactSurface, ChatMessage,
+        NoToolCallEnding, RunEnding, TestVerdict, ToolCallAccumulator, WriteGrade,
+        FILE_EDITING_TOOLS, MAX_ARTIFACT_NUDGES, MAX_AUTO_CONTINUATIONS, MAX_COMPILE_REPAIR_TURNS,
+        MAX_OFF_TARGET_REFUSALS, MAX_REFUNDED_REPAIR_ATTEMPTS, MAX_SURFACE_REFUSALS,
+        MAX_TEST_REPAIR_TURNS, MAX_TRACKED_RUN_WRITES, MAX_UNARMED_REPAIR_NOTES,
+        MAX_WRITE_PRESSURE_NUDGES, MEDIA_GENERATION_TOOLS, ONE_ERROR_AT_A_TIME_NOTE,
+        WRITE_PRESSURE_STREAK,
     };
 
     // The file-free forms of the repeat detector. Most of these tests feed
@@ -8747,6 +8866,110 @@ mod tests {
         // The bound is 40% of the budget, inclusive at the threshold.
         assert!(wasted_time_ends_the_run(600, 1500));
         assert!(!wasted_time_ends_the_run(599, 1500));
+    }
+
+    /// `lr7b_v25` turn 5. The crate still carried the one E0515 turns 3 and 4 had
+    /// failed to move, the repair counter read 3/3, the turn made no tool call —
+    /// and the post-run validation ended the run on the spot, 23.7s into a 1200s
+    /// budget, without ever reaching the decision that exists for a tool-call-free
+    /// turn. Asking costs nothing but the ask; not asking spends the whole clock.
+    #[test]
+    fn an_unarmed_post_run_validation_asks_before_it_ends_the_run() {
+        let announcement = "Let me design the Rust implementation now.";
+        // Nothing spent, budget intact, and the turn announced an action it did
+        // not take: that is a nudge, and a nudge is the one answer that keeps the
+        // run alive.
+        assert!(should_nudge_unarmed_validation(decide_no_tool_call_ending(
+            false,
+            false,
+            announcement,
+            0,
+            4,
+            1200
+        )));
+        // A deliberate summary ends it. The crate is red, so there is nothing left
+        // to ask for and reporting that is the verdict.
+        assert!(!should_nudge_unarmed_validation(
+            NoToolCallEnding::FinalAnswer
+        ));
+        // The two bounds on asking are honoured here too, or this is a retry with
+        // no ceiling: the count bound...
+        assert_eq!(
+            decide_no_tool_call_ending(false, false, announcement, MAX_AUTO_CONTINUATIONS, 4, 1200),
+            NoToolCallEnding::Blocked
+        );
+        assert!(!should_nudge_unarmed_validation(NoToolCallEnding::Blocked));
+        // ...and the cost bound, which is the one that matters on a local model.
+        assert!(!should_nudge_unarmed_validation(NoToolCallEnding::Stalled));
+    }
+
+    /// Two places can now nudge a tool-call-free turn: the no-tool-call branch,
+    /// and the post-run validation that a sticky `sitemap_needed` routes such a
+    /// turn into. One helper feeds both, so the same turn cannot be told "make the
+    /// call now" at one and "reply with your final summary" at the other.
+    #[test]
+    fn one_nudge_wording_serves_both_sites_that_can_send_it() {
+        let (status, notice) = no_tool_call_nudge(false, 1);
+        assert!(status.contains("auto-continuing"), "{status}");
+        assert!(
+            status.contains(&format!("(1/{MAX_AUTO_CONTINUATIONS})")),
+            "the count shown is the one after this nudge, which is the count the \
+             bound is read against: {status}"
+        );
+        assert!(notice.contains("make the tool calls now"), "{notice}");
+        assert!(
+            !notice.contains("markup"),
+            "a turn that carried no markup is not accused of breaking it: {notice}"
+        );
+
+        // Broken markup earns the other wording, which asks for the same call
+        // rather than a summary: the model meant to act and the parser lost it.
+        let (_, broken) = no_tool_call_nudge(true, 1);
+        assert!(broken.contains("Re-issue that tool call now"), "{broken}");
+        assert_ne!(broken, notice);
+    }
+
+    /// `unarmed_nudge` measured this: the loop announced a nudge, spent a model
+    /// call, and sent a request byte-identical to the one the model had just
+    /// answered with narration. The nudge's own `auto_continuations += 1` engages
+    /// the exploration lock on the following turn, and that lock rebuilds a lean
+    /// context keeping only the system prompt, the task, the last two tool
+    /// exchanges and the directive — so a nudge left in history is deleted by the
+    /// very turn it was meant to steer.
+    #[test]
+    fn a_nudge_survives_the_lean_rebuild_it_triggers() {
+        let notice = no_tool_call_nudge(false, 1).1;
+        let mut history = Vec::new();
+        let mut carried: Option<String> = None;
+        deliver_nudge(&notice, &mut history, &mut carried);
+
+        // A turn that keeps its history sees the nudge there...
+        assert_eq!(history.len(), 1);
+        assert_eq!(history[0].role, "user");
+        assert_eq!(history[0].content, notice);
+        // ...and a turn that rebuilds sees it armed, so the tail can carry it.
+        let tail = write_context_tail(carried.as_deref(), "Call write_file now.");
+        assert_eq!(tail.len(), 2, "the notice is not dropped by the rebuild");
+        assert!(
+            tail.iter().any(|m| m.content == notice),
+            "the rebuilt request still says why nothing happened"
+        );
+    }
+
+    /// The directive's position is the measured part of a lean context — it is the
+    /// shape that flipped a probe from narration to an executed write — so a nudge
+    /// is prepended to it and never appended after it.
+    #[test]
+    fn the_rebuilt_context_keeps_the_directive_last() {
+        let tail = write_context_tail(Some("[System notice] Nothing was executed."), "Write now.");
+        assert_eq!(tail.len(), 2);
+        assert_eq!(tail[0].content, "[System notice] Nothing was executed.");
+        assert_eq!(tail[1].content, "Write now.");
+        assert!(tail.iter().all(|m| m.role == "user"));
+        // With nothing owed the tail is the directive alone, exactly as before.
+        let bare = write_context_tail(None, "Write now.");
+        assert_eq!(bare.len(), 1);
+        assert_eq!(bare[0].content, "Write now.");
     }
 
     fn summary_done() -> &'static str {
