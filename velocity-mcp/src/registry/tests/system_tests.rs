@@ -848,6 +848,82 @@ fn a_rescue_that_locates_the_site_outranks_the_guess_that_it_moved() {
     );
 }
 
+/// `lr7b_v27`, which spent 38 identical refusals and ended at turn 48 with
+/// E0499 and E0515 still standing. rustfmt had broken one binding in two places —
+/// after its `=` at line 287 and again before each `.` of the chain under it, down
+/// to line 291:
+///
+/// ```text
+///         let result_record =
+///             self.user_dict
+///                 .values_mut()
+///                 .next()
+///                 .unwrap_or(&mut PersistedUserRecord {
+/// ```
+///
+/// The model wrote all five back as the one line
+/// `let result_record = self.user_dict.values_mut().next().unwrap_or(&mut
+/// PersistedUserRecord {`. `chain_join_rescue` existed for exactly that and could
+/// not see it, because `dechain` joined only before a `.` and so left the file's
+/// first break standing: the joined file said `let result_record =` and the needle
+/// said `let result_record = self.user_dict…`, which differ. The refusal that
+/// answered it named a real line, 292, but quoted only 290 and 291 — two of the
+/// five the absent head covered — so it was true and unusable, and the model
+/// re-sent. This is a rescue rather than a better explanation because the code is
+/// the file's own, the site is unique (one hit in the 754-line file), and the only
+/// thing wrong is where the formatter wrapped it.
+#[test]
+fn a_binding_the_formatter_broke_after_its_equals_is_applied_not_refused() {
+    let (_temp, root) = setup_root();
+    let file = concat!(
+        "    fn create_budget(&mut self) {\n",
+        "        let _ = self.save_data();\n",
+        "        let result_record =\n",
+        "            self.user_dict\n",
+        "                .values_mut()\n",
+        "                .next()\n",
+        "                .unwrap_or(&mut Rec { a: 0.0 });\n",
+        "        result_record\n",
+        "    }\n",
+    );
+    fs::write(root.join("port.rs"), file).unwrap();
+
+    let flat = "        let result_record = self.user_dict.values_mut().next().unwrap_or(&mut Rec { a: 0.0 });";
+    let ok = call_tool_in_workspace(
+        &root,
+        "edit_file",
+        &json!({
+            "relativeFilePath": "port.rs",
+            "edits": [{
+                "oldString": flat,
+                "newString": format!("{flat}\n        save(result_record);")
+            }],
+            "context": "fix E0515"
+        }),
+    )
+    .unwrap_or_else(|e| panic!("one binding, five file lines, one needle line: {e}"));
+
+    assert!(
+        ok.contains("ignoring its line breaks"),
+        "the answer has to say what was forgiven, or the model re-sends it: {ok}"
+    );
+    assert!(
+        ok.contains("across 5 lines") && ok.contains("wrote it on 1"),
+        "and how many, counting the break after the `=`: {ok}"
+    );
+    assert!(ok.contains("line 3"), "{ok}");
+    let after = fs::read_to_string(root.join("port.rs")).unwrap();
+    assert!(after.contains("save(result_record);"), "{after}");
+    assert!(
+        !after.contains("        let result_record =\n"),
+        "the broken binding is what got replaced, not a flat copy beside it: {after}"
+    );
+    assert!(
+        !after.contains("                .values_mut()"),
+        "and so is the chain under it: {after}"
+    );
+}
+
 /// `lr7b_v24` turns 3 to 6. One semicolon cost the run four of its ten turns:
 /// the `oldString` said `});` where the file says `})`, and turns 3 and 4 were
 /// both answered with that line quoted from each side, which is the whole of the
@@ -946,13 +1022,20 @@ fn a_loose_near_miss_still_defers_to_the_guess_that_the_site_moved() {
 }
 
 /// `lr7b_v26` turns 5, 11 and 12. The model quoted eleven lines whose only fault
-/// was the first: it wrote `let result_record = self.user_dict` on one line where
-/// rustfmt had broken the file's into two, and every line after it was the file's
-/// own byte for byte. [`nearest_miss`] is a prefix run, so it scored zero, and the
-/// refusal fell through to "the text itself is wrong rather than merely
-/// mis-indented ... over that region" with no line number anywhere in it. The
-/// model obeyed by reading 289-304 three times — a window opening *below* the only
-/// two lines it was missing — and re-sent the same guess each time.
+/// was the first, and every line after it was the file's own byte for byte.
+/// [`nearest_miss`] is a prefix run, so it scored zero, and the refusal fell
+/// through to "the text itself is wrong rather than merely mis-indented ... over
+/// that region" with no line number anywhere in it. The model obeyed by reading
+/// 289-304 three times — a window opening *below* the only two lines it was
+/// missing — and re-sent the same guess each time.
+///
+/// v26's first line was the file's own two lines joined, and that shape is now
+/// applied rather than explained: see
+/// `a_binding_the_formatter_broke_after_its_equals_is_applied_not_refused`. What
+/// is left for the tail anchor is a head that is wrong *text* — here a field the
+/// model renamed — where applying the edit would write a line the file has never
+/// held, so the only useful answer is the line the tail starts at and the lines
+/// above it to copy the head from.
 ///
 /// The `newString` carries one unique file line, so `superseded_site` has an
 /// anchor and would otherwise have answered first with a history nothing had
@@ -978,7 +1061,7 @@ fn a_refused_edit_whose_head_is_wrong_but_whose_tail_stands_names_the_line() {
     );
     fs::write(root.join("port.rs"), file).unwrap();
     let old = concat!(
-        "        let result_record = self.user_dict\n",
+        "        let result_record = self.user_map\n",
         "                .values_mut()\n",
         "                .next()\n",
         "                .unwrap_or(&mut PersistedUserRecord {\n",
@@ -1005,7 +1088,7 @@ fn a_refused_edit_whose_head_is_wrong_but_whose_tail_stands_names_the_line() {
     )
     .err()
     .map(|e| e.to_string())
-    .unwrap_or_else(|| "a head the formatter split is not a match".to_string());
+    .unwrap_or_else(|| "a line the file has never held is not a match".to_string());
 
     assert!(
         !err.contains("The text is gone"),
@@ -1018,7 +1101,7 @@ fn a_refused_edit_whose_head_is_wrong_but_whose_tail_stands_names_the_line() {
     );
     assert!(
         err.contains("3| let result_record =") && err.contains("4| self.user_dict"),
-        "and quote the two lines the model joined, so it can copy them: {err}"
+        "and quote the two lines the head has to be copied from: {err}"
     );
     assert!(
         !err.contains("appears nowhere in the file"),

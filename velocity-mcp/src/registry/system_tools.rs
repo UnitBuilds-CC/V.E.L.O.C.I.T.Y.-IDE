@@ -933,6 +933,13 @@ fn run_start(file: &[&str], start: usize, tail: &[&str]) -> Option<usize> {
 /// a window opening below the only two lines it was missing — and re-sent the same
 /// guess each time.
 ///
+/// That exact needle is no longer refused: a head whose only fault is where the
+/// formatter broke it is the file's own code, so [`chain_join_rescue`] applies the
+/// edit and says so. What reaches here is a head that is wrong *text* — a renamed
+/// field, a dropped argument — where applying the edit would write a line the file
+/// has never held, so the answer has to be the line the tail starts at and the
+/// head above it to copy from.
+///
 /// The tail must match complete and unique, and the head must be short and text
 /// the file has never held. A partial tail is a coincidence, an ambiguous one
 /// names nothing, a head that is somewhere in the file already has a home, and a
@@ -1218,24 +1225,36 @@ struct ChainJoin {
     file_lines: usize,
 }
 
-/// `hay` with every line that continues a chain joined onto the line above it,
-/// plus the byte span each joined line covers in the original.
+/// `hay` with every line that continues the one above it joined onto it, plus the
+/// byte span each joined line covers in the original.
 ///
-/// In Rust a line whose first non-whitespace character is `.` cannot begin a
-/// statement, so it is always a continuation of the one before it and joining
-/// the two changes the line breaks and nothing else. That is what makes the
-/// joined text safe to match against, and the spans are what make the match
-/// reversible: they say which original bytes a joined line stands for, so a
-/// splice can replace them rather than the joined copy. A blank line above a `.`
-/// line ends the chain rather than joining through it.
+/// Two shapes continue, and both are licensed by Rust's grammar rather than by
+/// appearance. A line whose first non-whitespace character is `.` cannot begin a
+/// statement, so it belongs to the one before it. A line whose last
+/// non-whitespace character is `=` cannot end one, so the line after it is its
+/// right-hand side — rustfmt breaks there whenever the whole binding will not
+/// fit, and that is the break both `lr7b_v26` and `lr7b_v27` reproduced wrong:
+/// the model wrote `let result_record = self.user_dict…` back on one line where
+/// the file had two, and the rescue that exists for exactly this could not see
+/// it. Joining either way changes the line breaks and nothing else, which is what
+/// makes the joined text safe to match against, and the spans are what make the
+/// match reversible: they say which original bytes a joined line stands for, so a
+/// splice can replace them rather than the joined copy. A blank line above a
+/// continuation ends the chain rather than joining through it, and a comment
+/// neither opens nor joins one: its text is not grammar, so a `=` at the end of
+/// it is inside the comment, and joining the line below a comment onto it would
+/// put that line inside the comment too.
 fn dechain(hay: &str) -> (String, Vec<(usize, usize)>) {
     let starts = line_starts(hay);
     let mut text = String::new();
     let mut spans: Vec<(usize, usize)> = Vec::new();
-    // A `.` line continues the code above it, so a blank line above it means
-    // there is nothing to join onto rather than that the blank line is the head
-    // of a chain.
+    // A continuation needs something above it to continue, so a blank line above
+    // one means there is nothing to join onto rather than that the blank line is
+    // the head of a chain.
     let mut prev_blank = true;
+    // Whether the line being accumulated is still waiting for the expression
+    // that completes it, so the line after it continues rather than starts.
+    let mut prev_open = false;
     for (k, &s) in starts.iter().enumerate() {
         let raw = line_at(hay, &starts, k);
         // The segment after a trailing newline is not a line of the file.
@@ -1243,11 +1262,23 @@ fn dechain(hay: &str) -> (String, Vec<(usize, usize)>) {
             break;
         }
         let body = raw.trim_start();
-        if body.starts_with('.') && !spans.is_empty() && !prev_blank {
+        let dotted = body.starts_with('.');
+        let comment = body.starts_with("//");
+        if !body.is_empty() && !comment && !spans.is_empty() && !prev_blank && (dotted || prev_open)
+        {
+            // The break after `=` stands where the source had a space and the
+            // model puts the space back; a break before a `.` had none to lose.
+            if !dotted {
+                while text.ends_with(' ') || text.ends_with('\t') {
+                    text.pop();
+                }
+                text.push(' ');
+            }
             text.push_str(body);
             let last = spans.len() - 1;
             spans[last].1 = s + raw.len();
             prev_blank = false;
+            prev_open = ends_with_eq(body);
             continue;
         }
         if !spans.is_empty() {
@@ -1256,8 +1287,14 @@ fn dechain(hay: &str) -> (String, Vec<(usize, usize)>) {
         text.push_str(raw);
         spans.push((s, s + raw.len()));
         prev_blank = raw.trim().is_empty();
+        prev_open = !prev_blank && !comment && ends_with_eq(raw);
     }
     (text, spans)
+}
+
+/// Whether a line is left waiting for the expression that completes it.
+fn ends_with_eq(line: &str) -> bool {
+    line.trim_end().ends_with('=')
 }
 
 /// The one place a needle's lines occur once the file's chain breaks are
@@ -4056,11 +4093,13 @@ mod tests {
         "    }\n",
     );
 
-    /// The `oldString` v26 sent on turns 5, 11 and 12: its first line is the
-    /// file's own two lines joined, and every line after it is the file's byte
-    /// for byte.
-    const JOINED_HEAD: &str = concat!(
-        "        let result_record = self.user_dict\n",
+    /// The `oldString` shape the tail anchor is left with: its first line is a
+    /// field the model renamed, and every line after it is the file's byte for
+    /// byte. v26's own first line was the file's two lines joined, but that shape
+    /// is applied by [`super::chain_join_rescue`] before a refusal is ever
+    /// drafted, so it never reaches here.
+    const WRONG_HEAD: &str = concat!(
+        "        let result_record = self.user_map\n",
         "                .values_mut()\n",
         "                .next()\n",
         "                .unwrap_or(&mut PersistedUserRecord {\n",
@@ -4074,37 +4113,37 @@ mod tests {
     );
 
     #[test]
-    fn a_head_the_formatter_split_is_named_by_the_tail_that_still_stands() {
+    fn a_head_no_file_line_matches_is_named_by_the_tail_that_still_stands() {
         // The prefix run scores nothing here — the needle's first line is in no
         // file — which is why the refusal fell all the way through to
         // `explain_refused_edit` and named no line at all.
-        assert!(nearest_miss(SPLIT_HEAD, JOINED_HEAD).is_none());
+        assert!(nearest_miss(SPLIT_HEAD, WRONG_HEAD).is_none());
 
-        let a = tail_anchor(SPLIT_HEAD, JOINED_HEAD).expect("ten of eleven lines are the file's");
+        let a = tail_anchor(SPLIT_HEAD, WRONG_HEAD).expect("ten of eleven lines are the file's");
         assert_eq!(a.line, 4, "the tail starts at the file's own line 4: {a:?}");
         assert_eq!(a.skipped, 1, "{a:?}");
         assert_eq!((a.matched, a.total), (10, 11), "{a:?}");
-        assert_eq!(a.wrote, "let result_record = self.user_dict", "{a:?}");
+        assert_eq!(a.wrote, "let result_record = self.user_map", "{a:?}");
         assert_eq!(
             a.file_says,
             vec![
                 (2, "let result_record =".to_string()),
                 (3, "self.user_dict".to_string())
             ],
-            "both halves of the line the formatter split, and none of the match itself: {a:?}"
+            "the head the model got wrong, and none of the match itself: {a:?}"
         );
     }
 
     #[test]
     fn the_tail_anchor_message_names_a_line_and_not_a_region() {
-        let a = tail_anchor(SPLIT_HEAD, JOINED_HEAD).expect("as above");
+        let a = tail_anchor(SPLIT_HEAD, WRONG_HEAD).expect("as above");
         let msg = tail_anchor_message("src/port.rs", &a);
         assert!(msg.contains("at line 4"), "{msg}");
         assert!(msg.contains("Read from line 2"), "{msg}");
         assert!(msg.contains("2| let result_record ="), "{msg}");
         assert!(msg.contains("3| self.user_dict"), "{msg}");
         assert!(
-            msg.contains("`let result_record = self.user_dict`"),
+            msg.contains("`let result_record = self.user_map`"),
             "the model has to see its own line to know which one to replace: {msg}"
         );
         // v26 read 289-304 three times on the strength of "over that region". A
@@ -4334,6 +4373,59 @@ mod tests {
         assert_eq!(text, "    .orphan()\nrest");
         assert_eq!(spans, vec![(0, 13), (14, 18)]);
         assert_eq!(super::dechain("").1, Vec::<(usize, usize)>::new());
+    }
+
+    /// `lr7b_v26` and `lr7b_v27` in one fixture: rustfmt broke the binding after
+    /// its `=` and broke the chain under it, and the model wrote the whole thing
+    /// back on one line. Both breaks have to be undone for that line to be
+    /// findable, and the one after `=` has to put back the space it stood for —
+    /// plain concatenation gives `let x =self.dict`, which matches nothing.
+    #[test]
+    fn dechain_joins_a_right_hand_side_the_formatter_broke_off() {
+        let hay = "    let x =\n        self.dict\n            .values_mut();\n    rest\n";
+        let (text, spans) = super::dechain(hay);
+        assert_eq!(text, "    let x = self.dict.values_mut();\n    rest");
+        assert_eq!(spans, vec![(0, 56), (57, 65)]);
+        assert_eq!(
+            &hay[spans[0].0..spans[0].1],
+            "    let x =\n        self.dict\n            .values_mut();"
+        );
+    }
+
+    #[test]
+    fn dechain_collapses_the_whitespace_a_break_after_equals_stood_for() {
+        let (text, spans) = super::dechain("let x =  \n    y;\n");
+        assert_eq!(text, "let x = y;");
+        assert_eq!(spans, vec![(0, 16)]);
+        // The run keeps going while the lines say it has not ended, so a break
+        // after `=` and a break before a `.` in the same binding both go.
+        let (text, spans) = super::dechain("    let a =\n        b\n        .c();\n");
+        assert_eq!(text, "    let a = b.c();");
+        assert_eq!(spans, vec![(0, 35)]);
+    }
+
+    #[test]
+    fn dechain_does_not_join_through_a_blank_line_below_an_open_binding() {
+        // The blank line ends the chain, so the span stays on the line the model
+        // quoted rather than reaching past a gap it did not.
+        let (text, spans) = super::dechain("    let x =\n\n        y;\n");
+        assert_eq!(text, "    let x =\n\n        y;");
+        assert_eq!(spans, vec![(0, 11), (12, 12), (13, 23)]);
+    }
+
+    #[test]
+    fn dechain_treats_a_comment_as_prose_and_not_as_an_open_binding() {
+        // A `=` at the end of a comment is inside the comment. Joining the next
+        // line onto it would write that line into the comment too, so a rescue
+        // would silently delete code while reporting that it applied an edit.
+        let (text, spans) = super::dechain("    // default =\n    let y = 1;\n");
+        assert_eq!(text, "    // default =\n    let y = 1;");
+        assert_eq!(spans, vec![(0, 16), (17, 31)]);
+        // The same holds for a comment standing between an open binding and the
+        // expression that completes it: the run is broken, not joined through.
+        let (text, spans) = super::dechain("    let x =\n    // why\n        y;\n");
+        assert_eq!(text, "    let x =\n    // why\n        y;");
+        assert_eq!(spans, vec![(0, 11), (12, 22), (23, 33)]);
     }
 
     /// `lr7b_v22`'s file: rustfmt broke the chain, and the model wrote it back
