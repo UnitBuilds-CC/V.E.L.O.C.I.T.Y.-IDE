@@ -3064,7 +3064,7 @@ pub fn run_agent_reasoning_loop(
                         if should_arm_write_repair(
                             *attempts < max,
                             changed,
-                            prior_encounters(&e, &repair_error_history, Some(workspace_root)) < 2,
+                            !report_is_repeating(&e, &repair_error_history, Some(workspace_root)),
                         ) {
                             arm_compile_repair(
                                 &e,
@@ -4548,9 +4548,10 @@ fn same_crate(declared: &str, used: &str) -> bool {
 /// had already told the model to fix.
 ///
 /// `not_repeating` is the other way a repair turn buys nothing: a message whose
-/// errors have already come back twice is a loop the model is inside, and one
+/// errors have ALL already come back twice is a loop the model is inside, and one
 /// more interrupt only costs the turn that the completion gate needs to report
-/// the failure honestly.
+/// the failure honestly. All, not any — see [`report_is_repeating`] for the run
+/// where one standing error vetoed three new ones.
 fn should_arm_write_repair(
     attempts_left: bool,
     diagnostics_changed: bool,
@@ -4731,7 +4732,19 @@ fn should_note_unarmed_repair(diagnostics_changed: bool, notes_sent: u32) -> boo
 /// Both keys are emitted for one error, adjacent, the line text first: either
 /// half matching an earlier round means the error did not move, and the line key
 /// keeps the detector working when the file cannot be read.
-fn error_signatures(errors: &str, workspace_root: Option<&std::path::Path>) -> Vec<String> {
+///
+/// Grouped one `Vec` per error rather than returned flat, because the item half
+/// is coarse by design and a flat list cannot say which error a match belonged
+/// to. `lr7b_v21` measured what that costs: its seed report carried an `E0308`
+/// inside `fn create_budget`, and three turns later the model — obeying a
+/// directive that narrowed it to a different error — replaced that function's
+/// body and produced THREE brand-new `E0308`s, all inside `fn create_budget`.
+/// Flat, those four keys looked like an error that had come back; grouped, they
+/// are three errors nobody had been shown and one that had.
+fn error_signature_groups(
+    errors: &str,
+    workspace_root: Option<&std::path::Path>,
+) -> Vec<Vec<String>> {
     // One read per file per call: a report quotes the same crate's source for
     // every error, and this runs on every red build.
     let mut files: std::collections::HashMap<String, Vec<String>> =
@@ -4740,7 +4753,8 @@ fn error_signatures(errors: &str, workspace_root: Option<&std::path::Path>) -> V
         crate::automation::build_runner::cargo_manifest_dir(root)
             .unwrap_or_else(|_| root.to_path_buf())
     });
-    let mut sigs: Vec<String> = Vec::new();
+    let mut groups: Vec<Vec<String>> = Vec::new();
+    let mut seen: Vec<String> = Vec::new();
     let mut code = String::new();
     let mut site: Option<(String, String, usize, String)> = None;
     for raw in errors.lines() {
@@ -4779,9 +4793,11 @@ fn error_signatures(errors: &str, workspace_root: Option<&std::path::Path>) -> V
                         // same expression in two functions, or one function twice
                         // — and a key list that counts them twice makes
                         // "how many errors" mean nothing.
+                        let mut keys: Vec<String> = Vec::new();
                         let line_key = format!("{c}|{f}|{src}");
-                        if !sigs.contains(&line_key) {
-                            sigs.push(line_key);
+                        if !seen.contains(&line_key) {
+                            seen.push(line_key.clone());
+                            keys.push(line_key);
                         }
                         if let (Some(base), Some(root)) = (base.as_deref(), workspace_root) {
                             let lines = files
@@ -4789,10 +4805,17 @@ fn error_signatures(errors: &str, workspace_root: Option<&std::path::Path>) -> V
                                 .or_insert_with(|| source_lines(base, root, &path));
                             if let Some(item) = enclosing_item_name(lines, n) {
                                 let key = format!("{c}|{f}|inside {item}");
-                                if !sigs.contains(&key) {
-                                    sigs.push(key);
+                                if !seen.contains(&key) {
+                                    seen.push(key.clone());
+                                    keys.push(key);
                                 }
                             }
+                        }
+                        // An error whose every key was already emitted by an
+                        // earlier one in this same report brings no identity of
+                        // its own, so it casts no vote of its own either.
+                        if !keys.is_empty() {
+                            groups.push(keys);
                         }
                         site = None;
                     }
@@ -4800,20 +4823,52 @@ fn error_signatures(errors: &str, workspace_root: Option<&std::path::Path>) -> V
             }
         }
     }
-    sigs
+    groups
 }
 
-/// How many earlier gate messages contained at least one of these same errors.
-fn prior_encounters(
+/// Every key of every error in one report, in report order, each error's line
+/// key before its item key.
+fn error_signatures(errors: &str, workspace_root: Option<&std::path::Path>) -> Vec<String> {
+    error_signature_groups(errors, workspace_root)
+        .into_iter()
+        .flatten()
+        .collect()
+}
+
+/// Encounters at which one error stops being news and starts being a loop.
+const RECURRING_ENCOUNTERS: usize = 2;
+
+/// How many earlier gate messages carried any of these keys.
+fn signature_encounters(keys: &[String], history: &[Vec<String>]) -> usize {
+    history
+        .iter()
+        .filter(|earlier| earlier.iter().any(|s| keys.contains(s)))
+        .count()
+}
+
+/// Whether this whole report is a loop the model is already inside.
+///
+/// Judged error by error, and only recurring when EVERY error in it has come
+/// back [`RECURRING_ENCOUNTERS`] times. A report-wide count over a flat key list
+/// cannot tell those two runs apart, and `lr7b_v21` was the one that paid for
+/// it: its third gate carried three `E0308`s the model had never seen — created
+/// by the edit the previous directive asked for — beside one `E0515` that had
+/// genuinely come back. Counting the report as a whole, the seed's own
+/// `E0308`-inside-`fn create_budget` item key and that standing `E0515` line key
+/// were two encounters, so the loop called the whole report a loop and declined
+/// to spend its last repair turn. The next turn produced no tool call at all and
+/// the run ended with four errors standing. A report that carries anything new is
+/// not a loop; it is the case a repair turn exists for.
+fn report_is_repeating(
     errors: &str,
     history: &[Vec<String>],
     workspace_root: Option<&std::path::Path>,
-) -> usize {
-    let sigs = error_signatures(errors, workspace_root);
-    history
-        .iter()
-        .filter(|earlier| earlier.iter().any(|s| sigs.contains(s)))
-        .count()
+) -> bool {
+    let groups = error_signature_groups(errors, workspace_root);
+    !groups.is_empty()
+        && groups
+            .iter()
+            .all(|keys| signature_encounters(keys, history) >= RECURRING_ENCOUNTERS)
 }
 
 /// What to say when the model is re-reporting an error it has already been told
@@ -7267,7 +7322,11 @@ mod tests {
     }
 
     fn prior_encounters(errors: &str, history: &[Vec<String>]) -> usize {
-        super::prior_encounters(errors, history, None)
+        super::signature_encounters(&super::error_signatures(errors, None), history)
+    }
+
+    fn report_is_repeating(errors: &str, history: &[Vec<String>]) -> bool {
+        super::report_is_repeating(errors, history, None)
     }
 
     fn recurring_error_focus(errors: &str, history: &[Vec<String>]) -> Option<String> {
@@ -9218,12 +9277,15 @@ mod tests {
         assert_eq!(round2[1], round1[1], "the item did not move");
         assert_ne!(round2[0], round1[0], "and the line text did not survive");
         assert_eq!(
-            super::prior_encounters(second, std::slice::from_ref(&round1), Some(root)),
+            super::signature_encounters(
+                &super::error_signatures(second, Some(root)),
+                std::slice::from_ref(&round1)
+            ),
             1,
             "so the item key is the only thing that can call it a repeat"
         );
         assert_eq!(
-            super::prior_encounters(second, std::slice::from_ref(&round1), None),
+            prior_encounters(second, std::slice::from_ref(&round1)),
             0,
             "which is exactly what the line-text key missed"
         );
@@ -9262,7 +9324,10 @@ mod tests {
         let moved = "error[E0308]: mismatched types\n --> src/budget_manager.rs:17:13\n\
              17 |             user_record: self.record(user),\n";
         assert_eq!(
-            super::prior_encounters(moved, std::slice::from_ref(&round1), Some(root)),
+            super::signature_encounters(
+                &super::error_signatures(moved, Some(root)),
+                std::slice::from_ref(&round1)
+            ),
             0,
             "an error that moved to another item with new text is progress"
         );
@@ -9271,10 +9336,103 @@ mod tests {
         let carried = "error[E0308]: mismatched types\n --> src/budget_manager.rs:17:13\n\
              17 |             user_record: result_record,\n";
         assert_eq!(
-            super::prior_encounters(carried, std::slice::from_ref(&round1), Some(root)),
+            super::signature_encounters(
+                &super::error_signatures(carried, Some(root)),
+                std::slice::from_ref(&round1)
+            ),
             1,
             "the same line text is the same complaint wherever it sits"
         );
+    }
+
+    /// The seed's `E0308`, sitting in `create_budget`.
+    const SEED_IN_CREATE: &str = "error[E0308]: mismatched types\n \
+        --> src/budget_manager.rs:10:13\n10 |             user_record: result_record,\n";
+
+    /// An `E0515` in `update_cost`, quoted from the line the fixture has there.
+    const STANDING_E0515: &str = "error[E0515]: cannot return value referencing temporary value\n \
+         --> src/budget_manager.rs:17:13\n17 |             user_record: result_record,\n";
+
+    /// Three `E0308`s nobody has been shown, all inside `create_budget`, beside
+    /// that standing `E0515`.
+    const THREE_NEW_AND_ONE_OLD: &str = "error[E0308]: mismatched types\n \
+        --> src/budget_manager.rs:8:21\n\
+        8 |         let result_record = PersistedUserRecord { user_dict: HashMap::new() };\n\
+        error[E0308]: mismatched types\n --> src/budget_manager.rs:9:9\n\
+        9 |         UpdateCostResult {\n\
+        error[E0308]: mismatched types\n --> src/budget_manager.rs:11:9\n11 |         }\n\
+        error[E0515]: cannot return value referencing temporary value\n \
+        --> src/budget_manager.rs:17:13\n17 |             user_record: result_record,\n";
+
+    /// `lr7b_v21` is what this predicate was written against. Its third gate
+    /// carried three `E0308`s the model had never been shown — produced by the
+    /// edit the previous directive asked for, all inside `fn create_budget` —
+    /// beside one `E0515` that had genuinely come back. The SEED's own `E0308`
+    /// was in that same function, so its item key supplied a second encounter,
+    /// and a report-wide count over a flat key list called the whole report a
+    /// loop. The loop kept its last repair turn unspent, the next turn produced
+    /// no tool call at all, and the run ended with four errors standing.
+    #[test]
+    fn a_report_carrying_new_errors_is_not_a_loop_because_one_old_error_stands() {
+        let (temp, _) = crate_with_source(&budget_crate_lines());
+        let root = temp.path();
+        let seed = super::error_signatures(SEED_IN_CREATE, Some(root));
+        assert!(
+            seed.iter()
+                .any(|s| s == "E0308|budget_manager.rs|inside fn create_budget"),
+            "the seed's error is keyed to the function it sits in: {seed:?}"
+        );
+        let standing = super::error_signatures(STANDING_E0515, Some(root));
+        let history = vec![seed, standing.clone(), standing];
+
+        // The flat count that used to decide this: two encounters, so "repeating".
+        assert!(
+            super::signature_encounters(
+                &super::error_signatures(THREE_NEW_AND_ONE_OLD, Some(root)),
+                &history
+            ) >= super::RECURRING_ENCOUNTERS,
+            "the report-wide count is what vetoed the repair turn"
+        );
+        assert!(
+            !super::report_is_repeating(THREE_NEW_AND_ONE_OLD, &history, Some(root)),
+            "three errors nobody has been shown are not a loop"
+        );
+    }
+
+    /// The other side of it: a report whose errors have ALL come back twice is
+    /// still a loop, and spending a turn on it is what the bound exists to
+    /// prevent. Judging error by error must not turn into never judging.
+    #[test]
+    fn a_report_whose_every_error_has_come_back_twice_is_still_a_loop() {
+        let (temp, _) = crate_with_source(&budget_crate_lines());
+        let root = temp.path();
+        let round = super::error_signatures(TWO_FIELD_ERRORS, Some(root));
+        let history = vec![round.clone(), round];
+        assert!(
+            super::report_is_repeating(TWO_FIELD_ERRORS, &history, Some(root)),
+            "both fills are exactly where they were, two rounds running"
+        );
+        // One complaint the model has never seen is enough to make the report
+        // news again — `settle` has not been mentioned before this.
+        assert!(
+            !super::report_is_repeating(REWRITTEN_AND_NEW, &history, Some(root)),
+            "a repeat plus a first sighting is not a loop"
+        );
+    }
+
+    /// A report with nothing locatable in it identifies no error, so it has no
+    /// error to call a loop. The repair turn is spent, which is what the flat
+    /// count did too: an empty key list matches no history entry.
+    #[test]
+    fn a_report_with_no_locatable_error_is_not_a_loop() {
+        let history = vec![vec![
+            "E0308|budget_manager.rs|user_record: result_record,".to_string()
+        ]];
+        assert!(!report_is_repeating(
+            "error: could not compile `litellm-port`",
+            &history
+        ));
+        assert!(!report_is_repeating("", &history));
     }
 
     /// The payoff, measured against `lr7b_v10`'s shape: with two errors standing,
