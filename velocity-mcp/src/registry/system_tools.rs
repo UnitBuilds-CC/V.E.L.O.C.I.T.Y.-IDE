@@ -685,6 +685,83 @@ fn blocks_are_distinct(lines: &[&str], sites: &[usize], width: usize) -> bool {
     true
 }
 
+/// The line a `newString` already occupies verbatim, if it occupies one.
+///
+/// This is the "already applied" case in its pure form: an earlier turn wrote
+/// this replacement and the formatter left it alone, so the edit being refused
+/// now asks for a change the file already carries. Claiming that is only honest
+/// on a match of the whole `newString` against the file's own bytes — a shared
+/// line proves nothing — and only when the `newString` is long enough that a
+/// match cannot be luck: `}` and `});` are in every file, and pointing at the
+/// first one would send the model to the wrong place with total confidence.
+fn already_applied_at(file: &str, replacement: &str) -> Option<usize> {
+    const MIN_LINES: usize = 2;
+    const MIN_CHARS: usize = 24;
+    let hay = file.replace("\r\n", "\n");
+    let needle = replacement.replace("\r\n", "\n");
+    if needle.lines().filter(|l| !l.trim().is_empty()).count() < MIN_LINES
+        && needle.trim().chars().count() < MIN_CHARS
+    {
+        return None;
+    }
+    let at = hay.find(&needle)?;
+    Some(hay[..at].matches('\n').count() + 1)
+}
+
+/// The line where the file already carries what a refused edit meant to write.
+///
+/// A refusal whose `oldString` is absent has two causes and only one of them is
+/// a typo. The other is that the file moved: the model's own earlier write
+/// replaced the text it is now quoting, or the formatter that ran after that
+/// write rewrapped it. `lr7b_v11` turns 5, 7 and 9 replayed one byte-identical
+/// edit against a site its turn-3 write had already rewritten, and the reply —
+/// "copy the text verbatim" — was true and impossible to act on, because the
+/// text it wanted to copy had been the thing that got replaced.
+///
+/// The anchor is taken from the `newString`, not the `oldString`: the
+/// replacement is what the model believes belongs at that place, so the lines of
+/// it that differ from what it is quoting are the change itself. A line the
+/// `oldString` also carries is context the model copied and says nothing about
+/// where the edit was aimed. Requiring exactly one occurrence is what keeps the
+/// answer honest — an anchor that matches three places names none of them, and
+/// the next candidate line is tried instead.
+fn superseded_site(hay: &str, needle: &str, replacement: &str) -> Option<usize> {
+    const MIN_CHARS: usize = 12;
+    let lines: Vec<&str> = hay.lines().map(str::trim).collect();
+    let quoted: Vec<&str> = needle.lines().map(str::trim).collect();
+    replacement
+        .lines()
+        .map(str::trim)
+        .filter(|l| l.chars().count() >= MIN_CHARS && !quoted.contains(l))
+        .find_map(|probe| {
+            let hits: Vec<usize> = lines
+                .iter()
+                .enumerate()
+                .filter(|(_, l)| **l == probe)
+                .map(|(i, _)| i)
+                .collect();
+            (hits.len() == 1).then(|| hits[0] + 1)
+        })
+}
+
+/// The file's own bytes around a site an earlier write already changed.
+fn superseded_site_message(hay: &str, line: usize) -> String {
+    const BEFORE: usize = 2;
+    const AFTER: usize = 10;
+    let lines: Vec<&str> = hay.lines().collect();
+    let start = line.saturating_sub(1).saturating_sub(BEFORE);
+    let end = (start + BEFORE + AFTER + 1).min(lines.len());
+    format!(
+        "The text is gone because this place has already been changed: an earlier write of \
+         yours replaced what the `oldString` quotes, or the formatter that ran after it \
+         rewrapped those lines. The file now says this, verbatim, starting at the line number \
+         in the `[line N]` marker — build the next edit from these lines, and treat the marker \
+         itself as something that is not part of the file:\n[line {}]\n{}",
+        start + 1,
+        lines[start..end].join("\n")
+    )
+}
+
 /// Where an over-fitting `oldString` actually matches, and what the file puts
 /// around each site.
 ///
@@ -1067,7 +1144,29 @@ pub fn handle_system_tool(
                         ));
                         continue;
                     }
-                    let why = explain_refused_edit(&working, old);
+                    // The two answers below are read from the file, not from
+                    // `working`: a batch is all-or-nothing, so an edit earlier in
+                    // this same call matched in memory only and nothing it produced
+                    // is on disk yet. Both are complete answers in their own right,
+                    // so neither rides behind the "copy the text verbatim" lead-in —
+                    // the text these two describe is not there to copy.
+                    if let Some(line) = already_applied_at(&current, new) {
+                        rejected.push(format!(
+                            "edit {n}: this change is already on disk — its `newString` is in \
+                             {rel_path} verbatim at line {line}, and its `oldString` is not in the \
+                             file at all. Nothing to redo here. If the compiler still reports an \
+                             error, it is asking for a different change, at the line it names."
+                        ));
+                        continue;
+                    }
+                    if let Some(line) = superseded_site(&current, old, new) {
+                        rejected.push(format!(
+                            "edit {n}: its `oldString` is not in {rel_path}. {}",
+                            superseded_site_message(&current, line)
+                        ));
+                        continue;
+                    }
+                    let why = explain_refused_edit(&current, old);
                     let mut msg = format!(
                         "edit {n}: its `oldString` is not in {rel_path} \u{2014} copy the text \
                          verbatim, including the exact indentation."

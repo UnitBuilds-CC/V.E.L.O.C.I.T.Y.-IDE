@@ -1257,6 +1257,152 @@ fn a_file_that_really_does_carry_an_excerpt_header_line_still_edits() {
     assert_eq!(fs::read_to_string(root.join("notes.md")).unwrap(), "kept\n");
 }
 
+// The three refusals below are the shape lr7b_v11 spent its last turns in: the
+// model quotes the text its own earlier write replaced, so the `oldString` is
+// absent, and the reply it got — "copy the text verbatim ... call read_file" —
+// pointed at a tool the same repair turn had locked.
+const SUPERSEDED_OLD: &str = "    let user_record: &mut PersistedUserRecord = self\n        .user_dict\n        .get(user)\n        .unwrap_or(&mut PersistedUserRecord::default());";
+
+#[test]
+fn an_edit_whose_replacement_already_landed_is_told_the_line_it_landed_on() {
+    let (_temp, root) = setup_root();
+    let original = "fn create_budget(&mut self, user: &str) {\n    let user_record = self.user_dict.get(user).unwrap_or_else(|| {\n        let new_record = PersistedUserRecord::default();\n        self.user_dict.insert(user.clone(), new_record);\n        self.user_dict.get(user).unwrap()\n    });\n}\n";
+    fs::write(root.join("lib.rs"), original).unwrap();
+
+    // The `newString` is the file's own bytes: an earlier turn applied this edit
+    // and the formatter left it alone, so the `oldString` is pre-repair text.
+    let err = call_tool_in_workspace(
+        &root,
+        "edit_file",
+        &json!({
+            "relativeFilePath": "lib.rs",
+            "edits": [{
+                "oldString": SUPERSEDED_OLD,
+                "newString": "    let user_record = self.user_dict.get(user).unwrap_or_else(|| {\n        let new_record = PersistedUserRecord::default();\n        self.user_dict.insert(user.clone(), new_record);\n        self.user_dict.get(user).unwrap()\n    });"
+            }]
+        }),
+    )
+    .expect_err("the oldString is gone, so nothing can match");
+    let msg = err.to_string();
+
+    assert!(
+        msg.contains("this change is already on disk"),
+        "must say the change landed rather than asking for it again: {msg}"
+    );
+    assert!(
+        msg.contains("at line 2"),
+        "must name where it landed: {msg}"
+    );
+    assert!(
+        !msg.contains("copy the text verbatim"),
+        "the lead-in contradicts an answer that says the text is already there: {msg}"
+    );
+    assert_eq!(fs::read_to_string(root.join("lib.rs")).unwrap(), original);
+}
+
+#[test]
+fn a_refused_edit_is_answered_with_the_bytes_that_replaced_its_target() {
+    let (_temp, root) = setup_root();
+    // A different repair than the one being replayed landed here, so the
+    // `newString` is not verbatim in the file — only its anchor line is.
+    let original = "fn create_budget(&mut self, user: &str) {\n    let user_record = self.user_dict.get(user).unwrap_or_else(|| {\n        let record = PersistedUserRecord::with_budget(input.total_budget);\n        self.user_dict.insert(user, record);\n        self.user_dict.get(user).unwrap()\n    });\n}\n";
+    fs::write(root.join("lib.rs"), original).unwrap();
+
+    let err = call_tool_in_workspace(
+        &root,
+        "edit_file",
+        &json!({
+            "relativeFilePath": "lib.rs",
+            "edits": [{
+                "oldString": SUPERSEDED_OLD,
+                "newString": "    let user_record = self.user_dict.get(user).unwrap_or_else(|| {\n        let new_record = PersistedUserRecord::default();\n        self.user_dict.insert(user.clone(), new_record);\n        self.user_dict.get(user).unwrap()\n    });"
+            }]
+        }),
+    )
+    .expect_err("the oldString is gone, so nothing can match");
+    let msg = err.to_string();
+
+    assert!(
+        msg.contains("this place has already been changed"),
+        "must say why the text is missing: {msg}"
+    );
+    assert!(
+        msg.contains("PersistedUserRecord::with_budget(input.total_budget);"),
+        "must paste what the file says now: {msg}"
+    );
+    assert!(
+        msg.contains("[line 1]"),
+        "the pasted block must carry its line number: {msg}"
+    );
+    assert!(
+        !msg.contains("appears nowhere in the file"),
+        "the dead-end reading must not survive a site the tool can locate: {msg}"
+    );
+    assert!(
+        !msg.contains("read_file"),
+        "a repair turn locks exploration, so pointing at read_file is a dead end: {msg}"
+    );
+}
+
+#[test]
+fn a_refused_edit_that_landed_nowhere_still_gets_the_read_file_advice() {
+    let (_temp, root) = setup_root();
+    // Non-vacuity for the two above: with neither side of the patch anywhere in
+    // the file there is no site to point at, and the old answer is the honest one.
+    let original = "fn budget() {\n    cap = 10;\n}\n";
+    fs::write(root.join("lib.rs"), original).unwrap();
+
+    let err = call_tool_in_workspace(
+        &root,
+        "edit_file",
+        &json!({
+            "relativeFilePath": "lib.rs",
+            "edits": [{
+                "oldString": "fn absent_before() {\n    nothing_here = 1;\n}",
+                "newString": "fn absent_after() {\n    something_else = 2;\n}"
+            }]
+        }),
+    )
+    .expect_err("neither side of this patch exists in the file");
+    let msg = err.to_string();
+
+    assert!(
+        msg.contains("appears nowhere in the file"),
+        "must still say the text itself is wrong: {msg}"
+    );
+    assert!(
+        msg.contains("read_file"),
+        "with no site to paste, a ranged read is the only way forward: {msg}"
+    );
+    assert!(!msg.contains("already on disk"), "{msg}");
+}
+
+#[test]
+fn a_short_replacement_is_never_claimed_to_be_already_applied() {
+    let (_temp, root) = setup_root();
+    // `}` is in every file. Naming its first occurrence would point the model at
+    // the wrong place with total confidence, so the claim needs a real match.
+    let original = "fn budget() {\n    cap = 10;\n}\n";
+    fs::write(root.join("lib.rs"), original).unwrap();
+
+    let err = call_tool_in_workspace(
+        &root,
+        "edit_file",
+        &json!({
+            "relativeFilePath": "lib.rs",
+            "edits": [{ "oldString": "    total = 99;", "newString": "}" }]
+        }),
+    )
+    .expect_err("the oldString is not in the file");
+    let msg = err.to_string();
+
+    assert!(!msg.contains("already on disk"), "{msg}");
+    assert!(
+        msg.contains("appears nowhere in the file"),
+        "must fall through to the ordinary explanation: {msg}"
+    );
+}
+
 // ═══════════════════════════════════════════════════════════════════════════
 // System Tool Contract Tests — list_dir
 // ═══════════════════════════════════════════════════════════════════════════

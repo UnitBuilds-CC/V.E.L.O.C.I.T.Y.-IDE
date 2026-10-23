@@ -273,6 +273,17 @@ pub fn run_agent_reasoning_loop(
     let mut compile_repair_attempts: u32 = 0;
     // Spendable repairs the TEST gate has left, counted apart from the build's.
     let mut test_repair_attempts: u32 = 0;
+    // Attempts given back because the armed turn moved no file. Bounded so a
+    // model that refuses every directive cannot be re-armed forever.
+    let mut refunded_repair_attempts: u32 = 0;
+    // How many times this run has refused each distinct tool-call payload. The
+    // error-signature map below cannot see this class of repeat: a call the tool
+    // itself refused never reached a compiler, so no diagnostic exists to
+    // compare. `lr7b_v12` spent turns 2-5 replaying one `edit_file` whose
+    // `oldString` matched two places, and each replay earned the same two-site
+    // explanation again — four refusals, four identical answers, no file moved.
+    let mut refused_call_counts: std::collections::HashMap<String, u32> =
+        std::collections::HashMap::new();
     // One entry per compile message a gate handed back: the identity of every
     // error in it. A repair that turns E0053 into E0594 and back produces
     // diagnostics that differ every time, so `diagnostics_changed` alone reads
@@ -472,6 +483,25 @@ pub fn run_agent_reasoning_loop(
     let named_target =
         existing_file_named_by_task(workspace_root, &task_text).filter(|_| requires_artifact);
     let preexisting_target = named_target.is_some();
+
+    // The one exploration schema a locked turn keeps, and only when there is
+    // something to read: a "fix this file" dispatch asks for edits whose
+    // `oldString` is copied verbatim from a file the model is not otherwise
+    // allowed to open. `lr7b_v15` is what that costs — refused a whole-file
+    // write, it answered with 54 edits whose `oldString` and `newString` were the
+    // same identifier, because the item names quoted in that refusal were the
+    // only text from the file it had ever seen. Execution stays one path wide
+    // (`read_of_named_target`); this only stops advertising a tool the turn
+    // would have honoured.
+    let locked_read_tools: Vec<Value> = if preexisting_target {
+        cf_tools
+            .iter()
+            .filter(|t| t["function"]["name"].as_str() == Some("read_file"))
+            .cloned()
+            .collect()
+    } else {
+        Vec::new()
+    };
     // Does this run owe Rust code? Only a task that says so in its own text —
     // the safe default for every other artifact task is that any file it writes
     // is the deliverable, because the loop has no general idea what shape that
@@ -734,7 +764,7 @@ pub fn run_agent_reasoning_loop(
             } else {
                 &["write_file"]
             };
-        let locked_tools: Vec<Value> = write_only_tools
+        let mut locked_tools: Vec<Value> = write_only_tools
             .iter()
             .filter(|t| {
                 t["function"]["name"]
@@ -743,6 +773,9 @@ pub fn run_agent_reasoning_loop(
             })
             .cloned()
             .collect();
+        // The lock also admits a read of the deliverable itself, so advertise
+        // it rather than leaving the model to guess that the path exists.
+        locked_tools.extend(locked_read_tools.iter().cloned());
         let turn_tools: &Vec<Value> = if force_write_only {
             &locked_tools
         } else {
@@ -2149,7 +2182,37 @@ pub fn run_agent_reasoning_loop(
                 // alone until a file exists to patch (verified against the live
                 // MoE on the LiteLLM crucible).
                 let write_names = turn_write_tools.join(" / ");
-                if force_write_only && !turn_write_tools.contains(&tool_name.as_str()) {
+                if force_write_only
+                    && read_of_named_target(&tool_name, &arguments, named_target.as_deref())
+                {
+                    ui_tx
+                        .send(AgentToUiMessage::StatusUpdate(format!(
+                            "Exploration locked \u{2014} allowing '{tool_name}' of the \
+                             deliverable itself"
+                        )))
+                        .ok();
+                }
+                if force_write_only
+                    && !turn_write_tools.contains(&tool_name.as_str())
+                    && !read_of_named_target(&tool_name, &arguments, named_target.as_deref())
+                {
+                    // A model refused once may not ask again, so the refusal names
+                    // the one read the lock still allows — the file it must edit.
+                    let still_readable = if preexisting_target {
+                        named_target
+                            .as_deref()
+                            .map(|t| {
+                                format!(
+                                    " One read is still allowed, and it is the one you need: \
+                                     `read_file` with relativeFilePath \"{t}\", plus startLine \
+                                     and endLine to bring back just the region the diagnostics \
+                                     name."
+                                )
+                            })
+                            .unwrap_or_default()
+                    } else {
+                        String::new()
+                    };
                     ui_tx
                         .send(AgentToUiMessage::StatusUpdate(format!(
                             "Exploration locked \u{2014} refused '{}'; only {write_names} are \
@@ -2164,7 +2227,7 @@ pub fn run_agent_reasoning_loop(
                              this run must deliver is not yet on disk in the form the task asked \
                              for. The only tools available are {write_names} — call one NOW with \
                              the content built from what you have already seen. An incomplete \
-                             file is acceptable and far better than no file.",
+                             file is acceptable and far better than no file.{still_readable}",
                         ),
                         name: Some(tool_name.clone()),
                         tool_call_id: Some(call_id),
@@ -2273,9 +2336,24 @@ pub fn run_agent_reasoning_loop(
                 }
             }
 
+            // What each pending call carries, keyed by its id. The threads below
+            // consume the arguments, and the results loop still has to recognise a
+            // replay of a call an earlier turn already refused.
+            let call_identities: Vec<(String, String)> = tool_specs
+                .iter()
+                .map(|(id, name, args)| (id.clone(), call_identity(name, args)))
+                .collect();
+
             let mut handles = Vec::new();
             let bus_clone = coordination_bus.clone();
             let lsp_written_clone = lsp_written_files.clone();
+            // The deliverable's opening surface, so a whole-file write that would
+            // gut it is refused before it lands instead of graded afterwards.
+            let surface_target = artifact_surface.target.clone();
+            let surface_names = artifact_surface.names.clone();
+            // The path the exploration lock still lets through, so a refusal can
+            // name it instead of ordering an edit built from text never seen.
+            let lock_readable = named_target.clone();
 
             for (call_id, tool_name, _original_arguments) in tool_specs {
                 let approval = resolved_approvals.get(&call_id).cloned().flatten();
@@ -2285,6 +2363,9 @@ pub fn run_agent_reasoning_loop(
                 let lsp_written = lsp_written_clone.clone();
                 let attribution = agent_attribution.clone();
                 let write_governor = write_governor.clone();
+                let surface_target = surface_target.clone();
+                let surface_names = surface_names.clone();
+                let lock_readable = lock_readable.clone();
 
                 let handle = std::thread::spawn(move || {
                     let (tool_result, file_buffer_update, changelog_entry) = if let Some(
@@ -2297,6 +2378,20 @@ pub fn run_agent_reasoning_loop(
                         // required parameter, otherwise produces a broken artifact
                         // that only the compiler catches turns later.
                         if let Some(reason) = validate_tool_call(&tool_name, &approved_args) {
+                            return (call_id, tool_name, reason, None, None);
+                        }
+
+                        // Surface gate: a whole-file write that would delete most
+                        // of the deliverable's items is refused here, while the
+                        // items are still on disk to be edited. Afterwards the
+                        // guard can only name them, and naming is not restoring.
+                        if let Some(reason) = gutting_rewrite_refusal(
+                            &tool_name,
+                            &approved_args,
+                            surface_target.as_deref(),
+                            &surface_names,
+                            lock_readable.as_deref(),
+                        ) {
                             return (call_id, tool_name, reason, None, None);
                         }
 
@@ -2556,9 +2651,8 @@ pub fn run_agent_reasoning_loop(
             for (call_id, tool_name, tool_result, file_buffer_update, changelog_entry) in
                 thread_results
             {
-                if tool_result.contains("Error executing tool")
-                    || tool_result.starts_with("BLOCKED:")
-                {
+                let refused = is_refusal(&tool_result);
+                if refused {
                     any_error = true;
                     // Phase 3: Penalize failed strategy
                     let mem_key = format!("tool:{}:error", tool_name);
@@ -2623,11 +2717,38 @@ pub fn run_agent_reasoning_loop(
                     sitemap_needed = true;
                 }
 
+                // A replay is invisible to every other repeat check in this loop:
+                // they all key off compiler diagnostics, and a call the tool
+                // refused never produced one. `lr7b_v12` spent four turns on one
+                // `edit_file` whose `oldString` matched two places, each turn
+                // handed the same two-site explanation and each turn sending the
+                // same bytes back — so from the second refusal on, say that the
+                // repetition is itself the problem.
+                let replay = call_identities
+                    .iter()
+                    .find(|(id, _)| id == &call_id)
+                    .and_then(|(_, identity)| {
+                        note_refusal_repeat(&mut refused_call_counts, identity, refused)
+                    });
+                let outgoing = match replay {
+                    Some(times) => {
+                        ui_tx
+                            .send(AgentToUiMessage::StatusUpdate(format!(
+                                "'{tool_name}' refused the identical call {times} times \u{2014} \
+                                 told the model it is a replay"
+                            )))
+                            .ok();
+                        let note = repeated_refusal_note(times, &tool_result);
+                        tool_result + &note
+                    }
+                    None => tool_result,
+                };
+
                 message_history.push(ChatMessage {
                     role: "tool".to_string(),
                     content: bound_listing_output(
                         &tool_name,
-                        tool_result,
+                        outgoing,
                         requires_artifact,
                         current_profile.supports_thinking,
                     ),
@@ -2707,6 +2828,37 @@ pub fn run_agent_reasoning_loop(
             }
 
             save_chatlogs_nda(workspace_root, message_history);
+
+            // An armed repair turn whose calls were all refused moved no file, so
+            // the attempt charged when the directive went out was never spent: the
+            // gate below grades writes, and there was no write to grade. Which
+            // counter gives it back is read off the report still standing, because
+            // every route that arms a repair leaves its text there.
+            if should_refund_repair_attempt(
+                repair_this_turn,
+                !batch_rust_writes.is_empty(),
+                any_error,
+                refunded_repair_attempts,
+            ) {
+                refunded_repair_attempts += 1;
+                let standing = write_gate_diagnostics.as_deref().unwrap_or_default();
+                let (max, is_test) = repair_budget(standing);
+                let attempts = if is_test {
+                    &mut test_repair_attempts
+                } else {
+                    &mut compile_repair_attempts
+                };
+                *attempts = attempts.saturating_sub(1);
+                ui_tx
+                    .send(AgentToUiMessage::StatusUpdate(format!(
+                        "{} repair turn changed no file \u{2014} attempt returned ({}/{max}, {} \
+                         refund(s) left)",
+                        gate_failure_label(standing),
+                        *attempts,
+                        MAX_REFUNDED_REPAIR_ATTEMPTS - refunded_repair_attempts
+                    )))
+                    .ok();
+            }
 
             // Gate the write itself, not only the turn that follows a pause.
             //
@@ -3644,6 +3796,36 @@ fn write_misses_named_target(written: Option<&str>, named: Option<&str>) -> bool
     }
 }
 
+/// Whether a locked turn may still read the file the task names.
+///
+/// The lock exists to stop a small model wandering the workspace instead of
+/// writing, and `lr7b_v14` shows it working: 30 turns, no reads, no wandering.
+/// The deliverable itself is not wandering, though, and locking it produced the
+/// opposite of convergence. That run's dispatch text told the model to "use
+/// edit_file with an oldString copied verbatim from the file (read_file the
+/// region first if you are not sure of the exact text)" while the lock refused
+/// the read at turn 3, so every payload it sent afterwards was built from a file
+/// it had invented — 700 bytes standing in for a 26 KB port — and the write gate
+/// refused all sixteen of them. A model that cannot see the text it is told to
+/// quote verbatim cannot produce an edit that matches.
+fn read_of_named_target(tool_name: &str, args: &Value, named_target: Option<&str>) -> bool {
+    if tool_name != "read_file" {
+        return false;
+    }
+    let Some(target) = named_target else {
+        // Nothing named, nothing to aim a read at: the lock stays whole rather
+        // than opening for every path in the workspace.
+        return false;
+    };
+    let Some(path) = args["relativeFilePath"]
+        .as_str()
+        .or_else(|| args["path"].as_str())
+    else {
+        return false;
+    };
+    !write_misses_named_target(Some(path), Some(target))
+}
+
 /// Whether every Rust write of the run landed off the named target, so a clean
 /// build and green tests cannot be read as "the deliverable is done". An empty
 /// write list is not this rule's problem — that is the no-files-written nudge.
@@ -3943,6 +4125,114 @@ fn deleted_artifact_items(
         .filter(|name| !now.contains(name))
         .cloned()
         .collect()
+}
+
+/// The items a whole-file write would remove from the deliverable.
+///
+/// The comparison `deleted_artifact_items` makes after a write, made before it:
+/// the baseline is the surface the file arrived with and the "now" is what the
+/// incoming content declares. Only `write_file` is judged this way, because it is
+/// the only call that replaces text the model may never have seen — a repair turn
+/// runs under the exploration lock, so `lr7b_v13`'s turn 5 wrote over a 54-item
+/// port without ever reading it. An `edit_file` deletes text it was handed.
+fn items_a_rewrite_would_delete(baseline: &[String], content: &str) -> Vec<String> {
+    if baseline.is_empty() {
+        return Vec::new();
+    }
+    let incoming = rust_item_names(content);
+    baseline
+        .iter()
+        .filter(|name| !incoming.contains(*name))
+        .cloned()
+        .collect()
+}
+
+/// Whether a whole-file write over the deliverable is refused before it lands.
+///
+/// `baseline == 0` is not a shrug but "this run has no recorded surface" — a
+/// first write of a new artifact, or a task whose deliverable is not Rust — and
+/// there is nothing to protect. The threshold is `ArtifactSurface::collapse`'s:
+/// at least half the items gone. Below it a refactor that moves a few names to a
+/// sibling module still lands, which is the case the post-hoc guard also waves
+/// through with a warning.
+fn should_refuse_gutting_rewrite(missing: usize, baseline: usize) -> bool {
+    baseline > 0 && missing * 2 >= baseline
+}
+
+/// The refusal for a `write_file` that would gut the deliverable, or `None` when
+/// the write may proceed.
+///
+/// Refusing beats grading: once the bytes are gone the surface guard can only
+/// name the missing items, and "put those items back" is an order the model
+/// cannot follow — the source is off disk, `read_file` is refused on a repair
+/// turn, and the rebuilt 7-message context cannot be carrying a paste from five
+/// turns ago. `lr7b_v13` spent its last three turns on that impossible demand and
+/// ended with a 143-byte file and a Blocked verdict.
+///
+/// `named_target` is the one path a locked turn may still `read_file`, and it is
+/// what makes the order below followable. Without it the refusal quotes item
+/// names, and names are the only text from the file the model has seen —
+/// `lr7b_v15` answered this refusal with 54 edits whose `oldString` and
+/// `newString` were both a bare identifier copied off that list.
+fn gutting_rewrite_refusal(
+    tool_name: &str,
+    args: &Value,
+    surface_target: Option<&str>,
+    surface_names: &[String],
+    named_target: Option<&str>,
+) -> Option<String> {
+    if tool_name != "write_file" || surface_names.is_empty() {
+        return None;
+    }
+    let path = args["relativeFilePath"]
+        .as_str()
+        .or_else(|| args["path"].as_str())?;
+    // A surface with no target is a surface this gate cannot aim at, so it stays
+    // inert rather than watching every write in the run.
+    let target = surface_target?;
+    if write_misses_named_target(Some(path), Some(target)) {
+        return None;
+    }
+    let content = args["content"].as_str()?;
+    let missing = items_a_rewrite_would_delete(surface_names, content);
+    should_refuse_gutting_rewrite(missing.len(), surface_names.len()).then(|| {
+        let shown: Vec<&String> = missing.iter().take(8).collect();
+        let list = shown
+            .iter()
+            .map(|n| format!("`{n}`"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let tail = if missing.len() > shown.len() {
+            format!(" and {} more", missing.len() - shown.len())
+        } else {
+            String::new()
+        };
+        // The names above are a list, not a payload. A model that has never read
+        // the file will otherwise send them straight back as edit text.
+        let readable = named_target
+            .map(|t| {
+                format!(
+                    " Those names are a list, not the text to send. The text is on disk in \
+                     \"{t}\": `read_file` with that relativeFilePath is allowed on this turn, and \
+                     startLine/endLine bring back just the region the diagnostics name."
+                )
+            })
+            .unwrap_or_default();
+        // "Error executing tool" is the prefix `is_refusal` classifies on, so this
+        // refusal is charged, refunded and replay-counted like any other.
+        format!(
+            "Error executing tool: {tool_name} replaces {path} whole, and the content you sent \
+             does not declare {} of the {} items that file arrived with ({list}{tail}). It was \
+             NOT written, so those items are still on disk — and they would not be recoverable \
+             if it had been, because nothing in this run can hand you their source again once a \
+             write has removed it. A crate that builds because its code is gone is not a fix. \
+             Change only what the diagnostics name, with `edit_file`: its `edits` take the exact \
+             text to replace and the exact text to put there, so the rest of the file stays as \
+             it is.{readable}",
+            missing.len(),
+            surface_names.len()
+        )
+    })
 }
 
 /// Marks the gate report that is the loop's own verdict about the artifact's
@@ -4267,6 +4557,125 @@ fn should_arm_write_repair(
     not_repeating: bool,
 ) -> bool {
     attempts_left && diagnostics_changed && not_repeating
+}
+
+/// Upper bound on repair attempts handed back. A refund returns budget the model
+/// never spent; it is not a licence to keep interrupting. Two covers a run whose
+/// first repair turns are refused without letting a model that ignores every
+/// directive be re-armed indefinitely — the turn budget still ends the run.
+const MAX_REFUNDED_REPAIR_ATTEMPTS: u32 = 2;
+
+/// Whether an armed repair turn gives its attempt back.
+///
+/// `arm_compile_repair` charges the attempt when the directive is armed, so the
+/// charge lands before the model has done anything with it. `lr7b_v9` and
+/// `lr7b_v11` both drained their budget that way: the arms went out, and the
+/// turns that followed produced one `edit_file` each, refused because its
+/// `oldString` quoted text an earlier write had already replaced. Nothing reached
+/// the file, so the gate never ran again — it grades writes — and each run ended
+/// with an error still standing and no attempts left to spend on it. An attempt
+/// buys a repair the compiler got to grade; a turn that moved no file is not one.
+fn should_refund_repair_attempt(
+    armed_this_turn: bool,
+    wrote_this_turn: bool,
+    a_call_was_refused: bool,
+    refunds_used: u32,
+) -> bool {
+    armed_this_turn
+        && !wrote_this_turn
+        && a_call_was_refused
+        && refunds_used < MAX_REFUNDED_REPAIR_ATTEMPTS
+}
+
+/// The identity of a tool call for repeat detection: the tool and its arguments.
+///
+/// A `Value` object is a `BTreeMap` unless serde_json is built with
+/// `preserve_order`, so one payload spelled with its keys in a different order
+/// formats to the same string — and `lr7b_v12`'s transcript shows this model
+/// doing exactly that between turns, `relativeFilePath` first in one call and
+/// last in the next. If that feature is ever turned on, this must sort the keys
+/// itself or the same call starts reading as a different one.
+fn call_identity(tool_name: &str, arguments: &Value) -> String {
+    format!("{tool_name}|{arguments}")
+}
+
+/// Whether a tool result is a refusal, by the same test the results loop uses to
+/// set `any_error`. Kept beside it so a call counted as a repeat is a call the
+/// loop already charged for.
+fn is_refusal(result: &str) -> bool {
+    result.contains("Error executing tool") || result.starts_with("BLOCKED:")
+}
+
+/// Record how one call ended and report a replay.
+///
+/// Returns the number of times this run has now refused this identical payload,
+/// from the second refusal onward. Anything that is not a refusal — a write that
+/// landed, or a call the user turned away before it ran — clears the count: the
+/// same arguments can land once the file underneath them changes, and a stale
+/// count would accuse that call of being a replay it is not.
+fn note_refusal_repeat(
+    counts: &mut std::collections::HashMap<String, u32>,
+    identity: &str,
+    refused: bool,
+) -> Option<u32> {
+    if !refused {
+        counts.remove(identity);
+        return None;
+    }
+    let seen = counts.entry(identity.to_string()).or_insert(0);
+    *seen += 1;
+    (*seen > 1).then_some(*seen)
+}
+
+/// What a model that keeps replaying one refused call should do instead, read
+/// off the refusal it is being handed again.
+///
+/// This is derived rather than fixed because the fixed version was actively
+/// harmful. `lr7b_v17` replayed an edit that `already_applied_at` had refused
+/// with "this change is already on disk … at line 285" four times, and every
+/// replay carried a note advising "an `oldString` long enough to match the one
+/// place you mean". The model obeyed the note — its own words were "I will
+/// ensure the `oldString` is exactly what the compiler is expecting" — and
+/// re-sent the identical payload, because no spelling of `oldString` can make an
+/// applied change apply again. A note that contradicts the refusal it is
+/// attached to wins, being the last thing in the message, so it has to agree
+/// with it.
+fn replay_advice(refusal: &str) -> &'static str {
+    if refusal.contains("already on disk") {
+        "The change is in the file already, so no version of this call can do anything. The \
+         error the compiler still reports is at a different line: `read_file` the region that \
+         line is in, copy what you see there into `oldString`, and change that instead."
+    } else if refusal.contains("byte-identical") {
+        "A call whose `newString` equals its `oldString` changes no characters however often it \
+         is sent. Write the replacement the error asks for."
+    } else if refusal.contains("place") {
+        "Widen the `oldString` — include the lines around it — until only the one place you mean \
+         still matches, and send that."
+    } else if refusal.contains("is not in") {
+        "The text to replace has to be copied out of the file, not recalled: `read_file` the \
+         region the diagnostics name and paste what it returns into `oldString` verbatim."
+    } else {
+        "The refusal above says what is wrong with this call. The next one has to differ in \
+         substance, not in spelling."
+    }
+}
+
+/// What a repeated refusal adds to the answer the tool already gave.
+///
+/// Appended, never substituted: a repair turn rebuilds a lean context from
+/// scratch, so the tool's own explanation may be the only copy of it the model
+/// still has, and replacing it would trade a refusal it can read for one it
+/// cannot. The note's job is to say the replaying is the problem, which is the
+/// one fact no tool result can know.
+fn repeated_refusal_note(times: u32, refusal: &str) -> String {
+    format!(
+        "\n\n--- REPEATED CALL ({times} times) ---\n\
+         This run has now sent this exact call, byte for byte, {times} times and every attempt \
+         was refused. Sending it again cannot work: the refusal above is read from the file as \
+         it stands, and these arguments describe the same change, so the next one will say the \
+         same thing. {}",
+        replay_advice(refusal)
+    )
 }
 
 /// Upper bound on gate reports shown without a repair turn. Same reason the
@@ -6812,27 +7221,30 @@ mod tests {
     use serde_json::json;
 
     use super::{
-        arm_compile_repair, artifact_delivery_directive, compile_repair_directive,
+        arm_compile_repair, artifact_delivery_directive, call_identity, compile_repair_directive,
         correct_missing_crate_help, counts_as_artifact, decide_no_tool_call_ending,
         declared_dependencies, declared_name, dependency_repair_rule, enclosing_fn_block,
         error_code_recipes, existing_file_named_by_task, extract_fenced_code_block,
-        force_write_directive, gate_failure_label, grade_write, handover_for_outcome,
-        hides_generation_tool, is_rustc_diagnostic_report, is_test_failure_report,
-        item_head_keyword, missing_crate_help, off_target_refusal, parse_function_fragments,
-        remember_run_write, repair_api_context, repair_budget, repair_error_excerpt,
-        rust_item_names, salvage_complete_calls, should_arm_write_repair, should_close_validate,
+        force_write_directive, gate_failure_label, grade_write, gutting_rewrite_refusal,
+        handover_for_outcome, hides_generation_tool, is_refusal, is_rustc_diagnostic_report,
+        is_test_failure_report, item_head_keyword, items_a_rewrite_would_delete,
+        missing_crate_help, note_refusal_repeat, off_target_refusal, parse_function_fragments,
+        read_of_named_target, remember_run_write, repair_api_context, repair_budget,
+        repair_error_excerpt, repeated_refusal_note, replay_advice, rust_item_names,
+        salvage_complete_calls, should_arm_write_repair, should_close_validate,
         should_grade_tests_now, should_lock_exploration, should_note_unarmed_repair,
         should_nudge_missing_artifact, should_nudge_write_pressure, should_rebuild_write_context,
-        should_steer_wrong_path, strip_tool_markup_residue, type_names_in_diagnostics,
-        unfinished_announced_turn, unknown_tool_message, validate_tool_call,
-        wasted_time_ends_the_run, write_context_directive, write_misses_named_target,
-        write_pressure_directive, writes_miss_named_target, wrong_path_directive, AgentLoopOutcome,
-        AgentToUiMessage, ArtifactSurface, ChatMessage, NoToolCallEnding, RunEnding, TestVerdict,
+        should_refund_repair_attempt, should_refuse_gutting_rewrite, should_steer_wrong_path,
+        strip_tool_markup_residue, type_names_in_diagnostics, unfinished_announced_turn,
+        unknown_tool_message, validate_tool_call, wasted_time_ends_the_run,
+        write_context_directive, write_misses_named_target, write_pressure_directive,
+        writes_miss_named_target, wrong_path_directive, AgentLoopOutcome, AgentToUiMessage,
+        ArtifactSurface, ChatMessage, NoToolCallEnding, RunEnding, TestVerdict,
         ToolCallAccumulator, WriteGrade, FILE_EDITING_TOOLS, MAX_ARTIFACT_NUDGES,
         MAX_AUTO_CONTINUATIONS, MAX_COMPILE_REPAIR_TURNS, MAX_OFF_TARGET_REFUSALS,
-        MAX_SURFACE_REFUSALS, MAX_TEST_REPAIR_TURNS, MAX_TRACKED_RUN_WRITES,
-        MAX_UNARMED_REPAIR_NOTES, MAX_WRITE_PRESSURE_NUDGES, MEDIA_GENERATION_TOOLS,
-        ONE_ERROR_AT_A_TIME_NOTE, WRITE_PRESSURE_STREAK,
+        MAX_REFUNDED_REPAIR_ATTEMPTS, MAX_SURFACE_REFUSALS, MAX_TEST_REPAIR_TURNS,
+        MAX_TRACKED_RUN_WRITES, MAX_UNARMED_REPAIR_NOTES, MAX_WRITE_PRESSURE_NUDGES,
+        MEDIA_GENERATION_TOOLS, ONE_ERROR_AT_A_TIME_NOTE, WRITE_PRESSURE_STREAK,
     };
 
     // The file-free forms of the repeat detector. Most of these tests feed
@@ -7171,6 +7583,206 @@ mod tests {
             MAX_UNARMED_REPAIR_NOTES - 1
         ));
         assert!(!should_note_unarmed_repair(true, MAX_UNARMED_REPAIR_NOTES));
+    }
+
+    #[test]
+    fn a_repair_turn_that_wrote_nothing_gives_its_attempt_back() {
+        // The lr7b_v11 shape: the directive went out and the turn's only call was
+        // an edit_file refused because its `oldString` quoted text the model's own
+        // earlier write had already replaced. No file moved, so no repair was
+        // graded — but the attempt had been charged when the directive was armed.
+        assert!(should_refund_repair_attempt(true, false, true, 0));
+        // A turn that moved the file spent its attempt, whatever else it hit.
+        assert!(!should_refund_repair_attempt(true, true, true, 0));
+        // A turn that refused nothing has no answer of the loop's own to blame:
+        // the refund is for a repair the tooling would not let land.
+        assert!(!should_refund_repair_attempt(true, false, false, 0));
+        // A turn that was never armed was never charged.
+        assert!(!should_refund_repair_attempt(false, false, true, 0));
+        // Bounded, so a model that refuses every directive cannot be re-armed for
+        // ever — the turn budget is the only thing that would stop it.
+        assert!(should_refund_repair_attempt(
+            true,
+            false,
+            true,
+            MAX_REFUNDED_REPAIR_ATTEMPTS - 1
+        ));
+        assert!(!should_refund_repair_attempt(
+            true,
+            false,
+            true,
+            MAX_REFUNDED_REPAIR_ATTEMPTS
+        ));
+    }
+
+    #[test]
+    fn an_identical_refused_call_is_named_as_a_replay_from_the_second_time() {
+        // The lr7b_v12 shape: one `edit_file` payload refused on four turns
+        // running, each with the same two-site explanation, because its
+        // `oldString` was a bare identifier that matched two places. Nothing was
+        // compiled on any of those turns, so no error-signature check could see
+        // the circle — the payload itself is the only thing that repeats.
+        let call = call_identity(
+            "edit_file",
+            &json!({
+                "relativeFilePath": "rust_port/src/budget_manager.rs",
+                "edits": [{ "oldString": "result_record", "newString": "&result_record" }]
+            }),
+        );
+        let mut counts = std::collections::HashMap::new();
+
+        // The first refusal is the tool's own answer and nothing else: nothing
+        // has been repeated yet, and saying it had been would be a lie.
+        assert_eq!(note_refusal_repeat(&mut counts, &call, true), None);
+        assert_eq!(note_refusal_repeat(&mut counts, &call, true), Some(2));
+        assert_eq!(note_refusal_repeat(&mut counts, &call, true), Some(3));
+
+        // Counted per payload, not per run: a different call in the same batch is
+        // still being answered for the first time.
+        let other = call_identity("edit_file", &json!({"relativeFilePath": "other.rs"}));
+        assert_eq!(note_refusal_repeat(&mut counts, &other, true), None);
+    }
+
+    #[test]
+    fn a_refused_call_that_later_lands_stops_being_a_replay() {
+        let call = call_identity("edit_file", &json!({"relativeFilePath": "a.rs"}));
+        let mut counts = std::collections::HashMap::new();
+        assert_eq!(note_refusal_repeat(&mut counts, &call, true), None);
+        assert_eq!(note_refusal_repeat(&mut counts, &call, true), Some(2));
+
+        // The same bytes can land once the file underneath them changes — an
+        // `oldString` that matched two places matches one after the other site is
+        // edited. A count kept past that point would accuse the next refusal of
+        // replaying a call that has since succeeded.
+        assert_eq!(note_refusal_repeat(&mut counts, &call, false), None);
+        assert_eq!(note_refusal_repeat(&mut counts, &call, true), None);
+        assert_eq!(note_refusal_repeat(&mut counts, &call, true), Some(2));
+    }
+
+    #[test]
+    fn a_call_is_the_same_call_whatever_order_its_keys_come_in() {
+        // lr7b_v12's transcript spells one payload both ways across turns.
+        // serde_json's `Value` object is a `BTreeMap` unless the crate is built
+        // with `preserve_order`; if that ever changes, `Display` follows insertion
+        // order and these two stop matching — silently switching the replay
+        // detector off, which is what this assertion is here to catch.
+        let a = call_identity(
+            "edit_file",
+            &json!({"relativeFilePath": "x.rs", "edits": [{ "oldString": "a" }]}),
+        );
+        let b = call_identity(
+            "edit_file",
+            &json!({"edits": [{ "oldString": "a" }], "relativeFilePath": "x.rs"}),
+        );
+        assert_eq!(a, b);
+
+        // And a different payload, or a different tool, is still a different call.
+        assert_ne!(
+            a,
+            call_identity(
+                "edit_file",
+                &json!({"relativeFilePath": "x.rs", "edits": [{ "oldString": "b" }]})
+            )
+        );
+        assert_ne!(
+            a,
+            call_identity(
+                "write_file",
+                &json!({"relativeFilePath": "x.rs", "edits": [{ "oldString": "a" }]})
+            )
+        );
+    }
+
+    #[test]
+    fn only_the_loops_own_refusal_shapes_count_as_a_refusal() {
+        // The two shapes the results loop charges to `any_error`. A replay note
+        // that counted anything else would fire on a turn the loop considers
+        // clean, and one that missed these would never fire at all.
+        assert!(is_refusal(
+            "Error executing tool: edit 1: its `oldString` matches 2 places in a.rs."
+        ));
+        assert!(is_refusal("BLOCKED: write outside the workspace"));
+        // A human turning a call away is not the tool refusing it.
+        assert!(!is_refusal("Tool call rejected by the user"));
+        assert!(!is_refusal("Applied 1 edit to a.rs"));
+    }
+
+    #[test]
+    fn the_replay_note_is_a_suffix_that_carries_the_count() {
+        let note = repeated_refusal_note(
+            4,
+            "Error executing tool: edit 1: its `oldString` is not in a.rs.",
+        );
+
+        // It has to carry the number: that count is the one fact no tool result
+        // can know, and it is what makes this answer differ from the last three.
+        assert!(note.contains("4 times"), "{note}");
+        // It is appended to the tool's own refusal, never substituted for it, so
+        // it must start by separating itself from whatever precedes it.
+        assert!(note.starts_with("\n\n"), "{note:?}");
+    }
+
+    /// Each refusal the loop actually emits, keyed by the class the note has to
+    /// recognise. Wordings are copied from `system_tools.rs` so a change there
+    /// that breaks the classifier breaks this test rather than a probe run.
+    #[test]
+    fn the_replay_advice_agrees_with_the_refusal_it_follows() {
+        // The `lr7b_v17` case: the change landed two turns ago, so the only
+        // useful instruction is to go and look at the line the compiler names.
+        // The old fixed note told the model to widen its `oldString` here, and
+        // the model complied four times with a payload that could never apply.
+        let applied = replay_advice(
+            "Error executing tool: no edits were applied to a.rs; the file is unchanged:\n\
+             edit 1: this change is already on disk — its `newString` is in a.rs verbatim at \
+             line 285, and its `oldString` is not in the file at all.",
+        );
+        assert!(applied.contains("already"), "{applied}");
+        assert!(!applied.contains("Widen"), "{applied}");
+
+        // v12's case: two sites match, so the lever really is the `oldString`.
+        let ambiguous = replay_advice(
+            "Error executing tool: edit 1: its `oldString` matches 2 places in a.rs — \
+             widen it until only the site you mean still matches.",
+        );
+        assert!(ambiguous.contains("Widen"), "{ambiguous}");
+        assert!(!ambiguous.contains("already"), "{ambiguous}");
+
+        // v15's case: the edit changes no characters, so no re-aiming helps.
+        let noop = replay_advice(
+            "Error executing tool: edit 1: its `newString` is byte-identical to its `oldString`, \
+             so this edit would change no characters.",
+        );
+        assert!(noop.contains("changes no characters"), "{noop}");
+
+        // A miss with nothing else diagnosed: the text has to come off the disk.
+        let missing = replay_advice(
+            "Error executing tool: edit 1: its `oldString` is not in a.rs — copy the text \
+             verbatim from the file.",
+        );
+        assert!(missing.contains("read_file"), "{missing}");
+
+        // Anything unrecognised still gets a lever, just not a wrong one.
+        let other = replay_advice("BLOCKED: write outside the workspace");
+        assert!(other.contains("substance"), "{other}");
+    }
+
+    #[test]
+    fn an_already_applied_refusal_is_never_answered_with_widen_the_oldstring() {
+        // The regression this whole classifier exists to prevent, stated as the
+        // model sees it: the note is the last text in the message, so if it
+        // contradicts the refusal the model follows the note.
+        let refusal = "Error executing tool: no edits were applied to a.rs; the file is \
+                       unchanged:\nedit 1: this change is already on disk — its `newString` is \
+                       in a.rs verbatim at line 285, and its `oldString` is not in the file at \
+                       all."
+            .to_string();
+        let outgoing = refusal.clone() + &repeated_refusal_note(2, &refusal);
+        assert!(outgoing.contains("already on disk"), "{outgoing}");
+        assert!(outgoing.contains("2 times"), "{outgoing}");
+        assert!(
+            !outgoing.contains("long enough to match the one place"),
+            "the note overruled the refusal: {outgoing}"
+        );
     }
 
     #[test]
@@ -9134,6 +9746,278 @@ mod tests {
                 "`{noise}` is not a declaration but appeared in {names:?}"
             );
         }
+    }
+
+    /// The surface `lr7b_v13`'s deliverable arrived with, cut to four items so the
+    /// assertions stay readable.
+    const SURFACE_SRC: &str = "pub fn token_count(t: &str) -> usize { t.len() }\n\
+                               pub fn cost_per_token(m: &str) -> f64 { 0.0 }\n\
+                               pub struct CostCalculator { pub rate: f64 }\n\
+                               pub trait Budget { fn spend(&mut self, n: u64); }\n";
+
+    /// What turn 5 of that run sent instead: one stub, over a file it had never
+    /// been allowed to read.
+    const STUB_REWRITE: &str = "fn calculate_cost(&self) {\n    unimplemented!()\n}\n";
+
+    /// A full rewrite that still declares most of the surface.
+    const FAITHFUL_REWRITE: &str = "pub fn token_count(t: &str) -> usize { t.chars().count() }\n\
+                                    pub fn cost_per_token(m: &str) -> f64 { 0.1 }\n\
+                                    pub struct CostCalculator { pub rate: f64 }\n";
+
+    #[test]
+    fn a_whole_file_write_that_guts_the_deliverable_is_refused_before_it_lands() {
+        let surface = rust_item_names(SURFACE_SRC);
+        assert_eq!(surface.len(), 4, "{surface:?}");
+
+        let reason = gutting_rewrite_refusal(
+            "write_file",
+            &json!({
+                "relativeFilePath": "rust_port/src/budget_manager.rs",
+                "content": STUB_REWRITE
+            }),
+            Some("rust_port/src/budget_manager.rs"),
+            &surface,
+            Some("rust_port/src/budget_manager.rs"),
+        )
+        .expect("a one-function stub over a four-item port is the write that lost v13");
+
+        // Classified as a refusal by the same test the loop charges `any_error`
+        // with, so it is refunded and replay-counted like any other. Losing the
+        // prefix would silently make it a success the loop credits.
+        assert!(is_refusal(&reason), "{reason}");
+        // Everything it would have removed is named, so the model sees the loss.
+        for gone in ["token_count", "cost_per_token", "CostCalculator", "Budget"] {
+            assert!(
+                reason.contains(&format!("`{gone}`")),
+                "missing `{gone}`: {reason}"
+            );
+        }
+        // It has to say the file survived, and offer the call that changes one
+        // line without moving the rest — the surface guard's "put those items
+        // back" has no such exit once the bytes are gone.
+        assert!(reason.contains("NOT written"), "{reason}");
+        assert!(reason.contains("`edit_file`"), "{reason}");
+        // And it has to say where the replacement text comes from, or the list of
+        // names above is what gets sent back as the edit payload — v15's 54
+        // identical `oldString`/`newString` pairs.
+        assert!(reason.contains("not the text to send"), "{reason}");
+        assert!(
+            reason.contains("relativeFilePath"),
+            "the read has to be spelled out as a call: {reason}"
+        );
+    }
+
+    #[test]
+    fn a_rewrite_that_keeps_the_deliverables_items_is_not_refused() {
+        // Non-vacuity for the test above: the refusal comes from the missing
+        // items, not from `write_file` touching the deliverable. One name of four
+        // gone is a refactor, which the post-hoc guard also waves through.
+        let surface = rust_item_names(SURFACE_SRC);
+        assert_eq!(
+            gutting_rewrite_refusal(
+                "write_file",
+                &json!({
+                    "relativeFilePath": "rust_port/src/budget_manager.rs",
+                    "content": FAITHFUL_REWRITE
+                }),
+                Some("rust_port/src/budget_manager.rs"),
+                &surface,
+                Some("rust_port/src/budget_manager.rs"),
+            ),
+            None
+        );
+    }
+
+    #[test]
+    fn the_gutting_write_gate_only_watches_the_deliverable() {
+        let surface = rust_item_names(SURFACE_SRC);
+
+        // Another file in the same crate may be written from scratch: the surface
+        // records one file, not a floor for the workspace.
+        assert_eq!(
+            gutting_rewrite_refusal(
+                "write_file",
+                &json!({"relativeFilePath": "rust_port/src/lib.rs", "content": STUB_REWRITE}),
+                Some("rust_port/src/budget_manager.rs"),
+                &surface,
+                Some("rust_port/src/budget_manager.rs"),
+            ),
+            None
+        );
+        // Only `write_file` replaces text wholesale. An `edit_file` deletes text
+        // the model was handed, and the grade after it still catches the loss.
+        assert_eq!(
+            gutting_rewrite_refusal(
+                "edit_file",
+                &json!({
+                    "relativeFilePath": "rust_port/src/budget_manager.rs",
+                    "content": STUB_REWRITE
+                }),
+                Some("rust_port/src/budget_manager.rs"),
+                &surface,
+                Some("rust_port/src/budget_manager.rs"),
+            ),
+            None
+        );
+        // A run with no recorded surface — a new artifact written for the first
+        // time, or a deliverable that is not Rust — has nothing to protect.
+        assert_eq!(
+            gutting_rewrite_refusal(
+                "write_file",
+                &json!({
+                    "relativeFilePath": "rust_port/src/budget_manager.rs",
+                    "content": STUB_REWRITE
+                }),
+                Some("rust_port/src/budget_manager.rs"),
+                &[],
+                Some("rust_port/src/budget_manager.rs"),
+            ),
+            None
+        );
+        // Names with no file to compare them against cannot be aimed at anything,
+        // so the gate stays inert instead of watching every write in the run.
+        assert_eq!(
+            gutting_rewrite_refusal(
+                "write_file",
+                &json!({
+                    "relativeFilePath": "rust_port/src/budget_manager.rs",
+                    "content": STUB_REWRITE
+                }),
+                None,
+                &surface,
+                Some("rust_port/src/budget_manager.rs"),
+            ),
+            None
+        );
+    }
+
+    #[test]
+    fn a_backslash_path_is_still_the_deliverable() {
+        // The task names the target with forward slashes and a Windows checkout
+        // answers with backslashes. Comparing the strings raw would let every
+        // gutting write through on the host this was measured on.
+        let surface = rust_item_names(SURFACE_SRC);
+        assert!(gutting_rewrite_refusal(
+            "write_file",
+            &json!({
+                "relativeFilePath": "rust_port\\src\\budget_manager.rs",
+                "content": STUB_REWRITE
+            }),
+            Some("rust_port/src/budget_manager.rs"),
+            &surface,
+            Some("rust_port/src/budget_manager.rs"),
+        )
+        .is_some());
+    }
+
+    #[test]
+    fn the_read_the_gutting_refusal_offers_is_the_read_the_lock_honours() {
+        let surface = rust_item_names(SURFACE_SRC);
+        let target = "rust_port/src/budget_manager.rs";
+
+        let reason = gutting_rewrite_refusal(
+            "write_file",
+            &json!({"relativeFilePath": target, "content": STUB_REWRITE}),
+            Some(target),
+            &surface,
+            Some(target),
+        )
+        .expect("the stub rewrite is refused");
+        let offered = format!("\"{target}\"");
+        assert!(reason.contains(&offered), "{reason}");
+
+        // The promise has to be kept by the gate that enforces the lock, not just
+        // printed. A refusal that names a read the lock would refuse sends the
+        // model straight into a second refusal.
+        let read = json!({"relativeFilePath": target, "startLine": 1, "endLine": 40});
+        assert!(
+            read_of_named_target("read_file", &read, Some(target)),
+            "the refusal offered a read the lock refuses"
+        );
+
+        // With nothing named by the task the lock stays whole, so the refusal must
+        // not offer a path through it.
+        let no_read = gutting_rewrite_refusal(
+            "write_file",
+            &json!({"relativeFilePath": target, "content": STUB_REWRITE}),
+            Some(target),
+            &surface,
+            None,
+        )
+        .expect("still refused without a named target");
+        assert!(!no_read.contains("not the text to send"), "{no_read}");
+        assert!(!read_of_named_target("read_file", &read, None));
+    }
+
+    #[test]
+    fn half_the_surface_is_where_a_rewrite_becomes_a_deletion() {
+        assert!(!should_refuse_gutting_rewrite(0, 4));
+        assert!(!should_refuse_gutting_rewrite(1, 4));
+        assert!(should_refuse_gutting_rewrite(2, 4));
+        assert!(should_refuse_gutting_rewrite(4, 4));
+        // `baseline == 0` means "no surface recorded", not "nothing is missing".
+        assert!(!should_refuse_gutting_rewrite(0, 0));
+
+        assert!(items_a_rewrite_would_delete(&[], STUB_REWRITE).is_empty());
+        assert!(
+            items_a_rewrite_would_delete(&rust_item_names(SURFACE_SRC), SURFACE_SRC).is_empty()
+        );
+        assert_eq!(
+            items_a_rewrite_would_delete(&rust_item_names(SURFACE_SRC), FAITHFUL_REWRITE),
+            vec!["Budget".to_string()]
+        );
+    }
+
+    #[test]
+    fn a_locked_turn_may_still_read_the_file_it_must_edit() {
+        let target = "rust_port/src/budget_manager.rs";
+        // lr7b_v14 turn 3: the read the dispatch text itself asked for, refused by
+        // the lock, after which every payload the model sent was invented.
+        assert!(read_of_named_target(
+            "read_file",
+            &json!({"relativeFilePath": target}),
+            Some(target)
+        ));
+        // A region read is the same read, and the one that fits an output budget.
+        assert!(read_of_named_target(
+            "read_file",
+            &json!({"relativeFilePath": target, "startLine": 340, "endLine": 370}),
+            Some(target)
+        ));
+        // Backslashes name the same file on the checkout this was measured on.
+        assert!(read_of_named_target(
+            "read_file",
+            &json!({"relativeFilePath": "rust_port\\src\\budget_manager.rs"}),
+            Some(target)
+        ));
+    }
+
+    #[test]
+    fn the_lock_still_closes_every_other_read() {
+        let target = "rust_port/src/budget_manager.rs";
+        // Wandering is what the lock exists to stop, so the exception is one path
+        // wide rather than "reads are allowed now".
+        assert!(!read_of_named_target(
+            "read_file",
+            &json!({"relativeFilePath": "rust_port/src/lib.rs"}),
+            Some(target)
+        ));
+        // No named target means nothing to aim a read at.
+        assert!(!read_of_named_target(
+            "read_file",
+            &json!({"relativeFilePath": target}),
+            None
+        ));
+        // No other tool rides through on it. write_file and edit_file are offered
+        // by the lock's own tool list, not by this exception.
+        for tool in ["list_dir", "grep_search", "glob", "write_file", "edit_file"] {
+            assert!(
+                !read_of_named_target(tool, &json!({"relativeFilePath": target}), Some(target)),
+                "`{tool}` is not a read of the deliverable"
+            );
+        }
+        // And a read that names no path is not a read of the deliverable.
+        assert!(!read_of_named_target("read_file", &json!({}), Some(target)));
     }
 
     #[test]

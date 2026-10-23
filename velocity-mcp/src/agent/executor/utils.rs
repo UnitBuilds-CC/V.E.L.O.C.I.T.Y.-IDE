@@ -869,6 +869,63 @@ fn as_bare_tool_call(
     })
 }
 
+/// A character JSON admits outside a string literal, so a run of anything else
+/// at the end of the content is not part of the call.
+fn json_structure_char(c: char) -> bool {
+    matches!(c, '{' | '}' | '[' | ']' | ':' | ',' | '"' | '-' | '+' | '.')
+        || c.is_ascii_alphanumeric()
+        || c.is_ascii_whitespace()
+}
+
+/// Complete an unclosed `{...}` region that runs to the end of the content, or
+/// `None` when it cannot be completed without inventing text.
+///
+/// A model that emits its call as text instead of a native `tool_calls` delta
+/// routinely botches the envelope while leaving the payload intact. `lr7b_v18`
+/// turn 6 streamed a 19,673-char `write_file` carrying the whole deliverable and
+/// ended it `…}\n"})`: one missing brace, with a stray paren between it and the
+/// last real one. Both defects are repaired here — the junk is trimmed off the
+/// end and the owed closers go where the call stopped, not at EOF. Without this
+/// the turn graded as a final answer that wrote nothing and the run was blocked
+/// with the file untouched.
+///
+/// `None` when the scan ends inside a string literal or on a dangling escape:
+/// that is a value cut mid-text, and appending braces there would fabricate the
+/// rest of it. The same distinction `salvage_complete_calls` makes at the
+/// wall-clock deadline — complete the structure, never the content.
+fn complete_trailing_call(content: &str, start: usize) -> Option<String> {
+    let body = content[start..].trim_end_matches(|c: char| !json_structure_char(c));
+    let mut stack: Vec<u8> = Vec::new();
+    let mut in_string = false;
+    let mut escaped = false;
+    for &b in body.as_bytes() {
+        if in_string {
+            if escaped {
+                escaped = false;
+            } else if b == b'\\' {
+                escaped = true;
+            } else if b == b'"' {
+                in_string = false;
+            }
+        } else {
+            match b {
+                b'"' => in_string = true,
+                b'{' => stack.push(b'}'),
+                b'[' => stack.push(b']'),
+                b'}' | b']' => {
+                    stack.pop();
+                }
+                _ => {}
+            }
+        }
+    }
+    if in_string || escaped || stack.is_empty() {
+        return None;
+    }
+    let closers: String = stack.iter().rev().map(|&c| c as char).collect();
+    Some(format!("{body}{closers}"))
+}
+
 /// Recover tool calls a model emitted as bare OpenAI-style JSON objects in its
 /// text content rather than structured `tool_calls` deltas — the shape some
 /// Ollama/Qwen builds return (`{"name": "list_dir", "arguments": {...}}`, or an
@@ -888,6 +945,13 @@ pub fn parse_bare_json_tool_calls(
                 if let Some(call) = as_bare_tool_call(&content[i..end], known_tools) {
                     calls.push(call);
                     i = end;
+                    continue;
+                }
+            } else if let Some(completed) = complete_trailing_call(content, i) {
+                // Unclosed to EOF, so the rest of the content is this one call.
+                if let Some(call) = as_bare_tool_call(&completed, known_tools) {
+                    calls.push(call);
+                    i = content.len();
                     continue;
                 }
             }
@@ -1451,6 +1515,102 @@ mod tests {
     fn bare_json_plain_prose_is_untouched() {
         let content = "The map is complete; no further tool calls are needed.";
         let (cleaned, calls) = parse_bare_json_tool_calls(content, &known(&["list_dir"]));
+        assert!(calls.is_empty());
+        assert_eq!(cleaned, content);
+    }
+
+    #[test]
+    fn a_call_that_dropped_its_last_brace_is_still_recovered() {
+        // `lr7b_v18` turn 6, minus its stray paren: a whole-file write,
+        // correctly terminated, one envelope brace short. The run was graded
+        // "wrote no files" and blocked with the deliverable untouched.
+        let content = r#"{"name": "write_file", "arguments": {"relativeFilePath": "src/a.rs", "content": "pub fn a() {}\n"}"#;
+        let (cleaned, calls) = parse_bare_json_tool_calls(content, &known(&["write_file"]));
+        assert_eq!(calls.len(), 1, "{cleaned}");
+        assert_eq!(calls[0].name, "write_file");
+        assert_eq!(
+            calls[0].arguments["content"].as_str(),
+            Some("pub fn a() {}\n")
+        );
+        assert_eq!(
+            calls[0].arguments["relativeFilePath"].as_str(),
+            Some("src/a.rs")
+        );
+        // The salvaged span is the whole rest of the content, so nothing is left
+        // behind to be read as a final answer.
+        assert_eq!(cleaned, "");
+    }
+
+    #[test]
+    fn nested_closers_are_completed_in_the_order_they_are_owed() {
+        // The trailing `}` closes the edit object; the array, the arguments and
+        // the outer object are all still owed, innermost first.
+        let content =
+            r#"{"name": "edit_file", "arguments": {"edits": [{"oldString": "a", "newString": "b"}"#;
+        let (_cleaned, calls) = parse_bare_json_tool_calls(content, &known(&["edit_file"]));
+        assert_eq!(calls.len(), 1);
+        assert_eq!(
+            calls[0].arguments["edits"].as_array().map(|a| a.len()),
+            Some(1)
+        );
+        assert_eq!(
+            complete_trailing_call(content, 0).as_deref(),
+            Some(
+                r#"{"name": "edit_file", "arguments": {"edits": [{"oldString": "a", "newString": "b"}]}}"#
+            )
+        );
+        // A brace inside a string literal is not structure and must not be
+        // counted: this port is full of `fn a() {`.
+        let braces_in_strings =
+            r#"{"name": "read_file", "arguments": {"relativeFilePath": "src/{a}.rs"}"#;
+        assert_eq!(
+            complete_trailing_call(braces_in_strings, 0).as_deref(),
+            Some(r#"{"name": "read_file", "arguments": {"relativeFilePath": "src/{a}.rs"}}"#)
+        );
+    }
+
+    #[test]
+    fn junk_after_the_call_does_not_block_its_completion() {
+        // `lr7b_v18` turn 6 in shape: the payload arrived whole and the envelope
+        // ended `…}\n"})`. The owed brace belongs where the call stopped, so the
+        // paren has to go first — appending it at EOF cannot parse.
+        let content = r#"{"name": "write_file", "arguments": {"relativeFilePath": "src/a.rs", "content": "mod t {\n}\n"})"#;
+        let (cleaned, calls) = parse_bare_json_tool_calls(content, &known(&["write_file"]));
+        assert_eq!(calls.len(), 1, "{cleaned}");
+        assert_eq!(calls[0].arguments["content"].as_str(), Some("mod t {\n}\n"));
+        assert_eq!(cleaned, "");
+
+        // Trailing prose is not separable from a `true`/`null` literal by this
+        // rule, so the completion is attempted and just fails to parse. Nothing
+        // is invented out of it.
+        let narrated = r#"{"name": "write_file", "arguments": {"content": "x"} and done"#;
+        let (cleaned, calls) = parse_bare_json_tool_calls(narrated, &known(&["write_file"]));
+        assert!(calls.is_empty());
+        assert_eq!(cleaned, narrated);
+    }
+
+    #[test]
+    fn a_value_cut_mid_string_is_not_completed() {
+        // Completing this would fabricate the rest of the file. `in_string` at
+        // EOF means content was lost, not just structure, and the honest answer
+        // is that there is no call here.
+        let content = r#"{"name": "write_file", "arguments": {"relativeFilePath": "src/a.rs", "content": "pub fn a("#;
+        assert_eq!(complete_trailing_call(content, 0), None);
+        let (cleaned, calls) = parse_bare_json_tool_calls(content, &known(&["write_file"]));
+        assert!(calls.is_empty());
+        assert_eq!(cleaned, content);
+
+        // Same for a dangling escape: the next character was never delivered.
+        let escaped = "{\"name\": \"write_file\", \"arguments\": {\"content\": \"line\\";
+        assert_eq!(complete_trailing_call(escaped, 0), None);
+    }
+
+    #[test]
+    fn an_unclosed_blob_that_is_not_a_call_is_left_alone() {
+        // Completing the braces is not a licence to hijack a JSON answer: the
+        // name still has to be a registered tool.
+        let content = r#"{"name": "drop_table", "arguments": {"table": "users"}"#;
+        let (cleaned, calls) = parse_bare_json_tool_calls(content, &known(&["write_file"]));
         assert!(calls.is_empty());
         assert_eq!(cleaned, content);
     }
