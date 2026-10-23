@@ -699,6 +699,9 @@ struct NearMiss {
     /// What the model wrote there, and what the file says.
     wrote: String,
     file_says: String,
+    /// Whether the file ran out at the divergence, so the quoted region is not
+    /// present with one line altered but stops short there.
+    at_eof: bool,
 }
 
 /// One quoted line of a near-miss report, clipped so a long line cannot crowd
@@ -810,6 +813,7 @@ fn nearest_miss(hay: &str, needle: &str) -> Option<NearMiss> {
         } else {
             "the file ends".to_string()
         },
+        at_eof: j >= file.len(),
     })
 }
 
@@ -830,6 +834,44 @@ fn near_miss_message(rel_path: &str, m: &NearMiss) -> String {
         wrote = m.wrote,
         file_says = m.file_says,
     )
+}
+
+impl NearMiss {
+    /// Whether this near miss locates the site the `oldString` was aimed at,
+    /// rather than happening on a prefix of it somewhere else in the file.
+    ///
+    /// The scan is a prefix run, so `matched` counts the lines before the
+    /// divergence and says nothing at all about the ones after it. A needle that
+    /// parts company on its second line and runs on for twenty more is a
+    /// two-line coincidence; one that parts on its second-to-last line has every
+    /// other line of it standing in the file at a single place. Only the second
+    /// contradicts the claim that the site was rewritten away, which is what
+    /// [`superseded_site`] asserts from one line of the `newString`, so only the
+    /// second one gets to displace it.
+    ///
+    /// `lr7b_v24` needed the distinction. Turns 3 and 4 quoted a twelve-line
+    /// chain whose only fault was `});` where the file says `})`, and both were
+    /// answered with that line quoted from each side — the whole of the fix. Turn
+    /// 5 sent the same twelve lines with a different replacement, so
+    /// `superseded_site` found a unique anchor in it, and the refusal became "an
+    /// earlier write of yours replaced what the `oldString` quotes" over a paste
+    /// of a function forty lines above the site. Nothing had replaced anything.
+    /// Turn 6 then quoted the tail of turn 5's refused `newString`, text the file
+    /// had never held, and the run spent both turns it had left on a phantom.
+    ///
+    /// A divergence at end of file is excluded: there the region does not stand
+    /// with one line altered, it stops short, and a write that shortened the file
+    /// is exactly the history `superseded_site` tells.
+    fn locates_the_site(&self) -> bool {
+        /// Lines of the needle the divergence may leave unexamined and still be
+        /// the site's own: the line that differs, and one after it.
+        const TAIL: usize = 1;
+        /// A prefix this short turns up anywhere by accident.
+        const MIN_MATCHED: usize = 3;
+        !self.at_eof
+            && self.matched >= MIN_MATCHED
+            && self.total.saturating_sub(self.matched + 1) <= TAIL
+    }
 }
 
 /// A refused `oldString` that differs from exactly one place in the file by
@@ -1938,17 +1980,24 @@ pub fn handle_system_tool(
                         }
                         continue;
                     }
-                    if let Some(line) = superseded_site(&current, old, new) {
-                        rejected.push(format!(
-                            "edit {n}: its `oldString` is not in {rel_path}. {}",
-                            superseded_site_message(&current, line)
-                        ));
-                        continue;
-                    }
                     // Naming the one line that differs beats pasting the sites of
                     // the line that already matched: v19 re-sent the same call
                     // five times because the paste showed only its correct part.
-                    if let Some(miss) = nearest_miss(&current, old) {
+                    // It beats `superseded_site`'s history too, when the near miss
+                    // is tight enough to have found the site: a place still
+                    // standing with one line of it altered is not a place an
+                    // earlier write replaced. See `NearMiss::locates_the_site`.
+                    let miss = nearest_miss(&current, old);
+                    if !miss.as_ref().is_some_and(NearMiss::locates_the_site) {
+                        if let Some(line) = superseded_site(&current, old, new) {
+                            rejected.push(format!(
+                                "edit {n}: its `oldString` is not in {rel_path}. {}",
+                                superseded_site_message(&current, line)
+                            ));
+                            continue;
+                        }
+                    }
+                    if let Some(miss) = miss {
                         rejected.push(format!("edit {n}: {}", near_miss_message(rel_path, &miss)));
                         continue;
                     }
@@ -3738,6 +3787,69 @@ mod tests {
         // short, so it arrives whole and the model can copy it.
         let msg = near_miss_message("src/port.rs", &miss);
         assert!(msg.contains("the file says `let target = 3;`"), "{msg}");
+    }
+
+    /// The file a tightness case is built against: six statements, so a needle
+    /// quoting them can part company at any depth and score differently.
+    const SIX_STATEMENTS: &str =
+        "    let a = 1;\n    let b = 2;\n    let c = 3;\n    let d = 4;\n    save(a);\n}\n";
+
+    #[test]
+    fn a_near_miss_one_line_from_its_end_locates_the_site() {
+        // `lr7b_v24`'s twelve-line chain in miniature: everything but the line
+        // that differs, and the one after it, is standing at a single place.
+        let needle =
+            "    let a = 1;\n    let b = 2;\n    let c = 3;\n    let WRONG = 9;\n    save(a);\n";
+        let miss = nearest_miss(SIX_STATEMENTS, needle).expect("four of five lines are the file's");
+        assert_eq!((miss.matched, miss.total), (3, 5), "{miss:?}");
+        assert!(
+            miss.locates_the_site(),
+            "one unexamined line after the divergence is still the site: {miss:?}"
+        );
+        // And the shape the run actually sent, where the divergence is the last
+        // line but one of a longer quote.
+        let needle = "    let a = 1;\n    let b = 2;\n    let c = 3;\n    let d = 4;\n    let WRONG = 9;\n    save(a);\n";
+        let miss = nearest_miss(SIX_STATEMENTS, needle).expect("five of six are the file's");
+        assert_eq!((miss.matched, miss.total), (4, 6), "{miss:?}");
+        assert!(miss.locates_the_site(), "{miss:?}");
+    }
+
+    #[test]
+    fn a_near_miss_with_a_long_unexamined_tail_does_not_locate_the_site() {
+        // Three lines matched and two the scan never got to: the prefix could be
+        // anywhere, so this may not contradict a claim about where the site went.
+        let needle = "    let a = 1;\n    let b = 2;\n    let c = 3;\n    let WRONG = 9;\n    let e = 5;\n    let f = 6;\n";
+        let miss =
+            nearest_miss(SIX_STATEMENTS, needle).expect("three of six is half, so it scores");
+        assert_eq!((miss.matched, miss.total), (3, 6), "{miss:?}");
+        assert!(
+            !miss.locates_the_site(),
+            "half a needle is not the site, it is a prefix that happened: {miss:?}"
+        );
+    }
+
+    #[test]
+    fn a_two_line_prefix_never_locates_the_site_however_short_the_quote() {
+        // The tail rule is satisfied exactly, so what turns this away is the
+        // floor on the matched prefix: two lines are in every file.
+        let needle = "    let a = 1;\n    let b = 2;\n    let WRONG = 9;\n";
+        let miss = nearest_miss(SIX_STATEMENTS, needle).expect("two of three is above half");
+        assert_eq!((miss.matched, miss.total), (2, 3), "{miss:?}");
+        assert!(!miss.locates_the_site(), "{miss:?}");
+    }
+
+    #[test]
+    fn a_near_miss_at_the_end_of_the_file_does_not_locate_the_site() {
+        // The region does not stand with one line altered here, it stops short —
+        // and a write that shortened the file is the history `superseded_site`
+        // tells, so the two claims are not in contradiction.
+        let hay = "    let a = 1;\n    let b = 2;\n    let c = 3;\n";
+        let needle =
+            "    let a = 1;\n    let b = 2;\n    let c = 3;\n    let d = 4;\n    let e = 5;\n";
+        let miss = nearest_miss(hay, needle).expect("three of five still anchors it");
+        assert!(miss.at_eof, "{miss:?}");
+        assert_eq!(miss.file_says, "the file ends", "{miss:?}");
+        assert!(!miss.locates_the_site(), "{miss:?}");
     }
 
     #[test]

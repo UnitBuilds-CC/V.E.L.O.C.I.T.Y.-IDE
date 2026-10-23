@@ -848,6 +848,103 @@ fn a_rescue_that_locates_the_site_outranks_the_guess_that_it_moved() {
     );
 }
 
+/// `lr7b_v24` turns 3 to 6. One semicolon cost the run four of its ten turns:
+/// the `oldString` said `});` where the file says `})`, and turns 3 and 4 were
+/// both answered with that line quoted from each side, which is the whole of the
+/// fix. Turn 5 sent the same twelve lines behind a different replacement, and
+/// because that replacement happened to repeat one unique line of the file,
+/// `superseded_site` took the refusal away from `nearest_miss` and asserted "an
+/// earlier write of yours replaced what the `oldString` quotes" over a paste of
+/// a function forty lines above the site. Nothing had replaced anything — the
+/// site was standing with one character altered, which the two earlier refusals
+/// had proved by quoting it. Turn 6 then quoted the tail of turn 5's refused
+/// `newString`, text the file had never held, and the run ended two errors deep.
+///
+/// A located site outranks an inferred history for the same reason the two
+/// rescues do: an explanation of why text cannot be located is contradicted by
+/// anything that locates it.
+#[test]
+fn a_tight_near_miss_outranks_the_guess_that_the_site_was_rewritten() {
+    let (_temp, root) = setup_root();
+    let file = "fn update(&mut self, user: &str) -> &mut Rec {\n    let _ = self.save_data();\n    self.dict\n        .values_mut()\n        .next()\n        .unwrap_or(&mut Rec { a: 0.0 })\n}\n";
+    fs::write(root.join("port.rs"), file).unwrap();
+
+    let err = call_tool_in_workspace(
+        &root,
+        "edit_file",
+        &json!({
+            "relativeFilePath": "port.rs",
+            "edits": [{
+                "oldString": "    self.dict\n        .values_mut()\n        .next()\n        .unwrap_or(&mut Rec { a: 0.0 });\n}",
+                "newString": "    let r = self.dict\n        .values_mut()\n        .next()\n        .unwrap_or(&mut Rec { a: 0.0 });\n    let _ = self.save_data();\n    r"
+            }],
+            "context": "fix E0515"
+        }),
+    )
+    .err()
+    .map(|e| e.to_string())
+    .unwrap_or_else(|| "one semicolon is not a match".to_string());
+
+    assert!(
+        !err.contains("The text is gone"),
+        "the replacement's one unique file line is context, not a rewrite, and the site is \
+         standing: {err}"
+    );
+    assert!(
+        err.contains("is where they part"),
+        "the answer that names the line has to be the one sent: {err}"
+    );
+    assert!(
+        err.contains("you wrote `.unwrap_or(&mut Rec { a: 0.0 });`"),
+        "{err}"
+    );
+    assert!(
+        err.contains("the file says `.unwrap_or(&mut Rec { a: 0.0 })`"),
+        "{err}"
+    );
+    assert_eq!(
+        fs::read_to_string(root.join("port.rs")).unwrap(),
+        file,
+        "a refused batch leaves the file alone"
+    );
+}
+
+/// The other side of the confidence gate. Three lines matched and two the scan
+/// never reached is a prefix that happened, not a located site, so the guess
+/// keeps its turn: it is the only answer left that says anything about where the
+/// text went, and pasting the file's own bytes around the anchor beats naming a
+/// divergence at a place the edit may never have been aimed at.
+#[test]
+fn a_loose_near_miss_still_defers_to_the_guess_that_the_site_moved() {
+    let (_temp, root) = setup_root();
+    let file = "fn update(&mut self, user: &str) -> &mut Rec {\n    let _ = self.save_data();\n    self.dict\n        .values_mut()\n        .next()\n        .unwrap_or(&mut Rec { a: 0.0 })\n}\n";
+    fs::write(root.join("port.rs"), file).unwrap();
+
+    let err = call_tool_in_workspace(
+        &root,
+        "edit_file",
+        &json!({
+            "relativeFilePath": "port.rs",
+            "edits": [{
+                "oldString": "    self.dict\n        .values_mut()\n        .next()\n        .unwrpx(&mut Rec { a: 0.0 })\n        .other()\n}",
+                "newString": "    let r = self.dict\n        .values_mut();\n    let _ = self.save_data();\n    r"
+            }],
+            "context": "fix E0515"
+        }),
+    )
+    .err()
+    .map(|e| e.to_string())
+    .unwrap_or_else(|| "a line the file has never held is not a match".to_string());
+
+    assert!(err.contains("The text is gone"), "{err}");
+    assert!(!err.contains("is where they part"), "{err}");
+    assert_eq!(
+        fs::read_to_string(root.join("port.rs")).unwrap(),
+        file,
+        "a refused batch leaves the file alone"
+    );
+}
+
 /// The join is licensed by Rust's grammar: a line whose first non-whitespace
 /// character is `.` cannot begin a statement there, so it continues the one
 /// above. In prose or markup a line can begin with a full stop and mean it, so
