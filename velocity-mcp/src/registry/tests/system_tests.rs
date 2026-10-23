@@ -762,6 +762,125 @@ fn an_already_applied_change_is_not_rescued_into_a_second_site() {
     );
 }
 
+/// `lr7b_v22` in full shape. Turns 5, 7, 9 and 11 sent one byte-identical
+/// `edit_file` whose `oldString` was the file's own chain with rustfmt's line
+/// breaks undone, and all four were refused — burning three compile repairs and
+/// two refunds on a turn counter that never saw a write. Turn 4 had been allowed
+/// to `read_file` that exact region and handed back every line verbatim; the
+/// model re-emitted them flattened anyway. Reproducing where a formatter chose
+/// to wrap a chain is the same ability `indent_rescue` exists to substitute for,
+/// one dimension over, and its absence — not the model's reasoning — is what
+/// ended the run.
+#[test]
+fn a_chain_the_model_flattened_onto_one_line_is_applied_not_refused() {
+    let (_temp, root) = setup_root();
+    let file = "fn update(&mut self, k: &str) {\n    self.dict\n        .get_mut(k)\n        .unwrap_or(&mut Rec { a: 0.0 });\n}\n";
+    fs::write(root.join("port.rs"), file).unwrap();
+
+    let ok = call_tool_in_workspace(
+        &root,
+        "edit_file",
+        &json!({
+            "relativeFilePath": "port.rs",
+            "edits": [{
+                "oldString": "    self.dict.get_mut(k).unwrap_or(&mut Rec { a: 0.0 });",
+                "newString": "    let r = self.dict.get_mut(k).unwrap_or(&mut Rec { a: 0.0 });\n    save(r);"
+            }],
+            "context": "fix E0515"
+        }),
+    )
+    .unwrap_or_else(|e| panic!("the code is the file's own, only its wraps differ: {e}"));
+
+    assert!(
+        ok.contains("ignoring its line breaks"),
+        "the answer has to say what was forgiven, or the model re-sends it: {ok}"
+    );
+    assert!(
+        ok.contains("across 3 lines") && ok.contains("wrote it on 1"),
+        "and how many: {ok}"
+    );
+    assert!(ok.contains("line 2"), "{ok}");
+    let after = fs::read_to_string(root.join("port.rs")).unwrap();
+    assert!(after.contains("let r = self.dict"), "{after}");
+    assert!(after.contains("save(r);"), "{after}");
+    assert!(
+        !after.contains("        .get_mut(k)"),
+        "the wrapped chain is what got replaced, not a copy of it beside the original: {after}"
+    );
+}
+
+/// `superseded_site` infers a history — "an earlier write of yours replaced what
+/// the `oldString` quotes" — from one line of the `newString` occurring in the
+/// file exactly once. v22's fourth refusal was that claim and it was false: the
+/// anchor was `self.user_dict.insert(user, record);`, a line the file had always
+/// carried and the `newString` merely repeated as context, while the site itself
+/// sat there untouched with its chain re-wrapped. An explanation of why text
+/// cannot be located is contradicted by anything that locates it, so the two
+/// answers that apply come first. `already_applied_at` still leads — a whole
+/// `newString` on disk is proof rather than inference.
+#[test]
+fn a_rescue_that_locates_the_site_outranks_the_guess_that_it_moved() {
+    let (_temp, root) = setup_root();
+    let file = "fn update(&mut self, k: &str) {\n    self.dict.insert(k, rec);\n    self.dict\n        .get_mut(k)\n        .unwrap_or(&mut Rec { a: 0.0 });\n}\n";
+    fs::write(root.join("port.rs"), file).unwrap();
+
+    let ok = call_tool_in_workspace(
+        &root,
+        "edit_file",
+        &json!({
+            "relativeFilePath": "port.rs",
+            "edits": [{
+                "oldString": "    self.dict.get_mut(k).unwrap_or(&mut Rec { a: 0.0 });",
+                "newString": "    let r = self.dict.get_mut(k).unwrap_or(&mut Rec { a: 0.0 });\n    self.dict.insert(k, rec);\n    save(r);"
+            }],
+            "context": "fix E0515"
+        }),
+    )
+    .unwrap_or_else(|e| panic!("the anchor line is context the model copied, not a rewrite: {e}"));
+
+    assert!(!ok.contains("The text is gone"), "{ok}");
+    assert!(ok.contains("ignoring its line breaks"), "{ok}");
+    let after = fs::read_to_string(root.join("port.rs")).unwrap();
+    assert_eq!(
+        after.matches("self.dict.insert(k, rec);").count(),
+        2,
+        "the context line is written where the model put it: {after}"
+    );
+}
+
+/// The join is licensed by Rust's grammar: a line whose first non-whitespace
+/// character is `.` cannot begin a statement there, so it continues the one
+/// above. In prose or markup a line can begin with a full stop and mean it, so
+/// the rescue stays off and the ordinary refusal stands.
+#[test]
+fn a_flattened_chain_in_a_file_with_no_such_grammar_is_not_rescued() {
+    let (_temp, root) = setup_root();
+    let file = "step one\n    .values_mut()\n    .next()\n    .unwrap_or(the default value)\n";
+    fs::write(root.join("notes.txt"), file).unwrap();
+
+    let err = call_tool_in_workspace(
+        &root,
+        "edit_file",
+        &json!({
+            "relativeFilePath": "notes.txt",
+            "edits": [{
+                "oldString": "step one.values_mut().next().unwrap_or(the default value)",
+                "newString": "step one joined"
+            }]
+        }),
+    )
+    .err()
+    .map(|e| e.to_string())
+    .unwrap_or_else(|| "a `.` line in prose is not a continuation".to_string());
+
+    assert!(!err.contains("ignoring its line breaks"), "{err}");
+    assert_eq!(
+        fs::read_to_string(root.join("notes.txt")).unwrap(),
+        file,
+        "a refused batch leaves the file alone"
+    );
+}
+
 /// `lr7b_v19` in full shape: the `oldString` is the file's own region with one
 /// extra character on its last line, and the `newString` is the correct fix for
 /// the error under repair. Refusing it as "not in the file" and pasting the

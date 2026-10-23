@@ -990,6 +990,159 @@ fn reindent(new_lf: &str, extra: &str, deepen: bool) -> String {
     joined
 }
 
+/// A refused `oldString` that names exactly one place in the file once the
+/// file's chain-continuation lines are joined back onto the lines they
+/// continue.
+#[derive(Debug, PartialEq)]
+struct ChainJoin {
+    /// Byte span the matched lines occupy in the unjoined file, terminators
+    /// excluded — the bytes a rescued edit replaces.
+    start: usize,
+    end: usize,
+    /// 1-based line of the unjoined file the match starts at.
+    line: usize,
+    /// Indentation adjustment taken from the first matched line alone, which is
+    /// the only one whose shift means anything: the lines under it were joined
+    /// out of deeper nesting, so their shift is an artefact of the formatter.
+    extra: String,
+    deepen: bool,
+    /// Unjoined file lines the match covers, always more than the needle has.
+    file_lines: usize,
+}
+
+/// `hay` with every line that continues a chain joined onto the line above it,
+/// plus the byte span each joined line covers in the original.
+///
+/// In Rust a line whose first non-whitespace character is `.` cannot begin a
+/// statement, so it is always a continuation of the one before it and joining
+/// the two changes the line breaks and nothing else. That is what makes the
+/// joined text safe to match against, and the spans are what make the match
+/// reversible: they say which original bytes a joined line stands for, so a
+/// splice can replace them rather than the joined copy. A blank line above a `.`
+/// line ends the chain rather than joining through it.
+fn dechain(hay: &str) -> (String, Vec<(usize, usize)>) {
+    let starts = line_starts(hay);
+    let mut text = String::new();
+    let mut spans: Vec<(usize, usize)> = Vec::new();
+    // A `.` line continues the code above it, so a blank line above it means
+    // there is nothing to join onto rather than that the blank line is the head
+    // of a chain.
+    let mut prev_blank = true;
+    for (k, &s) in starts.iter().enumerate() {
+        let raw = line_at(hay, &starts, k);
+        // The segment after a trailing newline is not a line of the file.
+        if raw.is_empty() && s == hay.len() {
+            break;
+        }
+        let body = raw.trim_start();
+        if body.starts_with('.') && !spans.is_empty() && !prev_blank {
+            text.push_str(body);
+            let last = spans.len() - 1;
+            spans[last].1 = s + raw.len();
+            prev_blank = false;
+            continue;
+        }
+        if !spans.is_empty() {
+            text.push('\n');
+        }
+        text.push_str(raw);
+        spans.push((s, s + raw.len()));
+        prev_blank = raw.trim().is_empty();
+    }
+    (text, spans)
+}
+
+/// The one place a needle's lines occur once the file's chain breaks are
+/// undone, when there is exactly one and a break really was undone.
+///
+/// `lr7b_v22` spent turns 5 through 11 — four identical calls, three compile
+/// repairs and two refunds — on an `oldString` whose only fault was its line
+/// breaks. The file said
+///
+/// ```text
+///         self.user_dict
+///             .values_mut()
+///             .next()
+///             .unwrap_or(&mut PersistedUserRecord {
+/// ```
+///
+/// and the model wrote `self.user_dict.values_mut().next().unwrap_or(&mut
+/// PersistedUserRecord {`, one line, with the struct body under it four spaces
+/// shallower than the file has it. Turn 4 had been allowed to `read_file` that
+/// very region and returned all eleven lines verbatim; the model re-emitted
+/// eight anyway. It is the same inability [`indent_rescue`] exists for, one
+/// dimension over: a small model reproduces the code it means, not the
+/// formatter's decisions about where that code wraps.
+///
+/// Uniqueness is the licence, as it is there. The needle's shift cannot be used
+/// the way `indent_rescue` uses one — the first line keeps the file's indent
+/// while every line under it loses the nesting the chain was broken into, so no
+/// single delta describes it — which is why this answer is narrower: it only
+/// fires when joining recovered the match, and only on the first line's shift.
+/// Both sides are joined, so a needle that breaks a chain the file keeps on one
+/// line is answered the same way.
+fn chain_join_rescue(hay: &str, needle: &str) -> Option<ChainJoin> {
+    // A chain flattened onto one line still has to say something: `x.y()` is in
+    // every source file, and uniqueness alone cannot carry a residue this short.
+    const MIN_TRIMMED: usize = 24;
+    let (joined_needle, _) = dechain(needle);
+    let want: Vec<&str> = joined_needle.lines().collect();
+    let n = want.len();
+    if n == 0 {
+        return None;
+    }
+    let want_trim: Vec<&str> = want.iter().map(|l| l.trim()).collect();
+    if want_trim[0].is_empty() {
+        return None;
+    }
+    if want_trim.iter().map(|l| l.chars().count()).sum::<usize>() < MIN_TRIMMED {
+        return None;
+    }
+    let (joined_hay, spans) = dechain(hay);
+    let got: Vec<&str> = joined_hay.lines().collect();
+    if n > got.len() {
+        return None;
+    }
+    let mut hits: Vec<usize> = Vec::new();
+    for i in 0..=(got.len() - n) {
+        if (0..n).all(|k| got[i + k].trim() == want_trim[k]) {
+            hits.push(i);
+            if hits.len() > 1 {
+                return None;
+            }
+        }
+    }
+    let i = *hits.first()?;
+    let start = spans[i].0;
+    let end = spans[i + n - 1].1;
+    // If no break was undone on either side then the needle's lines already
+    // occur in the file, and `indent_rescue` — with its stricter one-delta rule
+    // — is the truer answer. This one earns its looser footing only by
+    // recovering a match the file's line breaks were hiding.
+    let file_lines = hay[start..end].matches('\n').count() + 1;
+    if file_lines == n && needle.lines().count() == n {
+        return None;
+    }
+    let fk = crate::editor::auto_indent::leading_whitespace(&hay[start..]);
+    let nk = crate::editor::auto_indent::leading_whitespace(want[0]);
+    let (extra, deepen) = if fk.starts_with(nk) {
+        (fk[nk.len()..].to_string(), true)
+    } else if nk.starts_with(fk) {
+        (nk[fk.len()..].to_string(), false)
+    } else {
+        // Tabs against spaces: not a re-wrap of the same code.
+        return None;
+    };
+    Some(ChainJoin {
+        start,
+        end,
+        line: hay[..start].matches('\n').count() + 1,
+        extra,
+        deepen,
+        file_lines,
+    })
+}
+
 /// The line a `newString` already occupies verbatim, if it occupies one.
 ///
 /// This is the "already applied" case in its pure form: an earlier turn wrote
@@ -1450,12 +1603,18 @@ pub fn handle_system_tool(
                         ));
                         continue;
                     }
-                    // The two answers below are read from the file, not from
-                    // `working`: a batch is all-or-nothing, so an edit earlier in
-                    // this same call matched in memory only and nothing it produced
-                    // is on disk yet. Both are complete answers in their own right,
-                    // so neither rides behind the "copy the text verbatim" lead-in —
-                    // the text these two describe is not there to copy.
+                    // Everything below is read from the file. The two that apply
+                    // come before the three that explain, because an explanation
+                    // of why text cannot be located is false the moment something
+                    // locates it: `lr7b_v22` was told "the text is gone because
+                    // this place has already been changed" about a site that was
+                    // sitting there untouched, its chain merely re-wrapped.
+                    // `already_applied_at` stays ahead of them all — a
+                    // `newString` already on disk means the change was made, and
+                    // applying the `oldString` somewhere else would write it
+                    // twice. A batch is all-or-nothing, so these read `current`
+                    // for the file as it stands on disk and `working` for the
+                    // spans they splice.
                     if let Some(line) = already_applied_at(&current, new) {
                         rejected.push(format!(
                             "edit {n}: this change is already on disk — its `newString` is in \
@@ -1465,24 +1624,8 @@ pub fn handle_system_tool(
                         ));
                         continue;
                     }
-                    if let Some(line) = superseded_site(&current, old, new) {
-                        rejected.push(format!(
-                            "edit {n}: its `oldString` is not in {rel_path}. {}",
-                            superseded_site_message(&current, line)
-                        ));
-                        continue;
-                    }
-                    // Naming the one line that differs beats pasting the sites of
-                    // the line that already matched: v19 re-sent the same call
-                    // five times because the paste showed only its correct part.
-                    if let Some(miss) = nearest_miss(&current, old) {
-                        rejected.push(format!("edit {n}: {}", near_miss_message(rel_path, &miss)));
-                        continue;
-                    }
-                    // Last resort before explaining, and the only one of these
-                    // answers that applies instead of refusing. A model cannot
-                    // count leading whitespace: `lr7b_v20` sent the same
-                    // eight-space `oldString` against a twelve-space file ten
+                    // A model cannot count leading whitespace: `lr7b_v20` sent the
+                    // same eight-space `oldString` against a twelve-space file ten
                     // times, and each refusal told it the truth — its lines were
                     // in exactly one place, here they are verbatim — and it
                     // re-guessed eight spaces anyway. One candidate site is the
@@ -1514,6 +1657,54 @@ pub fn handle_system_tool(
                              the file — do not re-send it.",
                             r.line
                         ));
+                        continue;
+                    }
+                    // Nor can it reproduce where a formatter chose to wrap: v22
+                    // read the eleven lines back from `read_file` and re-sent
+                    // them as eight, four times. Joining the file's chain
+                    // continuations is the same answer one dimension over, and
+                    // it is Rust-only because that is where a leading `.` is
+                    // provably a continuation.
+                    let joined = if is_rust {
+                        chain_join_rescue(&working, old)
+                    } else {
+                        None
+                    };
+                    if let Some(r) = joined {
+                        let lf = reindent(&new.replace("\r\n", "\n"), &r.extra, r.deepen);
+                        let patch = if crlf_file {
+                            lf.replace('\n', "\r\n")
+                        } else {
+                            lf
+                        };
+                        if is_rust {
+                            brace_drift +=
+                                brace_delta(&patch) - brace_delta(&working[r.start..r.end]);
+                        }
+                        working = format!("{}{}{}", &working[..r.start], patch, &working[r.end..]);
+                        rescued.push(format!(
+                            "Edit {n} was applied at line {} after ignoring its line breaks: the \
+                             file wraps that code across {} lines and your `oldString` wrote it on \
+                             {}, so the match was made on the code rather than on where the \
+                             formatter wrapped it. The change is in the file — do not re-send it.",
+                            r.line,
+                            r.file_lines,
+                            old.lines().count()
+                        ));
+                        continue;
+                    }
+                    if let Some(line) = superseded_site(&current, old, new) {
+                        rejected.push(format!(
+                            "edit {n}: its `oldString` is not in {rel_path}. {}",
+                            superseded_site_message(&current, line)
+                        ));
+                        continue;
+                    }
+                    // Naming the one line that differs beats pasting the sites of
+                    // the line that already matched: v19 re-sent the same call
+                    // five times because the paste showed only its correct part.
+                    if let Some(miss) = nearest_miss(&current, old) {
+                        rejected.push(format!("edit {n}: {}", near_miss_message(rel_path, &miss)));
                         continue;
                     }
                     let why = explain_refused_edit(&current, old);
@@ -3378,5 +3569,145 @@ mod tests {
         assert_eq!(reindent("a\n\n   \nb", "  ", true), "  a\n\n\n  b");
         // A trailing newline is the model's, not the file's, and survives.
         assert_eq!(reindent("a\n", "  ", true), "  a\n");
+    }
+
+    #[test]
+    fn dechain_joins_continuation_lines_and_remembers_their_bytes() {
+        let hay = "one\n    .two\n    .three\nfour\n";
+        let (text, spans) = super::dechain(hay);
+        assert_eq!(text, "one.two.three\nfour");
+        assert_eq!(spans, vec![(0, 23), (24, 28)]);
+        // The span is the point: it has to name the bytes the joined line stands
+        // for, terminators and all, or a splice replaces the wrong region.
+        assert_eq!(&hay[spans[0].0..spans[0].1], "one\n    .two\n    .three");
+        assert_eq!(&hay[spans[1].0..spans[1].1], "four");
+    }
+
+    #[test]
+    fn dechain_joins_nothing_when_there_is_nothing_above_the_dot() {
+        // A `.` line with a blank line above it is not a continuation, and
+        // joining it onto the blank would move the span onto a line the model
+        // never quoted.
+        let (text, spans) = super::dechain("a\n\n    .b\n");
+        assert_eq!(text, "a\n\n    .b");
+        assert_eq!(spans, vec![(0, 1), (2, 2), (3, 9)]);
+        // Nor is one with no line above it at all.
+        let (text, spans) = super::dechain("    .orphan()\nrest\n");
+        assert_eq!(text, "    .orphan()\nrest");
+        assert_eq!(spans, vec![(0, 13), (14, 18)]);
+        assert_eq!(super::dechain("").1, Vec::<(usize, usize)>::new());
+    }
+
+    /// `lr7b_v22`'s file: rustfmt broke the chain, and the model wrote it back
+    /// as one line with the struct body four spaces shallower than the file
+    /// nests it. The first line keeps the file's own indent while every line
+    /// under it does not, so no single delta describes the difference and
+    /// [`super::indent_rescue`] declines it.
+    const CHAINED_FILE: &str = r#"    pub fn update(&mut self, user: &str, record: Record) {
+        self.user_dict.insert(user, record);
+        let _ = self.save_data();
+        self.user_dict
+            .values_mut()
+            .next()
+            .unwrap_or(&mut PersistedUserRecord {
+                total_budget: 0.0,
+                current_cost: 0.0,
+            })
+    }
+"#;
+
+    /// v22's `oldString`, byte for byte: the chain on one line, the body under
+    /// it at the nesting the model expected rather than the file's.
+    const FLATTENED_CHAIN: &str = r#"        self.user_dict.values_mut().next().unwrap_or(&mut PersistedUserRecord {
+            total_budget: 0.0,
+            current_cost: 0.0,
+        })"#;
+
+    #[test]
+    fn a_chain_flattened_onto_one_line_still_names_exactly_one_site() {
+        let r = super::chain_join_rescue(CHAINED_FILE, FLATTENED_CHAIN)
+            .expect("the code is the file's own, only its wraps differ");
+        assert_eq!(r.line, 4, "the match starts where the chain starts");
+        assert_eq!(
+            r.file_lines, 7,
+            "and covers every line the formatter broke it into"
+        );
+        assert_eq!(
+            &CHAINED_FILE[r.start..r.end],
+            "        self.user_dict\n            .values_mut()\n            .next()\n            .unwrap_or(&mut PersistedUserRecord {\n                total_budget: 0.0,\n                current_cost: 0.0,\n            })",
+            "the span is the unjoined bytes, so the splice replaces them and not a copy"
+        );
+        // The first line is at the file's own indent, so the replacement goes in
+        // as the model wrote it and rustfmt re-wraps it.
+        assert!(
+            r.extra.is_empty(),
+            "the one shift that is taken is the first line's, and here it is none: {r:?}"
+        );
+    }
+
+    #[test]
+    fn a_chain_join_declines_when_the_code_is_not_the_files() {
+        // One character on the last line: the region is nearly right, which is
+        // `nearest_miss`'s answer, not something to apply.
+        assert_eq!(
+            super::chain_join_rescue(CHAINED_FILE, &format!("{FLATTENED_CHAIN};")),
+            None
+        );
+        // Two sites is no site: uniqueness is the whole licence.
+        let twice = format!("fn a() {{\n{CHAINED_FILE}\nfn b() {{\n{CHAINED_FILE}");
+        assert_eq!(super::chain_join_rescue(&twice, FLATTENED_CHAIN), None);
+        // A residue this short is in every file, so uniqueness cannot carry it.
+        assert_eq!(
+            super::chain_join_rescue("fn f() {\n    a.b\n        .c(x);\n}\n", "a.b.c(x);\n}"),
+            None
+        );
+        assert_eq!(super::chain_join_rescue(CHAINED_FILE, ""), None);
+    }
+
+    #[test]
+    fn a_chain_join_needs_a_first_line_to_take_its_indent_from() {
+        // The one delta it reports comes from the first matched line, so a
+        // needle opening on a blank one would take its shift from a line that
+        // carries no code — here the file's own whitespace-only line, which
+        // would push the whole replacement four spaces right.
+        let hay = "fn f() {\n    \n        self.dict\n            .get_mut(k)\n            .unwrap_or(&mut Rec { a: 0.0 });\n}\n";
+        let needle = "\n        self.dict.get_mut(k).unwrap_or(&mut Rec { a: 0.0 });";
+        assert_eq!(super::chain_join_rescue(hay, needle), None);
+    }
+
+    #[test]
+    fn a_chain_join_leaves_a_pure_reindent_to_the_indent_rescue() {
+        let hay = "fn f() {\n    let total = mgr.record(total_cost);\n    save(total);\n}\n";
+        let needle = "  let total = mgr.record(total_cost);\n  save(total);";
+        // No break to undo on either side, so this is a shift and nothing else —
+        // and the rescue that answers a shift has a stricter rule about it.
+        assert_eq!(super::chain_join_rescue(hay, needle), None);
+        assert!(super::indent_rescue(hay, needle).is_some());
+    }
+
+    #[test]
+    fn a_chain_the_model_broke_is_joined_back_too() {
+        let hay = "fn f() {\n    self.user_dict.values_mut().next().unwrap_or(&mut Record {\n        total_budget: 0.0,\n    });\n}\n";
+        let needle = "    self.user_dict\n        .values_mut()\n        .next()\n        \
+                      .unwrap_or(&mut Record {\n        total_budget: 0.0,\n    });";
+        let r = super::chain_join_rescue(hay, needle)
+            .expect("the mirror image of a flattened chain is the same difference");
+        assert_eq!(r.line, 2);
+        assert_eq!(r.file_lines, 3);
+        assert_eq!(r.extra, "");
+    }
+
+    #[test]
+    fn a_chain_join_locates_a_span_in_a_crlf_file_by_byte() {
+        let hay = CHAINED_FILE.replace('\n', "\r\n");
+        let needle = FLATTENED_CHAIN.replace('\n', "\r\n");
+        let r = super::chain_join_rescue(&hay, &needle).expect("endings are not text");
+        assert_eq!(r.line, 4);
+        assert_eq!(r.file_lines, 7);
+        assert_eq!(
+            &hay[r.start..r.end],
+            "        self.user_dict\r\n            .values_mut()\r\n            .next()\r\n            .unwrap_or(&mut PersistedUserRecord {\r\n                total_budget: 0.0,\r\n                current_cost: 0.0,\r\n            })",
+            "terminators stay outside the span, so a splice cannot drop or double one"
+        );
     }
 }
