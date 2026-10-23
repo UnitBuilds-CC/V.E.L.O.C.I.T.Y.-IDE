@@ -582,6 +582,71 @@ fn a_refused_edit_shows_the_files_own_indentation_of_the_line_it_missed() {
     );
 }
 
+/// `lr7b_v19` in full shape: the `oldString` is the file's own region with one
+/// extra character on its last line, and the `newString` is the correct fix for
+/// the error under repair. Refusing it as "not in the file" and pasting the
+/// sites of its FIRST line shows only the part that already matched, so the
+/// model re-sent the byte-identical call five times and the run ended with the
+/// error still standing. The line that differs has to be named, from both sides.
+#[test]
+fn a_refused_edit_one_character_off_names_the_line_that_differs() {
+    let (_temp, root) = setup_root();
+    let file = r#"    pub fn update(&mut self, user: &str, record: Record) {
+        self.user_dict.insert(user, record);
+        let _ = self.save_data();
+        self.user_dict
+            .values_mut()
+            .next()
+            .unwrap_or(&mut PersistedUserRecord {
+                total_budget: 0.0,
+                current_cost: 0.0,
+            })
+    }
+"#;
+    fs::write(root.join("port.rs"), file).unwrap();
+
+    let err = call_tool_in_workspace(
+        &root,
+        "edit_file",
+        &json!({
+            "relativeFilePath": "port.rs",
+            "edits": [{
+                "oldString": "        self.user_dict\n            .values_mut()\n            .next()\n            .unwrap_or(&mut PersistedUserRecord {\n                total_budget: 0.0,\n                current_cost: 0.0,\n            });\n",
+                "newString": "        let result_record = self.user_dict\n            .values_mut()\n            .next()\n            .unwrap_or(&mut PersistedUserRecord {\n                total_budget: 0.0,\n                current_cost: 0.0,\n            });\n"
+            }],
+            "context": "fix E0515"
+        }),
+    )
+    .err()
+    .map(|e| e.to_string())
+    .unwrap_or_else(|| "the one-character-off edit must be refused".to_string());
+
+    assert!(err.contains("not in port.rs"), "{err}");
+    assert!(
+        err.contains("6 of its 7 non-blank lines"),
+        "the refusal must say how much of the edit was right: {err}"
+    );
+    assert!(
+        err.contains("you wrote `});`") && err.contains("the file says `})`"),
+        "and name the divergent line from both sides: {err}"
+    );
+    assert!(
+        err.contains("read from line 4"),
+        "and where the matching region starts: {err}"
+    );
+    // The sites paste answered this call before and taught nothing: its first
+    // line is in the file, so the paste was all correct text and no divergence.
+    assert!(
+        !err.contains("different leading whitespace"),
+        "the near-miss answer must take the place of the sites paste: {err}"
+    );
+    assert_eq!(
+        fs::read_to_string(root.join("port.rs")).unwrap(),
+        file,
+        "a refused batch leaves the file alone"
+    );
+}
+
 /// The other half: text that is not in the file at all. Pasting back a random
 /// near-match would be worse than useless, so the refusal has to say the
 /// content differs and point at the one tool that can settle it.

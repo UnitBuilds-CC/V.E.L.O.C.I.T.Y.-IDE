@@ -685,6 +685,153 @@ fn blocks_are_distinct(lines: &[&str], sites: &[usize], width: usize) -> bool {
     true
 }
 
+/// A refused `oldString` that is one line away from text the file does contain.
+#[derive(Debug, PartialEq)]
+struct NearMiss {
+    /// The 1-based file line the candidate starts at.
+    line: usize,
+    /// How many of the needle's non-blank lines matched in order from there.
+    matched: usize,
+    /// How many non-blank lines the needle has.
+    total: usize,
+    /// The needle's own 1-based line where it diverged.
+    needle_line: usize,
+    /// What the model wrote there, and what the file says.
+    wrote: String,
+    file_says: String,
+}
+
+/// One quoted line of a near-miss report, clipped so a long line cannot crowd
+/// out the rest of the refusal.
+fn clipped_line(line: &str) -> String {
+    const MAX: usize = 160;
+    let mut out: String = line.chars().take(MAX).collect();
+    if out.len() != line.len() {
+        out.push('\u{2026}');
+    }
+    out
+}
+
+/// The closest near-miss to a refused `needle`, when one is close enough to name.
+///
+/// `lr7b_v19` lost five of its eleven turns, and the run, to one semicolon. The
+/// model's 11-line `oldString` matched `budget_manager.rs` from line 287 for 10
+/// of its 11 non-blank lines and diverged on the last — it wrote `});` where the
+/// file says `})` — and its `newString` was the correct fix for the E0515 that
+/// turn was repairing. The refusal answered with the sites of the needle's
+/// *first* line pasted two to four lines wide, which is the part that already
+/// matched. Nothing in the message named the line that did not, so the model
+/// re-sent the byte-identical call five times and the error survived the run.
+///
+/// The scan is a prefix run from every file line, not an alignment: a needle
+/// botched in the middle scores only the lines before the mistake and falls
+/// through to `explain_refused_edit`. That is the shape this was built for — a
+/// model reproduces a region it was just shown and paraphrases its last line —
+/// and guessing past a divergence in the middle would be inventing an edit.
+///
+/// `None` unless the needle has at least three non-blank lines and the best
+/// candidate matches at least half of them, and `None` when every line matched:
+/// then only the indentation differs, which is `explain_refused_edit`'s answer
+/// and a better one. A near miss that is not confidently near reads as an answer
+/// while pointing at the wrong place, which is worse than the sites paste.
+fn nearest_miss(hay: &str, needle: &str) -> Option<NearMiss> {
+    const MIN_LINES: usize = 3;
+    const MAX_LINES: usize = 60;
+    let hay = hay.replace("\r\n", "\n");
+    let needle = needle.replace("\r\n", "\n");
+    let file: Vec<&str> = hay.lines().collect();
+    let want: Vec<(usize, &str)> = needle
+        .lines()
+        .enumerate()
+        .map(|(i, l)| (i + 1, l.trim()))
+        .filter(|(_, l)| !l.is_empty())
+        .take(MAX_LINES)
+        .collect();
+    if want.len() < MIN_LINES {
+        return None;
+    }
+    let mut best_at = 0usize;
+    let mut best_matched = 0usize;
+    let mut indentation_only = false;
+    for i in 0..file.len() {
+        let mut k = 0usize;
+        let mut j = i;
+        // The run may skip blank lines before its first match, and an anchor on
+        // one of those is not where the region starts.
+        let mut first = i;
+        while j < file.len() && k < want.len() {
+            let line = file[j].trim();
+            if line.is_empty() {
+                j += 1;
+                continue;
+            }
+            if line != want[k].1 {
+                break;
+            }
+            if k == 0 {
+                first = j;
+            }
+            k += 1;
+            j += 1;
+        }
+        if k == want.len() {
+            indentation_only = true;
+        } else if k > best_matched {
+            best_matched = k;
+            best_at = first;
+        }
+    }
+    if indentation_only || best_matched < 2 || best_matched * 2 < want.len() {
+        return None;
+    }
+    // Walk the winning candidate again to land on the file line it stopped at.
+    let mut j = best_at;
+    let mut k = 0usize;
+    while j < file.len() && k < best_matched {
+        if file[j].trim().is_empty() {
+            j += 1;
+            continue;
+        }
+        k += 1;
+        j += 1;
+    }
+    while j < file.len() && file[j].trim().is_empty() {
+        j += 1;
+    }
+    let (needle_line, wrote) = want[best_matched];
+    Some(NearMiss {
+        line: best_at + 1,
+        matched: best_matched,
+        total: want.len(),
+        needle_line,
+        wrote: clipped_line(wrote),
+        file_says: if j < file.len() {
+            clipped_line(file[j].trim())
+        } else {
+            "the file ends".to_string()
+        },
+    })
+}
+
+/// The refusal for a near-miss `oldString`: what matched, and the one line that
+/// did not, quoted from both sides so the next call differs where it must.
+fn near_miss_message(rel_path: &str, m: &NearMiss) -> String {
+    format!(
+        "its `oldString` is not in {rel_path}, but it is close to text that is: read from line \
+         {line}, {matched} of its {total} non-blank lines are in the file in that order and the \
+         next one is not. Its line {needle_line} is where they part — you wrote `{wrote}`, the \
+         file says `{file_says}`. Send the same edit with the file's version of that one line in \
+         the `oldString`; the {matched} lines before it are right. Both texts quoted here are \
+         single lines, not a region to paste back whole.",
+        line = m.line,
+        matched = m.matched,
+        total = m.total,
+        needle_line = m.needle_line,
+        wrote = m.wrote,
+        file_says = m.file_says,
+    )
+}
+
 /// The line a `newString` already occupies verbatim, if it occupies one.
 ///
 /// This is the "already applied" case in its pure form: an earlier turn wrote
@@ -1164,6 +1311,13 @@ pub fn handle_system_tool(
                             "edit {n}: its `oldString` is not in {rel_path}. {}",
                             superseded_site_message(&current, line)
                         ));
+                        continue;
+                    }
+                    // Naming the one line that differs beats pasting the sites of
+                    // the line that already matched: v19 re-sent the same call
+                    // five times because the paste showed only its correct part.
+                    if let Some(miss) = nearest_miss(&current, old) {
+                        rejected.push(format!("edit {n}: {}", near_miss_message(rel_path, &miss)));
                         continue;
                     }
                     let why = explain_refused_edit(&current, old);
@@ -2832,5 +2986,102 @@ mod tests {
             }
         }
         let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn a_near_miss_names_the_one_line_that_differs() {
+        // lr7b_v19 in miniature: every non-blank line but the last is the file's
+        // own, and the last carries a `;` the file does not have.
+        let hay = r#"    pub fn update(&mut self, user: &str, record: Record) {
+        self.user_dict.insert(user, record);
+        let _ = self.save_data();
+        self.user_dict
+            .values_mut()
+            .next()
+            .unwrap_or(&mut PersistedUserRecord {
+                total_budget: 0.0,
+                current_cost: 0.0,
+            })
+    }
+"#;
+        let needle = r#"        self.user_dict
+            .values_mut()
+            .next()
+            .unwrap_or(&mut PersistedUserRecord {
+                total_budget: 0.0,
+                current_cost: 0.0,
+            });
+"#;
+        let miss = nearest_miss(hay, needle).expect("one character off is nameable");
+        assert_eq!(miss.line, 4, "the region starts at the file's own line 4");
+        assert_eq!((miss.matched, miss.total), (6, 7));
+        assert_eq!(miss.needle_line, 7, "the needle's own numbering");
+        assert_eq!(miss.wrote, "});");
+        assert_eq!(miss.file_says, "})");
+
+        let msg = near_miss_message("src/port.rs", &miss);
+        for want in [
+            "src/port.rs",
+            "line 4",
+            "6 of its 7 non-blank lines",
+            "Its line 7",
+            "you wrote `});`",
+            "the file says `})`",
+        ] {
+            assert!(msg.contains(want), "{want} missing from: {msg}");
+        }
+    }
+
+    #[test]
+    fn a_near_miss_looks_past_blank_lines_and_crlf() {
+        let hay = "fn a() {\r\n\r\n    let x = 1;\r\n\r\n    let y = 2;\r\n    let z = 3;\r\n}\r\n";
+        let needle = "    let x = 1;\n    let y = 2;\n    let z = 9;\n";
+        let miss = nearest_miss(hay, needle).expect("blank lines and CRLF are not content");
+        assert_eq!(miss.line, 3);
+        assert_eq!((miss.matched, miss.total), (2, 3));
+        assert_eq!(miss.file_says, "let z = 3;");
+    }
+
+    #[test]
+    fn a_near_miss_has_to_be_confidently_near() {
+        // Two non-blank lines cannot say which region was meant.
+        let hay = "fn a() {\n    let x = 1;\n    let y = 2;\n}\n";
+        assert_eq!(nearest_miss(hay, "    let x = 1;\n    let z = 9;\n"), None);
+
+        // A needle botched in the middle scores only the lines before the
+        // mistake; the scan is a prefix run and never guesses past it.
+        let middle = "    let a = 1;\n    let WRONG = 0;\n    let c = 3;\n    let d = 4;\n";
+        let needle = "    let a = 1;\n    let b = 2;\n    let c = 3;\n    let d = 4;\n";
+        assert_eq!(nearest_miss(middle, needle), None);
+
+        // Two of six is under half, so it points at nothing worth pointing at.
+        let hay =
+            "    let a = 1;\n    let b = 2;\n    let c = 9;\n    let d = 9;\n    let e = 9;\n";
+        let six = "    let a = 1;\n    let b = 2;\n    let c = 3;\n    let d = 4;\n    let e = 5;\n    let f = 6;\n";
+        assert_eq!(nearest_miss(hay, six), None);
+
+        // Every line present with only the indentation wrong belongs to
+        // explain_refused_edit, which pastes the file's own leading spaces.
+        let flat = "    let a = 1;\n    let b = 2;\n    let c = 3;\n";
+        let deep = "        let a = 1;\n        let b = 2;\n        let c = 3;\n";
+        assert_eq!(nearest_miss(flat, deep), None);
+        // And an exact match is not a near miss at all.
+        assert_eq!(nearest_miss(flat, flat), None);
+    }
+
+    #[test]
+    fn a_long_quoted_line_is_clipped_not_dropped() {
+        let hay = "    let a = 1;\n    let b = 2;\n    let target = 3;\n";
+        let needle = format!(
+            "    let a = 1;\n    let b = 2;\n    let target = {};\n",
+            "x".repeat(400)
+        );
+        let miss = nearest_miss(hay, &needle).expect("the first two lines still anchor it");
+        assert_eq!(miss.wrote.chars().count(), 161, "160 kept plus the mark");
+        assert!(miss.wrote.ends_with('\u{2026}'), "{}", miss.wrote);
+        // Clipping one side does not touch the other: the file's own line is
+        // short, so it arrives whole and the model can copy it.
+        let msg = near_miss_message("src/port.rs", &miss);
+        assert!(msg.contains("the file says `let target = 3;`"), "{msg}");
     }
 }

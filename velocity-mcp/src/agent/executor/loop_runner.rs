@@ -4640,15 +4640,25 @@ fn note_refusal_repeat(
 /// applied change apply again. A note that contradicts the refusal it is
 /// attached to wins, being the last thing in the message, so it has to agree
 /// with it.
+///
+/// The branches run most specific first because the refusals share words: a
+/// near-miss refusal also says its `oldString` is not in the file, and the
+/// brace-drift refusal says "not in place of it" in ordinary prose, so the
+/// ambiguous-site branch keys on `places in` and not on `place`.
 fn replay_advice(refusal: &str) -> &'static str {
-    if refusal.contains("already on disk") {
+    if refusal.contains("is where they part") {
+        "The refusal quotes the file's own version of that line after \"the file says\". Put it \
+         into the `oldString` in place of the line you wrote and send the same edit again. Every \
+         other line of the `oldString` already matches the file, so re-reading it learns nothing \
+         new and re-sending this call unchanged cannot apply."
+    } else if refusal.contains("already on disk") {
         "The change is in the file already, so no version of this call can do anything. The \
          error the compiler still reports is at a different line: `read_file` the region that \
          line is in, copy what you see there into `oldString`, and change that instead."
     } else if refusal.contains("byte-identical") {
         "A call whose `newString` equals its `oldString` changes no characters however often it \
          is sent. Write the replacement the error asks for."
-    } else if refusal.contains("place") {
+    } else if refusal.contains("places in") {
         "Widen the `oldString` — include the lines around it — until only the one place you mean \
          still matches, and send that."
     } else if refusal.contains("is not in") {
@@ -7738,6 +7748,33 @@ mod tests {
         );
         assert!(applied.contains("already"), "{applied}");
         assert!(!applied.contains("Widen"), "{applied}");
+
+        // The `lr7b_v19` case: the refusal quoted the file's own line, so that
+        // line is the lever. Telling the model to go and read the region again
+        // would send it after the one thing it has already been handed.
+        let near = replay_advice(
+            "Error executing tool: no edits were applied to a.rs; the file is unchanged:\n\
+             edit 1: its `oldString` is not in a.rs, but it is close to text that is: read from \
+             line 287, 10 of its 11 non-blank lines are in the file in that order and the next \
+             one is not. Its line 11 is where they part — you wrote `});`, the file says `})`.",
+        );
+        assert!(near.contains("the file says"), "{near}");
+        assert!(
+            !near.contains("read_file"),
+            "a read returns the same line: {near}"
+        );
+        assert!(!near.contains("Widen"), "{near}");
+
+        // The brace-drift refusal says "not in place of it" in ordinary prose.
+        // It is not an ambiguous-site refusal, so it must not draw the
+        // widen-it lever, which cannot fix an unclosed block.
+        let drift = replay_advice(
+            "Error executing tool: no edits were applied to a.rs; the file is unchanged: this \
+             batch of 1 edit(s) would leave the file with 1 more block left open than it has \
+             now. Put the new text around it, not in place of it.",
+        );
+        assert!(!drift.contains("Widen"), "{drift}");
+        assert!(drift.contains("substance"), "{drift}");
 
         // v12's case: two sites match, so the lever really is the `oldString`.
         let ambiguous = replay_advice(
