@@ -2213,6 +2213,25 @@ impl<'a> TabViewerImpl<'a> {
                                     self.app.next_intervention_id += 1;
                                     self.app.mission_control.queue_intervention(id, note);
                                     self.app.mission_control.intervention_input.clear();
+                                    // Immediately attempt delivery to the selected
+                                    // running task (or first running task).
+                                    let target = self.app.mission_control.selected_task_id
+                                        .or_else(|| {
+                                            snapshot.tasks.iter()
+                                                .find(|t| t.status_label == "Running")
+                                                .map(|t| t.id)
+                                        });
+                                    if let Some(tid) = target {
+                                        let delivered = self.app.mission_control
+                                            .dispatch_intervention(id, |n| {
+                                                self.app.orchestrator
+                                                    .send_task_note_action(crate::orchestrator::TaskId(tid), n)
+                                            });
+                                        if delivered {
+                                            self.app.status_message =
+                                                format!("Intervention #{} delivered to task #{}", id, tid);
+                                        }
+                                    }
                                 }
                             }
                             if !self.app.mission_control.interventions.is_empty() {

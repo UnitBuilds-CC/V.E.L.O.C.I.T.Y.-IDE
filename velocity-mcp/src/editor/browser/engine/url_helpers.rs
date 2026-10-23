@@ -176,7 +176,10 @@ pub fn truncate_string(s: &str, max_len: usize) -> String {
     if s.len() <= max_len {
         s.to_string()
     } else {
-        format!("{}...", &s[..max_len])
+        // The budget is in bytes and the text is whatever a page contained, so
+        // the cut lands inside an accented, CJK or emoji character constantly —
+        // and slicing there panics in the middle of report generation.
+        format!("{}...", &s[..s.floor_char_boundary(max_len)])
     }
 }
 
@@ -338,4 +341,23 @@ pub fn browser_workflow_run_path(
             sanitize_file_stem(workflow_name),
             sanitize_file_stem(session_id)
         ))
+}
+
+#[cfg(test)]
+mod truncate_tests {
+    use super::truncate_string;
+
+    /// Callers pass a BYTE budget over page text (`truncate_string(page_text
+    /// .trim(), 1000)`), so an accented or CJK page cut mid-character used to
+    /// panic in the middle of report generation.
+    #[test]
+    fn every_truncation_budget_lands_on_a_character_boundary() {
+        let text = "Le café ⚡ 日本語 — ".repeat(40);
+        for max in 0..text.len() {
+            let t = truncate_string(&text, max);
+            assert!(t.len() <= max + 3, "max={max}: {t}");
+            let kept = t.strip_suffix("...").unwrap_or(&t);
+            assert!(text.starts_with(kept), "max={max} kept bytes not a prefix");
+        }
+    }
 }

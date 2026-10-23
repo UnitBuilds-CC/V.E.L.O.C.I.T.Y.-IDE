@@ -305,6 +305,12 @@ pub struct PeerManager {
 }
 
 impl PeerManager {
+    /// The workspace this manager is rooted at, when initialized. It is also
+    /// the home of the durable op-log that `POST /peer/ops` replicates.
+    pub fn workspace_root(&self) -> Option<&Path> {
+        self.workspace_root.as_deref()
+    }
+
     pub fn new() -> Self {
         Self {
             local_identity: None,
@@ -813,6 +819,79 @@ impl PeerManager {
             execution_output: exec_output,
             error,
         }
+    }
+
+    // ── Op-log replication (System A, spec §4) ──
+
+    /// Replicate the workspace op-log with a remote peer in one round: send
+    /// what we have (with our observed clock), merge whatever the peer returns,
+    /// and report `(merged_in, sent)`. Idempotent by construction — the receiver
+    /// dedupes by `op_id` and we dedupe before appending — so calling this on
+    /// every heartbeat is safe; only bandwidth varies.
+    pub fn sync_ops_with_peer(&self, peer_id: &str) -> Result<(usize, usize), String> {
+        use crate::automation::replication::{OpsExchangeRequest, ReplicationView};
+        let workspace = self
+            .workspace_root
+            .as_ref()
+            .ok_or_else(|| "No workspace root — cannot open the op-log to sync".to_string())?;
+        let peer = self
+            .get_peer(peer_id)
+            .ok_or_else(|| format!("Peer '{}' not found", peer_id))?
+            .clone();
+        let store = crate::automation::OpLogStore::open(workspace);
+        let local = store.load();
+        let view = ReplicationView::from_log(&local);
+        let request = OpsExchangeRequest {
+            from_node: self
+                .local_identity
+                .as_ref()
+                .map(|id| id.id.clone())
+                .unwrap_or_default(),
+            observed: view.observed,
+            ops: local.ops().to_vec(),
+            seen_ids: view.seen_ids.into_iter().collect(),
+        };
+        // One POST /peer/ops carries our whole log + observed clock; the peer
+        // answers in kind with the ops its view of us says we may lack.
+        let response_val = crate::agent::peer_server::send_to_peer(
+            &peer.host,
+            peer.port,
+            "/peer/ops",
+            &serde_json::to_value(&request).map_err(|e| format!("Serialize sync: {e}"))?,
+        )?;
+        let response: crate::automation::replication::OpsExchangeResponse =
+            serde_json::from_value(response_val)
+                .map_err(|e| format!("Parse sync response: {e}"))?;
+        let inbound = crate::automation::replication::OpsExchangeRequest {
+            from_node: peer.id.clone(),
+            observed: Default::default(),
+            ops: response.ops,
+            seen_ids: Vec::new(),
+        };
+        let (merged, _skipped) = crate::automation::replication::merge_remote_ops(&store, &inbound);
+        Ok((merged, request.ops.len()))
+    }
+
+    /// One fan-out round of [`Self::sync_ops_with_peer`] across every *online*
+    /// peer — the entry point a heartbeat (or a manual "sync now") calls to
+    /// converge the whole visible fleet in a single pass. Per-peer failures are
+    /// collected rather than aborting the round, so one dead node never stalls
+    /// convergence with the rest; offline peers are not attempted at all.
+    /// Returns `(merged_in, sent, failures)` aggregated across successful rounds.
+    pub fn sync_all_peers(&self) -> (usize, usize, Vec<(String, String)>) {
+        let mut merged = 0usize;
+        let mut sent = 0usize;
+        let mut failures: Vec<(String, String)> = Vec::new();
+        for peer in self.online_peers() {
+            match self.sync_ops_with_peer(&peer.id) {
+                Ok((m, s)) => {
+                    merged += m;
+                    sent += s;
+                }
+                Err(e) => failures.push((peer.id.clone(), e)),
+            }
+        }
+        (merged, sent, failures)
     }
 
     // ── Pairing ──
@@ -1504,5 +1583,129 @@ mod tests {
         }
         mgr.prune_history();
         assert_eq!(mgr.tasks.len(), 4);
+    }
+
+    #[test]
+    fn ops_sync_over_real_tcp_converges_two_workspaces() {
+        // The full System-A claim, end to end: two workspaces, each with ops
+        // only the other has, one POST /peer/ops round — both durable logs
+        // materialize to the same site-map state (spec §4 convergence).
+        use crate::automation::{oplog::materialize, OpLogStore};
+
+        // Reserve an ephemeral port, then hand it to the server. (Tiny race;
+        // acceptable in-process tests on loopback.)
+        let probe = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = probe.local_addr().unwrap().port();
+        drop(probe);
+
+        // Peer B's workspace + server, as the *remote* node.
+        let b_dir = tempfile::tempdir().unwrap();
+        {
+            let b_store = OpLogStore::open(b_dir.path());
+            let op = crate::automation::replication::test_util::stamped_triple_op(
+                &b_store, "node-b", "b.rs", 10, 20,
+            );
+            b_store.append(&op).unwrap();
+        }
+        let mut b_mgr = PeerManager::new();
+        b_mgr.init(b_dir.path(), "HostB");
+        b_mgr.set_listen_port(port);
+        let server = std::sync::Arc::new(crate::agent::peer_server::PeerServer::new(
+            crate::agent::peer_server::PeerServerConfig {
+                port,
+                bind_addr: "127.0.0.1".to_string(),
+                ..Default::default()
+            },
+        ));
+        let flag = server.running_flag();
+        {
+            let server = server.clone();
+            std::thread::spawn(move || {
+                let _ = server.start(&b_mgr);
+            });
+        }
+        for _ in 0..50 {
+            if flag.load(std::sync::atomic::Ordering::SeqCst) {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+        assert!(
+            flag.load(std::sync::atomic::Ordering::SeqCst),
+            "peer server did not start"
+        );
+
+        // Local node A: its own workspace, its own op, B registered as peer.
+        let a_dir = tempfile::tempdir().unwrap();
+        let a_store = OpLogStore::open(a_dir.path());
+        let _a_op = crate::automation::replication::test_util::stamped_triple_op(
+            &a_store, "node-a", "a.rs", 1, 2,
+        );
+        a_store.append(&_a_op).unwrap();
+        let mut a_mgr = PeerManager::new();
+        a_mgr.init(a_dir.path(), "HostA");
+        a_mgr.add_peer(PeerIdentity {
+            id: "peer-b".to_string(),
+            name: "B".to_string(),
+            host: "127.0.0.1".to_string(),
+            port,
+            auth_secret_handle: None,
+            first_seen: now_secs(),
+            last_seen: now_secs(),
+            online: true,
+            capabilities: vec![],
+            environment: None,
+        });
+
+        let (merged_in, sent) = a_mgr.sync_ops_with_peer("peer-b").unwrap();
+        assert_eq!(sent, 1, "A ships its one op");
+        assert_eq!(merged_in, 1, "A pulls B's op back");
+        assert_eq!(a_store.load().ops().len(), 2);
+
+        let a_state = materialize(&a_store.load());
+        let b_state = materialize(&OpLogStore::open(b_dir.path()).load());
+        assert_eq!(a_state, b_state, "cross-node convergence over TCP");
+        assert_eq!(a_state.live_triples.len(), 2);
+
+        // Idempotent second round: nothing new moves.
+        let (merged_again, _) = a_mgr.sync_ops_with_peer("peer-b").unwrap();
+        assert_eq!(merged_again, 0);
+        assert_eq!(a_store.load().ops().len(), 2);
+
+        flag.store(false, std::sync::atomic::Ordering::SeqCst);
+    }
+
+    #[test]
+    fn sync_all_peers_fans_out_to_online_and_collects_failures() {
+        // The fan-out entry point targets only online peers, and a peer failure
+        // is collected rather than aborting the round — one unreachable node
+        // must never stall fleet convergence. Port 1 has no listener, so the
+        // online peer reliably errors without a live server.
+        let dir = tempfile::tempdir().unwrap();
+        let mut mgr = PeerManager::new();
+        mgr.init(dir.path(), "HostA");
+        let dead = PeerIdentity {
+            id: String::new(),
+            name: "n".to_string(),
+            host: "127.0.0.1".to_string(),
+            port: 1,
+            auth_secret_handle: None,
+            first_seen: now_secs(),
+            last_seen: now_secs(),
+            online: true,
+            capabilities: vec![],
+            environment: None,
+        };
+        let mut online_dead = dead.clone();
+        online_dead.id = "online-dead".to_string();
+        mgr.add_peer(online_dead);
+        let mut offline = dead.clone();
+        offline.id = "offline-peer".to_string();
+        offline.online = false;
+        mgr.add_peer(offline);
+
+        let (_merged, _sent, failures) = mgr.sync_all_peers();
+        assert_eq!(failures.len(), 1, "the offline peer must not be attempted");
+        assert_eq!(failures[0].0, "online-dead");
     }
 }

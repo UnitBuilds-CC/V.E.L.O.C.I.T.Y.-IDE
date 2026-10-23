@@ -4,7 +4,7 @@ A complete guide to using the V.E.L.O.C.I.T.Y. Cognitive IDE — a native, GPU-a
 
 > **Looking for a specific answer?** This guide is the narrative overview. The
 > **de-facto, exhaustive reference** — every panel, sub-panel, dropdown,
-> command, shortcut, and the full list of 291 agent tools, each cross-checked
+> command, shortcut, and the full list of 336 agent tools, each cross-checked
 > against the source — lives in the split manual at
 > **[docs/manual/](docs/manual/README.md)**:
 >
@@ -827,9 +827,9 @@ To connect an external AI assistant, add Velocity as an MCP server in the assist
 
 ### Available MCP Tools
 
-The server exposes 250+ tools across 5 categories:
+The server exposes 336 tools across 7 categories:
 
-**System Tools** (28 tools):
+**System Tools** (53 tools — representative sample):
 | Tool | Description |
 |------|-------------|
 | `read_file` | Read file contents |
@@ -852,6 +852,7 @@ The server exposes 250+ tools across 5 categories:
 | `code_coverage_analyze` | Analyze test coverage |
 | `knowledge_ingest` | Ingest text into the knowledge base |
 | `knowledge_search` | Search the knowledge base |
+| `workflow_list` | List saved workflows with step-type counts and reference validation |
 | `workflow_run` | Run an automation workflow |
 | `connector_call` | Call an external connector |
 | `generate_image` | Generate an image via AI |
@@ -865,7 +866,10 @@ The server exposes 250+ tools across 5 categories:
 
 **Windows Automation Tools** (86 tools): UI automation, screenshot capture, registry access, advanced input simulation.
 
-**Team Tools** (20 tools): `create_expert_team`, `create_skill_file`, `list_expert_teams`, `list_skills`, `update_expert_team`, `update_team_member`, `add_team_member`, `remove_team_member`, `validate_team`, `check_scope_overlaps`, `clone_expert_team`, `export_expert_team`, `import_expert_team`, `debug_routing`, `team_analytics`, `team_health_check`, `list_providers`, `create_team_quick`, `bulk_import_members`, `team_changelog`.
+**Team Tools** (22 tools): `create_expert_team`, `create_skill_file`, `list_expert_teams`, `list_skills`, `update_expert_team`, `update_team_member`, `add_team_member`, `remove_team_member`, `validate_team`, `check_scope_overlaps`, `clone_expert_team`, `export_expert_team`, `import_expert_team`, `debug_routing`, `team_analytics`, `team_health_check`, `list_providers`, `create_team_quick`, `bulk_import_members`, `team_changelog`, and more.
+
+**Company Org Tools** (44 tools): `init_company_org`, `get_company_org`, `add_org_role`, `add_org_resource`, `grant_capability`, `request_org_action`, `approve_org_action`, `reject_org_action`, `add_org_playbook`, `list_org_playbooks`, `validate_org_playbooks`, `run_org_playbook`, `schedule_org_playbook`, `run_due_org_playbooks`, `rotate_org_resource_credential`, `list_org_credential_audit`, and more — the approval-gated governance layer (full descriptions in
+[docs/manual/mcp-tools.md](docs/manual/mcp-tools.md#company)).
 
 **Drone Tools** (10 tools): Deploy and control remote drones for distributed execution, screen capture, GUI automation, and network monitoring.
 | Tool | Description |

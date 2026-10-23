@@ -20,7 +20,7 @@ source, so it matches the running binary.
 | [Panel reference](panels-reference.md) | Every dock tab and rail sub-panel, grouped: core, orchestration, search/knowledge, agents, build/debug, automation, git, workspace/peers, rail-only |
 | [Settings & providers](settings-providers.md) | Appearance, system, agent defaults, and all 16 provider credential forms |
 | [Keyboard shortcuts & commands](keyboard-and-commands.md) | The 57 default keybindings, special in-widget chords, and all 110 command-palette commands |
-| [MCP tool reference](mcp-tools.md) | All **291** agent-facing tools, grouped by registry module (browser · wa · system · team · drone · instances · generation) |
+| [MCP tool reference](mcp-tools.md) | All **336** agent-facing tools, grouped by registry module (browser · wa · system · team · company · drone · instances · generation) |
 
 ---
 

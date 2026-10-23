@@ -197,7 +197,7 @@ impl ToolExecutor {
 
         // 3. Empty args check.
         if args.trim().is_empty() {
-            errors.push("tool arguments must be empty".to_string());
+            errors.push("tool arguments must not be empty".to_string());
             warnings.push("provide at least one argument for the tool call".to_string());
         }
 

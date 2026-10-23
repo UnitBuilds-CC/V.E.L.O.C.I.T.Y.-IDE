@@ -11,8 +11,6 @@ pub use types::*;
 mod tests {
     use super::artifacts::*;
     use super::scope::*;
-    #[allow(unused_imports)]
-    use super::types::*;
     use super::*;
     use crate::agent::AiProvider;
     use crate::automation::instruction_registry::AgentTaskKind;

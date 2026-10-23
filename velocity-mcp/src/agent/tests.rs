@@ -1,6 +1,4 @@
 use super::executor::utils::*;
-#[allow(unused_imports)]
-use super::executor::*;
 use super::models::*;
 use super::nda::*;
 use super::provider::*;
@@ -450,20 +448,6 @@ fn writes_last_request_artifacts() {
     assert!(json.contains("\"model\""));
 }
 
-#[allow(dead_code)]
-#[derive(serde::Deserialize, serde::Serialize)]
-struct ToolCallFunction {
-    name: String,
-    arguments: String,
-}
-
-#[allow(dead_code)]
-#[derive(serde::Deserialize, serde::Serialize)]
-struct ToolCall {
-    id: String,
-    function: ToolCallFunction,
-}
-
 #[test]
 fn test_eager_merkle_compaction() {
     let mut long_content = String::new();
@@ -567,7 +551,19 @@ fn prose_read_file_stub_gets_excerpt_not_fake_declarations() {
         "prose fence leaked into the stub: {stub}"
     );
     assert!(stub.contains("Excerpt: # Storage Guide"), "{stub}");
-    assert!(stub.contains("Call read_file again"), "{stub}");
+    // The recovery hint must not invite an UNQUALIFIED re-read: a whole-file
+    // result re-compresses every turn, so "Call read_file again" looped the
+    // LiteLLM porters. It must, however, offer the ranged re-read — "use what
+    // you already read" is a dead end for a model that has to copy an exact
+    // `oldString`, which is precisely what got elided.
+    assert!(
+        stub.contains("Do NOT re-read the whole file"),
+        "the recovery hint must not invite a re-read loop: {stub}"
+    );
+    assert!(
+        stub.contains("startLine") && stub.contains("endLine"),
+        "the hint must name the bounded re-read that survives the budget: {stub}"
+    );
 }
 
 #[test]
@@ -642,6 +638,184 @@ fn mid_slice_truncation_snaps_to_char_boundaries() {
     assert!(compressed[0]
         .content
         .contains("Truncated middle output of 'read_file'"));
+}
+
+/// The compressed stub for a `read_file` result must not tell the model to read
+/// the file again. A result over the threshold is re-compressed on every later
+/// turn, so that hint — the old text — looped the LiteLLM porters through ~18
+/// re-reads of conventions.md per dispatch without a single write.
+#[test]
+fn a_compressed_read_file_stub_does_not_invite_a_reread_loop() {
+    let mut prose = String::from("# Conventions\n\nUse snake_case for modules.\n");
+    while prose.len() < 5_000 {
+        prose.push_str("Propagate errors with Result; never unwrap in library code.\n");
+    }
+    let messages = vec![
+        ChatMessage {
+            role: "assistant".to_string(),
+            content: String::new(),
+            name: None,
+            tool_call_id: None,
+            tool_calls: Some(serde_json::json!([{
+                "id": "call_conv",
+                "function": {
+                    "name": "read_file",
+                    "arguments": "{\"relativeFilePath\":\"mission/conventions.md\"}"
+                }
+            }])),
+        },
+        ChatMessage {
+            role: "tool".to_string(),
+            content: prose,
+            name: Some("read_file".to_string()),
+            tool_call_id: Some("call_conv".to_string()),
+            tool_calls: None,
+        },
+        ChatMessage {
+            role: "assistant".to_string(),
+            content: "Now I will port the file.".to_string(),
+            name: None,
+            tool_call_id: None,
+            tool_calls: None,
+        },
+    ];
+
+    let compressed = compress_history(&messages, true);
+    let stub = &compressed[1].content;
+    assert!(
+        stub.contains("compressed to optimize context budget"),
+        "the oversized prose read must still be compressed: {stub}"
+    );
+    assert!(
+        !stub.contains("Call read_file again"),
+        "the stub must not invite the re-read loop: {stub}"
+    );
+    assert!(
+        stub.contains("Do NOT re-read the whole file"),
+        "the stub must say an unqualified re-read reproduces the elision: {stub}"
+    );
+    // Every offer to re-read has to be conditioned on a range: an unbounded one
+    // is the ~18-turn loop, a bounded one is the escape a verbatim `oldString`
+    // needs. Assert the invitation and the condition are the same sentence.
+    let at = stub
+        .find("read_file again")
+        .unwrap_or_else(|| panic!("the stub must offer a bounded re-read: {stub}"));
+    let tail = &stub[at..stub.len().min(at + 120)];
+    assert!(
+        tail.contains("startLine") && tail.contains("endLine"),
+        "the offered re-read must be ranged, not total: {tail}"
+    );
+}
+
+/// The harness's own annotation on a `read_file` result must never be what
+/// gets that result elided.
+///
+/// A crucible dispatch read a 200-line window, spent its next turn composing an
+/// `edit_file`, and the window it was copying from had already been replaced by
+/// a stub — not because the file text was long, but because the Decision Trail
+/// appended after it pushed the payload over the threshold. The enricher now
+/// budgets its own output against the same constant the compressor reads.
+#[test]
+fn an_enriched_read_reaches_the_turn_that_has_to_copy_from_it() {
+    use crate::registry::event_store::{
+        enrich_read_response, EventOutcome, EventStore, MAX_TOOL_RESULT_FOR_CONTEXT,
+    };
+
+    let dir = tempfile::TempDir::new().unwrap();
+    let store = EventStore::open(dir.path());
+    let target = "rust_port/src/budget_manager.rs";
+    for pass in 0..12u64 {
+        store
+            .record(
+                "write_file",
+                &format!(
+                    "Rewrote the budget ledger entry point on pass {pass}, keeping the public \
+                     API and every cfg(test) assertion real and reachable through the std-only \
+                     JSON reimplementation"
+                ),
+                None,
+                None,
+                Some("the crate declares zero dependencies".to_string()),
+                vec![target.to_string()],
+            )
+            .unwrap();
+        store
+            .mark_outcome(pass + 1, EventOutcome::Success, None)
+            .unwrap();
+    }
+
+    // A full capped read window: the largest file text the loop hands back.
+    let mut window = String::new();
+    while window.len() < 2_000 {
+        window
+            .push_str("        let entry = self.user_dict.entry(key.to_string()).or_default();\n");
+    }
+    let enriched = enrich_read_response(dir.path(), target, &window);
+
+    // The trail must be present and must have actually been cut short; an
+    // enricher that appended all 12 entries would blow the budget here.
+    assert!(
+        enriched.contains("Decision Trail"),
+        "a busy event file must still get a trail"
+    );
+    let entries = enriched
+        .lines()
+        .filter(|line| line.trim_start().starts_with("[#"))
+        .count();
+    assert!(
+        entries < 8,
+        "the trail must be cut mid-list, not merely capped at the 8 entries the \
+         enricher always tried to print: {entries} survived of 12 events"
+    );
+    assert!(
+        enriched.contains("older decision(s) omitted"),
+        "and the reader must be told the list was cut"
+    );
+    assert!(
+        enriched.starts_with(&window),
+        "the file text itself must stay byte-for-byte intact"
+    );
+    assert!(
+        enriched.len() <= MAX_TOOL_RESULT_FOR_CONTEXT,
+        "enriched read is {} bytes, over the elision threshold",
+        enriched.len()
+    );
+
+    // End to end: one later assistant turn must not cost the model its read.
+    let messages = vec![
+        ChatMessage {
+            role: "assistant".to_string(),
+            content: String::new(),
+            name: None,
+            tool_call_id: None,
+            tool_calls: Some(serde_json::json!([{
+                "id": "call_window",
+                "function": {
+                    "name": "read_file",
+                    "arguments": format!("{{\"relativeFilePath\":\"{target}\",\"startLine\":270,\"endLine\":300}}")
+                }
+            }])),
+        },
+        ChatMessage {
+            role: "tool".to_string(),
+            content: enriched.clone(),
+            name: Some("read_file".to_string()),
+            tool_call_id: Some("call_window".to_string()),
+            tool_calls: None,
+        },
+        ChatMessage {
+            role: "assistant".to_string(),
+            content: "Now I will patch the borrow.".to_string(),
+            name: None,
+            tool_call_id: None,
+            tool_calls: None,
+        },
+    ];
+    let compressed = compress_history(&messages, true);
+    assert_eq!(
+        compressed[1].content, enriched,
+        "an enriched read must arrive at the next turn whole"
+    );
 }
 
 #[test]

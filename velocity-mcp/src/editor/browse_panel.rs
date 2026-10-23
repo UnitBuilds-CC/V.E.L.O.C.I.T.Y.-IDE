@@ -142,6 +142,11 @@ impl BrowseState {
             progress: Some(progress),
             scoped_files: None,
             max_turns: None,
+            // The panel polls this thread but cannot cancel it, so the shared
+            // unattended budget is the only thing that stops a stalled
+            // provider call from running forever in the background.
+            budget: Some(crate::agent::unattended_budget()),
+            requires_artifact: false,
         };
 
         std::thread::spawn(move || {

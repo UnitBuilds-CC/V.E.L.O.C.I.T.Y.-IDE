@@ -404,6 +404,11 @@ impl InlineSuggestionEngine {
                 progress: None,
                 scoped_files: Some(vec![file_path]),
                 max_turns: None,
+                // Ghost text is worthless by the time a slow provider answers,
+                // and this thread has no cancel channel — so it gets a short
+                // hard bound instead of the unattended dispatch budget.
+                budget: Some(std::time::Duration::from_secs(60)),
+                requires_artifact: false,
             };
             let result = crate::agent::run_headless_subagent(req);
             let completion = sanitize_completion(&result.transcript, max_chars, allow_multiline);

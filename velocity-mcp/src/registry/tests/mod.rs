@@ -1,4 +1,5 @@
 mod browser_tests;
+mod company_tests;
 mod provider_failover_tests;
 mod security_tests;
 mod system_tests;

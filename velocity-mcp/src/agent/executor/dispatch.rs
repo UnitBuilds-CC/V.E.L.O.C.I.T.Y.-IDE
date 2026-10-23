@@ -28,6 +28,23 @@ pub(crate) fn stream_agent() -> &'static ureq::Agent {
     })
 }
 
+/// Same bounds, but the read window is 600 s. Local llama.cpp servers on
+/// CPU-offloaded hardware can sit silent for minutes *before the first token*
+/// (model load + prefill of a multi-KB prompt emit nothing on the socket), and
+/// the 90 s window aborted healthy write-forced turns at the status line.
+/// A stream that starts emitting is still expected to keep emitting; the wide
+/// window only forgives the pre-token silence, not mid-stream freezes beyond
+/// ten minutes. Used exclusively by `execute_ollama_request`.
+pub(crate) fn slow_stream_agent() -> &'static ureq::Agent {
+    static AGENT: std::sync::OnceLock<ureq::Agent> = std::sync::OnceLock::new();
+    AGENT.get_or_init(|| {
+        ureq::AgentBuilder::new()
+            .timeout_connect(Duration::from_secs(15))
+            .timeout_read(Duration::from_secs(600))
+            .build()
+    })
+}
+
 /// Resolve an API key by checking provider-settings.json first (where the
 /// Settings UI saves keys), then falling back to the environment variable.
 /// Provider settings are stored at the user-level config directory
@@ -67,6 +84,111 @@ pub(crate) fn resolve_api_key(
         }
     }
     std::env::var(env_var).unwrap_or_default()
+}
+
+/// Why a provider call produced no response.
+///
+/// Every `execute_*_request` returns `Option<ureq::Response>`, so on its own a
+/// `None` carries no information: the reasoning loop could only fall back to a
+/// per-provider guess string ("Alibaba Qwen request failed or DASHSCOPE_API_KEY
+/// missing.") which is *wrong* whenever the key is present and the real cause is
+/// a 404 model name, a 429, or a dead socket. That guess sent a live debugging
+/// session hunting for a missing key that was configured.
+///
+/// The concrete cause is recorded here as it happens, and the loop reads it back
+/// with [`take_last_request_error`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ProviderRequestError {
+    /// No API key or account is configured for this provider at all.
+    NoCredentials { detail: String },
+    /// The endpoint rejected the credentials (HTTP 401).
+    AuthRejected { detail: String },
+    /// A deterministic 4xx for *this request* — in practice a model name the
+    /// endpoint does not serve (404) or a body it refuses (400/403). Another
+    /// model on the same provider is worth trying.
+    Rejected { status: u16, detail: String },
+    /// Rate limit or upstream 5xx that outlived its retries.
+    Exhausted { detail: String },
+    /// Transport-level failure: DNS, TLS, connect/read timeout, reset.
+    Transport { detail: String },
+}
+
+impl ProviderRequestError {
+    /// The operator-facing sentence. This is what both the status line and the
+    /// loop's blocked reason are built from, so the two cannot drift apart.
+    pub fn describe(&self) -> String {
+        match self {
+            ProviderRequestError::NoCredentials { detail } => detail.clone(),
+            ProviderRequestError::AuthRejected { detail } => detail.clone(),
+            ProviderRequestError::Rejected { detail, .. } => detail.clone(),
+            ProviderRequestError::Exhausted { detail } => detail.clone(),
+            ProviderRequestError::Transport { detail } => detail.clone(),
+        }
+    }
+
+    /// Whether the failure covers the whole provider rather than one model.
+    /// A caller that is choosing between "try the next model here" and "move to
+    /// the next provider" branches on this, so it must be a property of the
+    /// variant and never of the message text.
+    pub fn is_provider_wide(&self) -> bool {
+        !matches!(self, ProviderRequestError::Rejected { .. })
+    }
+
+    /// Whether sending this exact request again could produce a different answer.
+    ///
+    /// The loop sleeps 5s and resends a failed request up to twice when no other
+    /// provider is configured, which is right for a dead socket and wrong for
+    /// everything the endpoint decided from the request alone. gateprobe4 showed
+    /// the cost: it printed "client errors are deterministic" for a 403 and then
+    /// resent that identical request twice anyway, ten wasted seconds per model
+    /// candidate on the way to BLOCKED. So the decision needs the cause, and the
+    /// cause must be a property of the variant, not a string match.
+    pub fn is_resend_futile(&self) -> bool {
+        matches!(
+            self,
+            ProviderRequestError::Rejected { .. }
+                | ProviderRequestError::AuthRejected { .. }
+                | ProviderRequestError::NoCredentials { .. }
+        )
+    }
+}
+
+thread_local! {
+    /// Cause of the most recent failed provider request on this thread.
+    ///
+    /// Thread-local because the request is issued synchronously by the same
+    /// thread that runs the reasoning loop, and because a shared global would
+    /// let two concurrent sub-agents overwrite each other's diagnosis.
+    static LAST_REQUEST_ERROR: std::cell::RefCell<Option<ProviderRequestError>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+/// Report a failed request: announce it on the status channel *and* keep the
+/// structured cause for the loop to read. Using this at every failure site is
+/// what keeps the human-visible sentence and the machine-visible reason in step.
+fn fail_request(
+    ui_tx: &Sender<AgentToUiMessage>,
+    err: ProviderRequestError,
+) -> Option<ureq::Response> {
+    ui_tx
+        .send(AgentToUiMessage::StatusUpdate(err.describe()))
+        .ok();
+    LAST_REQUEST_ERROR.with(|slot| *slot.borrow_mut() = Some(err));
+    None
+}
+
+/// Take the cause of the most recent failed provider request, clearing it.
+///
+/// Taking (rather than peeking) matters: a stale error from an earlier turn
+/// must never be reported as the reason a later, unrelated `None` happened.
+pub fn take_last_request_error() -> Option<ProviderRequestError> {
+    LAST_REQUEST_ERROR.with(|slot| slot.borrow_mut().take())
+}
+
+/// Drop any recorded cause. Called before a request is issued so the value read
+/// afterwards can only describe that request.
+pub fn clear_last_request_error() {
+    LAST_REQUEST_ERROR.with(|slot| *slot.borrow_mut() = None);
 }
 
 pub fn execute_openrouter_request<'a>(
@@ -175,6 +297,20 @@ pub fn execute_openrouter_request<'a>(
             break;
         }
     }
+    if final_res.is_none() {
+        // Every account was quota-exhausted, rejected the request, or could not
+        // be reached. Recorded here rather than at each break so the reason
+        // survives whichever path gave up first.
+        let _ = fail_request(
+            ui_tx,
+            ProviderRequestError::Exhausted {
+                detail: format!(
+                    "OpenRouter request failed across all {} account(s).",
+                    or_accounts.len()
+                ),
+            },
+        );
+    }
     (final_res, used_acct)
 }
 
@@ -186,12 +322,15 @@ pub fn execute_cloudflare_request<'a>(
     ui_tx: &Sender<AgentToUiMessage>,
 ) -> (Option<ureq::Response>, Option<&'a CloudflareAccount>) {
     if accounts.is_empty() {
-        ui_tx
-            .send(AgentToUiMessage::StatusUpdate(
-                "No Cloudflare accounts configured.".to_string(),
-            ))
-            .ok();
-        return (None, None);
+        return (
+            fail_request(
+                ui_tx,
+                ProviderRequestError::NoCredentials {
+                    detail: "No Cloudflare accounts configured.".to_string(),
+                },
+            ),
+            None,
+        );
     }
     let start_idx = usage_tracker
         .pick_account(accounts)
@@ -244,6 +383,17 @@ pub fn execute_cloudflare_request<'a>(
             break;
         }
     }
+    if cf_response.is_none() {
+        let _ = fail_request(
+            ui_tx,
+            ProviderRequestError::Exhausted {
+                detail: format!(
+                    "All {} Cloudflare Workers AI account(s) exhausted or failed.",
+                    accounts.len()
+                ),
+            },
+        );
+    }
     (cf_response, used_acct)
 }
 
@@ -253,12 +403,12 @@ pub fn execute_azure_request(
     ui_tx: &Sender<AgentToUiMessage>,
 ) -> Option<ureq::Response> {
     if azure_accounts.is_empty() {
-        ui_tx
-            .send(AgentToUiMessage::StatusUpdate(
-                "No Azure OpenAI accounts configured.".to_string(),
-            ))
-            .ok();
-        return None;
+        return fail_request(
+            ui_tx,
+            ProviderRequestError::NoCredentials {
+                detail: "No Azure OpenAI accounts configured.".to_string(),
+            },
+        );
     }
     // Select account by priority (.n): lower = higher priority.
     let account = azure_accounts
@@ -288,23 +438,35 @@ pub fn execute_azure_request(
             }
             Err(ureq::Error::Status(code, resp)) => {
                 let body = resp.into_string().unwrap_or_default();
-                ui_tx
-                    .send(AgentToUiMessage::StatusUpdate(format!(
-                        "Azure OpenAI HTTP {code} error: {body}"
-                    )))
-                    .ok();
+                // 401 is the key; any other 4xx names the deployment, so it is
+                // model-specific and another deployment is worth a try.
+                let err = if code == 401 {
+                    ProviderRequestError::AuthRejected {
+                        detail: format!("Azure OpenAI authentication failed (401): {body}"),
+                    }
+                } else if (400..=499).contains(&code) {
+                    ProviderRequestError::Rejected {
+                        status: code,
+                        detail: format!("Azure OpenAI HTTP {code} error: {body}"),
+                    }
+                } else {
+                    ProviderRequestError::Exhausted {
+                        detail: format!("Azure OpenAI HTTP {code} error: {body}"),
+                    }
+                };
+                let _ = fail_request(ui_tx, err);
                 break;
             }
             Err(e) => {
                 if attempt < max_attempts {
                     std::thread::sleep(Duration::from_secs(1));
                 } else {
-                    ui_tx
-                        .send(AgentToUiMessage::StatusUpdate(format!(
-                            "Azure OpenAI connection error: {:?}",
-                            e
-                        )))
-                        .ok();
+                    let _ = fail_request(
+                        ui_tx,
+                        ProviderRequestError::Transport {
+                            detail: format!("Azure OpenAI connection error: {e:?}"),
+                        },
+                    );
                 }
             }
         }
@@ -312,39 +474,246 @@ pub fn execute_azure_request(
     azure_response
 }
 
+/// Pick which Ollama host should serve a request. A single account is trivial.
+/// With cross-node accounts the requested model may live on only one host, so
+/// probe each host's `/api/tags` and return the first that actually advertises
+/// the model; fall back to the first account when none claim it (or none
+/// answer), which keeps the historic single-host behaviour intact.
+fn choose_ollama_account<'a>(
+    accounts: &'a [crate::usage::LocalOllamaAccount],
+    model: &str,
+) -> Option<&'a crate::usage::LocalOllamaAccount> {
+    let first = accounts.first()?;
+    if accounts.len() == 1 || model.is_empty() {
+        return Some(first);
+    }
+    for account in accounts {
+        let url = crate::agent::provider::ollama_tags_url(&account.host);
+        let body: Option<serde_json::Value> = match ureq::get(&url)
+            .timeout(std::time::Duration::from_secs(5))
+            .call()
+        {
+            Ok(r) => r.into_json().ok(),
+            Err(_) => None,
+        };
+        if let Some(body) = body {
+            let serves = crate::agent::provider::parse_ollama_tags(&body)
+                .iter()
+                .any(|(name, _, _)| name == model);
+            if serves {
+                return Some(account);
+            }
+        }
+    }
+    Some(first)
+}
+
+/// Classify an HTTP status answered by the local Ollama server.
+///
+/// A 4xx from it is the same class of answer as a 4xx from a cloud endpoint:
+/// the body the message describes is the body this process will send again, so
+/// resending cannot change it. Recording these as `Transport` made the loop's
+/// own retry gate (`is_resend_futile`) call them transient, and the stubbed
+/// `reject4xx` probe measured what that costs — three identical turns with 5s
+/// of sleep between them, for a server that had already said no. Only 408 and
+/// 429 are left retryable, matching the cloud path: a slow model load or a
+/// rate limit can both clear on their own.
+fn ollama_status_error(
+    code: u16,
+    label: &str,
+    model: &str,
+    api_url: &str,
+    snippet: &str,
+) -> ProviderRequestError {
+    if (400..=499).contains(&code) && code != 408 && code != 429 {
+        ProviderRequestError::Rejected {
+            status: code,
+            detail: format!(
+                "Ollama '{label}' rejected the request ({code}) for model '{model}' \
+                 at {api_url}: {snippet}"
+            ),
+        }
+    } else {
+        ProviderRequestError::Transport {
+            detail: format!("Ollama '{label}' returned HTTP {code} at {api_url}: {snippet}"),
+        }
+    }
+}
+
 pub fn execute_ollama_request(
     ollama_accounts: &[LocalOllamaAccount],
     request_body: &Value,
     ui_tx: &Sender<AgentToUiMessage>,
+    workspace_root: &PathBuf,
 ) -> Option<ureq::Response> {
-    let account = ollama_accounts.first();
+    let model = request_body["model"].as_str().unwrap_or("");
+    let account = choose_ollama_account(ollama_accounts, model);
     let host = account
         .map(|a| a.host.as_str())
         .unwrap_or("http://localhost:11434");
     let label = account.map(|a| a.label.as_str()).unwrap_or("Local-Ollama");
     let api_url = ollama_chat_url(host);
-    match stream_agent()
-        .post(&api_url)
-        .set("Content-Type", "application/json")
-        .send_json(request_body)
-    {
-        Ok(res) => Some(res),
-        Err(e) => {
-            ui_tx
-                .send(AgentToUiMessage::StatusUpdate(format!(
-                    "Ollama '{label}' connection error at {host}: {e:?}",
-                )))
-                .ok();
-            None
+
+    // The internal request is OpenAI-shaped; convert it to the body the native
+    // /api/chat endpoint accepts (assistant tool_calls.arguments as an object,
+    // tool-result messages re-emitted as user turns) before posting.
+    let request_body = &to_native_ollama_body(request_body);
+
+    // Durable retry logic for transient connection errors (timeouts, connection refused, etc.)
+    // Exponential backoff: 2s, 4s, 8s (3 attempts total)
+    const MAX_RETRIES: u32 = 3;
+    const BASE_DELAY_MS: u64 = 2000;
+
+    for attempt in 0..MAX_RETRIES {
+        match slow_stream_agent()
+            .post(&api_url)
+            .set("Content-Type", "application/json")
+            .send_json(request_body)
+        {
+            Ok(res) => return Some(res),
+            // A Status response carries Ollama's actual rejection reason in the
+            // body (e.g. the 400 "Value looks like object..." history-shape
+            // error). Without it, a turn-2 rejection is undiagnosable from the
+            // agent log alone — the status code says only "Bad Request".
+            Err(ureq::Error::Status(code, resp)) => {
+                let why = resp.into_string().unwrap_or_default();
+                let snippet: String = why.chars().take(400).collect();
+                // `last_request.json` is re-written by every later fallback
+                // turn, so by the time a run ends it no longer shows what the
+                // Ollama endpoint actually received. Persist the rejected
+                // native body alongside the server's reason for offline replay.
+                dump_rejected_request(workspace_root, &api_url, code, &snippet, request_body);
+                let err = ollama_status_error(code, label, model, &api_url, &snippet);
+                return fail_request(ui_tx, err);
+            }
+            Err(e) => {
+                let is_last_attempt = attempt == MAX_RETRIES - 1;
+                let error_str = format!("{:?}", e);
+
+                // Check if this is a transient error worth retrying
+                let is_transient = error_str.contains("TimedOut")
+                    || error_str.contains("ConnectionRefused")
+                    || error_str.contains("ConnectionReset")
+                    || error_str.contains("BrokenPipe")
+                    || error_str.contains("NetworkUnreachable")
+                    || error_str.contains("HostUnreachable");
+
+                if is_transient && !is_last_attempt {
+                    let delay_ms = BASE_DELAY_MS * (1 << attempt); // Exponential: 2s, 4s, 8s
+                    ui_tx
+                        .send(AgentToUiMessage::StatusUpdate(format!(
+                            "Ollama connection error (attempt {}/{}), retrying in {}ms...",
+                            attempt + 1,
+                            MAX_RETRIES,
+                            delay_ms
+                        )))
+                        .ok();
+                    std::thread::sleep(std::time::Duration::from_millis(delay_ms));
+                    continue;
+                }
+
+                // Non-transient error or last attempt: fail
+                return fail_request(
+                    ui_tx,
+                    ProviderRequestError::Transport {
+                        detail: format!("Ollama '{label}' connection error at {host}: {e:?}"),
+                    },
+                );
+            }
         }
     }
+
+    // Should never reach here, but satisfy the compiler
+    None
 }
 
-/// Build the Ollama OpenAI-compatible chat endpoint URL from a host, tolerating
-/// a trailing slash. Kept as a pure helper so the request shape is testable
+/// Persist a rejected Ollama request (exact body + server reason) for offline
+/// replay. Written best-effort; a failure to dump must never mask the error
+/// the caller is about to return.
+fn dump_rejected_request(
+    workspace_root: &PathBuf,
+    api_url: &str,
+    code: u16,
+    reason: &str,
+    request_body: &Value,
+) {
+    let dir = workspace_root.join(".velocity");
+    if std::fs::create_dir_all(&dir).is_err() {
+        return;
+    }
+    let dump = json!({
+        "url": api_url,
+        "status": code,
+        "server_reason": reason,
+        "rejected_body": request_body,
+    });
+    let _ = std::fs::write(
+        dir.join("ollama_rejected.json"),
+        serde_json::to_string_pretty(&dump).unwrap_or_default(),
+    );
+}
+
+/// Build the Ollama NATIVE chat endpoint URL from a host, tolerating a
+/// trailing slash. Kept as a pure helper so the request shape is testable
 /// without a running server.
+///
+/// We use `/api/chat` (native) rather than `/v1/chat/completions` (OpenAI
+/// compatibility shim) because the shim silently ignores the `think:false`
+/// flag for Qwen3-family models: reasoning always runs and, on complex
+/// convert-phase tasks, exhausts the entire output budget before any tool
+/// call is emitted (finish_reason=length with empty content). The native
+/// endpoint honours `think:false`, suppressing reasoning so the full budget
+/// is available for large write_file tool calls. The native streaming reply
+/// is JSONL (one JSON object per line, `message.content` deltas, complete
+/// `message.tool_calls`, terminal `done:true`) rather than SSE — see the
+/// native-format branch in `run_agent_reasoning_loop`.
 pub fn ollama_chat_url(host: &str) -> String {
-    format!("{}/v1/chat/completions", host.trim_end_matches('/'))
+    format!("{}/api/chat", host.trim_end_matches('/'))
+}
+
+/// Transform an OpenAI-style request body into the shape Ollama's NATIVE
+/// `/api/chat` endpoint accepts. The internal history is built OpenAI-style
+/// (shared with the cloud providers), but native rejects it with a 400
+/// "Value looks like object, but can't find closing '}'" because it tries to
+/// parse the assistant `tool_calls[].function.arguments` string as an object
+/// and chokes on the JSON escapes. Native wants `arguments` as a parsed object
+/// and drops the `id`/`type` wrapper. A `role:"tool"` result message is also
+/// not a native role — native feeds the observation back as a `user` turn.
+pub fn to_native_ollama_body(body: &Value) -> Value {
+    let mut out = body.clone();
+    let Some(msgs) = out.get_mut("messages").and_then(|m| m.as_array_mut()) else {
+        return out;
+    };
+    for msg in msgs.iter_mut() {
+        let role = msg
+            .get("role")
+            .and_then(|r| r.as_str())
+            .unwrap_or("")
+            .to_string();
+        if role == "assistant" {
+            if let Some(tcs) = msg.get_mut("tool_calls").and_then(|t| t.as_array_mut()) {
+                for tc in tcs.iter_mut() {
+                    if let Some(func) = tc.get("function").cloned() {
+                        let name = func.get("name").cloned().unwrap_or(Value::Null);
+                        let args = match func.get("arguments") {
+                            Some(Value::String(s)) => serde_json::from_str::<Value>(s)
+                                .unwrap_or(Value::Object(serde_json::Map::new())),
+                            Some(v) => v.clone(),
+                            None => Value::Object(serde_json::Map::new()),
+                        };
+                        *tc = json!({ "function": { "name": name, "arguments": args } });
+                    }
+                }
+            }
+        } else if role == "tool" {
+            let content = msg
+                .get("content")
+                .cloned()
+                .unwrap_or(Value::String(String::new()));
+            *msg = json!({ "role": "user", "content": content });
+        }
+    }
+    out
 }
 
 /// Execute a request against an OpenAI-compatible API endpoint.
@@ -361,12 +730,14 @@ fn execute_openai_compatible_request(
 ) -> Option<ureq::Response> {
     let api_key = resolve_api_key(workspace_root, settings_field, api_key_env_var);
     if api_key.trim().is_empty() {
-        ui_tx
-            .send(AgentToUiMessage::StatusUpdate(format!(
-                "{provider_name} API key not set. Configure it in Settings or export {api_key_env_var}."
-            )))
-            .ok();
-        return None;
+        return fail_request(
+            ui_tx,
+            ProviderRequestError::NoCredentials {
+                detail: format!(
+                    "{provider_name} API key not set. Configure it in Settings or export {api_key_env_var}."
+                ),
+            },
+        );
     }
 
     let max_attempts = 3u32;
@@ -380,12 +751,36 @@ fn execute_openai_compatible_request(
             Ok(res) => return Some(res),
             Err(ureq::Error::Status(401, _)) => {
                 // Auth errors are not retryable.
-                ui_tx
-                    .send(AgentToUiMessage::StatusUpdate(format!(
-                        "{provider_name} authentication failed. Check your API key in Settings."
-                    )))
-                    .ok();
-                return None;
+                return fail_request(
+                    ui_tx,
+                    ProviderRequestError::AuthRejected {
+                        detail: format!(
+                            "{provider_name} authentication failed. Check your API key in Settings."
+                        ),
+                    },
+                );
+            }
+            Err(ureq::Error::Status(code, _)) if (400..=499).contains(&code) && code != 408 => {
+                // Client errors other than rate-limit are deterministic: a bad
+                // model name (404), a malformed body (400), a forbidden model
+                // (403). Repeating the identical request cannot change the
+                // answer — the LiteLLM crucible burned nine attempts and ~45s
+                // of sleeps on a token-plan 404 for a legacy model name before
+                // giving up. Fail fast and name the model so the operator can
+                // see *which* candidate the chain exhausted on.
+                let model = request_body
+                    .get("model")
+                    .and_then(Value::as_str)
+                    .unwrap_or("?");
+                return fail_request(
+                    ui_tx,
+                    ProviderRequestError::Rejected {
+                        status: code,
+                        detail: format!(
+                            "{provider_name} rejected the request ({code}) for model '{model}'. Not retrying: client errors are deterministic."
+                        ),
+                    },
+                );
             }
             Err(ureq::Error::Status(429, _)) => {
                 if attempt < max_attempts {
@@ -397,12 +792,14 @@ fn execute_openai_compatible_request(
                         .ok();
                     std::thread::sleep(Duration::from_secs(wait_secs as u64));
                 } else {
-                    ui_tx
-                        .send(AgentToUiMessage::StatusUpdate(format!(
-                            "{provider_name} rate limit exceeded after {max_attempts} retries."
-                        )))
-                        .ok();
-                    return None;
+                    return fail_request(
+                        ui_tx,
+                        ProviderRequestError::Exhausted {
+                            detail: format!(
+                                "{provider_name} rate limit exceeded after {max_attempts} retries."
+                            ),
+                        },
+                    );
                 }
             }
             Err(ureq::Error::Status(code, _)) if code >= 500 => {
@@ -415,30 +812,39 @@ fn execute_openai_compatible_request(
                         .ok();
                     std::thread::sleep(Duration::from_secs(wait_secs as u64));
                 } else {
-                    ui_tx
-                        .send(AgentToUiMessage::StatusUpdate(format!(
-                            "{provider_name} server error after {max_attempts} retries."
-                        )))
-                        .ok();
-                    return None;
+                    return fail_request(
+                        ui_tx,
+                        ProviderRequestError::Exhausted {
+                            detail: format!(
+                                "{provider_name} server error ({code}) after {max_attempts} retries."
+                            ),
+                        },
+                    );
                 }
             }
             Err(e) => {
                 if attempt < max_attempts {
                     std::thread::sleep(Duration::from_secs(1));
                 } else {
-                    ui_tx
-                        .send(AgentToUiMessage::StatusUpdate(format!(
-                            "{provider_name} request error: {:?}",
-                            e
-                        )))
-                        .ok();
-                    return None;
+                    return fail_request(
+                        ui_tx,
+                        ProviderRequestError::Transport {
+                            detail: format!("{provider_name} request error: {e:?}"),
+                        },
+                    );
                 }
             }
         }
     }
-    None
+    // Unreachable in practice: every arm above either returns or retries, and
+    // the last retry returns. Recorded rather than silently `None` so the loop
+    // never has to invent a reason.
+    fail_request(
+        ui_tx,
+        ProviderRequestError::Exhausted {
+            detail: format!("{provider_name} gave up after {max_attempts} attempts."),
+        },
+    )
 }
 
 /// Deepseek API — OpenAI-compatible endpoint.
@@ -612,13 +1018,14 @@ pub fn execute_google_request(
 ) -> Option<ureq::Response> {
     let api_key = resolve_api_key(workspace_root, "google", "GOOGLE_API_KEY");
     if api_key.trim().is_empty() {
-        ui_tx
-            .send(AgentToUiMessage::StatusUpdate(
-                "Google API key not set. Configure it in Settings or export GOOGLE_API_KEY."
-                    .to_string(),
-            ))
-            .ok();
-        return None;
+        return fail_request(
+            ui_tx,
+            ProviderRequestError::NoCredentials {
+                detail:
+                    "Google API key not set. Configure it in Settings or export GOOGLE_API_KEY."
+                        .to_string(),
+            },
+        );
     }
     let url =
         "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions".to_string();
@@ -629,23 +1036,28 @@ pub fn execute_google_request(
         .send_json(request_body)
     {
         Ok(res) => Some(res),
-        Err(ureq::Error::Status(401, _)) => {
-            ui_tx
-                .send(AgentToUiMessage::StatusUpdate(
-                    "Google authentication failed. Check your API key in Settings.".to_string(),
-                ))
-                .ok();
-            None
+        Err(ureq::Error::Status(401, _)) => fail_request(
+            ui_tx,
+            ProviderRequestError::AuthRejected {
+                detail: "Google authentication failed. Check your API key in Settings.".to_string(),
+            },
+        ),
+        Err(ureq::Error::Status(code, resp)) if (400..=499).contains(&code) => {
+            let body = resp.into_string().unwrap_or_default();
+            fail_request(
+                ui_tx,
+                ProviderRequestError::Rejected {
+                    status: code,
+                    detail: format!("Google rejected the request ({code}): {body}"),
+                },
+            )
         }
-        Err(e) => {
-            ui_tx
-                .send(AgentToUiMessage::StatusUpdate(format!(
-                    "Google request error: {:?}",
-                    e
-                )))
-                .ok();
-            None
-        }
+        Err(e) => fail_request(
+            ui_tx,
+            ProviderRequestError::Transport {
+                detail: format!("Google request error: {e:?}"),
+            },
+        ),
     }
 }
 
@@ -746,12 +1158,14 @@ pub fn execute_bedrock_request(
     }
     // Otherwise, Bedrock requires AWS SigV4 signing which is beyond simple ureq.
     // Direct the user to configure a proxy or use OpenRouter as a Bedrock gateway.
-    ui_tx.send(AgentToUiMessage::StatusUpdate(
-        "AWS Bedrock requires BEDROCK_PROXY_URL env var pointing to an OpenAI-compatible proxy. \
-         Alternatively, use OpenRouter which routes to Bedrock models."
-        .to_string()
-    )).ok();
-    None
+    fail_request(
+        ui_tx,
+        ProviderRequestError::NoCredentials {
+            detail: "AWS Bedrock requires BEDROCK_PROXY_URL env var pointing to an OpenAI-compatible proxy. \
+                     Alternatively, use OpenRouter which routes to Bedrock models."
+                .to_string(),
+        },
+    )
 }
 
 /// Convert an OpenAI-format request body into an Anthropic Messages API body.
@@ -914,23 +1328,26 @@ pub fn execute_anthropic_request(
 ) -> Option<ureq::Response> {
     let api_key = resolve_api_key(workspace_root, "anthropic", "ANTHROPIC_API_KEY");
     if api_key.trim().is_empty() {
-        ui_tx
-            .send(AgentToUiMessage::StatusUpdate(
-                "Anthropic API key not set. Configure it in Settings or export ANTHROPIC_API_KEY."
+        return fail_request(
+            ui_tx,
+            ProviderRequestError::NoCredentials {
+                detail: "Anthropic API key not set. Configure it in Settings or export ANTHROPIC_API_KEY."
                     .to_string(),
-            ))
-            .ok();
-        return None;
+            },
+        );
     }
     let anthropic_body = match build_anthropic_body(request_body) {
         Ok(body) => body,
         Err(msg) => {
-            ui_tx
-                .send(AgentToUiMessage::StatusUpdate(format!(
-                    "Anthropic request failed: {msg}"
-                )))
-                .ok();
-            return None;
+            return fail_request(
+                ui_tx,
+                ProviderRequestError::Rejected {
+                    // Not an HTTP status: the conversion refused before any
+                    // request went out, and no retry can fix the payload.
+                    status: 400,
+                    detail: format!("Anthropic request failed: {msg}"),
+                },
+            );
         }
     };
     match stream_agent()
@@ -941,30 +1358,35 @@ pub fn execute_anthropic_request(
         .send_json(&anthropic_body)
     {
         Ok(res) => Some(res),
-        Err(ureq::Error::Status(401, _)) => {
-            ui_tx
-                .send(AgentToUiMessage::StatusUpdate(
-                    "Anthropic authentication failed. Check your ANTHROPIC_API_KEY.".to_string(),
-                ))
-                .ok();
-            None
+        Err(ureq::Error::Status(401, _)) => fail_request(
+            ui_tx,
+            ProviderRequestError::AuthRejected {
+                detail: "Anthropic authentication failed. Check your ANTHROPIC_API_KEY."
+                    .to_string(),
+            },
+        ),
+        Err(ureq::Error::Status(429, _)) => fail_request(
+            ui_tx,
+            ProviderRequestError::Exhausted {
+                detail: "Anthropic rate limit exceeded (429). Try again shortly.".to_string(),
+            },
+        ),
+        Err(ureq::Error::Status(code, resp)) if (400..=499).contains(&code) => {
+            let body = resp.into_string().unwrap_or_default();
+            fail_request(
+                ui_tx,
+                ProviderRequestError::Rejected {
+                    status: code,
+                    detail: format!("Anthropic rejected the request ({code}): {body}"),
+                },
+            )
         }
-        Err(ureq::Error::Status(429, _)) => {
-            ui_tx
-                .send(AgentToUiMessage::StatusUpdate(
-                    "Anthropic rate limit exceeded (429). Try again shortly.".to_string(),
-                ))
-                .ok();
-            None
-        }
-        Err(e) => {
-            ui_tx
-                .send(AgentToUiMessage::StatusUpdate(format!(
-                    "Anthropic request failed: {e}"
-                )))
-                .ok();
-            None
-        }
+        Err(e) => fail_request(
+            ui_tx,
+            ProviderRequestError::Transport {
+                detail: format!("Anthropic request failed: {e}"),
+            },
+        ),
     }
 }
 
@@ -985,13 +1407,207 @@ mod tests {
         }
     }
 
+    // ── ProviderRequestError ─────────────────────────────────
+
+    /// The loop reports this text to the operator, so it has to be the real
+    /// cause. The bug it replaces: a token-plan 404 on a stale model name was
+    /// reported as "Alibaba Qwen request failed or DASHSCOPE_API_KEY missing."
+    /// while the key was configured, which sent a debugging session after the
+    /// wrong thing entirely.
+    #[test]
+    fn a_rejected_model_keeps_its_status_and_name_in_the_reason() {
+        let err = ProviderRequestError::Rejected {
+            status: 404,
+            detail: "Alibaba Qwen rejected the request (404) for model 'qwen-plus'.".to_string(),
+        };
+        assert!(err.describe().contains("404"));
+        assert!(err.describe().contains("qwen-plus"));
+        assert!(
+            !err.describe().to_lowercase().contains("api_key missing"),
+            "a present key must not be blamed: {}",
+            err.describe()
+        );
+        // Model-specific: the next model on this provider is worth an attempt.
+        assert!(!err.is_provider_wide());
+    }
+
+    /// Everything except a per-model rejection covers the whole provider, so
+    /// `team_dispatch` moves to the next provider instead of burning attempts
+    /// on model names that cannot help.
+    #[test]
+    fn only_a_model_rejection_leaves_the_provider_worth_retrying() {
+        let provider_wide = [
+            ProviderRequestError::NoCredentials {
+                detail: "no key".to_string(),
+            },
+            ProviderRequestError::AuthRejected {
+                detail: "401".to_string(),
+            },
+            ProviderRequestError::Exhausted {
+                detail: "429 after 3".to_string(),
+            },
+            ProviderRequestError::Transport {
+                detail: "dns".to_string(),
+            },
+        ];
+        for err in provider_wide {
+            assert!(err.is_provider_wide(), "{err:?} covers the whole provider");
+        }
+    }
+
+    /// gateprobe4's blocked run printed "Not retrying: client errors are
+    /// deterministic" and then, one line later, "Retrying same request in 5s
+    /// (attempt 1/2)" — the loop had the structured cause but only consulted it
+    /// after the sleep. A request the endpoint refused on its own content
+    /// answers identically forever; a socket or a rate limit may recover.
+    #[test]
+    fn a_refused_request_is_never_resent_and_a_blip_still_is() {
+        let futile = [
+            ProviderRequestError::Rejected {
+                status: 403,
+                detail: "glm-5.2 forbidden".to_string(),
+            },
+            ProviderRequestError::Rejected {
+                status: 404,
+                detail: "model not found".to_string(),
+            },
+            ProviderRequestError::AuthRejected {
+                detail: "401".to_string(),
+            },
+            ProviderRequestError::NoCredentials {
+                detail: "no key".to_string(),
+            },
+        ];
+        for err in futile {
+            assert!(err.is_resend_futile(), "{err:?} cannot change by resending");
+        }
+
+        let transient = [
+            ProviderRequestError::Transport {
+                detail: "connection reset".to_string(),
+            },
+            ProviderRequestError::Exhausted {
+                detail: "429 after 3 retries".to_string(),
+            },
+        ];
+        for err in transient {
+            assert!(!err.is_resend_futile(), "{err:?} may recover on its own");
+        }
+    }
+
+    /// The native `/api/chat` path classified *every* HTTP status as
+    /// `Transport`, so a deterministic 400 from Ollama — the history-shape
+    /// rejection, an unknown model, a bad `think` value — was resent twice
+    /// with 5s sleeps before the run gave up. `reject4xx` measured it against
+    /// a stub that refuses on one line: 3 chat calls, 2 "Retrying same request
+    /// in 5s" status lines, ~10s spent proving a refusal is still a refusal.
+    #[test]
+    fn a_local_ollama_4xx_is_a_refusal_and_a_blip_is_not() {
+        for code in [400u16, 401, 403, 404, 415, 422] {
+            let err = ollama_status_error(code, "Local-Ollama", "qwen3.6:35b-a3b", "u", "nope");
+            assert!(
+                err.is_resend_futile(),
+                "HTTP {code} answers from the request body alone; resending it cannot help"
+            );
+            // The operator has to see which model the local server refused,
+            // and Ollama's own reason — a bare "Bad Request" sent a previous
+            // debugging session after the wrong thing.
+            assert!(err.describe().contains("nope"), "{}", err.describe());
+            assert!(err.describe().contains("qwen3.6:35b-a3b"));
+        }
+
+        for code in [408u16, 429, 500, 502, 503] {
+            let err = ollama_status_error(code, "Local-Ollama", "qwen3.6:35b-a3b", "u", "later");
+            assert!(
+                !err.is_resend_futile(),
+                "HTTP {code} may clear on its own; the loop's resend is correct there"
+            );
+        }
+    }
+
+    /// The sink is take-once: a stale cause from an earlier turn must never be
+    /// reported as the reason a later, unrelated failure happened.
+    #[test]
+    fn the_error_sink_is_cleared_by_reading_it() {
+        clear_last_request_error();
+        assert_eq!(take_last_request_error(), None);
+
+        let (ui_tx, ui_rx) = crossbeam_channel::unbounded();
+        let returned = fail_request(
+            &ui_tx,
+            ProviderRequestError::Transport {
+                detail: "connection reset".to_string(),
+            },
+        );
+        assert!(returned.is_none(), "fail_request never yields a response");
+        // The operator sees the same sentence the loop will report.
+        match ui_rx.try_recv() {
+            Ok(AgentToUiMessage::StatusUpdate(text)) => {
+                assert_eq!(text, "connection reset");
+            }
+            other => panic!("expected a status update, got {other:?}"),
+        }
+
+        assert_eq!(
+            take_last_request_error(),
+            Some(ProviderRequestError::Transport {
+                detail: "connection reset".to_string(),
+            })
+        );
+        assert_eq!(take_last_request_error(), None, "reading must clear it");
+    }
+
+    // ── to_native_ollama_body ────────────────────────────────────────
+
+    #[test]
+    fn native_body_rewrites_assistant_tool_call_arguments_to_object() {
+        let body = json!({
+            "messages": [
+                {"role": "user", "content": "hi"},
+                {"role": "assistant", "content": "", "tool_calls": [
+                    {"id": "c1", "type": "function", "function": {
+                        "name": "write_file",
+                        "arguments": "{\"path\":\"a.txt\"}"}}]},
+                {"role": "tool", "tool_call_id": "c1", "content": "ok"}
+            ]
+        });
+        let out = to_native_ollama_body(&body);
+        let msgs = out["messages"].as_array().unwrap();
+        let tc = &msgs[1]["tool_calls"][0];
+        assert!(tc.get("id").is_none(), "native drops the id wrapper");
+        assert!(tc.get("type").is_none(), "native drops the type wrapper");
+        assert_eq!(tc["function"]["name"], json!("write_file"));
+        assert!(
+            tc["function"]["arguments"].is_object(),
+            "arguments must be an object, not a JSON string"
+        );
+        assert_eq!(tc["function"]["arguments"]["path"], json!("a.txt"));
+        assert_eq!(
+            msgs[2]["role"],
+            json!("user"),
+            "tool result becomes a user turn"
+        );
+        assert_eq!(msgs[2]["content"], json!("ok"));
+    }
+
+    #[test]
+    fn native_body_leaves_plain_messages_untouched() {
+        let body = json!({"messages": [
+            {"role": "system", "content": "s"},
+            {"role": "user", "content": "u"}
+        ]});
+        let out = to_native_ollama_body(&body);
+        assert_eq!(out["messages"][0]["role"], json!("system"));
+        assert_eq!(out["messages"][1]["content"], json!("u"));
+    }
+
     // ── ollama_chat_url ──────────────────────────────────────────────
 
     #[test]
-    fn ollama_url_appends_openai_chat_path() {
+    fn ollama_url_appends_native_chat_path() {
         assert_eq!(
             ollama_chat_url("http://localhost:11434"),
-            "http://localhost:11434/v1/chat/completions"
+            "http://localhost:11434/api/chat"
         );
     }
 
@@ -999,11 +1615,11 @@ mod tests {
     fn ollama_url_trims_trailing_slash() {
         assert_eq!(
             ollama_chat_url("http://localhost:11434/"),
-            "http://localhost:11434/v1/chat/completions"
+            "http://localhost:11434/api/chat"
         );
         assert_eq!(
             ollama_chat_url("http://remote:9999///"),
-            "http://remote:9999/v1/chat/completions"
+            "http://remote:9999/api/chat"
         );
     }
 

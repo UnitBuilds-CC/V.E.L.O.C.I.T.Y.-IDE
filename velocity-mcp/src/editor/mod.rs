@@ -27,6 +27,7 @@ pub mod smart_sidebar;
 
 // Expert Teams Studio & Task Routing
 pub mod agent_memory;
+pub mod company_org;
 pub mod expert_team;
 pub mod skill_file;
 pub mod team_builder_chat;

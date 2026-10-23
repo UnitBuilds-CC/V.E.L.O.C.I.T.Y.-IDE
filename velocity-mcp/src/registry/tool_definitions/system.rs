@@ -45,18 +45,23 @@ pub fn get_system_tools() -> Vec<Tool> {
         },
         Tool {
             name: "read_file".to_string(),
-            description: "Read the contents of a file in the workspace.".to_string(),
+            description: "Read the contents of a file in the workspace. For a file too large to \
+             hold in context, pass `startLine` and/or `endLine` (1-based, inclusive) to read one \
+             region — the result names the range and the file's total line count, and the body is \
+             verbatim file text you can copy into an `edit_file` `oldString`.".to_string(),
             input_schema: json!({
                 "type": "object",
                 "properties": {
-                    "relativeFilePath": { "type": "string", "description": "Path relative to workspace root (e.g. \"scripts/bootstrap.sh\")" }
+                    "relativeFilePath": { "type": "string", "description": "Path relative to workspace root (e.g. \"scripts/bootstrap.sh\")" },
+                    "startLine": { "type": "integer", "description": "First line to return, 1-based and inclusive. Omit for the whole file." },
+                    "endLine": { "type": "integer", "description": "Last line to return, 1-based and inclusive. Defaults to a bounded window from startLine." }
                 },
                 "required": ["relativeFilePath"]
             }),
         },
         Tool {
             name: "write_file".to_string(),
-            description: "Write or overwrite a file with specific content in the workspace. Creates folders if they do not exist. Include 'context' to record *why* this change is being made — the reason is persisted in the codebase event log so future agents can understand the decision.".to_string(),
+            description: "Write or overwrite a file with specific content in the workspace. Creates folders if they do not exist. Rust files are run through rustfmt after the write, so the bytes on disk may be laid out differently from what you sent; the result says when that happened, and warns if rustfmt could not parse the file at all. Include 'context' to record *why* this change is being made — the reason is persisted in the codebase event log so future agents can understand the decision.".to_string(),
             input_schema: json!({
                 "type": "object",
                 "properties": {
@@ -65,6 +70,30 @@ pub fn get_system_tools() -> Vec<Tool> {
                     "context": { "type": "string", "description": "Why this file is being written (requirement, design decision, bug fix). Recorded in the codebase event log for future reference." }
                 },
                 "required": ["relativeFilePath", "content"]
+            }),
+        },
+        Tool {
+            name: "edit_file".to_string(),
+            description: "Apply targeted replacements to an existing file instead of rewriting it. Prefer this over write_file when only part of a file is wrong: it sends a few hundred bytes rather than the whole file, so a long fix cannot be cut off by the generation limit. Every `oldString` must match exactly one place in the file — include enough surrounding lines to make it unique. The edits are applied in order and the file is only written if ALL of them match, so a partially-correct batch changes nothing.".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "relativeFilePath": { "type": "string", "description": "Path of the existing file, relative to the workspace root." },
+                    "edits": {
+                        "type": "array",
+                        "description": "Replacements to apply in order. Each oldString must occur exactly once in the file (after the earlier edits have been applied).",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "oldString": { "type": "string", "description": "The exact current text to replace, copied verbatim from the file, with enough context to be unique." },
+                                "newString": { "type": "string", "description": "The replacement text. May be empty to delete the matched region." }
+                            },
+                            "required": ["oldString", "newString"]
+                        }
+                    },
+                    "context": { "type": "string", "description": "Why this edit is being made. Recorded in the codebase event log." }
+                },
+                "required": ["relativeFilePath", "edits"]
             }),
         },
         Tool {
@@ -110,6 +139,20 @@ pub fn get_system_tools() -> Vec<Tool> {
                     "command": { "type": "string", "description": "The command line string to execute." }
                 },
                 "required": ["command"]
+            }),
+        },
+        Tool {
+            name: "git_clone".to_string(),
+            description: "Clone a git repository into the workspace. git is run directly (not via a shell) so the URL cannot inject commands; it must start with http://, https://, git:// or git@. The destination is confined to the workspace and defaults to '.velocity/clones/<repo>' so it never overwrites tracked source; an existing non-empty destination is refused. Returns JSON with success, the workspace-relative path, exit code, and combined git output. Use this to fetch an external codebase before a port/rewrite task.".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "url": { "type": "string", "description": "Repository URL to clone (http/https/git scheme)." },
+                    "dest": { "type": "string", "description": "Workspace-relative destination directory. Defaults to '.velocity/clones/<repo-name>'." },
+                    "depth": { "type": "integer", "description": "Optional shallow-clone depth (e.g. 1) to fetch only the latest commit." },
+                    "branch": { "type": "string", "description": "Optional branch or tag to check out." }
+                },
+                "required": ["url"]
             }),
         },
         Tool {
@@ -437,6 +480,14 @@ pub fn get_system_tools() -> Vec<Tool> {
             }),
         },
         // ── Workflows ───────────────────────────────────────────────────────
+        Tool {
+            name: "workflow_list".to_string(),
+            description: "List saved workflows from .velocity/workflows/ with per-step-type counts (T=tool/connector, C=condition, A=agent task, F=foreach) and tool-name validation issues flagged. Use workflow_run to execute.".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {}
+            }),
+        },
         Tool {
             name: "workflow_run".to_string(),
             description: "Execute a saved workflow by id. Runs its steps in order (tool calls, agent tasks, conditions) and returns the run record with per-step status and output.".to_string(),

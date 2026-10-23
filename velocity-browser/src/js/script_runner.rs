@@ -265,6 +265,14 @@ pub fn execute_page_scripts_full(
     // from a clean module registry so re-navigation re-evaluates modules.
     crate::js::interpreter::clear_module_registry();
     install_module_fetch_resolver(current_url);
+    // Seed the interpreter's SPA navigation state with the real document URL
+    // so `location` reads and history operations reflect the loaded page
+    // instead of a hardcoded placeholder.
+    crate::js::interpreter::set_page_url(current_url);
+    // Committing a new document discards the previous page's event-loop state
+    // (timers, pending lifecycle listeners, readyState latch) so sessions don't
+    // leak into one another across navigations on a reused thread.
+    crate::js::interpreter::reset_page_state();
 
     let script_nodes = find_script_nodes(tree);
     let mut deferred: Vec<String> = Vec::new();
@@ -298,6 +306,11 @@ pub fn execute_page_scripts_full(
     for script in deferred {
         execute_single_script(tree, vm, scheduler, trace, &script);
     }
+
+    // The document is parsed and its scripts have run: fire the load
+    // lifecycle (DOMContentLoaded → load) exactly as a browser would, so
+    // listeners the page registered during execution are notified.
+    crate::js::interpreter::settle_page_lifecycle();
 
     // Final event loop drain
     let tick_limit = scheduler.tick_limit;

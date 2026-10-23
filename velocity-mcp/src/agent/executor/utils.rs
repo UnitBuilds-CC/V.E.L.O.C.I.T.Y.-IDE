@@ -1,4 +1,5 @@
 use super::super::models::*;
+use crate::registry::event_store::MAX_TOOL_RESULT_FOR_CONTEXT;
 use crate::usage::{CloudflareAccount, OpenRouterAccount, UsageTracker};
 use crossbeam_channel::Sender;
 use serde_json::{json, Value};
@@ -108,6 +109,65 @@ pub fn build_inline_tool_docs() -> String {
     doc
 }
 
+/// True when a LOCAL Ollama model reasons by default and therefore must not be
+/// told to stop thinking with `think:false`. Detection is by model name rather
+/// than `profile.supports_thinking`: the catalog profile for a local qwen3.x
+/// build is NOT flagged thinking (infer_model_info keys on "thinking"/"qwq"/
+/// "r1", none of which appear in "qwen3.6"), yet the model still emits a
+/// reasoning trace. The list mirrors `parse_ollama_tags` so the two capability
+/// views cannot drift apart, plus a generic "reasoning" catch.
+///
+/// Also drives `lean_context_for_reasoning_model` in the loop: a model whose
+/// catalog profile is NOT flagged thinking (a local qwen3.x build) still emits a
+/// reasoning trace and still needs a lean, on-task prompt, so both capability
+/// views must key off this one detector rather than `profile.supports_thinking`.
+pub(crate) fn ollama_model_reasons(model: &str) -> bool {
+    let lower = model.to_lowercase();
+    ["qwen3", "r1", "qwq", "thinking", "reasoning"]
+        .iter()
+        .any(|tag| lower.contains(tag))
+}
+
+/// The `think` value the native /api/chat endpoint needs from a local model on
+/// a non-thinking turn, chosen by live behaviour on Ollama 0.40.6:
+///   * Reasoning models (qwen3.x, r1, qwq): send `think:"low"`. `think:false`
+///     is actively harmful — the model degenerates to empty content and burns
+///     the entire `num_predict` budget before emitting a call (measured:
+///     eval_count=1200, content="", done=length). `think:"low"` keeps a short
+///     trace and yields a real tool call with a clean stop (eval_count=628).
+///     An explicit thinking turn gets full `think:true`.
+///   * Non-reasoning coders (qwen2.5-coder): send `think:false`. They reject a
+///     truthy `think` (HTTP 400 "does not support thinking") but accept
+///     `think:false` as a harmless no-op (measured: 200).
+///
+/// Exported for unit testing.
+pub fn ollama_think_value(model: &str, thinking: bool) -> Value {
+    if ollama_model_reasons(model) {
+        if thinking {
+            json!(true)
+        } else {
+            json!("low")
+        }
+    } else {
+        json!(false)
+    }
+}
+
+/// The context window every local Ollama turn asks for.
+///
+/// Ollama's native endpoint defaults to a 2048-token window and SILENTLY drops
+/// the front of the prompt instead of refusing the request: measured on 0.40.6,
+/// a ~50k-token prompt sent with `num_ctx` unset came back with
+/// `prompt_eval_count = 2050`. Only reasoning models and write-forced turns set
+/// the window before this const existed, so on a non-reasoning coder
+/// (qwen2.5-coder) every ordinary tool turn lost the preloaded source, the tool
+/// schemas and its own history — the model then re-reads files it was already
+/// given, which reads as a wandering agent rather than a clamped one.
+///
+/// 20480 is the largest window measured to complete a multi-KB write on an 8 GB
+/// host running a 22 GB model (32768 overflowed VRAM and returned empty turns).
+pub const LOCAL_OLLAMA_NUM_CTX: u32 = 20480;
+
 pub fn build_request(
     profile: &ModelInfo,
     model: &str,
@@ -148,6 +208,35 @@ pub fn build_request(
             _ => {
                 request["reasoning_effort"] = json!("high");
             }
+        }
+    } else if provider == AiProvider::LocalOllama {
+        request["think"] = ollama_think_value(model, thinking);
+    }
+    // Ollama's NATIVE /api/chat endpoint (see ollama_chat_url) ignores the
+    // top-level OpenAI `max_tokens` field and reads its output ceiling from
+    // `options.num_predict` instead, with the context window from
+    // `options.num_ctx`. Ollama's defaults (num_predict -1 bounded by a 2048
+    // window, num_ctx 2048) truncate long tool-call arguments (write_file with
+    // multi-KB content) mid-stream, so both must be raised explicitly.
+    //
+    // Reasoning models run on a reduced `think:"low"` trace (see
+    // ollama_think_value): the trace is short but non-zero, so they get the
+    // larger output ceiling. The window itself is the same for both — see
+    // LOCAL_OLLAMA_NUM_CTX for why leaving it unset on a non-reasoning coder is
+    // not a smaller prompt but an invisible one. Detection is by model name, not
+    // profile supports_thinking, because the catalog profile for a local qwen3.x
+    // build is not flagged thinking (infer_model_info keys on "thinking"/"qwq"/
+    // "r1", none of which appear in "qwen3.6"), yet the model still reasons by
+    // default — the exact mismatch that made think:false starve the turn.
+    if provider == AiProvider::LocalOllama {
+        // A turn that only reboots the model between requests wastes 40-90 s
+        // reloading multi-GB weights on the buildbox (and the reload is dead
+        // time on the socket that can trip read timeouts). Hold it resident.
+        request["keep_alive"] = json!("30m");
+        if ollama_model_reasons(model) {
+            request["options"] = json!({ "num_ctx": LOCAL_OLLAMA_NUM_CTX, "num_predict": 14000 });
+        } else {
+            request["options"] = json!({ "num_ctx": LOCAL_OLLAMA_NUM_CTX, "num_predict": 8192 });
         }
     }
     request
@@ -323,7 +412,7 @@ pub fn compress_history(messages: &[ChatMessage], supports_tools: bool) -> Vec<C
             let has_subsequent_assistant_msg = messages[idx + 1..]
                 .iter()
                 .any(|msg| msg.role == "assistant");
-            if has_subsequent_assistant_msg && m_copy.content.len() > 4_000 {
+            if has_subsequent_assistant_msg && m_copy.content.len() > MAX_TOOL_RESULT_FOR_CONTEXT {
                 let tool_name = m_copy
                     .name
                     .clone()
@@ -430,8 +519,32 @@ pub fn compress_history(messages: &[ChatMessage], supports_tools: bool) -> Vec<C
                 // produced the output: site_map holds code symbols, not tool
                 // results, so telling the model to "query site_map" after a
                 // compressed run_command output sent it on a dead end.
+                //
+                // The read_file hint must NOT be an instruction to re-read the
+                // whole file. A result over the threshold is re-compressed on
+                // every later turn, so the old "call read_file again" was a
+                // trap: the model re-read, the fresh copy compressed next turn,
+                // the stub told it to read again, and it never reached the task.
+                // The LiteLLM porters spun ~18 re-reads of a 19 KB conventions.md
+                // per dispatch, wrote zero files, and the gates went green over
+                // an empty crate.
+                //
+                // But "use what you already read" is its own dead end for a model
+                // that has to COPY text: an `edit_file` oldString is verbatim or
+                // it matches nothing, and the text it would copy is exactly what
+                // was elided. The escape is a bounded re-read — a range survives
+                // the budget the whole file could not — so the hint forbids the
+                // unbounded re-read and names the bounded one.
                 let hint = match tool_name.as_str() {
-                    "read_file" => "Call read_file again to retrieve the full content.",
+                    "read_file" => {
+                        "This file was already read in full earlier in the conversation; \
+                     only this older copy is elided to save context. Do NOT re-read the whole file \
+                     to recover the text \u{2014} the fresh copy is elided again next turn. If you \
+                     need exact lines \u{2014} to build an `edit_file` `oldString`, for instance \
+                     \u{2014} call read_file again with `startLine` and `endLine` for just that \
+                     region: a bounded window survives, and its body is verbatim. Otherwise use \
+                     what you already read and continue the task."
+                    }
                     "run_command" => {
                         "Re-run the command to see this output again; it may have changed."
                     }
@@ -691,6 +804,102 @@ pub struct ParsedToolCall {
     pub arguments: serde_json::Map<String, Value>,
 }
 
+/// Byte offset just past the `}` matching the `{` at `start`, respecting JSON
+/// string literals and escapes. `None` when the braces never balance (truncated).
+fn match_json_brace(content: &str, start: usize) -> Option<usize> {
+    let bytes = content.as_bytes();
+    let mut depth = 0usize;
+    let mut in_string = false;
+    let mut escaped = false;
+    let mut i = start;
+    while i < bytes.len() {
+        let b = bytes[i];
+        if in_string {
+            if escaped {
+                escaped = false;
+            } else if b == b'\\' {
+                escaped = true;
+            } else if b == b'"' {
+                in_string = false;
+            }
+        } else if b == b'"' {
+            in_string = true;
+        } else if b == b'{' {
+            depth += 1;
+        } else if b == b'}' {
+            depth -= 1;
+            if depth == 0 {
+                return Some(i + 1);
+            }
+        }
+        i += 1;
+    }
+    None
+}
+
+/// Interpret a `{...}` span as one tool call only when it is unambiguously a
+/// call to a KNOWN tool: it has a string `name` in `known_tools` and an
+/// `arguments`/`parameters` field (object, or a JSON string encoding one).
+/// Anything else returns `None`, so a genuine JSON final answer is never taken
+/// for a call.
+fn as_bare_tool_call(
+    span: &str,
+    known_tools: &std::collections::HashSet<String>,
+) -> Option<ParsedToolCall> {
+    let obj = serde_json::from_str::<Value>(span)
+        .ok()?
+        .as_object()
+        .cloned()?;
+    let name = obj.get("name").and_then(|n| n.as_str())?;
+    if !known_tools.contains(name) {
+        return None;
+    }
+    let args_field = obj.get("arguments").or_else(|| obj.get("parameters"))?;
+    let args_map = match args_field {
+        Value::Object(m) => m.clone(),
+        Value::String(s) => serde_json::from_str::<Value>(s)
+            .ok()
+            .and_then(|p| p.as_object().cloned())
+            .unwrap_or_default(),
+        _ => return None,
+    };
+    Some(ParsedToolCall {
+        name: name.to_string(),
+        arguments: args_map,
+    })
+}
+
+/// Recover tool calls a model emitted as bare OpenAI-style JSON objects in its
+/// text content rather than structured `tool_calls` deltas — the shape some
+/// Ollama/Qwen builds return (`{"name": "list_dir", "arguments": {...}}`, or an
+/// array of them). Scans every balanced `{...}` region, keeps the ones that are
+/// calls to registered tools, and returns the content with those spans stripped
+/// plus the calls in document order. An empty Vec means the dialect is absent.
+pub fn parse_bare_json_tool_calls(
+    content: &str,
+    known_tools: &std::collections::HashSet<String>,
+) -> (String, Vec<ParsedToolCall>) {
+    let mut calls = Vec::new();
+    let mut cleaned = String::new();
+    let mut i = 0usize;
+    while i < content.len() {
+        if content.as_bytes()[i] == b'{' {
+            if let Some(end) = match_json_brace(content, i) {
+                if let Some(call) = as_bare_tool_call(&content[i..end], known_tools) {
+                    calls.push(call);
+                    i = end;
+                    continue;
+                }
+            }
+        }
+        // Advance a whole char so multi-byte text never splits a boundary.
+        let ch = content[i..].chars().next().unwrap();
+        cleaned.push(ch);
+        i += ch.len_utf8();
+    }
+    (cleaned.trim().to_string(), calls)
+}
+
 /// Parse DSML (DeepSeek Markup Language) tool calls out of assistant text.
 /// Some DeepSeek-family models emit tool calls as structured text using the
 /// fullwidth-pipe delimiter U+FF5C instead of native function_call deltas:
@@ -781,6 +990,172 @@ pub fn parse_dsml_tool_calls(content: &str) -> (String, Vec<ParsedToolCall>) {
         .into_iter()
         .fold(cleaned, |acc, wrapper| acc.replace(&wrapper, ""));
     (cleaned.trim().to_string(), calls)
+}
+
+/// Parse the Claude-family inline tool dialect out of assistant text.
+///
+/// Models trained on the Anthropic wire format emit their calls as plain text
+/// whenever no native schema is attached to the request. The LiteLLM crucible
+/// hit exactly this on the token-plan glm-5.2 route while the profile still
+/// claimed the model was not tool-capable: the batch opened with a
+/// call-list tag, each call was an invoke marker carrying a quoted name
+/// attribute with quoted-name parameter markers inside, every tag was
+/// namespace-qualified with the provider prefix, and the whole block was
+/// interleaved with the models reasoning prose. None of the other readers
+/// (native deltas, the wrapped inline syntax, DSML) match that spelling, so
+/// the turn looked like a final answer with no tool calls and the mission
+/// ended after one turn.
+///
+/// Returns the content with every recovered call stripped, plus the calls in
+/// document order. An empty Vec means the dialect was not present.
+pub fn parse_claude_inline_tool_calls(content: &str) -> (String, Vec<ParsedToolCall>) {
+    // Tag assembly goes through these two builders rather than hand-joined
+    // format strings: an earlier hand-written closer carried both a literal
+    // angle bracket and the escape constant, so every close marker began
+    // "</<" and matched nothing in the wild — the parser then read each
+    // parameter value straight to the end of its call and swallowed the tags.
+    let open_tag = |prefix: &str, name: &str| format!("<{}{}>", prefix, name);
+    let close_tag = |prefix: &str, name: &str| format!("{}/{}{}>", '\u{3c}', prefix, name);
+    // Provider-qualified and bare spellings of the same marker.
+    let mut invoke_opens: Vec<String> = Vec::new();
+    let mut invoke_closes: Vec<String> = Vec::new();
+    let mut param_opens: Vec<String> = Vec::new();
+    let mut param_closes: Vec<String> = Vec::new();
+    for prefix in ["", "antml:"] {
+        invoke_opens.push(format!("<{}invoke name=", prefix));
+        invoke_closes.push(close_tag(prefix, "invoke"));
+        param_opens.push(format!("<{}parameter name=", prefix));
+        param_closes.push(close_tag(prefix, "parameter"));
+    }
+
+    /// Earliest occurrence of any candidate, with its length.
+    fn find_any(haystack: &str, candidates: &[String]) -> Option<(usize, usize)> {
+        candidates
+            .iter()
+            .filter_map(|c| haystack.find(c.as_str()).map(|p| (p, c.len())))
+            .min_by_key(|(p, _)| *p)
+    }
+
+    let mut calls = Vec::new();
+    let mut cleaned = String::new();
+    let mut rest = content;
+    // No early exit when no invoke marker is present: the reasoning-span and
+    // wrapper cleanup below is wanted for those turns too.
+    while let Some((inv_start, _)) = find_any(rest, &invoke_opens) {
+        cleaned.push_str(&rest[..inv_start]);
+        // The invoke tag ends at its closing bracket; a stream cut mid-tag
+        // leaves none, so treat the remainder of the text as the tag.
+        let tag_end = rest[inv_start..]
+            .find('>')
+            .map(|p| inv_start + p)
+            .unwrap_or(rest.len());
+        let fname = extract_quoted_attr(&rest[inv_start..tag_end], "name").unwrap_or_default();
+        let body_start = (tag_end + 1).min(rest.len());
+        // The call ends at its close marker, at the next call, or at the end
+        // of the text — whichever comes first (a truncated stream leaves the
+        // close marker unsent, and the call is still executable).
+        let inv_close = [
+            find_any(&rest[body_start..], &invoke_closes).map(|(p, l)| (body_start + p, l)),
+            find_any(&rest[body_start..], &invoke_opens).map(|(p, _)| (body_start + p, 0)),
+        ]
+        .into_iter()
+        .flatten()
+        .min_by_key(|(p, _)| *p);
+        let (body_end, consumed) = match inv_close {
+            Some((p, l)) => (p, l),
+            None => (rest.len(), 0),
+        };
+        let mut args = serde_json::Map::new();
+        let mut cursor = body_start;
+        while let Some((ps, _)) = find_any(&rest[cursor..body_end], &param_opens) {
+            let open_at = cursor + ps;
+            let key_tag_end = rest[open_at..body_end]
+                .find('>')
+                .map(|p| open_at + p)
+                .unwrap_or(body_end);
+            let key = extract_quoted_attr(&rest[open_at..key_tag_end], "name").unwrap_or_default();
+            let val_start = (key_tag_end + 1).min(body_end);
+            let val_end = [
+                find_any(&rest[val_start..body_end], &param_closes).map(|(p, _)| val_start + p),
+                find_any(&rest[val_start..body_end], &param_opens).map(|(p, _)| val_start + p),
+            ]
+            .into_iter()
+            .flatten()
+            .min()
+            .unwrap_or(body_end);
+            if !key.is_empty() {
+                args.insert(key, coerced_param_value(&rest[val_start..val_end]));
+            }
+            cursor = val_end;
+            // Step over the parameter close marker when the value ended at
+            // one (rather than at the next marker or the end of the call).
+            if let Some(close) = param_closes
+                .iter()
+                .find(|c| rest[cursor..].starts_with(c.as_str()))
+            {
+                cursor += close.len();
+            }
+        }
+        if !fname.is_empty() {
+            calls.push(ParsedToolCall {
+                name: fname,
+                arguments: args,
+            });
+        }
+        let next_from = (body_end + consumed).min(rest.len());
+        rest = &rest[next_from..];
+    }
+    cleaned.push_str(rest);
+
+    // Batch wrappers and reasoning-block tags: the call list is opened and
+    // closed in either spelling (with or without the namespace prefix), and
+    // the same routes smuggle the models reasoning block into the content
+    // channel. These carry no arguments, so cutting them out of the prose is
+    // enough to make the turn readable.
+    let mut wrappers: Vec<String> = Vec::new();
+    for prefix in ["", "antml:"] {
+        for name in ["tool_calls", "function_calls", "thinking"] {
+            wrappers.push(open_tag(prefix, name));
+            wrappers.push(close_tag(prefix, name));
+        }
+    }
+    // A complete reasoning block carries no answer, so drop the whole span
+    // rather than only its tags: cutting the tags alone would leak the models
+    // private prose into the visible turn and straight into chat history. An
+    // unterminated opener keeps its text (only the tag is cut) because
+    // assuming the block runs to end-of-stream can swallow a real answer that
+    // the provider simply never finished tagging.
+    for prefix in ["", "antml:"] {
+        let open = open_tag(prefix, "thinking");
+        let close = close_tag(prefix, "thinking");
+        while let Some(start) = cleaned.find(&open) {
+            let after = start + open.len();
+            match cleaned[after..].find(&close) {
+                Some(rel) => {
+                    let end = after + rel + close.len();
+                    cleaned = format!("{}{}", &cleaned[..start], &cleaned[end..]);
+                }
+                None => break,
+            }
+        }
+    }
+    cleaned = wrappers
+        .into_iter()
+        .fold(cleaned, |acc, wrapper| acc.replace(&wrapper, ""));
+    (cleaned.trim().to_string(), calls)
+}
+
+/// A parameter value as the model wrote it: JSON where the payload is a valid
+/// JSON literal (object, array or bare number — large `write_file` bodies
+/// arrive that way), otherwise the trimmed text.
+fn coerced_param_value(raw: &str) -> Value {
+    let trimmed = raw.trim();
+    if let Ok(v) = serde_json::from_str::<Value>(trimmed) {
+        if v.is_object() || v.is_array() || v.is_number() || v.is_boolean() {
+            return v;
+        }
+    }
+    Value::String(trimmed.to_string())
 }
 
 pub fn sanitize_chat_token(s: &str) -> String {
@@ -909,5 +1284,242 @@ mod tests {
         );
         assert_eq!(extract_quoted_attr(" name=", "name"), None);
         assert_eq!(extract_quoted_attr("other=\"v\"", "name"), None);
+    }
+
+    /// Render the Claude-family dialect from an ASCII sketch where `~` stands
+    /// for the angle bracket the model actually emits.
+    fn claude(sketch: &str) -> String {
+        sketch.replace('~', "\u{3c}")
+    }
+
+    #[test]
+    fn claude_inline_parses_the_live_batch_shape() {
+        // Byte shape of the LiteLLM crucible phase-1 turn (token-plan
+        // glm-5.2): provider-qualified tags, a call-list wrapper closed by
+        // the function-plural spelling, and the reasoning block interleaved.
+        let content = claude(
+            "Let me map the litellm package.\n\n~thinking>I must issue one call per block.~/thinking>\n~antml:tool_calls>\n~antml:invoke name=\"list_dir\">~antml:parameter name=\"relativeDirPath\">.velocity/clones/litellm/litellm~/antml:parameter>~/antml:invoke>\n~antml:invoke name=\"read_file\">~antml:parameter name=\"filePath\">litellm/__init__.py~/antml:parameter>~/antml:invoke>\n~/antml:function_calls>\n",
+        );
+        let (cleaned, calls) = parse_claude_inline_tool_calls(&content);
+        assert_eq!(calls.len(), 2, "both calls in the batch: {calls:?}");
+        assert_eq!(calls[0].name, "list_dir");
+        assert_eq!(
+            calls[0].arguments["relativeDirPath"],
+            Value::String(".velocity/clones/litellm/litellm".into())
+        );
+        assert_eq!(calls[1].name, "read_file");
+        assert_eq!(
+            calls[1].arguments["filePath"],
+            Value::String("litellm/__init__.py".into())
+        );
+        assert_eq!(cleaned, "Let me map the litellm package.");
+    }
+
+    #[test]
+    fn claude_inline_accepts_bare_unprefixed_markers() {
+        let content = claude(
+            "Reading now.~tool_calls>~invoke name=\"grep_search\">~parameter name=\"searchText\">def completion~parameter name=\"maxResults\">25~/invoke>~/tool_calls>",
+        );
+        let (cleaned, calls) = parse_claude_inline_tool_calls(&content);
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].name, "grep_search");
+        assert_eq!(
+            calls[0].arguments["searchText"],
+            Value::String("def completion".into())
+        );
+        // A numeric payload arrives as JSON so the schema check sees a number.
+        assert_eq!(calls[0].arguments["maxResults"], Value::from(25));
+        assert_eq!(cleaned, "Reading now.");
+    }
+
+    #[test]
+    fn claude_inline_recovers_a_call_truncated_at_eof() {
+        // Stream died before any close marker: the call is still executable.
+        let content = claude(
+            "~antml:invoke name=\"write_file\">~antml:parameter name=\"relativeFilePath\">rust_port/component_map.md~/antml:parameter>~antml:parameter name=\"content\"># Component map",
+        );
+        let (_cleaned, calls) = parse_claude_inline_tool_calls(&content);
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].name, "write_file");
+        assert_eq!(
+            calls[0].arguments["relativeFilePath"],
+            Value::String("rust_port/component_map.md".into())
+        );
+        assert!(calls[0].arguments.contains_key("content"));
+    }
+
+    #[test]
+    fn claude_inline_drops_a_whole_reasoning_block() {
+        // The private prose inside a closed thinking span is not an answer:
+        // leaking it into the visible turn also leaks it into chat history,
+        // where the model later reads it back as its own statement.
+        let content = claude(
+            "~thinking>Weighing three crates, then picking reqwest.~/thinking>\nPorting the HTTP layer now.",
+        );
+        let (cleaned, calls) = parse_claude_inline_tool_calls(&content);
+        assert!(calls.is_empty());
+        assert_eq!(cleaned, "Porting the HTTP layer now.");
+    }
+
+    #[test]
+    fn claude_inline_keeps_text_of_an_unclosed_reasoning_opener() {
+        // No close marker: the span boundary is unknowable, so only the tag
+        // is cut and the prose stays — swallowing it could delete the answer.
+        let content = claude("~thinking>Deciding between reqwest and hyper.");
+        let (cleaned, calls) = parse_claude_inline_tool_calls(&content);
+        assert!(calls.is_empty());
+        assert_eq!(cleaned, "Deciding between reqwest and hyper.");
+    }
+
+    #[test]
+    fn claude_inline_leaves_plain_prose_alone() {
+        let content = "The proxy package depends on httpx and fastapi; port it to reqwest.";
+        let (cleaned, calls) = parse_claude_inline_tool_calls(content);
+        assert!(calls.is_empty());
+        assert_eq!(cleaned, content);
+    }
+
+    // ── bare OpenAI-style JSON tool calls (Ollama/Qwen dialect) ──────────
+
+    fn known(tools: &[&str]) -> std::collections::HashSet<String> {
+        tools.iter().map(|t| t.to_string()).collect()
+    }
+
+    #[test]
+    fn bare_json_recovers_a_single_object_call() {
+        // Byte-for-byte the phase-1 14B turn that stalled the mission.
+        let content =
+            r#"{"name": "list_dir", "arguments": {"path": ".velocity/clones/litellm/litellm"}}"#;
+        let (cleaned, calls) = parse_bare_json_tool_calls(content, &known(&["list_dir"]));
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].name, "list_dir");
+        assert_eq!(
+            calls[0].arguments["path"].as_str(),
+            Some(".velocity/clones/litellm/litellm")
+        );
+        assert_eq!(cleaned, "");
+    }
+
+    #[test]
+    fn bare_json_recovers_an_array_of_calls_in_order() {
+        let content = r#"[{"name": "read_file", "arguments": {"path": "a.rs"}}, {"name": "grep_search", "arguments": {"pattern": "fn main"}}]"#;
+        let (_cleaned, calls) =
+            parse_bare_json_tool_calls(content, &known(&["read_file", "grep_search"]));
+        assert_eq!(calls.len(), 2);
+        assert_eq!(calls[0].name, "read_file");
+        assert_eq!(calls[1].name, "grep_search");
+    }
+
+    #[test]
+    fn bare_json_keeps_surrounding_prose() {
+        let content = r#"Let me look. {"name": "list_dir", "arguments": {"path": "."}} done"#;
+        let (cleaned, calls) = parse_bare_json_tool_calls(content, &known(&["list_dir"]));
+        assert_eq!(calls.len(), 1);
+        assert!(cleaned.contains("Let me look."));
+        assert!(cleaned.contains("done"));
+        assert!(!cleaned.contains("list_dir"));
+    }
+
+    #[test]
+    fn bare_json_ignores_unknown_tool_names() {
+        // A JSON final answer that happens to carry a `name`/`arguments` pair
+        // must not be hijacked unless `name` is a registered tool.
+        let content = r#"{"name": "some_report", "arguments": {"x": 1}}"#;
+        let (cleaned, calls) = parse_bare_json_tool_calls(content, &known(&["list_dir"]));
+        assert!(calls.is_empty());
+        assert_eq!(cleaned, content);
+    }
+
+    #[test]
+    fn bare_json_requires_an_arguments_field() {
+        // No `arguments`/`parameters` key: too ambiguous to treat as a call.
+        let content = r#"{"name": "list_dir"}"#;
+        let (cleaned, calls) = parse_bare_json_tool_calls(content, &known(&["list_dir"]));
+        assert!(calls.is_empty());
+        assert_eq!(cleaned, content);
+    }
+
+    #[test]
+    fn bare_json_parses_stringified_arguments() {
+        let content = r#"{"name": "read_file", "arguments": "{\"path\": \"x.rs\"}"}"#;
+        let (_cleaned, calls) = parse_bare_json_tool_calls(content, &known(&["read_file"]));
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].arguments["path"].as_str(), Some("x.rs"));
+    }
+
+    #[test]
+    fn bare_json_plain_prose_is_untouched() {
+        let content = "The map is complete; no further tool calls are needed.";
+        let (cleaned, calls) = parse_bare_json_tool_calls(content, &known(&["list_dir"]));
+        assert!(calls.is_empty());
+        assert_eq!(cleaned, content);
+    }
+
+    #[test]
+    fn reasoning_models_never_receive_think_false() {
+        // Live defect on Ollama 0.40.6: qwen3.6:35b-a3b with think:false emits
+        // empty content and burns the whole num_predict budget before any tool
+        // call (eval_count=1200, content="", done=length). think:"low" restores
+        // a real tool call with a clean stop (eval_count=628). A non-thinking
+        // turn must never send `false` to a model that reasons.
+        assert_eq!(ollama_think_value("qwen3.6:35b-a3b", false), json!("low"));
+        assert_eq!(ollama_think_value("qwen3:32b", false), json!("low"));
+        assert_eq!(ollama_think_value("deepseek-r1:8b", false), json!("low"));
+        assert_eq!(ollama_think_value("qwq:32b", false), json!("low"));
+        // An explicit thinking turn gets the full trace.
+        assert_eq!(ollama_think_value("qwen3.6:35b-a3b", true), json!(true));
+    }
+
+    #[test]
+    fn non_reasoning_models_keep_think_false_noop() {
+        // qwen2.5-coder rejects a truthy think (HTTP 400 does not support
+        // thinking) but accepts false as a no-op (200), so it must keep false
+        // and must NOT be swept in by the qwen3 reasoning detection.
+        assert_eq!(ollama_think_value("qwen2.5-coder:32b", false), json!(false));
+        assert_eq!(ollama_think_value("qwen2.5-coder:32b", true), json!(false));
+        assert!(!ollama_model_reasons("qwen2.5-coder:32b"));
+    }
+
+    #[test]
+    fn every_ollama_turn_declares_its_context_window() {
+        // Left unset, Ollama's native endpoint allocates 2048 tokens and SILENTLY
+        // drops the front of the prompt instead of erroring: measured on 0.40.6,
+        // a ~50k-token prompt came back with prompt_eval_count=2050. The window
+        // used to be set only for reasoning models, so each ordinary turn of a
+        // non-reasoning coder lost the preloaded source, the tool schemas and its
+        // own history — which the loop then read back as a wandering agent.
+        let profile = |id: &str| ModelInfo {
+            id: id.to_string(),
+            label: id.to_string(),
+            api_style: ApiStyle::OpenAiTools,
+            supports_tools: true,
+            supports_thinking: false,
+        };
+        for (model, num_predict) in [("qwen2.5-coder:7b", 8192u32), ("qwen3.6:35b-a3b", 14000)] {
+            let req = build_request(
+                &profile(model),
+                model,
+                &[],
+                &[json!({"name": "write_file"})],
+                false,
+                AiProvider::LocalOllama,
+            );
+            assert_eq!(
+                req["options"]["num_ctx"],
+                json!(LOCAL_OLLAMA_NUM_CTX),
+                "{model} got no window"
+            );
+            assert_eq!(req["options"]["num_predict"], json!(num_predict), "{model}");
+        }
+        // A cloud provider must not gain the Ollama-only `options` block.
+        let req = build_request(
+            &profile("qwen-plus"),
+            "qwen-plus",
+            &[],
+            &[],
+            false,
+            AiProvider::OpenRouter,
+        );
+        assert!(req.get("options").is_none());
     }
 }

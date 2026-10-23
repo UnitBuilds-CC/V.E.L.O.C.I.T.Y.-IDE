@@ -116,12 +116,127 @@ pub struct HeadlessSubAgentRequest {
     pub scoped_files: Option<Vec<PathBuf>>,
     /// Maximum reasoning turns. None = use default (15).
     pub max_turns: Option<usize>,
+    /// Wall-clock budget for the whole run. The loop checks it at every turn
+    /// boundary and stops as [`AgentLoopOutcome::TimedOut`] rather than running
+    /// on forever. `None` keeps the old unbounded behaviour, which is right for
+    /// an interactive session a human can cancel but wrong for a dispatch that
+    /// nobody is watching: a LiteLLM porting attempt once ran 21 minutes past
+    /// the caller's own 300 s budget and had to be killed by hand.
+    pub budget: Option<std::time::Duration>,
+    /// Whether this task's promised deliverable is files the agent must write
+    /// (the `output_format_block("artifact")` contract: "a response with no
+    /// writes is a failed task"). When true, the loop refuses to report a clean
+    /// `Completed` final answer if it never produced a file — it steers the
+    /// model back to the write tool, and stops as `Blocked` if that fails, so an
+    /// empty deliverable is never a silent success. `false` leaves the text
+    /// answer as a valid ending (reports, chat, read-only analysis).
+    pub requires_artifact: bool,
+}
+
+/// Why the agent reasoning loop stopped, as a structured signal.
+///
+/// The loop used to return `()`, so every caller had to guess success by
+/// scanning the transcript for the word `Error:` — and a *successful* porting
+/// run quotes cargo output, so it contains that word too. Guessing this way
+/// threw away a completed, compiler-validated LiteLLM port: `team_dispatch`
+/// scored the winning attempt failed and re-ran the whole task on two models
+/// that 404, then reported "no model succeeded".
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AgentLoopOutcome {
+    /// The model delivered a final answer, or post-run validation passed.
+    Completed,
+    /// The loop stopped for a reason that means the mission is not done, but a
+    /// different model on the same provider could still succeed (a rejected
+    /// model name, an exhausted turn budget, unrepairable tool markup).
+    Blocked { reason: String },
+    /// No provider could be reached at all: missing credentials, an account
+    /// list that is empty, or a transport failure that outlived its retries.
+    /// Trying another *model* on the same provider cannot help, so callers
+    /// skip straight to the next provider.
+    ///
+    /// This is a variant rather than a `Blocked` reason prefix because the
+    /// dispatch failover branches on it, and branching on `reason().starts_with`
+    /// is the same prose-guessing defect that made `is_completed` necessary.
+    ProviderUnavailable { reason: String },
+    /// The wall-clock budget ran out mid-mission. Partial work is on disk and
+    /// the transcript is real, so callers should report what exists instead of
+    /// re-running the whole task on a weaker model with no time left.
+    TimedOut {
+        elapsed_secs: u64,
+        budget_secs: u64,
+        turns: usize,
+    },
+    /// An operator — or an orchestrator watchdog acting for one — stopped the
+    /// run. Not a model failure and not worth a failover: the next provider
+    /// would be doing work a human just asked to stop. It gets its own variant
+    /// because the orchestrator worker used to detect it by scanning status
+    /// updates for the substring "cancelled by operator", which is the same
+    /// prose-guessing defect `is_completed` was introduced to remove.
+    Cancelled,
+}
+
+impl AgentLoopOutcome {
+    pub fn is_completed(&self) -> bool {
+        matches!(self, AgentLoopOutcome::Completed)
+    }
+
+    /// Whether another model on the *same* provider is worth an attempt.
+    pub fn is_provider_unavailable(&self) -> bool {
+        matches!(self, AgentLoopOutcome::ProviderUnavailable { .. })
+    }
+
+    /// Whether the run stopped because its wall-clock budget was spent. Such a
+    /// run must never trigger a failover: the budget that ran out is shared by
+    /// every remaining candidate, so a retry only burns time it does not have.
+    pub fn is_timed_out(&self) -> bool {
+        matches!(self, AgentLoopOutcome::TimedOut { .. })
+    }
+
+    /// Whether a human (or a watchdog acting for one) stopped the run. Such a
+    /// run must never trigger a failover, and must never be reported as a
+    /// model or provider failure.
+    pub fn is_cancelled(&self) -> bool {
+        matches!(self, AgentLoopOutcome::Cancelled)
+    }
+
+    /// Why a run stopped, for logs and the dispatch result. Empty when the
+    /// mission finished normally.
+    pub fn reason(&self) -> String {
+        match self {
+            AgentLoopOutcome::Completed => String::new(),
+            AgentLoopOutcome::Blocked { reason } => reason.clone(),
+            AgentLoopOutcome::ProviderUnavailable { reason } => {
+                format!("provider unavailable: {reason}")
+            }
+            AgentLoopOutcome::TimedOut {
+                elapsed_secs,
+                budget_secs,
+                turns,
+            } => format!(
+                "wall-clock budget of {budget_secs}s spent after {turns} turn(s) ({elapsed_secs}s elapsed)"
+            ),
+            AgentLoopOutcome::Cancelled => "cancelled by operator".to_string(),
+        }
+    }
+}
+
+impl Default for AgentLoopOutcome {
+    /// Deliberately not `Completed`: an outcome nobody reported must never be
+    /// read as success by a caller that only looks at `is_completed`.
+    fn default() -> Self {
+        AgentLoopOutcome::Blocked {
+            reason: "loop reported no outcome".to_string(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Default)]
 pub struct HeadlessSubAgentResult {
     pub status_updates: Vec<String>,
     pub transcript: String,
+    /// Whether the sub-agent actually finished its mission. Read this instead
+    /// of pattern-matching the transcript.
+    pub outcome: AgentLoopOutcome,
 }
 
 #[derive(Debug, Clone)]
@@ -328,6 +443,74 @@ pub struct ToolCallAccumulator {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// An outcome nobody reported must never read as success: `team_dispatch`
+    /// fails over on `is_completed`, so a default that claimed completion would
+    /// quietly accept a run that never answered.
+    #[test]
+    fn unreported_loop_outcome_defaults_to_blocked() {
+        let unreported = AgentLoopOutcome::default();
+        assert!(!unreported.is_completed());
+        assert!(!unreported.reason().is_empty());
+
+        assert!(AgentLoopOutcome::Completed.is_completed());
+        assert_eq!(AgentLoopOutcome::Completed.reason(), "");
+
+        let blocked = AgentLoopOutcome::Blocked {
+            reason: "turn budget exhausted".to_string(),
+        };
+        assert!(!blocked.is_completed());
+        assert_eq!(blocked.reason(), "turn budget exhausted");
+        // A blocked run is still worth another model on the same provider.
+        assert!(!blocked.is_provider_unavailable());
+        assert!(!blocked.is_timed_out());
+        assert!(!blocked.is_cancelled());
+    }
+
+    /// The non-completed outcomes must be distinguishable *structurally*:
+    /// `team_dispatch` skips the rest of a provider's models on
+    /// `ProviderUnavailable` and abandons the whole chain on `TimedOut`, and the
+    /// orchestrator worker reports `Cancelled` instead of a model failure. Those
+    /// decisions used to be made by matching a reason string or scanning status
+    /// updates, which is how a healthy run that happened to mention a dead
+    /// provider got thrown away.
+    #[test]
+    fn failover_decisions_read_the_outcome_variant_not_its_prose() {
+        let dead = AgentLoopOutcome::ProviderUnavailable {
+            reason: "Alibaba Qwen API key not set".to_string(),
+        };
+        assert!(!dead.is_completed());
+        assert!(dead.is_provider_unavailable());
+        assert!(!dead.is_timed_out());
+        assert!(!dead.is_cancelled());
+        assert!(
+            dead.reason().contains("API key not set"),
+            "the operator-facing text keeps the real cause: {}",
+            dead.reason()
+        );
+
+        let spent = AgentLoopOutcome::TimedOut {
+            elapsed_secs: 305,
+            budget_secs: 300,
+            turns: 13,
+        };
+        assert!(!spent.is_completed());
+        assert!(spent.is_timed_out());
+        // A timeout is not a dead provider: the next provider would be tried
+        // with a budget that is already gone.
+        assert!(!spent.is_provider_unavailable());
+        let text = spent.reason();
+        assert!(text.contains("300s") && text.contains("13 turn"), "{text}");
+
+        let stopped = AgentLoopOutcome::Cancelled;
+        assert!(!stopped.is_completed());
+        assert!(stopped.is_cancelled());
+        // A cancellation is neither a dead provider nor a spent budget, so
+        // neither failover branch may claim it.
+        assert!(!stopped.is_provider_unavailable());
+        assert!(!stopped.is_timed_out());
+        assert_eq!(stopped.reason(), "cancelled by operator");
+    }
 
     /// The lenient `Deserialize` impl must accept every spelling the tool
     /// surface produces: variant names (persisted format), display labels

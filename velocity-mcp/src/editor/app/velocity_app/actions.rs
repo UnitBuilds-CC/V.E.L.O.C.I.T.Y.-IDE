@@ -1006,6 +1006,45 @@ impl VelocityApp {
         }
     }
 
+    /// System B: attribute externally-detected create/modify events into the
+    /// durable op-log as `Human`-attributed ops, deduped by content digest so a
+    /// repeated ping for unchanged bytes — or an agent's own write that already
+    /// landed in the log — is not double-recorded. Only present files get a text
+    /// op here; deletes ride the site-map delete path. A read failure (binary
+    /// file, race with deletion) is skipped: attribution must never disturb the
+    /// render frame the watcher runs in.
+    pub fn attribute_external_changes(
+        &mut self,
+        events: &[crate::editor::file_watcher::FileChangeEvent],
+    ) {
+        // Clone the root up front so the loop can read it while `attributor`
+        // holds the mutable borrow of `self`.
+        let workspace_root = self.workspace_root.clone();
+        let Some(attributor) = self.change_attributor.as_mut() else {
+            return;
+        };
+        for ev in events {
+            if !matches!(
+                ev.kind,
+                crate::editor::file_watcher::FileChangeKind::Created
+                    | crate::editor::file_watcher::FileChangeKind::Modified
+            ) {
+                continue;
+            }
+            let Ok(content) = std::fs::read_to_string(&ev.path) else {
+                continue;
+            };
+            let rel = pathdiff::diff_paths(&ev.path, &workspace_root)
+                .unwrap_or_else(|| ev.path.clone())
+                .to_string_lossy()
+                .replace('\\', "/");
+            let digest = crate::automation::ChangeAttributor::digest_of_content(&content);
+            // Append failure is logged inside `record`; nothing here should
+            // bubble up into the UI.
+            let _ = attributor.record(&rel, &digest, "external edit");
+        }
+    }
+
     pub fn close_tab(&mut self, id: &TabId) {
         if let Some(path) = self.tab_path(id).cloned() {
             self.push_closed_editor_path(path.clone());

@@ -189,53 +189,6 @@ where
     })
 }
 
-#[allow(dead_code)]
-pub fn run_script_report(
-    root: &Path,
-    session_id: &str,
-    relative_file_path: &Path,
-    snapshot_name: Option<&str>,
-) -> Result<WaScriptRunReport, Box<dyn Error>> {
-    let script_report = crate::wa::read_script_report(root, relative_file_path)?;
-    build_script_run_report(
-        root,
-        session_id,
-        snapshot_name,
-        script_report,
-        0,
-        |resolved_snapshot_name, step| {
-            crate::wa::execute_windows_action_report(
-                root,
-                session_id,
-                Some(resolved_snapshot_name),
-                &step.action,
-                step.node_id.as_deref(),
-                step.role.as_deref(),
-                step.name.as_deref(),
-                step.value.as_deref(),
-            )
-        },
-        |resolved_snapshot_name, step| {
-            let Some((condition, expected_value)) = verification_plan(step) else {
-                return Ok(None);
-            };
-            let report = crate::wa::wait_for_windows_condition_report(
-                root,
-                session_id,
-                Some(resolved_snapshot_name),
-                condition,
-                step.node_id.as_deref(),
-                step.role.as_deref(),
-                step.name.as_deref(),
-                expected_value,
-                1500,
-                100,
-            )?;
-            Ok(Some(report))
-        },
-    )
-}
-
 pub fn run_and_persist_script_report(
     root: &Path,
     session_id: &str,

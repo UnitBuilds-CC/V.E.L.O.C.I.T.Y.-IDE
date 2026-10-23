@@ -409,8 +409,9 @@ fn main() {
     );
 
     let workspace_root_agent = workspace_root.clone();
+    let mediator_agent = mediator.clone();
     std::thread::spawn(move || {
-        velocity_mcp::agent::run_agent_thread(workspace_root_agent, ui_rx, ui_tx);
+        velocity_mcp::agent::run_agent_thread(workspace_root_agent, ui_rx, ui_tx, mediator_agent);
     });
 
     automation::spawn_build_watcher(workspace_root.clone(), 5);

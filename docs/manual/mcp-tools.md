@@ -1,17 +1,18 @@
 # MCP Tool Reference
 
-Every Model-Context-Protocol tool the IDE exposes to agents, grouped by the registry module that defines it. Descriptions are taken verbatim from the tool definitions in `velocity-mcp/src/registry/tool_definitions/`, so this table matches the running binary. **Total: 291 tools.**
+Every Model-Context-Protocol tool the IDE exposes to agents, grouped by the registry module that defines it. Descriptions are taken verbatim from the tool definitions in `velocity-mcp/src/registry/tool_definitions/`, so this table matches the running binary. **Total: 343 tools.**
 
 ## Categories
 
 | Category | Tools | Contents |
 |----------|------:|----------|
 | [browser](#browser) | 109 | Native browser-engine and web-automation tools: navigation, crawling, AOM/DOM inspection, forms, auth profiles, runtime capture, and visual artifacts. |
+| [company](#company) | 44 |  |
 | [drone](#drone) | 10 | Distributed build-node (drone) tools: register, ping, remote build/run, and peer file operations. |
 | [generation](#generation) | 5 | Code generation tools driven by the agent. |
 | [instances](#instances) | 7 | Workspace instance management tools. |
-| [system](#system) | 52 | Core IDE/system tools: file & editor operations, build/test, git, search, knowledge, memory, and app control. |
-| [team](#team) | 22 | Expert-team orchestration tools: create teams, assign agents, route work. |
+| [system](#system) | 55 | Core IDE/system tools: file & editor operations, build/test, git, search, knowledge, memory, and app control. |
+| [team](#team) | 27 | Expert-team orchestration tools: create teams, assign agents, route work. |
 | [wa](#wa) | 86 | Windows Automation (UIA) tools: desktop element discovery, action planning, snapshots, OCR, clipboard, and virtual desktops. |
 
 
@@ -133,6 +134,59 @@ Native browser-engine and web-automation tools: navigation, crawling, AOM/DOM in
 | `runtime_session_submit` | Submit within an explicit Go runtime browser session by targeting a nodeId or selector when available, or by allowing the runtime to fall back to Enter-key submission. |
 | `web_navigate` | Navigate and crawl a page with the current static AOM-first browser engine. It captures a truthful live snapshot, persists SiteMap facts, and writes browser artifacts for links, forms, and cookies discovered in fetched HTML. |
 
+## company
+
+
+
+44 tools.
+
+| Tool | Description |
+|------|-------------|
+| `add_org_playbook` | Add or update a deterministic playbook owned by a role. Running it first submits the (role, resource, capability, amount) intent to the approval engine; the steps execute ONLY if that action clears. Steps reuse the workflow engine so rep... |
+| `add_org_resource` | Register an external system the org can act on (GitHub, email, banking, social, cloud, ...). Only a secret *reference* (env-var name / keychain label) is stored — never the secret itself. |
+| `add_org_role` | Add a role/position to the company org chart. |
+| `approve_and_resume_org_action` | Sign a pending request and, if that signature reaches quorum, immediately run the playbook whose steps it was gating (the one-click form of approve_org_action + resume_org_playbook). Below quorum nothing runs; a request not raised by a p... |
+| `approve_org_action` | Record an approval from a designated approver on a pending request; advances to Approved once quorum is reached. Approver role must hold Approve authority on the resource. |
+| `chain_org_playbooks` | Wire a deterministic cross-SOP handoff: when `upstream_id` finishes CLEAN (every step ok), the downstream playbook's intent is queued automatically. Chaining routes WORK, never authority — the downstream SOP is submitted under its own ro... |
+| `check_org_credential_elevation` | Query whether an active (unexpired, unconsumed) just-in-time elevation exists for a role's (resource, capability) right now. This is the deterministic gate an elevated action consults before releasing a secret — a plain ledger query, no ... |
+| `check_org_permission` | Deterministically evaluate whether a role may perform a capability on a resource at a given amount. Returns ALLOWED, REQUIRES APPROVAL (approvers+quorum) or DENIED. No LLM inference is used. |
+| `consume_org_credential_elevation` | Spend an active elevation to authorize exactly one execution. Errors (and records Expired/Denied in the ledger) if the grant is past its TTL or already consumed, so a minted elevation can never be replayed. Returns the consumed grant's s... |
+| `dispatch_org_role` | Route a natural-language task to the right org role and hand it to the synced expert team for execution. Routing and team sync are deterministic; only the member's work is inference. Outward/sensitive actions remain gated by the org appr... |
+| `elevate_and_resume_org_request` | Complete an approved irreversible action: mint the single-use TTL-bounded credential elevation its scope requires, then run the playbook waiting on that request (the elevation is consumed by the run, so one call authorizes exactly one ex... |
+| `execute_org_browser_broadcast` | Fan an outward campaign across many platforms and actually drive each cleared account against the live browser engine. Each platform is gated independently: give a platform a request_id to post only once that action request is Approved (... |
+| `execute_org_browser_task` | Run a gated cross-platform browser task for an org role against the live browser engine: gate the action, resolve the credential from the vault at execution (never echoed), open a session and replay the login + optional composer steps. P... |
+| `execute_org_browser_task_for_request` | Run a browser task on behalf of an ALREADY-APPROVED action request (by request_id). Where execute_org_browser_task gates on the stateless permission matrix, this gates on the request: it must exist and be Approved, otherwise nothing runs... |
+| `execute_org_credential_rotation_after_approval` | Apply a rotation whose PENDING request has already cleared to Approved. Mirrors the gated-playbook resume path: the request id is the proof, the pointer swap is applied, and the ledger entry transitions to Executed so the rotation cannot... |
+| `get_company_org` | Read the company org chart: departments, roles with reporting lines, external resources (with secret references only, never secret values), capability grants and approval policies. Pass full=true for the raw JSON. |
+| `grant_capability` | Grant a role one or more capabilities over a resource (deny-by-default: without a grant the action is denied). Optionally set a per-action spend limit. |
+| `grant_org_credential_elevation` | Mint a single-use, TTL-bounded just-in-time credential elevation from an ALREADY-APPROVED action request. The elevation's scope (role, resource, capability) is copied verbatim from the request, so an agent can never mint broader access t... |
+| `init_company_org` | Seed the workspace with the UnitBuilds CC company org (Executive, Management, Engineering, Testing, Scouting, Marketing, Support, Finance, Legal, Operations) including capability grants and approval policies, persisted to .velocity/compa... |
+| `list_org_actions` | List action requests, optionally filtered by status (pending\|approved\|rejected\|executed). |
+| `list_org_credential_audit` | Read the append-only, secret-free credential-use audit ledger: who elevated or used what capability on which resource, when, and the outcome (Granted/Used/Denied/Expired). Never stores a credential value — only the pointer-level facts. R... |
+| `list_org_escalations` | Deterministic escalation routing for the approval pipeline. With 'approver_id', lists exactly the pending actions that approver is designated to clear (their queue), each annotated with its chain context: the playbook a signature runs, t... |
+| `list_org_playbook_verdicts` | Cross-SOP verdict memory: the recent playbook runs that HALTED on a verdict gate (e.g. a browser VERIFY: FAIL, an elevation-gated spend refused, a campaign that never landed) or FAILED mid-run, as a secret-free escalation briefing — play... |
+| `list_org_playbooks` | List the org's playbooks with their gate (role, capability, resource). |
+| `list_org_schedules` | The org's recurring duties: each armed cadence with its interval, whether it is due/overdue or when it next fires, last run and armed/PAUSED state. Secret-free — ids, intervals and timestamps only. |
+| `list_org_sop_handoffs` | The cross-SOP chain ledger: every recorded hop (which SOP handed off to which, at what depth, under which requests) with the downstream gate's own verdict — ran, awaiting-approval, denied, not-found or depth-limit. Secret-free by constru... |
+| `pause_org_playbook_schedule` | Pause (default) or resume an armed cadence without disturbing its interval or due clock. A paused duty is skipped by every tick; resuming leaves it on its original schedule rather than dumping a backlog. |
+| `plan_org_browser_broadcast` | Fan a single outward campaign out across many platforms at once (e.g. post to X and LinkedIn). Each platform is gated INDEPENDENTLY against the role's capability grant, so a partial grant yields runnable secret-free plans only for the cl... |
+| `plan_org_browser_login` | Build a gated, secret-free cross-platform browser plan (navigate/fill/submit login + optional composer post) for an org role. The password references the vault as 'vault:SECRET_REF', never a literal secret. Returns NO plan if the approva... |
+| `reject_org_action` | Reject a pending action request. |
+| `remove_approval_policy` | Delete an approval policy by id. |
+| `remove_org_playbook` | Delete a playbook by id. |
+| `request_org_action` | Propose an action and record it in the approval ledger. Auto-approved if permission allows; otherwise queued Pending for the required approvers. |
+| `resume_org_playbook` | Resume a gated playbook whose approval request has cleared. Takes the request_id returned by a prior gated run_org_playbook. Runs the stored deterministic steps ONLY if that request is now Approved, threading {{requestId}} into outward-a... |
+| `revoke_capability` | Remove capabilities a role holds over a resource. |
+| `rotate_org_resource_credential` | Rotate a resource's stored `secret_ref` POINTER through the credential-vault gate (Operations key-rotation primitive). Never returns the raw secret. The proposal is routed through check_permission(role, "credentials", deploy): ungranted ... |
+| `run_due_org_playbooks` | The scheduler tick: fire every due cadence through the gated playbook runner and advance each clock by exactly one interval, so a backfill after downtime runs a duty once (never N times) and a halting SOP waits a full interval instead of... |
+| `run_org_playbook` | Run a playbook: evaluate its permission gate, and if cleared execute the deterministic steps. If gated, no steps run and the pending request is returned for approval. |
+| `schedule_org_playbook` | Arm a recurring cadence on an existing playbook (the org's self-starting duties: uptime sweeps, staging verification, weekly reviews). Arming grants NOTHING — when the cadence falls due it runs through the same approval gate as a manual ... |
+| `set_approval_policy` | Add or update an approval policy: which capability (+resource, +amount threshold) requires how many approvals from which roles. Empty approvers means the human operator signs off. |
+| `sync_org_team` | Project the company org chart into Velocity's expert-team roster so the AI company becomes runnable. Each role becomes a team member with a persona drawn from its title, department charter and capability grants. Upserts the org's team by... |
+| `unschedule_org_playbook` | Retire a playbook's recurring cadence. The playbook itself stays defined and manually runnable. |
+| `validate_org_playbooks` | Validate all playbooks: check every Tool step references a registered tool. Reports issues or confirms all valid. |
+| `verify_org_credential` | Audit whether a role's credential for a resource actually resolves through the vault, WITHOUT returning the secret. Reports GRANTED (masked preview), NEEDS APPROVAL, DENIED or MISSING (pointer not provisioned). The secret is zeroized imm... |
+
 ## drone
 
 Distributed build-node (drone) tools: register, ping, remote build/run, and peer file operations.
@@ -186,7 +240,7 @@ Workspace instance management tools.
 
 Core IDE/system tools: file & editor operations, build/test, git, search, knowledge, memory, and app control.
 
-52 tools.
+55 tools.
 
 | Tool | Description |
 |------|-------------|
@@ -204,6 +258,7 @@ Core IDE/system tools: file & editor operations, build/test, git, search, knowle
 | `convert_to_nda` | Convert any file (text, code, CSV, image) into a portable, browser-viewable NDA1 (.nda) document with self-contained provenance. Text becomes wrapped draw-text commands plus content triples; images become a draw-image command. Optionally... |
 | `delete_file` | Delete a file in the workspace. Include 'context' to record *why* this file is being removed — the reason is persisted in the codebase event log. |
 | `describe_image` | Describe an image file. Vision-capable models can consume the image directly; returns an OCR text fallback for non-vision models plus mime and size. |
+| `edit_file` | Apply targeted replacements to an existing file instead of rewriting it. Prefer this over write_file when only part of a file is wrong: it sends a few hundred bytes rather than the whole file, so a long fix cannot be cut off by the gener... |
 | `event_attach_context` | Attach agent reasoning (the *why*) to an existing codebase event. Use this after a change to record why it was made — the requirement, the motivation, the design decision. This context is what makes the event store valuable for future ag... |
 | `event_context` | Get full detail for a single codebase event by sequence number. Includes agent context, Merkle roots, affected files, and failure reason. |
 | `event_history` | Query the codebase event history. Returns events newest-first with optional filters for file path and outcome (success/failure/revert/pending). Shows the full decision trail including failed attempts and reverts. |
@@ -212,6 +267,7 @@ Core IDE/system tools: file & editor operations, build/test, git, search, knowle
 | `event_timeline` | Show a chronological timeline of all codebase events with state transitions (Merkle root changes). Shows the codebase's evolution over time — what changed, when, why, and with what outcome. Newest first. |
 | `execute_nda` | Execute a runnable .nda container. If it holds a compiled C# binary, it is run in-memory. If it contains a script (e.g., Python, Node.js, PowerShell, Bash), it executes via the corresponding shell process. |
 | `fetch_panel_data` | Read structured IDE panel data without navigating the GUI. Supported panels: teams (expert-team roster), wiki (workspace documentation summary), graph (symbol/file summary), bookmarks (saved workspace bookmarks), and files (a workspace d... |
+| `git_clone` | Clone a git repository into the workspace. git is run directly (not via a shell) so the URL cannot inject commands; it must start with http://, https://, git:// or git@. The destination is confined to the workspace and defaults to '.velo... |
 | `grep_search` | Find lines containing a query string in the workspace. |
 | `gui_app_map` | Get the running IDE's navigable surface as a graph: rails, their sub-tabs, menus, dock panels, workspace profiles and commands, with the action each hop needs. With 'to', returns the shortest route there instead. Requires the GUI to be r... |
 | `gui_dismiss_overlays` | Close every transient overlay in the running IDE at once -- command palette, quick open, go-to-line/symbol, references, the tab and workspace switchers, the keyboard cheat-sheet, full diff, find/replace, and the in-app open/save-as/close... |
@@ -240,20 +296,22 @@ Core IDE/system tools: file & editor operations, build/test, git, search, knowle
 | `tool_register` | Register a new custom tool backed by a shell command. The tool becomes immediately available for invocation without restarting the MCP server. Use {{param}} placeholders in the command to substitute argument values at call time. Custom t... |
 | `tool_unregister` | Remove a previously registered custom tool. The tool is removed from the active list and from disk persistence. |
 | `use_skill` | Read the full markdown body of one workspace knowledge skill (.velocity/skills/*.md) by name. The PROJECT SKILLS block in your instructions and the on-demand index lines show which names exist; use this to pull the full guidance when a s... |
+| `workflow_list` | List saved workflows from .velocity/workflows/ with per-step-type counts (T=tool/connector, C=condition, A=agent task, F=foreach) and tool-name validation issues flagged. Use workflow_run to execute. |
 | `workflow_run` | Execute a saved workflow by id. Runs its steps in order (tool calls, agent tasks, conditions) and returns the run record with per-step status and output. |
-| `write_file` | Write or overwrite a file with specific content in the workspace. Creates folders if they do not exist. Include 'context' to record *why* this change is being made — the reason is persisted in the codebase event log so future agents can ... |
+| `write_file` | Write or overwrite a file with specific content in the workspace. Creates folders if they do not exist. Rust files are run through rustfmt after the write, so the bytes on disk may be laid out differently from what you sent; the result s... |
 
 ## team
 
 Expert-team orchestration tools: create teams, assign agents, route work.
 
-22 tools.
+27 tools.
 
 | Tool | Description |
 |------|-------------|
 | `add_team_member` | Add a new member to an existing expert team. The member object follows the same schema as create_expert_team members. Cannot add to preset teams. |
 | `bulk_import_members` | Bulk import multiple members to an existing team at once. Each member object follows the same schema as create_expert_team members. More efficient than calling add_team_member multiple times. |
 | `check_scope_overlaps` | Detect scope pattern overlaps between members of a team. Overlaps occur when one member's scope pattern contains another's (e.g. 'src/' and 'src/api/'). Returns detailed overlap pairs. |
+| `classify_intent` | Run the intent decision brain on a request and return the routing verdict as JSON: whether it should be handled by a single agent or a specialized team, whether a repository must be cloned first, the detected target language, the special... |
 | `clone_expert_team` | Clone an existing expert team (including preset teams) with a new name. All member configurations are preserved. The clone is a non-preset team that can be edited. Use this to customize a preset team. |
 | `create_expert_team` | Create or update a mixture-of-experts team and persist it to .velocity/expert_teams.nda. Each member is assigned an AI provider/model, a role, optional skills (loadable .nda skill files), file scope patterns, and workflow instructions. T... |
 | `create_skill_file` | Create or overwrite a reusable skill definition saved as .velocity/skills/<id>.nda. A skill body is injected into the system prompt of any team member that lists the skill id, specializing that member's behavior. |
@@ -265,7 +323,11 @@ Expert-team orchestration tools: create teams, assign agents, route work.
 | `list_expert_teams` | List the expert teams currently persisted for the workspace, including each team's slug and members. Use this before creating a team to avoid duplicating an existing one. |
 | `list_providers` | List all available AI providers with their slugs, labels, and aliases. Use this to discover valid provider values for team members. |
 | `list_skills` | List the reusable skill files persisted under .velocity/skills (id, name, description). Use this before creating a skill to avoid duplicating one, or to discover skill ids to attach to a team member. |
+| `provision_team_from_intent` | Classify a request with the intent brain and, when it verdicts a team, author and persist the implied ExpertTeam (lead + specialists with skills and file-scope patterns) to .velocity/expert_teams.nda. Idempotent on the team slug (re-runn... |
 | `remove_team_member` | Remove a member from an expert team by member id. Cannot remove from preset teams. |
+| `repo_rewrite` | Orchestrate a 'clone X and rewrite it in Y' request end to end: safely git-clone the repository into .velocity/clones, analyze it deterministically (dominant languages, file count, layout), decompose it into dependency-ordered sectors sm... |
+| `run_rewrite_mission` | Execute or resume the long-horizon rewrite mission that repo_rewrite planned. Reads mission.json and sector_plan.json from the mission directory, then runs the plan end to end without a human in the loop: the conventions/design pass, the... |
+| `select_model` | Pick the best AI model for a task from the models that are ACTUALLY usable: live provider catalogs fetched with the API keys enabled in provider-settings (e.g. the Alibaba Qwen token-plan listing), never a fabricated model id. Optionally... |
 | `team_analytics` | Show analytics and statistics for a team: member count, provider distribution, scope coverage, skills/tools per member. Useful for understanding team composition and identifying gaps. |
 | `team_changelog` | Generate a versioned snapshot of a team for change tracking. Returns a snapshot hash, timestamp, and current team state. Compare hashes to detect changes over time. |
 | `team_dispatch` | Dispatch a task to the best-matching team member for autonomous execution. Routes the task using file-scope matching, keyword scoring, or fallback to team lead. Builds a persona prompt from the member's role, skills, and workflow instruc... |

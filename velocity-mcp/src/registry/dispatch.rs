@@ -1,4 +1,5 @@
 use super::browser_tools::handle_browser_tool;
+use super::company_tools::handle_company_tool;
 use super::custom_tools;
 use super::event_store;
 use super::generation_tools::handle_generation_tool;
@@ -15,6 +16,20 @@ use std::error::Error;
 use std::path::Path;
 use std::time::Instant;
 
+/// Drop the Windows verbatim (`\\?\`) prefix from a *local drive* path.
+/// UNC shares (`\\?\UNC\server\share`) keep it — removing it there would
+/// silently turn a server path into a bogus drive path. Non-Windows paths and
+/// already-clean paths pass through untouched.
+pub fn strip_verbatim_prefix(path: &Path) -> std::path::PathBuf {
+    let s = path.to_string_lossy();
+    if let Some(rest) = s.strip_prefix(r"\\?\") {
+        if !rest.to_uppercase().starts_with(r"UNC\") {
+            return std::path::PathBuf::from(rest);
+        }
+    }
+    path.to_path_buf()
+}
+
 pub fn call_tool_in_workspace(
     root: &Path,
     name: &str,
@@ -27,6 +42,13 @@ pub fn call_tool_in_workspace(
         );
         e
     })?;
+    // NOTE: on Windows this root is verbatim (`\\?\C:\...`). It is kept that way
+    // deliberately: every containment check canonicalizes the candidate path
+    // the same way and compares with `starts_with`, and a verbatim prefix does
+    // not compare equal to a plain drive path — stripping here makes every
+    // relative path "escape the workspace". Toolchain children that choke on
+    // extended-length arguments (MSYS git) must instead simplify at their own
+    // call sites via `strip_verbatim_prefix`.
 
     // Governance gate: deny or park-for-approval per the workspace policy. With
     // no policy configured this allows everything (no behavior change).
@@ -250,6 +272,9 @@ fn try_builtin_tools(
     if let Some(result) = handle_team_tool(root, name, arguments)? {
         return Ok(Some(result));
     }
+    if let Some(result) = handle_company_tool(root, name, arguments)? {
+        return Ok(Some(result));
+    }
     if let Some(result) = handle_browser_tool(root, name, arguments)? {
         return Ok(Some(result));
     }
@@ -325,6 +350,11 @@ fn build_event_description(name: &str, arguments: &Value) -> String {
         "delete_file" => {
             let path = arguments["relativeFilePath"].as_str().unwrap_or("unknown");
             format!("Deleted {}", path)
+        }
+        "edit_file" => {
+            let path = arguments["relativeFilePath"].as_str().unwrap_or("unknown");
+            let edits = arguments["edits"].as_array().map(Vec::len).unwrap_or(0);
+            format!("Edited {} ({} edit(s))", path, edits)
         }
         "read_file" => {
             let path = arguments["relativeFilePath"].as_str().unwrap_or("unknown");
@@ -443,6 +473,32 @@ fn summarize_arguments(arguments: &Value) -> String {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    /// The crucible bug: canonicalize on Windows yields `\\?\C:\...`, and MSYS
+    /// git rejects that as a work-tree argument, breaking every clone through
+    /// the tool dispatch. The verbatim prefix must be stripped for local
+    /// drives while UNC shares keep theirs (stripping would corrupt the path).
+    #[test]
+    fn verbatim_prefix_is_stripped_for_local_drives_only() {
+        assert_eq!(
+            strip_verbatim_prefix(std::path::Path::new(r"\\?\C:\Users\x\ws")),
+            std::path::PathBuf::from(r"C:\Users\x\ws")
+        );
+        // UNC share roots stay verbatim: the prefix is load-bearing there.
+        assert_eq!(
+            strip_verbatim_prefix(std::path::Path::new(r"\\?\UNC\server\share\ws")),
+            std::path::PathBuf::from(r"\\?\UNC\server\share\ws")
+        );
+        // Plain paths (Unix, or Windows that never got canonicalized) pass through.
+        assert_eq!(
+            strip_verbatim_prefix(std::path::Path::new("/home/dev/ws")),
+            std::path::PathBuf::from("/home/dev/ws")
+        );
+        assert_eq!(
+            strip_verbatim_prefix(std::path::Path::new(r"D:\work\repo")),
+            std::path::PathBuf::from(r"D:\work\repo")
+        );
+    }
 
     /// Bug #41: the event log is the only record of what ran when the operator's
     /// desktop moved, and until now it said nothing beyond the tool name.

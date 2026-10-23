@@ -425,7 +425,7 @@ pub fn eval_expr_node(expr: &Expr, scope: &ScopeRef) -> EvalResult {
                 // Browser environment globals.
                 "window" => super::browser_env::make_window(),
                 "navigator" => super::browser_env::make_navigator(),
-                "location" => super::browser_env::make_location("https://localhost/"),
+                "location" => super::browser_env::make_location(""),
                 "document" => super::browser_env::make_document(),
                 "localStorage" => super::browser_env::make_local_storage(),
                 "sessionStorage" => super::browser_env::make_session_storage(),
@@ -908,6 +908,15 @@ fn eval_assign(target: &Expr, op: &Token, val: &Expr, scope: &ScopeRef) -> EvalR
     Ok(final_val)
 }
 
+/// True when the value is the browser `location` object — writes to it need
+/// special handling (URL sync + hashchange) instead of a plain property set.
+fn is_location_object(v: &JsValue) -> bool {
+    matches!(
+        v,
+        JsValue::Object(m) if m.get("__type__").map(super::coercion::to_string).as_deref() == Some("Location")
+    )
+}
+
 pub(super) fn assign_to_target(target: &Expr, value: JsValue, scope: &ScopeRef) {
     match target {
         Expr::Ident(name) => {
@@ -927,11 +936,21 @@ pub(super) fn assign_to_target(target: &Expr, value: JsValue, scope: &ScopeRef) 
             };
             if let Some(name) = obj_name {
                 if let Some(mut obj_val) = Scope::resolve(scope, name) {
-                    set_property(&mut obj_val, prop, value);
-                    Scope::assign(scope, name, obj_val);
-                } else {
+                    // Location writes (`location.hash = '#/route'`) update the
+                    // interpreter's page URL and fire hashchange, like a real
+                    // SPA router mutating location in-place.
+                    if is_location_object(&obj_val) {
+                        super::browser_env::apply_location_write(&mut obj_val, prop, value);
+                        Scope::assign(scope, name, obj_val);
+                    } else {
+                        set_property(&mut obj_val, prop, value);
+                        Scope::assign(scope, name, obj_val);
+                    }
+                } else if let Ok(mut obj_val) = eval_expr_node(obj, scope) {
                     // Global objects (document, window, etc.) resolved via identifier fallback.
-                    if let Ok(mut obj_val) = eval_expr_node(obj, scope) {
+                    if is_location_object(&obj_val) {
+                        super::browser_env::apply_location_write(&mut obj_val, prop, value);
+                    } else {
                         set_property(&mut obj_val, prop, value);
                     }
                 }
@@ -939,7 +958,11 @@ pub(super) fn assign_to_target(target: &Expr, value: JsValue, scope: &ScopeRef) 
                 // Nested member expression (e.g. el.dataset.x = v):
                 // evaluate the object, set the property on it.
                 if let Ok(mut obj_val) = eval_expr_node(obj, scope) {
-                    set_property(&mut obj_val, prop, value);
+                    if is_location_object(&obj_val) {
+                        super::browser_env::apply_location_write(&mut obj_val, prop, value);
+                    } else {
+                        set_property(&mut obj_val, prop, value);
+                    }
                 }
             }
         }
@@ -1294,7 +1317,28 @@ fn eval_call(callee: &Expr, args: &[Expr], scope: &ScopeRef) -> EvalResult {
                     return Ok(result);
                 }
                 Some("Location") => {
-                    return Ok(get_property(&obj, method));
+                    // Location methods: assign/replace navigate (URL update +
+                    // hashchange); reload is a no-op in the interpreter (the
+                    // session layer re-fetches when it observes an href change).
+                    let result = match method.as_str() {
+                        "assign" | "replace" => {
+                            let raw = evaluated_args
+                                .first()
+                                .map(super::coercion::to_string)
+                                .unwrap_or_default();
+                            let current = super::web_platform::page_url();
+                            let new_url = if raw.contains("://") {
+                                raw
+                            } else {
+                                super::web_platform::resolve_page_url_public(&current, &raw)
+                            };
+                            super::browser_env::apply_location_href_write(&new_url);
+                            JsValue::Undefined
+                        }
+                        "reload" => JsValue::Undefined,
+                        _ => get_property(&obj, method),
+                    };
+                    return Ok(result);
                 }
                 Some("Window") => {
                     // Window methods + property access.

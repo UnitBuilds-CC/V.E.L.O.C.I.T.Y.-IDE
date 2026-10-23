@@ -141,6 +141,35 @@ impl PersistentMemory {
         hits
     }
 
+    /// Recall only the entries that describe how to work, not what a file said.
+    ///
+    /// Every successful tool result is stored under a `tool:<name>:<outcome>`
+    /// key holding the first 200 bytes of that result — verbatim file content
+    /// for `read_file`, a directory listing for `list_dir`. Recall is keyed on
+    /// the task text, so a task naming `budget_manager.rs` matches those
+    /// fragments and pastes them into the system prompt as though they
+    /// described the file on disk *now*, from a workspace that has since been
+    /// replaced. Measured on the `qwen2.5-coder:7b` crucible (lr7b_v8,
+    /// 2026-10-23): the recalled `read_file -> Lines 680-70…` fragment came
+    /// from a different specimen (`budget_manager_pendulum.rs`), and the model
+    /// then spent turns sending `edit_file` patches whose `oldString` was
+    /// copied from text never present in the file under repair — a guess no
+    /// re-guessing can land, and the exploration lock had already withheld
+    /// `read_file`, so the run had no way back to the truth. A lesson
+    /// generalises across runs; a quotation does not. The telemetry itself
+    /// stays in the store, because `ImprovementEngine` reads it for its
+    /// success/failure ratios.
+    pub fn recall_for_prompt(&self, query: &str, limit: usize) -> Vec<MemoryHit> {
+        // Over-fetch, then trim: a run's `tool:` quotations usually outrank
+        // lessons on task-text similarity, so filtering a `limit`-sized window
+        // would silently return nothing whenever the top hits were telemetry.
+        self.recall(query, limit * 4 + 4)
+            .into_iter()
+            .filter(|hit| !hit.entry.key.starts_with("tool:"))
+            .take(limit)
+            .collect()
+    }
+
     /// Remove a specific memory by key.
     pub fn forget(&mut self, key: &str) -> bool {
         let removed = self.entries.remove(key).is_some();
@@ -622,6 +651,55 @@ mod tests {
 
         assert!(mem.forget("test_key"));
         assert!(!mem.forget("test_key"));
+    }
+
+    #[test]
+    fn a_prompt_recall_withholds_a_past_runs_workspace_quotation() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut mem = PersistentMemory::open(dir.path());
+        // The shape the loop actually stores: a successful `read_file` records
+        // the first 200 bytes of its result, which is file text from a run
+        // whose workspace has since been replaced.
+        mem.remember(
+            "tool:read_file:success",
+            "read_file -> /// A deliberately contradictory persistence hook. The trait demands budget_manager.rs",
+            &["tool", "success"],
+            0.8,
+        );
+        mem.remember(
+            "tool:list_dir:success",
+            "list_dir -> budget_manager.rs.broken2 budget_manager.rs.prev budget_manager.rs.run4_final",
+            &["tool", "success"],
+            0.8,
+        );
+        mem.remember(
+            "strategy:repair-then-verify",
+            "Edit the named file, then re-run cargo test before reporting it fixed",
+            &["strategy"],
+            0.9,
+        );
+        let query =
+            "The Rust port at budget_manager.rs does not compile. Fix it so cargo test passes";
+
+        let keys = |hits: &[MemoryHit]| -> Vec<String> {
+            hits.iter().map(|h| h.entry.key.clone()).collect()
+        };
+        // The quotation is what plain recall surfaces — it is the strongest
+        // textual match to a task that names the file.
+        assert!(keys(&mem.recall(query, 5)).contains(&"tool:read_file:success".to_string()));
+
+        let prompt = mem.recall_for_prompt(query, 3);
+        assert_eq!(
+            keys(&prompt),
+            vec!["strategy:repair-then-verify".to_string()]
+        );
+        // And the over-fetch is load-bearing: asking for one hit from a store
+        // whose top matches are telemetry must still deliver the lesson rather
+        // than an empty section.
+        assert_eq!(
+            keys(&mem.recall_for_prompt(query, 1)),
+            vec!["strategy:repair-then-verify".to_string()]
+        );
     }
 
     #[test]

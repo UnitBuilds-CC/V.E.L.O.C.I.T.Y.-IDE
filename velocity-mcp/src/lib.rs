@@ -3,6 +3,10 @@
 //! This crate is primarily a binary (the MCP server / IDE), but exposes
 //! key modules for integration testing and programmatic access.
 
+// The browser tool schemas are large flat `json!` objects; serde_json's `json!`
+// expands recursively per key, so raise the recursion budget above the 128
+// default to keep adding deterministic browser verbs without a macro-overflow.
+#![recursion_limit = "512"]
 // Workspace-level clippy configuration.
 // Architectural allows (function signatures, naming conventions, glob structure):
 #![allow(clippy::too_many_arguments)]

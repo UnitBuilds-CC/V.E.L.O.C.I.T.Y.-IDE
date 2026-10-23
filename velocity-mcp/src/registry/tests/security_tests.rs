@@ -131,6 +131,52 @@ fn write_file_rejects_absolute_paths() {
     assert!(!outside.exists(), "nothing written outside the workspace");
 }
 
+/// edit_file runs the same containment check as write_file, but it reads a
+/// workspace-relative path with `allow_create: false`, so the guard has to hold
+/// on that branch too — a targeted edit of a file outside the root is exactly
+/// as damaging as overwriting it.
+#[test]
+fn edit_file_rejects_parent_traversal() {
+    let (temp, root) = setup_root();
+    let victim = temp.path().join("victim.txt");
+    fs::write(&victim, "original bytes\n").unwrap();
+
+    let result = call_tool_in_workspace(
+        &root,
+        "edit_file",
+        &json!({
+            "relativeFilePath": "../victim.txt",
+            "edits": [{ "oldString": "original", "newString": "malicious" }]
+        }),
+    );
+
+    assert!(result.is_err(), "should reject path traversal");
+    assert_eq!(
+        fs::read_to_string(&victim).unwrap(),
+        "original bytes\n",
+        "file outside the workspace must be untouched"
+    );
+}
+
+#[test]
+fn edit_file_rejects_absolute_paths() {
+    let (temp, root) = setup_root();
+    let victim = temp.path().join("sam.txt");
+    fs::write(&victim, "original bytes\n").unwrap();
+
+    let result = call_tool_in_workspace(
+        &root,
+        "edit_file",
+        &json!({
+            "relativeFilePath": victim.to_string_lossy(),
+            "edits": [{ "oldString": "original", "newString": "malicious" }]
+        }),
+    );
+
+    assert!(result.is_err(), "should reject absolute paths");
+    assert_eq!(fs::read_to_string(&victim).unwrap(), "original bytes\n");
+}
+
 /// The rejection has to be a rejection rather than a rewrite.
 ///
 /// `resolve_workspace_path` used to trim a leading separator off the supplied

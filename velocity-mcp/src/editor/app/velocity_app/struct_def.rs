@@ -521,6 +521,10 @@ pub struct VelocityApp {
     pub scm_diff_lines: Vec<crate::editor::diff_view::DiffLine>,
     /// OS-level file watcher for instant external change detection.
     pub file_watcher: Option<crate::editor::file_watcher::FileWatcher>,
+    /// System B attribution: folds externally-detected (change-only) file events
+    /// into the durable op-log as `Human`-attributed ops. `None` until the
+    /// workspace is known; the notify watcher drives it (spec §5).
+    pub change_attributor: Option<crate::automation::ChangeAttributor>,
     /// Extension registry.
     pub extension_registry: crate::editor::extensions::ExtensionRegistry,
     /// Minimap configuration.
@@ -1393,6 +1397,7 @@ impl VelocityApp {
             scm_diff_path: None,
             scm_diff_lines: Vec::new(),
             file_watcher: None,
+            change_attributor: None,
             extension_registry: crate::editor::extensions::ExtensionRegistry::default(),
             minimap_config: crate::editor::minimap::MinimapConfig::default(),
             snippet_collection: crate::editor::snippets::SnippetCollection::default(),
@@ -1489,6 +1494,15 @@ impl VelocityApp {
         app.git_state.refresh(&app.workspace_root);
         // Start OS-level file watcher for instant external change detection
         app.file_watcher = crate::editor::file_watcher::FileWatcher::new(&app.workspace_root);
+        // System B: attribute external edits into the durable op-log, under the
+        // OS login user's identity (the real `user_id`, ending anonymous edits).
+        let os_user = std::env::var("USERNAME")
+            .or_else(|_| std::env::var("USER"))
+            .unwrap_or_else(|_| "operator".to_string());
+        app.change_attributor = Some(crate::automation::ChangeAttributor::open_human(
+            &app.workspace_root,
+            os_user,
+        ));
         // Load keybindings from workspace config
         app.keybindings_config =
             crate::editor::keybindings::KeybindingsConfig::load(&app.workspace_root);
@@ -1719,6 +1733,7 @@ impl VelocityApp {
             scm_diff_path: None,
             scm_diff_lines: Vec::new(),
             file_watcher: None,
+            change_attributor: None,
             extension_registry: Default::default(),
             minimap_config: Default::default(),
             snippet_collection: Default::default(),

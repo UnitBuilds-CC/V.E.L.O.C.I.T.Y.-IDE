@@ -92,5 +92,9 @@ criterion = { version = "0.5", features = ["html_reports"] }
 name = "concurrency_stress"
 harness = false
 
+[[bench]]
+name = "decision_micro"
+harness = false
+
 [lints]
 workspace = true

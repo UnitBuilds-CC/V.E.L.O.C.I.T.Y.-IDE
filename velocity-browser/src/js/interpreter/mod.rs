@@ -51,3 +51,9 @@ pub use property::{
 };
 pub use signal::*;
 pub use token::*;
+// SPA navigation state: the interpreter's live page URL (location reads,
+// pushState/replaceState, popstate/hashchange) and the deterministic pump.
+pub use browser_env::flush_page_timers;
+pub use web_platform::{page_url, set_page_url};
+// Per-document lifecycle reset + load-event settlement for fresh page loads.
+pub use browser_env::{reset_page_state, settle_page_lifecycle};

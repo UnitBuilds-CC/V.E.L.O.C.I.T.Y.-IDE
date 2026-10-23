@@ -323,6 +323,8 @@ impl WorkflowCanvas {
                     CanvasNodeKind::Condition { .. } => {
                         crate::editor::workflow::WorkflowStep::Condition {
                             require: crate::editor::workflow::StepOutcome::Ok,
+                            on_text: None,
+                            recheck: None,
                         }
                     }
                 };

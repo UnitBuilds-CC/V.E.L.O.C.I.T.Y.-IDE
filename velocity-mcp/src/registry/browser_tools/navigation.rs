@@ -236,6 +236,46 @@ pub fn handle_navigation_tool(
                 crate::editor::browser::render_runtime_auth_reseed_report(&report)
             }
         }
+        // ── Rich deterministic interactions (company-org browser planner) ──
+        // Each verb is forwarded to the runtime session API via the generic
+        // action forwarder, so a plan step emitted by the org planner is always
+        // routable (never a silent "unknown tool"). The engine is the source of
+        // truth for which verbs it actually performs.
+        "runtime_session_wait"
+        | "runtime_session_wait_text"
+        | "runtime_session_wait_url"
+        | "runtime_session_scroll"
+        | "runtime_session_hover"
+        | "runtime_session_right_click"
+        | "runtime_session_select"
+        | "runtime_session_drag"
+        | "runtime_session_switch_tab"
+        | "runtime_session_upload"
+        | "runtime_session_screenshot"
+        | "runtime_session_enter_frame"
+        | "runtime_session_dialog"
+        | "runtime_session_download"
+        | "runtime_session_network_idle"
+        | "runtime_session_set_headers"
+        | "runtime_session_set_cookie"
+        | "runtime_session_set_storage"
+        | "runtime_session_basic_auth"
+        | "runtime_session_set_user_agent"
+        | "runtime_session_set_viewport" => {
+            let verb = name.strip_prefix("runtime_session_").unwrap_or(name);
+            let sitemap_path = root.join(".velocity").join("site_map");
+            crate::editor::browser::runtime_browser_action_session(
+                root,
+                arguments["sessionId"]
+                    .as_str()
+                    .ok_or("sessionId is required")?,
+                verb,
+                arguments,
+                &sitemap_path,
+                arguments["compact"].as_bool().unwrap_or(false),
+            )
+            .map_err(Box::<dyn Error>::from)?
+        }
         _ => return Ok(None),
     };
 

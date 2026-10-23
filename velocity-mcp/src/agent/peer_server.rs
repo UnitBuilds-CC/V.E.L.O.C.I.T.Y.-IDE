@@ -17,6 +17,7 @@
 //! | POST | `/peer/task` | Delegate a task |
 //! | POST | `/peer/task/progress` | Update task progress |
 //! | POST | `/peer/task/complete` | Complete a task |
+//! | POST | `/peer/ops` | Op-log sync round (send + merge + answer) |
 //! | GET | `/peer/health` | Health check |
 
 use std::io::{Read, Write};
@@ -246,6 +247,27 @@ fn handle_request(req: &HttpRequest, peer_mgr: &PeerManager) -> HttpResponse {
         // Task complete.
         ("POST", "/peer/task/complete") => {
             HttpResponse::ok(&serde_json::json!({"acknowledged": true}))
+        }
+
+        // Op-log replication (System A, spec §4): the peer ships its ops and
+        // observed clock; we merge what we lack into the durable log and
+        // answer in kind with what its clock says it may lack. Idempotent —
+        // resending converges, it never duplicates (INV-3).
+        ("POST", "/peer/ops") => {
+            let workspace = match peer_mgr.workspace_root() {
+                Some(w) => w,
+                None => return HttpResponse::server_error("No workspace root to replicate"),
+            };
+            match serde_json::from_str::<crate::automation::OpsExchangeRequest>(&req.body) {
+                Ok(request) => {
+                    let response = crate::automation::handle_exchange(workspace, &request);
+                    match serde_json::to_value(&response) {
+                        Ok(v) => HttpResponse::ok(&v),
+                        Err(e) => HttpResponse::server_error(&format!("Encode response: {e}")),
+                    }
+                }
+                Err(e) => HttpResponse::bad_request(&format!("Invalid ops exchange: {e}")),
+            }
         }
 
         // Unknown endpoint.
@@ -503,6 +525,75 @@ mod tests {
         let resp = handle_request(&req, &mgr);
         assert_eq!(resp.status, 200);
         assert!(resp.body.contains("accepted"));
+    }
+
+    #[test]
+    fn ops_endpoint_merges_and_answers_over_the_real_workspace_log() {
+        // The endpoint arm end-to-end (parser → handler → durable log), with
+        // the peer's ops arriving as they would over the wire.
+        let dir = tempfile::tempdir().unwrap();
+        let mut mgr = PeerManager::new();
+        mgr.init(dir.path(), "HostA");
+        let peer_op = {
+            let store = crate::automation::OpLogStore::open(dir.path());
+            let op =
+                crate::automation::replication::test_util::triple_op("peer-node", "a.rs", 1, 2);
+            store.append(&op).unwrap();
+            // Move the peer's copy out: the local log must not pre-know it.
+            std::fs::write(store.ops_path(), "").unwrap();
+            op
+        };
+        let request = crate::automation::OpsExchangeRequest {
+            from_node: "peer-node".into(),
+            observed: Default::default(),
+            ops: vec![peer_op],
+            seen_ids: Vec::new(),
+        };
+        let req = HttpRequest {
+            method: "POST".to_string(),
+            path: "/peer/ops".to_string(),
+            _headers: Vec::new(),
+            body: serde_json::to_string(&request).unwrap(),
+        };
+        let resp = handle_request(&req, &mgr);
+        assert_eq!(resp.status, 200);
+        let val: serde_json::Value = serde_json::from_str(&resp.body).unwrap();
+        assert_eq!(val["merged"], 1);
+        assert_eq!(val["skipped"], 0);
+        // The op really landed in the workspace's durable log.
+        assert_eq!(
+            crate::automation::OpLogStore::open(dir.path())
+                .load()
+                .ops()
+                .len(),
+            1
+        );
+
+        // Resend: skipped, not duplicated — idempotence at the HTTP seam.
+        let resp2 = handle_request(&req, &mgr);
+        let val2: serde_json::Value = serde_json::from_str(&resp2.body).unwrap();
+        assert_eq!(val2["merged"], 0);
+        assert_eq!(val2["skipped"], 1);
+        assert_eq!(
+            crate::automation::OpLogStore::open(dir.path())
+                .load()
+                .ops()
+                .len(),
+            1
+        );
+    }
+
+    #[test]
+    fn ops_endpoint_without_workspace_is_a_500_not_a_panic() {
+        let mgr = PeerManager::new(); // init never called → no workspace root
+        let req = HttpRequest {
+            method: "POST".to_string(),
+            path: "/peer/ops".to_string(),
+            _headers: Vec::new(),
+            body: "{}".to_string(),
+        };
+        let resp = handle_request(&req, &mgr);
+        assert_eq!(resp.status, 500);
     }
 
     #[test]

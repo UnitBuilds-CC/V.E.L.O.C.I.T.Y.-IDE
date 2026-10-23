@@ -74,9 +74,14 @@ impl Default for JsVirtualMachine {
 impl JsVirtualMachine {
     pub fn new() -> Self {
         let scope_ref = Scope::new_global();
-        let mut global_scope = HashMap::new();
-        global_scope.insert("window".to_string(), JsValue::Object(HashMap::new()));
-        global_scope.insert("document".to_string(), JsValue::Object(HashMap::new()));
+        // `window` and `document` are intentionally NOT seeded.
+        // They resolve through the interpreter's global fallback (eval.rs) to
+        // `make_window()`/`make_document()`, which carry the `__type__` tags
+        // that route method calls (`document.createElement`,
+        // `window.addEventListener`, …) into the DOM/Window dispatch paths. An
+        // empty stub here would shadow them inside multi-statement `<script>`
+        // tags and silently no-op every DOM call. See the web_app_compat tests.
+        let global_scope = HashMap::new();
 
         // Register built-in globals in the scope chain
         {
@@ -278,11 +283,8 @@ impl JsVirtualMachine {
             s.locals
                 .insert("console".to_string(), JsValue::Object(console));
 
-            // window and document will be populated per-session
-            s.locals
-                .insert("window".to_string(), JsValue::Object(HashMap::new()));
-            s.locals
-                .insert("document".to_string(), JsValue::Object(HashMap::new()));
+            // `window` and `document` are resolved lazily via the interpreter's
+            // global fallback (see the note in `new()`), not seeded as stubs.
 
             // Symbol constructor + well-known symbols
             let mut symbol_obj = HashMap::new();
@@ -386,41 +388,13 @@ impl JsVirtualMachine {
             s.locals
                 .insert("Reflect".to_string(), JsValue::Object(reflect));
 
-            // history
-            let mut history = HashMap::new();
-            history.insert("length".to_string(), JsValue::Number(1.0));
-            history.insert("state".to_string(), JsValue::Null);
-            history.insert(
-                "pushState".to_string(),
-                JsValue::NativeFunction("__noop__".into()),
-            );
-            history.insert(
-                "replaceState".to_string(),
-                JsValue::NativeFunction("__noop__".into()),
-            );
-            history.insert(
-                "back".to_string(),
-                JsValue::NativeFunction("__noop__".into()),
-            );
-            history.insert(
-                "forward".to_string(),
-                JsValue::NativeFunction("__noop__".into()),
-            );
-            history.insert("go".to_string(), JsValue::NativeFunction("__noop__".into()));
-            s.locals
-                .insert("history".to_string(), JsValue::Object(history));
-
-            // location (basic)
-            let mut location = HashMap::new();
-            location.insert("href".to_string(), JsValue::String("about:blank".into()));
-            location.insert("protocol".to_string(), JsValue::String("https:".into()));
-            location.insert("hostname".to_string(), JsValue::String(String::new()));
-            location.insert("pathname".to_string(), JsValue::String("/".into()));
-            location.insert("search".to_string(), JsValue::String(String::new()));
-            location.insert("hash".to_string(), JsValue::String(String::new()));
-            location.insert("origin".to_string(), JsValue::String(String::new()));
-            s.locals
-                .insert("location".to_string(), JsValue::Object(location));
+            // `history` and `location` are intentionally NOT seeded here.
+            // They resolve through the interpreter's global fallback
+            // (eval.rs) to `make_history()`/`make_location()`, which reflect
+            // live page state (pushState/replaceState URL sync, history
+            // traversal, location writes). A placeholder seed here would
+            // shadow those live objects with `__noop__` stubs and freeze
+            // SPA routing — see the web_app_compat tests.
 
             // crypto
             let mut crypto = HashMap::new();

@@ -703,8 +703,9 @@ fn main() {
 
     // Spawn agent thread
     let ws_agent = cli.workspace.clone();
+    let mediator_agent = mediator.clone();
     std::thread::spawn(move || {
-        velocity_mcp::agent::run_agent_thread(ws_agent, ui_rx, ui_tx);
+        velocity_mcp::agent::run_agent_thread(ws_agent, ui_rx, ui_tx, mediator_agent);
     });
 
     // ── egui Context + VelocityApp ──

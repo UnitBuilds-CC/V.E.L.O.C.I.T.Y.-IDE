@@ -25,9 +25,15 @@ pub fn eval_dom(tree: &mut DomTree, expr: &str) -> Option<Result<JsValue, String
         .strip_prefix("document.createElement(")
         .and_then(|s| s.strip_suffix(")"))
     {
-        let tag = unquote(arg);
-        let id = tree.create_element(&tag);
-        return Some(Ok(element_handle(id)));
+        // Only a bare, single-argument call belongs here. A chained expression
+        // like `document.createElement('canvas').getContext('2d')` still
+        // carries parentheses in `arg` — hand it to the interpreter so the
+        // canvas/context models (`canvas.rs`) resolve the whole chain.
+        if !arg.contains('(') && !arg.contains(')') {
+            let tag = unquote(arg);
+            let id = tree.create_element(&tag);
+            return Some(Ok(element_handle(id)));
+        }
     }
 
     // document.createTextNode('text')

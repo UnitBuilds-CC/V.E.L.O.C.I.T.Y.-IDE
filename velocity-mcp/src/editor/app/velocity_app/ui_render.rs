@@ -122,6 +122,10 @@ impl VelocityApp {
             for ev in &watcher_events {
                 self.reload_buffer_if_open(&ev.path);
             }
+            // System B: fold each external create/modify into the durable op-log,
+            // attributed to the human, deduped by content digest so a repeated ping
+            // for unchanged bytes (or an agent's own write) is not re-recorded.
+            self.attribute_external_changes(&watcher_events);
             // Keep explorer git decorations current; the watcher debounces per
             // path (300 ms), so this runs at most a few git invocations.
             self.git_state.refresh(&self.workspace_root);

@@ -98,6 +98,13 @@ pub struct CodebaseEvent {
     /// Free-form metadata.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub metadata: Option<serde_json::Value>,
+    /// Causal identity of who performed the action (Spine-1). Pre-refactor log
+    /// lines that predate this field load as an unattributable `Service`
+    /// principal via `#[serde(default)]` (spec §7 back-compat, INV-4); real
+    /// human/agent principals are populated by the watcher (Phase 2) and the
+    /// executor/RBAC path (Phase 5).
+    #[serde(default)]
+    pub actor: crate::automation::principal::Principal,
 }
 
 /// Tools that never mutate the codebase: reads, searches, GUI state polling and
@@ -271,6 +278,10 @@ impl EventStore {
             failure_reason,
             affected_files,
             metadata,
+            // Principals are wired in later phases; every event recorded from
+            // the current executor path defaults to the unattributable Service
+            // identity so existing callers are unchanged (INV-4).
+            actor: crate::automation::principal::Principal::default(),
         };
 
         self.append_event(&event)?;
@@ -634,6 +645,18 @@ pub const DECISION_TRAIL_HEADER: &str = "── Decision Trail ──";
 /// Prefix of the banner line the enricher places before the header.
 pub const DECISION_TRAIL_BANNER: &str = "── End of file content.";
 
+/// The longest a tool result can be and still reach the model's NEXT turn.
+///
+/// `compress_history` replaces any older tool result above this size with a
+/// stub, and a stub is worthless to a model that is about to build an
+/// `edit_file` `oldString`: it has to have the file's own characters. The value
+/// lives in this module because the harness that *builds* tool results has to
+/// budget for it — the Decision Trail used to be appended without measuring, and
+/// a capped `read_file` window plus its trail crossed the threshold, so the text
+/// the model had just read was elided before it could be used. The compressor
+/// imports this instead of repeating the number, so the two cannot drift.
+pub const MAX_TOOL_RESULT_FOR_CONTEXT: usize = 4_000;
+
 /// Render one trail entry line. Every entry line begins with a bracketed
 /// marker (`[#seq]`, `[verdict]`, `[noise]`) so the write-side stripper can
 /// recognise the whole block without cutting legitimate prose.
@@ -706,13 +729,23 @@ pub fn enrich_read_response(root: &Path, relative_path: &str, content: &str) -> 
     if signal.is_empty() && noise == 0 {
         return content.to_string();
     }
+    // A result this size is already going to be elided next turn; appending
+    // metadata only makes the stub that replaces it longer.
+    if content.len() >= MAX_TOOL_RESULT_FOR_CONTEXT {
+        return content.to_string();
+    }
 
     let mut enriched = content.to_string();
-    enriched.push_str(&format!(
-        "\n\n{DECISION_TRAIL_BANNER} The Decision Trail below is harness metadata appended to \nthis tool result by V.E.L.O.C.I.T.Y.; it is NOT part of the file and must never be copied\ninto a file write. ──\n{DECISION_TRAIL_HEADER}\n"
-    ));
-    enriched.push_str(&format!("  {}\n", file_verdict(&events)));
+    let banner = format!(
+        "\n\n{DECISION_TRAIL_BANNER} The Decision Trail below is harness metadata appended to \nthis tool result by V.E.L.O.C.I.T.Y.; it is NOT part of the file and must never be copied\ninto a file write. ──\n{DECISION_TRAIL_HEADER}\n  {}\n",
+        file_verdict(&events)
+    );
+    if enriched.len() + banner.len() > MAX_TOOL_RESULT_FOR_CONTEXT {
+        return content.to_string();
+    }
+    enriched.push_str(&banner);
 
+    let mut added = 0usize;
     for event in signal.iter().take(8) {
         let outcome_tag = match event.outcome {
             EventOutcome::Success => "OK",
@@ -720,25 +753,47 @@ pub fn enrich_read_response(root: &Path, relative_path: &str, content: &str) -> 
             EventOutcome::Revert => "REVERT",
             EventOutcome::Pending => "?",
         };
-        enriched.push_str(&render_trail_entry(
+        let mut entry = render_trail_entry(
             event.sequence,
             outcome_tag,
             &event.tool_name,
             &event.description,
-        ));
+        );
         if let Some(ctx) = &event.context {
-            enriched.push_str(&format!(" — {}", ctx));
+            entry.push_str(&format!(" — {}", ctx));
         }
         if let Some(reason) = &event.failure_reason {
-            enriched.push_str(&format!(" (failed: {})", reason));
+            entry.push_str(&format!(" (failed: {})", reason));
         }
-        enriched.push('\n');
+        entry.push('\n');
+        // Newest entries are already first, so stop at the point where the
+        // remaining budget cannot fit one more.
+        if enriched.len() + entry.len() > MAX_TOOL_RESULT_FOR_CONTEXT {
+            break;
+        }
+        enriched.push_str(&entry);
+        added += 1;
     }
+    // Covers both reasons an entry can be absent: the budget ran out, and the
+    // newest-first cap of 8.
+    let omitted = signal.len().saturating_sub(added);
     if noise > 0 {
-        enriched.push_str(&format!(
+        let poll = format!(
             "  [noise] {} read-only poll(s) folded (no codebase change)\n",
             noise
-        ));
+        );
+        if enriched.len() + poll.len() <= MAX_TOOL_RESULT_FOR_CONTEXT {
+            enriched.push_str(&poll);
+        }
+    }
+    if omitted > 0 {
+        let note = format!(
+            "  [trail] {} older decision(s) omitted to keep the file text usable\n",
+            omitted
+        );
+        if enriched.len() + note.len() <= MAX_TOOL_RESULT_FOR_CONTEXT {
+            enriched.push_str(&note);
+        }
     }
     enriched
 }
@@ -1617,6 +1672,21 @@ mod tests {
     }
 
     #[test]
+    fn legacy_event_line_without_actor_loads_as_service() {
+        // INV-4: a pre-refactor events.jsonl line carries no `actor` field, yet
+        // must still deserialize, defaulting to an unattributable Service
+        // principal so the decision trail keeps rendering unchanged.
+        let legacy = r#"{"sequence":1,"timestamp_ms":100,"tool_name":"write_file","description":"old","merkle_root_before":null,"merkle_root_after":null,"context":null,"outcome":"success","failure_reason":null,"affected_files":[]}"#;
+        let ev: CodebaseEvent = serde_json::from_str(legacy).unwrap();
+        assert_eq!(
+            ev.actor.kind,
+            crate::automation::principal::PrincipalKind::Service
+        );
+        assert_eq!(ev.description, "old");
+        assert_eq!(ev.outcome, EventOutcome::Success);
+    }
+
+    #[test]
     fn load_all_recovers_concated_objects() {
         let (dir, store) = open_store();
         // Simulate a `}{` collision: two serialized records on one physical line.
@@ -1632,6 +1702,7 @@ mod tests {
             failure_reason: None,
             affected_files: vec![],
             metadata: None,
+            actor: crate::automation::principal::Principal::default(),
         })
         .unwrap();
         let b = serde_json::to_string(&CodebaseEvent {
@@ -1646,6 +1717,7 @@ mod tests {
             failure_reason: None,
             affected_files: vec![],
             metadata: None,
+            actor: crate::automation::principal::Principal::default(),
         })
         .unwrap();
         let path = dir
@@ -1881,6 +1953,42 @@ mod tests {
             strip_decision_trail(&enriched).as_deref(),
             Some("fn authenticate() {}")
         );
+    }
+
+    #[test]
+    fn enrich_read_response_adds_nothing_to_a_result_that_is_already_elided() {
+        // A payload at or past the threshold is replaced by a stub next turn no
+        // matter what else it carries, so a trail there only makes the stub
+        // longer and costs the dispatch tokens for metadata nobody reads.
+        let (dir, store) = open_store();
+        store
+            .record(
+                "write_file",
+                "Added auth module",
+                None,
+                None,
+                None,
+                vec!["src/auth.rs".into()],
+            )
+            .unwrap();
+        store.mark_outcome(1, EventOutcome::Success, None).unwrap();
+
+        let whole = "x".repeat(MAX_TOOL_RESULT_FOR_CONTEXT);
+        assert_eq!(
+            enrich_read_response(dir.path(), "src/auth.rs", &whole),
+            whole,
+            "an already-elided read must be handed back untouched"
+        );
+
+        // Just below it, the same file does get the trail — the rule is a
+        // threshold, not a ban on annotating long reads.
+        let nearly = "y".repeat(whole.len() - 900);
+        let enriched = enrich_read_response(dir.path(), "src/auth.rs", &nearly);
+        assert!(
+            enriched.contains(DECISION_TRAIL_HEADER),
+            "a read with room left must still be annotated"
+        );
+        assert!(enriched.len() <= MAX_TOOL_RESULT_FOR_CONTEXT);
     }
 
     #[test]

@@ -345,6 +345,13 @@ impl BrowserSession {
             &mut self.trace_collector,
             &self.current_url,
         );
+        // SPA routers change the address bar via history.pushState/replaceState
+        // without a document load — mirror that into the session so agent reads
+        // (snapshots, relative-URL resolution) see the route the page is on.
+        let after = crate::js::interpreter::page_url();
+        if !after.is_empty() && after != self.current_url {
+            self.current_url = after;
+        }
     }
 
     /// Execute JavaScript expression natively via JS Virtual Machine
@@ -368,6 +375,13 @@ impl BrowserSession {
 
         // Drain event loop
         self.drain_event_loop();
+
+        // An eval'd expression may have routed the SPA (pushState / location
+        // writes); keep the session URL aligned with the interpreter's view.
+        let after = crate::js::interpreter::page_url();
+        if !after.is_empty() && after != self.current_url {
+            self.current_url = after;
+        }
 
         Ok(format!("{:?}", res))
     }
@@ -479,6 +493,10 @@ impl BrowserSession {
                 break;
             }
         }
+        // Also pump the interpreter's own timer registry: `setTimeout` /
+        // `setInterval` / `requestAnimationFrame` called from inline `<script>`
+        // tags register there, not in the scheduler, so SPA page scripts settle.
+        crate::js::interpreter::flush_page_timers();
     }
 
     /// Native CSS selector element query & click event execution

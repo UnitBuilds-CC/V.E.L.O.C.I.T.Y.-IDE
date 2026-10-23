@@ -118,8 +118,28 @@ impl VelocityApp {
                                         .strong()
                                         .color(palette.text),
                                 );
+                                let (mut t, mut c, mut a, mut f) = (0u32, 0u32, 0u32, 0u32);
+                                for s in &wf.steps {
+                                    match s {
+                                        crate::editor::workflow::WorkflowStep::Tool { .. } => {
+                                            t += 1
+                                        }
+                                        crate::editor::workflow::WorkflowStep::Condition {
+                                            ..
+                                        } => c += 1,
+                                        crate::editor::workflow::WorkflowStep::AgentTask {
+                                            ..
+                                        } => a += 1,
+                                        crate::editor::workflow::WorkflowStep::ForEach {
+                                            ..
+                                        } => f += 1,
+                                        crate::editor::workflow::WorkflowStep::Connector {
+                                            ..
+                                        } => t += 1,
+                                    }
+                                }
                                 ui.label(
-                                    RichText::new(format!("({} step(s))", wf.steps.len()))
+                                    RichText::new(format!("(T{} C{} A{} F{})", t, c, a, f))
                                         .size(8.0)
                                         .color(palette.text_muted),
                                 );
@@ -428,14 +448,26 @@ impl VelocityApp {
         }
         if let Some(id) = run {
             if let Some(wf) = self.workflow_state.workflows.get(&id).cloned() {
-                let runrec = wf.execute(&ws);
-                self.toasts.push(crate::editor::toast::Toast::info(format!(
-                    "Workflow '{}' \u{2192} {}",
-                    wf.name,
-                    runrec.status.label()
-                )));
-                self.workflow_state.workflow_last_run = Some(runrec);
-                self.workflow_state.workflow_selected = Some(id);
+                // Pre-flight: same reference guard the workflow_run MCP tool
+                // applies — refuse to start a run whose Tool/Connector steps
+                // name things that don't exist, instead of half-executing.
+                if let Err(e) = crate::editor::company_org::validate_step_references(
+                    Some(&ws),
+                    "workflow",
+                    &wf.id,
+                    &wf.steps,
+                ) {
+                    self.toasts.push(crate::editor::toast::Toast::error(e));
+                } else {
+                    let runrec = wf.execute(&ws);
+                    self.toasts.push(crate::editor::toast::Toast::info(format!(
+                        "Workflow '{}' \u{2192} {}",
+                        wf.name,
+                        runrec.status.label()
+                    )));
+                    self.workflow_state.workflow_last_run = Some(runrec);
+                    self.workflow_state.workflow_selected = Some(id);
+                }
             }
         }
     }
@@ -489,13 +521,24 @@ impl VelocityApp {
                     for t in members {
                         // Build once to count real steps (Start/End excluded).
                         let preview = t.build("__preview", t.name);
-                        let step_count = preview
-                            .nodes
-                            .iter()
-                            .filter(|n| {
-                                !matches!(n.kind, CanvasNodeKind::Start | CanvasNodeKind::End)
-                            })
-                            .count();
+                        let mut t_n = 0usize; // Tool + Connector
+                        let mut c_n = 0usize; // Condition
+                        let mut a_n = 0usize; // AgentTask
+                        let mut step_count = 0usize;
+                        for n in &preview.nodes {
+                            if matches!(n.kind, CanvasNodeKind::Start | CanvasNodeKind::End) {
+                                continue;
+                            }
+                            step_count += 1;
+                            match &n.kind {
+                                CanvasNodeKind::Tool { .. } | CanvasNodeKind::Connector { .. } => {
+                                    t_n += 1
+                                }
+                                CanvasNodeKind::Condition { .. } => c_n += 1,
+                                CanvasNodeKind::AgentTask { .. } => a_n += 1,
+                                _ => {}
+                            }
+                        }
                         egui::Frame::new()
                             .fill(palette.bg_secondary)
                             .corner_radius(5.0)
@@ -509,9 +552,11 @@ impl VelocityApp {
                                             .color(palette.text),
                                     );
                                     ui.label(
-                                        RichText::new(format!("{step_count} step(s)"))
-                                            .size(8.0)
-                                            .color(palette.text_muted),
+                                        RichText::new(format!(
+                                            "{step_count} step(s): T{t_n} C{c_n} A{a_n}"
+                                        ))
+                                        .size(8.0)
+                                        .color(palette.text_muted),
                                     );
                                     ui.with_layout(
                                         egui::Layout::right_to_left(egui::Align::Center),
@@ -814,6 +859,163 @@ impl VelocityApp {
                     if ui.small_button(RichText::new("Slack").size(8.0)).clicked() { add_preset = Some("slack"); }
                 });
 
+                // ── Company org (UnitBuilds CC) ──
+                ui.add_space(8.0);
+                ui.label(RichText::new("COMPANY ORG").small().strong().color(palette.accent));
+                let org_dash = crate::editor::company_org::org_dashboard(&self.workspace_root);
+                ui.label(
+                    RichText::new(org_dash)
+                        .monospace()
+                        .size(8.0)
+                        .color(palette.text),
+                );
+
+                // Stuck-SOP alert: halted playbook runs (recorded verdict-verified,
+                // secret-free) get a coloured banner so a human scanning the approve
+                // queue also notices automation that silently stopped working.
+                let org_stuck = crate::editor::company_org::playbook_verdict_trail(&self.workspace_root, 3);
+                if !org_stuck.is_empty() {
+                    // De-duplicate so the same SOP failing twice shows once.
+                    let mut seen = std::collections::HashSet::new();
+                    let names: Vec<String> = org_stuck
+                        .iter()
+                        .map(|v| v.playbook_id.clone())
+                        .filter(|n| seen.insert(n.clone()))
+                        .collect();
+                    ui.label(
+                        RichText::new(format!(
+                            "\u{26a0} {} stuck SOP(s): {}",
+                            names.len(),
+                            names.join(", ")
+                        ))
+                        .size(9.0)
+                        .strong()
+                        .color(palette.warning),
+                    );
+                }
+
+                // Human-in-the-loop: approve/deny the org's pending irreversible /
+                // financial / legal requests directly from the dashboard, each as a
+                // designated approver (the same Approve-capability + quorum +
+                // no-replay engine the MCP tool drives). Mutations are deferred.
+                let org = crate::editor::company_org::ensure_default_org(&self.workspace_root);
+                let mut org_approve: Option<(String, String)> = None;
+                let mut org_deny: Option<String> = None;
+                let org_pending: Vec<crate::editor::company_org::ActionRequest> =
+                    crate::editor::company_org::load_requests(&self.workspace_root)
+                        .into_iter()
+                        .filter(|a| {
+                            a.status == crate::editor::company_org::ActionStatus::Pending
+                        })
+                        .collect();
+                if !org_pending.is_empty() {
+                    ui.label(
+                        RichText::new("APPROVE / DENY PENDING")
+                            .size(8.0)
+                            .strong()
+                            .color(palette.text_muted),
+                    );
+                    for a in &org_pending {
+                        // A SOP-raised intent carries the steps waiting on this
+                        // signature; show them so the human knows exactly what a
+                        // click will run before running it.
+                        let runs = a
+                            .playbook_id
+                            .as_deref()
+                            .map(|p| format!("  \u{2192} runs '{p}'"))
+                            .unwrap_or_default();
+                        let all_approvers: Vec<String> = if a.required_approvers.is_empty() {
+                            vec![crate::editor::company_org::HUMAN_OPERATOR.to_string()]
+                        } else {
+                            a.required_approvers.clone()
+                        };
+                        let approvers: Vec<String> = all_approvers
+                            .into_iter()
+                            .filter(|w| !a.approvals.contains(w))
+                            .collect();
+                        ui.horizontal(|ui| {
+                            let amt = if a.amount > 0.0 {
+                                format!(" \u{00a3}{:.0}", a.amount)
+                            } else {
+                                String::new()
+                            };
+                            ui.label(
+                                RichText::new(format!(
+                                    "{}: {} -[{}]-> {}{} ({} of {}){}",
+                                    a.id,
+                                    a.role_id,
+                                    a.capability.as_str(),
+                                    a.resource_id,
+                                    amt,
+                                    a.approvals.len(),
+                                    a.quorum.max(1),
+                                    runs
+                                ))
+                                .size(8.0)
+                                .color(palette.text),
+                            );
+                            for who in &approvers {
+                                if ui
+                                    .small_button(RichText::new(format!("approve:{who}")).size(8.0))
+                                    .clicked()
+                                {
+                                    org_approve = Some((a.id.clone(), who.clone()));
+                                }
+                            }
+                            if ui
+                                .small_button(RichText::new("deny").size(8.0))
+                                .clicked()
+                            {
+                                org_deny = Some(a.id.clone());
+                            }
+                        });
+                    }
+                }
+
+                // Approved-but-unelevated Spend/Deploy duties: the signature is
+                // in, the second factor is not. Without this row a human could
+                // approve a payment and still watch the executor refuse it.
+                let org_elev: Vec<crate::editor::company_org::ActionRequest> =
+                    crate::editor::company_org::approved_awaiting_elevation(
+                        &self.workspace_root,
+                        crate::editor::company_org::now_secs(),
+                    );
+                let mut org_elevate: Option<String> = None;
+                if !org_elev.is_empty() {
+                    ui.label(
+                        RichText::new("APPROVED, AWAITING ELEVATION")
+                            .size(8.0)
+                            .strong()
+                            .color(palette.warning),
+                    );
+                    for a in &org_elev {
+                        let duty = a
+                            .playbook_id
+                            .clone()
+                            .unwrap_or_else(|| "(no playbook)".to_string());
+                        ui.horizontal(|ui| {
+                            ui.label(
+                                RichText::new(format!(
+                                    "{}: {} -[{}]-> {} \u{00a3}{:.0} \u{2192} runs '{duty}'",
+                                    a.id,
+                                    a.role_id,
+                                    a.capability.as_str(),
+                                    a.resource_id,
+                                    a.amount
+                                ))
+                                .size(8.0)
+                                .color(palette.text),
+                            );
+                            if ui
+                                .small_button(RichText::new("elevate+run (5m)").size(8.0))
+                                .clicked()
+                            {
+                                org_elevate = Some(a.id.clone());
+                            }
+                        });
+                    }
+                }
+
                 // ── Deferred mutations ──
                 let ws = self.workspace_root.clone();
                 if cycle_default {
@@ -848,6 +1050,41 @@ impl VelocityApp {
                 }
                 if let Some(id) = approve { self.governance.approvals.approve(&id); if let Err(e) = self.governance.approvals.save(&ws) { Self::persist_err(&mut self.toasts, "approvals", &e); } }
                 if let Some(id) = deny { self.governance.approvals.deny(&id); if let Err(e) = self.governance.approvals.save(&ws) { Self::persist_err(&mut self.toasts, "approvals", &e); } }
+                if let Some((rid, who)) = org_approve {
+                    // Sign *and* run: reaching quorum resumes the SOP that raised
+                    // the intent, so an approved duty is not left sitting in the
+                    // ledger with its side effect still unwritten. Below quorum
+                    // nothing runs and the line names the missing signatures.
+                    match crate::editor::company_org::approve_and_resume(&ws, &org, &rid, &who) {
+                        Ok(line) => self.governance.gov_status = line,
+                        Err(e) => Self::persist_err(&mut self.toasts, "org approval", &e),
+                    }
+                }
+                if let Some(rid) = org_deny {
+                    match crate::editor::company_org::reject_action(&ws, &rid, crate::editor::company_org::HUMAN_OPERATOR, "denied from dashboard") {
+                        // Name the duty that was cancelled, so a denial reads as
+                        // the decision it is rather than a bare ledger write.
+                        Ok(r) => self.governance.gov_status = match r.playbook_id {
+                            Some(p) => format!("org {rid} denied — playbook '{p}' will not run."),
+                            None => format!("org {rid} denied."),
+                        },
+                        Err(e) => Self::persist_err(&mut self.toasts, "org denial", &e),
+                    }
+                }
+                if let Some(rid) = org_elevate {
+                    // Mint the scope the quorum already cleared, then run the
+                    // waiting duty: the elevation is spent by that one execution.
+                    match crate::editor::company_org::elevate_and_resume(
+                        &ws,
+                        &org,
+                        &rid,
+                        300,
+                        crate::editor::company_org::now_secs(),
+                    ) {
+                        Ok(line) => self.governance.gov_status = line,
+                        Err(e) => Self::persist_err(&mut self.toasts, "org elevation", &e),
+                    }
+                }
                 if add_secret {
                     let name = self.governance.gov_secret_name_input.trim().to_string();
                     let value = self.governance.gov_secret_value_input.clone();
@@ -1169,6 +1406,15 @@ fn step_detail(step: &crate::editor::workflow::WorkflowStep) -> String {
         WorkflowStep::AgentTask { prompt, .. } => prompt.chars().take(80).collect(),
         WorkflowStep::Tool { args, .. } => args.to_string().chars().take(80).collect(),
         WorkflowStep::Connector { req, .. } => req.to_string().chars().take(80).collect(),
-        WorkflowStep::Condition { require } => format!("require prior == {}", require.label()),
+        WorkflowStep::Condition { require, .. } => format!("require prior == {}", require.label()),
+        WorkflowStep::ForEach {
+            source,
+            as_var,
+            body,
+            ..
+        } => format!(
+            "for each {{{{{as_var}}}}} in {source} \u{2014} {} step(s) per item",
+            body.len()
+        ),
     }
 }

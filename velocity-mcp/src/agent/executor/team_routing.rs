@@ -308,8 +308,10 @@ pub fn try_route_team_prompt(
         ui_tx,
         deferred_messages,
         &CoordinationBus::new(),
-        None, // Team routing uses direct dispatch, not MoA router
-        None, // default max_loops
+        None,  // Team routing uses direct dispatch, not MoA router
+        None,  // default max_loops
+        None,  // interactive @-mention routing: the user can cancel, no budget
+        false, // @-mention chat: a text answer is a valid completion
     );
 
     true

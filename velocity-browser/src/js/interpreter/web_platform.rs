@@ -203,12 +203,81 @@ thread_local! {
         url: "https://localhost/".to_string(),
     }]);
     static HISTORY_INDEX: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    /// The page's current resolved URL — kept in sync with pushState/replaceState
+    /// and history traversal so that `location` reads reflect reality.
+    pub(crate) static PAGE_URL: RefCell<String> = RefCell::new("https://localhost/".to_string());
 }
 
 #[derive(Debug, Clone)]
 struct HistoryEntry {
     state: JsValue,
     url: String,
+}
+
+/// Read the current page URL (thread-local).
+pub fn page_url() -> String {
+    PAGE_URL.with(|u| u.borrow().clone())
+}
+
+/// Seed the interpreter's page URL + history stack on document load.
+pub fn set_page_url(url: &str) {
+    PAGE_URL.with(|u| *u.borrow_mut() = url.to_string());
+    // Reset history to a single entry representing the fresh document.
+    HISTORY_STACK.with(|s| {
+        *s.borrow_mut() = vec![HistoryEntry {
+            state: JsValue::Null,
+            url: url.to_string(),
+        }];
+    });
+    HISTORY_INDEX.with(|i| i.set(0));
+}
+
+/// Update the page URL without touching the history stack — used for
+/// `location.href`/`location.hash` writes, which browsers treat as same-table
+/// navigations rather than fresh document loads.
+pub(crate) fn set_page_url_only(url: &str) {
+    PAGE_URL.with(|u| *u.borrow_mut() = url.to_string());
+    let idx = HISTORY_INDEX.with(|i| i.get());
+    HISTORY_STACK.with(|s| {
+        if let Some(entry) = s.borrow_mut().get_mut(idx) {
+            entry.url = url.to_string();
+        }
+    });
+}
+
+/// Resolve a URL against the current page URL (exposed for location writes).
+pub(crate) fn resolve_page_url_public(base: &str, rel: &str) -> String {
+    resolve_page_url(base, rel)
+}
+
+/// Fire a hashchange event from a location write (exposed for browser_env).
+pub(crate) fn fire_hashchange_public(old_url: &str, new_url: &str) {
+    let old_hash = extract_hash(old_url);
+    let new_hash = extract_hash(new_url);
+    fire_hashchange(old_url, new_url, &old_hash, &new_hash);
+}
+
+/// Resolve a possibly-relative URL against a base, producing a full URL.
+fn resolve_page_url(base: &str, rel: &str) -> String {
+    if rel.is_empty() {
+        return base.to_string();
+    }
+    if rel.starts_with("http://") || rel.starts_with("https://") {
+        return rel.to_string();
+    }
+    // Absolute path
+    if rel.starts_with('/') {
+        let scheme_end = base.find("://").unwrap_or(0) + 3;
+        let authority = &base[scheme_end..].split('/').next().unwrap_or("");
+        return format!("{}//{}{}", &base[..scheme_end], authority, rel);
+    }
+    // Relative path — resolve against base directory
+    let last_slash = base.rfind('/').unwrap_or(base.len());
+    if last_slash > 6 {
+        format!("{}/{}", &base[..last_slash], rel)
+    } else {
+        format!("{}/{}", base, rel)
+    }
 }
 
 pub(super) fn make_history() -> JsValue {
@@ -234,76 +303,164 @@ pub(super) fn call_history_method(method: &str, args: &[JsValue]) -> JsValue {
     match method {
         "pushState" => {
             let state = args.first().cloned().unwrap_or(JsValue::Null);
-            let url = args
+            let raw_url = args
                 .get(2)
                 .map(crate::js::interpreter::coercion::to_string)
                 .unwrap_or_default();
+            let base = page_url();
+            let resolved = resolve_page_url(&base, &raw_url);
+            let old_hash = extract_hash(&base);
+            let new_hash = extract_hash(&resolved);
             HISTORY_STACK.with(|s| {
                 let mut stack = s.borrow_mut();
                 let idx = HISTORY_INDEX.with(|i| i.get());
                 // Truncate forward history.
                 stack.truncate(idx + 1);
-                stack.push(HistoryEntry { state, url });
+                stack.push(HistoryEntry {
+                    state,
+                    url: resolved.clone(),
+                });
                 HISTORY_INDEX.with(|i| i.set(stack.len() - 1));
             });
+            PAGE_URL.with(|u| *u.borrow_mut() = resolved.clone());
+            // Fire hashchange if hash portion changed.
+            if old_hash != new_hash {
+                fire_hashchange(&base, &resolved, &old_hash, &new_hash);
+            }
             JsValue::Undefined
         }
         "replaceState" => {
             let state = args.first().cloned().unwrap_or(JsValue::Null);
-            let url = args
+            let raw_url = args
                 .get(2)
                 .map(crate::js::interpreter::coercion::to_string)
                 .unwrap_or_default();
+            let base = page_url();
+            let resolved = if raw_url.is_empty() {
+                base.clone()
+            } else {
+                resolve_page_url(&base, &raw_url)
+            };
+            let old_hash = extract_hash(&base);
+            let new_hash = extract_hash(&resolved);
             HISTORY_STACK.with(|s| {
                 let mut stack = s.borrow_mut();
                 let idx = HISTORY_INDEX.with(|i| i.get());
                 if let Some(entry) = stack.get_mut(idx) {
                     entry.state = state;
-                    if !url.is_empty() {
-                        entry.url = url;
-                    }
+                    entry.url = resolved.clone();
                 }
             });
+            PAGE_URL.with(|u| *u.borrow_mut() = resolved.clone());
+            if old_hash != new_hash {
+                fire_hashchange(&base, &resolved, &old_hash, &new_hash);
+            }
             JsValue::Undefined
         }
         "back" => {
-            HISTORY_INDEX.with(|i| {
+            let old_url = page_url();
+            let moved = HISTORY_INDEX.with(|i| {
                 let idx = i.get();
                 if idx > 0 {
                     i.set(idx - 1);
+                    true
+                } else {
+                    false
                 }
             });
+            if moved {
+                sync_history_url_and_fire_popstate(&old_url);
+            }
             JsValue::Undefined
         }
         "forward" => {
-            HISTORY_STACK.with(|s| {
+            let old_url = page_url();
+            let moved = HISTORY_STACK.with(|s| {
                 let len = s.borrow().len();
                 HISTORY_INDEX.with(|i| {
                     let idx = i.get();
                     if idx + 1 < len {
                         i.set(idx + 1);
+                        true
+                    } else {
+                        false
                     }
-                });
+                })
             });
+            if moved {
+                sync_history_url_and_fire_popstate(&old_url);
+            }
             JsValue::Undefined
         }
         "go" => {
+            let old_url = page_url();
             let delta = args
                 .first()
                 .map(crate::js::interpreter::coercion::to_number)
                 .unwrap_or(0.0) as i32;
-            HISTORY_STACK.with(|s| {
+            let moved = HISTORY_STACK.with(|s| {
                 let len = s.borrow().len() as i32;
                 HISTORY_INDEX.with(|i| {
                     let idx = i.get() as i32;
                     let target = (idx + delta).clamp(0, len - 1);
-                    i.set(target as usize);
-                });
+                    if target != idx {
+                        i.set(target as usize);
+                        true
+                    } else {
+                        false
+                    }
+                })
             });
+            if moved {
+                sync_history_url_and_fire_popstate(&old_url);
+            }
             JsValue::Undefined
         }
         _ => JsValue::Undefined,
     }
+}
+
+/// After a history traversal, update PAGE_URL to the new entry and fire popstate.
+fn sync_history_url_and_fire_popstate(old_url: &str) {
+    let (new_url, state) = HISTORY_STACK.with(|s| {
+        let stack = s.borrow();
+        let idx = HISTORY_INDEX.with(|i| i.get());
+        let entry = stack.get(idx);
+        (
+            entry.map(|e| e.url.clone()).unwrap_or_default(),
+            entry.map(|e| e.state.clone()).unwrap_or(JsValue::Null),
+        )
+    });
+    let old_hash = extract_hash(old_url);
+    let new_hash = extract_hash(&new_url);
+    PAGE_URL.with(|u| *u.borrow_mut() = new_url.clone());
+    // Fire popstate with the restored state object.
+    super::browser_env::fire_lifecycle_event_with("popstate", &["state"], &[state]);
+    // If hash portion changed, also fire hashchange.
+    if old_hash != new_hash {
+        fire_hashchange(old_url, &new_url, &old_hash, &new_hash);
+    }
+}
+
+/// Extract the fragment (after #) from a URL, without the leading '#'.
+fn extract_hash(url: &str) -> String {
+    url.split_once('#')
+        .map(|(_, h)| h.to_string())
+        .unwrap_or_default()
+}
+
+/// Fire a hashchange event with oldURL/newURL/oldHash/newHash properties.
+fn fire_hashchange(old_url: &str, new_url: &str, old_hash: &str, new_hash: &str) {
+    super::browser_env::fire_lifecycle_event_with(
+        "hashchange",
+        &["oldURL", "newURL", "oldHash", "newHash"],
+        &[
+            JsValue::String(old_url.to_string()),
+            JsValue::String(new_url.to_string()),
+            JsValue::String(format!("#{}", old_hash)),
+            JsValue::String(format!("#{}", new_hash)),
+        ],
+    );
 }
 
 pub(super) fn history_length() -> JsValue {

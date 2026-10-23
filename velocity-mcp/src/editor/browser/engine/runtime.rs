@@ -331,6 +331,71 @@ fn runtime_session_action(
     }
 }
 
+/// Forward a rich deterministic browser interaction (hover, scroll, select,
+/// right-click, drag, wait, wait-text, wait-url, switch-tab) to the runtime
+/// session API. The company-org planner emits these as first-class steps; the
+/// `action` verb and its args pass straight through to the runtime engine, which
+/// is the source of truth for which verbs it executes. Keeping one generic
+/// forwarder (rather than a bespoke wrapper per verb) means our dispatch layer is
+/// complete — every emitted tool is routable, never a silent "unknown tool"
+/// no-op — and a new planner interaction needs only a matching arm in the
+/// navigation handler. Extra body fields (`selector`, `nodeId`, `optionText`,
+/// `sourceSelector`, `targetSelector`, `urlPattern`, `text`) ride through verbatim;
+/// a caller-supplied `timeout` is normalised to the engine's `waitTimeoutMs`.
+pub fn runtime_browser_action_session(
+    workspace_root: &Path,
+    session_id: &str,
+    action: &str,
+    args: &serde_json::Value,
+    sitemap_path: &Path,
+    compact: bool,
+) -> Result<String, String> {
+    let mut session = load_runtime_session_state(workspace_root, session_id)?;
+    let wait_timeout_ms = args
+        .get("timeout")
+        .and_then(|v| v.as_u64())
+        .or_else(|| args.get("waitTimeoutMs").and_then(|v| v.as_u64()))
+        .unwrap_or(1_500);
+    let mut body = args.clone();
+    if let Some(obj) = body.as_object_mut() {
+        obj.insert("action".to_string(), serde_json::json!(action));
+        obj.insert(
+            "waitTimeoutMs".to_string(),
+            serde_json::json!(wait_timeout_ms),
+        );
+        obj.remove("timeout");
+    }
+    let value = runtime_api_request(
+        "POST",
+        &format!(
+            "{}/api/runtime/session/{}/action",
+            session.api_base, session.runtime_session_id
+        ),
+        Some(&body),
+    )?;
+    let captured = parse_runtime_session_capture_response(value)?;
+    // Best-effort target for the transcript: whichever locator the verb carries.
+    let target = ["selector", "nodeId", "urlPattern", "text"]
+        .iter()
+        .find_map(|k| args.get(*k).and_then(|v| v.as_str()))
+        .map(|s| s.to_string())
+        .unwrap_or_else(|| action.to_string());
+    let report = sync_runtime_capture_session(
+        workspace_root,
+        &mut session,
+        &captured,
+        Some(target),
+        action,
+        sitemap_path,
+    )?;
+    if compact {
+        serde_json::to_string_pretty(&report)
+            .map_err(|err| format!("serialise runtime session action summary: {err}"))
+    } else {
+        Ok(render_runtime_capture_report(&report))
+    }
+}
+
 pub fn runtime_navigate_session(
     workspace_root: &Path,
     session_id: &str,

@@ -547,7 +547,11 @@ pub fn call_native(name: &str, args: &[JsValue]) -> EvalResult {
         "String" => JsValue::String(args.first().map(to_string).unwrap_or_default()),
         "Boolean" => JsValue::Boolean(args.first().map(to_boolean).unwrap_or(false)),
         "structuredClone" => args.first().cloned().unwrap_or(JsValue::Undefined),
-        "queueMicrotask" | "requestAnimationFrame" | "requestIdleCallback" => JsValue::Number(0.0),
+        "queueMicrotask" | "requestIdleCallback" => JsValue::Number(0.0),
+        // rAF is a once-per-frame timeout: schedule the callback so the
+        // deterministic pump (flush_timers) actually runs it, matching the
+        // `window.requestAnimationFrame` dispatch in eval.rs.
+        "requestAnimationFrame" => super::browser_env::set_timeout(args),
         "__noop__" => JsValue::Undefined,
         "__promise_resolve__" => {
             let val = args.first().cloned().unwrap_or(JsValue::Undefined);

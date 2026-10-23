@@ -163,6 +163,14 @@ pub fn reset_timers() {
     NEXT_TIMER_ID.with(|c| *c.borrow_mut() = 1);
 }
 
+/// Public entry to the interpreter's deterministic timer pump, so the session
+/// layer can fire page `setTimeout`/`setInterval`/`requestAnimationFrame`
+/// callbacks registered through the interpreter (not just the scheduler).
+/// Returns the number of callbacks executed in this pass.
+pub fn flush_page_timers() -> u32 {
+    flush_timers()
+}
+
 // ── Document Lifecycle ───────────────────────────────────────────────────────
 
 thread_local! {
@@ -208,6 +216,17 @@ pub(super) fn remove_lifecycle_listeners(event_type: &str) {
 /// Fire all page-level listeners for `event_type`; returns how many ran.
 /// Listeners are cloned up-front so they can freely add/remove listeners.
 pub(super) fn fire_lifecycle_event(event_type: &str) -> u32 {
+    fire_lifecycle_event_with(event_type, &[], &[])
+}
+
+/// Fire a page-level event carrying extra properties — `popstate` needs
+/// `state`, `hashchange` needs `oldURL`/`newURL`/`oldHash`/`newHash`. The
+/// `keys`/`values` slices are zipped into the event object.
+pub(super) fn fire_lifecycle_event_with(
+    event_type: &str,
+    keys: &[&str],
+    values: &[JsValue],
+) -> u32 {
     let listeners =
         LIFECYCLE_LISTENERS.with(|l| l.borrow().get(event_type).cloned().unwrap_or_default());
     let mut event = HashMap::new();
@@ -218,6 +237,9 @@ pub(super) fn fire_lifecycle_event(event_type: &str) -> u32 {
         JsValue::String("document".to_string()),
     );
     event.insert("bubbles".to_string(), JsValue::Boolean(false));
+    for (k, v) in keys.iter().zip(values.iter()) {
+        event.insert((*k).to_string(), v.clone());
+    }
     let event_val = JsValue::Object(event);
     let mut executed = 0u32;
     for listener in listeners {
@@ -245,6 +267,27 @@ pub(super) fn advance_lifecycle() -> u32 {
     READY_STATE.with(|s| *s.borrow_mut() = "complete");
     executed += fire_lifecycle_event("load");
     executed
+}
+
+/// Reset all per-document interpreter state so a fresh page load starts clean
+/// on a reused thread: timers, pending lifecycle listeners, the `readyState`
+/// phase, and the "load already fired" latch. A real browser discards this
+/// state when it commits a new document; because the interpreter keeps its
+/// event-loop state in thread-locals, `BrowserSession`s would otherwise leak
+/// listeners and timers into one another across `load_html` calls.
+pub fn reset_page_state() {
+    TIMER_REGISTRY.with(|reg| reg.borrow_mut().clear());
+    NEXT_TIMER_ID.with(|c| *c.borrow_mut() = 1);
+    LIFECYCLE_LISTENERS.with(|l| l.borrow_mut().clear());
+    LIFECYCLE_FIRED.with(|c| c.set(false));
+    READY_STATE.with(|s| *s.borrow_mut() = "loading");
+}
+
+/// Public hook so the session layer can fire the DOMContentLoaded/load pair
+/// once a document's scripts have run (real load ordering: listeners
+/// registered by the page are then notified the DOM is ready).
+pub fn settle_page_lifecycle() -> u32 {
+    advance_lifecycle()
 }
 
 // ── Browser Global Objects ───────────────────────────────────────────────────
@@ -333,19 +376,30 @@ pub(super) fn make_navigator() -> JsValue {
     JsValue::Object(map)
 }
 
-/// Build the `location` object for a given URL.
-pub(super) fn make_location(url: &str) -> JsValue {
+/// Build the `location` object, always reflecting the interpreter's current
+/// page URL (kept in sync by document loads, pushState/replaceState, history
+/// traversal, and location writes — SPA routers rely on reading fresh values).
+pub(super) fn make_location(_url: &str) -> JsValue {
+    let url = super::web_platform::page_url();
+    let url = url.as_str();
     let mut map = HashMap::new();
     map.insert(
         "__type__".to_string(),
         JsValue::String("Location".to_string()),
     );
 
-    // Parse the URL into components.
-    let (protocol, rest) = url.split_once("://").unwrap_or(("https", url));
+    // Parse the URL into components. Split the fragment off the *whole* URL
+    // first, so `https://host/#frag` (no path before the `#`) is still read as
+    // a hash rather than leaking into the pathname.
+    let (url_no_hash, hash) = match url.split_once('#') {
+        Some((base, frag)) => (base, frag),
+        None => (url, ""),
+    };
+    let (protocol, rest) = url_no_hash
+        .split_once("://")
+        .unwrap_or(("https", url_no_hash));
     let (host_part, path_part) = rest.split_once('/').unwrap_or((rest, ""));
-    let (path, query) = path_part.split_once('?').unwrap_or((path_part, ""));
-    let (query_clean, hash) = query.split_once('#').unwrap_or((query, ""));
+    let (path, query_clean) = path_part.split_once('?').unwrap_or((path_part, ""));
     let path = if path.is_empty() {
         "/"
     } else {
@@ -409,6 +463,98 @@ pub(super) fn make_location(url: &str) -> JsValue {
     );
     map.insert("origin".to_string(), JsValue::String(origin));
     JsValue::Object(map)
+}
+
+/// Replace the fragment of `url` with `new_hash` ("" clears it).
+fn with_hash(url: &str, new_hash: &str) -> String {
+    let stripped = url.split_once('#').map(|(b, _)| b).unwrap_or(url);
+    if new_hash.is_empty() {
+        stripped.to_string()
+    } else {
+        format!("{}#{}", stripped, new_hash.trim_start_matches('#'))
+    }
+}
+
+/// Replace the path+query of `url` with `new_path` (path/query component).
+fn with_path_and_query(url: &str, new_path: &str) -> String {
+    let (base, _) = split_hash(url);
+    let scheme_end = base.find("://").map(|i| i + 3).unwrap_or(0);
+    if scheme_end == 0 || !new_path.starts_with('/') {
+        return base.to_string();
+    }
+    let after = &base[scheme_end..];
+    let authority = after.split('/').next().unwrap_or("");
+    format!("{}//{}{}", &base[..scheme_end], authority, new_path)
+}
+
+/// Split a URL into (base without fragment, hash without '#').
+fn split_hash(url: &str) -> (&str, &str) {
+    match url.split_once('#') {
+        Some((b, h)) => (b, h),
+        None => (url, ""),
+    }
+}
+
+/// Handle writes to the location object (`location.hash = '#/route'`,
+/// `location.href = '/new'`, `location.pathname = '/x'`). SPA routers mutate
+/// location directly, so the interpreter's page URL must follow and the
+/// matching event (hashchange) must fire. The session layer treats href/path
+/// writes as navigations on the next fetch point.
+pub(crate) fn apply_location_write(target: &mut JsValue, prop: &str, value: JsValue) {
+    let current = super::web_platform::page_url();
+    let new_url = match prop {
+        "hash" => {
+            let raw = crate::js::interpreter::coercion::to_string(&value);
+            with_hash(&current, raw.trim_start_matches('#'))
+        }
+        "href" => {
+            let raw = crate::js::interpreter::coercion::to_string(&value);
+            if raw.contains("://") {
+                raw
+            } else {
+                super::web_platform::resolve_page_url_public(&current, &raw)
+            }
+        }
+        "pathname" | "search" | "host" | "hostname" | "port" | "protocol" => {
+            let path = crate::js::interpreter::coercion::to_string(&value);
+            with_path_and_query(&current, &path)
+        }
+        _ => {
+            // Unknown property: store it like a plain object write.
+            if let JsValue::Object(m) = target {
+                m.insert(prop.to_string(), value);
+            }
+            return;
+        }
+    };
+    let old_hash = split_hash(&current).1.to_string();
+    let new_hash = split_hash(&new_url).1.to_string();
+    super::web_platform::set_page_url_only(&new_url);
+    // Rebuild the caller-visible location snapshot so later reads within the
+    // same statement see fresh values.
+    *target = make_location(&new_url);
+    if old_hash != new_hash {
+        super::web_platform::fire_hashchange_public(&current, &new_url);
+    }
+}
+
+/// Handle `location.href = url` / `location.assign(url)` / `location.replace(url)`.
+/// A fragment-only change is a same-document navigation (hashchange); anything
+/// else rewrites the page URL — the session layer re-fetches when it observes
+/// the new href, mirroring how the web_apis interception path handles writes.
+pub(crate) fn apply_location_href_write(new_url: &str) {
+    let current = super::web_platform::page_url();
+    let cur_base = split_hash(&current).0.to_string();
+    let new_base = split_hash(new_url).0.to_string();
+    super::web_platform::set_page_url_only(new_url);
+    if cur_base == new_base {
+        // Same document: notify via hashchange instead of a reload.
+        let old_hash = split_hash(&current).1.to_string();
+        let new_hash = split_hash(new_url).1.to_string();
+        if old_hash != new_hash {
+            super::web_platform::fire_hashchange_public(&current, new_url);
+        }
+    }
 }
 
 /// Build a minimal `document` stub object for the interpreter.

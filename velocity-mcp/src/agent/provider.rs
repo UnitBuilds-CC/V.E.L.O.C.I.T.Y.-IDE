@@ -66,6 +66,11 @@ pub fn infer_model_info(id: String, item: &serde_json::Value) -> Option<ModelInf
     let supports_tools = lower.contains("function-calling")
         || lower.contains("tool-use")
         || lower.contains("kimi")
+        // Zhipu GLM family (covers chatglm): the token-plan endpoint accepts
+        // native tool_calls, verified live. Without this the profile fell
+        // back to OpenAiChat and the agent had to be prompted to hand-write
+        // tool markup, which streams unreliably.
+        || lower.contains("glm")
         || lower.contains("llama-3.1")
         || lower.contains("llama-3.2")
         || lower.contains("llama-3.3")
@@ -393,36 +398,107 @@ pub fn default_provider_model(provider: AiProvider) -> String {
     }
 }
 
+/// Parse an Ollama `/api/tags` JSON body into `(id, supports_tools,
+/// supports_thinking)` tuples. Split out as a pure function so the catalog is
+/// testable without a running server and so cross-node merging has a single
+/// place to reason about the wire shape.
+///
+/// Tool support is read from the server-advertised `capabilities` list rather
+/// than assumed: a random GGUF pulled onto a host must not be silently offered
+/// into the agent loop as if it could emit tool calls.
+pub fn parse_ollama_tags(body: &serde_json::Value) -> Vec<(String, bool, bool)> {
+    body["models"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|m| {
+            let name = m["name"].as_str()?;
+            let supports_tools = m["capabilities"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .any(|c| c.as_str() == Some("tools"));
+            let lower = name.to_lowercase();
+            let supports_thinking = ["r1", "qwq", "thinking", "qwen3"]
+                .iter()
+                .any(|tag| lower.contains(tag));
+            Some((name.to_string(), supports_tools, supports_thinking))
+        })
+        .collect()
+}
+
+/// Build the Ollama `/api/tags` URL from a host, tolerating a trailing slash.
+pub fn ollama_tags_url(host: &str) -> String {
+    format!("{}/api/tags", host.trim_end_matches('/'))
+}
+
+/// Query every configured Ollama host's `/api/tags` and merge the results into
+/// one catalog. This is what makes cross-node model sharing real: each host
+/// contributes the models it actually serves, labelled with the host that owns
+/// them, and one unreachable host degrades gracefully instead of blanking the
+/// whole set.
 pub fn fetch_local_ollama_models(
     accounts: &[crate::usage::LocalOllamaAccount],
 ) -> Result<Vec<ModelInfo>, String> {
-    let host = accounts
-        .first()
-        .map(|a| a.host.as_str())
-        .unwrap_or("http://localhost:11434");
-    Ok(vec![
-        ModelInfo {
-            id: "llama3.2".to_string(),
-            label: format!("llama3.2 ({host})"),
-            api_style: ApiStyle::OpenAiTools,
-            supports_tools: true,
-            supports_thinking: false,
-        },
-        ModelInfo {
-            id: "qwen2.5-coder".to_string(),
-            label: format!("qwen2.5-coder ({host})"),
-            api_style: ApiStyle::OpenAiTools,
-            supports_tools: true,
-            supports_thinking: false,
-        },
-        ModelInfo {
-            id: "deepseek-r1".to_string(),
-            label: format!("deepseek-r1 ({host})"),
-            api_style: ApiStyle::OpenAiTools,
-            supports_tools: true,
-            supports_thinking: true,
-        },
-    ])
+    // No accounts configured: still probe the default local host so a freshly
+    // started Ollama is discoverable without any settings.
+    let hosts: Vec<(String, String)> = if accounts.is_empty() {
+        vec![(
+            "http://localhost:11434".to_string(),
+            "Local-Ollama".to_string(),
+        )]
+    } else {
+        accounts
+            .iter()
+            .map(|a| {
+                let display = if a.label.trim().is_empty() {
+                    a.host.clone()
+                } else {
+                    a.label.clone()
+                };
+                (a.host.clone(), display)
+            })
+            .collect()
+    };
+
+    use std::collections::HashSet;
+    let mut catalog = Vec::new();
+    let mut seen: HashSet<(String, String)> = HashSet::new();
+    let mut any_reachable = false;
+    for (host, display) in hosts {
+        let url = ollama_tags_url(&host);
+        let body: Option<serde_json::Value> = match ureq::get(&url)
+            .timeout(std::time::Duration::from_secs(8))
+            .call()
+        {
+            Ok(r) => r.into_json().ok(),
+            Err(_) => None,
+        };
+        let body = match body {
+            Some(b) => b,
+            None => continue,
+        };
+        any_reachable = true;
+        for (name, supports_tools, supports_thinking) in parse_ollama_tags(&body) {
+            if !seen.insert((host.clone(), name.clone())) {
+                continue;
+            }
+            catalog.push(ModelInfo {
+                id: name.clone(),
+                label: format!("{name} ({display})"),
+                api_style: ApiStyle::OpenAiTools,
+                supports_tools,
+                supports_thinking,
+            });
+        }
+    }
+    if !any_reachable {
+        return Err(
+            "No reachable Ollama host: every configured host failed its /api/tags probe."
+                .to_string(),
+        );
+    }
+    Ok(catalog)
 }
 
 pub fn fetch_azure_models(
@@ -466,6 +542,33 @@ pub fn fetch_azure_models(
     Ok(catalog)
 }
 
+/// Model families whose OpenAI-compatible endpoints accept a native `tools`
+/// array. The catalog listing carries no capability field, so the model id is
+/// the only signal available before the first request.
+///
+/// Keeping this as a named predicate (rather than an inline chain) matters:
+/// the same table is consulted by the headless worker profile path via
+/// `default_model_info`, and a family missing here silently degrades that
+/// worker onto hand-written tool markup. glm-5.2 was missing on both tables
+/// and the LiteLLM crucible stalled on turn 1 three runs in a row.
+fn openai_compat_tool_family(lower: &str) -> bool {
+    lower.contains("function")
+        || lower.contains("tool")
+        || lower.contains("llama-3")
+        || lower.contains("llama-4")
+        || lower.contains("meta-llama")
+        || lower.contains("qwen")
+        || lower.contains("glm")
+        || lower.contains("gpt-4")
+        || lower.contains("gpt-3.5")
+        || lower.contains("mistral")
+        || lower.contains("mixtral")
+        || lower.contains("deepseek")
+        || lower.contains("claude")
+        || lower.contains("gemini")
+        || lower.contains("sonar")
+}
+
 /// Generic fetcher for any OpenAI-compatible `/v1/models` endpoint.
 /// Used by OpenAI, Groq, Mistral, Deepseek, AlibabaQwen, Together, Fireworks, Perplexity, Cerebras.
 fn fetch_openai_compatible_models(
@@ -498,11 +601,13 @@ fn fetch_openai_compatible_models(
         .filter_map(|item| {
             let id = item["id"].as_str()?.to_string();
             let lower = id.to_lowercase();
-            // Filter out embedding/non-chat models
+            // Filter out embedding/non-chat/routing models
             if lower.contains("embed")
                 || lower.contains("whisper")
                 || lower.contains("tts")
                 || lower.contains("image")
+                || lower.contains("audio")
+                || lower == "auto"
             {
                 return None;
             }
@@ -512,20 +617,7 @@ fn fetch_openai_compatible_models(
                 || lower.contains("qwq")
                 || lower.contains("o1")
                 || lower.contains("o3");
-            let supports_tools = lower.contains("function")
-                || lower.contains("tool")
-                || lower.contains("llama-3")
-                || lower.contains("llama-4")
-                || lower.contains("qwen")
-                || lower.contains("gpt-4")
-                || lower.contains("gpt-3.5")
-                || lower.contains("mistral")
-                || lower.contains("mixtral")
-                || lower.contains("deepseek")
-                || lower.contains("claude")
-                || lower.contains("gemini")
-                || lower.contains("sonar")
-                || lower.contains("meta-llama");
+            let supports_tools = openai_compat_tool_family(&lower);
             Some(ModelInfo {
                 label: id.rsplit('/').next().unwrap_or(&id).to_string(),
                 id: id.clone(),
@@ -1016,6 +1108,45 @@ mod tests {
     }
 
     #[test]
+    fn infer_model_info_marks_glm_family_tool_capable() {
+        // Live defect: the token-plan glm-5.2 profile fell to OpenAiChat, so
+        // the agent was prompted to hand-write tool markup instead of
+        // receiving native tool schemas. The endpoint does support them.
+        for id in ["glm-5.2", "zhipu/glm-4-plus", "chatglm3-6b"] {
+            let info = default_model_info(id);
+            assert!(info.supports_tools, "{id} must be tool-capable");
+            assert_eq!(info.api_style, ApiStyle::OpenAiTools, "{id}");
+        }
+    }
+
+    #[test]
+    fn openai_compat_table_agrees_with_the_headless_profile() {
+        // The two capability tables drifting apart was the real bug: the
+        // catalog listed glm as tool-incapable while the endpoint streams
+        // native delta.tool_calls. Any family the worker path marks
+        // tool-capable must also be marked here, or a model is presented to
+        // the user as chat-only and then hand-writes markup under the hood.
+        for id in [
+            "glm-5.2",
+            "qwen3-max",
+            "deepseek-v3",
+            "claude-3-5-sonnet",
+            "llama-3.3-70b",
+        ] {
+            assert!(
+                openai_compat_tool_family(id),
+                "catalog table rejects tool-capable {id}"
+            );
+            assert!(
+                default_model_info(id).supports_tools,
+                "worker profile rejects tool-capable {id}"
+            );
+        }
+        // Non-chat leftovers must not be swept in by the widening.
+        assert!(!openai_compat_tool_family("my-plain-chat-model"));
+    }
+
+    #[test]
     fn infer_model_info_detects_thinking() {
         let item = serde_json::json!({});
         let info = infer_model_info("deepseek-r1".into(), &item).unwrap();
@@ -1215,47 +1346,115 @@ mod tests {
         assert_eq!(default_provider_model(AiProvider::OpenAI), "gpt-4o");
     }
 
-    // ── fetch_local_ollama_models ──────────────────────────────────────
+    // ── ollama catalog ─────────────────────────────────────────────────
+    // The catalog is discovered live from each host's /api/tags, so the
+    // content-bearing logic (parse) is tested as a pure function; only the
+    // graceful-failure path touches the network, against a guaranteed-closed
+    // port so it is deterministic and fast.
 
-    #[test]
-    fn ollama_models_always_returns_three() {
-        let models = fetch_local_ollama_models(&[]).unwrap();
-        assert_eq!(models.len(), 3);
+    fn tags_body(json: &str) -> serde_json::Value {
+        serde_json::from_str(json).unwrap()
     }
 
     #[test]
-    fn ollama_models_contain_expected_ids() {
-        let models = fetch_local_ollama_models(&[]).unwrap();
-        let ids: Vec<&str> = models.iter().map(|m| m.id.as_str()).collect();
-        assert!(ids.contains(&"llama3.2"));
-        assert!(ids.contains(&"qwen2.5-coder"));
-        assert!(ids.contains(&"deepseek-r1"));
+    fn parse_ollama_tags_reads_names_and_per_model_tool_capability() {
+        let body = tags_body(
+            r#"{"models":[
+                {"name":"qwen2.5-coder:14b","capabilities":["completion","tools"]},
+                {"name":"some-legacy-gguf","capabilities":["completion"]}
+            ]}"#,
+        );
+        let parsed = parse_ollama_tags(&body);
+        let ids: Vec<&str> = parsed.iter().map(|(n, _, _)| n.as_str()).collect();
+        assert_eq!(ids, vec!["qwen2.5-coder:14b", "some-legacy-gguf"]);
+        // Tool support is read per model, never assumed for the whole batch.
+        assert!(parsed[0].1);
+        assert!(!parsed[1].1);
     }
 
     #[test]
-    fn ollama_models_all_support_tools() {
-        let models = fetch_local_ollama_models(&[]).unwrap();
-        for m in &models {
-            assert!(m.supports_tools);
-        }
+    fn parse_ollama_tags_flags_thinking_models() {
+        let body =
+            tags_body(r#"{"models":[{"name":"deepseek-r1:8b","capabilities":["completion"]}]}"#);
+        let parsed = parse_ollama_tags(&body);
+        assert!(parsed[0].2, "an r1 model must be recognized as thinking");
     }
 
     #[test]
-    fn ollama_deepseek_r1_supports_thinking() {
-        let models = fetch_local_ollama_models(&[]).unwrap();
-        let ds = models.iter().find(|m| m.id == "deepseek-r1").unwrap();
-        assert!(ds.supports_thinking);
+    fn parse_ollama_tags_missing_capabilities_is_not_tools() {
+        let body = tags_body(r#"{"models":[{"name":"llama3.2:3b"}]}"#);
+        let parsed = parse_ollama_tags(&body);
+        assert_eq!(parsed.len(), 1);
+        assert!(
+            !parsed[0].1,
+            "no advertised capability means no tool support"
+        );
     }
 
     #[test]
-    fn ollama_models_use_custom_host() {
+    fn parse_ollama_tags_empty_or_malformed_is_empty() {
+        assert!(parse_ollama_tags(&tags_body(r#"{"models":[]}"#)).is_empty());
+        assert!(parse_ollama_tags(&tags_body(r#"{}"#)).is_empty());
+    }
+
+    #[test]
+    fn ollama_tags_url_tolerates_trailing_slash() {
+        assert_eq!(ollama_tags_url("http://h:11434"), "http://h:11434/api/tags");
+        assert_eq!(
+            ollama_tags_url("http://h:11434/"),
+            "http://h:11434/api/tags"
+        );
+    }
+
+    #[test]
+    fn unreachable_hosts_surface_an_error_not_an_empty_success() {
+        // Port 1 is closed, so every probe fails fast. A catalog that silently
+        // returns "no models" would masquerade as success and strand a dispatch
+        // on a model nothing can serve; the error keeps the fallback chain honest.
         let accounts = vec![crate::usage::LocalOllamaAccount {
-            host: "http://myhost:1234".to_string(),
+            host: "http://127.0.0.1:1".to_string(),
             default_model: String::new(),
-            label: String::new(),
+            label: "dead".to_string(),
         }];
-        let models = fetch_local_ollama_models(&accounts).unwrap();
-        assert!(models[0].label.contains("myhost:1234"));
+        assert!(fetch_local_ollama_models(&accounts).is_err());
+    }
+
+    /// Live, opt-in proof of cross-node sharing: reads the configured host
+    /// list (set `OLLAMA_HOSTS` to two or more reachable Ollama servers) and
+    /// asserts the merged catalog is a superset of every host's solo catalog,
+    /// so no host's models are dropped by the merge. Ignored by default
+    /// because it needs running servers.
+    #[test]
+    #[ignore = "requires live Ollama hosts configured in OLLAMA_HOSTS"]
+    fn live_multi_host_ollama_discovery_merges_all_hosts() {
+        let accounts = crate::usage::load_local_ollama_accounts(std::path::Path::new("."));
+        assert!(
+            accounts.len() >= 2,
+            "expected OLLAMA_HOSTS to configure at least two hosts, got {}",
+            accounts.len()
+        );
+        let merged = fetch_local_ollama_models(&accounts).expect("at least one host reachable");
+        for acct in &accounts {
+            let solo = fetch_local_ollama_models(std::slice::from_ref(acct)).unwrap_or_default();
+            for m in solo {
+                assert!(
+                    merged.iter().any(|x| x.id == m.id && x.label == m.label),
+                    "model {:?} from host {:?} was dropped by the multi-host merge",
+                    m.id,
+                    acct.host
+                );
+            }
+        }
+        assert!(
+            !merged.is_empty(),
+            "merged catalog must list discovered models"
+        );
+        let listing: Vec<String> = merged.iter().map(|m| format!("  {}", m.label)).collect();
+        println!(
+            "merged ollama catalog across {} hosts:\n{}",
+            accounts.len(),
+            listing.join("\n")
+        );
     }
 
     // ── fetch_azure_models ─────────────────────────────────────────────

@@ -308,9 +308,91 @@ pub fn get_team_tools() -> Vec<Tool> {
                 "properties": {
                     "team_id": { "type": "string", "description": "Team id, slug, or name." },
                     "task": { "type": "string", "description": "The task description to execute." },
-                    "files": { "type": "array", "items": { "type": "string" }, "description": "Optional file paths for scope-based routing and pre-indexing." }
+                    "files": { "type": "array", "items": { "type": "string" }, "description": "Optional file paths for scope-based routing and pre-indexing." },
+                    "deliverable": { "type": "string", "enum": ["report", "artifact"], "description": "What the task owes. 'report' (default) ends the prompt with a structured-report format, right for audits and analysis. 'artifact' tells the agent its deliverable is files it must write with the write tool (porting, design, docs, remediation) and that a text answer with no writes is a failed task. Sending the wrong one makes the agent emit prose when it should have written a file, and report success doing it." }
                 },
                 "required": ["team_id", "task"]
+            }),
+        },
+        // ── Intent / Decision Routing Tools ────────────────────────────
+        Tool {
+            name: "classify_intent".to_string(),
+            description: "Run the intent decision brain on a request and return the routing verdict as JSON: whether it should be handled by a single agent or a specialized team, whether a repository must be cloned first, the detected target language, the specialist roles implied, a confidence value, and the fired signals. Uses the configured System-1 decision model (on-device Laya or hosted Jev) when one is set up, and falls back to the deterministic scorer otherwise. Read-only: it classifies and explains, and does NOT provision any team or clone any repo.".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "prompt": { "type": "string", "description": "The user request to classify, e.g. \"clone liteLLM and rewrite it in rust\"." }
+                },
+                "required": ["prompt"]
+            }),
+        },
+        Tool {
+            name: "select_model".to_string(),
+            description: "Pick the best AI model for a task from the models that are ACTUALLY usable: live provider catalogs fetched with the API keys enabled in provider-settings (e.g. the Alibaba Qwen token-plan listing), never a fabricated model id. Optionally scope the candidate pool to one provider slug. Runs the configured System-1 decision model (on-device Laya or hosted Jev) over the candidate set and adopts its pick only when the chosen option is in the usable set and stands clearly above the rest; otherwise falls back to the deterministic capability ranking (task needs vs tool/thinking/context support). The result explains which backend decided, the confidence, the option probability, the rationale, and the ranked runners-up. Read-only: it fetches catalogs and selects, it never switches the active model or dispatches work.".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "task": { "type": "string", "description": "Description of the task to pick a model for." },
+                    "provider": { "type": "string", "description": "Optional provider slug (e.g. \"alibaba\", \"openai\") to scope the pool; all key-enabled providers are scanned when omitted." },
+                    "task_kind": { "type": "string", "enum": ["refactor", "bug_fix", "test", "documentation", "analysis", "planning", "merge", "desktop_automation"], "description": "Optional task kind for capability scoring; inferred from the task text when omitted." }
+                },
+                "required": ["task"]
+            }),
+        },
+        Tool {
+            name: "provision_team_from_intent".to_string(),
+            description: "Classify a request with the intent brain and, when it verdicts a team, author and persist the implied ExpertTeam (lead + specialists with skills and file-scope patterns) to .velocity/expert_teams.nda. Idempotent on the team slug (re-running replaces the roster). Returns the team slug and the full decision. Does not clone a repository or start execution.".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "prompt": { "type": "string", "description": "The user request whose implied team should be provisioned." },
+                    "team_name": { "type": "string", "description": "Optional team name; a stable default is used when omitted." }
+                },
+                "required": ["prompt"]
+            }),
+        },
+        Tool {
+            name: "repo_rewrite".to_string(),
+            description: "Orchestrate a 'clone X and rewrite it in Y' request end to end: safely git-clone the repository into .velocity/clones, analyze it deterministically (dominant languages, file count, layout), decompose it into dependency-ordered sectors small enough for one dispatch to own (oversized files pre-chunked into line ranges, generated/vendored files excluded and reported), provision the specialist team the intent brain implies for a long-horizon port (including security, durability and performance sweep seats), and emit a 12-phase rewrite plan grounded in the measured arithmetic. Also reports a feasibility verdict in model-hours and wall-hours. It does NOT perform the rewrite itself: use run_rewrite_mission to execute, so the user keeps control over model spend.".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "url": { "type": "string", "description": "Git repository URL to clone (http/https/git scheme)." },
+                    "target_language": { "type": "string", "description": "Language to rewrite the repository into, e.g. \"rust\"." },
+                    "team_name": { "type": "string", "description": "Optional team name; defaults to 'Repo Rewrite Team'." },
+                    "depth": { "type": "integer", "description": "Optional shallow-clone depth (e.g. 1)." },
+                    "dispatch": { "type": "boolean", "description": "When true, dispatch the mapping phase to the team lead for a planning pass. Default false." },
+                    "parallelism": { "type": "integer", "description": "Concurrent workers the wall-clock estimate assumes (1-32). Default 8, matching the orchestrator's concurrency gate." },
+                    "include_tests": { "type": "boolean", "description": "Include the source test suite in the sector decomposition. Default false; test parity is its own phase." },
+                    "source_root": { "type": "string", "description": "Optional package root to scope the decomposition to, relative to the repo root (e.g. \"litellm\", \"src/packaging\"). When omitted it is detected, and detection refuses to adopt a root that would leave more than a quarter of the collected source outside it — such a monorepo is planned whole rather than silently narrowed. The response reports sectors.root_coverage, sectors.outside_root_* and sectors.root_declined so the scope actually in force is always visible; read them before trusting the effort estimate." }
+                },
+                "required": ["url", "target_language"]
+            }),
+        },
+        Tool {
+            name: "run_rewrite_mission".to_string(),
+            description: "Execute or resume the long-horizon rewrite mission that repo_rewrite planned. Reads mission.json and sector_plan.json from the mission directory, then runs the plan end to end without a human in the loop: the conventions/design pass, the porting waves in parallel (workers pull from a shared queue, one dispatch per sector unit, oversized files arriving as line-range chunks), the build/fmt/clippy/test gates against the output tree, the security + durability + performance sweeps concurrently over batches of ported code, remediation of every finding with the gates re-run afterwards, a behavioural parity review, and documentation with the benchmark numbers. Progress is checkpointed after every sector, so a cap, crash or reboot resumes instead of restarting. Requires an explicit authorization to spend: unattended=true, or dry_run=true to see the schedule, the seats and the caps for free. The report states what was NOT done - missing seats, truncated sweep coverage, failed gates, degraded small-model dispatches - rather than only what succeeded.".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "mission_dir": { "type": "string", "description": "Mission directory from repo_rewrite's mission.dir, e.g. '.velocity/missions/litellm-rust'. Absolute paths are accepted." },
+                    "unattended": { "type": "boolean", "description": "REQUIRED to dispatch. Authorises running the mission without a human reviewing each result. Set it only when the user's request actually asked for an unattended run; dry_run=true is the free alternative." },
+                    "dry_run": { "type": "boolean", "description": "Plan and validate without dispatching a single model call or writing progress: resolves every seat, lists the caps, and reports what would run. Default false." },
+                    "team_id": { "type": "string", "description": "Override the team recorded in mission.json." },
+                    "parallelism": { "type": "integer", "description": "Concurrent sector dispatches (1-32). 0 uses the manifest's value, default 8." },
+                    "max_dispatches": { "type": "integer", "description": "Hard cap on dispatches THIS RUN may make. 0 (default) is uncapped; a paused run resumes with a fresh cap." },
+                    "max_wall_secs": { "type": "integer", "description": "Hard cap on wall-clock seconds spent dispatching this run. 0 (default) is uncapped." },
+                    "max_waves": { "type": "integer", "description": "Stop after this many dependency waves. 0 (default) runs all of them." },
+                    "max_attempts": { "type": "integer", "description": "Retries per sector across the whole mission, including prior runs. Default 2." },
+                    "run_gates": { "type": "boolean", "description": "Run build/fmt/clippy/test/bench against the output tree. Default true." },
+                    "stop_on_gate_failure": { "type": "boolean", "description": "Halt at the first failing gate instead of recording it and continuing. Default false, so one sector that will not compile does not strand the rest." },
+                    "run_sweeps": { "type": "boolean", "description": "Run the security, durability and performance sweeps. Default true." },
+                    "sweep_batch_sectors": { "type": "integer", "description": "Ported sectors audited per sweep dispatch. Default 6; one dispatch per sector would triple the porting cost." },
+                    "max_sweep_dispatches": { "type": "integer", "description": "Per-sweep dispatch cap, bounding audit spend separately from porting spend. Default 20. Coverage is reported when this truncates a sweep." },
+                    "run_documentation": { "type": "boolean", "description": "Run the documentation + benchmark-report phase. Default true." },
+                    "gate_timeout_secs": { "type": "integer", "description": "Per-gate wall-clock ceiling. Default 900; a hung cargo test would otherwise hang the mission forever." }
+                },
+                "required": ["mission_dir"]
             }),
         },
         // ── Wiki Generation Tools ──────────────────────────────────────

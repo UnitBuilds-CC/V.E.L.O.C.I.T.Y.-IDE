@@ -51,12 +51,6 @@ pub fn create_session_report(
     })
 }
 
-#[allow(dead_code)]
-pub fn create_session(workspace_root: &Path, session_id: &str) -> Result<PathBuf, String> {
-    let report = create_session_report(workspace_root, session_id)?;
-    Ok(PathBuf::from(report.session_json_path))
-}
-
 pub fn runtime_session_state_to_json(
     session: &RuntimeBrowserSessionState,
 ) -> Result<String, String> {

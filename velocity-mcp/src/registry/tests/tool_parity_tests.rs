@@ -224,6 +224,11 @@ fn tool_categories_are_represented() {
         "missing system tool: write_file"
     );
     assert!(
+        names.contains(&"edit_file"),
+        "missing system tool: edit_file — models need a targeted editor; a whole-file \
+         rewrite of a 30 KB port cannot fit the output budget"
+    );
+    assert!(
         names.contains(&"run_command"),
         "missing system tool: run_command"
     );
@@ -297,4 +302,45 @@ fn tool_names_follow_conventions() {
             tool.name
         );
     }
+}
+
+/// `docs/manual/mcp-tools.md` states that its table "matches the running
+/// binary". It drifts the moment a tool is added and only the source is
+/// updated — `edit_file` and `git_clone` were both undocumented until the
+/// catalog generator was re-run. Comparing the name SETS (never the prose,
+/// which the generator clips) keeps the claim checked rather than asserted.
+#[test]
+fn documented_tool_catalog_lists_every_registered_tool() {
+    let doc = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .map(|repo| repo.join("docs").join("manual").join("mcp-tools.md"))
+        .expect("crate lives inside the workspace");
+    let text = std::fs::read_to_string(&doc)
+        .unwrap_or_else(|e| panic!("{} must be readable: {e}", doc.display()));
+
+    let documented: std::collections::BTreeSet<String> = std::collections::BTreeSet::from_iter(
+        text.lines()
+            .filter_map(|l| l.strip_prefix("| `"))
+            .filter_map(|l| l.split('`').next())
+            .map(str::to_string),
+    );
+    let registered: std::collections::BTreeSet<String> =
+        std::collections::BTreeSet::from_iter(get_tools().iter().map(|t| t.name.clone()));
+
+    let missing: Vec<&String> = registered
+        .iter()
+        .filter(|n| !documented.contains(n.as_str()))
+        .collect();
+    let stale: Vec<&String> = documented
+        .iter()
+        .filter(|n| !registered.contains(n.as_str()))
+        .collect();
+    assert!(
+        missing.is_empty() && stale.is_empty(),
+        "{} tool(s) undocumented: {:?}; {} doc row(s) with no such tool: {:?}",
+        missing.len(),
+        missing,
+        stale.len(),
+        stale
+    );
 }

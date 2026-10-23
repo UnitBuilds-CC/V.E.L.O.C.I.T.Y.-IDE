@@ -3,8 +3,8 @@
 //! Provides model-specific context window sizes and intelligent compression
 //! strategies to optimize token usage while preserving critical information.
 
-use super::super::models::ChatMessage;
-use super::utils::{compress_history, estimate_tokens, find_mission_anchor};
+use super::super::models::{AiProvider, ChatMessage};
+use super::utils::{compress_history, estimate_tokens, find_mission_anchor, LOCAL_OLLAMA_NUM_CTX};
 use serde_json::Value;
 
 /// Default context budget (32k tokens) for unknown models.
@@ -241,6 +241,26 @@ pub fn get_model_budget(model: &str) -> usize {
     DEFAULT_BUDGET_TOKENS
 }
 
+/// The window a turn may actually be built to, given who will run it.
+///
+/// `get_model_budget` answers what the *model* can hold; a local Ollama server
+/// answers for what it will *allocate*, and `build_request` declares
+/// [`LOCAL_OLLAMA_NUM_CTX`]. Building a 28k-token prompt against a 20480-token
+/// window does not error — Ollama drops the FRONT of the prompt, which is the
+/// task anchor and the preloaded source, and the model then goes and re-reads
+/// files it was already handed. That reads as a wandering agent and has cost
+/// several loop fixes aimed at a symptom of the clamp instead of its cause.
+///
+/// Cloud providers get the catalog window unchanged: their endpoints reject an
+/// oversized request rather than silently truncating it.
+pub fn declared_window(provider: AiProvider, model: &str) -> usize {
+    let catalog = get_model_budget(model);
+    match provider {
+        AiProvider::LocalOllama => catalog.min(LOCAL_OLLAMA_NUM_CTX as usize),
+        _ => catalog,
+    }
+}
+
 /// Check if estimated token count fits within the model's context budget.
 ///
 /// Takes into account reserved output tokens to ensure the model has
@@ -411,11 +431,25 @@ pub fn compress_history_with_budget(
     supports_tools: bool,
     tools: &[Value],
 ) -> Vec<ChatMessage> {
+    compress_history_to_window(messages, get_model_budget(model), supports_tools, tools)
+}
+
+/// Same compression, against a window the caller has already chosen.
+///
+/// The loop must use this rather than `compress_history_with_budget` whenever
+/// the provider allocates a smaller window than the model advertises — see
+/// [`declared_window`].
+pub fn compress_history_to_window(
+    messages: &[ChatMessage],
+    window_tokens: usize,
+    supports_tools: bool,
+    tools: &[Value],
+) -> Vec<ChatMessage> {
     // First apply base compression (cleans up malformed messages, etc.)
     let base_compressed = compress_history(messages, supports_tools);
 
     // Get model-specific budget
-    let max_tokens = get_model_budget(model);
+    let max_tokens = window_tokens;
     let target_tokens = max_tokens.saturating_sub(RESERVED_OUTPUT_TOKENS);
 
     // Tool schemas are sent with every request but are not part of the message
@@ -1054,5 +1088,51 @@ mod tests {
         assert!(compressed
             .iter()
             .any(|m| m.role == "user" && m.content == mission));
+    }
+
+    #[test]
+    fn a_local_window_clamps_the_catalog_budget() {
+        // The catalog entry says what the *model* can hold; a local server only
+        // allocates what build_request declares (LOCAL_OLLAMA_NUM_CTX) and drops
+        // the front of a prompt that overflows instead of rejecting it.
+        assert_eq!(
+            declared_window(AiProvider::LocalOllama, "gpt-4o"),
+            LOCAL_OLLAMA_NUM_CTX as usize
+        );
+        // min(), not max(): a model with a genuinely smaller catalog window is
+        // not inflated by the clamp.
+        assert_eq!(
+            declared_window(AiProvider::LocalOllama, "gpt-3.5-turbo"),
+            16_000
+        );
+        // Cloud providers keep the catalog window — they reject an oversized
+        // request loudly rather than truncating it silently.
+        assert_eq!(declared_window(AiProvider::OpenRouter, "gpt-4o"), 128_000);
+    }
+
+    #[test]
+    fn compression_obeys_the_window_it_is_handed() {
+        // Guards the plumbing, not the arithmetic: if the loop still passed the
+        // catalog budget through, a declared 20480-token window would receive a
+        // far larger prompt and lose its task anchor to the runtime's clamp.
+        let fat: Vec<ChatMessage> = (0..40)
+            .map(|i| ChatMessage {
+                role: if i % 2 == 0 { "user" } else { "assistant" }.to_string(),
+                content: format!("turn {i}\n{}", "fn body line\n".repeat(600)),
+                name: None,
+                tool_call_id: None,
+                tool_calls: None,
+            })
+            .collect();
+        let wide = compress_history_to_window(&fat, 128_000, false, &[]);
+        let narrow = compress_history_to_window(&fat, LOCAL_OLLAMA_NUM_CTX as usize, false, &[]);
+        let (wide_tokens, narrow_tokens) = (
+            estimate_messages_tokens(&wide),
+            estimate_messages_tokens(&narrow),
+        );
+        assert!(
+            narrow_tokens < wide_tokens / 2,
+            "narrow {narrow_tokens} vs wide {wide_tokens}: the window was ignored"
+        );
     }
 }

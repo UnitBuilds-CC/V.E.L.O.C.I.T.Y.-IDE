@@ -827,16 +827,77 @@ pub fn load_azure_accounts(workspace_root: &Path) -> Vec<AzureOpenAiAccount> {
     load_azure_accounts_from_env()
 }
 
+/// Normalize an Ollama base URL: guarantee a scheme and strip a trailing slash
+/// so downstream `format!("{host}/api/tags")` and the chat URL build cleanly.
+/// Pure and public so the cross-node host parsing is unit-testable.
+pub fn normalize_ollama_host(raw: &str) -> String {
+    let trimmed = raw.trim().trim_end_matches('/');
+    if trimmed.is_empty() {
+        return String::new();
+    }
+    if trimmed.starts_with("http://") || trimmed.starts_with("https://") {
+        trimmed.to_string()
+    } else {
+        format!("http://{trimmed}")
+    }
+}
+
+/// Parse a comma-separated list of Ollama hosts into accounts, de-duplicating
+/// by normalized host. This is the cross-node sharing seam: a second host (e.g.
+/// a buildbox serving a 32B model) becomes just another account, so both hosts'
+/// models merge into one discovered catalog rather than only the first winning.
+fn parse_ollama_host_list(list: &str) -> Vec<LocalOllamaAccount> {
+    let mut accounts: Vec<LocalOllamaAccount> = Vec::new();
+    for raw in list.split(',').map(|s| s.trim()).filter(|s| !s.is_empty()) {
+        let host = normalize_ollama_host(raw);
+        if host.is_empty() || accounts.iter().any(|a| a.host == host) {
+            continue;
+        }
+        let label = format!(
+            "Ollama-{}",
+            host.trim_start_matches("http://")
+                .trim_start_matches("https://")
+                .replace(['/', ':'], "-")
+        );
+        accounts.push(LocalOllamaAccount {
+            host,
+            default_model: String::new(),
+            label,
+        });
+    }
+    accounts
+}
+
 pub fn load_local_ollama_accounts(workspace_root: &Path) -> Vec<LocalOllamaAccount> {
+    dotenvy::dotenv().ok();
+    let mut accounts = Vec::new();
+
+    // 1. Explicit multi-host list wins: `OLLAMA_HOSTS="http://a:11434,http://b:11434"`.
+    if let Ok(list) = std::env::var("OLLAMA_HOSTS") {
+        accounts.extend(parse_ollama_host_list(&list));
+    }
+
+    // 2. The workspace-configured single host (the GUI Settings path) joins the
+    //    set if it is not already present, so a registered host is never lost
+    //    to the env list and vice-versa.
     let workspace_settings = load_workspace_provider_settings(workspace_root);
     if workspace_settings.ollama.is_configured() {
-        return vec![LocalOllamaAccount {
-            host: workspace_settings.ollama.host,
-            default_model: workspace_settings.ollama.default_model,
-            label: workspace_settings.ollama.label,
-        }];
+        let host = normalize_ollama_host(&workspace_settings.ollama.host);
+        if !host.is_empty() && !accounts.iter().any(|a| a.host == host) {
+            accounts.push(LocalOllamaAccount {
+                host,
+                default_model: workspace_settings.ollama.default_model.clone(),
+                label: workspace_settings.ollama.label.clone(),
+            });
+        }
     }
-    load_local_ollama_accounts_from_env()
+
+    // 3. Nothing configured anywhere: fall back to the legacy single-host env so
+    //    a plain `ollama serve` on the default port still works out of the box.
+    if accounts.is_empty() {
+        return load_local_ollama_accounts_from_env();
+    }
+    accounts
 }
 
 pub fn load_accounts_from_env() -> Vec<CloudflareAccount> {
@@ -1434,5 +1495,44 @@ mod tests {
         assert_eq!(views[0].label, "legacy label");
         assert_eq!(views[0].requests, 4);
         assert!(views[0].exhausted);
+    }
+
+    // ── Cross-node Ollama host list ───────────────────────────────────────
+
+    #[test]
+    fn normalize_ollama_host_adds_scheme_and_strips_slash() {
+        assert_eq!(
+            normalize_ollama_host("192.168.0.5:11434"),
+            "http://192.168.0.5:11434"
+        );
+        assert_eq!(
+            normalize_ollama_host("http://localhost:11434/"),
+            "http://localhost:11434"
+        );
+        assert_eq!(
+            normalize_ollama_host("  https://gpu.lan  "),
+            "https://gpu.lan"
+        );
+        assert_eq!(normalize_ollama_host("   "), "");
+    }
+
+    #[test]
+    fn host_list_registers_every_distinct_host_as_its_own_account() {
+        // Two hosts means both model sets are discoverable: neither shadows the
+        // other, which is the whole point of the second-provider path.
+        let accounts = parse_ollama_host_list(
+            "http://localhost:11434, 192.168.0.5:11434 ,http://localhost:11434",
+        );
+        assert_eq!(accounts.len(), 2, "duplicate host must collapse");
+        assert_eq!(accounts[0].host, "http://localhost:11434");
+        assert_eq!(accounts[1].host, "http://192.168.0.5:11434");
+        // Every account carries a non-empty label naming its host for the UI.
+        assert!(accounts.iter().all(|a| !a.label.trim().is_empty()));
+    }
+
+    #[test]
+    fn empty_host_list_yields_no_accounts() {
+        assert!(parse_ollama_host_list("").is_empty());
+        assert!(parse_ollama_host_list(" , , ").is_empty());
     }
 }

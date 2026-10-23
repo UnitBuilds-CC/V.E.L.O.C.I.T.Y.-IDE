@@ -1,5 +1,3 @@
-#![allow(dead_code)]
-
 use super::defaults::*;
 use super::nda_format::*;
 use super::types::*;

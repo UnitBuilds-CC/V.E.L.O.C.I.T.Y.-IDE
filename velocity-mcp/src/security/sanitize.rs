@@ -42,7 +42,10 @@ fn preview(input: &str, max: usize) -> String {
     if input.len() <= max {
         input.to_string()
     } else {
-        format!("{}...", &input[..max])
+        // `max` is a byte budget and `input` is whatever the caller typed — a
+        // path with an accent or an emoji puts the cut inside a character, and
+        // the slice panics inside the sanitizer every command passes through.
+        format!("{}...", &input[..input.floor_char_boundary(max)])
     }
 }
 
@@ -258,4 +261,23 @@ pub fn sanitize_tool_arg(input: &str) -> Result<String, SanitizeError> {
     }
 
     Ok(input.to_string())
+}
+
+#[cfg(test)]
+mod preview_tests {
+    use super::preview;
+
+    /// Every budget the callers use (80) is a byte count over text the caller
+    /// typed, so the cut lands inside a multi-byte character for any accented
+    /// path. Before the boundary floor, that panicked inside the sanitizer every
+    /// `run_command` argument passes through.
+    #[test]
+    fn no_preview_budget_panics_over_a_non_ascii_input() {
+        let input = "rm -rf 'Ünïcødé ⚡ projets' \u{2014} --a-flag-that-keeps-going-and-going";
+        for max in 0..input.len() {
+            let p = preview(input, max);
+            assert!(p.len() <= max + 3, "max={max}: {p}");
+            assert_eq!(p.ends_with("..."), input.len() > max, "max={max}: {p}");
+        }
+    }
 }

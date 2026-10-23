@@ -108,7 +108,16 @@ pub fn cargo_manifest_dir(workspace_root: &std::path::Path) -> Result<PathBuf, S
             }
         }
     }
-    Err(format!("{} {}", workspace_root.display(), NO_MANIFEST))
+    // The workspace root arrives canonicalized, which on Windows means a
+    // verbatim (`\\?\`) prefix. That prefix is load-bearing for the dispatch
+    // containment checks, but this string is shown to a person in the build
+    // panel and the agent loop's `Build status:` line, so it gets stripped for
+    // display only.
+    Err(format!(
+        "{} {}",
+        crate::registry::dispatch::strip_verbatim_prefix(workspace_root).display(),
+        NO_MANIFEST
+    ))
 }
 
 pub fn run_cargo_check(workspace_root: &std::path::Path) -> BuildDiagnostics {
@@ -472,6 +481,27 @@ mod tests {
         assert_eq!(
             cargo_manifest_dir(&scratch).unwrap(),
             scratch.join("my-crate")
+        );
+    }
+
+    /// The refusal sentence names the workspace, and the workspace root the agent
+    /// loop hands over is canonicalized -- on Windows that means a `\\?\` prefix
+    /// which a person reading `Build status:` cannot act on. The prefix stays on
+    /// the real path (the dispatch containment checks depend on it) and is dropped
+    /// only in the message.
+    #[test]
+    fn refusal_prints_a_readable_path_for_a_verbatim_root() {
+        let verbatim = std::path::Path::new(r"\\?\C:\Users\dev\scratch-project");
+        let err = cargo_manifest_dir(verbatim).unwrap_err();
+        assert!(err.contains("no Cargo.toml"), "{err}");
+        assert!(
+            !err.contains(r"\\?\"),
+            "{} must not carry the verbatim prefix",
+            err
+        );
+        assert!(
+            err.contains(r"C:\Users\dev\scratch-project") || !cfg!(windows),
+            "{err}"
         );
     }
 

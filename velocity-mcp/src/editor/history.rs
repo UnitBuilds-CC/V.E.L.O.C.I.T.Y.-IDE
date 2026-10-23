@@ -297,8 +297,6 @@ impl FileHistory {
 #[cfg(test)]
 mod tests {
     use super::*;
-    #[allow(unused_imports)]
-    use std::time::Duration;
 
     #[test]
     fn records_and_lists_snapshots() {

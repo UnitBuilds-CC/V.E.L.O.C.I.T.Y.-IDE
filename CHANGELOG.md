@@ -7,7 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-_Nothing recorded since [2.8.0]._
+### Added
+- **Playbook and workflow reference validation** — a three-layer defense sharing one code path (`validate_step_references`): write-time rejection in `add_org_playbook`, pre-flight failure in `run_playbook` / `workflow_run` / the GUI Run button, and a batch `validate_org_playbooks` MCP tool plus a dashboard summary line. Every `Tool` step is checked against the live registry and every `Connector` step against `.velocity/connectors.json`, recursing into ForEach bodies; a broken SOP can no longer half-execute side effects before hitting a ghost name.
+- **`workflow_list` MCP tool**: saved workflows with per-step-type counts and validation issues flagged, closing the discovery gap that left `workflow_run` callable only by guessing ids.
+- **Step-type breakdowns everywhere workflows render**: the org dashboard, `list_org_playbooks`, the `workflow_list` output, the workflow editor panel and the template gallery now show `(T# C# A# F#)` counts instead of bare step totals.
+
+### Changed
+- **The MCP tool reference matches the running binary again**: `docs/manual/mcp-tools.md` was missing an entire category — all 44 company-org tools and the new `workflow_list` (291 documented vs 336 live). The `company` section is now generated verbatim from `tools/list`, totals and category tables corrected, and the USER_GUIDE tool counts refreshed (including the long-stale Team figure).
+- **Dead-code annotations reduced**: four file-level `#![allow(dead_code)]` (model_quality, instruction registry, wa platform, worker types) retired after verifying the code is fully live, one orphaned runtime function and three redundant `#[allow(unused_imports)]` removed; `dispatch_intervention` is `#[must_use]` so delivery outcomes can't be silently dropped.
 
 ## [2.8.0] - 2026-10-02
 

@@ -954,6 +954,24 @@ mod tests {
         assert!(unpack_ndav(data).is_none());
     }
 
+    /// Debug aid for live-run forensics: dump a real sealed chatlogs.nda so the
+    /// exact persisted assistant content can be inspected (e.g. diagnosing why
+    /// the unfinished-turn detector did not fire). Run manually:
+    ///   set VELOCITY_DUMP_CHATLOGS=<abs path to workspace root>
+    ///   cargo test --lib dump_chatlogs_from_env -- --ignored --nocapture
+    #[test]
+    #[ignore]
+    fn dump_chatlogs_from_env() {
+        let root = std::path::PathBuf::from(
+            std::env::var("VELOCITY_DUMP_CHATLOGS").expect("VELOCITY_DUMP_CHATLOGS must be set"),
+        );
+        let msgs = load_chatlogs_nda(&root).expect("no chatlogs could be loaded");
+        for (i, m) in msgs.iter().enumerate() {
+            eprintln!("=== [{}] role={} ===", i, m.role);
+            eprintln!("{}", m.content);
+        }
+    }
+
     #[test]
     fn test_encode_decode_nda_text() {
         let original = "hello\tworld\nfoo\\bar\r\n";

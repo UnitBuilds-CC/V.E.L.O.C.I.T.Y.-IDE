@@ -11,6 +11,7 @@
 //! `pending_help_for`, `reset`) is the delegation API for the multi-agent team
 //! runtime and is intentionally retained ahead of that integration.
 
+use crate::automation::write_gate::WriteGate;
 use crate::safety::SafeMutex;
 use crossbeam_channel::{Receiver, Sender};
 use std::collections::HashMap;
@@ -41,13 +42,6 @@ pub enum AgentBroadcast {
     AgentFinished { agent_id: String, summary: String },
 }
 
-/// A file lock entry tracking which agent owns a path.
-#[derive(Debug, Clone)]
-struct FileLock {
-    agent_id: String,
-    claimed_at: u64,
-}
-
 /// Progress report from a single agent.
 #[derive(Debug, Clone)]
 pub struct AgentProgress {
@@ -57,11 +51,10 @@ pub struct AgentProgress {
     pub updated_at: u64,
 }
 
-/// Shared state guarded by a mutex inside the coordination bus.
+/// Shared state guarded by a mutex inside the coordination bus. File claims live on
+/// the shared [`WriteGate`], not here; this holds only the delegation surface.
 #[derive(Debug, Default)]
 struct BusState {
-    /// Currently locked files: path -> lock info.
-    file_locks: HashMap<PathBuf, FileLock>,
     /// Latest progress per agent.
     progress: HashMap<String, AgentProgress>,
     /// Pending help requests: (from, to, task).
@@ -73,16 +66,31 @@ struct BusState {
 /// Cheap to clone (Arc-based) so each agent thread gets its own handle.
 #[derive(Clone)]
 pub struct CoordinationBus {
+    gate: Arc<WriteGate>,
     state: Arc<Mutex<BusState>>,
     tx: Sender<AgentBroadcast>,
     rx: Receiver<AgentBroadcast>,
 }
 
 impl CoordinationBus {
-    /// Create a new coordination bus.
+    /// Create a new coordination bus with its own private write gate.
     pub fn new() -> Self {
         let (tx, rx) = crossbeam_channel::unbounded();
         Self {
+            gate: Arc::new(WriteGate::new()),
+            state: Arc::new(Mutex::new(BusState::default())),
+            tx,
+            rx,
+        }
+    }
+
+    /// Create a coordination bus whose file claims share the given gate instance.
+    /// This is how the executor thread is pointed at the app's one arena, so a chat
+    /// agent's claim and an orchestrator scope lock consult the *same* table (D5).
+    pub fn with_gate(gate: Arc<WriteGate>) -> Self {
+        let (tx, rx) = crossbeam_channel::unbounded();
+        Self {
+            gate,
             state: Arc::new(Mutex::new(BusState::default())),
             tx,
             rx,
@@ -108,59 +116,36 @@ impl CoordinationBus {
         msgs
     }
 
-    /// Attempt to claim a file for exclusive writing.
-    /// Returns `true` if the claim succeeded, `false` if another agent holds it.
+    /// Attempt to claim a file for exclusive writing on the shared gate.
+    /// Returns `true` if the claim succeeded, `false` if another owner holds an
+    /// overlapping lock. Broadcasts `FileClaimed` only on success.
     pub fn claim_file(&self, agent_id: &str, path: &Path) -> bool {
-        let canonical = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
-        let mut state = self.state.lock_safe();
-
-        if let Some(lock) = state.file_locks.get(&canonical) {
-            if lock.agent_id != agent_id {
-                return false;
-            }
-        }
-
-        state.file_locks.insert(
-            canonical.clone(),
-            FileLock {
+        if self.gate.claim_whole_file(agent_id, path) {
+            self.broadcast(AgentBroadcast::FileClaimed {
                 agent_id: agent_id.to_string(),
-                claimed_at: current_ts(),
-            },
-        );
-
-        drop(state);
-        self.broadcast(AgentBroadcast::FileClaimed {
-            agent_id: agent_id.to_string(),
-            path: canonical,
-        });
-        true
+                path: path.to_path_buf(),
+            });
+            true
+        } else {
+            false
+        }
     }
 
-    /// Release a previously claimed file.
+    /// Release a previously claimed file. No-op (and no broadcast) unless the
+    /// caller actually holds the claim.
     pub fn release_file(&self, agent_id: &str, path: &Path) {
-        let canonical = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
-        let mut state = self.state.lock_safe();
-
-        if let Some(lock) = state.file_locks.get(&canonical) {
-            if lock.agent_id == agent_id {
-                state.file_locks.remove(&canonical);
-                drop(state);
-                self.broadcast(AgentBroadcast::FileReleased {
-                    agent_id: agent_id.to_string(),
-                    path: canonical,
-                });
-            }
+        if self.gate.holds(agent_id, path) {
+            self.gate.release(path, agent_id);
+            self.broadcast(AgentBroadcast::FileReleased {
+                agent_id: agent_id.to_string(),
+                path: path.to_path_buf(),
+            });
         }
     }
 
-    /// Check if a file is currently locked by another agent.
+    /// Check if a file is currently locked by another owner on the shared gate.
     pub fn is_locked_by_other(&self, agent_id: &str, path: &Path) -> bool {
-        let canonical = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
-        let state = self.state.lock_safe();
-        match state.file_locks.get(&canonical) {
-            Some(lock) => lock.agent_id != agent_id,
-            None => false,
-        }
+        self.gate.is_locked_by_other(agent_id, path)
     }
 
     /// Request help from another agent.
@@ -205,25 +190,15 @@ impl CoordinationBus {
         state.progress.values().cloned().collect()
     }
 
-    /// Get all currently locked files.
+    /// Get all currently locked files (delegated to the shared gate).
     pub fn locked_files(&self) -> Vec<(PathBuf, String)> {
-        let state = self.state.lock_safe();
-        state
-            .file_locks
-            .iter()
-            .map(|(path, lock)| (path.clone(), lock.agent_id.clone()))
-            .collect()
+        self.gate.locked_files()
     }
 
     /// Get all current file locks with the owning agent id and the unix-seconds
     /// timestamp at which each lock was claimed, enabling stale-lock detection.
     pub fn lock_details(&self) -> Vec<(PathBuf, String, u64)> {
-        let state = self.state.lock_safe();
-        state
-            .file_locks
-            .iter()
-            .map(|(path, lock)| (path.clone(), lock.agent_id.clone(), lock.claimed_at))
-            .collect()
+        self.gate.lock_details()
     }
 
     /// Get pending help requests for a specific agent.
@@ -237,10 +212,11 @@ impl CoordinationBus {
             .collect()
     }
 
-    /// Clear all locks and progress (session cleanup).
+    /// Clear all locks and progress (session cleanup). Because file claims now live
+    /// on the shared gate, this clears every claim on that gate too.
     pub fn reset(&self) {
+        self.gate.clear_all();
         let mut state = self.state.lock_safe();
-        state.file_locks.clear();
         state.progress.clear();
         state.help_requests.clear();
     }
@@ -412,5 +388,41 @@ mod tests {
         assert!(bus.locked_files().is_empty());
         assert!(bus.all_progress().is_empty());
         assert!(bus.drain().is_empty());
+    }
+
+    #[test]
+    fn shared_gate_makes_bus_claims_visible_to_mediator() {
+        // THE D5 RUNTIME UNIFY: with a chat agent (CoordinationBus) and an
+        // orchestrator task (MediatorArena) pointed at ONE shared WriteGate, an
+        // executor claim is now seen by the mediator and vice versa — previously
+        // impossible because they kept separate lock tables.
+        use crate::automation::write_gate::WriteGate;
+        use crate::automation::MediatorArena;
+        use std::path::Path;
+        use std::sync::Arc;
+        use tempfile::TempDir;
+        use velocity_ide::site_map::SiteMap;
+
+        let gate = Arc::new(WriteGate::new());
+        let mediator = MediatorArena::from_gate(gate.clone());
+        let bus = CoordinationBus::with_gate(gate);
+        let temp = TempDir::new().unwrap();
+        let sm = SiteMap::open(temp.path(), 0).unwrap();
+        let file = Path::new("src/shared.rs");
+
+        // Executor claims whole-file through the bus ...
+        assert!(bus.claim_file("primary", file));
+        // ... the orchestrator's mediator now refuses a scope lock on the same file.
+        let conflict = mediator.acquire_lock(file.to_path_buf(), (1, 5), "task-9".to_string(), &sm);
+        assert!(
+            conflict.is_err(),
+            "mediator must see the bus claim on the shared gate"
+        );
+
+        // Releasing through the bus frees the mediator path too.
+        bus.release_file("primary", file);
+        assert!(mediator
+            .acquire_lock(file.to_path_buf(), (1, 5), "task-9".to_string(), &sm)
+            .is_ok());
     }
 }
