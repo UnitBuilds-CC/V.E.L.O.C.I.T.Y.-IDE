@@ -3472,6 +3472,210 @@ fn an_edit_that_closes_a_block_it_never_covered_is_told_to_widen() {
     );
 }
 
+/// `lr7b_v35` turn 3 was refused for a drift of -3 with the words "the lines
+/// below the site that already close them" and no line named. "Widen the
+/// `oldString` down to the last of those lines" is an instruction about lines
+/// the model has not been shown, so it could not obey: it re-sent the call, then
+/// tried a whole-file `write_file`, then wrote prose asking a human to paste the
+/// file. The refusal has to quote the file's own lines, with the file's own
+/// numbers, because that is the only form of the instruction it can act on.
+#[test]
+fn a_negative_drift_refusal_quotes_the_files_own_lines_below_the_site() {
+    let (_temp, root) = setup_root();
+    let before =
+        "fn f() -> i32 {\n    let a = if c {\n        1\n    } else {\n        2\n    };\n    a\n}\n";
+    fs::write(root.join("port.rs"), before).unwrap();
+
+    let err = call_tool_in_workspace(
+        &root,
+        "edit_file",
+        &json!({
+            "relativeFilePath": "port.rs",
+            "edits": [{
+                "oldString": "    let a = if c {\n        1",
+                "newString": "    let a = if c {\n        1\n    } else {\n        9\n    };"
+            }],
+            "context": "change the branch"
+        }),
+    )
+    .err()
+    .map(|e| e.to_string())
+    .unwrap_or_else(|| "the closers below the site are still in the file".to_string());
+
+    assert!(
+        err.contains("matched lines 2-3"),
+        "the span it matched: {err}"
+    );
+    assert!(
+        err.contains("[line 4]     } else {"),
+        "and the file's own closer below it, numbered: {err}"
+    );
+    assert!(
+        err.contains("2 more such line(s)"),
+        "the file has two further closers below, and the report says so rather than looking \
+         complete: {err}"
+    );
+    assert!(err.contains("Widen the `oldString`"), "{err}");
+    assert_eq!(
+        fs::read_to_string(root.join("port.rs")).unwrap(),
+        before,
+        "a refused batch leaves every byte alone"
+    );
+}
+
+/// The report is per edit, so an edit that kept the file's balance must not
+/// appear in it. Naming it tells the model to change the one edit that was
+/// right, which is the same mistake the batch-wide count made -- and the batch
+/// total is still what fired the refusal, so both numbers have to be in the
+/// message and agree.
+#[test]
+fn a_balanced_edit_in_a_refused_batch_is_not_blamed_for_the_drift() {
+    let (_temp, root) = setup_root();
+    let before =
+        "fn f() -> i32 {\n    let a = if c {\n        1\n    } else {\n        2\n    };\n    a\n}\n";
+    fs::write(root.join("port.rs"), before).unwrap();
+
+    let err = call_tool_in_workspace(
+        &root,
+        "edit_file",
+        &json!({
+            "relativeFilePath": "port.rs",
+            "edits": [{
+                "oldString": "    let a = if c {\n        1",
+                "newString": "    let a = if c {\n        1\n    } else {\n        9\n    };"
+            }, {
+                // A real change, and a balanced one: it must survive the refusal
+                // unnamed.
+                "oldString": "        2\n    };",
+                "newString": "        5\n    };"
+            }],
+            "context": "change the branch and the value"
+        }),
+    )
+    .err()
+    .map(|e| e.to_string())
+    .unwrap_or_else(|| "the closers below the site are still in the file".to_string());
+
+    assert!(
+        err.contains("batch of 2 edit(s)"),
+        "both edits reached the splice: {err}"
+    );
+    assert!(err.contains("edit 1:"), "the drifter is answered: {err}");
+    assert!(
+        !err.contains("edit 2:"),
+        "and the balanced edit beside it is not blamed: {err}"
+    );
+    assert_eq!(
+        fs::read_to_string(root.join("port.rs")).unwrap(),
+        before,
+        "a refused batch leaves every byte alone"
+    );
+}
+
+/// The other direction quotes the other text. A `newString` that stops short of
+/// the closers its `oldString` matched has to be told which closers those were,
+/// and they are inside the match -- naming the file's lines below it would send
+/// the model to widen when the fix is to carry the tail it dropped.
+#[test]
+fn a_positive_drift_refusal_quotes_the_closers_the_newstring_dropped() {
+    let (_temp, root) = setup_root();
+    let before =
+        "fn f() -> i32 {\n    let a = if c {\n        1\n    } else {\n        2\n    };\n    a\n}\n";
+    fs::write(root.join("port.rs"), before).unwrap();
+
+    let err = call_tool_in_workspace(
+        &root,
+        "edit_file",
+        &json!({
+            "relativeFilePath": "port.rs",
+            "edits": [{
+                "oldString": "    } else {\n        2\n    };\n    a",
+                "newString": "    } else {\n        9"
+            }],
+            "context": "change the branch"
+        }),
+    )
+    .err()
+    .map(|e| e.to_string())
+    .unwrap_or_else(|| "a batch that drops a closing brace must be refused".to_string());
+
+    assert!(err.contains("block left open"), "{err}");
+    assert!(
+        err.contains("matched lines 4-7"),
+        "the span it matched: {err}"
+    );
+    assert!(
+        err.contains("[line 6]     };"),
+        "the closer it dropped, quoted from the file: {err}"
+    );
+    assert!(
+        !err.contains("[line 4]"),
+        "line 4 is a closer the `newString` did carry, so naming it invites a second copy: {err}"
+    );
+    assert!(err.contains("repeat that closing brace"), "{err}");
+    assert_eq!(
+        fs::read_to_string(root.join("port.rs")).unwrap(),
+        before,
+        "a refused batch leaves every byte alone"
+    );
+}
+
+/// A batch can drift both ways at once, and then the count at the top is the sum
+/// of two opposite mistakes: acting on it in either direction makes one of them
+/// worse. Each edit has to be answered under its own number, in its own
+/// direction, which is what `lr7b_v29`'s single shared paragraph could not do.
+#[test]
+fn a_batch_that_drifts_both_ways_answers_each_edit_in_its_own_direction() {
+    let (_temp, root) = setup_root();
+    let before = "fn f() -> i32 {\n    let a = if c {\n        1\n    } else {\n        2\n    };\n    a\n}\n\nfn g() -> i32 {\n    let b = if d {\n        3\n    } else {\n        4\n    };\n    b\n}\n";
+    fs::write(root.join("port.rs"), before).unwrap();
+
+    let err = call_tool_in_workspace(
+        &root,
+        "edit_file",
+        &json!({
+            "relativeFilePath": "port.rs",
+            "edits": [{
+                // Drops the `};` and the `a` its match covered: +1.
+                "oldString": "    } else {\n        2\n    };\n    a",
+                "newString": "    } else {\n        9"
+            }, {
+                // Closes two blocks its match never covered, by copying the
+                // file's own lines 15-17 into the replacement: -2. The total is
+                // -1, so the batch is refused, and neither edit's own fault is
+                // the other's.
+                "oldString": "    let b = if d {\n        3",
+                "newString": "    let b = if d {\n        3\n    } else {\n        8\n    };\n    b\n}"
+            }],
+            "context": "change both branches"
+        }),
+    )
+    .err()
+    .map(|e| e.to_string())
+    .unwrap_or_else(|| "a batch that changes the brace balance must be refused".to_string());
+
+    assert!(err.contains("drifts both ways"), "{err}");
+    let opened = err.find("repeat that closing brace").unwrap_or(0);
+    let widened = err.find("Widen the `oldString`").unwrap_or(0);
+    assert!(
+        opened > 0 && widened > 0,
+        "both directions are answered: {err}"
+    );
+    assert_ne!(opened, widened, "and not with one paragraph: {err}");
+    let edit1 = err.find("edit 1:").unwrap_or(usize::MAX);
+    let edit2 = err.find("edit 2:").unwrap_or(usize::MAX);
+    assert!(
+        edit1 < opened && opened < edit2,
+        "edit 1 opened a block: {err}"
+    );
+    assert!(edit2 < widened, "edit 2 closed one early: {err}");
+    assert_eq!(
+        fs::read_to_string(root.join("port.rs")).unwrap(),
+        before,
+        "a refused batch leaves every byte alone"
+    );
+}
+
 /// v30's turn 3: the `oldString` is the file's own site with rustfmt's line
 /// breaks undone and a `;` added to its last line. The tool can fold that site
 /// and did, two turns earlier, for the same needle without the `;`, so the

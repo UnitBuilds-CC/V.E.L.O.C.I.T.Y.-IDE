@@ -4703,6 +4703,12 @@ fn replay_advice(refusal: &str) -> &'static str {
     } else if refusal.contains("byte-identical") {
         "A call whose `newString` equals its `oldString` changes no characters however often it \
          is sent. Write the replacement the error asks for."
+    } else if refusal.contains("drifts both ways") {
+        "The refusal answers each edit below its own count, quoting the file's lines, and the two \
+         answers are opposite: an edit that left a block open has to carry the closer its \
+         `oldString` matched, and an edit that closed a block early has to stop carrying one it \
+         never matched. Change each `newString` against its own paragraph; the total at the top is \
+         the sum of the two and following it in either direction makes one of them worse."
     } else if refusal.contains("no block to close") {
         "The `newString` closes blocks the `oldString` never covered, so the lines below the \
          site still hold the closers and are left standing. Widen the `oldString` down to the \
@@ -8055,6 +8061,28 @@ mod tests {
             !closed.contains("substance"),
             "a lever the model can pull, not a shrug: {closed}"
         );
+
+        // A batch that drifts both ways has no one lever, and the count at its
+        // top is the sum of two opposite mistakes -- so repeating either
+        // direction's advice over it tells the model to make one of its edits
+        // worse. The refusal already answers each edit separately; the note has
+        // to point at those answers instead of restating one of them.
+        let both = replay_advice(
+            "Error executing tool: no edits were applied to a.rs; the file is unchanged: this \
+             batch of 2 edit(s) would leave the file with 1 more brace with no block to close \
+             than it has now. That is never what a patch means. The batch drifts both ways, so \
+             its edits are answered below one by one, each in its own direction.\n\
+             edit 1: its `oldString` matched lines 4-7 of a.rs and its `newString` leaves 1 \
+             block(s) open that the text it replaces closed.\n\
+             edit 2: its `oldString` matched lines 11-12 of a.rs and its `newString` carries 2 \
+             more closing brace(s) than the text it replaces.",
+        );
+        assert!(both.contains("its own paragraph"), "{both}");
+        assert!(
+            both.contains("opposite"),
+            "the note has to say why the count is no lever: {both}"
+        );
+        assert_ne!(both, closed, "and it is not the one-direction note: {both}");
 
         // v30's case: the refusal located the site by folding it and named the
         // span, so the lever is copying that span back. Not widening — no

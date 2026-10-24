@@ -2294,17 +2294,31 @@ fn explain_ambiguous_edit(hay: &str, needle: &str, hits: usize) -> String {
 /// or a comment that mentions a brace would make `edit_file` worse than the
 /// whole-file rewrite it exists to replace.
 pub(crate) fn brace_delta(src: &str) -> i32 {
+    brace_depths(src).last().map(|(_, d)| *d).unwrap_or(0)
+}
+
+/// Every brace in `src` that is code, as the byte offset it sits at and the
+/// depth the file is at after it. `brace_delta` is the last of these, so the two
+/// cannot disagree about what counts as a brace.
+///
+/// The offsets are what makes a drift *quotable*: a count on its own can say a
+/// patch is wrong but not which of the file's own lines it is wrong about, and
+/// `lr7b_v35` spent four turns on that — see `drift_report`.
+fn brace_depths(src: &str) -> Vec<(usize, i32)> {
     let b = src.as_bytes();
     let mut depth: i32 = 0;
+    let mut out: Vec<(usize, i32)> = Vec::new();
     let mut i = 0usize;
     while i < b.len() {
         match b[i] {
             b'{' => {
                 depth += 1;
+                out.push((i, depth));
                 i += 1;
             }
             b'}' => {
                 depth -= 1;
+                out.push((i, depth));
                 i += 1;
             }
             b'/' if b.get(i + 1) == Some(&b'/') => {
@@ -2363,7 +2377,187 @@ pub(crate) fn brace_delta(src: &str) -> i32 {
             _ => i += 1,
         }
     }
-    depth
+    out
+}
+
+/// The lines of `text` at which its brace depth drops below the depth it had at
+/// its own first character, numbered from `first_line`, plus how many such lines
+/// exist in all.
+///
+/// One entry per line however many braces on it drop: `} else {` closes a block
+/// and opens one on the same line and is a single fact about that line, so a
+/// report that quoted it twice would look like two lines to widen down to.
+///
+/// `from_end` picks which of them are quoted once there are more than `limit`,
+/// and the two drift directions want opposite ends -- see `drift_site`.
+fn depth_dropping_lines(
+    text: &str,
+    first_line: usize,
+    limit: usize,
+    from_end: bool,
+) -> (Vec<(usize, String)>, usize) {
+    let starts = line_starts(text);
+    let lines: Vec<&str> = text.lines().collect();
+    let mut drops: Vec<usize> = Vec::new();
+    for (off, depth) in brace_depths(text) {
+        if depth >= 0 {
+            continue;
+        }
+        let idx = starts.partition_point(|s| *s <= off).saturating_sub(1);
+        if !drops.contains(&idx) {
+            drops.push(idx);
+        }
+    }
+    let total = drops.len();
+    let from = if from_end {
+        total.saturating_sub(limit)
+    } else {
+        0
+    };
+    let to = if from_end { total } else { limit.min(total) };
+    let out = drops[from..to]
+        .iter()
+        .map(|&idx| {
+            (
+                first_line + idx,
+                clipped_line(lines.get(idx).copied().unwrap_or("")),
+            )
+        })
+        .collect();
+    (out, total)
+}
+
+/// Where a drifting edit matched in the file on disk, and which of the file's
+/// own lines the drift is about.
+struct DriftSite {
+    /// First line the matched text is on, 1-based.
+    from: usize,
+    /// Last line it reaches, 1-based.
+    to: usize,
+    /// The lines that carry the drift, with their numbers.
+    closers: Vec<(usize, String)>,
+    /// How many such lines were left off the end of `closers`.
+    more: usize,
+}
+
+/// The most lines one drifting edit may quote. A batch is refused and nothing is
+/// written, so the model has to re-read the region anyway; past eight lines the
+/// report is a paste of the file rather than an answer about it.
+const MAX_DRIFT_LINES: usize = 8;
+
+/// Locate the text an edit matched in `hay` and pick out the lines its drift is
+/// about.
+///
+/// `None` whenever the site cannot be proved, and the report then names no line:
+/// the text has to appear in `hay` exactly once, because the refusal prints a
+/// number and a number that points at the wrong site sends the model to edit
+/// there. An empty `matched` is refused by the same test -- every position
+/// contains the empty string, so it is never "exactly once".
+///
+/// `hay` is the file as it stands on disk, not the batch's in-memory copy: a
+/// refused batch writes nothing, so the disk is what the model reads next.
+fn drift_site(hay: &str, matched: &str, drift: i32) -> Option<DriftSite> {
+    let hay = hay.replace("\r\n", "\n");
+    let needle = matched.replace("\r\n", "\n");
+    let at = hay.find(&needle)?;
+    let end = at + needle.len();
+    if hay[end..].contains(&needle) {
+        return None;
+    }
+    let from = hay[..at].matches('\n').count() + 1;
+    let to = hay[..end].matches('\n').count() + usize::from(!needle.ends_with('\n'));
+    let want = (drift.unsigned_abs() as usize).clamp(1, MAX_DRIFT_LINES);
+    // The two directions quote different text, and the difference is the whole
+    // answer. A negative drift means the `newString` closed blocks early, so the
+    // lines that have lost their block are the file's own, below the match, and
+    // the ones nearest it are the ones it got to first. A positive drift means it
+    // dropped closers it matched, so those closers are inside the match and the
+    // file below it is innocent -- and a replacement that loses closers loses the
+    // ones at its end, so the last of them are the ones to quote.
+    let (closers, total) = if drift < 0 {
+        let first = hay[..end].matches('\n').count() + 1;
+        depth_dropping_lines(&hay[end..], first, want, false)
+    } else {
+        depth_dropping_lines(&hay[at..end], from, want, true)
+    };
+    Some(DriftSite {
+        from,
+        to,
+        more: total.saturating_sub(closers.len()),
+        closers,
+    })
+}
+
+/// One edit of a refused batch whose `newString` changed the file's brace
+/// balance, with the lines the change is about.
+struct DriftedEdit {
+    n: usize,
+    drift: i32,
+    site: Option<DriftSite>,
+}
+
+/// Record an edit that drifted, or nothing when it kept the file's balance. The
+/// batch total is the sum of what this returns, which is the same number the
+/// single accumulator used to hold: an edit that drifts by zero adds nothing to
+/// either.
+fn drifted_edit(current: &str, matched: &str, n: usize, drift: i32) -> Option<DriftedEdit> {
+    (drift != 0).then(|| DriftedEdit {
+        n,
+        drift,
+        site: drift_site(current, matched, drift),
+    })
+}
+
+/// The per-edit part of a brace-drift refusal: the lines the edit matched, the
+/// file's own lines the drift is about, quoted, and the advice for *this* edit's
+/// direction.
+///
+/// Per edit rather than per batch because a batch can drift both ways at once
+/// and the two directions are opposite instructions -- `brace_drift_advice`
+/// exists because one paragraph for both cost `lr7b_v29` four turns.
+fn drift_report(path: &str, d: &DriftedEdit) -> String {
+    let k = d.drift.unsigned_abs();
+    let fault = if d.drift < 0 {
+        format!("carries {k} more closing brace(s) than the text it replaces")
+    } else {
+        format!("leaves {k} block(s) open that the text it replaces closed")
+    };
+    let mut out = match &d.site {
+        Some(s) if !s.closers.is_empty() => {
+            let span = if s.from == s.to {
+                format!("line {}", s.from)
+            } else {
+                format!("lines {}-{}", s.from, s.to)
+            };
+            let below = if d.drift < 0 {
+                "These are the first of the file's own lines below that match at which its brace \
+                 depth drops, quoted with the file's own numbers \u{2014} once your `newString` has \
+                 closed those blocks early there is nothing left for them to close:"
+            } else {
+                "These are the last of the lines inside that match at which the file's brace depth \
+                 drops, quoted with the file's own numbers \u{2014} the closers your `oldString` \
+                 covered:"
+            };
+            let mut t = format!(
+                "edit {}: its `oldString` matched {span} of {path} and its `newString` {fault}. {below}",
+                d.n
+            );
+            for (line, text) in &s.closers {
+                t.push_str(&format!("\n[line {line}] {text}"));
+            }
+            if s.more > 0 {
+                t.push_str(&format!("\n[\u{2026} and {} more such line(s)]", s.more));
+            }
+            t
+        }
+        _ => format!(
+            "edit {}: its `oldString` matched and its `newString` {fault}.",
+            d.n
+        ),
+    };
+    out.push('\n');
+    out.push_str(brace_drift_advice(d.drift));
+    out
 }
 
 /// What the brace-drift refusal tells the model to do next, which is not the
@@ -2614,8 +2808,13 @@ pub fn handle_system_tool(
             // cost — the edit applied cleanly, rustc reported an unclosed
             // delimiter, and the 391s repair turn that followed made the file
             // worse. Refusing at this point names the mistake for free.
+            //
+            // Per edit, not as one running total: the refusal is written after
+            // the loop, by which time the site each edit matched is gone, and a
+            // total with no site behind it can only say "somewhere in this batch"
+            // -- which is what `lr7b_v35` was told and could not act on.
             let is_rust = rel_path.replace('\\', "/").ends_with(".rs");
-            let mut brace_drift: i32 = 0;
+            let mut drifted: Vec<DriftedEdit> = Vec::new();
             for (i, edit) in edits.iter().enumerate() {
                 let n = i + 1;
                 let Some(old) = edit["oldString"].as_str() else {
@@ -2740,15 +2939,26 @@ pub fn handle_system_tool(
                         } else {
                             lf
                         };
-                        let before = if is_rust {
-                            brace_delta(&working[r.start..r.end])
+                        let matched = if is_rust {
+                            working[r.start..r.end].to_string()
                         } else {
-                            0
+                            String::new()
                         };
+                        let before = if is_rust { brace_delta(&matched) } else { 0 };
                         match splice_trimmed(&working, r.start, r.end, patch, n) {
                             Ok(s) => {
-                                if is_rust {
-                                    brace_drift += brace_delta(&s.wrote) - before;
+                                let rec = if is_rust {
+                                    drifted_edit(
+                                        &current,
+                                        &matched,
+                                        n,
+                                        brace_delta(&s.wrote) - before,
+                                    )
+                                } else {
+                                    None
+                                };
+                                if let Some(rec) = rec {
+                                    drifted.push(rec);
                                 }
                                 working = s.working;
                                 let how = if r.extra.is_empty() {
@@ -2793,15 +3003,26 @@ pub fn handle_system_tool(
                         } else {
                             lf
                         };
-                        let before = if is_rust {
-                            brace_delta(&working[r.start..r.end])
+                        let matched = if is_rust {
+                            working[r.start..r.end].to_string()
                         } else {
-                            0
+                            String::new()
                         };
+                        let before = if is_rust { brace_delta(&matched) } else { 0 };
                         match splice_trimmed(&working, r.start, r.end, patch, n) {
                             Ok(s) => {
-                                if is_rust {
-                                    brace_drift += brace_delta(&s.wrote) - before;
+                                let rec = if is_rust {
+                                    drifted_edit(
+                                        &current,
+                                        &matched,
+                                        n,
+                                        brace_delta(&s.wrote) - before,
+                                    )
+                                } else {
+                                    None
+                                };
+                                if let Some(rec) = rec {
+                                    drifted.push(rec);
                                 }
                                 working = s.working;
                                 rescued.push(format!(
@@ -2967,8 +3188,13 @@ pub fn handle_system_tool(
                     let before = if is_rust { brace_delta(&needle) } else { 0 };
                     match splice_trimmed(&working, at, end, repl, n) {
                         Ok(s) => {
-                            if is_rust {
-                                brace_drift += brace_delta(&s.wrote) - before;
+                            let rec = if is_rust {
+                                drifted_edit(&current, &needle, n, brace_delta(&s.wrote) - before)
+                            } else {
+                                None
+                            };
+                            if let Some(rec) = rec {
+                                drifted.push(rec);
                             }
                             working = s.working;
                             if let Some(note) = s.note {
@@ -3000,19 +3226,39 @@ pub fn handle_system_tool(
             // no-op is not part of the batch that reached the file, and saying it
             // was would tell a repair turn that more of its patch landed than did.
             let applied = edits.len() - noop.len();
+            // The sum of the per-edit drifts, which is the number the single
+            // accumulator used to hold: an edit that changes nothing adds zero to
+            // either, and the batch is refused on the total while the report below
+            // is written per edit.
+            let brace_drift: i32 = drifted.iter().map(|d| d.drift).sum();
             if is_rust && brace_drift != 0 {
                 let (moved, glyph) = if brace_drift > 0 {
                     (brace_drift, "block left open")
                 } else {
                     (-brace_drift, "brace with no block to close")
                 };
-                return Err(format!(
+                let mut why = format!(
                     "no edits were applied to {rel_path}; the file is unchanged: this batch of \
                      {applied} edit(s) would leave the file with {moved} more {glyph} than it has now. \
-                     That is never what a patch means. {}",
-                    brace_drift_advice(brace_drift)
-                )
-                .into());
+                     That is never what a patch means."
+                );
+                // A batch that drifts in both directions has no one instruction,
+                // and the count above is the sum of two opposite mistakes. Say so
+                // before the per-edit answers -- "drifts both ways" is also what
+                // `replay_advice` keys on, so that a replay note cannot repeat one
+                // direction's advice over a batch that needs both.
+                if drifted.iter().any(|d| d.drift > 0) && drifted.iter().any(|d| d.drift < 0) {
+                    why.push_str(
+                        " This batch drifts both ways, so the count above is the sum of two \
+                         opposite mistakes and acting on it in either direction makes one of them \
+                         worse: each edit is answered below in its own direction.",
+                    );
+                }
+                for d in &drifted {
+                    why.push('\n');
+                    why.push_str(&drift_report(rel_path, d));
+                }
+                return Err(why.into());
             }
 
             let scan_warning = scan_file_content(&working);
@@ -6385,6 +6631,248 @@ fn a() {
             closed.contains("More closers raise this count"),
             "and say what the wrong move does: {closed}"
         );
+    }
+
+    /// The shape `lr7b_v35`'s offending edit sat in: an `oldString` that stops
+    /// three lines above the closers its `newString` went on to write.
+    const DRIFT_FILE: &str = "pub fn f(input: &In) -> Out {\n    let record = if input.flag {\n        let d = match input.kind {\n            K::A => 1,\n            _ => 2,\n        };\n        Rec::new(input.total, d)\n    } else {\n        Rec::new(input.total)\n    };\n    self.dict.insert(input.user, record);\n    self.dict.values_mut().next()\n}\n";
+
+    /// The site is lines 2-4; the file's own closers below it are 6, 8, 10, 13.
+    const DRIFT_SITE: &str =
+        "    let record = if input.flag {\n        let d = match input.kind {\n            K::A => 1,";
+
+    #[test]
+    fn the_position_scan_and_the_count_agree_about_what_is_code() {
+        let src = "fn f() { let s = \"}\"; /* } { */ let c = '}'; }";
+        let depths = super::brace_depths(src);
+        assert_eq!(
+            depths.len(),
+            2,
+            "the string, the block comment and the char literal hold no code brace: {depths:?}"
+        );
+        assert_eq!(
+            depths.last().map(|(_, d)| *d),
+            Some(0),
+            "and the file is balanced: {depths:?}"
+        );
+        assert_eq!(
+            super::brace_delta(src),
+            0,
+            "the count is still the last depth the scan reached"
+        );
+    }
+
+    /// A negative drift means the `newString` closed blocks early, so the lines
+    /// that have lost their block are the file's own, below the match. The
+    /// refusal used to say "the lines below the site that already close them"
+    /// and quote none of them, and v35 answered by re-sending the call, then by
+    /// trying a whole-file `write_file`, then by asking a human for the file.
+    #[test]
+    fn a_negative_drift_quotes_the_files_own_closers_below_the_site() {
+        let site = super::drift_site(DRIFT_FILE, DRIFT_SITE, -3).expect("the site is unique");
+        assert_eq!((site.from, site.to), (2, 4), "the lines the edit matched");
+        assert_eq!(
+            site.closers.iter().map(|(l, _)| *l).collect::<Vec<_>>(),
+            vec![6, 8, 10],
+            "one per closing brace the `newString` got to first"
+        );
+        assert_eq!(
+            site.closers[0].1, "        };",
+            "quoted as the file writes it"
+        );
+        assert_eq!(
+            site.closers[2].1, "    };",
+            "and the last of them is the widen target"
+        );
+        assert_eq!(
+            site.more, 1,
+            "the file has one more closer below, and says so"
+        );
+    }
+
+    /// A positive drift is the other fault: the `newString` dropped closers its
+    /// `oldString` matched, so the lines to quote are inside the match and the
+    /// file below it is innocent. A replacement that loses closers loses the ones
+    /// at its end, so the *last* of them are quoted -- quoting the first would
+    /// name a closer the `newString` did carry and send the model to add it twice.
+    #[test]
+    fn a_positive_drift_quotes_the_closers_inside_the_match() {
+        let matched = "        };\n        Rec::new(input.total, d)\n    } else {\n        \
+                       Rec::new(input.total)\n    };";
+        let site = super::drift_site(DRIFT_FILE, matched, 2).expect("the site is unique");
+        assert_eq!((site.from, site.to), (6, 10));
+        assert_eq!(
+            site.closers.iter().map(|(l, _)| *l).collect::<Vec<_>>(),
+            vec![8, 10],
+            "the last two closers the `newString` has to carry back"
+        );
+        assert_eq!(site.closers[1].1, "    };", "quoted as the file writes it");
+        assert!(
+            site.closers.iter().all(|(l, _)| (6..=10).contains(l)),
+            "and never a line outside the match: {:?}",
+            site.closers
+        );
+        assert_eq!(site.more, 1, "line 6 drops too, and the report says so");
+    }
+
+    /// The quote is read through the same scanner as the count, so a brace that
+    /// is not code cannot be named as a closer the model has to widen down to.
+    /// The noise sits *above* those closers on purpose: a scanner that counted it
+    /// would quote it first, and a fixture with the noise below them would read
+    /// the same either way and prove nothing.
+    #[test]
+    fn a_brace_in_a_comment_or_a_string_is_not_quoted_as_a_closer() {
+        let hay =
+            "fn f() {\n    let a = if c {\n        1\n    // }\n    let s = \"}\";\n    } else \
+                   {\n        2\n    };\n}\n";
+        let site = super::drift_site(hay, "    let a = if c {\n        1", -2)
+            .expect("the site is unique");
+        let quoted = site
+            .closers
+            .iter()
+            .map(|(_, t)| t.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            site.closers.iter().map(|(l, _)| *l).collect::<Vec<_>>(),
+            vec![6, 8],
+            "the file's two real closers below the match, not the noise above them: {:?}",
+            site.closers
+        );
+        assert_eq!(quoted, vec!["    } else {", "    };"], "{quoted:?}");
+        assert!(
+            !quoted.iter().any(|t| t.contains("//") || t.contains('"')),
+            "neither the comment's brace nor the string's is a closer: {quoted:?}"
+        );
+        assert_eq!(site.more, 1, "line 9 closes too, and the report says so");
+    }
+
+    /// `} else {` closes a block and opens one on the same line. It is one fact
+    /// about one line, and quoting it twice would read as two lines to widen
+    /// down to.
+    #[test]
+    fn a_line_that_closes_and_reopens_is_quoted_once() {
+        let site = super::drift_site(DRIFT_FILE, DRIFT_SITE, -4).expect("the site is unique");
+        let eights = site.closers.iter().filter(|(l, _)| *l == 8).count();
+        assert_eq!(eights, 1, "line 8 drops and reopens: {:?}", site.closers);
+        assert_eq!(site.closers.len(), 4, "every closer the file has below");
+        assert_eq!(site.more, 0);
+    }
+
+    #[test]
+    fn a_drift_span_can_end_in_a_multibyte_character_or_a_newline() {
+        let hay = "fn f() {\n    let 名 = 1;\n}\n";
+        for matched in ["    let 名", "    let 名 = 1;\n"] {
+            let site = super::drift_site(hay, matched, -1).expect("the site is unique");
+            assert_eq!((site.from, site.to), (2, 2));
+            assert_eq!(site.closers, vec![(3, "}".to_string())]);
+        }
+    }
+
+    #[test]
+    fn the_quote_stops_at_the_cap_and_says_how_many_it_left() {
+        let hay = format!("fn f() {{\n{}", "}\n".repeat(10));
+        let site = super::drift_site(&hay, "fn f() {", -20).expect("the site is unique");
+        assert_eq!(
+            site.closers.len(),
+            super::MAX_DRIFT_LINES,
+            "a refusal is an answer about the file, not a paste of it"
+        );
+        assert_eq!(site.more, 10 - super::MAX_DRIFT_LINES);
+    }
+
+    /// The report prints a line number, so it may only print one it has proved.
+    /// A matched text that sits in two places has no single number, and naming
+    /// either would send the model to edit the wrong one.
+    #[test]
+    fn no_line_is_named_when_the_matched_text_sits_in_two_places() {
+        let hay = "fn a() {\n    let x = 1;\n}\nfn b() {\n    let x = 1;\n}\n";
+        assert!(
+            super::drift_site(hay, "    let x = 1;", -1).is_none(),
+            "two sites, so no number"
+        );
+        assert!(
+            super::drift_site(hay, "", -1).is_none(),
+            "and an empty match has no site at all"
+        );
+    }
+
+    /// The refusal carries one paragraph per drifting edit, and each paragraph
+    /// ends in the advice for *its* direction: a batch that drifts both ways has
+    /// no single instruction, and the wrong one is what v29 obeyed four times.
+    #[test]
+    fn each_directions_report_ends_in_its_own_advice() {
+        let opened = super::DriftedEdit {
+            n: 1,
+            drift: 2,
+            site: super::drift_site(
+                DRIFT_FILE,
+                "        };\n        Rec::new(input.total, d)",
+                2,
+            ),
+        };
+        let report = super::drift_report("port.rs", &opened);
+        assert!(
+            report.starts_with("edit 1: its `oldString` matched lines 6-7"),
+            "{report}"
+        );
+        assert!(report.contains("[line 6]"), "and quotes the file: {report}");
+        assert!(report.contains("repeat that closing brace"), "{report}");
+        assert!(
+            !report.contains("Widen the `oldString`"),
+            "the other direction's advice would send it after more closers: {report}"
+        );
+        assert!(
+            report.contains("inside that match"),
+            "the lines it quotes are its own, and the prose has to say so: {report}"
+        );
+        assert!(
+            !report.contains("below that match"),
+            "pointing below a positive drift sends the model at innocent lines: {report}"
+        );
+
+        let closed = super::DriftedEdit {
+            n: 2,
+            drift: -3,
+            site: super::drift_site(DRIFT_FILE, DRIFT_SITE, -3),
+        };
+        let report = super::drift_report("port.rs", &closed);
+        assert!(
+            report.starts_with("edit 2: its `oldString` matched lines 2-4"),
+            "{report}"
+        );
+        assert!(
+            report.contains("carries 3 more closing brace(s)"),
+            "{report}"
+        );
+        assert!(report.contains("[line 10]     };"), "{report}");
+        assert!(report.contains("Widen the `oldString`"), "{report}");
+        assert!(!report.contains("repeat that closing brace"), "{report}");
+        assert!(
+            report.contains("below that match"),
+            "and the other way round: {report}"
+        );
+        assert!(!report.contains("inside that match"), "{report}");
+    }
+
+    /// A drifting edit whose site cannot be proved still gets its own direction's
+    /// advice -- the count is a fact about the two strings and does not depend on
+    /// locating them -- but names no line, because a wrong number is worse than
+    /// none.
+    #[test]
+    fn a_report_without_a_provable_site_names_no_line() {
+        let d = super::DriftedEdit {
+            n: 3,
+            drift: -1,
+            site: None,
+        };
+        let report = super::drift_report("port.rs", &d);
+        assert!(report.contains("edit 3:"), "{report}");
+        assert!(
+            report.contains("carries 1 more closing brace(s)"),
+            "{report}"
+        );
+        assert!(!report.contains("[line"), "nothing to point at: {report}");
+        assert!(report.contains("Widen the `oldString`"), "{report}");
     }
 
     #[test]
