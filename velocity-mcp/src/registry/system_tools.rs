@@ -2238,6 +2238,24 @@ fn raw_string_hashes(b: &[u8], quote: usize) -> Option<usize> {
     Some(hashes)
 }
 
+/// How many bytes a file holds once the formatter has had it.
+///
+/// The buffer a write leaves behind is not the file. `format_written_file` runs
+/// *after* `fs::write` and can rewrite the whole thing, so a count taken from the
+/// buffer is the count of a file that no longer exists. `lr7b_v31` was told
+/// "(137 \u{2192} 163 bytes)" about a file that was 171 — eight bytes out, which is
+/// exactly what rustfmt added — and it was told that in the same message that said
+/// "rustfmt reformatted this file, so its bytes differ from what you sent". A
+/// model reads the count to check its write landed, so the count has to come off
+/// the disk.
+///
+/// `sent` is the fallback, not the answer: a file that cannot be statted is a
+/// file that cannot be read back either, and reporting what was written is the
+/// honest thing left to say.
+fn bytes_on_disk(path: &Path, sent: usize) -> usize {
+    fs::metadata(path).map(|m| m.len() as usize).unwrap_or(sent)
+}
+
 pub fn handle_system_tool(
     root: &Path,
     name: &str,
@@ -2717,7 +2735,7 @@ pub fn handle_system_tool(
                 "Success: applied {} edit(s) to {rel_path} ({} \u{2192} {} bytes).",
                 edits.len(),
                 current.len(),
-                working.len()
+                bytes_on_disk(&full_path, working.len())
             );
             for note in &rescued {
                 message.push(' ');
@@ -5678,6 +5696,26 @@ mod tests {
         assert!(
             note.contains("do not re-send it"),
             "the model has to know the payload it sent is not what was written: {note}"
+        );
+    }
+
+    #[test]
+    fn the_byte_count_comes_off_the_disk_and_not_out_of_the_buffer() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("port.rs");
+        fs::write(&path, "0123456789").unwrap();
+        assert_eq!(
+            super::bytes_on_disk(&path, 999),
+            10,
+            "the file is the authority, whatever the caller believes it wrote"
+        );
+        // A path that cannot be statted falls back to what was sent rather than
+        // to zero or a panic: the write already succeeded by the time this runs,
+        // and a wrong count is a bad message where a missing one is a tool error.
+        assert_eq!(
+            super::bytes_on_disk(&dir.path().join("absent.rs"), 42),
+            42,
+            "the fallback is the count of the bytes that were written"
         );
     }
 }

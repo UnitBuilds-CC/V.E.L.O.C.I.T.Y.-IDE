@@ -3549,3 +3549,51 @@ fn a_fix_inside_an_already_unbalanced_file_is_not_refused_for_being_unbalanced()
     .unwrap();
     assert!(out.contains("Success"), "{out}");
 }
+
+/// The formatter runs after the write, so the buffer the splice left behind is
+/// not the file. `lr7b_v31` was told "(137 → 163 bytes)" about a file that was
+/// 171 — eight bytes out, which is exactly what rustfmt added — and it was told
+/// that in the same message that said "rustfmt reformatted this file, so its
+/// bytes differ from what you sent". A model reads the count to check its write
+/// landed; a count that disagrees with the disk teaches it to ignore the count.
+///
+/// This test needs `rustfmt` on PATH and format-on-write enabled (the default) to
+/// mean anything, and says so out loud rather than passing on a no-op format.
+#[test]
+fn the_byte_count_in_the_success_message_is_the_file_rustfmt_left_behind() {
+    let (_temp, root) = setup_root();
+    let before = "pub fn  add(a:u8,b:u8)->u8{a+b}\n";
+    fs::write(root.join("port.rs"), before).unwrap();
+
+    let out = call_tool_in_workspace(
+        &root,
+        "edit_file",
+        &json!({
+            "relativeFilePath": "port.rs",
+            "edits": [{
+                "oldString": "pub fn  add(a:u8,b:u8)->u8{a+b}",
+                "newString": "pub fn  add(a:u8,b:u8)->u16{(a+b) as u16}"
+            }],
+            "context": "widen the result"
+        }),
+    )
+    .unwrap();
+
+    let on_disk = fs::read_to_string(root.join("port.rs")).unwrap();
+    assert!(
+        on_disk.contains("pub fn add(a: u8, b: u8) -> u16 {"),
+        "the formatter has to have run for this to test anything; the file is {on_disk:?}"
+    );
+    assert!(
+        out.contains("rustfmt reformatted this file"),
+        "and the message has to be the one that admits the bytes moved: {out}"
+    );
+    assert!(
+        out.contains(&format!(
+            "({} \u{2192} {} bytes)",
+            before.len(),
+            on_disk.len()
+        )),
+        "the count has to be the file's, not the buffer's: {out}"
+    );
+}
