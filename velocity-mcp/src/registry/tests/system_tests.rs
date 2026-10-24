@@ -3029,6 +3029,50 @@ fn an_edit_that_leaves_a_brace_open_is_refused_before_the_file_changes() {
     );
 }
 
+/// The same gate drifted the other way, which is where `lr7b_v29` spent its
+/// first five turns. The `oldString` stops above the lines that close the block
+/// it opens and the `newString` closes it anyway, so the file's own `} else {`
+/// and `};` are left standing with nothing to close. The refusal has to send the
+/// model after the `oldString`: the note both directions used to share sent it
+/// after more closers, and the count came back 1, 2, 2, 3.
+#[test]
+fn an_edit_that_closes_a_block_it_never_covered_is_told_to_widen() {
+    let (_temp, root) = setup_root();
+    let before = "fn f() -> i32 {\n    let a = if c {\n        1\n    } else {\n        2\n    };\n    a\n}\n";
+    fs::write(root.join("port.rs"), before).unwrap();
+
+    let err = call_tool_in_workspace(
+        &root,
+        "edit_file",
+        &json!({
+            "relativeFilePath": "port.rs",
+            "edits": [{
+                "oldString": "    let a = if c {\n        1",
+                "newString": "    let a = if c {\n        1\n    } else {\n        9\n    };"
+            }],
+            "context": "change the branch"
+        }),
+    )
+    .err()
+    .map(|e| e.to_string())
+    .unwrap_or_else(|| "the closers below the site are still in the file".to_string());
+
+    assert!(err.contains("no block to close"), "{err}");
+    assert!(
+        err.contains("Widen the `oldString`"),
+        "and say which side of the edit to change: {err}"
+    );
+    assert!(
+        !err.contains("carrying every delimiter"),
+        "that is the advice the model obeyed four times: {err}"
+    );
+    assert_eq!(
+        fs::read_to_string(root.join("port.rs")).unwrap(),
+        before,
+        "a refused batch leaves every byte alone"
+    );
+}
+
 /// The other side of the same check: a restructure that adds a scope has to keep
 /// both delimiters in the batch, and when it does the edit must apply. A guard
 /// that refused this too would push the model back onto the whole-file rewrite

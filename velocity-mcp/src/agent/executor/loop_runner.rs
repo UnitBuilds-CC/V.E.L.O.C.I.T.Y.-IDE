@@ -4673,6 +4673,13 @@ fn note_refusal_repeat(
 /// near-miss refusal also says its `oldString` is not in the file, and the
 /// brace-drift refusal says "not in place of it" in ordinary prose, so the
 /// ambiguous-site branch keys on `places in` and not on `place`.
+///
+/// The brace-drift refusal itself reads two ways and only one of them is fixed
+/// by widening. A block left open is the `newString`'s fault -- it dropped a
+/// closer the site matched -- and no widening puts it back. A brace with no
+/// block to close is the `oldString`'s fault: it stopped above the lines that
+/// close what it opened. Those two keys have to stay apart, because the note is
+/// appended to the refusal and a note that contradicts it wins.
 fn replay_advice(refusal: &str) -> &'static str {
     if refusal.contains("is where they part") {
         "The refusal quotes the file's own version of that line after \"the file says\". Put it \
@@ -4686,6 +4693,11 @@ fn replay_advice(refusal: &str) -> &'static str {
     } else if refusal.contains("byte-identical") {
         "A call whose `newString` equals its `oldString` changes no characters however often it \
          is sent. Write the replacement the error asks for."
+    } else if refusal.contains("no block to close") {
+        "The `newString` closes blocks the `oldString` never covered, so the lines below the \
+         site still hold the closers and are left standing. Widen the `oldString` down to the \
+         last of them and carry it into the `newString`, or take the extra closing braces back \
+         out; more closers raise the count the refusal reports."
     } else if refusal.contains("places in") {
         "Widen the `oldString` — include the lines around it — until only the one place you mean \
          still matches, and send that."
@@ -7944,8 +7956,9 @@ mod tests {
         assert!(!near.contains("Widen"), "{near}");
 
         // The brace-drift refusal says "not in place of it" in ordinary prose.
-        // It is not an ambiguous-site refusal, so it must not draw the
-        // widen-it lever, which cannot fix an unclosed block.
+        // It is not an ambiguous-site refusal, and a block left open is the
+        // `newString`'s fault, so this direction must not draw the widen-it
+        // lever: no widening puts a dropped closer back.
         let drift = replay_advice(
             "Error executing tool: no edits were applied to a.rs; the file is unchanged: this \
              batch of 1 edit(s) would leave the file with 1 more block left open than it has \
@@ -7953,6 +7966,20 @@ mod tests {
         );
         assert!(!drift.contains("Widen"), "{drift}");
         assert!(drift.contains("substance"), "{drift}");
+
+        // Drifted the other way it is the `oldString` that is too short, and
+        // `lr7b_v29` turns 1 to 5 are what a note that does not say so costs:
+        // four refusals, a refund, and the artifact gate tripped at turn 6.
+        let closed = replay_advice(
+            "Error executing tool: no edits were applied to a.rs; the file is unchanged: this \
+             batch of 1 edit(s) would leave the file with 1 more brace with no block to close \
+             than it has now. Widen the `oldString` down to the last of those lines.",
+        );
+        assert!(closed.contains("Widen"), "{closed}");
+        assert!(
+            !closed.contains("substance"),
+            "a lever the model can pull, not a shrug: {closed}"
+        );
 
         // v12's case: two sites match, so the lever really is the `oldString`.
         let ambiguous = replay_advice(

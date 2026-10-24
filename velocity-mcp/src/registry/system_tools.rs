@@ -1932,6 +1932,30 @@ pub(crate) fn brace_delta(src: &str) -> i32 {
     depth
 }
 
+/// What the brace-drift refusal tells the model to do next, which is not the
+/// same advice in both directions and was one paragraph for both until
+/// `lr7b_v29`.
+///
+/// A positive drift means the `newString` dropped a closer the `oldString`
+/// matched, so the fix is on the `newString` side and the old paragraph names
+/// it correctly. A negative drift means the opposite: the `newString` closes
+/// blocks whose closing lines the `oldString` never covered, and those file
+/// lines are still standing. Telling that model to carry every delimiter it
+/// matched sends it after more closers, which is the one change guaranteed to
+/// raise the count -- v29 obeyed it four times and read back 1, 2, 2, 3.
+fn brace_drift_advice(drift: i32) -> &'static str {
+    if drift > 0 {
+        "When an `oldString` matches a line that closes a block, its `newString` has to \
+         repeat that closing brace and put the new text around it, not in place of it. \
+         Re-issue the batch carrying every delimiter the `oldString` matched."
+    } else {
+        "Your `newString` closes blocks its `oldString` never covered, so the lines below \
+         the site that already close them are left standing with nothing to close. Widen the \
+         `oldString` down to the last of those lines and carry it into the `newString`, or \
+         take the extra closing braces back out. More closers raise this count."
+    }
+}
+
 /// The length of the char literal starting at `quote`, or `None` when the quote
 /// starts a lifetime (`'a`, `'src`). Only the two shapes Rust allows are
 /// recognised, because treating a lifetime as an opening quote would swallow the
@@ -2404,11 +2428,9 @@ pub fn handle_system_tool(
                 return Err(format!(
                     "no edits were applied to {rel_path}; the file is unchanged: this batch of \
                      {} edit(s) would leave the file with {moved} more {glyph} than it has now. \
-                     That is never what a patch means. When an `oldString` matches a line that \
-                     closes a block, its `newString` has to repeat that closing brace and put the \
-                     new text around it, not in place of it. Re-issue the batch carrying every \
-                     delimiter the `oldString` matched.",
-                    edits.len()
+                     That is never what a patch means. {}",
+                    edits.len(),
+                    brace_drift_advice(brace_drift)
                 )
                 .into());
             }
@@ -5032,6 +5054,38 @@ mod tests {
         assert_eq!(
             s.working,
             format!("{}    let c = compute();{}", &hay[..start], &hay[end..])
+        );
+    }
+
+    /// `lr7b_v29` turns 1 to 5 were four refusals of one edit whose
+    /// `newString` closed blocks its `oldString` never covered. Both drift
+    /// directions shared one paragraph, it was written for the other one, and
+    /// the model obeyed it: a closer added each round, and the count it read
+    /// back went 1, 2, 2, 3.
+    #[test]
+    fn the_brace_drift_advice_names_the_side_of_the_edit_that_is_wrong() {
+        let opened = super::brace_drift_advice(2);
+        assert!(
+            opened.contains("repeat that closing brace"),
+            "a dropped closer is the `newString`'s fault: {opened}"
+        );
+        assert!(
+            opened.contains("carrying every delimiter"),
+            "and carrying it back is the fix: {opened}"
+        );
+        let closed = super::brace_drift_advice(-1);
+        assert_ne!(opened, closed, "the two directions are not one paragraph");
+        assert!(
+            !closed.contains("carrying every delimiter"),
+            "the advice that raised the count four turns running: {closed}"
+        );
+        assert!(
+            closed.contains("Widen the `oldString`"),
+            "the site ends above the lines that close it: {closed}"
+        );
+        assert!(
+            closed.contains("More closers raise this count"),
+            "and say what the wrong move does: {closed}"
         );
     }
 
