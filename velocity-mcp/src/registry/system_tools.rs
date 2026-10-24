@@ -2390,6 +2390,42 @@ fn brace_drift_advice(drift: i32) -> &'static str {
     }
 }
 
+/// The per-edit wording for a batch in which *every* edit writes back the text it
+/// matched. The sentence is the one a single no-op edit has always been answered
+/// with, because that is the case the model can act on: nothing else in the batch
+/// was going to change the file either, so there is no partial success to report
+/// and no line number to point at beyond the ones it quoted.
+fn noop_refusal(noop: &[usize]) -> String {
+    noop.iter()
+        .map(|n| {
+            format!(
+                "edit {n}: its `newString` is byte-identical to its `oldString`, so this \
+                 edit would change no characters. The error is still in the file at that \
+                 line — write the replacement the error asks for."
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// What a *successful* batch says about the edits it dropped for changing no
+/// characters. Written without grammatical agreement on purpose: the count varies
+/// from one dropped edit to four, and the sentence has to read the same for both,
+/// so it says "Each such edit" rather than naming a number the list contradicts.
+fn noop_edit_note(noop: &[usize]) -> String {
+    let list = noop
+        .iter()
+        .map(usize::to_string)
+        .collect::<Vec<_>>()
+        .join(", ");
+    format!(
+        "Left out as changing no characters: edit {list}. Each such edit has a `newString` \
+         byte-identical to its `oldString`, so the text it quotes is still in the file exactly \
+         as it was and no error at any of those lines has moved. Where the diagnostics name one, \
+         the replacement still has to be written."
+    )
+}
+
 /// The length of the char literal starting at `quote`, or `None` when the quote
 /// starts a lifetime (`'a`, `'src`). Only the two shapes Rust allows are
 /// recognised, because treating a lifetime as an opening quote would swallow the
@@ -2570,6 +2606,7 @@ pub fn handle_system_tool(
             let mut working = current.clone();
             let mut rejected: Vec<String> = Vec::new();
             let mut rescued: Vec<String> = Vec::new();
+            let mut noop: Vec<usize> = Vec::new();
             // Rust is the one language whose edits the agent loop grades with a
             // compiler, and a batch that changes the file's brace balance cannot
             // be anything but a mistake: `mod tests {` left open by a `newString`
@@ -2599,17 +2636,25 @@ pub fn handle_system_tool(
                     ));
                     continue;
                 };
-                // A repair turn that hands back the text it was given applies
-                // cleanly and changes nothing, so "Success: applied 1 edit(s)
-                // (23886 -> 23886 bytes)" reads to the model as a fix while the
-                // compiler still reports the same error. Refusing costs one turn
-                // and tells it the patch it meant never left its context.
+                // An edit that hands back the text it matched writes no bytes, so
+                // it cannot be the reason a batch is refused: dropping it leaves
+                // the file exactly where the surviving edits put it, which is a
+                // state the model did describe. lr7b_v34 is the cost of the other
+                // reading — one no-op beside one real edit vetoed the real edit
+                // four turns running, and the run ended at 3/3 repair turns with
+                // both original errors still standing. A batch that is *only*
+                // no-ops is still refused, because there the file would be
+                // written and nothing in it would move, which reads to a repair
+                // turn as a fix that was not one.
+                //
+                // This is the literal case and the only one dropped. The no-op
+                // `splice_trimmed` derives by taking copied context lines back out
+                // still refuses its batch: that one rests on an inference about
+                // what the model meant, and silently discarding an edit on an
+                // inference is not the same as discarding one that is proved to
+                // write nothing.
                 if new == old {
-                    rejected.push(format!(
-                        "edit {n}: its `newString` is byte-identical to its `oldString`, so this \
-                         edit would change no characters. The error is still in the file at that \
-                         line — write the replacement the error asks for."
-                    ));
+                    noop.push(n);
                     continue;
                 }
                 // Line endings are the one thing a model cannot see: read_file
@@ -2944,6 +2989,17 @@ pub fn handle_system_tool(
                 )
                 .into());
             }
+            if noop.len() == edits.len() {
+                return Err(format!(
+                    "no edits were applied to {rel_path}; the file is unchanged:\n{}",
+                    noop_refusal(&noop)
+                )
+                .into());
+            }
+            // Only the edits that wrote bytes are counted from here on: a dropped
+            // no-op is not part of the batch that reached the file, and saying it
+            // was would tell a repair turn that more of its patch landed than did.
+            let applied = edits.len() - noop.len();
             if is_rust && brace_drift != 0 {
                 let (moved, glyph) = if brace_drift > 0 {
                     (brace_drift, "block left open")
@@ -2952,9 +3008,8 @@ pub fn handle_system_tool(
                 };
                 return Err(format!(
                     "no edits were applied to {rel_path}; the file is unchanged: this batch of \
-                     {} edit(s) would leave the file with {moved} more {glyph} than it has now. \
+                     {applied} edit(s) would leave the file with {moved} more {glyph} than it has now. \
                      That is never what a patch means. {}",
-                    edits.len(),
                     brace_drift_advice(brace_drift)
                 )
                 .into());
@@ -2965,14 +3020,17 @@ pub fn handle_system_tool(
             let format_note = crate::automation::formatter::format_written_file(&full_path).note();
 
             let mut message = format!(
-                "Success: applied {} edit(s) to {rel_path} ({} \u{2192} {} bytes).",
-                edits.len(),
+                "Success: applied {applied} edit(s) to {rel_path} ({} \u{2192} {} bytes).",
                 current.len(),
                 bytes_on_disk(&full_path, working.len())
             );
             for note in &rescued {
                 message.push(' ');
                 message.push_str(note);
+            }
+            if !noop.is_empty() {
+                message.push(' ');
+                message.push_str(&noop_edit_note(&noop));
             }
             if let Some(warn) = scan_warning {
                 message = format!(
@@ -6368,6 +6426,76 @@ fn a() {
             super::bytes_on_disk(&dir.path().join("absent.rs"), 42),
             42,
             "the fallback is the count of the bytes that were written"
+        );
+    }
+
+    /// The note has to name the edit by the number it was sent under, because
+    /// that is the only handle the model has on which of its own edits was
+    /// dropped — it cannot see the file move under the other one.
+    #[test]
+    fn the_dropped_edits_are_named_by_the_number_they_were_sent_under() {
+        let one = super::noop_edit_note(&[2]);
+        assert!(one.contains("edit 2"), "{one}");
+        let two = super::noop_edit_note(&[2, 4]);
+        assert!(two.contains("edit 2, 4"), "{two}");
+        assert!(
+            !two.contains("edit 2, 4, "),
+            "the list ends at the last number it names: {two}"
+        );
+    }
+
+    /// One dropped edit and four have to read the same way. A note that agreed
+    /// with the count would have to say "1 edit" or "2 edits", and the sentence
+    /// that follows it is about each of them separately, so it says "Each such
+    /// edit" and the count never enters the grammar.
+    #[test]
+    fn the_note_reads_the_same_for_one_dropped_edit_as_for_four() {
+        for dropped in [&[3][..], &[1, 2, 3, 4][..]] {
+            let note = super::noop_edit_note(dropped);
+            assert!(
+                note.contains("Each such edit"),
+                "the sentence after the list is about all of them: {note}"
+            );
+            assert!(
+                note.contains("byte-identical"),
+                "and it says what made them alike: {note}"
+            );
+            assert!(
+                note.contains("still has to be written"),
+                "dropping an edit is not the same as doing it: {note}"
+            );
+        }
+        // The list is the only part that changes with the count. A sentence that
+        // agreed with it -- "the 4 edits were", "this edit was" -- would have to
+        // change too, and that is the wording this pins down.
+        let after_list = |n: &[usize]| {
+            super::noop_edit_note(n)
+                .split_once(". Each such edit")
+                .map(|(_, rest)| rest.to_string())
+                .expect("the sentence after the list is the one that has to be count-free")
+        };
+        assert_eq!(after_list(&[3]), after_list(&[1, 2, 3, 4]));
+    }
+
+    /// A batch of nothing but no-ops is refused in the words a replay keys on.
+    /// `replay_advice` in the agent loop branches on "byte-identical", and a
+    /// refusal that lost that phrase would fall through to the generic advice and
+    /// tell the model to re-read a region it has already quoted exactly.
+    #[test]
+    fn the_all_no_op_refusal_keeps_the_words_the_replay_advice_keys_on() {
+        let why = super::noop_refusal(&[1, 2]);
+        assert!(why.contains("byte-identical"), "{why}");
+        assert!(why.contains("change no characters"), "{why}");
+        assert_eq!(
+            why.lines().count(),
+            2,
+            "each dropped edit gets its own line, as it did when it was refused alone: {why}"
+        );
+        assert!(why.contains("edit 1:"), "{why}");
+        assert!(why.contains("edit 2:"), "{why}");
+        assert!(
+            why.contains("write the replacement the error asks for"),
+            "and the way out of it: {why}"
         );
     }
 }

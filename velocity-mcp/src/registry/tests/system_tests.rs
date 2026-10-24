@@ -1950,6 +1950,225 @@ fn an_edit_that_would_write_back_the_text_it_matched_is_refused_as_a_no_op() {
     );
 }
 
+/// `lr7b_v34` sent one two-edit batch four times. Edit 1 replaced a real line;
+/// edit 2 handed back the text it matched. The no-op refused the batch, so the
+/// real edit was never evaluated in any of the four turns, two refunds went on
+/// re-sending it, and the run reached 3/3 compile-repair turns with both of the
+/// errors it started with still standing. A no-op writes no bytes, so it cannot
+/// be the reason the edit beside it did not land.
+#[test]
+fn a_no_op_edit_does_not_veto_the_real_edit_beside_it() {
+    let (_temp, root) = setup_root();
+    let before = "fn charge(&mut self, user: String, record: UsageRecord) -> f64 {\n    \
+                  let result_record = record.clone();\n    self.user_dict.insert(user, record);\n    \
+                  &result_record\n}\n";
+    fs::write(root.join("port.txt"), before).unwrap();
+
+    let ok = call_tool_in_workspace(
+        &root,
+        "edit_file",
+        &json!({
+            "relativeFilePath": "port.txt",
+            "edits": [
+                {
+                    "oldString": "    self.user_dict.insert(user, record);",
+                    "newString": "    self.user_dict.entry(user).or_insert_with(|| record);"
+                },
+                {
+                    "oldString": "    &result_record",
+                    "newString": "    &result_record"
+                }
+            ],
+            "context": "one real change and one that is not a change"
+        }),
+    )
+    .unwrap_or_else(|e| panic!("the no-op was the only thing wrong with this batch: {e}"));
+
+    assert!(ok.starts_with("Success"), "{ok}");
+    assert!(
+        ok.contains("applied 1 edit(s)"),
+        "one edit wrote bytes and one did not: {ok}"
+    );
+    assert!(
+        ok.contains("Left out as changing no characters: edit 2"),
+        "the model has to be told which of its own edits was dropped: {ok}"
+    );
+    assert!(
+        ok.contains("still has to be written"),
+        "and that dropping it did not do it: {ok}"
+    );
+    assert_eq!(
+        fs::read_to_string(root.join("port.txt")).unwrap(),
+        before.replace(
+            "    self.user_dict.insert(user, record);",
+            "    self.user_dict.entry(user).or_insert_with(|| record);"
+        ),
+        "every byte of the surviving edit lands and nothing else moves"
+    );
+}
+
+/// Dropping a no-op is not the same as allowing a batch that would write the
+/// file back to itself. There is nothing to apply in that case, so the file is
+/// left alone and the refusal keeps the wording `replay_advice` branches on.
+#[test]
+fn a_batch_of_nothing_but_no_ops_is_still_refused_and_names_each_one() {
+    let (_temp, root) = setup_root();
+    let src = "fn a() {\n    let x = 1;\n}\n\nfn b() {\n    let y = 2;\n}\n";
+    fs::write(root.join("port.txt"), src).unwrap();
+
+    let err = call_tool_in_workspace(
+        &root,
+        "edit_file",
+        &json!({
+            "relativeFilePath": "port.txt",
+            "edits": [
+                { "oldString": "    let x = 1;", "newString": "    let x = 1;" },
+                { "oldString": "    let y = 2;", "newString": "    let y = 2;" }
+            ],
+            "context": "two intents with no patch between them"
+        }),
+    )
+    .err()
+    .map(|e| e.to_string())
+    .unwrap_or_else(|| "a batch that writes the file back to itself is not a success".to_string());
+
+    assert!(err.contains("no edits were applied"), "{err}");
+    assert!(
+        err.contains("byte-identical"),
+        "the phrase `replay_advice` keys on: {err}"
+    );
+    assert!(
+        err.contains("change no characters"),
+        "and why that is not progress: {err}"
+    );
+    assert!(err.contains("edit 1:"), "{err}");
+    assert!(
+        err.contains("edit 2:"),
+        "a second no-op is a second line, not a summary: {err}"
+    );
+    assert!(
+        !err.contains("Left out"),
+        "the note belongs to a batch that wrote something: {err}"
+    );
+    assert_eq!(fs::read_to_string(root.join("port.txt")).unwrap(), src);
+}
+
+/// The count in the success message is the number of edits that reached the
+/// file. `edits.len()` would claim three and hide the drop; the note would then
+/// be the only thing contradicting the headline.
+#[test]
+fn the_applied_count_leaves_out_the_edits_that_wrote_nothing() {
+    let (_temp, root) = setup_root();
+    let src = "fn f() {\n    let a = 1;\n    let b = 2;\n    let c = 3;\n}\n";
+    fs::write(root.join("port.txt"), src).unwrap();
+
+    let ok = call_tool_in_workspace(
+        &root,
+        "edit_file",
+        &json!({
+            "relativeFilePath": "port.txt",
+            "edits": [
+                { "oldString": "    let a = 1;", "newString": "    let a = 9;" },
+                { "oldString": "    let b = 2;", "newString": "    let b = 2;" },
+                { "oldString": "    let c = 3;", "newString": "    let c = 9;" }
+            ],
+            "context": "two changes with a nothing between them"
+        }),
+    )
+    .unwrap_or_else(|e| panic!("{e}"));
+
+    assert!(
+        ok.contains("applied 2 edit(s)"),
+        "not 3, which is what was sent, and not 1, which is what was dropped: {ok}"
+    );
+    assert!(
+        ok.contains("Left out as changing no characters: edit 2"),
+        "{ok}"
+    );
+    assert_eq!(
+        fs::read_to_string(root.join("port.txt")).unwrap(),
+        "fn f() {\n    let a = 9;\n    let b = 2;\n    let c = 9;\n}\n"
+    );
+}
+
+/// The brace-drift refusal counts the batch that reached the gate. A no-op
+/// contributes no braces, so counting it would blame the drift on a batch of two
+/// when one edit caused it and the other wrote nothing.
+#[test]
+fn a_no_op_is_not_counted_in_the_brace_drift_it_did_not_cause() {
+    let (_temp, root) = setup_root();
+    let src = "fn a() {\n    let x = 1;\n}\n\nfn b() {\n    let y = 2;\n}\n";
+    fs::write(root.join("port.rs"), src).unwrap();
+
+    let err = call_tool_in_workspace(
+        &root,
+        "edit_file",
+        &json!({
+            "relativeFilePath": "port.rs",
+            "edits": [
+                { "oldString": "    let y = 2;", "newString": "    let y = 2;" },
+                { "oldString": "fn a() {\n    let x = 1;\n}", "newString": "fn a() {\n    let x = 2;" }
+            ],
+            "context": "one nothing and one dropped closer"
+        }),
+    )
+    .err()
+    .map(|e| e.to_string())
+    .unwrap_or_else(|| "a dropped closer has to be refused".to_string());
+
+    assert!(
+        err.contains("batch of 1 edit(s)"),
+        "the drift is one edit's, so the count is one: {err}"
+    );
+    assert!(
+        !err.contains("batch of 2 edit(s)"),
+        "and the no-op is not folded into it: {err}"
+    );
+    assert!(err.contains("block left open"), "{err}");
+    assert_eq!(fs::read_to_string(root.join("port.rs")).unwrap(), src);
+}
+
+/// A batch is still all-or-nothing for anything actually refused. Dropping a
+/// no-op is a licence to write the edits that meant something, not to write half
+/// of a batch that contains a mistake.
+#[test]
+fn a_refused_edit_still_refuses_the_batch_a_no_op_sits_in() {
+    let (_temp, root) = setup_root();
+    let src = "fn a() {\n    let x = 1;\n}\n\nfn b() {\n    let x = 2;\n}\n";
+    fs::write(root.join("port.txt"), src).unwrap();
+
+    let err = call_tool_in_workspace(
+        &root,
+        "edit_file",
+        &json!({
+            "relativeFilePath": "port.txt",
+            "edits": [
+                { "oldString": "    let x = 1;", "newString": "    let x = 1;" },
+                { "oldString": "    let x = ", "newString": "    let q = " }
+            ],
+            "context": "one nothing and one that cannot be located"
+        }),
+    )
+    .err()
+    .map(|e| e.to_string())
+    .unwrap_or_else(|| "an edit that matches two places still refuses its batch".to_string());
+
+    assert!(err.contains("no edits were applied"), "{err}");
+    assert!(
+        err.contains("edit 2:"),
+        "the refused edit is named by its own number: {err}"
+    );
+    assert!(
+        err.contains("matches 2 places"),
+        "and by its own reason: {err}"
+    );
+    assert_eq!(
+        fs::read_to_string(root.join("port.txt")).unwrap(),
+        src,
+        "a refused batch leaves every byte alone, no-op or not"
+    );
+}
+
 /// Gateprobe2 spent three turns on this refusal. The model sent a one-line
 /// `oldString` that matched two call sites, got back "widen it with the
 /// surrounding lines until it is unique" — a sentence naming no lines — and
