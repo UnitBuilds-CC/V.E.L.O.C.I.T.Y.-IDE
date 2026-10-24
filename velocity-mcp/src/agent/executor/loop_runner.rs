@@ -7949,6 +7949,36 @@ mod tests {
         assert!(applied.contains("already"), "{applied}");
         assert!(!applied.contains("Widen"), "{applied}");
 
+        // The `lr7b_v31` case: the call applied on its first attempt and the run
+        // then sent it again byte for byte, so the file carried the insert twice
+        // and every `oldString` after that was stale. The refusal here says the
+        // site is still in the file, which is the one place this differs from the
+        // message above, and it has to draw the same lever: the change is done,
+        // and a read of the line the compiler names is what learns something.
+        // Not the near-miss branch's "re-reading it learns nothing new" — that
+        // claim is exactly what kept v31 re-reading fourteen lines it had just
+        // read, because its picture of the file was the stale thing.
+        let replayed = replay_advice(
+            "Error executing tool: no edits were applied to a.rs; the file is unchanged:\n\
+             edit 1: this change is already on disk — a.rs carries every line of its `newString` \
+             from line 345 down, and its `oldString` still matches inside that run. Applying it \
+             again would write 1 of those lines a second time.",
+        );
+        assert!(replayed.contains("already"), "{replayed}");
+        assert!(
+            replayed.contains("read_file"),
+            "the model's picture of the file is stale, so a read is the lever: {replayed}"
+        );
+        assert!(
+            !replayed.contains("learns nothing"),
+            "and the note must not say the opposite: {replayed}"
+        );
+        assert!(!replayed.contains("Widen"), "{replayed}");
+        assert_eq!(
+            replayed, applied,
+            "one voice for one fact, whichever way it was proved"
+        );
+
         // The `lr7b_v19` case: the refusal quoted the file's own line, so that
         // line is the lever. Telling the model to go and read the region again
         // would send it after the one thing it has already been handed.

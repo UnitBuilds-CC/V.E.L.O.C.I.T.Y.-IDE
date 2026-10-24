@@ -811,6 +811,186 @@ fn an_already_applied_change_is_not_rescued_into_a_second_site() {
     );
 }
 
+/// `lr7b_v31` end to end. Calls 5 and 6 of that run were byte-identical and
+/// *both* applied: the first inserted `let _ = self.save_data();` once and the
+/// second inserted it again, because the `oldString` still matched uniquely and
+/// nothing asked whether the file already went on with the rest of the
+/// `newString`. Every `oldString` the model built after that was stale, so turns
+/// 4 to 9 alternated a refusal with a re-read of the same fourteen lines and the
+/// transcript ended at 29 identical refusals.
+#[test]
+fn a_replayed_edit_that_already_applied_is_refused_instead_of_written_twice() {
+    let (_temp, root) = setup_root();
+    let before = "fn charge(&mut self, user: &str, record: UsageRecord) -> f64 {\n    let result_record = record.clone();\n    result_record.current_cost\n}\n";
+    fs::write(root.join("port.txt"), before).unwrap();
+    let call = json!({
+        "relativeFilePath": "port.txt",
+        "edits": [{
+            "oldString": "    let result_record = record.clone();",
+            "newString": "    let result_record = record.clone();\n    let _ = self.save_data();"
+        }],
+        "context": "persist before returning"
+    });
+    let copies = || {
+        fs::read_to_string(root.join("port.txt"))
+            .unwrap()
+            .matches("let _ = self.save_data();")
+            .count()
+    };
+
+    let ok = call_tool_in_workspace(&root, "edit_file", &call)
+        .unwrap_or_else(|e| panic!("the first call is an ordinary insert: {e}"));
+    assert!(ok.starts_with("Success"), "{ok}");
+    assert_eq!(copies(), 1, "the insert landed once");
+
+    let after = fs::read_to_string(root.join("port.txt")).unwrap();
+    let err = call_tool_in_workspace(&root, "edit_file", &call)
+        .err()
+        .map(|e| e.to_string())
+        .unwrap_or_else(|| "a replay of an applied edit writes a second copy".to_string());
+
+    assert!(
+        err.contains("already on disk"),
+        "the same answer its whole-file sibling gives, so `replay_advice` reads it the same way: {err}"
+    );
+    assert!(
+        err.contains("from line 2 down"),
+        "and names where the replacement already starts: {err}"
+    );
+    assert!(
+        err.contains("would write 1 of those lines a second time"),
+        "and says what applying it again would cost: {err}"
+    );
+    assert!(
+        !err.contains("is not in the file at all"),
+        "the `oldString` is in the file here; that clause belongs to the other predicate: {err}"
+    );
+    assert_eq!(
+        fs::read_to_string(root.join("port.txt")).unwrap(),
+        after,
+        "a refused batch leaves every byte alone"
+    );
+    assert_eq!(copies(), 1, "and the file still carries the insert once");
+}
+
+/// The other side of the same predicate: an insert the file does not yet carry is
+/// the ordinary case and has to keep applying. Without this the refusal above
+/// could be passing by refusing everything.
+#[test]
+fn an_insert_the_file_lacks_is_still_written_at_its_unique_site() {
+    let (_temp, root) = setup_root();
+    let before = "fn charge(&mut self, record: UsageRecord) -> f64 {\n    let result_record = record.clone();\n    result_record.current_cost\n}\n";
+    fs::write(root.join("port.txt"), before).unwrap();
+
+    let ok = call_tool_in_workspace(
+        &root,
+        "edit_file",
+        &json!({
+            "relativeFilePath": "port.txt",
+            "edits": [{
+                "oldString": "    let result_record = record.clone();",
+                "newString": "    let result_record = record.clone();\n    let _ = self.save_data();"
+            }],
+            "context": "persist before returning"
+        }),
+    )
+    .unwrap_or_else(|e| panic!("nothing about this edit is a replay: {e}"));
+
+    assert!(ok.starts_with("Success"), "{ok}");
+    assert_eq!(
+        fs::read_to_string(root.join("port.txt")).unwrap(),
+        "fn charge(&mut self, record: UsageRecord) -> f64 {\n    let result_record = record.clone();\n    let _ = self.save_data();\n    result_record.current_cost\n}\n",
+        "the insert went in where the site was"
+    );
+}
+
+/// A batch is all-or-nothing, so one replayed edit in a batch of two refuses the
+/// other one with it. That is the contract every other refusal here follows, and
+/// it is the honest one: reporting "applied 2 edit(s)" when one of them was
+/// skipped is the lie the success message exists not to tell.
+#[test]
+fn a_replayed_edit_refuses_its_whole_batch_and_leaves_the_other_edit_out() {
+    let (_temp, root) = setup_root();
+    let before = "fn a() {\n    let x = 1;\n    let _ = self.save_data();\n}\n\nfn b() {\n    let y = 2;\n}\n";
+    fs::write(root.join("port.txt"), before).unwrap();
+
+    let err = call_tool_in_workspace(
+        &root,
+        "edit_file",
+        &json!({
+            "relativeFilePath": "port.txt",
+            "edits": [
+                {
+                    "oldString": "    let x = 1;",
+                    "newString": "    let x = 1;\n    let _ = self.save_data();"
+                },
+                {
+                    "oldString": "    let y = 2;",
+                    "newString": "    let y = compute();"
+                }
+            ],
+            "context": "two changes"
+        }),
+    )
+    .err()
+    .map(|e| e.to_string())
+    .unwrap_or_else(|| "one replayed edit has to refuse the batch".to_string());
+
+    assert!(err.contains("no edits were applied"), "{err}");
+    assert!(
+        err.contains("edit 1: this change is already on disk"),
+        "{err}"
+    );
+    assert!(
+        !err.contains("edit 2:"),
+        "the second edit was applicable and is not blamed: {err}"
+    );
+    assert_eq!(
+        fs::read_to_string(root.join("port.txt")).unwrap(),
+        before,
+        "a refused batch leaves every byte alone"
+    );
+}
+
+/// The predicate is not gated on Rust, unlike `terminator_miss`: a duplicated
+/// line is a duplicated line in every language, and a `.rs` file is where the
+/// crucible actually runs. rustfmt leaves this fixture alone, so the second call
+/// sees the same bytes the first one wrote.
+#[test]
+fn a_replayed_edit_is_refused_in_a_rust_file_too() {
+    let (_temp, root) = setup_root();
+    let before = "impl Manager {\n    fn charge(&mut self, record: UsageRecord) -> f64 {\n        let result_record = record.clone();\n        result_record.current_cost\n    }\n}\n";
+    fs::write(root.join("port.rs"), before).unwrap();
+    let call = json!({
+        "relativeFilePath": "port.rs",
+        "edits": [{
+            "oldString": "        let result_record = record.clone();",
+            "newString": "        let result_record = record.clone();\n        let _ = self.save_data();"
+        }],
+        "context": "persist before returning"
+    });
+
+    call_tool_in_workspace(&root, "edit_file", &call)
+        .unwrap_or_else(|e| panic!("the first call is an ordinary insert: {e}"));
+    let after = fs::read_to_string(root.join("port.rs")).unwrap();
+    assert_eq!(
+        after.matches("let _ = self.save_data();").count(),
+        1,
+        "the insert landed once: {after}"
+    );
+
+    let err = call_tool_in_workspace(&root, "edit_file", &call)
+        .err()
+        .map(|e| e.to_string())
+        .unwrap_or_else(|| "a replay of an applied edit writes a second copy".to_string());
+    assert!(err.contains("already on disk"), "{err}");
+    assert_eq!(
+        fs::read_to_string(root.join("port.rs")).unwrap(),
+        after,
+        "and the file still carries the insert once"
+    );
+}
+
 /// `lr7b_v22` in full shape. Turns 5, 7, 9 and 11 sent one byte-identical
 /// `edit_file` whose `oldString` was the file's own chain with rustfmt's line
 /// breaks undone, and all four were refused — burning three compile repairs and

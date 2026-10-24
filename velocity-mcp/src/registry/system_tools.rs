@@ -1901,6 +1901,71 @@ fn already_applied_at(file: &str, replacement: &str) -> Option<usize> {
     Some(hay[..at].matches('\n').count() + 1)
 }
 
+/// A replacement the file already carries at the site its own match found.
+#[derive(Debug, PartialEq, Eq)]
+struct SiteRepeat {
+    /// The line the replacement starts on, 1-based.
+    line: usize,
+    /// How many of its lines the write would put in the file a second time.
+    extra: usize,
+}
+
+/// Whether the file already carries a replacement at the site its own match
+/// found, and where.
+///
+/// `already_applied_at` answers that question from the whole file, so it has to
+/// demand a replacement long enough that a match cannot be luck. Here the site is
+/// one the `oldString` was proved to reach exactly once, so the only question left
+/// is whether the file goes on from there with the rest of the replacement — and
+/// proving that needs no length floor.
+///
+/// This is what a replayed write leaves behind. `lr7b_v31` sent one `edit_file`
+/// twice, byte for byte: `oldString` a single line, `newString` that line plus
+/// `let _ = self.save_data();`. The first call applied it. The second found the
+/// same unique site, spliced the same two lines over the same one, and left the
+/// file carrying the insert twice — after which every `oldString` the model built
+/// was stale, so turns 4 to 9 alternated a refusal with a re-read of the same
+/// fourteen lines and the transcript ended at 29 identical refusals.
+/// `trim_copied_context` could not have caught it: it needs a run of two
+/// reproduced lines, and the copy here is one.
+///
+/// Two limits keep the claim provable. The replacement has to be *longer* than
+/// the span it covers, because one of the same length is a rewrite, and a rewrite
+/// is where a model legitimately changes indentation — which this comparison,
+/// being blind to whitespace on purpose, would read as nothing to do. And the
+/// span has to cover whole lines, because a fragment's own line in the file holds
+/// more than the replacement's first line does, so the run below would be
+/// comparing two different things.
+fn already_written_at_site(hay: &str, start: usize, end: usize, patch: &str) -> Option<SiteRepeat> {
+    // An `oldString` that ends on a newline ends at the start of the next line,
+    // which is not a line of the span. Backing off one byte keeps the whole-line
+    // test below reading the span's own last line rather than its successor's.
+    let last = if end > start && hay.as_bytes()[end - 1] == b'\n' {
+        end - 1
+    } else {
+        end
+    };
+    let line_start = hay[..start].rfind('\n').map_or(0, |i| i + 1);
+    let line_end = hay[last..].find('\n').map_or(hay.len(), |i| last + i);
+    if !hay[line_start..start].trim().is_empty() || !hay[last..line_end].trim().is_empty() {
+        return None;
+    }
+    let want: Vec<&str> = patch.lines().map(str::trim).collect();
+    let covered = hay[start..end].lines().count();
+    if want.len() <= covered {
+        return None;
+    }
+    let got: Vec<&str> = hay[start..]
+        .lines()
+        .map(str::trim)
+        .take(want.len())
+        .collect();
+    (got == want).then(|| SiteRepeat {
+        line: hay[..start].matches('\n').count() + 1,
+        extra: want.len() - covered,
+    })
+}
+
 /// The line where the file already carries what a refused edit meant to write.
 ///
 /// A refusal whose `oldString` is absent has two causes and only one of them is
@@ -2583,6 +2648,26 @@ pub fn handle_system_tool(
                     // context, so it goes.
                     let at = working.find(&needle).unwrap_or(0);
                     let end = at + needle.len();
+                    // Refuse before writing, not after: the copy lands in the
+                    // file the moment the splice does, and the model's next
+                    // `oldString` is built from a picture of the file that no
+                    // longer matches it. The message has to carry "already on
+                    // disk" — that phrase is what `replay_advice` keys on to say
+                    // no version of this call can do anything, which is the one
+                    // thing a model replaying it needs to hear. See
+                    // `already_written_at_site`.
+                    if let Some(rep) = already_written_at_site(&working, at, end, &repl) {
+                        rejected.push(format!(
+                            "edit {n}: this change is already on disk \u{2014} {rel_path} carries \
+                             every line of its `newString` from line {} down, and its `oldString` \
+                             still matches inside that run. Applying it again would write {} of \
+                             those lines a second time. Nothing to redo here. If the compiler \
+                             still reports an error, it is asking for a different change, at the \
+                             line it names.",
+                            rep.line, rep.extra
+                        ));
+                        continue;
+                    }
                     let before = if is_rust { brace_delta(&needle) } else { 0 };
                     match splice_trimmed(&working, at, end, repl, n) {
                         Ok(s) => {
@@ -5289,6 +5374,144 @@ mod tests {
             ),
             super::ContextTrim::Keep
         ));
+    }
+
+    /// `lr7b_v31`'s replay, as the file stood after the first call applied it:
+    /// the one-line `oldString` still matches uniquely, and the line its
+    /// `newString` adds is already the file's next one.
+    const REPLAYED_FILE: &str = "    fn charge(&mut self, user: &str, record: UsageRecord) -> f64 {\n        let result_record = record.clone();\n        let _ = self.save_data();\n        result_record.current_cost\n    }\n";
+    const REPLAYED_SITE: &str = "        let result_record = record.clone();";
+    const REPLAYED_PATCH: &str =
+        "        let result_record = record.clone();\n        let _ = self.save_data();";
+
+    #[test]
+    fn a_replayed_insert_one_line_long_is_a_replay_and_not_a_copied_run() {
+        let (start, end) = site_of(REPLAYED_FILE, REPLAYED_SITE);
+        assert_eq!(
+            super::already_written_at_site(REPLAYED_FILE, start, end, REPLAYED_PATCH),
+            Some(super::SiteRepeat { line: 2, extra: 1 }),
+            "the file carries both lines of the replacement from line 2 down"
+        );
+        // And the guard below it cannot: one reproduced line is under
+        // `trim_copied_context`'s floor of two, which is the hole v31 fell
+        // through. See `one_repeated_line_is_the_models_to_write`.
+        assert!(
+            matches!(
+                super::trim_copied_context(REPLAYED_FILE, start, end, REPLAYED_PATCH),
+                super::ContextTrim::Keep
+            ),
+            "the copy here is a single line, so the run floor waves it through"
+        );
+    }
+
+    #[test]
+    fn an_insert_the_file_does_not_yet_carry_is_not_a_replay() {
+        let hay = "    fn charge(&mut self, record: UsageRecord) -> f64 {\n        let result_record = record.clone();\n        result_record.current_cost\n    }\n";
+        let (start, end) = site_of(hay, "        let result_record = record.clone();");
+        assert_eq!(
+            super::already_written_at_site(hay, start, end, REPLAYED_PATCH),
+            None,
+            "the second line is the change, and it is not there yet"
+        );
+    }
+
+    #[test]
+    fn a_replacement_the_same_length_as_its_site_is_a_rewrite_not_a_replay() {
+        // A rewrite is where a model legitimately changes indentation, and this
+        // comparison is blind to whitespace on purpose, so it has to stay out.
+        let hay = "fn f() {\n    let a = 1;\n    let b = 2;\n}\n";
+        let (start, end) = site_of(hay, "    let a = 1;");
+        assert_eq!(
+            super::already_written_at_site(hay, start, end, "        let a = 1;"),
+            None,
+            "one line over one line is the same length"
+        );
+        assert_eq!(
+            super::already_written_at_site(hay, start, end, "    let a = compute();"),
+            None,
+            "and a different line of the same count is the ordinary case"
+        );
+    }
+
+    #[test]
+    fn a_site_that_is_a_fragment_of_its_line_is_not_a_replay() {
+        // Both of these would match the run below if the whole-line test were
+        // lifted, and both would then name a line that does not hold what the
+        // refusal says it holds: line 2 of the first file is `let a = 1;`, not
+        // the replacement's first line `a = 1;`. A diagnosis that points at the
+        // wrong line is worse than one that points at none, because the model
+        // reads it and finds something else there.
+        let hay = "fn f() {\n    let a = 1;\n    let z = 9;\n}\n";
+        let (start, end) = site_of(hay, "a = 1;");
+        assert_eq!(
+            super::already_written_at_site(hay, start, end, "a = 1;\n    let z = 9;"),
+            None,
+            "the site begins inside its line, so the file holds more there"
+        );
+        let hay = "fn f() {\n    let _ = self.save_data();\n}\n";
+        let (start, end) = site_of(hay, "let _ = self.save_data");
+        assert_eq!(
+            super::already_written_at_site(hay, start, end, "let _ = self.save_data();\n}"),
+            None,
+            "and so does one that ends inside it"
+        );
+    }
+
+    #[test]
+    fn a_replay_names_the_line_the_replacement_starts_on_however_deep() {
+        let hay = "use std::collections::HashMap;\n\npub struct M {\n    user_dict: HashMap<String, UsageRecord>,\n}\n\nimpl M {\n    fn charge(&mut self, user: &str) -> f64 {\n        let record = self.user_dict.get(user).unwrap();\n        let result_record = record.clone();\n        let _ = self.save_data();\n        let _ = self.flush();\n        result_record.current_cost\n    }\n}\n";
+        let (start, end) = site_of(hay, "        let result_record = record.clone();");
+        let patch = "        let result_record = record.clone();\n        let _ = self.save_data();\n        let _ = self.flush();";
+        assert_eq!(
+            super::already_written_at_site(hay, start, end, patch),
+            Some(super::SiteRepeat { line: 10, extra: 2 }),
+            "line 10 is where the replacement starts, and two of its lines are the copy"
+        );
+    }
+
+    #[test]
+    fn a_replay_is_read_by_line_in_a_crlf_file() {
+        let hay = REPLAYED_FILE.replace('\n', "\r\n");
+        let patch = REPLAYED_PATCH.replace('\n', "\r\n");
+        let site = REPLAYED_SITE.to_string();
+        let (start, end) = site_of(&hay, &site);
+        assert_eq!(
+            super::already_written_at_site(&hay, start, end, &patch),
+            Some(super::SiteRepeat { line: 2, extra: 1 }),
+            "a trailing `\\r` is whitespace, and the line count is the same"
+        );
+    }
+
+    #[test]
+    fn a_replay_the_formatter_reindented_is_still_a_replay() {
+        let hay = "fn charge(&mut self, record: UsageRecord) -> f64 {\n    let result_record = record.clone();\n    let _ = self.save_data();\n    result_record.current_cost\n}\n";
+        // The model replays the eight spaces it wrote the first time; rustfmt
+        // took them down to four on the way to disk, and a model cannot count
+        // indentation — which is why `indent_rescue` exists. Blindness here is
+        // the same fact, and the site is proved, so there is nothing to guess.
+        let patch =
+            "        let result_record = record.clone();\n        let _ = self.save_data();";
+        let (start, end) = site_of(hay, "    let result_record = record.clone();");
+        assert_eq!(
+            super::already_written_at_site(hay, start, end, patch),
+            Some(super::SiteRepeat { line: 2, extra: 1 }),
+            "the two sides differ only in leading whitespace"
+        );
+    }
+
+    #[test]
+    fn an_old_string_that_ends_on_a_newline_still_proves_the_replay() {
+        let hay = "fn f() {\n    let a = 1;\n    let _ = save();\n    done();\n}\n";
+        // The needle carries its own line break, so `end` lands at the start of
+        // the line after the site. Without backing off a byte the whole-line test
+        // reads that successor — `let _ = save();`, the very line the replacement
+        // adds — and calls the site a fragment.
+        let (start, end) = site_of(hay, "    let a = 1;\n");
+        assert_eq!(
+            super::already_written_at_site(hay, start, end, "    let a = 1;\n    let _ = save();"),
+            Some(super::SiteRepeat { line: 2, extra: 1 }),
+            "the span still covers exactly one whole line"
+        );
     }
 
     #[test]
