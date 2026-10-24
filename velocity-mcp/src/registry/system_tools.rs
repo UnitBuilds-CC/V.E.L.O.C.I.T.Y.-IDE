@@ -874,6 +874,222 @@ impl NearMiss {
     }
 }
 
+/// A refused `oldString` that quotes two runs of the file and steps over the
+/// lines between them.
+#[derive(Debug, PartialEq)]
+struct SkippedBlock {
+    /// 1-based file line the head the needle matched starts on.
+    head_from: usize,
+    /// 1-based file line that head ends on.
+    head_to: usize,
+    /// How many of the needle's non-blank lines that head is.
+    head: usize,
+    /// How many non-blank lines the needle has.
+    total: usize,
+    /// The needle's own 1-based line where the head ran out.
+    needle_line: usize,
+    /// What the needle wrote there, which is not what the file has there.
+    wrote: String,
+    /// 1-based file line the needle's remaining lines resume on.
+    resumes_at: usize,
+    /// 1-based file line they end on, so the span to copy has a floor and a
+    /// ceiling the model can hand to `read_file`.
+    tail_to: usize,
+    /// The file's own lines in between, numbered and quoted as they stand.
+    omitted: Vec<(usize, String)>,
+}
+
+/// Where a refused `oldString` steps over the file, and what it steps over.
+///
+/// [`nearest_miss`] is a prefix run, so it reports the first line that does not
+/// match and stops looking. That is the right answer when the needle quotes one
+/// region and gets one line of it wrong, and it is the wrong answer when the
+/// needle quotes *two* regions and leaves the lines between them out — because
+/// then the line it names is not a mistake, it is the needle's own tail standing
+/// further down the file, and the prescription that follows from reading it as a
+/// mistake ("send the same edit with the file's version of that one line") builds
+/// an `oldString` covering the head plus one line of the block that was skipped,
+/// against a `newString` written for the whole span. The splice would delete the
+/// rest of the block.
+///
+/// `lr7b_v32` died on exactly that. Turns 5, 6, 8 and 10 sent one byte-identical
+/// `edit_file`: an `oldString` of twelve lines that were the file's 288 to 298
+/// and then its 303, leaving out 299 to 302, with a `newString` that wrote all
+/// sixteen back. Each attempt was answered "11 of its 12 non-blank lines are in
+/// the file in that order and the next one is not. Its line 12 is where they part
+/// — you wrote `}`, the file says `self.user_dict`", which is a true sentence
+/// about a false shape, and the run re-sent the same call four times rather than
+/// act on it. It ended at 3/3 compile-repair turns and 0 refunds with the E0499
+/// it started with.
+///
+/// Three things have to be proved before this says anything, because a hole is
+/// an inference about intent and the file alone does not carry it:
+///
+/// - the head has to match at exactly one place. Two places is no site, and the
+///   span named below would be a guess dressed as a line number.
+/// - the tail has to resume at exactly one place that leaves a block of at most
+///   `MAX_OMITTED` lines between. A one-line tail like `}` stands on hundreds
+///   of lines, so "the first one after the break" is not a proof; the block has
+///   to be short enough that the two runs are still one region.
+/// - the `newString` has to carry the skipped lines, in order and contiguously,
+///   right through to the end of the tail. That is what picks the resumption out
+///   of the many a short tail could have, and it is also the whole of the claim
+///   the message makes: the replacement already covers the block, so widening the
+///   `oldString` to match it is the only thing this edit is missing.
+///
+/// This refuses rather than applies. Widening a span is not the same as
+/// re-indenting one or joining what a formatter broke: the needle here also says
+/// nothing about whether the lines *above* the head belong in the span, and
+/// `lr7b_v32`'s did not — its `newString` opened with a `let` the file already
+/// had on the line its `oldString` started below, so writing it would have
+/// declared that binding twice. Naming the hole is the most this can prove.
+fn skipped_block(hay: &str, needle: &str, patch: &str) -> Option<SkippedBlock> {
+    /// File lines a needle may step over and still be one region with a hole in
+    /// it rather than two regions quoted by accident.
+    const MAX_OMITTED: usize = 12;
+    /// Below this there is no head *and* a tail to resume.
+    const MIN_TOTAL: usize = 3;
+    const MAX_LINES: usize = 60;
+    let raw: Vec<&str> = hay.lines().collect();
+    // Blank lines carry no text to match, so dropping them up front makes every
+    // run below contiguous in one index space — the same reading `nearest_miss`
+    // and `run_start` give, without their inner skip loops.
+    let file: Vec<(usize, &str)> = raw
+        .iter()
+        .enumerate()
+        .map(|(i, l)| (i, l.trim()))
+        .filter(|(_, l)| !l.is_empty())
+        .collect();
+    let want: Vec<(usize, &str)> = needle
+        .lines()
+        .enumerate()
+        .map(|(i, l)| (i + 1, l.trim()))
+        .filter(|(_, l)| !l.is_empty())
+        .take(MAX_LINES)
+        .collect();
+    if want.len() < MIN_TOTAL {
+        return None;
+    }
+    let have: Vec<&str> = patch
+        .lines()
+        .map(str::trim)
+        .filter(|l| !l.is_empty())
+        .collect();
+    // The longest run of the needle's own leading lines that the file carries,
+    // and every place it carries it. A head of zero is declined by the majority
+    // floor below whatever `sites` says, so the run it records needs no floor of
+    // its own here.
+    let mut head = 0usize;
+    let mut sites: Vec<usize> = Vec::new();
+    for p in 0..file.len() {
+        let mut k = 0;
+        while k < want.len() && p + k < file.len() && file[p + k].1 == want[k].1 {
+            k += 1;
+        }
+        if k > head {
+            head = k;
+            sites.clear();
+        }
+        if k == head {
+            sites.push(p);
+        }
+    }
+    // A head that is the whole needle is a match, not a hole, and one that is
+    // less than half of it is a coincidence the tail says nothing about. That
+    // floor is also what keeps the head at two lines or more, since the needle
+    // has three at the very least — and, with the head a run of the file itself,
+    // what keeps the tail no longer than the file has lines left to search.
+    if head >= want.len() || head * 2 < want.len() || sites.len() != 1 {
+        return None;
+    }
+    let p = sites[0];
+    let tail: Vec<&str> = want[head..].iter().map(|&(_, l)| l).collect();
+    let mut hits: Vec<usize> = Vec::new();
+    for q in (p + head + 1)..=file.len() - tail.len() {
+        if file[q..q + tail.len()]
+            .iter()
+            .map(|&(_, l)| l)
+            .ne(tail.iter().copied())
+        {
+            continue;
+        }
+        let omitted = &file[p + head..q];
+        if omitted.len() > MAX_OMITTED {
+            break;
+        }
+        // The witness: the replacement carries the skipped lines and the tail
+        // after them as one unbroken run, which is what makes this span the one
+        // the edit means rather than a place the tail happens to stand.
+        let needed: Vec<&str> = omitted
+            .iter()
+            .map(|&(_, l)| l)
+            .chain(tail.iter().copied())
+            .collect();
+        if !have.windows(needed.len()).any(|w| w == needed.as_slice()) {
+            continue;
+        }
+        hits.push(q);
+        if hits.len() > 1 {
+            return None;
+        }
+    }
+    let q = *hits.first()?;
+    let omitted = &file[p + head..q];
+    Some(SkippedBlock {
+        head_from: file[p].0 + 1,
+        head_to: file[p + head - 1].0 + 1,
+        head,
+        total: want.len(),
+        needle_line: want[head].0,
+        wrote: clipped_line(want[head].1),
+        resumes_at: file[q].0 + 1,
+        tail_to: file[q + tail.len() - 1].0 + 1,
+        omitted: omitted
+            .iter()
+            .map(|&(i, _)| (i + 1, clipped_line(raw[i])))
+            .collect(),
+    })
+}
+
+/// The refusal for an `oldString` with a hole in it: both runs it did quote, by
+/// line, and the file's own lines between them, which are the part it left out
+/// and the part its `newString` already writes back.
+///
+/// The lines are quoted with their own indentation and their own numbers rather
+/// than trimmed, because the model has to put them into an `oldString` that will
+/// be matched byte for byte — the one thing it cannot do is count leading
+/// whitespace, which is why [`indent_rescue`] exists.
+fn skipped_block_message(rel_path: &str, s: &SkippedBlock) -> String {
+    let quoted = s
+        .omitted
+        .iter()
+        .map(|(line, text)| format!("    {line}| {text}"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let n = s.omitted.len();
+    format!(
+        "its `oldString` is not in {rel_path}, and it is not one line wrong either — it has a \
+         hole in it. {head} of its {total} non-blank lines are the file's own, lines {from} to \
+         {to}; its line {needle_line}, `{wrote}`, is not what the file has next but the file's \
+         line {resumes}. Between the two the file carries {n} line(s) the `oldString` leaves \
+         out:\n{quoted}\nIts `newString` writes those {n} line(s) back and the line after them, \
+         which is how the span they sit in is the one this edit means. So widen the `oldString` \
+         to cover it: `read_file` lines {from} to {tail_to} and copy that whole run in, the {n} \
+         line(s) above included, and send the same `newString`. Do not swap your line \
+         {needle_line} for the file's line {first_omitted} — nothing here is a one-line \
+         difference, and that would leave the hole where it is.",
+        head = s.head,
+        total = s.total,
+        from = s.head_from,
+        to = s.head_to,
+        needle_line = s.needle_line,
+        wrote = s.wrote,
+        resumes = s.resumes_at,
+        tail_to = s.tail_to,
+        first_omitted = s.omitted[0].0,
+    )
+}
+
 /// A refused `oldString` whose head is absent from the file but whose tail is
 /// present, complete, and in exactly one place.
 #[derive(Debug, PartialEq)]
@@ -2571,6 +2787,18 @@ pub fn handle_system_tool(
                     // while the history is a guess about it. See
                     // `NearMiss::locates_the_site`.
                     let miss = nearest_miss(&current, old);
+                    // The hole answers the case the prefix run misreads: a needle
+                    // that quotes two runs of the file and steps over the lines
+                    // between them scores `matched` up to the break and then
+                    // reports the needle's own tail as the line that differs,
+                    // which prescribes a substitution that would delete the rest
+                    // of the block. It ranks above that one because it says
+                    // strictly more — the same head, plus where the tail really
+                    // is and what the file holds in between — and above the fold
+                    // for the same reason. It needs the `newString` as its
+                    // witness, so it reads `current` for the file and `new` for
+                    // the patch. See `skipped_block`.
+                    let skipped = skipped_block(&current, old, new);
                     // The tail anchor answers the case the prefix run cannot: a
                     // needle whose first line is wrong scores zero on every site
                     // however exactly the rest of it stands in the file.
@@ -2607,7 +2835,8 @@ pub fn handle_system_tool(
                     } else {
                         terminator_miss(&current, old)
                     };
-                    let located = miss.as_ref().is_some_and(NearMiss::locates_the_site)
+                    let located = skipped.is_some()
+                        || miss.as_ref().is_some_and(NearMiss::locates_the_site)
                         || anchor.is_some()
                         || terminator.is_some();
                     if !located {
@@ -2618,6 +2847,10 @@ pub fn handle_system_tool(
                             ));
                             continue;
                         }
+                    }
+                    if let Some(s) = skipped {
+                        rejected.push(format!("edit {n}: {}", skipped_block_message(rel_path, &s)));
+                        continue;
                     }
                     if let Some(miss) = miss {
                         rejected.push(format!("edit {n}: {}", near_miss_message(rel_path, &miss)));
@@ -5299,6 +5532,425 @@ mod tests {
         assert_eq!(m.file_lines, 7);
         assert_eq!(m.file_tail, "})", "no stray carriage return in the quote");
         assert_eq!(m.wrote_tail, "});");
+    }
+
+    /// `lr7b_v32`'s file at the E0499, reduced to the region that matters: a
+    /// binding whose initializer borrows `self.user_dict` mutably and holds the
+    /// borrow, and a tail expression that borrows it again.
+    const HOLED_FILE: &str = "\
+impl BudgetManager {
+    fn update_cost(&mut self, user: &str) -> f64 {
+        let record = self.input(user);
+        let _ = self.save_data();
+        let result_record =
+            self.user_dict
+                .values_mut()
+                .next()
+                .unwrap_or(&mut PersistedUserRecord {
+                    total_budget: 0.0,
+                    current_cost: 0.0,
+                });
+        self.user_dict
+            .values_mut()
+            .next()
+            .unwrap_or(&mut *result_record)
+    }
+}
+";
+
+    /// v32's `oldString`: the file's lines 6 to 12, then its line 17. Lines 13
+    /// to 16 are the hole.
+    const HOLED_NEEDLE: &str = "\
+            self.user_dict
+                .values_mut()
+                .next()
+                .unwrap_or(&mut PersistedUserRecord {
+                    total_budget: 0.0,
+                    current_cost: 0.0,
+                });
+    }";
+
+    /// v32's `newString`: the binding folded onto one line, then every line of
+    /// the hole written back and the `}` under it.
+    const HOLED_PATCH: &str = "\
+        let result_record = self.user_dict.values_mut().next().unwrap_or(&mut PersistedUserRecord {
+            total_budget: 0.0,
+            current_cost: 0.0,
+        });
+        self.user_dict
+            .values_mut()
+            .next()
+            .unwrap_or(&mut *result_record)
+    }";
+
+    #[test]
+    fn a_needle_that_steps_over_the_file_names_the_lines_it_stepped_over() {
+        let s = super::skipped_block(HOLED_FILE, HOLED_NEEDLE, HOLED_PATCH)
+            .expect("seven of its eight lines are the file's and the eighth is four lines on");
+        assert_eq!((s.head_from, s.head_to), (6, 12), "{s:?}");
+        assert_eq!((s.head, s.total), (7, 8), "{s:?}");
+        assert_eq!(
+            s.needle_line, 8,
+            "the needle's own line where the head ran out"
+        );
+        assert_eq!(s.wrote, "}");
+        assert_eq!(s.resumes_at, 17, "where that line really stands");
+        assert_eq!(s.tail_to, 17);
+        assert_eq!(
+            s.omitted,
+            vec![
+                (13, "        self.user_dict".to_string()),
+                (14, "            .values_mut()".to_string()),
+                (15, "            .next()".to_string()),
+                (
+                    16,
+                    "            .unwrap_or(&mut *result_record)".to_string()
+                ),
+            ],
+            "quoted as the file holds them, indentation and all: the model has to paste these \
+             into an `oldString` that is matched byte for byte, and counting whitespace is the \
+             one thing it cannot do"
+        );
+    }
+
+    #[test]
+    fn the_hole_is_what_the_prefix_run_reads_as_one_wrong_line() {
+        // Both locators fire on this needle, which is why the rank between them
+        // is what the model reads. Left to the prefix run it is told "its line 8
+        // is where they part — you wrote `}`, the file says `self.user_dict`.
+        // Send the same edit with the file's version of that one line", and
+        // obeying that builds an `oldString` covering lines 6 to 13 against a
+        // `newString` written for 6 to 17 — the splice then deletes 14 to 17.
+        let m = super::nearest_miss(HOLED_FILE, HOLED_NEEDLE).expect("the same prefix run");
+        assert_eq!((m.line, m.matched, m.total), (6, 7, 8), "{m:?}");
+        assert_eq!(m.needle_line, 8);
+        assert_eq!(m.file_says, "self.user_dict");
+        assert!(
+            super::skipped_block(HOLED_FILE, HOLED_NEEDLE, HOLED_PATCH).is_some(),
+            "so the hole has to be pushed first, and the integration test says which one wins"
+        );
+    }
+
+    #[test]
+    fn a_needle_whose_last_line_is_nowhere_in_the_file_has_no_hole() {
+        // v19's shape, and the one `nearest_miss` was built for: one line
+        // genuinely wrong. There is nothing further down for the needle to
+        // resume at, so the substitution it prescribes is the fix.
+        let mut lines: Vec<&str> = HOLED_NEEDLE.lines().collect();
+        lines.pop();
+        lines.push("        save(result_record)");
+        let needle = lines.join("\n");
+        assert!(
+            super::nearest_miss(HOLED_FILE, &needle).is_some(),
+            "the near miss still reads it as one line off"
+        );
+        assert_eq!(
+            super::skipped_block(HOLED_FILE, &needle, HOLED_PATCH),
+            None,
+            "a line the file has never held is a mistake, not a hole"
+        );
+    }
+
+    #[test]
+    fn a_hole_the_replacement_does_not_write_back_is_not_named() {
+        // The witness is the whole of the claim. Without those lines in the
+        // `newString`, widening the span would delete them — and with nothing
+        // tying the tail to the head, the two runs the needle quotes could be
+        // anywhere in the file relative to each other.
+        //
+        // The tail here is three lines and resumes in exactly one place, so the
+        // witness is the only thing declining it. `HOLED_NEEDLE`'s tail is a
+        // bare `}`, which a file this size holds twice, and there the
+        // two-resumption guard answers first — the integration test covers that
+        // shape and this one has to cover the witness on its own.
+        let hay = "\
+fn a() {
+    let kept = self.take();
+    let used = self.give();
+    let total = self.sum();
+    log(kept);
+    save(kept);
+    done(used);
+}
+";
+        let needle = "    let kept = self.take();\n    let used = self.give();\n    let total = self.sum();\n    save(kept);\n    done(used);\n}";
+        let witnessed = "    log(kept);\n    save(kept);\n    done(used);\n}";
+        assert!(
+            super::skipped_block(hay, needle, witnessed).is_some(),
+            "the same shape with the hole written back is named"
+        );
+        let unwitnessed = "    save(kept);\n    done(used);\n}";
+        assert_eq!(
+            super::skipped_block(hay, needle, unwitnessed),
+            None,
+            "a span the replacement does not carry is a span that widening would delete"
+        );
+    }
+
+    #[test]
+    fn a_needle_the_file_already_carries_whole_is_not_a_hole() {
+        // The head run is the whole needle, so no line of it is wrong and there
+        // is nothing for a tail to resume at. This shape belongs to the `already
+        // on disk` refusal, and it is the `head >= want.len()` clause that keeps
+        // the hole out of it: past that clause there is no needle line `head` to
+        // quote, and the head ends one line short of the file's end here, which
+        // is what leaves the search exactly one place to resume and so reaches
+        // the quote rather than declining on the way.
+        let hay = "\
+fn a() {
+    let kept = self.take();
+    let used = self.give();
+    log(kept);
+}
+";
+        let needle = "    let kept = self.take();\n    let used = self.give();\n    log(kept);";
+        let patch = "    log(kept);\n}";
+        assert_eq!(
+            super::skipped_block(hay, needle, patch),
+            None,
+            "a needle the file holds whole has no hole in it"
+        );
+    }
+
+    #[test]
+    fn a_two_line_needle_leaves_no_head_to_anchor_a_hole() {
+        // One line of head against one line of tail. `head * 2 < want.len()` is
+        // `2 < 2` here, so the majority floor waves this through and `MIN_TOTAL`
+        // is the only thing declining it — and it has to, because the message
+        // would read "1 of its 2 non-blank lines are the file's own, lines 2 to
+        // 2", which names a line and not a span. Naming the line that differs is
+        // `nearest_miss`'s answer, and it gives the one thing this cannot: the
+        // text to put there.
+        let hay = "\
+fn a() {
+    let kept = self.take();
+    let used = self.give();
+    log(kept);
+    save(kept);
+    done(used);
+}
+";
+        let needle = "    let kept = self.take();\n    done(used);";
+        let patch = "    let used = self.give();\n    log(kept);\n    save(kept);\n    done(used);";
+        assert_eq!(
+            super::skipped_block(hay, needle, patch),
+            None,
+            "one matched line is a line, not a head"
+        );
+    }
+
+    #[test]
+    fn a_head_that_stands_in_two_places_names_no_site() {
+        // Two heads is two spans, and quoting either names a region the needle
+        // never quoted. The two stands sit four lines apart and the tail resumes
+        // once beyond the second of them, so this declines on the site count and
+        // not on how far the head is from the tail: doubling `HOLED_FILE`'s block
+        // instead puts thirteen lines between the first head and the `}`, and
+        // the distance cap answers before the count ever gets asked.
+        let hay = "\
+fn a() {
+    let kept = self.take();
+    let used = self.give();
+    log(kept);
+    let kept = self.take();
+    let used = self.give();
+    mid(kept);
+    save(kept);
+    done(used);
+}
+";
+        let needle = "    let kept = self.take();\n    let used = self.give();\n    save(kept);\n    done(used);";
+        let patch = "    log(kept);\n    let kept = self.take();\n    let used = self.give();\n    mid(kept);\n    save(kept);\n    done(used);";
+        assert_eq!(
+            super::skipped_block(hay, needle, patch),
+            None,
+            "the head the needle quoted is one of two, and nothing says which"
+        );
+    }
+
+    #[test]
+    fn a_tail_that_resumes_in_two_witnessed_places_names_neither() {
+        let hay = "\
+fn a() {
+    let kept = self.take();
+    let used = self.give();
+    log(kept);
+    save(kept);
+    done(used);
+    log(kept);
+    save(kept);
+    done(used);
+}
+";
+        // The head is lines 2 to 3, and the tail `save(kept); done(used);`
+        // resumes at 5 and again at 8, with the `newString` carrying both
+        // blocks. Two resumptions is no resumption: naming the first would put
+        // a line number on a guess.
+        let needle = "    let kept = self.take();\n    let used = self.give();\n    save(kept);\n    done(used);";
+        let patch = "    log(kept);\n    save(kept);\n    done(used);\n    log(kept);\n    save(kept);\n    done(used);";
+        assert_eq!(super::skipped_block(hay, needle, patch), None);
+    }
+
+    #[test]
+    fn a_block_too_big_to_be_one_region_is_not_named() {
+        let middle: String = (0..13).map(|i| format!("        step_{i}();\n")).collect();
+        let hay = format!(
+            "fn a() {{\n        let kept = self.take();\n        let used = self.give();\n\
+             {middle}        save(kept);\n    }}\n"
+        );
+        let needle = "        let kept = self.take();\n        let used = self.give();\n        save(kept);\n    }";
+        // The `newString` writes every skipped line back, so the cap is the only
+        // thing declining this one. Thirteen lines apart, the two runs the
+        // needle quotes are two regions and the span between them is not what
+        // the edit means.
+        let patch = format!("{middle}        save(kept);\n    }}");
+        assert_eq!(super::skipped_block(&hay, needle, &patch), None);
+    }
+
+    #[test]
+    fn a_head_shorter_than_half_the_needle_is_a_coincidence() {
+        let hay = "\
+fn a() {
+    let kept = self.take();
+    let used = self.give();
+    log(kept);
+    save(kept);
+    done(used);
+    end(kept);
+}
+";
+        // Two of five lines matched, uniquely, with the tail resuming at 5 and
+        // the `newString` carrying the block. The same floor `nearest_miss`
+        // applies still declines it: a head that short is a prefix the file
+        // happens to share, not evidence of which region the needle meant.
+        let needle = "    let kept = self.take();\n    let used = self.give();\n    save(kept);\n    done(used);\n    end(kept);";
+        let patch = "    log(kept);\n    save(kept);\n    done(used);\n    end(kept);";
+        assert_eq!(super::skipped_block(hay, needle, patch), None);
+    }
+
+    #[test]
+    fn a_hole_whose_tail_is_several_lines_is_still_one_hole() {
+        let hay = "\
+fn a() {
+    let kept = self.take();
+    let used = self.give();
+    let total = self.sum();
+    log(kept);
+    save(kept);
+    done(used);
+}
+";
+        let needle = "    let kept = self.take();\n    let used = self.give();\n    let total = self.sum();\n    save(kept);\n    done(used);\n}";
+        let patch = "    log(kept);\n    save(kept);\n    done(used);\n}";
+        let s = super::skipped_block(hay, needle, patch).expect("one line skipped, three resumed");
+        assert_eq!((s.head_from, s.head_to), (2, 4), "{s:?}");
+        assert_eq!((s.head, s.total, s.needle_line), (3, 6, 4), "{s:?}");
+        assert_eq!((s.resumes_at, s.tail_to), (6, 8), "{s:?}");
+        assert_eq!(s.omitted, vec![(5, "    log(kept);".to_string())]);
+        // And a near miss this loose does not locate the site: three of six
+        // lines matched leaves two of the needle unexamined past the divergence,
+        // which is more than `NearMiss::locates_the_site` allows. The hole does
+        // locate it, so `located` has to count the one and not only the other.
+        let m = super::nearest_miss(hay, needle).expect("the same prefix run");
+        assert!(!m.locates_the_site(), "{m:?}");
+    }
+
+    #[test]
+    fn a_hole_is_read_by_line_in_a_crlf_file() {
+        let hay = HOLED_FILE.replace('\n', "\r\n");
+        let needle = HOLED_NEEDLE.replace('\n', "\r\n");
+        let patch = HOLED_PATCH.replace('\n', "\r\n");
+        let s = super::skipped_block(&hay, &needle, &patch).expect("endings are not text");
+        assert_eq!(
+            s,
+            super::skipped_block(HOLED_FILE, HOLED_NEEDLE, HOLED_PATCH).unwrap(),
+            "same lines, same numbers, same quotes"
+        );
+        assert!(
+            s.omitted.iter().all(|(_, t)| !t.contains('\r')),
+            "no stray carriage return in a quote the model has to paste back: {:?}",
+            s.omitted
+        );
+    }
+
+    #[test]
+    fn a_hole_spanning_blank_lines_names_the_lines_it_really_skips() {
+        let hay = HOLED_FILE.replace(
+            "        self.user_dict\n            .values_mut()\n            .next()\n            .unwrap_or(&mut *result_record)\n",
+            "\n        self.user_dict\n\n            .values_mut()\n            .next()\n            .unwrap_or(&mut *result_record)\n",
+        );
+        assert_ne!(hay, HOLED_FILE, "the fixture holds the lines this splits");
+        let s = super::skipped_block(&hay, HOLED_NEEDLE, HOLED_PATCH)
+            .expect("a blank line carries no text to match, so it is stepped over like any other");
+        assert_eq!(
+            s.omitted
+                .iter()
+                .map(|(line, _)| *line)
+                .collect::<Vec<usize>>(),
+            vec![14, 16, 17, 18],
+            "the file's own numbering, blanks included: {s:?}"
+        );
+        assert_eq!(s.resumes_at, 19, "{s:?}");
+        assert_eq!((s.head_from, s.head_to), (6, 12), "{s:?}");
+    }
+
+    #[test]
+    fn the_hole_quotes_a_skipped_line_with_its_trailing_space() {
+        // The quote is what the model pastes into an `oldString` that is matched
+        // byte for byte, so a space the file carries and the message drops is a
+        // space the next call gets wrong. Leading whitespace is kept for exactly
+        // that reason, and trailing whitespace is kept for the same one — the
+        // lines are matched trimmed, so padding them changes nothing but the
+        // quote.
+        let hay = HOLED_FILE.replace(
+            "        self.user_dict\n            .values_mut()\n",
+            "        self.user_dict\n            .values_mut()  \n",
+        );
+        assert_ne!(hay, HOLED_FILE, "the fixture holds the lines this pads");
+        let s = super::skipped_block(&hay, HOLED_NEEDLE, HOLED_PATCH).expect("padding is not text");
+        assert_eq!(
+            s.omitted[1],
+            (14, "            .values_mut()  ".to_string()),
+            "the file's own bytes, so an `oldString` built from them matches: {s:?}"
+        );
+    }
+
+    #[test]
+    fn the_hole_message_names_the_span_and_forbids_the_one_line_swap() {
+        let s = super::skipped_block(HOLED_FILE, HOLED_NEEDLE, HOLED_PATCH).expect("v32's shape");
+        let msg = super::skipped_block_message("port.rs", &s);
+        assert!(
+            msg.contains("hole in it"),
+            "the phrase `replay_advice` keys on to give this refusal its own lever: {msg}"
+        );
+        assert!(msg.contains("7 of its 8 non-blank lines"), "{msg}");
+        assert!(msg.contains("lines 6 to 12"), "the head's own span: {msg}");
+        assert!(msg.contains("its line 8, `}`"), "{msg}");
+        assert!(
+            msg.contains("the file's line 17"),
+            "where that line really stands, so it is not read as a mistake: {msg}"
+        );
+        assert!(
+            msg.contains("    13|         self.user_dict"),
+            "quoted with its number and its own indentation: {msg}"
+        );
+        assert!(
+            msg.contains("    16|             .unwrap_or(&mut *result_record)"),
+            "and all of them, not a summary: {msg}"
+        );
+        assert!(
+            msg.contains("lines 6 to 17 and copy that whole run in"),
+            "a span to copy, not a region to hunt for: {msg}"
+        );
+        assert!(
+            msg.contains("Do not swap your line 8 for the file's line 13"),
+            "the near miss prescribes exactly that swap, and here it deletes lines 14 to 17: {msg}"
+        );
+        assert!(
+            !msg.contains("is where they part"),
+            "and it must not carry the near miss's own key, or a replay of this call is answered \
+             for the wrong diagnosis: {msg}"
+        );
     }
 
     /// v23 turn 4's `oldString`: the chain as the file wraps it, and the `}`

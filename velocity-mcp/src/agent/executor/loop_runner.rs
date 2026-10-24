@@ -4685,7 +4685,13 @@ fn note_refusal_repeat(
 /// close what it opened. Those two keys have to stay apart, because the note is
 /// appended to the refusal and a note that contradicts it wins.
 fn replay_advice(refusal: &str) -> &'static str {
-    if refusal.contains("is where they part") {
+    if refusal.contains("hole in it") {
+        "The refusal quotes every line the `oldString` steps over, with the file's own numbers, \
+         and names the span that has to be covered, so there is nothing to hunt for: put those \
+         lines into the `oldString` between the run above them and the run below, and send the \
+         same `newString`, which already writes them back. A hole is not mended by changing one \
+         line on either side of it, and re-sending this call unchanged cannot apply."
+    } else if refusal.contains("is where they part") {
         "The refusal quotes the file's own version of that line after \"the file says\". Put it \
          into the `oldString` in place of the line you wrote and send the same edit again. Every \
          other line of the `oldString` already matches the file, so re-reading it learns nothing \
@@ -7994,6 +8000,35 @@ mod tests {
             "a read returns the same line: {near}"
         );
         assert!(!near.contains("Widen"), "{near}");
+
+        // The `lr7b_v32` case, which is the near miss above with the diagnosis
+        // turned the right way round: the needle's last line is not wrong, it is
+        // four lines further down the file, and the refusal quotes what is in
+        // between. The lever has to be the quoted lines, and it has to stay off
+        // the near-miss branch's two claims — that the file's version of one line
+        // is the fix, and that re-reading learns nothing. Both are false here,
+        // and the second one is what kept v31 re-reading a region it had just
+        // read.
+        let holed = replay_advice(
+            "Error executing tool: no edits were applied to a.rs; the file is unchanged:\n\
+             edit 1: its `oldString` is not in a.rs, and it is not one line wrong either — it has \
+             a hole in it. 7 of its 8 non-blank lines are the file's own, lines 6 to 12; its line \
+             8, `}`, is not what the file has next but the file's line 17.",
+        );
+        assert!(holed.contains("hole"), "{holed}");
+        assert!(
+            holed.contains("`oldString`"),
+            "the action is to fill the hole in the needle it already has: {holed}"
+        );
+        assert!(
+            !holed.contains("learns nothing"),
+            "the near-miss branch's claim, and the one that cost v31 its last six turns: {holed}"
+        );
+        assert!(
+            !holed.contains("the file says"),
+            "a one-line swap is exactly what this refusal forbids: {holed}"
+        );
+        assert_ne!(holed, near, "two diagnoses, two levers");
 
         // The brace-drift refusal says "not in place of it" in ordinary prose.
         // It is not an ambiguous-site refusal, and a block left open is the

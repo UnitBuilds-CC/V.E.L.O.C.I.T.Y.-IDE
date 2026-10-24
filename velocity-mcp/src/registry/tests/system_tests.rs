@@ -3597,3 +3597,245 @@ fn the_byte_count_in_the_success_message_is_the_file_rustfmt_left_behind() {
         "the count has to be the file's, not the buffer's: {out}"
     );
 }
+
+/// `lr7b_v32`'s file at the E0499, reduced to the region that matters.
+const HOLED_FILE: &str = "impl BudgetManager {\n    fn update_cost(&mut self, user: &str) -> f64 {\n        let record = self.input(user);\n        let _ = self.save_data();\n        let result_record =\n            self.user_dict\n                .values_mut()\n                .next()\n                .unwrap_or(&mut PersistedUserRecord {\n                    total_budget: 0.0,\n                    current_cost: 0.0,\n                });\n        self.user_dict\n            .values_mut()\n            .next()\n            .unwrap_or(&mut *result_record)\n    }\n}\n";
+
+/// v32's `oldString`: the file's lines 6 to 12, then its line 17. Lines 13 to
+/// 16 are the hole.
+const HOLED_NEEDLE: &str = "            self.user_dict\n                .values_mut()\n                .next()\n                .unwrap_or(&mut PersistedUserRecord {\n                    total_budget: 0.0,\n                    current_cost: 0.0,\n                });\n    }";
+
+/// v32's `newString`: the binding folded onto one line, then every line of the
+/// hole written back and the `}` under it.
+const HOLED_PATCH: &str = "        let result_record = self.user_dict.values_mut().next().unwrap_or(&mut PersistedUserRecord {\n            total_budget: 0.0,\n            current_cost: 0.0,\n        });\n        self.user_dict\n            .values_mut()\n            .next()\n            .unwrap_or(&mut *result_record)\n    }";
+
+/// Turns 5, 6, 8 and 10 of `lr7b_v32` sent this one call, byte for byte, and
+/// each attempt was answered "11 of its 12 non-blank lines are in the file in
+/// that order and the next one is not. Its line 12 is where they part — you wrote
+/// `}`, the file says `self.user_dict`. Send the same edit with the file's
+/// version of that one line." A true sentence about a false shape: the needle's
+/// last line is not wrong, it is four lines further down, and the swap that
+/// sentence prescribes builds an `oldString` covering 288 to 299 against a
+/// `newString` written for 288 to 303. The run re-sent the call instead of
+/// acting on it, hit 3/3 compile-repair turns with 0 refunds left, and ended with
+/// the E0499 it started with.
+#[test]
+fn a_needle_with_a_hole_is_refused_at_the_block_it_stepped_over() {
+    let (_temp, root) = setup_root();
+    fs::write(root.join("port.rs"), HOLED_FILE).unwrap();
+
+    let err = call_tool_in_workspace(
+        &root,
+        "edit_file",
+        &json!({
+            "relativeFilePath": "port.rs",
+            "edits": [{
+                "oldString": HOLED_NEEDLE,
+                "newString": HOLED_PATCH
+            }],
+            "context": "bind the record before borrowing the map again"
+        }),
+    )
+    .err()
+    .map(|e| e.to_string())
+    .unwrap_or_else(|| "a needle with a hole in it cannot match, so it has to be refused".into());
+
+    assert!(err.contains("hole in it"), "{err}");
+    assert!(
+        err.contains("7 of its 8 non-blank lines are the file's own, lines 6 to 12"),
+        "the run it did quote, by line: {err}"
+    );
+    assert!(
+        err.contains("    13|         self.user_dict"),
+        "and the lines it stepped over, quoted with their own indentation, because the model has \
+         to paste them into an `oldString` that is matched byte for byte: {err}"
+    );
+    assert!(
+        err.contains("    16|             .unwrap_or(&mut *result_record)"),
+        "all of them, not a summary: {err}"
+    );
+    assert!(
+        err.contains("lines 6 to 17 and copy that whole run in"),
+        "a span with a floor and a ceiling, not a region to hunt for: {err}"
+    );
+    assert!(
+        !err.contains("is where they part"),
+        "the prefix run's answer has to stay out: it is the one that prescribes the swap that \
+         would delete lines 14 to 17: {err}"
+    );
+    assert!(
+        !err.contains("already on disk"),
+        "and neither does the already-applied refusal, which is about a `newString` the file \
+         carries and this one does not: {err}"
+    );
+    assert_eq!(
+        fs::read_to_string(root.join("port.rs")).unwrap(),
+        HOLED_FILE,
+        "a refused batch leaves every byte alone"
+    );
+}
+
+/// The hole locates the site — one head, one witnessed resumption, both by line
+/// — so it is proof, and proof keeps `superseded_site`'s inferred history out.
+/// This fixture is the shape where that matters: three of six lines matched,
+/// which is under the three `NearMiss::locates_the_site` asks for *and* leaves
+/// two of the needle unexamined past the divergence, so the near miss alone does
+/// not locate anything. Without the hole in `located`, this refusal belongs to a
+/// guess about a write that never happened.
+#[test]
+fn a_located_hole_keeps_history_from_outranking_the_span_it_found() {
+    let (_temp, root) = setup_root();
+    let before = "fn a() {\n    let kept = self.take();\n    let used = self.give();\n    let total = self.sum();\n    log(kept);\n    save(kept);\n    done(used);\n}\n\nfn flush(store: &mut Store) {\n    let _ = store.save_data();\n}\n";
+    fs::write(root.join("port.rs"), before).unwrap();
+
+    let err = call_tool_in_workspace(
+        &root,
+        "edit_file",
+        &json!({
+            "relativeFilePath": "port.rs",
+            "edits": [{
+                "oldString": "    let kept = self.take();\n    let used = self.give();\n    let total = self.sum();\n    save(kept);\n    done(used);\n}",
+                "newString": "    let _ = store.save_data();\n    log(kept);\n    save(kept);\n    done(used);\n}"
+            }],
+            "context": "persist before saving"
+        }),
+    )
+    .err()
+    .map(|e| e.to_string())
+    .unwrap_or_else(|| "the `oldString` steps over line 5, so it cannot match".into());
+
+    assert!(err.contains("hole in it"), "read out of the file: {err}");
+    assert!(
+        err.contains("    5|     log(kept);"),
+        "and naming the one line it stepped over: {err}"
+    );
+    assert!(
+        !err.contains("already been changed"),
+        "nothing was changed; the `newString` merely copies a line out of `flush`: {err}"
+    );
+    assert!(!err.contains("is where they part"), "{err}");
+    assert_eq!(
+        fs::read_to_string(root.join("port.rs")).unwrap(),
+        before,
+        "every byte alone"
+    );
+}
+
+/// The witness is what makes the span a proof rather than a guess, so without it
+/// the diagnosis has to fall back to the one that is proved: how many lines
+/// matched, and which one differs. Naming a hole the `newString` does not write
+/// back would tell the model to widen into a span its own replacement deletes.
+#[test]
+fn a_hole_the_replacement_does_not_write_back_falls_through_to_the_line_that_differs() {
+    let (_temp, root) = setup_root();
+    fs::write(root.join("port.rs"), HOLED_FILE).unwrap();
+
+    let err = call_tool_in_workspace(
+        &root,
+        "edit_file",
+        &json!({
+            "relativeFilePath": "port.rs",
+            "edits": [{
+                "oldString": HOLED_NEEDLE,
+                "newString": "        let result_record = self.user_dict.values_mut().next().unwrap_or_default();\n        save(result_record)"
+            }],
+            "context": "drop the literal"
+        }),
+    )
+    .err()
+    .map(|e| e.to_string())
+    .unwrap_or_else(|| "the `oldString` is not in the file".into());
+
+    assert!(
+        !err.contains("hole in it"),
+        "with nothing tying the tail to the head, a span would be a guess: {err}"
+    );
+    assert!(
+        err.contains("7 of its 8 non-blank lines"),
+        "so the prefix run answers, which is the most that is proved here: {err}"
+    );
+    assert_eq!(
+        fs::read_to_string(root.join("port.rs")).unwrap(),
+        HOLED_FILE,
+        "every byte alone"
+    );
+}
+
+/// A batch is all-or-nothing, and the hole is a refusal like any other: the
+/// second edit is never reached and nothing is written.
+#[test]
+fn a_holed_edit_refuses_its_whole_batch_and_leaves_the_other_edit_out() {
+    let (_temp, root) = setup_root();
+    fs::write(root.join("port.rs"), HOLED_FILE).unwrap();
+
+    let err = call_tool_in_workspace(
+        &root,
+        "edit_file",
+        &json!({
+            "relativeFilePath": "port.rs",
+            "edits": [
+                { "oldString": HOLED_NEEDLE, "newString": HOLED_PATCH },
+                {
+                    "oldString": "        let record = self.input(user);",
+                    "newString": "        let record = self.input(user).clone();"
+                }
+            ],
+            "context": "two changes, one of them holed"
+        }),
+    )
+    .err()
+    .map(|e| e.to_string())
+    .unwrap_or_else(|| "one refused edit refuses the batch".into());
+
+    assert!(err.contains("no edits were applied"), "{err}");
+    assert!(
+        err.contains("edit 1: its `oldString` is not in port.rs, and it is not one line wrong"),
+        "{err}"
+    );
+    assert!(
+        !err.contains("edit 2:"),
+        "the second edit is never reached: {err}"
+    );
+    assert_eq!(
+        fs::read_to_string(root.join("port.rs")).unwrap(),
+        HOLED_FILE,
+        "every byte alone"
+    );
+}
+
+/// A hole is a fact about line numbers, not about a grammar. The refusal quotes
+/// no language's rules — unlike the terminator fold, which cites Rust's — so it
+/// is not gated on the file being Rust, and the same shape in another language
+/// has to get the same answer.
+#[test]
+fn a_hole_is_named_in_a_file_whose_grammar_the_diagnosis_does_not_cite() {
+    let (_temp, root) = setup_root();
+    fs::write(root.join("port.js"), HOLED_FILE).unwrap();
+
+    let err = call_tool_in_workspace(
+        &root,
+        "edit_file",
+        &json!({
+            "relativeFilePath": "port.js",
+            "edits": [{
+                "oldString": HOLED_NEEDLE,
+                "newString": HOLED_PATCH
+            }],
+            "context": "the same shape in another language"
+        }),
+    )
+    .err()
+    .map(|e| e.to_string())
+    .unwrap_or_else(|| "a hole is a hole in any language".into());
+
+    assert!(err.contains("hole in it"), "{err}");
+    assert!(
+        err.contains("    13|         self.user_dict"),
+        "with the same lines quoted: {err}"
+    );
+    assert_eq!(
+        fs::read_to_string(root.join("port.js")).unwrap(),
+        HOLED_FILE,
+        "every byte alone"
+    );
+}
