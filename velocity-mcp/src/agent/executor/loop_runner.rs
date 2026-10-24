@@ -2190,9 +2190,10 @@ pub fn run_agent_reasoning_loop(
                 // alone until a file exists to patch (verified against the live
                 // MoE on the LiteLLM crucible).
                 let write_names = turn_write_tools.join(" / ");
-                if force_write_only
+                let target_read_allowed_now = force_write_only
                     && read_of_named_target(&tool_name, &arguments, named_target.as_deref())
-                {
+                    && deliverable_read_still_allowed(write_pressure_nudges);
+                if target_read_allowed_now {
                     ui_tx
                         .send(AgentToUiMessage::StatusUpdate(format!(
                             "Exploration locked \u{2014} allowing '{tool_name}' of the \
@@ -2202,11 +2203,16 @@ pub fn run_agent_reasoning_loop(
                 }
                 if force_write_only
                     && !turn_write_tools.contains(&tool_name.as_str())
-                    && !read_of_named_target(&tool_name, &arguments, named_target.as_deref())
+                    && !target_read_allowed_now
                 {
                     // A model refused once may not ask again, so the refusal names
                     // the one read the lock still allows — the file it must edit.
-                    let still_readable = if preexisting_target {
+                    // Once the nudge budget is spent that exception has already
+                    // carried the run past every directive it was given, so the
+                    // refusal has to say the read is closed too.
+                    let still_readable = if !deliverable_read_still_allowed(write_pressure_nudges) {
+                        String::new()
+                    } else if preexisting_target {
                         named_target
                             .as_deref()
                             .map(|t| {
@@ -2221,6 +2227,17 @@ pub fn run_agent_reasoning_loop(
                     } else {
                         String::new()
                     };
+                    let exhausted_note = if deliverable_read_still_allowed(write_pressure_nudges) {
+                        String::new()
+                    } else {
+                        format!(
+                            " Even `read_file` of the deliverable is now closed: the run has \
+                             nudged you {MAX_WRITE_PRESSURE_NUDGES} times to stop exploring and \
+                             write, and each nudge counted as a turn you did not use to edit. \
+                             The bytes you need are already in your context; call \
+                             {write_names} with them now."
+                        )
+                    };
                     ui_tx
                         .send(AgentToUiMessage::StatusUpdate(format!(
                             "Exploration locked \u{2014} refused '{}'; only {write_names} are \
@@ -2233,9 +2250,9 @@ pub fn run_agent_reasoning_loop(
                         content: format!(
                             "Error: Exploration tools are locked for this turn because the file \
                              this run must deliver is not yet on disk in the form the task asked \
-                             for. The only tools available are {write_names} — call one NOW with \
-                             the content built from what you have already seen. An incomplete \
-                             file is acceptable and far better than no file.{still_readable}",
+                             for. The only tools available are {write_names} \u{2014} call one \
+                             NOW with the content built from what you have already seen. An \
+                             incomplete file is acceptable and far better than no file.{still_readable}{exhausted_note}",
                         ),
                         name: Some(tool_name.clone()),
                         tool_call_id: Some(call_id),
@@ -3751,6 +3768,18 @@ const MAX_WRITE_PRESSURE_NUDGES: u32 = 3;
 /// and at least one more model turn remains to act on the directive.
 fn should_nudge_write_pressure(streak: u32, nudges_sent: u32, has_more_turns: bool) -> bool {
     streak >= WRITE_PRESSURE_STREAK && nudges_sent < MAX_WRITE_PRESSURE_NUDGES && has_more_turns
+}
+
+/// The `force_write_only` lock lets one call through that it refuses for every
+/// other exploration tool: a `read_file` of the deliverable itself, on the
+/// reasoning that a model cannot patch a file it has not seen. That exception
+/// was written assuming a single read, but nothing counted the reads; on a
+/// stubborn model it became the loophole — the run kept logging "allowing
+/// 'read_file' of the deliverable itself" for turn after turn while the
+/// write-pressure budget was already spent. Once the last nudge has fired, the
+/// exception has to close with the budget that authorised it.
+fn deliverable_read_still_allowed(nudges_sent: u32) -> bool {
+    nudges_sent < MAX_WRITE_PRESSURE_NUDGES
 }
 
 /// Whether a turn may offer only the file editors. Three steers all say the
@@ -7451,29 +7480,29 @@ mod tests {
     use super::{
         arm_compile_repair, artifact_delivery_directive, call_identity, compile_repair_directive,
         correct_missing_crate_help, counts_as_artifact, decide_no_tool_call_ending,
-        declared_dependencies, declared_name, deliver_nudge, dependency_repair_rule,
-        enclosing_fn_block, error_code_recipes, existing_file_named_by_task,
-        extract_fenced_code_block, force_write_directive, gate_failure_label, grade_write,
-        gutting_rewrite_refusal, handover_for_outcome, hides_generation_tool, is_refusal,
-        is_rustc_diagnostic_report, is_test_failure_report, item_head_keyword,
-        items_a_rewrite_would_delete, missing_crate_help, no_tool_call_nudge, note_refusal_repeat,
-        off_target_refusal, parse_function_fragments, read_of_named_target, remember_run_write,
-        repair_api_context, repair_budget, repair_error_excerpt, repeated_refusal_note,
-        replay_advice, rust_item_names, salvage_complete_calls, should_arm_write_repair,
-        should_close_validate, should_grade_tests_now, should_lock_exploration,
-        should_note_unarmed_repair, should_nudge_missing_artifact, should_nudge_unarmed_validation,
-        should_nudge_write_pressure, should_rebuild_write_context, should_refund_repair_attempt,
-        should_refuse_gutting_rewrite, should_steer_wrong_path, strip_tool_markup_residue,
-        type_names_in_diagnostics, unfinished_announced_turn, unknown_tool_message,
-        validate_tool_call, wasted_time_ends_the_run, write_context_directive, write_context_tail,
-        write_misses_named_target, write_pressure_directive, writes_miss_named_target,
-        wrong_path_directive, AgentLoopOutcome, AgentToUiMessage, ArtifactSurface, ChatMessage,
-        NoToolCallEnding, RunEnding, TestVerdict, ToolCallAccumulator, WriteGrade,
-        FILE_EDITING_TOOLS, MAX_ARTIFACT_NUDGES, MAX_AUTO_CONTINUATIONS, MAX_COMPILE_REPAIR_TURNS,
-        MAX_OFF_TARGET_REFUSALS, MAX_REFUNDED_REPAIR_ATTEMPTS, MAX_SURFACE_REFUSALS,
-        MAX_TEST_REPAIR_TURNS, MAX_TRACKED_RUN_WRITES, MAX_UNARMED_REPAIR_NOTES,
-        MAX_WRITE_PRESSURE_NUDGES, MEDIA_GENERATION_TOOLS, ONE_ERROR_AT_A_TIME_NOTE,
-        WRITE_PRESSURE_STREAK,
+        declared_dependencies, declared_name, deliver_nudge, deliverable_read_still_allowed,
+        dependency_repair_rule, enclosing_fn_block, error_code_recipes,
+        existing_file_named_by_task, extract_fenced_code_block, force_write_directive,
+        gate_failure_label, grade_write, gutting_rewrite_refusal, handover_for_outcome,
+        hides_generation_tool, is_refusal, is_rustc_diagnostic_report, is_test_failure_report,
+        item_head_keyword, items_a_rewrite_would_delete, missing_crate_help, no_tool_call_nudge,
+        note_refusal_repeat, off_target_refusal, parse_function_fragments, read_of_named_target,
+        remember_run_write, repair_api_context, repair_budget, repair_error_excerpt,
+        repeated_refusal_note, replay_advice, rust_item_names, salvage_complete_calls,
+        should_arm_write_repair, should_close_validate, should_grade_tests_now,
+        should_lock_exploration, should_note_unarmed_repair, should_nudge_missing_artifact,
+        should_nudge_unarmed_validation, should_nudge_write_pressure, should_rebuild_write_context,
+        should_refund_repair_attempt, should_refuse_gutting_rewrite, should_steer_wrong_path,
+        strip_tool_markup_residue, type_names_in_diagnostics, unfinished_announced_turn,
+        unknown_tool_message, validate_tool_call, wasted_time_ends_the_run,
+        write_context_directive, write_context_tail, write_misses_named_target,
+        write_pressure_directive, writes_miss_named_target, wrong_path_directive, AgentLoopOutcome,
+        AgentToUiMessage, ArtifactSurface, ChatMessage, NoToolCallEnding, RunEnding, TestVerdict,
+        ToolCallAccumulator, WriteGrade, FILE_EDITING_TOOLS, MAX_ARTIFACT_NUDGES,
+        MAX_AUTO_CONTINUATIONS, MAX_COMPILE_REPAIR_TURNS, MAX_OFF_TARGET_REFUSALS,
+        MAX_REFUNDED_REPAIR_ATTEMPTS, MAX_SURFACE_REFUSALS, MAX_TEST_REPAIR_TURNS,
+        MAX_TRACKED_RUN_WRITES, MAX_UNARMED_REPAIR_NOTES, MAX_WRITE_PRESSURE_NUDGES,
+        MEDIA_GENERATION_TOOLS, ONE_ERROR_AT_A_TIME_NOTE, WRITE_PRESSURE_STREAK,
     };
 
     // The file-free forms of the repeat detector. Most of these tests feed
@@ -8245,6 +8274,25 @@ mod tests {
             WRITE_PRESSURE_STREAK,
             0,
             false
+        ));
+    }
+
+    /// The `force_write_only` lock's exception for `read_file` of the
+    /// deliverable was written assuming one read but never counted them. Once
+    /// the nudge budget is spent, the model has had every chance the harness
+    /// is willing to give it to stop exploring; the exception has to close
+    /// with the budget so a stubborn run cannot loop until the wall clock
+    /// expires. Reverting the guard inside `deliverable_read_still_allowed`
+    /// to `true` fails the last two asserts of this test.
+    #[test]
+    fn the_deliverable_read_exception_closes_once_the_nudge_budget_is_spent() {
+        assert!(deliverable_read_still_allowed(0));
+        assert!(deliverable_read_still_allowed(
+            MAX_WRITE_PRESSURE_NUDGES - 1
+        ));
+        assert!(!deliverable_read_still_allowed(MAX_WRITE_PRESSURE_NUDGES));
+        assert!(!deliverable_read_still_allowed(
+            MAX_WRITE_PRESSURE_NUDGES + 3
         ));
     }
 
