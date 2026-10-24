@@ -2380,27 +2380,46 @@ fn brace_depths(src: &str) -> Vec<(usize, i32)> {
     out
 }
 
-/// The lines of `text` at which its brace depth drops below the depth it had at
-/// its own first character, numbered from `first_line`, plus how many such lines
-/// exist in all.
+/// The lines of `hay` inside `range` at which a code `}` takes the file's brace
+/// depth below what it had at `range.start`, plus how many such lines exist in
+/// `range` in all.
 ///
-/// One entry per line however many braces on it drop: `} else {` closes a block
-/// and opens one on the same line and is a single fact about that line, so a
-/// report that quoted it twice would look like two lines to widen down to.
+/// Two guards the fragment scan did not have:
+///   * the scan runs over the whole file, not just the fragment, so a comment or
+///     string that straddles `range`'s boundary keeps its true lexical role and
+///     a brace hidden inside it is not mistaken for a closer of real code;
+///   * the character at the event has to be `}`, because a `{` that merely lifts
+///     a still-below-baseline depth opens a block, it does not close one, and
+///     quoting it would send the model after a line the drift is not about.
+///
+/// One entry per line however many closers on it drop: `} else {` closes a
+/// block and opens one on the same line, and `}}` closes two, but each is a
+/// single fact about one line for the purpose of widening.
 ///
 /// `from_end` picks which of them are quoted once there are more than `limit`,
 /// and the two drift directions want opposite ends -- see `drift_site`.
 fn depth_dropping_lines(
-    text: &str,
-    first_line: usize,
+    hay: &str,
+    range: std::ops::Range<usize>,
     limit: usize,
     from_end: bool,
 ) -> (Vec<(usize, String)>, usize) {
-    let starts = line_starts(text);
-    let lines: Vec<&str> = text.lines().collect();
+    let starts = line_starts(hay);
+    let lines: Vec<&str> = hay.lines().collect();
+    let bytes = hay.as_bytes();
+    let events = brace_depths(hay);
+    let baseline_idx = events.partition_point(|e| e.0 < range.start);
+    let baseline = if baseline_idx > 0 {
+        events[baseline_idx - 1].1
+    } else {
+        0
+    };
     let mut drops: Vec<usize> = Vec::new();
-    for (off, depth) in brace_depths(text) {
-        if depth >= 0 {
+    for (off, depth) in events {
+        if off < range.start || off >= range.end {
+            continue;
+        }
+        if bytes.get(off) != Some(&b'}') || depth >= baseline {
             continue;
         }
         let idx = starts.partition_point(|s| *s <= off).saturating_sub(1);
@@ -2417,12 +2436,7 @@ fn depth_dropping_lines(
     let to = if from_end { total } else { limit.min(total) };
     let out = drops[from..to]
         .iter()
-        .map(|&idx| {
-            (
-                first_line + idx,
-                clipped_line(lines.get(idx).copied().unwrap_or("")),
-            )
-        })
+        .map(|&idx| (idx + 1, clipped_line(lines.get(idx).copied().unwrap_or(""))))
         .collect();
     (out, total)
 }
@@ -2475,10 +2489,9 @@ fn drift_site(hay: &str, matched: &str, drift: i32) -> Option<DriftSite> {
     // file below it is innocent -- and a replacement that loses closers loses the
     // ones at its end, so the last of them are the ones to quote.
     let (closers, total) = if drift < 0 {
-        let first = hay[..end].matches('\n').count() + 1;
-        depth_dropping_lines(&hay[end..], first, want, false)
+        depth_dropping_lines(&hay, end..hay.len(), want, false)
     } else {
-        depth_dropping_lines(&hay[at..end], from, want, true)
+        depth_dropping_lines(&hay, at..end, want, true)
     };
     Some(DriftSite {
         from,
@@ -2523,30 +2536,39 @@ fn drift_report(path: &str, d: &DriftedEdit) -> String {
         format!("leaves {k} block(s) open that the text it replaces closed")
     };
     let mut out = match &d.site {
-        Some(s) if !s.closers.is_empty() => {
+        Some(s) => {
             let span = if s.from == s.to {
                 format!("line {}", s.from)
             } else {
                 format!("lines {}-{}", s.from, s.to)
             };
-            let below = if d.drift < 0 {
-                "These are the first of the file's own lines below that match at which its brace \
-                 depth drops, quoted with the file's own numbers \u{2014} once your `newString` has \
-                 closed those blocks early there is nothing left for them to close:"
-            } else {
-                "These are the last of the lines inside that match at which the file's brace depth \
-                 drops, quoted with the file's own numbers \u{2014} the closers your `oldString` \
-                 covered:"
-            };
             let mut t = format!(
-                "edit {}: its `oldString` matched {span} of {path} and its `newString` {fault}. {below}",
+                "edit {}: its `oldString` matched {span} of {path} and its `newString` {fault}.",
                 d.n
             );
-            for (line, text) in &s.closers {
-                t.push_str(&format!("\n[line {line}] {text}"));
-            }
-            if s.more > 0 {
-                t.push_str(&format!("\n[\u{2026} and {} more such line(s)]", s.more));
+            // The span is a fact about the file even when the closer list is
+            // empty (an enclosing block whose only closer is outside the match,
+            // e.g. a whole-file match on `fn f(){{}}`), so it is quoted here
+            // first; the "These are..." paragraph that walks the model through
+            // individual closer lines only runs when there is one to walk to.
+            if !s.closers.is_empty() {
+                let below = if d.drift < 0 {
+                    "These are the first of the file's own lines below that match at which its \
+                     brace depth drops, quoted with the file's own numbers \u{2014} once your \
+                     `newString` has closed those blocks early there is nothing left for them to \
+                     close:"
+                } else {
+                    "These are the last of the lines inside that match at which the file's brace \
+                     depth drops, quoted with the file's own numbers \u{2014} the closers your \
+                     `oldString` covered:"
+                };
+                t.push_str(&format!(" {below}"));
+                for (line, text) in &s.closers {
+                    t.push_str(&format!("\n[line {line}] {text}"));
+                }
+                if s.more > 0 {
+                    t.push_str(&format!("\n[\u{2026} and {} more such line(s)]", s.more));
+                }
             }
             t
         }
@@ -6755,6 +6777,63 @@ fn a() {
         let eights = site.closers.iter().filter(|(l, _)| *l == 8).count();
         assert_eq!(eights, 1, "line 8 drops and reopens: {:?}", site.closers);
         assert_eq!(site.closers.len(), 4, "every closer the file has below");
+        assert_eq!(site.more, 0);
+    }
+
+    #[test]
+    fn drift_evidence_excludes_opening_only_lines() {
+        let hay = "fn f(){{0;\n}\n}\nfn g(){\n}\n";
+        let site = super::drift_site(hay, "0;", -3).expect("unique site");
+        assert_eq!(
+            site.closers,
+            vec![(2, "}".into()), (3, "}".into()), (5, "}".into())]
+        );
+        assert_eq!(site.more, 0);
+    }
+
+    #[test]
+    fn drift_evidence_preserves_lexical_context_across_match_boundaries() {
+        for (hay, matched, drift, expected) in [
+            ("fn f(){\n0; /* }\n*/\n}\n", "0; /*", -1, 4),
+            ("fn f(){\nlet s = \"}\";\n}\n", "let s = \"", -1, 3),
+            ("fn f(){\n/* }\n*/\n}\n", "}\n*/\n}", 1, 4),
+            ("fn f(){\nlet s = \"}\";\n}\n", "}\";\n}", 1, 3),
+            // A drift inside one function has to stay inside it: the closer of a
+            // sibling function below the match is not one the `newString` dropped,
+            // and quoting it sends the model to widen into code that never
+            // belonged to the edit.
+            ("fn a(){\n0;\n}\nfn b(){\n}\n", "0;\n}", 1, 3),
+        ] {
+            let site = super::drift_site(hay, matched, drift).expect("unique site");
+            assert_eq!(site.closers, vec![(expected, "}".into())], "{hay}");
+            assert_eq!(site.more, 0, "{hay}");
+        }
+    }
+
+    #[test]
+    fn drift_evidence_retains_proven_spans_without_closer_quotes() {
+        for (hay, drift, span) in [
+            ("fn f(){}", 1, "line 1"),
+            ("fn f(){\n}", 1, "lines 1-2"),
+            ("fn f(){}", -1, "line 1"),
+        ] {
+            let d = super::drifted_edit(hay, hay, 1, drift).expect("nonzero drift");
+            assert!(d.site.as_ref().unwrap().closers.is_empty());
+            let report = super::drift_report("port.rs", &d);
+            assert!(
+                report.contains(&format!("matched {span} of port.rs")),
+                "{report}"
+            );
+            assert!(!report.contains("These are"), "{report}");
+            assert!(!report.contains("[line"), "{report}");
+            assert!(report.ends_with(super::brace_drift_advice(drift)));
+        }
+    }
+
+    #[test]
+    fn drift_evidence_quotes_multiple_closers_on_one_line_once() {
+        let site = super::drift_site("fn f(){ {\n0;\n}}\n", "0;", -2).expect("unique site");
+        assert_eq!(site.closers, vec![(3, "}}".into())]);
         assert_eq!(site.more, 0);
     }
 

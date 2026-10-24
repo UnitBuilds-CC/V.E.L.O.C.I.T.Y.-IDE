@@ -4685,45 +4685,56 @@ fn note_refusal_repeat(
 /// close what it opened. Those two keys have to stay apart, because the note is
 /// appended to the refusal and a note that contradicts it wins.
 fn replay_advice(refusal: &str) -> &'static str {
-    if refusal.contains("hole in it") {
+    // A brace-drift refusal quotes the file's own lines with `[line N] `
+    // prefixes, and the source inside those quotes is arbitrary: a line that
+    // happens to say "already on disk" in a comment would otherwise let the
+    // quoted code pick the branch and send the model after the wrong lever.
+    // Only the tool's own prose classifies the refusal.
+    let diagnostic: String = refusal
+        .lines()
+        .filter(|l| !l.starts_with("[line "))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let diagnostic = diagnostic.as_str();
+    if diagnostic.contains("hole in it") {
         "The refusal quotes every line the `oldString` steps over, with the file's own numbers, \
          and names the span that has to be covered, so there is nothing to hunt for: put those \
          lines into the `oldString` between the run above them and the run below, and send the \
          same `newString`, which already writes them back. A hole is not mended by changing one \
          line on either side of it, and re-sending this call unchanged cannot apply."
-    } else if refusal.contains("is where they part") {
+    } else if diagnostic.contains("is where they part") {
         "The refusal quotes the file's own version of that line after \"the file says\". Put it \
          into the `oldString` in place of the line you wrote and send the same edit again. Every \
          other line of the `oldString` already matches the file, so re-reading it learns nothing \
          new and re-sending this call unchanged cannot apply."
-    } else if refusal.contains("already on disk") {
+    } else if diagnostic.contains("already on disk") {
         "The change is in the file already, so no version of this call can do anything. The \
          error the compiler still reports is at a different line: `read_file` the region that \
          line is in, copy what you see there into `oldString`, and change that instead."
-    } else if refusal.contains("byte-identical") {
+    } else if diagnostic.contains("byte-identical") {
         "A call whose `newString` equals its `oldString` changes no characters however often it \
          is sent. Write the replacement the error asks for."
-    } else if refusal.contains("drifts both ways") {
+    } else if diagnostic.contains("drifts both ways") {
         "The refusal answers each edit below its own count, quoting the file's lines, and the two \
          answers are opposite: an edit that left a block open has to carry the closer its \
          `oldString` matched, and an edit that closed a block early has to stop carrying one it \
          never matched. Change each `newString` against its own paragraph; the total at the top is \
          the sum of the two and following it in either direction makes one of them worse."
-    } else if refusal.contains("no block to close") {
+    } else if diagnostic.contains("no block to close") {
         "The `newString` closes blocks the `oldString` never covered, so the lines below the \
          site still hold the closers and are left standing. Widen the `oldString` down to the \
          last of them and carry it into the `newString`, or take the extra closing braces back \
          out; more closers raise the count the refusal reports."
-    } else if refusal.contains("statement terminator") {
+    } else if diagnostic.contains("statement terminator") {
         "The refusal names the lines the code is at and quotes the file's own last one, so there \
          is no region to hunt for: `read_file` exactly that span, copy it into the `oldString` \
          verbatim — its line breaks and its last line included — and put or take the `;` in the \
          `newString` instead. This tool will not move a statement terminator, and an `oldString` \
          that is one apart from the file cannot match however often it is re-sent unchanged."
-    } else if refusal.contains("places in") {
+    } else if diagnostic.contains("places in") {
         "Widen the `oldString` — include the lines around it — until only the one place you mean \
          still matches, and send that."
-    } else if refusal.contains("is not in") {
+    } else if diagnostic.contains("is not in") {
         "The text to replace has to be copied out of the file, not recalled: `read_file` the \
          region the diagnostics name and paste what it returns into `oldString` verbatim."
     } else {
@@ -7942,6 +7953,30 @@ mod tests {
         // It is appended to the tool's own refusal, never substituted for it, so
         // it must start by separating itself from whatever precedes it.
         assert!(note.starts_with("\n\n"), "{note:?}");
+    }
+
+    #[test]
+    fn drift_evidence_quotes_cannot_override_replay_diagnosis() {
+        let diagnoses = [
+            "hole in it",
+            "is where they part",
+            "already on disk",
+            "byte-identical",
+            "drifts both ways",
+            "no block to close",
+            "statement terminator",
+            "places in",
+            "is not in",
+            "block left open",
+        ];
+        for diagnosis in diagnoses {
+            let expected = replay_advice(diagnosis);
+            for quoted in diagnoses {
+                let refusal =
+                    format!("{diagnosis}\n[line 2] }} // {quoted}\nedit 2: replacement refused");
+                assert_eq!(replay_advice(&refusal), expected, "{refusal}");
+            }
+        }
     }
 
     /// Each refusal the loop actually emits, keyed by the class the note has to
