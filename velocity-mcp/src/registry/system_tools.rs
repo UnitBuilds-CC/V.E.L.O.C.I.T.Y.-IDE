@@ -1225,6 +1225,24 @@ struct ChainJoin {
     file_lines: usize,
 }
 
+/// A refused `oldString` that names exactly one place in the file once its chain
+/// breaks are undone, and differs from it by nothing but a statement terminator.
+#[derive(Debug, PartialEq)]
+struct TerminatorMiss {
+    /// 1-based line of the unjoined file the site starts at.
+    line: usize,
+    /// Unjoined file lines the site covers.
+    file_lines: usize,
+    /// Raw lines the `oldString` covers, so the refusal can say what the fold
+    /// undid on that side too.
+    needle_lines: usize,
+    /// Whether the file's own last line carries the terminator the needle lacks.
+    file_has_the_terminator: bool,
+    /// The last line of each side, trimmed: the file's own, and what was sent.
+    file_tail: String,
+    wrote_tail: String,
+}
+
 /// `hay` with every line that continues the one above it joined onto it, plus the
 /// byte span each joined line covers in the original.
 ///
@@ -1504,6 +1522,141 @@ fn chain_join_rescue(hay: &str, needle: &str) -> Option<ChainJoin> {
         deepen,
         file_lines,
     })
+}
+
+/// Whether two trimmed lines are the same code with exactly one statement
+/// terminator between them, in either direction.
+///
+/// One and only one, and only at the end: `foo();;` against `foo()` is a
+/// different fault, and `foo(); // why` against `foo()` is not a terminator the
+/// file lacks but a comment it does.
+fn one_terminator_apart(a: &str, b: &str) -> bool {
+    if b.len() == a.len() + 1 && b.ends_with(';') && &b[..b.len() - 1] == a {
+        return true;
+    }
+    a.len() == b.len() + 1 && a.ends_with(';') && &a[..a.len() - 1] == b
+}
+
+/// The one place a refused `oldString` differs from the file by a single
+/// statement terminator, found by folding both sides first.
+///
+/// `lr7b_v30` spent turns 3 through 9 — two refused edits alternating with
+/// two `read_file` calls over the same fourteen lines — on an `oldString`
+/// whose only fault was its last character. The file held eleven raw lines from
+/// 287 to 297 whose last was `            })`, and the model sent the same code
+/// flattened onto one line ending `});`. Both answers the chain had were wrong.
+/// [`nearest_miss`] scored it zero, because its run is over raw lines and the
+/// needle's first raw line matches nothing; [`explain_refused_edit`] then said
+/// the text "appears nowhere in the file even with indentation ignored" and
+/// sent the model to `read_file` a region it had just read twice. The tool
+/// could fold that site — [`chain_join_rescue`] had done exactly it two
+/// turns earlier, for the same code with the `;` in place — so the claim
+/// that the text appears nowhere was false, and no line was named to read.
+///
+/// This is a refusal and not a rescue. A trailing `;` is Rust semantics: it is
+/// what tells a statement from the value a block returns, so a needle that adds
+/// one to a tail expression, or drops one from a statement, asks for a change
+/// the tool cannot tell apart from the patch around it. Terminators stay out of
+/// every rescuer and inside the diagnosers; this is the diagnosis that was
+/// missing.
+///
+/// Uniqueness carries it, as it does in [`chain_join_rescue`], and so does that
+/// function's residue floor, for the same reason: folded text still has to say
+/// enough to name one place.
+///
+/// It also finds a needle that needed no fold, and that is not overreach but
+/// the caller's to rank. [`nearest_miss`] says more when it can align the two
+/// sides line by line -- how many of the needle's lines are already right, and
+/// that only the last is not -- so the chain consults this one only after that
+/// one and [`tail_anchor`] have both declined, which is how it ranks
+/// [`tail_anchor`] too. `lr7b_v19` is the case that decided it: a needle broken
+/// exactly like the file with one `;` on its last line, answered since that run
+/// by "6 of its 7 non-blank lines".
+fn terminator_miss(hay: &str, needle: &str) -> Option<TerminatorMiss> {
+    // Shared with `chain_join_rescue` because both ask the same question of the
+    // same folded text, and a residue this short turns up anywhere.
+    const MIN_TRIMMED: usize = 24;
+    let (joined_needle, _) = dechain(needle);
+    let want: Vec<&str> = joined_needle.lines().collect();
+    let n = want.len();
+    if n == 0 {
+        return None;
+    }
+    let want_trim: Vec<&str> = want.iter().map(|l| l.trim()).collect();
+    if want_trim.iter().map(|l| l.chars().count()).sum::<usize>() < MIN_TRIMMED {
+        return None;
+    }
+    let (joined_hay, spans) = dechain(hay);
+    let got: Vec<&str> = joined_hay.lines().collect();
+    if n > got.len() {
+        return None;
+    }
+    let mut hits: Vec<usize> = Vec::new();
+    for i in 0..=(got.len() - n) {
+        // Every line but the last has to match exactly; the last one has to
+        // match all the way to its terminator.
+        if !(0..n - 1).all(|k| got[i + k].trim() == want_trim[k]) {
+            continue;
+        }
+        let says = got[i + n - 1].trim();
+        let wrote = want_trim[n - 1];
+        if says != wrote && one_terminator_apart(says, wrote) {
+            hits.push(i);
+            if hits.len() > 1 {
+                return None;
+            }
+        }
+    }
+    let i = *hits.first()?;
+    let start = spans[i].0;
+    let end = spans[i + n - 1].1;
+    let site = &hay[start..end];
+    let file_tail = site.lines().last().unwrap_or("").trim();
+    Some(TerminatorMiss {
+        line: hay[..start].matches('\n').count() + 1,
+        file_lines: site.matches('\n').count() + 1,
+        needle_lines: needle.lines().count(),
+        file_has_the_terminator: file_tail.ends_with(';'),
+        file_tail: clipped_line(file_tail),
+        wrote_tail: clipped_line(needle.lines().last().unwrap_or("").trim()),
+    })
+}
+
+/// The refusal for a `;`-apart site: the span is named, the file's own last line
+/// is quoted against the one that was sent, and the reason no rescue is offered
+/// is stated rather than left to be inferred from a bare refusal.
+fn terminator_miss_message(rel_path: &str, m: &TerminatorMiss) -> String {
+    let last = m.line + m.file_lines - 1;
+    let side = if m.file_has_the_terminator {
+        "the file's line ends with a `;` and yours does not"
+    } else {
+        "yours ends with a `;` and the file's does not"
+    };
+    // Only worth saying when the two sides really do wrap differently; "across
+    // 7 line(s) where your `oldString` wrote 7" is noise that buries the `;`.
+    let wrapped = if m.file_lines == m.needle_lines {
+        String::new()
+    } else {
+        format!(
+            ", which the file wraps across {} line(s) where your `oldString` wrote {}",
+            m.file_lines, m.needle_lines
+        )
+    };
+    format!(
+        "its `oldString` is not in {rel_path}, but the code it quotes is, in exactly one place: \
+         lines {line}-{last}{wrapped}. The whole difference is a statement terminator on the \
+         last of them \u{2014} {side}. You wrote `{wrote_tail}`, the file says `{file_tail}`. A \
+         trailing `;` is Rust semantics and not formatting: it is what tells a statement from the \
+         value a block returns, so this tool will neither add one nor drop one for you. \
+         `read_file` lines {line} to {last}, copy them into the `oldString` verbatim, and settle \
+         the terminator in the `newString`, where the change you are making lives.",
+        line = m.line,
+        last = last,
+        wrapped = wrapped,
+        side = side,
+        wrote_tail = m.wrote_tail,
+        file_tail = m.file_tail,
+    )
 }
 
 /// A replacement with the lines it only copied from around its site removed.
@@ -2343,8 +2496,37 @@ pub fn handle_system_tool(
                     } else {
                         tail_anchor(&current, old)
                     };
-                    let located =
-                        miss.as_ref().is_some_and(NearMiss::locates_the_site) || anchor.is_some();
+                    // The fold answers the case `nearest_miss` cannot: a needle
+                    // that had to be folded to be found at all. That one reads
+                    // raw lines, so v30's eleven-line site quoted as one line
+                    // ending `});` scored zero on every one of them however
+                    // exactly the code stood in the file, and the answer became
+                    // "appears nowhere in the file" about a site the tool had
+                    // folded and matched two turns earlier. It ranks below that
+                    // one because it says less: v19's shape, a needle broken
+                    // like the file with one `;` on its last line, is answered
+                    // better by "6 of its 7 non-blank lines", and that rank
+                    // lives in the order the two are pushed below, which is
+                    // also what settles `tail_anchor` -- that one requires the
+                    // needle's last line to stand in the file and this one
+                    // requires it not to. It is still computed once the near
+                    // miss has fired, because the only thing left for it to
+                    // change is `located`, and a fold that found the site is a
+                    // reading of the file while `superseded_site` is a guess
+                    // about its history: gating the computation on the near
+                    // miss would hand a near miss too loose to locate the site
+                    // back to that guess. It refuses rather than applies,
+                    // because a `;` is semantics and not wrapping, and it is
+                    // Rust-only because both the fold and the rule it cites are
+                    // Rust's.
+                    let terminator = if !is_rust {
+                        None
+                    } else {
+                        terminator_miss(&current, old)
+                    };
+                    let located = miss.as_ref().is_some_and(NearMiss::locates_the_site)
+                        || anchor.is_some()
+                        || terminator.is_some();
                     if !located {
                         if let Some(line) = superseded_site(&current, old, new) {
                             rejected.push(format!(
@@ -2362,6 +2544,13 @@ pub fn handle_system_tool(
                         rejected.push(format!(
                             "edit {n}: {}",
                             tail_anchor_message(rel_path, &anchor)
+                        ));
+                        continue;
+                    }
+                    if let Some(t) = terminator {
+                        rejected.push(format!(
+                            "edit {n}: {}",
+                            terminator_miss_message(rel_path, &t)
                         ));
                         continue;
                     }
@@ -4683,7 +4872,8 @@ mod tests {
         assert_eq!(
             &hay[spans[0].0..spans[0].1].matches('\n').count() + 1,
             60,
-            "the fold is capped, so a bracket lost under a spanning block comment              costs one region and not the rest of the file"
+            "the fold is capped, so a bracket lost under a spanning block comment \
+             costs one region and not the rest of the file"
         );
         assert_eq!(
             spans.len(),
@@ -4849,6 +5039,163 @@ mod tests {
             "        self.user_dict\r\n            .values_mut()\r\n            .next()\r\n            .unwrap_or(&mut PersistedUserRecord {\r\n                total_budget: 0.0,\r\n                current_cost: 0.0,\r\n            })",
             "terminators stay outside the span, so a splice cannot drop or double one"
         );
+    }
+
+    /// v30's `oldString`: v22's, byte for byte, with the `;` the model put on
+    /// the end of it. The fold that located the one without it locates this one
+    /// too; only the terminator stands between them.
+    fn flattened_with_a_terminator() -> String {
+        format!("{FLATTENED_CHAIN};")
+    }
+
+    #[test]
+    fn one_terminator_apart_takes_the_terminator_at_the_end_and_only_one() {
+        assert!(super::one_terminator_apart("gamma(beta)", "gamma(beta);"));
+        assert!(super::one_terminator_apart("gamma(beta);", "gamma(beta)"));
+        assert!(!super::one_terminator_apart("gamma(beta)", "gamma(beta)"));
+        assert!(
+            !super::one_terminator_apart("gamma(beta)", "gamma(beta);;"),
+            "two terminators are a different fault"
+        );
+        assert!(
+            !super::one_terminator_apart("gamma(beta)", "gamma(beta); // why"),
+            "a comment is not a terminator the file lacks"
+        );
+        assert!(
+            !super::one_terminator_apart("a; b", "a b"),
+            "and a `;` in the middle is not this difference"
+        );
+    }
+
+    #[test]
+    fn a_needle_one_terminator_off_a_folded_site_is_located() {
+        let needle = flattened_with_a_terminator();
+        // The same needle without the `;` is `chain_join_rescue`'s, and it
+        // declines this one: the terminator is exactly what it may not move.
+        assert!(super::chain_join_rescue(CHAINED_FILE, FLATTENED_CHAIN).is_some());
+        assert!(super::chain_join_rescue(CHAINED_FILE, &needle).is_none());
+
+        let m = super::terminator_miss(CHAINED_FILE, &needle).expect("v30's shape");
+        assert_eq!(m.line, 4);
+        assert_eq!(m.file_lines, 7);
+        assert_eq!(
+            m.needle_lines, 4,
+            "so the refusal can say what the fold undid"
+        );
+        assert!(!m.file_has_the_terminator, "{m:?}");
+        assert_eq!(m.file_tail, "})");
+        assert_eq!(m.wrote_tail, "});");
+    }
+
+    #[test]
+    fn the_terminator_message_names_the_span_and_quotes_both_sides() {
+        let needle = flattened_with_a_terminator();
+        let m = super::terminator_miss(CHAINED_FILE, &needle).expect("v30's shape");
+        let msg = super::terminator_miss_message("port.rs", &m);
+        assert!(
+            msg.contains("lines 4-10"),
+            "the span, and not a region to go hunting for: {msg}"
+        );
+        assert!(msg.contains("You wrote `});`"), "{msg}");
+        assert!(msg.contains("the file says `})`"), "{msg}");
+        assert!(
+            msg.contains("will neither add one nor drop one"),
+            "say why no rescue is offered, or the refusal reads as a shrug: {msg}"
+        );
+        assert!(
+            msg.contains("yours ends with a `;` and the file's does not"),
+            "and which side holds it: {msg}"
+        );
+    }
+
+    #[test]
+    fn a_terminator_miss_names_the_side_the_file_has_it_on() {
+        let hay = CHAINED_FILE.replace("            })\n", "            });\n");
+        assert_ne!(hay, CHAINED_FILE, "the fixture holds the line this changes");
+        let m = super::terminator_miss(&hay, FLATTENED_CHAIN).expect("one `;` the other way");
+        assert!(m.file_has_the_terminator, "{m:?}");
+        assert_eq!(m.file_tail, "});");
+        assert_eq!(m.wrote_tail, "})");
+        let msg = super::terminator_miss_message("port.rs", &m);
+        assert!(msg.contains("the file's line ends with a `;`"), "{msg}");
+        assert!(
+            !msg.contains("yours ends with a `;` and"),
+            "the other direction's wording would be a lie here: {msg}"
+        );
+    }
+
+    #[test]
+    fn an_unfolded_terminator_is_found_by_both_locators_so_the_chain_must_rank_them() {
+        // Nothing was folded on either side here, and both answers find it.
+        // `nearest_miss` says more -- how many of the needle's lines are already
+        // right -- so the chain pushes this one only once that one has
+        // declined. That ranking is what this test exists to hold: the pure
+        // function has no way to know it lost, and pushed first it would put
+        // v19's "6 of its 7 non-blank lines" quiet. Both are computed, since a
+        // located terminator is still proof for `located` when the near miss is
+        // too loose to be.
+        let hay = "fn a() {\n    let alpha = compute_one();\n    let beta = compute_two();\n    gamma(beta)\n}\n";
+        let needle =
+            "    let alpha = compute_one();\n    let beta = compute_two();\n    gamma(beta);";
+        let m = super::nearest_miss(hay, needle).expect("v19's answer");
+        assert_eq!(m.matched, 2, "{m:?}");
+        let t = super::terminator_miss(hay, needle).expect("the same site, folded or not");
+        assert_eq!(t.line, 2);
+        assert_eq!(t.file_lines, 3);
+        assert_eq!(t.needle_lines, 3);
+        let msg = super::terminator_miss_message("port.rs", &t);
+        assert!(
+            !msg.contains("wraps across"),
+            "the two sides wrap alike, so saying so is noise: {msg}"
+        );
+    }
+
+    #[test]
+    fn a_terminator_miss_needs_one_site_and_one_terminator() {
+        let needle = flattened_with_a_terminator();
+        let twice = format!("{CHAINED_FILE}{FLATTENED_CHAIN}\n");
+        assert!(
+            super::terminator_miss(&twice, &needle).is_none(),
+            "two sites that both differ by a `;` name neither"
+        );
+        assert!(
+            super::terminator_miss(CHAINED_FILE, &format!("{FLATTENED_CHAIN};;")).is_none(),
+            "two terminators are not this difference"
+        );
+        assert!(
+            super::terminator_miss(
+                "fn a() {\n    take_the_value();\n}\n",
+                "    take_the_value()"
+            )
+            .is_none(),
+            "folded text this short turns up anywhere"
+        );
+    }
+
+    #[test]
+    fn a_terminator_miss_also_reads_a_chain_the_model_broke() {
+        // The other direction: the file holds the site on one line and the
+        // needle broke it, which is the shape `dechain` folds from the other
+        // side. Only the needle's fold was undone, so the raw-line counts still
+        // differ and the locator still earns its footing.
+        let hay = "fn a() {\n    let total = self.records.iter_mut().next().unwrap_or(&mut blank_record)\n}\n";
+        let needle = "    let total = self\n        .records\n        .iter_mut()\n        .next()\n        .unwrap_or(&mut blank_record);";
+        let m = super::terminator_miss(hay, needle).expect("one line against five");
+        assert_eq!(m.line, 2);
+        assert_eq!(m.file_lines, 1);
+        assert_eq!(m.needle_lines, 5);
+        assert!(!m.file_has_the_terminator, "{m:?}");
+    }
+
+    #[test]
+    fn a_terminator_miss_locates_a_span_in_a_crlf_file_by_line() {
+        let hay = CHAINED_FILE.replace('\n', "\r\n");
+        let needle = flattened_with_a_terminator().replace('\n', "\r\n");
+        let m = super::terminator_miss(&hay, &needle).expect("endings are not text");
+        assert_eq!(m.line, 4);
+        assert_eq!(m.file_lines, 7);
+        assert_eq!(m.file_tail, "})", "no stray carriage return in the quote");
+        assert_eq!(m.wrote_tail, "});");
     }
 
     /// v23 turn 4's `oldString`: the chain as the file wraps it, and the `}`

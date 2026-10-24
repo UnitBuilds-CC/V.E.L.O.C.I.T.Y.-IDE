@@ -4672,7 +4672,11 @@ fn note_refusal_repeat(
 /// The branches run most specific first because the refusals share words: a
 /// near-miss refusal also says its `oldString` is not in the file, and the
 /// brace-drift refusal says "not in place of it" in ordinary prose, so the
-/// ambiguous-site branch keys on `places in` and not on `place`.
+/// ambiguous-site branch keys on `places in` and not on `place`. The
+/// terminator refusal says `is not in` as well, and keys on `statement
+/// terminator` above that branch, because its own text already names the span
+/// to read: the generic branch would send the model after the region the
+/// diagnostics name and throw the span away.
 ///
 /// The brace-drift refusal itself reads two ways and only one of them is fixed
 /// by widening. A block left open is the `newString`'s fault -- it dropped a
@@ -4698,6 +4702,12 @@ fn replay_advice(refusal: &str) -> &'static str {
          site still hold the closers and are left standing. Widen the `oldString` down to the \
          last of them and carry it into the `newString`, or take the extra closing braces back \
          out; more closers raise the count the refusal reports."
+    } else if refusal.contains("statement terminator") {
+        "The refusal names the lines the code is at and quotes the file's own last one, so there \
+         is no region to hunt for: `read_file` exactly that span, copy it into the `oldString` \
+         verbatim — its line breaks and its last line included — and put or take the `;` in the \
+         `newString` instead. This tool will not move a statement terminator, and an `oldString` \
+         that is one apart from the file cannot match however often it is re-sent unchanged."
     } else if refusal.contains("places in") {
         "Widen the `oldString` — include the lines around it — until only the one place you mean \
          still matches, and send that."
@@ -7979,6 +7989,25 @@ mod tests {
         assert!(
             !closed.contains("substance"),
             "a lever the model can pull, not a shrug: {closed}"
+        );
+
+        // v30's case: the refusal located the site by folding it and named the
+        // span, so the lever is copying that span back. Not widening — no
+        // widening supplies a `;` the tool refuses to move — and not the generic
+        // "read the region the diagnostics name", which is the advice that sent
+        // v30 to fourteen lines it had just read twice.
+        let terminator = replay_advice(
+            "Error executing tool: no edits were applied to a.rs; the file is unchanged:\n\
+             edit 1: its `oldString` is not in a.rs, but the code it quotes is, in exactly one \
+             place: lines 287-297. The whole difference is a statement terminator on the last \
+             of them — yours ends with a `;` and the file's does not.",
+        );
+        assert!(terminator.contains("read_file"), "{terminator}");
+        assert!(terminator.contains("statement terminator"), "{terminator}");
+        assert!(!terminator.contains("Widen"), "{terminator}");
+        assert!(
+            !terminator.contains("the file says"),
+            "the near-miss branch, which tells the model a read learns nothing: {terminator}"
         );
 
         // v12's case: two sites match, so the lever really is the `oldString`.

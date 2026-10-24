@@ -3073,6 +3073,221 @@ fn an_edit_that_closes_a_block_it_never_covered_is_told_to_widen() {
     );
 }
 
+/// v30's turn 3: the `oldString` is the file's own site with rustfmt's line
+/// breaks undone and a `;` added to its last line. The tool can fold that site
+/// and did, two turns earlier, for the same needle without the `;`, so the
+/// answer it gave instead -- "appears nowhere in the file even with indentation
+/// ignored", with no line named -- was both false and unusable. The run spent
+/// turns 3 through 9 on it: two refusals alternating with two `read_file` calls
+/// over the same fourteen lines.
+///
+/// It has to name the span and still refuse. A trailing `;` is the difference
+/// between a statement and the value a block returns, so an `oldString` that
+/// adds one asks for a change no tool can tell apart from the patch around it.
+#[test]
+fn an_oldstring_one_semicolon_off_a_folded_site_is_refused_at_the_line() {
+    let (_temp, root) = setup_root();
+    let before = "impl M {\n    fn f(&mut self) {\n        self.user_dict\n            .values_mut()\n            .next()\n            .unwrap_or(&mut PersistedUserRecord {\n                total_budget: 0.0,\n                current_cost: 0.0,\n            })\n    }\n}\n";
+    fs::write(root.join("port.rs"), before).unwrap();
+
+    let err = call_tool_in_workspace(
+        &root,
+        "edit_file",
+        &json!({
+            "relativeFilePath": "port.rs",
+            "edits": [{
+                "oldString": "        self.user_dict.values_mut().next().unwrap_or(&mut PersistedUserRecord {\n            total_budget: 0.0,\n            current_cost: 0.0,\n        });",
+                "newString": "        self.user_dict.insert(user, record);"
+            }],
+            "context": "insert instead of defaulting"
+        }),
+    )
+    .err()
+    .map(|e| e.to_string())
+    .unwrap_or_else(|| "a `;` no rescuer may move has to be refused".to_string());
+
+    assert!(err.contains("lines 3-9"), "the span it was aimed at: {err}");
+    assert!(err.contains("the file says `})`"), "{err}");
+    assert!(
+        !err.contains("appears nowhere"),
+        "the fold located it, so that claim is false: {err}"
+    );
+    assert_eq!(
+        fs::read_to_string(root.join("port.rs")).unwrap(),
+        before,
+        "a refused batch leaves every byte alone"
+    );
+}
+
+/// The same refusal with a `newString` that hands `superseded_site` an anchor:
+/// its first line is one the file already carries, exactly once. That answer is
+/// a guess about history -- "an earlier write of yours replaced what the
+/// `oldString` quotes" -- and nothing was replaced. The locator read the site
+/// out of the file as it stands, so it wins, which is what the `located` gate is
+/// for; v24 spent two turns on a phantom of exactly this shape.
+#[test]
+fn a_located_terminator_outranks_the_history_superseded_site_infers() {
+    let (_temp, root) = setup_root();
+    let before = "impl M {\n    fn f(&mut self) {\n        let _ = self.save_data();\n        self.user_dict\n            .values_mut()\n            .next()\n            .unwrap_or(&mut PersistedUserRecord {\n                total_budget: 0.0,\n                current_cost: 0.0,\n            })\n    }\n}\n";
+    fs::write(root.join("port.rs"), before).unwrap();
+
+    let err = call_tool_in_workspace(
+        &root,
+        "edit_file",
+        &json!({
+            "relativeFilePath": "port.rs",
+            "edits": [{
+                "oldString": "        self.user_dict.values_mut().next().unwrap_or(&mut PersistedUserRecord {\n            total_budget: 0.0,\n            current_cost: 0.0,\n        });",
+                "newString": "        let _ = self.save_data();\n        self.user_dict.insert(user, record);"
+            }],
+            "context": "insert instead of defaulting"
+        }),
+    )
+    .err()
+    .map(|e| e.to_string())
+    .unwrap_or_else(|| "a `;` no rescuer may move has to be refused".to_string());
+
+    assert!(err.contains("statement terminator"), "{err}");
+    assert!(err.contains("lines 4-10"), "{err}");
+    assert!(
+        !err.contains("already been changed"),
+        "the site is standing in the file; nothing superseded it: {err}"
+    );
+    assert_eq!(
+        fs::read_to_string(root.join("port.rs")).unwrap(),
+        before,
+        "a refused batch leaves every byte alone"
+    );
+}
+
+/// Both locators find this site: nothing had to be folded, and the needle's last
+/// line is one `;` off the file's. `nearest_miss` also says how much of the edit
+/// was already right, which the terminator diagnosis cannot, so the chain pushes
+/// that one and this one stays out of the refusal. The ranking is the push order
+/// and nothing else -- both are computed, because a fold that found the site is
+/// proof for `located` even when the near miss matched too few lines to be.
+#[test]
+fn a_near_miss_that_found_the_line_outranks_the_terminator_diagnosis() {
+    let (_temp, root) = setup_root();
+    let before = "fn a() {\n    let alpha = compute_one();\n    let beta = compute_two();\n    gamma(beta)\n}\n";
+    fs::write(root.join("port.rs"), before).unwrap();
+
+    let err = call_tool_in_workspace(
+        &root,
+        "edit_file",
+        &json!({
+            "relativeFilePath": "port.rs",
+            "edits": [{
+                "oldString": "    let alpha = compute_one();\n    let beta = compute_two();\n    gamma(beta);",
+                "newString": "    let alpha = compute_one();\n    let beta = compute_two();\n    gamma(beta + alpha);"
+            }],
+            "context": "fold the two values into the call"
+        }),
+    )
+    .err()
+    .map(|e| e.to_string())
+    .unwrap_or_else(|| "a `;` no rescuer may move has to be refused".to_string());
+
+    assert!(
+        err.contains("2 of its 3 non-blank lines"),
+        "the near miss says how much of the edit was already right: {err}"
+    );
+    assert!(
+        !err.contains("statement terminator"),
+        "and the diagnosis that says less must not displace it: {err}"
+    );
+    assert_eq!(
+        fs::read_to_string(root.join("port.rs")).unwrap(),
+        before,
+        "a refused batch leaves every byte alone"
+    );
+}
+
+/// A near miss this loose does not locate its own site -- two of three lines is
+/// under the three `locates_the_site` asks for -- so alone it would hand the
+/// refusal to `superseded_site`, which infers a rewrite from the line this
+/// `newString` copies out of `flush`. The terminator fold did read the file and
+/// did find the site, so it is the proof that keeps the inference out, and it
+/// does that work without taking over the answer: the near miss says more and is
+/// pushed first. v24 is the run that made `located` a gate at all.
+#[test]
+fn a_loose_near_miss_does_not_let_history_outrank_a_located_terminator() {
+    let (_temp, root) = setup_root();
+    let before = "fn a() {\n    let alpha = compute_one();\n    let beta = compute_two();\n    emit_the_total(beta)\n}\n\nfn flush(store: &mut Store) {\n    let _ = store.save_data();\n}\n";
+    fs::write(root.join("port.rs"), before).unwrap();
+
+    let err = call_tool_in_workspace(
+        &root,
+        "edit_file",
+        &json!({
+            "relativeFilePath": "port.rs",
+            "edits": [{
+                "oldString": "    let alpha = compute_one();\n    let beta = compute_two();\n    emit_the_total(beta);",
+                "newString": "    let alpha = compute_one();\n    let beta = compute_two();\n    let _ = store.save_data();\n    emit_the_total(alpha);"
+            }],
+            "context": "persist before emitting"
+        }),
+    )
+    .err()
+    .map(|e| e.to_string())
+    .unwrap_or_else(|| "a `;` no rescuer may move has to be refused".to_string());
+
+    assert!(
+        err.contains("2 of its 3 non-blank lines"),
+        "the near miss answers, and it answers out of the file: {err}"
+    );
+    assert!(
+        !err.contains("already been changed"),
+        "the fold found the site, so the inferred history stays out: {err}"
+    );
+    assert!(
+        !err.contains("statement terminator"),
+        "and proving the site is not the same as taking over the answer: {err}"
+    );
+    assert_eq!(
+        fs::read_to_string(root.join("port.rs")).unwrap(),
+        before,
+        "a refused batch leaves every byte alone"
+    );
+}
+
+/// The fold is Rust's grammar and the refusal cites Rust's rule about a trailing
+/// `;`, so neither belongs to a file in another language. The same needle
+/// against the same shape of JavaScript has to get the ordinary answer, not a
+/// diagnosis quoting semantics that file does not have.
+#[test]
+fn a_terminator_diagnosis_is_not_offered_to_a_language_it_cites_rules_of() {
+    let (_temp, root) = setup_root();
+    let before = "function f(records) {\n    const rec = records\n        .values()\n        .next()\n        .orElseGet(() => ({\n            total_budget: 0.0,\n            current_cost: 0.0,\n        }))\n}\n";
+    fs::write(root.join("port.js"), before).unwrap();
+
+    let err = call_tool_in_workspace(
+        &root,
+        "edit_file",
+        &json!({
+            "relativeFilePath": "port.js",
+            "edits": [{
+                "oldString": "    const rec = records.values().next().orElseGet(() => ({\n        total_budget: 0.0,\n        current_cost: 0.0,\n    }));",
+                "newString": "    const rec = records.insert(user);"
+            }],
+            "context": "insert instead of defaulting"
+        }),
+    )
+    .err()
+    .map(|e| e.to_string())
+    .unwrap_or_else(|| "the flattened needle is not in the file".to_string());
+
+    assert!(
+        !err.contains("statement terminator"),
+        "Rust's rule, cited at a file that does not have it: {err}"
+    );
+    assert_eq!(
+        fs::read_to_string(root.join("port.js")).unwrap(),
+        before,
+        "a refused batch leaves every byte alone"
+    );
+}
+
 /// The other side of the same check: a restructure that adds a scope has to keep
 /// both delimiters in the batch, and when it does the edit must apply. A guard
 /// that refused this too would push the model back onto the whole-file rewrite
