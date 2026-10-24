@@ -643,10 +643,15 @@ fn b() {
 /// spaces on its first line and two on its second is not the same block
 /// re-indented, it is a model that restructured the region, and shifting the
 /// replacement by one amount would be inventing an edit.
+///
+/// The two lines have to be statements that stand on their own. Wrapped inside a
+/// call they are folded before this question is ever asked, and the fold drops the
+/// interior indentation that is the only evidence the shifts disagreed — see
+/// `a_non_uniform_shift_inside_a_wrapped_call_is_folded_and_applied`.
 #[test]
 fn a_mis_indented_oldstring_whose_lines_disagree_on_the_shift_is_refused() {
     let (_temp, root) = setup_root();
-    let file = "fn a() {\n    mgr.record(\n        total_cost,\n    );\n}\n";
+    let file = "fn a() {\n    mgr.record(total_cost);\n    save(total_cost);\n}\n";
     fs::write(root.join("port.rs"), file).unwrap();
 
     let err = call_tool_in_workspace(
@@ -655,8 +660,8 @@ fn a_mis_indented_oldstring_whose_lines_disagree_on_the_shift_is_refused() {
         &json!({
             "relativeFilePath": "port.rs",
             "edits": [{
-                "oldString": "        mgr.record(\n      total_cost,\n    );",
-                "newString": "        mgr.record(\n      total_budget,\n    );"
+                "oldString": "        mgr.record(total_cost);\n      save(total_cost);",
+                "newString": "        mgr.record(total_budget);\n      save(total_budget);"
             }],
             "context": "widen"
         }),
@@ -674,6 +679,50 @@ fn a_mis_indented_oldstring_whose_lines_disagree_on_the_shift_is_refused() {
         fs::read_to_string(root.join("port.rs")).unwrap(),
         file,
         "a refused batch leaves the file alone"
+    );
+}
+
+/// The other side of that boundary, and the reason the fixture above had to move.
+/// The same disagreement wrapped inside a call is applied rather than refused:
+/// both sides fold onto one line first, and a fold keeps the code and drops the
+/// interior whitespace that was the only evidence of the disagreement. What is left
+/// to take a shift from is the first line, which is the licence the rescue already
+/// runs under — the code occurs in one place and nowhere else. Refusing this one
+/// would cost a turn to a model that has just proved it cannot count spaces, and
+/// `lr7b_v20` re-guessed eight spaces ten times on exactly that refusal.
+#[test]
+fn a_non_uniform_shift_inside_a_wrapped_call_is_folded_and_applied() {
+    let (_temp, root) = setup_root();
+    let file = "fn a() {\n    mgr.record(\n        total_cost,\n    );\n}\n";
+    fs::write(root.join("port.rs"), file).unwrap();
+
+    let ok = call_tool_in_workspace(
+        &root,
+        "edit_file",
+        &json!({
+            "relativeFilePath": "port.rs",
+            "edits": [{
+                "oldString": "        mgr.record(\n      total_cost,\n    );",
+                "newString": "        mgr.record(\n      total_budget,\n    );"
+            }],
+            "context": "widen"
+        }),
+    )
+    .unwrap_or_else(|e| panic!("one site, its code matched once the wraps were ignored: {e}"));
+
+    assert!(
+        ok.contains("ignoring its line breaks"),
+        "the answer has to say what was forgiven, or the model re-sends it: {ok}"
+    );
+    assert!(
+        ok.contains("at line 2") && ok.contains("across 3 lines") && ok.contains("wrote it on 3"),
+        "both sides were folded, and the note counts the file's lines against the model's: {ok}"
+    );
+    let after = fs::read_to_string(root.join("port.rs")).unwrap();
+    assert!(after.contains("total_budget"), "{after}");
+    assert!(
+        !after.contains("total_cost"),
+        "the site was replaced, not a flat copy left beside it: {after}"
     );
 }
 
@@ -921,6 +970,68 @@ fn a_binding_the_formatter_broke_after_its_equals_is_applied_not_refused() {
     assert!(
         !after.contains("                .values_mut()"),
         "and so is the chain under it: {after}"
+    );
+}
+
+/// `lr7b_v28` call 5. The `=` break of v26 and v27 is only the first of three the
+/// model has to get right here: rustfmt had also broken the chain under it and
+/// opened a struct literal whose six fields each got a line, twelve lines in all,
+/// and the model quoted the whole of it as one. `nearest_miss` scores a prefix run,
+/// so a needle whose first line is wrong says nothing about the other eleven;
+/// `tail_anchor` needs at least four lines to work with and this needle has one;
+/// and so the answer fell through to the one diagnosis in the chain that names no
+/// line at all.
+#[test]
+fn a_struct_literal_the_formatter_broke_open_is_applied_not_refused() {
+    let (_temp, root) = setup_root();
+    let file = concat!(
+        "    fn create_budget(&mut self) {\n",
+        "        let _ = self.save_data();\n",
+        "        let result_record =\n",
+        "            self.user_dict\n",
+        "                .values_mut()\n",
+        "                .next()\n",
+        "                .unwrap_or(&mut PersistedUserRecord {\n",
+        "                    total_budget: 0.0,\n",
+        "                    current_cost: 0.0,\n",
+        "                    model_cost: HashMap::new(),\n",
+        "                    duration: None,\n",
+        "                    created_at: 0.0,\n",
+        "                    last_updated_at: 0.0,\n",
+        "                });\n",
+        "        result_record\n",
+        "    }\n",
+    );
+    fs::write(root.join("port.rs"), file).unwrap();
+
+    let flat = "        let result_record = self.user_dict.values_mut().next().unwrap_or(&mut PersistedUserRecord { total_budget: 0.0, current_cost: 0.0, model_cost: HashMap::new(), duration: None, created_at: 0.0, last_updated_at: 0.0, });";
+    let fixed = flat.replace("unwrap_or(", "unwrap_or_else(|| ");
+    let ok = call_tool_in_workspace(
+        &root,
+        "edit_file",
+        &json!({
+            "relativeFilePath": "port.rs",
+            "edits": [{ "oldString": flat, "newString": fixed }],
+            "context": "fix E0515"
+        }),
+    )
+    .unwrap_or_else(|e| panic!("one binding, twelve file lines, one needle line: {e}"));
+
+    assert!(
+        ok.contains("ignoring its line breaks"),
+        "the answer has to say what was forgiven, or the model re-sends it: {ok}"
+    );
+    assert!(
+        ok.contains("across 12 lines") && ok.contains("wrote it on 1"),
+        "and how many, counting the struct fields: {ok}"
+    );
+    assert!(ok.contains("line 3"), "{ok}");
+    let after = fs::read_to_string(root.join("port.rs")).unwrap();
+    assert!(after.contains("unwrap_or_else(||"), "{after}");
+    assert_eq!(
+        after.matches("unwrap_or").count(),
+        1,
+        "the twelve lines were replaced, not kept beside a flat copy: {after}"
     );
 }
 

@@ -1228,23 +1228,31 @@ struct ChainJoin {
 /// `hay` with every line that continues the one above it joined onto it, plus the
 /// byte span each joined line covers in the original.
 ///
-/// Two shapes continue, and both are licensed by Rust's grammar rather than by
+/// Three shapes continue, and each is licensed by Rust's grammar rather than by
 /// appearance. A line whose first non-whitespace character is `.` cannot begin a
-/// statement, so it belongs to the one before it. A line whose last
-/// non-whitespace character is `=` cannot end one, so the line after it is its
-/// right-hand side — rustfmt breaks there whenever the whole binding will not
-/// fit, and that is the break both `lr7b_v26` and `lr7b_v27` reproduced wrong:
-/// the model wrote `let result_record = self.user_dict…` back on one line where
-/// the file had two, and the rescue that exists for exactly this could not see
-/// it. Joining either way changes the line breaks and nothing else, which is what
-/// makes the joined text safe to match against, and the spans are what make the
-/// match reversible: they say which original bytes a joined line stands for, so a
-/// splice can replace them rather than the joined copy. A blank line above a
-/// continuation ends the chain rather than joining through it, and a comment
-/// neither opens nor joins one: its text is not grammar, so a `=` at the end of
-/// it is inside the comment, and joining the line below a comment onto it would
-/// put that line inside the comment too.
+/// statement, so it belongs to the one before it. A line whose last non-whitespace
+/// character is `=` cannot end one, so the line after it is its right-hand side —
+/// rustfmt breaks there whenever the whole binding will not fit, and that is the
+/// break both `lr7b_v26` and `lr7b_v27` reproduced wrong: the model wrote
+/// `let result_record = self.user_dict…` back on one line where the file had two.
+/// And a line that leaves a `(` or `[` unclosed cannot end one either, so
+/// everything down to the closer is still that one expression — which is the break
+/// `lr7b_v28` reproduced wrong, quoting a twelve-line binding and the six struct
+/// fields inside it as a single line.
+///
+/// Joining changes the line breaks and nothing else, which is what makes the
+/// joined text safe to match against, and the spans are what make the match
+/// reversible: they say which original bytes a joined line stands for, so a splice
+/// can replace them rather than the joined copy. A blank line above a continuation
+/// ends the chain rather than joining through it, and a comment neither opens nor
+/// joins one: its text is not grammar, so a bracket at the end of it is inside the
+/// comment, and joining the line below a comment onto it would put that line
+/// inside the comment too.
 fn dechain(hay: &str) -> (String, Vec<(usize, usize)>) {
+    /// Lines one run may cover. A bracket the scanner cannot see — one under a
+    /// `/* */` comment that spans lines — would otherwise leave the depth open
+    /// for the rest of the file and fold all of it onto one line.
+    const MAX_RUN: usize = 60;
     let starts = line_starts(hay);
     let mut text = String::new();
     let mut spans: Vec<(usize, usize)> = Vec::new();
@@ -1255,6 +1263,10 @@ fn dechain(hay: &str) -> (String, Vec<(usize, usize)>) {
     // Whether the line being accumulated is still waiting for the expression
     // that completes it, so the line after it continues rather than starts.
     let mut prev_open = false;
+    // The brackets the run so far has left unclosed. Reset at every head, which
+    // is where the line above proved it had closed them all.
+    let mut depth = 0usize;
+    let mut run = 0usize;
     for (k, &s) in starts.iter().enumerate() {
         let raw = line_at(hay, &starts, k);
         // The segment after a trailing newline is not a line of the file.
@@ -1264,11 +1276,18 @@ fn dechain(hay: &str) -> (String, Vec<(usize, usize)>) {
         let body = raw.trim_start();
         let dotted = body.starts_with('.');
         let comment = body.starts_with("//");
-        if !body.is_empty() && !comment && !spans.is_empty() && !prev_blank && (dotted || prev_open)
-        {
-            // The break after `=` stands where the source had a space and the
-            // model puts the space back; a break before a `.` had none to lose.
-            if !dotted {
+        let blank = raw.trim().is_empty();
+        let joins = !blank
+            && !comment
+            && run < MAX_RUN
+            && !spans.is_empty()
+            && !prev_blank
+            && (dotted || prev_open);
+        if joins {
+            // The break after `=` or inside a bracket stands where the source had
+            // a space and the model puts the space back; a break before a `.` had
+            // none to lose, and neither had one that only wrapped a bracket.
+            if !dotted && !joins_without_a_space(&text, body) {
                 while text.ends_with(' ') || text.ends_with('\t') {
                     text.pop();
                 }
@@ -1277,8 +1296,10 @@ fn dechain(hay: &str) -> (String, Vec<(usize, usize)>) {
             text.push_str(body);
             let last = spans.len() - 1;
             spans[last].1 = s + raw.len();
+            depth = bracket_depth(body, depth);
             prev_blank = false;
-            prev_open = ends_with_eq(body);
+            prev_open = depth > 0 || ends_with_eq(body);
+            run += 1;
             continue;
         }
         if !spans.is_empty() {
@@ -1286,8 +1307,14 @@ fn dechain(hay: &str) -> (String, Vec<(usize, usize)>) {
         }
         text.push_str(raw);
         spans.push((s, s + raw.len()));
-        prev_blank = raw.trim().is_empty();
-        prev_open = !prev_blank && !comment && ends_with_eq(raw);
+        prev_blank = blank;
+        run = 1;
+        depth = 0;
+        prev_open = false;
+        if !blank && !comment {
+            depth = bracket_depth(raw, 0);
+            prev_open = depth > 0 || ends_with_eq(raw);
+        }
     }
     (text, spans)
 }
@@ -1295,6 +1322,97 @@ fn dechain(hay: &str) -> (String, Vec<(usize, usize)>) {
 /// Whether a line is left waiting for the expression that completes it.
 fn ends_with_eq(line: &str) -> bool {
     line.trim_end().ends_with('=')
+}
+
+/// `depth` plus the brackets `line` opens and does not close.
+///
+/// Only `(` and `[` are counted. A `{` at the outermost level is a block's — a
+/// function's, an `if`'s, a `match`'s — and rustfmt keeps one statement per line
+/// inside one, so joining there would fold a whole body onto a line nobody quoted.
+/// A struct literal's `{` is inside a `(` or `[` by the time rustfmt has wrapped
+/// it, so the parenthesis already says the expression is unfinished.
+///
+/// Brackets that are text rather than code are skipped: a `//` comment runs to the
+/// end of the line, a `/* */` one to its closer or to the end of the line when it
+/// has none on it, and a string or character literal holds whatever it holds — one
+/// holding `'('` would otherwise open a parenthesis nothing in the file closes.
+fn bracket_depth(line: &str, mut depth: usize) -> usize {
+    let chars: Vec<char> = line.chars().collect();
+    let mut i = 0;
+    while i < chars.len() {
+        match chars[i] {
+            '(' | '[' => depth += 1,
+            ')' | ']' => depth = depth.saturating_sub(1),
+            '"' => {
+                i = past_literal(&chars, i, '"');
+                continue;
+            }
+            '\'' if starts_a_char_literal(&chars, i) => {
+                i = past_literal(&chars, i, '\'');
+                continue;
+            }
+            '/' if chars.get(i + 1) == Some(&'/') => break,
+            '/' if chars.get(i + 1) == Some(&'*') => {
+                match chars[i + 2..].windows(2).position(|w| w == ['*', '/']) {
+                    Some(at) => {
+                        i += 4 + at;
+                        continue;
+                    }
+                    // The comment outlives this line, and no scan of one line can
+                    // follow it. Counting the brackets under it is the worse
+                    // guess, so the line stops here.
+                    None => break,
+                }
+            }
+            _ => {}
+        }
+        i += 1;
+    }
+    depth
+}
+
+/// The index just past a quoted run opening at `at`, honouring backslash escapes.
+/// An unterminated one ends with the line, because that is where it stops being
+/// this line's problem.
+fn past_literal(chars: &[char], at: usize, quote: char) -> usize {
+    let mut i = at + 1;
+    while i < chars.len() {
+        if chars[i] == '\\' {
+            i += 2;
+            continue;
+        }
+        if chars[i] == quote {
+            return i + 1;
+        }
+        i += 1;
+    }
+    chars.len()
+}
+
+/// Whether a `'` opens a character literal rather than a lifetime. Only a literal
+/// can hold a bracket, and one holding `'('` would otherwise open a parenthesis
+/// that nothing in the file ever closes.
+fn starts_a_char_literal(chars: &[char], at: usize) -> bool {
+    match chars.get(at + 1) {
+        Some('\\') => chars.get(at + 2).is_some(),
+        Some(_) => chars.get(at + 2) == Some(&'\''),
+        None => false,
+    }
+}
+
+/// Whether a formatter's break between two pieces of one expression stood for
+/// nothing at all, so joining them must not put a space back. Rust writes none
+/// after an opening bracket and none before a closing one or a separator; the
+/// struct literal is the case that matters, because `Rec { a: 0.0, });` is what a
+/// model writes for the file's `Rec {` / fields / `});`.
+fn joins_without_a_space(left: &str, right: &str) -> bool {
+    if matches!(left.trim_end().chars().next_back(), Some('(') | Some('[')) {
+        return true;
+    }
+    matches!(
+        right.chars().next(),
+        Some(')') | Some(']') | Some(',') | Some(';')
+    )
 }
 
 /// The one place a needle's lines occur once the file's chain breaks are
@@ -4411,6 +4529,13 @@ mod tests {
         let (text, spans) = super::dechain("    let x =\n\n        y;\n");
         assert_eq!(text, "    let x =\n\n        y;");
         assert_eq!(spans, vec![(0, 11), (12, 12), (13, 23)]);
+        // That case is decided by the blank line being a head, which resets the
+        // depth and the open binding, so the gap check is not what proves it.
+        // A `.` line is the one shape that continues with nothing open above
+        // it, and only the gap check stops it reaching across the blank one.
+        let (text, spans) = super::dechain("    let x = foo\n\n        .bar();\n");
+        assert_eq!(text, "    let x = foo\n\n        .bar();");
+        assert_eq!(spans, vec![(0, 15), (16, 16), (17, 32)]);
     }
 
     #[test]
@@ -4426,6 +4551,169 @@ mod tests {
         let (text, spans) = super::dechain("    let x =\n    // why\n        y;\n");
         assert_eq!(text, "    let x =\n    // why\n        y;");
         assert_eq!(spans, vec![(0, 11), (12, 22), (23, 33)]);
+    }
+
+    /// `lr7b_v28`'s shape in miniature: rustfmt broke a binding after its `=` and
+    /// then opened a struct literal it did not close on that line, and the model
+    /// wrote all of it back as one line.
+    #[test]
+    fn dechain_joins_a_struct_literal_the_formatter_broke_open() {
+        let hay = "    let r = foo(Bar {\n        a: 1.0,\n    });\n    rest\n";
+        let (text, spans) = super::dechain(hay);
+        assert_eq!(text, "    let r = foo(Bar { a: 1.0, });\n    rest");
+        assert_eq!(spans, vec![(0, 45), (46, 54)]);
+        assert_eq!(
+            &hay[spans[0].0..spans[0].1],
+            "    let r = foo(Bar {\n        a: 1.0,\n    });",
+            "the span is the unjoined bytes, so the splice replaces them and not a copy"
+        );
+    }
+
+    #[test]
+    fn dechain_does_not_join_into_a_block_because_a_block_holds_statements() {
+        // A brace at the outermost level is a block's, and rustfmt keeps one
+        // statement per line inside one. Folding it would put the body on a line
+        // the model never quoted and take the match of any needle that copied it
+        // faithfully.
+        let (text, spans) = super::dechain("fn f() {\n    if c {\n        g();\n    }\n}\n");
+        assert_eq!(text, "fn f() {\n    if c {\n        g();\n    }\n}");
+        assert_eq!(spans.len(), 5);
+        // Nor does a `match` open one, whose arms are statements too.
+        let (text, spans) = super::dechain("    let x = match v {\n        1 => a,\n    };\n");
+        assert_eq!(text, "    let x = match v {\n        1 => a,\n    };");
+        assert_eq!(spans.len(), 3);
+        // A struct literal at the outermost level is the one this gives up: it
+        // cannot be told from a block without a parser, and folding a block is
+        // the worse mistake.
+        let (_text, spans) = super::dechain("    let r = Rec {\n        a: 1.0,\n    };\n");
+        assert_eq!(spans.len(), 3, "left refused rather than guessed at");
+    }
+
+    #[test]
+    fn dechain_skips_the_brackets_that_are_text_and_not_code() {
+        // Each of these holds a bracket that nothing closes. Counted as code it
+        // would leave the depth open and fold every line under it onto one.
+        let (_t, spans) = super::dechain("    let s = \"unbalanced (\";\n    next();\n");
+        assert_eq!(spans.len(), 2, "a string literal holds what it holds");
+        let (_t, spans) = super::dechain("    if c == '(' {\n        x();\n    }\n");
+        assert_eq!(
+            spans.len(),
+            3,
+            "and so does a character literal, unlike a lifetime"
+        );
+        let (_t, spans) = super::dechain("    let a = 1; // (\n    let b = 2;\n");
+        assert_eq!(spans.len(), 2, "a line comment runs to the end of the line");
+        let (_t, spans) = super::dechain("    foo(a, /* ( */ b);\n    next();\n");
+        assert_eq!(spans.len(), 2, "a block comment runs to its closer");
+        let (_t, spans) = super::dechain("    /* (\n    still in it\n");
+        assert_eq!(
+            spans.len(),
+            2,
+            "and one that outlives the line stops the scan there rather than guessing"
+        );
+        // An escape inside a string is not the end of it, so the bracket after
+        // the escaped quote is still text rather than code.
+        let escaped = r#"    let s = "a \" (";
+    next();
+"#;
+        let (_t, spans) = super::dechain(escaped);
+        assert_eq!(
+            spans.len(),
+            2,
+            "an escape inside a string is not the end of it"
+        );
+        // Nor is a lifetime a character literal. Treating one as a literal would
+        // swallow the rest of the line and the bracket standing on it, so the
+        // lifetime has to be reached at a depth of 0 and the bracket that opens
+        // the fold has to come after it.
+        let (_t, spans) = super::dechain("    let rows: &'a [&str] = take(\n        1,\n    );\n");
+        assert_eq!(
+            spans.len(),
+            1,
+            "so the bracket after a lifetime is code, and opens the fold"
+        );
+    }
+
+    #[test]
+    fn dechain_puts_no_space_where_rust_writes_none() {
+        // The break after `=` stood for a space, but the one that only wrapped a
+        // bracket did not: `foo( a, );` is in nobody's source.
+        let (text, spans) = super::dechain("    foo(\n        a,\n    );\n");
+        assert_eq!(text, "    foo(a,);");
+        assert_eq!(spans, vec![(0, 26)]);
+        let (text, _spans) = super::dechain("    let v = [\n        1,\n        2,\n    ];\n");
+        assert_eq!(text, "    let v = [1, 2,];");
+        // And the closer has to end the run, or the line under it is swallowed.
+        let (text, spans) =
+            super::dechain("    let v = [\n        1,\n        2,\n    ];\n    rest\n");
+        assert_eq!(text, "    let v = [1, 2,];\n    rest");
+        assert_eq!(
+            spans.len(),
+            2,
+            "the `]` closes the run, so what follows is its own line"
+        );
+    }
+
+    #[test]
+    fn dechain_stops_a_run_a_bracket_it_cannot_see_would_never_end() {
+        let hay = format!("foo(\n{});\n", "a,\n".repeat(70));
+        let (text, spans) = super::dechain(&hay);
+        assert_eq!(
+            &hay[spans[0].0..spans[0].1].matches('\n').count() + 1,
+            60,
+            "the fold is capped, so a bracket lost under a spanning block comment              costs one region and not the rest of the file"
+        );
+        assert_eq!(
+            spans.len(),
+            13,
+            "the fold, the eleven lines under the cap, and the closer"
+        );
+        assert_eq!(text.lines().count(), spans.len());
+    }
+
+    /// `lr7b_v28` call 5, byte for byte: the model quoted a twelve-line binding —
+    /// the `=` break, the chain under it and the struct literal rustfmt had opened
+    /// — as one line. The refusal said the text "appears nowhere in the file" and
+    /// told it to `read_file` "over that region" without naming one, so there was
+    /// nothing to act on.
+    #[test]
+    fn a_struct_literal_broken_open_folds_onto_the_one_line_the_model_wrote() {
+        let hay = concat!(
+            "        let result_record =\n",
+            "            self.user_dict\n",
+            "                .values_mut()\n",
+            "                .next()\n",
+            "                .unwrap_or(&mut PersistedUserRecord {\n",
+            "                    total_budget: 0.0,\n",
+            "                    current_cost: 0.0,\n",
+            "                    model_cost: HashMap::new(),\n",
+            "                    duration: None,\n",
+            "                    created_at: 0.0,\n",
+            "                    last_updated_at: 0.0,\n",
+            "                });\n",
+            "    }\n",
+        );
+        let needle = "let result_record = self.user_dict.values_mut().next().unwrap_or(&mut PersistedUserRecord { total_budget: 0.0, current_cost: 0.0, model_cost: HashMap::new(), duration: None, created_at: 0.0, last_updated_at: 0.0, });";
+        let (joined, spans) = super::dechain(hay);
+        assert_eq!(
+            joined.lines().count(),
+            2,
+            "the binding folds to one line and the brace under it stays its own"
+        );
+        assert_eq!(joined.lines().next().unwrap().trim(), needle);
+        assert_eq!(hay[spans[0].0..spans[0].1].lines().count(), 12);
+        let r = super::chain_join_rescue(hay, needle)
+            .expect("the code is the file's own, only its wraps differ");
+        assert_eq!(r.line, 1);
+        assert_eq!(
+            r.file_lines, 12,
+            "and covers every line the formatter broke it into, the struct fields included"
+        );
+        assert_eq!(
+            r.extra, "        ",
+            "the needle carries no indent at all, so the file's own eight spaces go back"
+        );
+        assert!(r.deepen, "{r:?}");
     }
 
     /// `lr7b_v22`'s file: rustfmt broke the chain, and the model wrote it back
