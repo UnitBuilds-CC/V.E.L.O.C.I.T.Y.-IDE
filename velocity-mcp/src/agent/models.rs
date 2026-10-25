@@ -199,6 +199,16 @@ impl AgentLoopOutcome {
         matches!(self, AgentLoopOutcome::Cancelled)
     }
 
+    /// Whether the loop ended on a *restartable* dead end — a stream stall, a
+    /// repeated refusal/error, or a run that only narrated without acting. The
+    /// orchestrator worker re-issues such an attempt from its continuation
+    /// ledger, because a fresh context sometimes breaks a loop a wall-clock
+    /// timeout would merely have stopped. A `Cancelled` or `TimedOut` (backstop
+    /// spent) run is deliberately not restartable.
+    pub fn is_blocked(&self) -> bool {
+        matches!(self, AgentLoopOutcome::Blocked { .. })
+    }
+
     /// Why a run stopped, for logs and the dispatch result. Empty when the
     /// mission finished normally.
     pub fn reason(&self) -> String {
@@ -465,6 +475,10 @@ mod tests {
         assert!(!blocked.is_provider_unavailable());
         assert!(!blocked.is_timed_out());
         assert!(!blocked.is_cancelled());
+        // `Blocked` is the restartable dead end the orchestrator worker re-issues
+        // from the ledger — the stall/loop signal, distinct from a cancel or a
+        // spent backstop.
+        assert!(blocked.is_blocked());
     }
 
     /// The non-completed outcomes must be distinguishable *structurally*:
@@ -483,6 +497,8 @@ mod tests {
         assert!(dead.is_provider_unavailable());
         assert!(!dead.is_timed_out());
         assert!(!dead.is_cancelled());
+        // A dead provider is a failover, not a restartable dead end.
+        assert!(!dead.is_blocked());
         assert!(
             dead.reason().contains("API key not set"),
             "the operator-facing text keeps the real cause: {}",

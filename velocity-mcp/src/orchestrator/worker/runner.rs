@@ -308,87 +308,101 @@ pub fn execute_live_task(
 
     // One budget for the whole route chain rather than one per route: a worker
     // is unattended, so no single run may be unbounded and a failover chain may
-    // not multiply the ceiling by its own length.
+    // not multiply the ceiling by its own length. This is the last-resort
+    // backstop only — a normal dead end is a *stall* or a *loop* the loop
+    // reports as `Blocked`, and the worker re-issues that pass from the
+    // continuation ledger instead of waiting the clock out (see `should_restart`).
     let worker_start = Instant::now();
     let worker_budget = crate::agent::unattended_budget();
-    let mut budget_spent = false;
+    let max_restarts = crate::agent::max_restarts();
+    let mut restarts_used: u32 = 0;
+    let mut restart_notes: Vec<String> = Vec::new();
+    // Set at the head of every pass, so it is always assigned before the
+    // failure message reads it after the loop.
+    let mut budget_spent;
 
-    for route in routes {
-        let route_start = Instant::now();
-        // `None` means the budget is gone, and forwarding `None` to the request
-        // would mean the opposite ("no deadline") — so this is the stop
-        // condition, not a default.
-        let Some(attempt_budget) = crate::agent::budget_left(worker_budget, worker_start.elapsed())
-        else {
-            budget_spent = true;
-            break;
-        };
-        let prompt = attempt_prompt(&base_instructions, carry_forward.as_deref());
-        // Modification kinds get more turns than the loop's default 15: with the
-        // ledger in hand, the extra turns go to edits and build fixes rather than
-        // exploration. The count comes from the seconds this attempt actually has
-        // left, not from a constant — a fixed 20 was another wall-clock cap in
-        // disguise, binding early on a fast model and never on a slow one.
-        // Read-only kinds keep the loop's default.
-        let attempt_max_turns = if assignment.task_kind.is_read_only() {
-            None
-        } else {
-            Some(crate::agent::turn_ceiling_for(attempt_budget))
-        };
-        let subagent = run_headless_subagent(HeadlessSubAgentRequest {
-            workspace_root: assignment.workspace_root.clone(),
-            provider: route.provider,
-            model: route.model_id.clone(),
-            thinking: route.thinking,
-            prompt,
-            cancel_rx: Some(cancel_rx.clone()),
-            progress: Some(progress.clone()),
-            scoped_files: assignment.scoped_files.clone(),
-            max_turns: attempt_max_turns,
-            budget: Some(attempt_budget),
-            // The worker already gates a file-modification task by diffing the
-            // filesystem (`detect_scoped_changes`), so it does not need the
-            // loop's in-run artifact gate too; keep the prior behaviour.
-            requires_artifact: false,
-        });
-        last_status_updates = subagent.status_updates.clone();
-        last_transcript = subagent.transcript.clone();
-        last_outcome = subagent.outcome.clone();
-        final_provider_label = route.provider.label().to_string();
-        final_model_label = route.model_label.clone();
+    // A pass runs the whole fallback chain once. When the chain ends on a
+    // restartable dead end, the pass repeats from the first route, resuming from
+    // the ledger the previous pass carried forward, up to `max_restarts` times.
+    'passes: loop {
+        budget_spent = false;
+        for route in routes.iter() {
+            let route_start = Instant::now();
+            // `None` means the budget is gone, and forwarding `None` to the request
+            // would mean the opposite ("no deadline") — so this is the stop
+            // condition, not a default.
+            let Some(attempt_budget) =
+                crate::agent::budget_left(worker_budget, worker_start.elapsed())
+            else {
+                budget_spent = true;
+                break;
+            };
+            let prompt = attempt_prompt(&base_instructions, carry_forward.as_deref());
+            // Modification kinds get more turns than the loop's default 15: with the
+            // ledger in hand, the extra turns go to edits and build fixes rather than
+            // exploration. The count comes from the seconds this attempt actually has
+            // left, not from a constant — a fixed 20 was another wall-clock cap in
+            // disguise, binding early on a fast model and never on a slow one.
+            // Read-only kinds keep the loop's default.
+            let attempt_max_turns = if assignment.task_kind.is_read_only() {
+                None
+            } else {
+                Some(crate::agent::turn_ceiling_for(attempt_budget))
+            };
+            let subagent = run_headless_subagent(HeadlessSubAgentRequest {
+                workspace_root: assignment.workspace_root.clone(),
+                provider: route.provider,
+                model: route.model_id.clone(),
+                thinking: route.thinking,
+                prompt,
+                cancel_rx: Some(cancel_rx.clone()),
+                progress: Some(progress.clone()),
+                scoped_files: assignment.scoped_files.clone(),
+                max_turns: attempt_max_turns,
+                budget: Some(attempt_budget),
+                // The worker already gates a file-modification task by diffing the
+                // filesystem (`detect_scoped_changes`), so it does not need the
+                // loop's in-run artifact gate too; keep the prior behaviour.
+                requires_artifact: false,
+            });
+            last_status_updates = subagent.status_updates.clone();
+            last_transcript = subagent.transcript.clone();
+            last_outcome = subagent.outcome.clone();
+            final_provider_label = route.provider.label().to_string();
+            final_model_label = route.model_label.clone();
 
-        let (changed_files, created_files, deleted_files) =
-            detect_scoped_changes(&scoped_paths, &before_contents, &assignment.workspace_root)
-                .map_err(|err| failed_execution(assignment, err))?;
-        let out_of_scope_created_files = detect_out_of_scope_created_files(
-            &scoped_paths,
-            &before_workspace_files,
-            &assignment.workspace_root,
-        )
-        .map_err(|err| failed_execution(assignment, err))?;
-        // Read-only task kinds (Analysis, Planning) succeed when the loop
-        // actually finished and said something; file-modification kinds require
-        // changes on disk.
-        let success = if assignment.task_kind.is_read_only() {
-            // The loop's own structured outcome, not a substring hunt through
-            // its status lines. Scanning for "error" failed a run whenever the
-            // analysis merely *quoted* one — a build log, a compiler diagnostic
-            // it was asked to explain — and passed a run that blew its whole
-            // turn budget without ever producing an answer.
-            subagent.outcome.is_completed() && !subagent.transcript.trim().is_empty()
-        } else {
-            !changed_files.is_empty() || !created_files.is_empty() || !deleted_files.is_empty()
-        };
-        let message = if success {
-            if assignment.task_kind.is_read_only() {
-                // For read-only tasks, surface the model's response (truncated).
-                let snippet: String = subagent.transcript.chars().take(500).collect();
-                format!(
-                    "Analysis via {} / {}: {}",
-                    final_provider_label, final_model_label, snippet,
-                )
-            } else if assignment.task_kind == AgentTaskKind::DesktopAutomation {
-                format!(
+            let (changed_files, created_files, deleted_files) =
+                detect_scoped_changes(&scoped_paths, &before_contents, &assignment.workspace_root)
+                    .map_err(|err| failed_execution(assignment, err))?;
+            let out_of_scope_created_files = detect_out_of_scope_created_files(
+                &scoped_paths,
+                &before_workspace_files,
+                &assignment.workspace_root,
+            )
+            .map_err(|err| failed_execution(assignment, err))?;
+            // Read-only task kinds (Analysis, Planning) succeed when the loop
+            // actually finished and said something; file-modification kinds require
+            // changes on disk.
+            let success = if assignment.task_kind.is_read_only() {
+                // The loop's own structured outcome, not a substring hunt through
+                // its status lines. Scanning for "error" failed a run whenever the
+                // analysis merely *quoted* one — a build log, a compiler diagnostic
+                // it was asked to explain — and passed a run that blew its whole
+                // turn budget without ever producing an answer.
+                subagent.outcome.is_completed() && !subagent.transcript.trim().is_empty()
+            } else {
+                !changed_files.is_empty() || !created_files.is_empty() || !deleted_files.is_empty()
+            };
+            let message = if success {
+                if assignment.task_kind.is_read_only() {
+                    // For read-only tasks, surface the model's response (truncated).
+                    let snippet: String = subagent.transcript.chars().take(500).collect();
+                    format!(
+                        "Analysis via {} / {}: {}",
+                        final_provider_label, final_model_label, snippet,
+                    )
+                } else if assignment.task_kind == AgentTaskKind::DesktopAutomation {
+                    format!(
                     "Desktop automation evidence captured: changed {}, created {}, deleted {} via {} / {}",
                     changed_files.len(),
                     created_files.len(),
@@ -396,111 +410,132 @@ pub fn execute_live_task(
                     final_provider_label,
                     final_model_label,
                 )
+                } else {
+                    format!(
+                        "Changed {}, created {}, deleted {} via {} / {}",
+                        changed_files.len(),
+                        created_files.len(),
+                        deleted_files.len(),
+                        final_provider_label,
+                        final_model_label,
+                    )
+                }
+            } else if assignment.task_kind == AgentTaskKind::DesktopAutomation {
+                format!(
+                    "Desktop automation run produced no scoped file changes via {} / {}",
+                    final_provider_label, final_model_label
+                )
             } else {
                 format!(
-                    "Changed {}, created {}, deleted {} via {} / {}",
-                    changed_files.len(),
-                    created_files.len(),
-                    deleted_files.len(),
-                    final_provider_label,
-                    final_model_label,
+                    "No scoped changes via {} / {}",
+                    final_provider_label, final_model_label
                 )
-            }
-        } else if assignment.task_kind == AgentTaskKind::DesktopAutomation {
-            format!(
-                "Desktop automation run produced no scoped file changes via {} / {}",
-                final_provider_label, final_model_label
-            )
-        } else {
-            format!(
-                "No scoped changes via {} / {}",
-                final_provider_label, final_model_label
-            )
-        };
-        attempts.push(WorkerAttempt {
-            provider_label: final_provider_label.clone(),
-            model_label: final_model_label.clone(),
-            model_id: route.model_id.clone(),
-            success,
-            message: message.clone(),
-        });
-
-        if success {
-            let mut status_updates = last_status_updates;
-            if !out_of_scope_created_files.is_empty() {
-                status_updates.push(format!(
-                    "Out-of-scope created files detected: {}",
-                    out_of_scope_created_files.join(", ")
-                ));
-            }
-            let outcome = ExecutionOutcome {
-                success: true,
-                task_kind: assignment.task_kind,
-                provider_label: final_provider_label,
-                model_label: final_model_label,
-                changed_files,
-                created_files,
-                deleted_files,
-                out_of_scope_created_files,
-                transcript: last_transcript,
-                status_updates,
-                attempts,
-                message,
-                is_read_only: assignment.task_kind.is_read_only(),
             };
-            write_execution_artifacts(run_dir, &outcome)
-                .map_err(|err| failed_execution(assignment, err))?;
-            return Ok(outcome);
-        }
+            attempts.push(WorkerAttempt {
+                provider_label: final_provider_label.clone(),
+                model_label: final_model_label.clone(),
+                model_id: route.model_id.clone(),
+                success,
+                message: message.clone(),
+            });
 
-        // ─── Continuation Ledger: capture state for cross-model handoff ───
-        // After each failed attempt, build a ledger so the next route in the
-        // fallback chain receives structured context about what was tried,
-        // what partially changed, and what still needs doing.
-        let scope_paths: Vec<PathBuf> = scoped_paths.explicit_files.clone();
-        let mut ledger = ContinuationLedger::capture(
-            &format!("task-{}", assignment.task.id.0),
-            &assignment.instructions,
-            &format!("{:?}", assignment.task_kind),
-            &scope_paths,
-            &assignment.workspace_root,
-            assignment.planned_site_map_root,
-            &last_transcript,
-            &changed_files,
-            &last_status_updates,
-            &final_provider_label,
-            &final_model_label,
-            &route.model_id,
-            route_start.elapsed(),
-            false,
-        );
+            if success {
+                let mut status_updates = last_status_updates;
+                if !out_of_scope_created_files.is_empty() {
+                    status_updates.push(format!(
+                        "Out-of-scope created files detected: {}",
+                        out_of_scope_created_files.join(", ")
+                    ));
+                }
+                let outcome = ExecutionOutcome {
+                    success: true,
+                    task_kind: assignment.task_kind,
+                    provider_label: final_provider_label,
+                    model_label: final_model_label,
+                    changed_files,
+                    created_files,
+                    deleted_files,
+                    out_of_scope_created_files,
+                    transcript: last_transcript,
+                    status_updates,
+                    attempts,
+                    message,
+                    is_read_only: assignment.task_kind.is_read_only(),
+                };
+                write_execution_artifacts(run_dir, &outcome)
+                    .map_err(|err| failed_execution(assignment, err))?;
+                return Ok(outcome);
+            }
 
-        // Enrich the brief with the workspace SiteMap so the next route in the
-        // fallback chain inherits the call graph around the scoped files, not
-        // just their contents. Best-effort: a missing or unreadable map leaves
-        // the brief exactly as captured.
-        if let Ok(site_map) = crate::automation::open_workspace_site_map(&assignment.workspace_root)
-        {
-            let site_map_root = assignment.workspace_root.join(".velocity").join("site_map");
-            crate::editor::continuation_ledger::enrich_from_site_map(
-                &mut ledger.environment,
-                &site_map_root,
+            // ─── Continuation Ledger: capture state for cross-model handoff ───
+            // After each failed attempt, build a ledger so the next route in the
+            // fallback chain receives structured context about what was tried,
+            // what partially changed, and what still needs doing.
+            let scope_paths: Vec<PathBuf> = scoped_paths.explicit_files.clone();
+            let mut ledger = ContinuationLedger::capture(
+                &format!("task-{}", assignment.task.id.0),
+                &assignment.instructions,
+                &format!("{:?}", assignment.task_kind),
                 &scope_paths,
-                &|hash| site_map.resolve_string(hash),
-                &|hash| site_map.get_callers(hash),
-                &|hash| site_map.get_dependencies(hash),
+                &assignment.workspace_root,
+                assignment.planned_site_map_root,
+                &last_transcript,
+                &changed_files,
+                &last_status_updates,
+                &final_provider_label,
+                &final_model_label,
+                &route.model_id,
+                route_start.elapsed(),
+                false,
             );
+
+            // Enrich the brief with the workspace SiteMap so the next route in the
+            // fallback chain inherits the call graph around the scoped files, not
+            // just their contents. Best-effort: a missing or unreadable map leaves
+            // the brief exactly as captured.
+            if let Ok(site_map) =
+                crate::automation::open_workspace_site_map(&assignment.workspace_root)
+            {
+                let site_map_root = assignment.workspace_root.join(".velocity").join("site_map");
+                crate::editor::continuation_ledger::enrich_from_site_map(
+                    &mut ledger.environment,
+                    &site_map_root,
+                    &scope_paths,
+                    &|hash| site_map.resolve_string(hash),
+                    &|hash| site_map.get_callers(hash),
+                    &|hash| site_map.get_dependencies(hash),
+                );
+            }
+            // Persist ledger for diagnostics and potential manual inspection.
+            let ledger_path = run_dir.join(format!(
+                "continuation_ledger_attempt_{}.txt",
+                attempts.len()
+            ));
+            let ledger_prompt = ledger.continuation_prompt();
+            let _ = fs::write(&ledger_path, &ledger_prompt);
+            // Hand the next route the map of what was already learned and changed
+            // instead of making it rediscover everything.
+            carry_forward = Some(ledger_prompt);
         }
-        // Persist ledger for diagnostics and potential manual inspection.
-        let ledger_path = run_dir.join(format!(
-            "continuation_ledger_attempt_{}.txt",
-            attempts.len()
-        ));
-        let ledger_prompt = ledger.continuation_prompt();
-        let _ = fs::write(&ledger_path, &ledger_prompt);
-        // Hand the next route the map of what was already learned and changed
-        // instead of making it rediscover everything.
-        carry_forward = Some(ledger_prompt);
+
+        // A pass through the whole chain ended. Restart it from the ledger only
+        // when the chain stopped on a dead end a fresh context can plausibly
+        // break — a stall or a loop (`Blocked`) — and never for an operator
+        // cancel, a spent backstop, or once the restart allowance is used up.
+        if should_restart(
+            last_outcome.is_blocked(),
+            last_outcome.is_cancelled(),
+            budget_spent,
+            restarts_used,
+            max_restarts,
+        ) {
+            restarts_used += 1;
+            restart_notes.push(format!(
+                "worker: restart {restarts_used}/{max_restarts} — the previous pass ended on a stall or loop, not a spent budget; re-issuing from the continuation ledger"
+            ));
+            continue 'passes;
+        }
+        break 'passes;
     }
 
     // Structured: the loop reports a cancellation as its own outcome variant,
@@ -529,6 +564,20 @@ pub fn execute_live_task(
             worker_budget.as_secs()
         );
     }
+    if restarts_used > 0 {
+        message = format!(
+            "{message} (re-passed {restarts_used}× from the continuation ledger after a stall or loop, still no scoped changes)"
+        );
+    } else if last_outcome.is_blocked() && !cancelled {
+        // A dead end the loop named — a stream stall or a repeated refusal — is
+        // reported as its own reason, not the generic "no changes", so the
+        // operator sees *why* the model got nowhere instead of a blank failure.
+        message = format!("{message} ({})", last_outcome.reason());
+    }
+    // Keep the restart history in the status stream so a later read of the run
+    // shows the worker retried on its own, and that the backstop was never what
+    // ended it.
+    last_status_updates.extend(restart_notes);
     let outcome = ExecutionOutcome {
         success: false,
         task_kind: assignment.task_kind,
@@ -585,9 +634,32 @@ fn attempt_prompt(instructions: &str, ledger_prompt: Option<&str>) -> String {
     )
 }
 
+/// Whether the worker should run the fallback chain again after a pass ended
+/// without success.
+///
+/// This is the timeout-replacement decision: a local model that is merely slow
+/// is never cut off by the clock any more, so the thing that ends an attempt is
+/// a *dead end the loop reported* — a stream stall or a structural loop, both
+/// surfaced as `Blocked`. Those are worth re-issuing from the continuation
+/// ledger, because a fresh context sometimes makes the move the wedged attempt
+/// kept failing to make. A `Cancelled` run must not restart (an operator stopped
+/// it), and neither must a pass whose only end was the backstop being spent
+/// (`budget_spent`) — re-running can only spend budget it no longer has. Bounded
+/// by `max_restarts` so a task the model genuinely cannot do terminates.
+fn should_restart(
+    blocked: bool,
+    cancelled: bool,
+    budget_spent: bool,
+    restarts_used: u32,
+    max_restarts: u32,
+) -> bool {
+    blocked && !cancelled && !budget_spent && restarts_used < max_restarts
+}
+
 #[cfg(test)]
 mod tests {
     use super::attempt_prompt;
+    use super::should_restart;
 
     #[test]
     fn first_attempt_prompt_is_plain_instructions() {
@@ -604,5 +676,29 @@ mod tests {
         assert!(prompt.contains("## Completed Edits"));
         assert!(prompt.contains("Do NOT re-read files"));
         assert!(prompt.contains("Prioritize writing the files"));
+    }
+
+    #[test]
+    fn a_blocked_dead_end_restarts_until_the_allowance_is_spent() {
+        // A stream stall or a structural loop both report `Blocked`, and either
+        // is worth re-issuing from the ledger. The allowance bounds it.
+        assert!(should_restart(true, false, false, 0, 2));
+        assert!(should_restart(true, false, false, 1, 2));
+        assert!(!should_restart(true, false, false, 2, 2));
+    }
+
+    #[test]
+    fn an_operator_cancel_or_a_spent_backstop_never_restarts() {
+        // A cancel is the operator's decision; a spent backstop means there is
+        // no budget left to restart with — re-running could only overshoot it.
+        assert!(!should_restart(true, true, false, 0, 2));
+        assert!(!should_restart(true, false, true, 0, 2));
+    }
+
+    #[test]
+    fn a_pass_that_ended_without_a_dead_end_does_not_restart() {
+        // A route that merely failed over (provider unavailable, handled by the
+        // chain itself) is not a `Blocked` dead end, so no extra pass.
+        assert!(!should_restart(false, false, false, 0, 2));
     }
 }

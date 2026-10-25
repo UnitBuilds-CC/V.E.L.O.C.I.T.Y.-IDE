@@ -750,6 +750,7 @@ fn process_ui_message(
                 Some(router_settings),
                 None,  // default max_loops
                 None,  // interactive session: the user cancels, no wall-clock budget
+                None,  // interactive session: no stall window, the socket may block
                 false, // interactive chat: a text answer is a valid completion
             );
         }

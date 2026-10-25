@@ -180,6 +180,28 @@ fn salvage_complete_calls(calls: Vec<ToolCallAccumulator>) -> Vec<ToolCallAccumu
         .collect()
 }
 
+/// How long the streamed read should block waiting for the *next* token before
+/// giving up, given the time left to the run's backstop (`deadline_remaining`)
+/// and the no-output stall window (`stall`).
+///
+/// This is what turns the deadline from "wait until the whole run expires" into
+/// a heartbeat: with a stall window set the read fires after `stall` of silence
+/// even though the backstop still has hours left, so a wedged generation is
+/// caught in one window instead of at the backstop, while a slow-but-streaming
+/// model — which resets this every token — is never cut off. `None` means no
+/// timeout (block on the socket), which is the interactive-session behavior.
+pub(crate) fn recv_wait(
+    deadline_remaining: Option<std::time::Duration>,
+    stall: Option<std::time::Duration>,
+) -> Option<std::time::Duration> {
+    match (deadline_remaining, stall) {
+        (Some(backstop), Some(window)) => Some(backstop.min(window)),
+        (Some(backstop), None) => Some(backstop),
+        (None, Some(window)) => Some(window),
+        (None, None) => None,
+    }
+}
+
 pub fn run_agent_reasoning_loop(
     workspace_root: &PathBuf,
     accounts: &[CloudflareAccount],
@@ -201,6 +223,7 @@ pub fn run_agent_reasoning_loop(
     router_settings: Option<&WorkspaceRouterSettings>,
     max_loops_override: Option<usize>,
     deadline: Option<std::time::Instant>,
+    stall: Option<std::time::Duration>,
     requires_artifact: bool,
 ) -> AgentLoopOutcome {
     let mut sitemap_needed = false;
@@ -211,6 +234,11 @@ pub fn run_agent_reasoning_loop(
     let budget_secs = deadline
         .map(|at| at.saturating_duration_since(loop_started).as_secs())
         .unwrap_or(0);
+    // The no-output heartbeat, in seconds, for status lines and the stall
+    // outcome's reason. `None` (interactive, or VELOCITY_STALL_WINDOW_SECS=0)
+    // means the read blocks on the socket and only the repeat detectors and the
+    // backstop can end a wedged generation.
+    let stall_secs = stall.map(|window| window.as_secs()).unwrap_or(0);
     let max_loops: usize = max_loops_override.unwrap_or(15);
     // How this run ends, for callers that cannot read a transcript. Starts as
     // the turn-budget case because that is what falling out of the `while`
@@ -1500,6 +1528,10 @@ pub fn run_agent_reasoning_loop(
         });
 
         let mut cut_at_deadline = false;
+        // Set when the read timed out because *no token arrived within the
+        // stall window*, as opposed to the run reaching its backstop. A stall
+        // ends the attempt as a restartable dead end rather than a timeout.
+        let mut stalled = false;
         loop {
             if apply_headless_control_messages(cancel_rx, message_history, ui_tx, progress) {
                 break;
@@ -1524,13 +1556,28 @@ pub fn run_agent_reasoning_loop(
             if interrupted {
                 break;
             }
-            let line = match deadline {
-                Some(at) => match line_rx
-                    .recv_timeout(at.saturating_duration_since(std::time::Instant::now()))
-                {
+            // Heartbeat, not a total-timeout: wait for the next token for at
+            // most the smaller of the stall window and the backstop remaining.
+            // Every line that arrives resets the wait, so a slow-but-streaming
+            // local model (minutes to compose one tool payload under GPU
+            // contention) is never cut off, while a wedged generation surfaces
+            // after one silent window instead of at the backstop.
+            let deadline_remaining =
+                deadline.map(|at| at.saturating_duration_since(std::time::Instant::now()));
+            let line = match recv_wait(deadline_remaining, stall) {
+                Some(wait) => match line_rx.recv_timeout(wait) {
                     Ok(line) => line,
                     Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
-                        cut_at_deadline = true;
+                        // Whichever bound fired decides the ending: the backstop
+                        // genuinely expired, or the model just stopped producing.
+                        // Re-measured now, because `deadline_remaining` was the
+                        // value read *before* the wait and would still be
+                        // non-zero when the backstop itself is what elapsed.
+                        if deadline.is_some_and(|at| std::time::Instant::now() >= at) {
+                            cut_at_deadline = true;
+                        } else {
+                            stalled = true;
+                        }
                         break;
                     }
                     Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
@@ -1720,6 +1767,39 @@ pub fn run_agent_reasoning_loop(
                         accumulated_tools.len()
                     )))
                     .ok();
+            }
+        }
+
+        // The generation stalled: no token for the whole window, yet the
+        // backstop still had time left. This is a dead end, not a slow run, so
+        // it ends the attempt in a *restartable* way (`Blocked`) instead of the
+        // `TimedOut` a spent backstop produces — the worker re-issues it from
+        // the continuation ledger, where a fresh context often breaks the loop
+        // an idle GPU would otherwise sit in until the backstop. If complete
+        // tool calls did land just before the silence, the model acted, so fall
+        // through and run them rather than throwing the turn away.
+        if stalled && !out_of_time {
+            accumulated_tools = salvage_complete_calls(accumulated_tools);
+            if accumulated_tools.is_empty() {
+                ui_tx
+                    .send(AgentToUiMessage::StatusUpdate(format!(
+                        "Model produced no output for {}s partway through turn {} — ending this attempt as a stall rather than waiting out the {}s backstop",
+                        stall_secs,
+                        loop_count,
+                        budget_secs
+                    )))
+                    .ok();
+                outcome = ending.stopped(
+                    loop_count,
+                    "stream stalled with no output",
+                    AgentLoopOutcome::Blocked {
+                        reason: format!(
+                            "no model output for {}s (stall window) during turn {} — restartable dead end",
+                            stall_secs, loop_count
+                        ),
+                    },
+                );
+                break;
             }
         }
 
@@ -7487,7 +7567,7 @@ mod tests {
         hides_generation_tool, is_refusal, is_rustc_diagnostic_report, is_test_failure_report,
         item_head_keyword, items_a_rewrite_would_delete, missing_crate_help, no_tool_call_nudge,
         note_refusal_repeat, off_target_refusal, parse_function_fragments, read_of_named_target,
-        remember_run_write, repair_api_context, repair_budget, repair_error_excerpt,
+        recv_wait, remember_run_write, repair_api_context, repair_budget, repair_error_excerpt,
         repeated_refusal_note, replay_advice, rust_item_names, salvage_complete_calls,
         should_arm_write_repair, should_close_validate, should_grade_tests_now,
         should_lock_exploration, should_note_unarmed_repair, should_nudge_missing_artifact,
@@ -7512,6 +7592,54 @@ mod tests {
     // by tests that pass a real temp dir to `super::`.
     fn error_signatures(errors: &str) -> Vec<String> {
         super::error_signatures(errors, None)
+    }
+
+    /// The heartbeat that replaced the arbitrary wall-clock read timeout. The
+    /// whole point is that a slow model keeps getting cut *in*, so the wait must
+    /// be the shorter of the stall window and the backstop remaining.
+    #[test]
+    fn the_stall_window_wins_when_the_backstop_still_has_time() {
+        use std::time::Duration;
+        // Backstop has an hour left, stall window is 300s: a wedged stream is
+        // abandoned in 300s, not an hour later.
+        assert_eq!(
+            recv_wait(
+                Some(Duration::from_secs(3600)),
+                Some(Duration::from_secs(300))
+            ),
+            Some(Duration::from_secs(300))
+        );
+    }
+
+    #[test]
+    fn the_backstop_wins_when_it_is_the_shorter_bound() {
+        use std::time::Duration;
+        // Only 10s remain before the backstop: never wait past it, even though
+        // the stall window is 300s.
+        assert_eq!(
+            recv_wait(
+                Some(Duration::from_secs(10)),
+                Some(Duration::from_secs(300))
+            ),
+            Some(Duration::from_secs(10))
+        );
+    }
+
+    #[test]
+    fn no_backstop_still_stalls_on_the_window() {
+        use std::time::Duration;
+        // An unbounded (deadline-free) unattended run still detects a stall.
+        assert_eq!(
+            recv_wait(None, Some(Duration::from_secs(300))),
+            Some(Duration::from_secs(300))
+        );
+    }
+
+    #[test]
+    fn an_unattended_run_with_neither_bound_blocks_on_the_socket() {
+        // Interactive sessions pass no stall window, preserving the old blocking
+        // read; `None` is the only case that must not impose a timeout.
+        assert_eq!(recv_wait(None, None), None);
     }
 
     fn prior_encounters(errors: &str, history: &[Vec<String>]) -> usize {

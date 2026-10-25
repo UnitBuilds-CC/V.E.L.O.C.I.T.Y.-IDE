@@ -11,16 +11,26 @@ use crate::usage::{
 };
 use std::sync::{Arc, Mutex};
 
-/// Wall-clock budget for a headless run nobody is watching.
+/// Last-resort wall-clock backstop for a headless run nobody is watching.
+///
+/// This is deliberately NOT the primary limiter any more. A local model does
+/// not run at cloud throughput — measured, `qwen3.6:35b-a3b` resident on one
+/// 8 GB GPU shared by four parallel specialists produced ~6 tok/s, so a
+/// legitimate first port generation ran for many minutes and a 900 s cap
+/// killed work that was alive, merely slow, never stalled. Normal dead ends are
+/// now caught much sooner and more honestly by [`stall_window`] (no output for
+/// a window) and by the loop's repeat/no-action detectors (a structural loop,
+/// not a clock). This value only has to be large enough to stop a pathological
+/// run that keeps trickling bytes yet never finishes logically.
 ///
 /// Shared by every unattended caller (`team_dispatch`, workflow agent steps,
 /// orchestrator workers) so one knob bounds them all. An interactive session
 /// passes `None` instead — a human at the keyboard is the deadline there.
-///
-/// Overridable because repo-scale ports legitimately need longer than a
-/// single-file task, and finding that out should not require a rebuild.
 pub fn unattended_budget() -> std::time::Duration {
-    const DEFAULT_SECS: u64 = 900;
+    // A backstop, not a target: 3600 s is far above any single attempt that is
+    // actually making progress, so it should never be the thing that ends a
+    // healthy run — a stall or a loop fires first.
+    const DEFAULT_SECS: u64 = 3600;
     std::env::var("VELOCITY_DISPATCH_BUDGET_SECS")
         .ok()
         .and_then(|raw| raw.trim().parse::<u64>().ok())
@@ -29,6 +39,45 @@ pub fn unattended_budget() -> std::time::Duration {
         .filter(|secs| *secs > 0)
         .map(std::time::Duration::from_secs)
         .unwrap_or_else(|| std::time::Duration::from_secs(DEFAULT_SECS))
+}
+
+/// How long a run may go with no streamed output before the generation is
+/// declared stalled rather than merely slow.
+///
+/// The loop's per-token read waits at most this long between lines, so the
+/// clock measures *time since the last token* — a model still producing
+/// tokens is never cut off, however long the whole message takes, while a
+/// wedged GPU/stream is abandoned within one window instead of at the backstop.
+/// Sized generously (300 s) because a reasoning model under GPU contention can
+/// spend minutes composing a single large `write_file` payload before any of it
+/// reaches the socket. Zero or garbage disables the stall check (the run then
+/// relies only on the loop's repeat detectors and the backstop).
+pub fn stall_window() -> Option<std::time::Duration> {
+    const DEFAULT_SECS: u64 = 300;
+    match std::env::var("VELOCITY_STALL_WINDOW_SECS") {
+        Ok(raw) => match raw.trim().parse::<u64>() {
+            // An explicitly-zero window means "no stall check", which is a
+            // legitimate operator choice, unlike the budget's zero-means-default.
+            Ok(0) => None,
+            Ok(secs) => Some(std::time::Duration::from_secs(secs)),
+            Err(_) => Some(std::time::Duration::from_secs(DEFAULT_SECS)),
+        },
+        Err(_) => Some(std::time::Duration::from_secs(DEFAULT_SECS)),
+    }
+}
+
+/// How many times an orchestrator worker re-issues a route after the loop ends
+/// it on a *restartable* dead end (a stall or a structural loop, reported as
+/// `Blocked`), resuming from the continuation ledger rather than the clock.
+///
+/// Bounded so a task the model genuinely cannot do cannot restart forever; the
+/// [`unattended_budget`] backstop still caps the total across every restart.
+pub fn max_restarts() -> u32 {
+    const DEFAULT: u32 = 2;
+    std::env::var("VELOCITY_MAX_RESTARTS")
+        .ok()
+        .and_then(|raw| raw.trim().parse::<u32>().ok())
+        .unwrap_or(DEFAULT)
 }
 
 /// What is left of `total` once `elapsed` has been spent.
@@ -249,6 +298,7 @@ pub fn run_headless_subagent(request: HeadlessSubAgentRequest) -> HeadlessSubAge
         None, // Headless sub-agents use direct dispatch, not MoA router
         request.max_turns,
         deadline,
+        stall_window(),
         request.requires_artifact,
     );
 

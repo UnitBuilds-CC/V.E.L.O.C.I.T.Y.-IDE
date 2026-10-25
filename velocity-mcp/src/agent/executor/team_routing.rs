@@ -311,6 +311,7 @@ pub fn try_route_team_prompt(
         None,  // Team routing uses direct dispatch, not MoA router
         None,  // default max_loops
         None,  // interactive @-mention routing: the user can cancel, no budget
+        None,  // interactive @-mention routing: no stall window, the socket may block
         false, // @-mention chat: a text answer is a valid completion
     );
 

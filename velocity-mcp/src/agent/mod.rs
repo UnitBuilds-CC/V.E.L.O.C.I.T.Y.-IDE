@@ -32,7 +32,8 @@ mod proptest_agent;
 mod tests;
 
 pub use executor::{
-    budget_left, run_agent_thread, run_headless_subagent, turn_ceiling_for, unattended_budget,
+    budget_left, max_restarts, run_agent_thread, run_headless_subagent, stall_window,
+    turn_ceiling_for, unattended_budget,
 };
 pub use models::{
     AgentToUiMessage, AiProvider, ApiStyle, HeadlessSubAgentEventKind, HeadlessSubAgentProgress,
