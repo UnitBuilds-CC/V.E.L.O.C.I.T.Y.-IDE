@@ -330,6 +330,36 @@ pub fn get_team_tools() -> Vec<Tool> {
                 "required": ["delta"]
             }),
         },
+        Tool {
+            name: "list_live_runs".to_string(),
+            description: "P5 observability: list every live-VC team run the running MCP process currently knows about — the background: true dispatches that are still executing or have just finished. Each row shows the run_id, team, trigger, whether it is still running, the current wave, elapsed seconds and any directives still queued. Use it to find a run_id to feed to inspect_live_run or read_directive_inbox. Read-only.".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {},
+            }),
+        },
+        Tool {
+            name: "inspect_live_run".to_string(),
+            description: "P5 observability: read one live-VC run's task graph, in-flight assignments and per-worker statuses from the snapshot the driver thread publishes every wave, plus the run lifecycle (running, or finished with succeeded/failed/blocked counts and wall seconds). This is the primary tool for watching the parallel pipeline work end to end. Supply a run_id, or a team slug/id to resolve that team's newest still-running dispatch. Read-only.".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "run_id": { "type": "string", "description": "The run_id from team_dispatch background:true or list_live_runs. Takes precedence over 'team'." },
+                    "team": { "type": "string", "description": "Team slug, @slug, or id fallback selector when run_id is omitted; resolves to that team's newest running dispatch." }
+                }
+            }),
+        },
+        Tool {
+            name: "read_directive_inbox".to_string(),
+            description: "P5 observability: read a live-VC run's shared directive inbox and delivery ledger. Lists every broadcast and scope-tagged directive pushed by amend_running_team, and the ledger of which directive was handed to which in-flight assignment by the driver thread. The ledger is the evidence that an amendment actually reached every in-flight worker rather than merely queueing a note. Supply a run_id or team selector. Read-only.".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "run_id": { "type": "string", "description": "The run_id from team_dispatch background:true or list_live_runs. Takes precedence over 'team'." },
+                    "team": { "type": "string", "description": "Team slug, @slug, or id fallback selector when run_id is omitted." }
+                }
+            }),
+        },
         // ── Intent / Decision Routing Tools ────────────────────────────
         Tool {
             name: "classify_intent".to_string(),

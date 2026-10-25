@@ -108,6 +108,9 @@ pub fn handle_team_tool(
         "team_changelog" => team_changelog(root, arguments)?,
         "team_dispatch" => team_dispatch(root, arguments)?,
         "amend_running_team" => amend_running_team(root, arguments)?,
+        "list_live_runs" => list_live_runs(root, arguments)?,
+        "inspect_live_run" => inspect_live_run(root, arguments)?,
+        "read_directive_inbox" => read_directive_inbox(root, arguments)?,
         "classify_intent" => classify_intent_tool(arguments)?,
         "select_model" => select_model_tool(root, arguments)?,
         "provision_team_from_intent" => provision_team_from_intent(root, arguments)?,
@@ -3702,6 +3705,170 @@ fn amend_running_team(root: &Path, arguments: &Value) -> Result<String, Box<dyn 
     Ok(serde_json::to_string_pretty(&response)?)
 }
 
+/// Resolve a [`LiveRun`] from either a `run_id` or a `team` selector. Shared by
+/// the P5 observability tools; a missing selector or unknown run is an error so
+/// an operator never inspects an empty table and mistakes it for a finished plan.
+fn locate_live_run(
+    arguments: &Value,
+) -> Result<std::sync::Arc<crate::orchestrator::live_runs::LiveRun>, Box<dyn Error>> {
+    use crate::orchestrator::live_runs;
+    if let Some(id) = arguments["run_id"]
+        .as_str()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    {
+        return live_runs::get(id).ok_or_else(|| format!("no live run with id '{id}'").into());
+    }
+    let team_ref = arguments["team"]
+        .as_str()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .ok_or("either 'run_id' or 'team' must name the run to inspect")?;
+    let slug = slugify(team_ref.trim_start_matches('@'));
+    let team_id = format!("team_{slug}");
+    live_runs::find_running_by_team(&team_id)
+        .or_else(|| live_runs::find_running_by_team(team_ref))
+        .ok_or_else(|| format!("no running live run found for team '{team_ref}'").into())
+}
+
+/// P5 — list every live-VC team run the process currently knows about, so an
+/// operator can find a `run_id` to feed to the richer read tools.
+fn list_live_runs(_root: &Path, _arguments: &Value) -> Result<String, Box<dyn Error>> {
+    use crate::orchestrator::live_runs;
+    let runs: Vec<Value> = live_runs::list_ids()
+        .into_iter()
+        .filter_map(|id| live_runs::get(&id))
+        .map(|r| {
+            let (wave, elapsed_secs) = {
+                let snap = r.snapshot.lock().unwrap();
+                (snap.wave, snap.elapsed_secs)
+            };
+            json!({
+                "run_id": r.run_id,
+                "team_id": r.team_id,
+                "team_name": r.team_name,
+                "trigger": r.trigger,
+                "running": r.is_running(),
+                "wave": wave,
+                "elapsed_secs": elapsed_secs,
+                "pending_directives": r.inbox.lock().unwrap().pending_len(),
+            })
+        })
+        .collect();
+    Ok(serde_json::to_string_pretty(&json!({
+        "count": runs.len(),
+        "runs": runs,
+    }))?)
+}
+
+/// P5 — inspect one run: the task graph, the in-flight assignments and their
+/// worker statuses all come from the snapshot the driver thread publishes every
+/// wave; the lifecycle (running vs finished counts) from its status slot. This is
+/// the primary "watch the pipeline working" read.
+fn inspect_live_run(_root: &Path, arguments: &Value) -> Result<String, Box<dyn Error>> {
+    use crate::orchestrator::live_runs::RunStatus;
+    let run = locate_live_run(arguments)?;
+    let (wave, elapsed_secs, tasks) = {
+        let snap = run.snapshot.lock().unwrap();
+        let tasks: Vec<Value> = snap
+            .tasks
+            .iter()
+            .map(|t| {
+                json!({
+                    "task_id": t.task_id,
+                    "member_id": t.member_id,
+                    "role": t.role,
+                    "scope": t.scope,
+                    "status": t.status,
+                })
+            })
+            .collect();
+        (snap.wave, snap.elapsed_secs, tasks)
+    };
+    let running = tasks
+        .iter()
+        .filter(|t| t["status"] == json!("running"))
+        .count();
+    let pending = tasks
+        .iter()
+        .filter(|t| t["status"] == json!("pending"))
+        .count();
+    let terminal = tasks.len() - running - pending;
+    let lifecycle = match &*run.status.lock().unwrap() {
+        RunStatus::Running => json!({ "state": "running" }),
+        RunStatus::Finished {
+            succeeded,
+            failed,
+            blocked,
+            wall_secs,
+        } => json!({
+            "state": "finished",
+            "succeeded": succeeded,
+            "failed": failed,
+            "blocked": blocked,
+            "wall_secs": wall_secs,
+        }),
+    };
+    Ok(serde_json::to_string_pretty(&json!({
+        "run_id": run.run_id,
+        "team_id": run.team_id,
+        "team_name": run.team_name,
+        "prompt": run.prompt,
+        "trigger": run.trigger,
+        "wave": wave,
+        "elapsed_secs": elapsed_secs,
+        "lifecycle": lifecycle,
+        "summary": {
+            "total": tasks.len(),
+            "running": running,
+            "pending": pending,
+            "terminal": terminal,
+        },
+        "task_graph": tasks,
+    }))?)
+}
+
+/// P5 — read the directive inbox and the delivery ledger for a run. The ledger
+/// is the record of which directive reached which in-flight assignment, so it is
+/// what proves an `amend_running_team` actually steered every worker rather than
+/// merely queueing a note.
+fn read_directive_inbox(_root: &Path, arguments: &Value) -> Result<String, Box<dyn Error>> {
+    use crate::orchestrator::directive::DirectiveKind;
+    let run = locate_live_run(arguments)?;
+    let (pending, directives, ledger) = {
+        let inbox = run.inbox.lock().unwrap();
+        let directives: Vec<Value> = inbox
+            .seen()
+            .iter()
+            .map(|d| {
+                json!({
+                    "directive_id": d.id,
+                    "text": d.text,
+                    "scope_filter": d.scope_filter,
+                    "broadcast": d.scope_filter.is_empty(),
+                    "kind": match d.kind {
+                        DirectiveKind::Amend => "amend",
+                        DirectiveKind::Provision => "provision",
+                    },
+                })
+            })
+            .collect();
+        let ledger: Vec<Value> = inbox
+            .deliveries()
+            .iter()
+            .map(|dl| json!({"directive_id": dl.directive_id, "task_id": dl.task_id}))
+            .collect();
+        (inbox.pending_len(), directives, ledger)
+    };
+    Ok(serde_json::to_string_pretty(&json!({
+        "run_id": run.run_id,
+        "pending_in_inbox": pending,
+        "directives": directives,
+        "delivery_ledger": ledger,
+        "note": "an in-flight assignment is reached once its task_id appears in delivery_ledger for the broadcast directive",
+    }))?)
+}
+
 /// Generate a wiki from the workspace site map with optional index/cache enrichment.
 fn generate_wiki(root: &Path, arguments: &Value) -> Result<String, Box<dyn Error>> {
     use velocity_ide::site_map::SiteMap;
@@ -5183,5 +5350,99 @@ mod tests {
 
         live_runs::remove(&run_id);
         live_runs::remove(&done_id);
+    }
+
+    /// P5 guard: the observability tools must faithfully surface the shared state
+    /// the driver thread writes. `inspect_live_run` reads the published snapshot
+    /// (task graph + worker statuses) and `read_directive_inbox` reads the
+    /// delivery ledger — the evidence that an amendment reached an in-flight
+    /// assignment. Stubbing either tool to ignore the shared `Arc`s makes these
+    /// counts go to zero and the ledger empty, so the test fails: that is the
+    /// non-vacuity check that the tools actually watch the live run.
+    #[test]
+    fn p5_observability_tools_expose_graph_status_and_ledger() {
+        use crate::orchestrator::directive::DirectiveKind;
+        use crate::orchestrator::live_runs::{self, LiveRun, TaskView};
+
+        let ws = tempfile::tempdir().unwrap();
+        let root = ws.path();
+        let run_id = live_runs::next_run_id("witness");
+        let run = std::sync::Arc::new(LiveRun::new(
+            run_id.clone(),
+            "team_witness".to_string(),
+            "Witness".to_string(),
+            "rewrite utils in rust".to_string(),
+            root.to_path_buf(),
+            "team_scope",
+        ));
+        {
+            let mut snap = run.snapshot.lock().unwrap();
+            snap.wave = 4;
+            snap.elapsed_secs = 90;
+            snap.tasks = vec![
+                TaskView {
+                    task_id: 2,
+                    member_id: "net".into(),
+                    role: "Networking Engineer".into(),
+                    scope: vec!["src/net/".into()],
+                    status: "running".into(),
+                },
+                TaskView {
+                    task_id: 3,
+                    member_id: "web".into(),
+                    role: "Frontend Engineer".into(),
+                    scope: vec!["web/".into()],
+                    status: "pending".into(),
+                },
+            ];
+        }
+        // An amendment drained by the driver: broadcast directive 0 reached the
+        // running net worker (task 2).
+        {
+            let mut inbox = run.inbox.lock().unwrap();
+            inbox.push("add retry backoff".into(), vec![], DirectiveKind::Amend);
+            inbox.record_delivery(0, 2);
+        }
+        live_runs::register(run.clone());
+
+        // list_live_runs finds the run.
+        let listed: Value =
+            serde_json::from_str(&list_live_runs(root, &json!({})).unwrap()).unwrap();
+        assert!(listed["runs"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|r| r["run_id"] == json!(run_id.as_str())));
+
+        // inspect_live_run reflects the published graph and statuses.
+        let insp: Value =
+            serde_json::from_str(&inspect_live_run(root, &json!({ "run_id": run_id })).unwrap())
+                .unwrap();
+        assert_eq!(insp["wave"], json!(4));
+        assert_eq!(insp["summary"]["running"], json!(1));
+        assert_eq!(insp["summary"]["pending"], json!(1));
+        assert_eq!(insp["summary"]["total"], json!(2));
+        assert_eq!(insp["lifecycle"]["state"], json!("running"));
+        assert_eq!(insp["task_graph"].as_array().unwrap().len(), 2);
+
+        // read_directive_inbox proves the amendment reached the in-flight worker.
+        let inbox: Value = serde_json::from_str(
+            &read_directive_inbox(root, &json!({ "run_id": run_id })).unwrap(),
+        )
+        .unwrap();
+        let ledger = inbox["delivery_ledger"].as_array().unwrap();
+        assert!(
+            ledger
+                .iter()
+                .any(|d| d["task_id"] == json!(2) && d["directive_id"] == json!(0)),
+            "the ledger must show directive 0 reached in-flight task 2, got {ledger:?}"
+        );
+        assert!(inbox["directives"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|d| d["broadcast"] == json!(true)));
+
+        live_runs::remove(&run_id);
     }
 }
