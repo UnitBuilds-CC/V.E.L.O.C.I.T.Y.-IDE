@@ -2739,6 +2739,34 @@ fn preload_target_files(root: &Path, files: &[String]) -> Vec<String> {
 /// runs the agent autonomously. If the primary provider fails, it
 /// falls back through the member's fallback_provider and other
 /// configured workspace providers.
+/// Decide whether a `team_dispatch` request should run through the
+/// headless-VC pipeline rather than the single-member chain, and on which
+/// axis.
+///
+/// Returns `None` (fall through to the legacy path) whenever the caller
+/// pinned a member/role — pinning is an explicit human instruction, and
+/// silently widening a "send this to X" dispatch behind the operator's back
+/// is worse than ignoring the classifier. Otherwise, the classifier's
+/// scope/horizon verdict decides.
+pub(crate) fn pipeline_branch_for(
+    task: &str,
+    arguments: &Value,
+) -> Option<(
+    crate::orchestrator::team_pipeline::PipelineTrigger,
+    crate::agent::intent::IntentDecision,
+)> {
+    let pinned = arguments["member"]
+        .as_str()
+        .or_else(|| arguments["role"].as_str())
+        .map(str::trim)
+        .filter(|s| !s.is_empty());
+    if pinned.is_some() {
+        return None;
+    }
+    let decision = crate::agent::intent::classify(task);
+    crate::orchestrator::team_pipeline::pipeline_trigger(&decision).map(|t| (t, decision))
+}
+
 fn team_dispatch(root: &Path, arguments: &Value) -> Result<String, Box<dyn Error>> {
     let team_ref = arguments["team_id"]
         .as_str()
@@ -2777,6 +2805,24 @@ fn team_dispatch(root: &Path, arguments: &Value) -> Result<String, Box<dyn Error
         if governor.governed() {
             governor.require_dispatch(&team.slug())?;
         }
+    }
+
+    // ── P1 branch: route Team/Long dispatches through the orchestrator ──
+    //
+    // Two axes from `intent::classify` decide whether the single-member
+    // headless chain can do the work: how *wide* the request is (scope) and
+    // how *long* it will run for (horizon). Either one crossing its
+    // threshold makes the pipeline the right tool — one agent, one context
+    // window and one wall-clock budget cannot rewrite a repository.
+    //
+    // Pinning is honoured before the branch: an operator who names a seat
+    // ("send this to the security engineer") meant one member, not a
+    // parallel plan, and quietly widening that dispatch behind their back
+    // is worse than ignoring the classifier. The whole guard lives in
+    // `pipeline_branch_for` so it is unit-testable in isolation and
+    // non-vacuity is provable by byte-revert of a single call site.
+    if let Some((trigger, decision)) = pipeline_branch_for(task, arguments) {
+        return dispatch_via_pipeline(root, team, task, &files, arguments, trigger, &decision);
     }
 
     // Route to the best member — unless the caller named the seat.
@@ -3244,6 +3290,114 @@ fn team_dispatch(root: &Path, arguments: &Value) -> Result<String, Box<dyn Error
     Ok(serde_json::to_string_pretty(&response)?)
 }
 
+/// Plan (and optionally drive) the live-VC parallel pipeline.
+///
+/// Split out so a caller (the `team_dispatch` P1 branch, the P5 observability
+/// tool and every regression test) can inspect the graph that
+/// `intent::classify` + `team.members` would produce WITHOUT actually
+/// spawning workers.
+///
+/// The crucible runs on models that take real wall-clock minutes per
+/// dispatch. Proving the guard fired and the DAG shape is correct does not
+/// need those minutes spent.
+///
+/// `dry_run` returns the plan; `execute` runs the tick loop to completion.
+pub(crate) fn dispatch_via_pipeline(
+    root: &Path,
+    team: &crate::editor::expert_team::ExpertTeam,
+    task: &str,
+    files: &[String],
+    arguments: &Value,
+    trigger: crate::orchestrator::team_pipeline::PipelineTrigger,
+    decision: &crate::agent::intent::IntentDecision,
+) -> Result<String, Box<dyn Error>> {
+    use crate::orchestrator::team_pipeline as pipeline;
+    use velocity_ide::site_map::SiteMap;
+
+    let deliverable = arguments["deliverable"].as_str().unwrap_or("report");
+    let dry_run = arguments["dry_run"].as_bool().unwrap_or(false);
+
+    let mut role_tasks = pipeline::build_team_graph(task, team, files);
+    let chain_builder = |member: &crate::editor::expert_team::ExpertMember| {
+        build_fallback_chain(member, root)
+            .into_iter()
+            .map(
+                |(provider, model_id)| crate::automation::task_router::RoutedModelRoute {
+                    provider,
+                    model_label: model_id.clone(),
+                    model_id,
+                    thinking: false,
+                    score: 0,
+                },
+            )
+            .collect::<Vec<_>>()
+    };
+    let preload = |scoped: &[String]| preload_target_files(root, scoped);
+    pipeline::fill_assignment_context(
+        &mut role_tasks,
+        team,
+        task,
+        files,
+        &chain_builder,
+        deliverable,
+        &preload,
+    );
+    let mut graph = pipeline::graph_from_role_tasks(task, &role_tasks);
+    let weight_root = crate::automation::resolve_weight_root(root);
+    let planned_site_map_root =
+        SiteMap::open(&root.join(".velocity").join("site_map"), weight_root)
+            .map(|sm| sm.root())
+            .unwrap_or(0);
+
+    let plan_json = json!({
+        "pipeline": pipeline::trigger_label(trigger),
+        "team_id": team.id,
+        "team_name": team.name,
+        "rationale": decision.rationale,
+        "signals": decision.signals,
+        "scope": format!("{:?}", decision.scope),
+        "horizon": decision.horizon.as_str(),
+        "task_count": role_tasks.len(),
+        "tasks": role_tasks.iter().map(|rt| json!({
+            "task_id": rt.task.id.0,
+            "member_id": rt.member_id,
+            "role": rt.role,
+            "title": rt.task.title,
+            "scope": rt.task.scope,
+            "dependencies": rt.task.dependencies.iter().map(|d| d.0).collect::<Vec<_>>(),
+            "priority": rt.task.priority,
+            "estimated_weight": rt.task.estimated_weight,
+            "task_kind": rt.task_kind.as_str(),
+            "provider": rt.provider.slug(),
+            "model": rt.model_id,
+        })).collect::<Vec<_>>(),
+        "reconcile_root": graph.root.0,
+        "planned_site_map_root": format!("{:016x}", planned_site_map_root),
+    });
+
+    if dry_run {
+        return Ok(serde_json::to_string_pretty(&plan_json)?);
+    }
+
+    let mut outcome = pipeline::run_pipeline(
+        root,
+        &mut graph,
+        &role_tasks,
+        planned_site_map_root,
+        weight_root,
+        std::time::Duration::ZERO,
+    );
+    outcome.trigger = trigger;
+    outcome.rationale = decision.rationale.clone();
+    let mut response = pipeline::outcome_to_json(&outcome);
+    if let Some(obj) = response.as_object_mut() {
+        obj.insert("team_id".into(), json!(team.id));
+        obj.insert("team_name".into(), json!(team.name));
+        obj.insert("plan".into(), plan_json);
+    }
+    Ok(serde_json::to_string_pretty(&response)?)
+}
+
 /// Generate a wiki from the workspace site map with optional index/cache enrichment.
 fn generate_wiki(root: &Path, arguments: &Value) -> Result<String, Box<dyn Error>> {
     use velocity_ide::site_map::SiteMap;
@@ -3373,6 +3527,159 @@ mod tests {
                 .iter()
                 .any(|o| o.intent.contains("rbac-deny: dispatch_to")),
             "the denial must be in the durable trail"
+        );
+    }
+
+    /// P1 branch: a sprawling port prompt must be routed through the
+    /// orchestrator, not the single-member chain. The response carries
+    /// `pipeline: "team_scope"` and one task per team member.
+    #[test]
+    fn team_dispatch_routes_whole_repo_port_through_pipeline_dry_run() {
+        std::env::remove_var("VELOCITY_DECISION_BACKEND");
+        use crate::editor::expert_team::{ExpertMember, ExpertTeam};
+        let ws = tempfile::tempdir().unwrap();
+        let members = vec![
+            ExpertMember::new(
+                "lead",
+                "Plan Lead",
+                "Planning Architect",
+                AiProvider::CloudflareWorkersAi,
+                "plan-model",
+                vec!["plan", "architect"],
+                vec![],
+                "coordinate the port",
+            ),
+            ExpertMember::new(
+                "backend",
+                "Backend Engineer",
+                "Backend Engineer",
+                AiProvider::CloudflareWorkersAi,
+                "be-model",
+                vec!["rust", "backend"],
+                vec!["src/backend/"],
+                "port backend modules",
+            ),
+            ExpertMember::new(
+                "auditor",
+                "Security Auditor",
+                "Security Auditor",
+                AiProvider::CloudflareWorkersAi,
+                "audit-model",
+                vec!["audit", "security"],
+                vec!["src/backend/"],
+                "review the port",
+            ),
+        ];
+        crate::editor::expert_team::save_expert_teams(
+            ws.path(),
+            &[ExpertTeam {
+                id: "team_port-team".into(),
+                name: "Port Team".into(),
+                description: String::new(),
+                members,
+                is_preset: false,
+            }],
+        );
+        let out = handle_team_tool(
+            ws.path(),
+            "team_dispatch",
+            &serde_json::json!({
+                "team": "Port Team",
+                "task": "rewrite the entire repository in rust, run it end to end",
+                "files": [],
+                "dry_run": true,
+            }),
+        )
+        .unwrap()
+        .expect("team_dispatch must return a payload");
+        let v: serde_json::Value = serde_json::from_str(&out).unwrap();
+        assert_eq!(
+            v["pipeline"].as_str(),
+            Some("team_scope"),
+            "a whole-repo port must go through the pipeline: {out}"
+        );
+        assert!(
+            v["task_count"].as_u64().unwrap_or(0) >= 3,
+            "one task per member: {out}"
+        );
+        assert_eq!(v["team_name"].as_str(), Some("Port Team"));
+    }
+
+    /// P1 branch guard: when the caller names a seat, the classifier is
+    /// never consulted and the pipeline is never entered. Silently widening
+    /// "send this to the security engineer" behind the operator's back would
+    /// be worse than ignoring the classifier entirely.
+    #[test]
+    fn pipeline_branch_for_returns_none_when_a_member_is_pinned() {
+        std::env::remove_var("VELOCITY_DECISION_BACKEND");
+        let sprawling = "rewrite the entire repository in rust, run it end to end";
+        assert!(
+            pipeline_branch_for(
+                sprawling,
+                &serde_json::json!({ "member": "Backend Engineer" })
+            )
+            .is_none(),
+            "a pinned member must short-circuit the pipeline branch"
+        );
+        assert!(
+            pipeline_branch_for(
+                sprawling,
+                &serde_json::json!({ "role": "Security Auditor" })
+            )
+            .is_none(),
+            "a pinned role must short-circuit the pipeline branch too"
+        );
+        // Same prompt, no pin → the classifier must fire. This is the
+        // non-vacuity half: without it, the pinned assertions above would
+        // pass whether the guard checked `pinned` or always returned None.
+        let unpinned = pipeline_branch_for(sprawling, &serde_json::json!({}));
+        assert!(
+            unpinned.is_some(),
+            "unpinned sprawling prompt must enter the pipeline branch"
+        );
+    }
+
+    /// P1 branch: a long-horizon request classified as `SingleAgent` scope
+    /// still goes through the pipeline. The two axes are independent — a
+    /// 3,000-file mechanical port is narrow but hours long, and one agent
+    /// with one context window and one wall-clock budget cannot run it.
+    ///
+    /// The decision is constructed directly rather than pulled from the
+    /// classifier: P1's guarantee is that *either* axis fires the branch,
+    /// and asking `classify` to hit a specific axis pair couples this test
+    /// to the whole scorer's phrase table. The pinned override is checked
+    /// alongside so the guard's precedence order (pin > classifier) is
+    /// covered on the horizon axis too.
+    #[test]
+    fn pipeline_fires_for_long_horizon_even_at_single_agent_scope() {
+        let long_single = crate::agent::intent::IntentDecision {
+            scope: crate::agent::intent::TaskScope::SingleAgent,
+            requires_repo_ingest: false,
+            repo_url: None,
+            target_language: None,
+            roles: vec![],
+            rationale: String::new(),
+            confidence: 1.0,
+            signals: vec![],
+            horizon: crate::agent::intent::TaskHorizon::Long,
+            wants_unattended: false,
+        };
+        assert_eq!(
+            crate::orchestrator::team_pipeline::pipeline_trigger(&long_single),
+            Some(crate::orchestrator::team_pipeline::PipelineTrigger::LongHorizon),
+            "long horizon must trigger the pipeline on its own axis"
+        );
+        // Pinned short-circuits the guard even when the classifier would
+        // otherwise fire: pinning wins over both axes.
+        std::env::remove_var("VELOCITY_DECISION_BACKEND");
+        let sprawling = "rewrite the entire repository in rust, run it end to end";
+        assert!(
+            pipeline_branch_for(
+                sprawling,
+                &serde_json::json!({ "role": "Security Auditor" })
+            )
+            .is_none(),
+            "pinning overrides the long-horizon axis too"
         );
     }
 

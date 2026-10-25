@@ -8,6 +8,7 @@ pub mod load_balancer;
 pub mod reconcile;
 pub mod registry;
 pub mod scheduler;
+pub mod team_pipeline;
 pub mod validator;
 pub mod worker;
 
