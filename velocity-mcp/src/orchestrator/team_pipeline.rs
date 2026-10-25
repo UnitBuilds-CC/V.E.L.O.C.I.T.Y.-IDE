@@ -785,7 +785,11 @@ pub fn status_label(status: &TaskStatus) -> &'static str {
 ///    into its brief so the worker meets the amendment on its first turn. Every
 ///    hand-off is written to the delivery ledger, which is what "did the amend
 ///    reach every in-flight assignment" is actually checked against.
-fn publish_and_drain(
+///
+/// `pub(crate)` so the acceptance test in `team_tools` can drive this exact
+/// wave-head step with a controlled roster — the same call `run_pipeline` makes
+/// at the head of every wave — without spawning a real model.
+pub(crate) fn publish_and_drain(
     live: Option<&LiveRun>,
     graph: &TaskGraph,
     registry: &OrchestratorRegistry,

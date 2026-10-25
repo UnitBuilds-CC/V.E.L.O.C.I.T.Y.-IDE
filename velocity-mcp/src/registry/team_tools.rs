@@ -5445,4 +5445,254 @@ mod tests {
 
         live_runs::remove(&run_id);
     }
+
+    /// The goal's acceptance proof, run deterministically through the REAL
+    /// pipeline code (no model spend):
+    ///
+    /// 1. A literal `"rewrite LiteLLM's utils.py in Rust"` prompt is classified
+    ///    and planned through `team_dispatch` (dry_run), yielding ≥3 specialist
+    ///    role tasks.
+    /// 2. Those specialists are held simultaneously in-flight (three live worker
+    ///    handles = parallel execution) inside a background [`LiveRun`].
+    /// 3. `amend_running_team` (P4) queues a mid-run amendment into the shared
+    ///    inbox.
+    /// 4. The exact wave-head step `run_pipeline` runs every tick —
+    ///    [`publish_and_drain`] — drains the inbox and hands the amendment to
+    ///    each worker its scope reaches, writing the delivery ledger.
+    /// 5. `inspect_live_run` + `read_directive_inbox` (P5) are then read back and
+    ///    must show the amendment reached EVERY in-flight assignment.
+    ///
+    /// Non-vacuity: the assertions judge the ledger `publish_and_drain` actually
+    /// produced, not a hand-seeded one. Byte-revert the `record_delivery` call in
+    /// that function and the ledger is empty, so the "reached every assignment"
+    /// assertion fails; remove the unconditional broadcast push in
+    /// `amend_running_team` and the disjoint-scope workers go unsteered, failing
+    /// the same assertion from the other side.
+    #[test]
+    fn litellm_prompt_drives_parallel_workers_and_a_mid_run_amend_reaches_all() {
+        use crate::agent::intent;
+        use crate::orchestrator::live_runs;
+        use crate::orchestrator::registry::OrchestratorRegistry;
+        use crate::orchestrator::team_pipeline as pipeline;
+        use crate::orchestrator::worker::{WorkerHandle, WorkerResult, WorkerThreadSnapshot};
+        use crate::orchestrator::TaskId;
+        use std::collections::HashMap;
+        use std::sync::{Arc, Mutex};
+
+        std::env::remove_var("VELOCITY_DECISION_BACKEND");
+        let ws = tempfile::tempdir().unwrap();
+        let root = ws.path();
+        let prompt = "rewrite LiteLLM's utils.py in Rust";
+
+        // A worker handle stand-in: it never reports finished (stays in-flight)
+        // and remembers the notes steered into its control channel. Only the
+        // provider-backed body is replaced — `publish_and_drain`'s delivery,
+        // roster-classification and ledger logic all run for real.
+        #[derive(Clone)]
+        struct NoteSpy {
+            notes: Arc<Mutex<Vec<String>>>,
+        }
+        impl WorkerHandle for NoteSpy {
+            fn poll(&mut self) -> Option<WorkerResult> {
+                None
+            }
+            fn cancel(&mut self) -> bool {
+                true
+            }
+            fn send_note(&mut self, note: String) -> bool {
+                self.notes.lock().unwrap().push(note);
+                true
+            }
+            fn snapshot(&self) -> WorkerThreadSnapshot {
+                WorkerThreadSnapshot::default()
+            }
+        }
+
+        // ── 1. classify the literal prompt and plan through team_dispatch ──────
+        let decision = intent::classify(prompt);
+        assert_eq!(
+            decision.scope,
+            intent::TaskScope::Team,
+            "the acceptance prompt must route through the team pipeline"
+        );
+        let team = team_from_roles(prompt, &decision);
+        save_expert_teams_for_test(root, &team);
+        let plan: Value = serde_json::from_str(
+            &handle_team_tool(
+                root,
+                "team_dispatch",
+                &json!({ "team": team.name, "task": prompt, "dry_run": true }),
+            )
+            .unwrap()
+            .expect("team_dispatch dry_run must return a plan"),
+        )
+        .unwrap();
+        let planned = plan["tasks"].as_array().unwrap();
+        assert!(
+            planned.len() >= 3,
+            "the prompt must yield ≥3 specialist role tasks, got {}",
+            planned.len()
+        );
+        // The routing label proves this specific prompt went through the
+        // orchestrator, not the single-member headless chain.
+        assert_eq!(
+            plan["pipeline"].as_str(),
+            Some("team_scope"),
+            "the acceptance prompt must route through the pipeline: {plan}"
+        );
+        let specialists: Vec<u64> = planned
+            .iter()
+            .map(|t| t["task_id"].as_u64().unwrap())
+            .collect();
+
+        // ── 2. hold them all in-flight in a background run ────────────────────
+        let role_tasks = pipeline::build_team_graph(prompt, &team, &[]);
+        let graph = pipeline::graph_from_role_tasks(prompt, &role_tasks);
+        let mut registry = OrchestratorRegistry::new(&graph);
+        let mut handles: HashMap<TaskId, Box<dyn WorkerHandle>> = HashMap::new();
+        let mut spies: HashMap<TaskId, NoteSpy> = HashMap::new();
+        let mut by_id_map: HashMap<TaskId, &pipeline::RoleTask> = HashMap::new();
+        for rt in &role_tasks {
+            by_id_map.insert(rt.task.id, rt);
+            if rt.task.id != graph.root {
+                registry.statuses.insert(
+                    rt.task.id,
+                    crate::orchestrator::registry::TaskStatus::Running,
+                );
+                let spy = NoteSpy {
+                    notes: Arc::new(Mutex::new(Vec::new())),
+                };
+                spies.insert(rt.task.id, spy.clone());
+                handles.insert(rt.task.id, Box::new(spy));
+            }
+        }
+        assert!(
+            specialists.len() >= 3
+                && specialists
+                    .iter()
+                    .all(|id| handles.contains_key(&TaskId(*id))),
+            "all ≥3 specialists must be simultaneously in-flight"
+        );
+
+        let run_id = live_runs::next_run_id(&team.slug());
+        let run = Arc::new(live_runs::LiveRun::new(
+            run_id.clone(),
+            team.id.clone(),
+            team.name.clone(),
+            prompt.to_string(),
+            root.to_path_buf(),
+            pipeline::trigger_label(pipeline::PipelineTrigger::TeamScope),
+        ));
+        live_runs::register(run.clone());
+        let mut assignment_by_id: HashMap<TaskId, crate::orchestrator::worker::WorkerAssignment> =
+            HashMap::new();
+
+        // Wave 0: publish the graph so an operator's `inspect_live_run` sees the
+        // parallel run already underway before the amendment lands (inbox empty,
+        // so nothing is delivered yet).
+        pipeline::publish_and_drain(
+            Some(&run),
+            &graph,
+            &registry,
+            &by_id_map,
+            &mut handles,
+            &mut assignment_by_id,
+            0,
+            std::time::Duration::from_secs(1),
+        );
+
+        // ── 3. amend mid-run, through the real P4 entry point ─────────────────
+        amend_running_team(
+            root,
+            &json!({ "run_id": run_id, "delta": "also add retry/backoff to the http transport" }),
+        )
+        .unwrap();
+
+        // ── 4. the next wave drains the inbox and steers every worker ─────────
+        pipeline::publish_and_drain(
+            Some(&run),
+            &graph,
+            &registry,
+            &by_id_map,
+            &mut handles,
+            &mut assignment_by_id,
+            1,
+            std::time::Duration::from_secs(2),
+        );
+
+        // Every in-flight specialist actually received the steering note.
+        for id in &specialists {
+            let landed = spies[&TaskId(*id)].notes.lock().unwrap().len();
+            assert!(
+                landed >= 1,
+                "worker task {id} got no amendment note (in-flight assignment missed)"
+            );
+        }
+
+        // ── 5. read it back through the P5 observability tools ────────────────
+        let insp: Value =
+            serde_json::from_str(&inspect_live_run(root, &json!({ "run_id": &run_id })).unwrap())
+                .unwrap();
+        assert_eq!(
+            insp["summary"]["running"],
+            json!(specialists.len()),
+            "all specialists must be reported running"
+        );
+        assert_eq!(
+            insp["task_graph"].as_array().unwrap().len(),
+            specialists.len(),
+            "the published task graph must list every specialist"
+        );
+
+        let inbox: Value = serde_json::from_str(
+            &read_directive_inbox(root, &json!({ "run_id": &run_id })).unwrap(),
+        )
+        .unwrap();
+        let ledger = inbox["delivery_ledger"].as_array().unwrap();
+        for id in &specialists {
+            assert!(
+                ledger.iter().any(|d| d["task_id"] == json!(*id)),
+                "the delivery ledger must prove the amendment reached in-flight task {id}, got {ledger:?}"
+            );
+        }
+
+        live_runs::remove(&run_id);
+    }
+
+    /// Build an [`ExpertTeam`] from the roles the intent brain implies for a
+    /// prompt — the same roster `intent::provision_team` persists, constructed
+    /// here in-memory so the test needs no on-disk provisioning round-trip.
+    fn team_from_roles(
+        prompt: &str,
+        decision: &crate::agent::intent::IntentDecision,
+    ) -> ExpertTeam {
+        let members: Vec<ExpertMember> = decision
+            .roles
+            .iter()
+            .enumerate()
+            .map(|(i, r)| ExpertMember {
+                id: format!("member_{i}"),
+                name: r.role.clone(),
+                role: r.role.clone(),
+                provider: AiProvider::CloudflareWorkersAi,
+                model_id: "test-model".to_string(),
+                skills: r.skills.clone(),
+                scope_patterns: r.scope_patterns.clone(),
+                tools: vec![],
+                workflow_instructions: String::new(),
+                fallback_provider: None,
+            })
+            .collect();
+        ExpertTeam {
+            id: format!("team_{}", slugify(prompt)),
+            name: "LiteLLM Rust Port Team".to_string(),
+            description: String::new(),
+            members,
+            is_preset: false,
+        }
+    }
+
+    fn save_expert_teams_for_test(root: &Path, team: &ExpertTeam) {
+        crate::editor::expert_team::save_expert_teams(root, std::slice::from_ref(team));
+    }
 }
