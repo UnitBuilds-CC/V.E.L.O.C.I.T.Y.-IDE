@@ -2767,6 +2767,19 @@ pub(crate) fn pipeline_branch_for(
     crate::orchestrator::team_pipeline::pipeline_trigger(&decision).map(|t| (t, decision))
 }
 
+/// Resolve the pipeline's wall-clock deadline from a `team_dispatch` request.
+///
+/// Mirrors [`crate::automation::mission_runner::MissionConfig::max_wall_secs`]:
+/// `0` (or absent) means *uncapped*, which is what the live-VC port runs need
+/// — a whole-repo port on a slow reasoning model can spend hours per wave and
+/// must not be cut off by an inherited 90-minute UI default. Any positive
+/// value becomes a hard `Duration::from_secs(n)` the tick loop enforces by
+/// marking every unfinished task Failed at the deadline boundary.
+pub(crate) fn deadline_from_args(arguments: &Value) -> std::time::Duration {
+    let secs = arguments["max_wall_secs"].as_u64().unwrap_or(0);
+    std::time::Duration::from_secs(secs)
+}
+
 fn team_dispatch(root: &Path, arguments: &Value) -> Result<String, Box<dyn Error>> {
     let team_ref = arguments["team_id"]
         .as_str()
@@ -3316,6 +3329,8 @@ pub(crate) fn dispatch_via_pipeline(
 
     let deliverable = arguments["deliverable"].as_str().unwrap_or("report");
     let dry_run = arguments["dry_run"].as_bool().unwrap_or(false);
+    let resume = arguments["resume"].as_bool().unwrap_or(false);
+    let max_wall_secs = deadline_from_args(arguments).as_secs();
 
     let mut role_tasks = pipeline::build_team_graph(task, team, files);
     let chain_builder = |member: &crate::editor::expert_team::ExpertMember| {
@@ -3357,6 +3372,8 @@ pub(crate) fn dispatch_via_pipeline(
         "signals": decision.signals,
         "scope": format!("{:?}", decision.scope),
         "horizon": decision.horizon.as_str(),
+        "max_wall_secs": max_wall_secs,
+        "resume": resume,
         "task_count": role_tasks.len(),
         "tasks": role_tasks.iter().map(|rt| json!({
             "task_id": rt.task.id.0,
@@ -3379,13 +3396,22 @@ pub(crate) fn dispatch_via_pipeline(
         return Ok(serde_json::to_string_pretty(&plan_json)?);
     }
 
+    let run_ctx = pipeline::PipelineRunCtx {
+        root,
+        team_id: &team.id,
+        team_name: &team.name,
+        prompt: task,
+        trigger,
+        resume,
+    };
     let mut outcome = pipeline::run_pipeline(
         root,
         &mut graph,
         &role_tasks,
         planned_site_map_root,
         weight_root,
-        std::time::Duration::ZERO,
+        std::time::Duration::from_secs(max_wall_secs),
+        &run_ctx,
     );
     outcome.trigger = trigger;
     outcome.rationale = decision.rationale.clone();
@@ -3681,6 +3707,75 @@ mod tests {
             .is_none(),
             "pinning overrides the long-horizon axis too"
         );
+    }
+
+    #[test]
+    fn deadline_from_args_defaults_to_zero_and_honours_max_wall_secs() {
+        // Non-vacuity: with `deadline_from_args` reverted to always return
+        // `Duration::ZERO`, the second assertion fails because 42s does not
+        // come back as 42s. If it always returned the raw seconds, the first
+        // assertion fails because absent means unbounded, not 0-bytes.
+        let absent = deadline_from_args(&serde_json::json!({}));
+        assert_eq!(
+            absent,
+            std::time::Duration::ZERO,
+            "an omitted max_wall_secs must mean unbounded, matching MissionConfig's 0 convention"
+        );
+        let explicit = deadline_from_args(&serde_json::json!({ "max_wall_secs": 42u64 }));
+        assert_eq!(explicit, std::time::Duration::from_secs(42));
+        let zero = deadline_from_args(&serde_json::json!({ "max_wall_secs": 0u64 }));
+        assert_eq!(zero, std::time::Duration::ZERO);
+    }
+
+    #[test]
+    fn dispatch_via_pipeline_dry_run_surfaces_max_wall_secs_and_resume() {
+        // The plan-JSON surface is what an operator reads back to know the
+        // cap they asked for actually reached the pipeline. Reverting the
+        // fields makes the assertions below fail on missing keys.
+        use crate::editor::expert_team::{ExpertMember, ExpertTeam};
+        use crate::orchestrator::team_pipeline::PipelineTrigger;
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        std::fs::create_dir_all(root.join(".velocity")).unwrap();
+        let team = ExpertTeam {
+            id: "team_p2".into(),
+            name: "P2 Team".into(),
+            description: String::new(),
+            is_preset: false,
+            members: vec![ExpertMember {
+                id: "m0".into(),
+                name: "Lead".into(),
+                role: "Lead Architect".into(),
+                provider: crate::agent::AiProvider::CloudflareWorkersAi,
+                model_id: "test-model".into(),
+                skills: vec![],
+                scope_patterns: vec!["src/".into()],
+                tools: vec![],
+                workflow_instructions: String::new(),
+                fallback_provider: None,
+            }],
+        };
+        let decision = crate::agent::intent::classify(
+            "rewrite the entire repository in rust, run it end to end",
+        );
+        let arguments = serde_json::json!({
+            "dry_run": true,
+            "max_wall_secs": 43200u64,
+            "resume": true,
+        });
+        let out = dispatch_via_pipeline(
+            root,
+            &team,
+            "rewrite the entire repository in rust, run it end to end",
+            &[],
+            &arguments,
+            PipelineTrigger::TeamScope,
+            &decision,
+        )
+        .expect("dry run");
+        let v: serde_json::Value = serde_json::from_str(&out).unwrap();
+        assert_eq!(v["max_wall_secs"].as_u64(), Some(43200));
+        assert_eq!(v["resume"].as_bool(), Some(true));
     }
 
     #[test]

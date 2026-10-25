@@ -309,7 +309,9 @@ pub fn get_team_tools() -> Vec<Tool> {
                     "team_id": { "type": "string", "description": "Team id, slug, or name." },
                     "task": { "type": "string", "description": "The task description to execute." },
                     "files": { "type": "array", "items": { "type": "string" }, "description": "Optional file paths for scope-based routing and pre-indexing." },
-                    "deliverable": { "type": "string", "enum": ["report", "artifact"], "description": "What the task owes. 'report' (default) ends the prompt with a structured-report format, right for audits and analysis. 'artifact' tells the agent its deliverable is files it must write with the write tool (porting, design, docs, remediation) and that a text answer with no writes is a failed task. Sending the wrong one makes the agent emit prose when it should have written a file, and report success doing it." }
+                    "deliverable": { "type": "string", "enum": ["report", "artifact"], "description": "What the task owes. 'report' (default) ends the prompt with a structured-report format, right for audits and analysis. 'artifact' tells the agent its deliverable is files it must write with the write tool (porting, design, docs, remediation) and that a text answer with no writes is a failed task. Sending the wrong one makes the agent emit prose when it should have written a file, and report success doing it." },
+                    "max_wall_secs": { "type": "integer", "description": "Long-horizon team runs only: hard cap on wall-clock seconds the orchestrator spends dispatching this plan. 0 (default) is uncapped, matching run_rewrite_mission. A run that hits the cap checkpoints its progress instead of losing it." },
+                    "resume": { "type": "boolean", "description": "Long-horizon team runs only: when true and a checkpoint for this team+prompt exists at .velocity/orchestrator/checkpoint.json, the orchestrator replays finished work and continues rather than starting the plan fresh. Default false." }
                 },
                 "required": ["team_id", "task"]
             }),

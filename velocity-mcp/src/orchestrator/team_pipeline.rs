@@ -37,6 +37,10 @@ use crate::editor::orchestrator::{
     requires_follow_up, task_result_outputs,
 };
 use crate::orchestrator::blueprint::{Task, TaskGraph};
+use crate::orchestrator::checkpoint::{
+    self as cp, clear_checkpoint, matches as cp_matches, read_checkpoint, snapshot as cp_snapshot,
+    write_checkpoint,
+};
 use crate::orchestrator::registry::{OrchestratorRegistry, TaskStatus};
 use crate::orchestrator::worker::{
     spawn_live_worker, WorkerAssignment, WorkerHandle, WorkerResult,
@@ -480,9 +484,19 @@ fn build_worker_brief(
 /// with a "wall clock spent" message rather than left Pending, so the report
 /// the caller gets back is a *closed* plan.
 ///
-/// `deadline` is `Duration::ZERO` for "unbounded" — see P2: the panel's 90
-/// minute const is not applied here, and the callers who want a cap pass one
-/// explicitly.
+/// `deadline` is `Duration::ZERO` for "unbounded". Every non-zero value comes
+/// from the caller's `max_wall_secs` argument (0 in `MissionConfig` is
+/// similarly uncapped), so a long-horizon port with no explicit cap runs
+/// until it finishes.
+///
+/// Checkpoint: after every dispatch wave the pipeline state (graph, per-task
+/// status, per-worker outputs, elapsed seconds) is snapshotted to
+/// `<root>/.velocity/orchestrator/checkpoint.json`. If `ctx.resume` is true
+/// and a matching checkpoint exists on disk (same `team_id` AND same prompt),
+/// the registry starts from the restored state instead of all-Pending; tasks
+/// that were Running when the previous process died reopen as Pending so the
+/// wave below re-dispatches them. On clean completion the file is deleted so
+/// an identical later dispatch correctly replans.
 pub fn run_pipeline(
     workspace_root: &Path,
     graph: &mut TaskGraph,
@@ -490,9 +504,28 @@ pub fn run_pipeline(
     planned_site_map_root: u64,
     weight_root: u64,
     deadline: Duration,
+    ctx: &PipelineRunCtx<'_>,
 ) -> PipelineOutcome {
     let started = Instant::now();
     let mut registry = OrchestratorRegistry::new(graph);
+    // Optional restore-before-loop. Only fires when the caller asked to
+    // resume AND the on-disk checkpoint identifies the same team + prompt.
+    let restored_elapsed = if ctx.resume {
+        read_checkpoint(ctx.root)
+            .filter(|cp| cp_matches(cp, ctx.team_id, ctx.prompt))
+            .map(|cp| {
+                let r = cp::restore_registry(&cp, graph);
+                registry = r;
+                Duration::from_secs(cp.elapsed_secs)
+            })
+            .unwrap_or(Duration::ZERO)
+    } else {
+        Duration::ZERO
+    };
+    let mut role_members: HashMap<u64, (String, String)> = HashMap::new();
+    for rt in role_tasks {
+        role_members.insert(rt.task.id.0, (rt.member_id.clone(), rt.role.clone()));
+    }
     let mediator = Arc::new(MediatorArena::new());
     let mut handles: HashMap<TaskId, Box<dyn WorkerHandle>> = HashMap::new();
     let mut by_id: HashMap<TaskId, &RoleTask> = HashMap::new();
@@ -523,6 +556,15 @@ pub fn run_pipeline(
         );
     }
 
+    // A resumed run has to keep the deadline accounting honest: the previous
+    // process spent `restored_elapsed` before it died, so the check below
+    // treats `started.elapsed() + restored_elapsed` as the wall clock. Zero
+    // deadline still means unbounded.
+    let effective_elapsed =
+        |now: Instant| -> Duration { now.duration_since(started) + restored_elapsed };
+    let trigger_str: &'static str = trigger_label(ctx.trigger);
+    let max_wall_secs: u64 = deadline.as_secs();
+
     loop {
         // 1. Poll running handles → mark terminal statuses.
         let mut finished: Vec<TaskId> = Vec::new();
@@ -541,17 +583,21 @@ pub fn run_pipeline(
         complete_reconcile_root(graph, &mut registry);
 
         if registry.is_complete() {
+            // Clean finish — drop the checkpoint so an identical later
+            // dispatch correctly starts from scratch.
+            clear_checkpoint(ctx.root);
             break;
         }
 
         // 3. Deadline check — mark every unfinished task Failed so the
-        // report is closed rather than half Pending. P2 removes this when
-        // max_wall_secs=0 becomes the default.
-        if !deadline.is_zero() && started.elapsed() >= deadline {
+        // report is closed rather than half Pending. A resumed run counts
+        // the previous process's elapsed seconds against the same cap.
+        if !deadline.is_zero() && effective_elapsed(Instant::now()) >= deadline {
+            let spent = effective_elapsed(Instant::now());
             for id in collect_unfinished(&registry) {
                 let message = format!(
                     "wall clock spent ({}s elapsed, deadline {}s) — task did not finish",
-                    started.elapsed().as_secs(),
+                    spent.as_secs(),
                     deadline.as_secs()
                 );
                 let mut result = registry
@@ -572,6 +618,20 @@ pub fn run_pipeline(
             // blocking, so `is_complete` will flip on the next tick.
             propagate_blocked_dependents(graph, &mut registry);
             complete_reconcile_root(graph, &mut registry);
+            let snap = cp_snapshot(
+                graph,
+                &registry,
+                &role_members,
+                trigger_str,
+                ctx.team_id,
+                ctx.team_name,
+                ctx.prompt,
+                max_wall_secs,
+                planned_site_map_root,
+                weight_root,
+                effective_elapsed(Instant::now()),
+            );
+            let _ = write_checkpoint(ctx.root, &snap);
             break;
         }
 
@@ -624,7 +684,28 @@ pub fn run_pipeline(
             handles.insert(id, handle);
         }
 
-        // 6. Nothing running and nothing ready means the plan cannot make
+        // 6. Wave boundary: snapshot the pipeline state so an MCP restart
+        // resumes from here instead of replanning. Writing every wave means
+        // an in-flight worker never gets re-spawned twice after a restart
+        // (its id is `Running` in the last snapshot, which the restore path
+        // reopens as Pending — but only for tasks that were mid-flight when
+        // the process died; already-Done tasks stay Done).
+        let snap = cp_snapshot(
+            graph,
+            &registry,
+            &role_members,
+            trigger_str,
+            ctx.team_id,
+            ctx.team_name,
+            ctx.prompt,
+            max_wall_secs,
+            planned_site_map_root,
+            weight_root,
+            effective_elapsed(Instant::now()),
+        );
+        let _ = write_checkpoint(ctx.root, &snap);
+
+        // 7. Nothing running and nothing ready means the plan cannot make
         // further progress on its own: either a Failed dep has left a
         // Pending task unreducible (propagate_blocked should have caught it
         // but does not, for a Failed whose scope is disjoint) or the wave is
@@ -637,7 +718,21 @@ pub fn run_pipeline(
         }
     }
 
-    summarize(registry, graph, by_id, started.elapsed())
+    summarize(registry, graph, by_id, effective_elapsed(Instant::now()))
+}
+
+/// Bundles what `run_pipeline` needs to persist and resume state — separated
+/// from the graph/registry arguments so P4 (amend) and P5 (observability) can
+/// reach the same on-disk checkpoint without threading more positional args.
+pub struct PipelineRunCtx<'a> {
+    pub root: &'a Path,
+    pub team_id: &'a str,
+    pub team_name: &'a str,
+    pub prompt: &'a str,
+    pub trigger: PipelineTrigger,
+    /// When true and a checkpoint matches (`team_id`, `prompt`), restore the
+    /// registry from it instead of starting from all-Pending.
+    pub resume: bool,
 }
 
 /// Mark a polled result Done/Failed/Blocked using the same rules as the panel:

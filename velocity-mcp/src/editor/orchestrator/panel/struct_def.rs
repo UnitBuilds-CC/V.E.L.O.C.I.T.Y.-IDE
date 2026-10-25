@@ -102,6 +102,15 @@ pub struct OrchestratorPanel {
     pub conflict_groups_cache: Vec<std::collections::HashSet<String>>,
     /// When `conflict_groups_cache` was last recomputed.
     pub conflict_groups_at: Option<std::time::Instant>,
+    /// Per-worker wall-clock ceiling enforced by
+    /// [`OrchestratorPanel::poll_live_workers`](super::execution::OrchestratorPanel::poll_live_workers).
+    /// `0` means uncapped, mirroring
+    /// [`MissionConfig::max_wall_secs`](crate::automation::mission_runner::MissionConfig::max_wall_secs)
+    /// and the `max_wall_secs` argument on `team_dispatch`. Long-horizon
+    /// ports run for hours per wave, so a UI default that silently fails a
+    /// worker at 90 minutes is a spend decision, not a correctness one — the
+    /// operator has to opt back in.
+    pub max_worker_wall_secs: u64,
 }
 
 impl Default for OrchestratorPanel {
@@ -115,6 +124,11 @@ impl OrchestratorPanel {
     /// routed plan moving, few enough that a 30-task plan does not open 30
     /// simultaneous provider sessions (rate limits, memory, mediator churn).
     pub const DEFAULT_MAX_CONCURRENT_WORKERS: usize = 8;
+    /// Legacy per-worker hard ceiling kept as the interactive default so
+    /// hand-driven panel runs still get watchdog coverage. `0` disables it,
+    /// which is what long-horizon live-VC pipelines want; the panel exposes
+    /// the setting via `max_worker_wall_secs`.
+    pub const DEFAULT_MAX_WORKER_WALL_SECS: u64 = 90 * 60;
 
     pub fn new() -> Self {
         // Empty on purpose. This used to open on `TaskGraph::example_game()`, a
@@ -150,6 +164,7 @@ impl OrchestratorPanel {
             repair_report: String::new(),
             conflict_groups_cache: Vec::new(),
             conflict_groups_at: None,
+            max_worker_wall_secs: Self::DEFAULT_MAX_WORKER_WALL_SECS,
         }
     }
 

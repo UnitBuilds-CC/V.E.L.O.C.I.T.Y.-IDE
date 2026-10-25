@@ -12,11 +12,23 @@ use std::time::Duration;
 /// asks it to stop. Generous on purpose: a slow reasoning model can spend
 /// minutes inside one turn, but it emits at least a status event per turn.
 const WORKER_STALL_TIMEOUT: Duration = Duration::from_secs(10 * 60);
-/// Wall-clock ceiling for one worker regardless of activity.
-const WORKER_HARD_TIMEOUT: Duration = Duration::from_secs(90 * 60);
 /// Grace between the watchdog's cancel request and failing the task outright
 /// (the thread may never observe the cancel; the UI must not wait on it).
 const WORKER_CANCEL_GRACE: Duration = Duration::from_secs(60);
+
+/// Turn `OrchestratorPanel::max_worker_wall_secs` into a [`Duration`] the
+/// watchdog can compare against. `0` means "no hard ceiling" — the same
+/// convention
+/// [`MissionConfig::max_wall_secs`](crate::automation::mission_runner::MissionConfig::max_wall_secs)
+/// uses, and the shape the live-VC pipeline relies on for whole-repo ports
+/// that legitimately run for hours.
+pub(crate) fn hard_timeout_for(max_secs: u64) -> Duration {
+    if max_secs == 0 {
+        Duration::MAX
+    } else {
+        Duration::from_secs(max_secs)
+    }
+}
 
 impl OrchestratorPanel {
     /// Keep the balancer's seat pool aligned with `max_concurrent_workers`.
@@ -386,6 +398,7 @@ impl OrchestratorPanel {
         self.worker_watchdog
             .retain(|id, _| running_ids.contains(id));
         let now = std::time::Instant::now();
+        let hard = hard_timeout_for(self.max_worker_wall_secs);
         let mut timed_out: Vec<(TaskId, String)> = Vec::new();
         for id in &running_ids {
             let Some(handle) = self.running_workers.get_mut(id) else {
@@ -405,7 +418,7 @@ impl OrchestratorPanel {
                 let total = now.duration_since(watchdog.started);
                 if silent > WORKER_STALL_TIMEOUT {
                     watchdog.reason = Some(format!("no progress for {}s", silent.as_secs()));
-                } else if total > WORKER_HARD_TIMEOUT {
+                } else if total > hard {
                     watchdog.reason = Some(format!("exceeded {}s hard limit", total.as_secs()));
                 }
             }
@@ -549,5 +562,35 @@ impl OrchestratorPanel {
 
         self.execution_running = !self.running_workers.is_empty();
         self.refresh_runtime_status();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::editor::orchestrator::panel::struct_def::OrchestratorPanel;
+
+    // Non-vacuity of the parameterized wall clock: with `hard_timeout_for`
+    // reverted to always return the old 90-minute const, the first assertion
+    // fails because `0` becomes 5400s, not MAX. If it instead always returned
+    // MAX, the second assertion fails because 5400s does not come back as
+    // MAX. The pair proves both the plumbing and the semantics.
+    #[test]
+    fn panel_wall_secs_zero_means_unbounded() {
+        assert_eq!(hard_timeout_for(0), Duration::MAX);
+        assert_eq!(hard_timeout_for(5400), Duration::from_secs(5400));
+        assert_eq!(hard_timeout_for(1), Duration::from_secs(1));
+    }
+
+    #[test]
+    fn panel_default_wall_secs_is_90_minutes_and_operator_can_lift_it() {
+        let mut panel = OrchestratorPanel::new();
+        assert_eq!(
+            panel.max_worker_wall_secs,
+            OrchestratorPanel::DEFAULT_MAX_WORKER_WALL_SECS
+        );
+        assert_eq!(panel.max_worker_wall_secs, 90 * 60);
+        panel.max_worker_wall_secs = 0;
+        assert_eq!(hard_timeout_for(panel.max_worker_wall_secs), Duration::MAX);
     }
 }
