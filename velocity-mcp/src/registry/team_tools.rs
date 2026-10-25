@@ -3364,6 +3364,13 @@ pub(crate) fn dispatch_via_pipeline(
             .map(|sm| sm.root())
             .unwrap_or(0);
 
+    // First-class decomposition (P3): the synthesiser reads the request's shape
+    // and expands it into the fine-grained plan the roster-level `role_tasks`
+    // above is a coarse stand-in for. Report it so an operator sees the actual
+    // fan-out before committing model spend.
+    let synth_graph = crate::orchestrator::synth::synthesize(task);
+    let synth_shape = crate::orchestrator::synth::describe_shape(task);
+
     let plan_json = json!({
         "pipeline": pipeline::trigger_label(trigger),
         "team_id": team.id,
@@ -3375,6 +3382,19 @@ pub(crate) fn dispatch_via_pipeline(
         "max_wall_secs": max_wall_secs,
         "resume": resume,
         "task_count": role_tasks.len(),
+        "synthesis": {
+            "shape": synth_shape,
+            "node_count": synth_graph.len(),
+            "root": synth_graph.root.0,
+            "tasks": synth_graph.tasks.values().map(|t| json!({
+                "task_id": t.id.0,
+                "title": t.title,
+                "scope": t.scope,
+                "dependencies": t.dependencies.iter().map(|d| d.0).collect::<Vec<_>>(),
+                "priority": t.priority,
+                "estimated_weight": t.estimated_weight,
+            })).collect::<Vec<_>>(),
+        },
         "tasks": role_tasks.iter().map(|rt| json!({
             "task_id": rt.task.id.0,
             "member_id": rt.member_id,
@@ -3776,6 +3796,16 @@ mod tests {
         let v: serde_json::Value = serde_json::from_str(&out).unwrap();
         assert_eq!(v["max_wall_secs"].as_u64(), Some(43200));
         assert_eq!(v["resume"].as_bool(), Some(true));
+        // P3 synthesiser reached the plan: the fine-grained decomposition rides
+        // alongside the coarse roster graph so an operator sees the real fan-out.
+        let synthesis = &v["synthesis"];
+        assert!(
+            synthesis["node_count"].as_u64().unwrap_or(0) >= 5,
+            "synthesiser must emit at least the 5-node floor, got {:?}",
+            synthesis["node_count"]
+        );
+        assert!(synthesis["tasks"].as_array().map(|a| a.len()).unwrap_or(0) >= 5);
+        assert!(synthesis["shape"].as_str().unwrap_or("").contains("Module"));
     }
 
     #[test]
