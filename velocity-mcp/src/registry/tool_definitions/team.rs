@@ -311,9 +311,23 @@ pub fn get_team_tools() -> Vec<Tool> {
                     "files": { "type": "array", "items": { "type": "string" }, "description": "Optional file paths for scope-based routing and pre-indexing." },
                     "deliverable": { "type": "string", "enum": ["report", "artifact"], "description": "What the task owes. 'report' (default) ends the prompt with a structured-report format, right for audits and analysis. 'artifact' tells the agent its deliverable is files it must write with the write tool (porting, design, docs, remediation) and that a text answer with no writes is a failed task. Sending the wrong one makes the agent emit prose when it should have written a file, and report success doing it." },
                     "max_wall_secs": { "type": "integer", "description": "Long-horizon team runs only: hard cap on wall-clock seconds the orchestrator spends dispatching this plan. 0 (default) is uncapped, matching run_rewrite_mission. A run that hits the cap checkpoints its progress instead of losing it." },
-                    "resume": { "type": "boolean", "description": "Long-horizon team runs only: when true and a checkpoint for this team+prompt exists at .velocity/orchestrator/checkpoint.json, the orchestrator replays finished work and continues rather than starting the plan fresh. Default false." }
+                    "resume": { "type": "boolean", "description": "Long-horizon team runs only: when true and a checkpoint for this team+prompt exists at .velocity/orchestrator/checkpoint.json, the orchestrator replays finished work and continues rather than starting the plan fresh. Default false." },
+                    "background": { "type": "boolean", "description": "Long-horizon team runs only: when true, the orchestrator run is handed to a driver thread and this call returns immediately with a run_id while the workers keep executing. Use it to start a run you intend to steer mid-flight, because the serial stdio server cannot deliver amend_running_team to a blocking dispatch. Default false (synchronous run, unchanged behaviour)." }
                 },
                 "required": ["team_id", "task"]
+            }),
+        },
+        Tool {
+            name: "amend_running_team".to_string(),
+            description: "Steer a live-VC team run that was started with team_dispatch background:true while it is still executing. Runs the mid-run change (the 'delta') through the intent brain, pushes a broadcast awareness directive into the run's shared directive inbox (so every in-flight and pending worker learns the direction changed) plus one scope-tagged directive per classified role (so each worker only sees the part of the change that falls in its own file-scope domain), and — when the delta names a scope no existing seat covers — provisions a fresh team so that domain gets a specialist. The driver thread drains the inbox on its next wave and records every hand-off in a delivery ledger the observability tools read. Requires a run_id or a team slug; a finished run cannot be amended.".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "run_id": { "type": "string", "description": "The run_id returned by a team_dispatch background:true call. Takes precedence over 'team'." },
+                    "team": { "type": "string", "description": "Team slug, @slug, or id used as a fallback selector when run_id is omitted; resolves to the newest still-running dispatch for that team." },
+                    "delta": { "type": "string", "description": "The mid-run change the user added or redirected to, e.g. \"also add a rate-limit retry to the http client and a React dashboard page\"." }
+                },
+                "required": ["delta"]
             }),
         },
         // ── Intent / Decision Routing Tools ────────────────────────────

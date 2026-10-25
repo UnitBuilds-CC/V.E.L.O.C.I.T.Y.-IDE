@@ -5,6 +5,8 @@ use std::fmt;
 
 pub mod blueprint;
 pub mod checkpoint;
+pub mod directive;
+pub mod live_runs;
 pub mod load_balancer;
 pub mod reconcile;
 pub mod registry;

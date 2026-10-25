@@ -107,6 +107,7 @@ pub fn handle_team_tool(
         "bulk_import_members" => bulk_import_members(root, arguments)?,
         "team_changelog" => team_changelog(root, arguments)?,
         "team_dispatch" => team_dispatch(root, arguments)?,
+        "amend_running_team" => amend_running_team(root, arguments)?,
         "classify_intent" => classify_intent_tool(arguments)?,
         "select_model" => select_model_tool(root, arguments)?,
         "provision_team_from_intent" => provision_team_from_intent(root, arguments)?,
@@ -3416,6 +3417,79 @@ pub(crate) fn dispatch_via_pipeline(
         return Ok(serde_json::to_string_pretty(&plan_json)?);
     }
 
+    // Background mode (P4/P5): hand the tick loop to a driver thread and
+    // return immediately, so the very next stdio request — `amend_running_team`
+    // or an observability read — lands *while the run is still in flight*. The
+    // serial `run_stdio_loop` cannot do this with a blocking dispatch: the
+    // request thread owns its stack frame for the whole run, so an amendment
+    // queued behind a running `team_dispatch` would never be read until the
+    // plan already finished. Everything the request thread needs to reach lives
+    // in the process-global [`live_runs`] table; the driver writes the snapshot
+    // and drains the inbox, the request thread pushes directives into it.
+    let background = arguments["background"].as_bool().unwrap_or(false);
+    if background {
+        use crate::orchestrator::live_runs;
+        let slug = team.slug();
+        let run_id = live_runs::next_run_id(&slug);
+        let run = std::sync::Arc::new(live_runs::LiveRun::new(
+            run_id.clone(),
+            team.id.clone(),
+            team.name.clone(),
+            task.to_string(),
+            root.to_path_buf(),
+            pipeline::trigger_label(trigger),
+        ));
+        // Register before spawning so an amend that arrives a millisecond later
+        // still finds the run; the driver thread shares this same `Arc`.
+        live_runs::register(run.clone());
+
+        let graph = graph;
+        let role_tasks = role_tasks;
+        let trigger_label = pipeline::trigger_label(trigger);
+        if let Err(err) = std::thread::Builder::new()
+            .name(format!("live-vc-{run_id}"))
+            .spawn(move || {
+                let mut graph = graph;
+                let ctx = pipeline::PipelineRunCtx {
+                    root: &run.root,
+                    team_id: &run.team_id,
+                    team_name: &run.team_name,
+                    prompt: &run.prompt,
+                    trigger,
+                    resume,
+                    live: Some(&run),
+                };
+                let outcome = pipeline::run_pipeline(
+                    &run.root,
+                    &mut graph,
+                    &role_tasks,
+                    planned_site_map_root,
+                    weight_root,
+                    std::time::Duration::from_secs(max_wall_secs),
+                    &ctx,
+                );
+                pipeline::finish_live_run(Some(&run), &outcome);
+            })
+        {
+            live_runs::remove(&run_id);
+            return Err(format!("failed to spawn background live-VC run: {err}").into());
+        }
+
+        let mut response = json!({
+            "run_id": run_id,
+            "status": "running",
+            "trigger": trigger_label,
+            "team_id": team.id,
+            "team_name": team.name,
+            "task_count": role_tasks_ref_count(&plan_json),
+            "amend_hint": "call amend_running_team with this run_id to steer in-flight workers",
+        });
+        if let Some(obj) = response.as_object_mut() {
+            obj.insert("plan".into(), plan_json);
+        }
+        return Ok(serde_json::to_string_pretty(&response)?);
+    }
+
     let run_ctx = pipeline::PipelineRunCtx {
         root,
         team_id: &team.id,
@@ -3423,6 +3497,7 @@ pub(crate) fn dispatch_via_pipeline(
         prompt: task,
         trigger,
         resume,
+        live: None,
     };
     let mut outcome = pipeline::run_pipeline(
         root,
@@ -3440,6 +3515,189 @@ pub(crate) fn dispatch_via_pipeline(
         obj.insert("team_id".into(), json!(team.id));
         obj.insert("team_name".into(), json!(team.name));
         obj.insert("plan".into(), plan_json);
+    }
+    Ok(serde_json::to_string_pretty(&response)?)
+}
+
+/// Read the planned task count back out of the plan JSON so the background
+/// response can report it without borrowing `role_tasks` after the move.
+fn role_tasks_ref_count(plan_json: &Value) -> usize {
+    plan_json["tasks"].as_array().map(|a| a.len()).unwrap_or(0)
+}
+
+/// P4 — amend a live-VC team run *while it is still executing*.
+///
+/// A `team_dispatch` issued with `background: true` publishes a
+/// [`crate::orchestrator::live_runs::LiveRun`] into the process-global table and
+/// hands the tick loop to a driver thread that drains a directive inbox once per
+/// wave. This tool is the write side of that rendezvous: it runs the delta
+/// through `intent::classify`, pushes a broadcast awareness note (so *every*
+/// in-flight assignment is reached) plus one scope-tagged directive per
+/// classified role (so each worker sees only the part of the change that falls
+/// in its own `RoleSpec.scope_patterns` domain), and — when the delta names a
+/// scope no existing seat covers — calls `intent::provision_team` to staff that
+/// domain for a later wave or a resumed run.
+///
+/// It never touches the workers directly: the handles belong to the driver
+/// thread and cannot be reached cross-thread. Pushing into the inbox is the only
+/// safe surface, and the driver decides *how* each directive lands (a live
+/// `send_note` for a running worker, folded into the brief for a not-yet-spawned
+/// one) and records every hand-off in the delivery ledger the observability
+/// tools read.
+fn amend_running_team(root: &Path, arguments: &Value) -> Result<String, Box<dyn Error>> {
+    use crate::agent::intent::{self, TaskScope};
+    use crate::orchestrator::directive::{patterns_overlap, DirectiveKind};
+    use crate::orchestrator::live_runs;
+
+    let delta = arguments["delta"]
+        .as_str()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .or_else(|| {
+            arguments["prompt"]
+                .as_str()
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+        })
+        .ok_or("'delta' (the mid-run change) is required")?;
+
+    // Locate the run: an explicit run_id wins, else the newest live run for the
+    // named team (`@slug`, slug, or raw team id).
+    let run = if let Some(id) = arguments["run_id"]
+        .as_str()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    {
+        live_runs::get(id).ok_or_else(|| format!("no live run with id '{id}'"))?
+    } else {
+        let team_ref = arguments["team"]
+            .as_str()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .ok_or("either 'run_id' or 'team' must name the running dispatch")?;
+        let slug = slugify(team_ref.trim_start_matches('@'));
+        let team_id = format!("team_{slug}");
+        live_runs::find_running_by_team(&team_id)
+            .or_else(|| live_runs::find_running_by_team(team_ref))
+            .ok_or_else(|| format!("no live run found for team '{team_ref}'"))?
+    };
+
+    if !run.is_running() {
+        return Err(format!(
+            "run '{}' already finished; nothing left to amend",
+            run.run_id
+        )
+        .into());
+    }
+
+    // 1. Classify the delta to learn which domains it touches.
+    let decision = intent::classify(delta);
+
+    // 2. Gather the current roster scopes — the authoritative set of what is
+    // already covered. Prefer the live snapshot (what is genuinely in flight);
+    // fall back to the persisted team members when the driver has not yet
+    // published wave 0.
+    let mut existing_scopes: Vec<String> = {
+        let snap = run.snapshot.lock().unwrap();
+        snap.tasks.iter().flat_map(|t| t.scope.clone()).collect()
+    };
+    if existing_scopes.is_empty() {
+        existing_scopes = load_expert_teams(root)
+            .into_iter()
+            .find(|t| t.id == run.team_id || t.slug() == slugify(&run.team_name))
+            .map(|t| {
+                t.members
+                    .into_iter()
+                    .flat_map(|m| m.scope_patterns)
+                    .collect()
+            })
+            .unwrap_or_default();
+    }
+
+    // 3a. Broadcast awareness: one directive with an empty filter reaches every
+    // live and pending worker, so the whole team learns the direction changed.
+    let mut queued = Vec::new();
+    let aware_id =
+        run.inbox
+            .lock()
+            .unwrap()
+            .push(format!("amend: {delta}"), vec![], DirectiveKind::Amend);
+    queued.push(json!({"directive_id": aware_id, "scope_filter": [], "broadcast": true}));
+
+    // 3b. Domain-addressed directives: each classified role contributes a
+    // directive scoped to its own patterns, so a worker sees the change as
+    // addressed to its domain and only for the roles it owns.
+    for role in decision.roles.iter() {
+        if role.scope_patterns.is_empty() {
+            continue;
+        }
+        let id = run.inbox.lock().unwrap().push(
+            delta.to_string(),
+            role.scope_patterns.clone(),
+            DirectiveKind::Amend,
+        );
+        queued.push(json!({
+            "directive_id": id,
+            "role": role.role,
+            "scope_filter": role.scope_patterns,
+        }));
+    }
+
+    // 4. Uncovered-scope detection: a delta role whose every pattern is disjoint
+    // from the current roster names a domain nobody on the team owns. If the
+    // verdict is a team-shaped one, provision a fresh roster so that domain gets
+    // a seat for the next wave or a resumed run.
+    let uncovered: Vec<Vec<String>> = decision
+        .roles
+        .iter()
+        .map(|r| r.scope_patterns.clone())
+        .filter(|scopes| {
+            !scopes.is_empty()
+                && !scopes
+                    .iter()
+                    .any(|p| existing_scopes.iter().any(|e| patterns_overlap(p, e)))
+        })
+        .collect();
+
+    let seat_provisioning =
+        if decision.scope == TaskScope::Team && !uncovered.is_empty() && !decision.roles.is_empty()
+        {
+            match intent::provision_team(root, &decision, &run.team_name) {
+                Ok(slug) => Some(json!({
+                    "provisioned_team": slug,
+                    "reason": "delta introduced scopes no live role covers",
+                    "uncovered_scopes": uncovered,
+                })),
+                Err(err) => Some(json!({
+                    "provision_failed": err,
+                    "uncovered_scopes": uncovered,
+                })),
+            }
+        } else {
+            None
+        };
+
+    let pending = run.inbox.lock().unwrap().pending_len();
+    let mut response = json!({
+        "run_id": run.run_id,
+        "team_id": run.team_id,
+        "delta_verdict": {
+            "scope": format!("{:?}", decision.scope),
+            "horizon": decision.horizon.as_str(),
+            "confidence": decision.confidence,
+            "roles": decision.roles.iter().map(|r| json!({
+                "role": r.role,
+                "scope": r.scope_patterns,
+            })).collect::<Vec<_>>(),
+        },
+        "directives_queued": queued,
+        "pending_in_inbox": pending,
+        "delivery_note": "the driver thread drains these on its next wave and records each hand-off in the delivery ledger; read it with the observability tools",
+    });
+    if let Some(p) = seat_provisioning {
+        if let Some(obj) = response.as_object_mut() {
+            obj.insert("seat_provisioning".into(), p);
+        }
     }
     Ok(serde_json::to_string_pretty(&response)?)
 }
@@ -4806,5 +5064,124 @@ mod tests {
         assert_eq!(chain[0].1, "qwen2.5-coder:14b");
         // The member's original (cloud) provider remains available as fallback.
         assert!(chain.iter().any(|(p, _)| *p == AiProvider::AlibabaQwen));
+    }
+
+    /// P4 guard: `amend_running_team` must queue an unconditional broadcast
+    /// directive so a mid-run delta reaches *every* in-flight assignment —
+    /// including a worker whose domain the delta never names — and must refuse a
+    /// run that already finished. Reverting the broadcast push (step 3a) makes
+    /// the first assertion observe no `broadcast: true` entry and fail; that is
+    /// the non-vacuity byte-revert check for the amendment mechanism.
+    #[test]
+    fn amend_running_team_broadcast_reaches_all_and_refuses_finished_runs() {
+        use crate::orchestrator::directive::{plan_directive_deliveries, RosterEntry, WorkerState};
+        use crate::orchestrator::live_runs::{self, LiveRun, RunStatus, TaskView};
+
+        std::env::remove_var("VELOCITY_DECISION_BACKEND");
+        let ws = tempfile::tempdir().unwrap();
+        let root = ws.path();
+
+        let run_id = live_runs::next_run_id("amendtest");
+        let run = std::sync::Arc::new(LiveRun::new(
+            run_id.clone(),
+            "team_amendtest".to_string(),
+            "Amend Test".to_string(),
+            "port the service".to_string(),
+            root.to_path_buf(),
+            "team_scope",
+        ));
+        // Two in-flight assignments in disjoint domains.
+        {
+            let mut snap = run.snapshot.lock().unwrap();
+            snap.tasks = vec![
+                TaskView {
+                    task_id: 2,
+                    member_id: "net".into(),
+                    role: "Networking Engineer".into(),
+                    scope: vec!["src/net/".into()],
+                    status: "running".into(),
+                },
+                TaskView {
+                    task_id: 3,
+                    member_id: "web".into(),
+                    role: "Frontend Engineer".into(),
+                    scope: vec!["web/".into()],
+                    status: "running".into(),
+                },
+            ];
+        }
+        live_runs::register(run.clone());
+
+        let out = amend_running_team(
+            root,
+            &serde_json::json!({
+                "run_id": run_id,
+                "delta": "add retry/backoff to the http client and a login form in the react frontend"
+            }),
+        )
+        .unwrap();
+        let v: Value = serde_json::from_str(&out).unwrap();
+        assert_eq!(v["run_id"].as_str().unwrap(), run_id.as_str());
+
+        // The broadcast is present — that is what guarantees every assignment is
+        // steered, regardless of how classify decomposed the delta's roles.
+        let queued = v["directives_queued"].as_array().unwrap();
+        assert!(
+            queued.iter().any(|d| d["broadcast"] == json!(true)),
+            "amend must queue an unconditional broadcast, got {queued:?}"
+        );
+
+        // A drained broadcast reaches BOTH disjoint-domain workers.
+        let drained = run.inbox.lock().unwrap().take_pending();
+        let roster = vec![
+            RosterEntry {
+                task_id: 2,
+                role: "Networking Engineer".into(),
+                scope: vec!["src/net/".into()],
+                state: WorkerState::Running,
+            },
+            RosterEntry {
+                task_id: 3,
+                role: "Frontend Engineer".into(),
+                scope: vec!["web/".into()],
+                state: WorkerState::Running,
+            },
+        ];
+        let plan = plan_directive_deliveries(&drained, &roster);
+        assert!(
+            plan.iter().any(|p| p.task_id == 2),
+            "net worker must be reached"
+        );
+        assert!(
+            plan.iter().any(|p| p.task_id == 3),
+            "web worker must be reached"
+        );
+
+        // A finished run cannot be amended.
+        let done_id = live_runs::next_run_id("deadteam");
+        let done = std::sync::Arc::new(LiveRun::new(
+            done_id.clone(),
+            "team_dead".into(),
+            "Dead Team".into(),
+            "p".into(),
+            root.to_path_buf(),
+            "team_scope",
+        ));
+        *done.status.lock().unwrap() = RunStatus::Finished {
+            succeeded: 1,
+            failed: 0,
+            blocked: 0,
+            wall_secs: 2,
+        };
+        live_runs::register(done.clone());
+        let err = amend_running_team(
+            root,
+            &serde_json::json!({ "run_id": done_id, "delta": "too late" }),
+        )
+        .unwrap_err();
+        assert!(err.to_string().contains("already finished"), "{err}");
+
+        live_runs::remove(&run_id);
+        live_runs::remove(&done_id);
     }
 }

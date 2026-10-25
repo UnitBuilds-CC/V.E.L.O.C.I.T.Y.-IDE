@@ -41,6 +41,8 @@ use crate::orchestrator::checkpoint::{
     self as cp, clear_checkpoint, matches as cp_matches, read_checkpoint, snapshot as cp_snapshot,
     write_checkpoint,
 };
+use crate::orchestrator::directive::{plan_directive_deliveries, RosterEntry, WorkerState};
+use crate::orchestrator::live_runs::{LiveRun, RunStatus, TaskView};
 use crate::orchestrator::registry::{OrchestratorRegistry, TaskStatus};
 use crate::orchestrator::worker::{
     spawn_live_worker, WorkerAssignment, WorkerHandle, WorkerResult,
@@ -564,8 +566,23 @@ pub fn run_pipeline(
         |now: Instant| -> Duration { now.duration_since(started) + restored_elapsed };
     let trigger_str: &'static str = trigger_label(ctx.trigger);
     let max_wall_secs: u64 = deadline.as_secs();
+    let mut wave: u32 = 0;
 
     loop {
+        // 0. Publish the current plan snapshot and fold any mid-run amendment
+        // into it (no-op for a synchronous run with no live handle).
+        publish_and_drain(
+            ctx.live,
+            graph,
+            &registry,
+            &by_id,
+            &mut handles,
+            &mut assignment_by_id,
+            wave,
+            effective_elapsed(Instant::now()),
+        );
+        wave += 1;
+
         // 1. Poll running handles → mark terminal statuses.
         let mut finished: Vec<TaskId> = Vec::new();
         for (id, handle) in handles.iter_mut() {
@@ -733,6 +750,143 @@ pub struct PipelineRunCtx<'a> {
     /// When true and a checkpoint matches (`team_id`, `prompt`), restore the
     /// registry from it instead of starting from all-Pending.
     pub resume: bool,
+    /// The shared handle for a background run. `Some` means the loop publishes a
+    /// [`RunSnapshot`] every wave and drains an amend directive inbox; `None`
+    /// (the synchronous default) leaves the loop byte-for-byte as it was, so the
+    /// crucible's blocking `team_dispatch` sees no behaviour change.
+    pub live: Option<&'a LiveRun>,
+}
+
+/// Flat JSON label for a [`TaskStatus`] — the observability read-out and the
+/// checkpoint writer must agree on these five strings.
+pub fn status_label(status: &TaskStatus) -> &'static str {
+    match status {
+        TaskStatus::Pending => "pending",
+        TaskStatus::Running => "running",
+        TaskStatus::Done(_) => "done",
+        TaskStatus::Failed(_) => "failed",
+        TaskStatus::Blocked(_) => "blocked",
+    }
+}
+
+/// Publish the plan snapshot and fold any pending amendment into the run.
+///
+/// Returns immediately when `live` is `None`, which is why the synchronous path
+/// is unaffected: the whole mechanism is gated behind one argument the blocking
+/// dispatcher never sets.
+///
+/// Two effects each wave:
+/// 1. Overwrite [`LiveRun::snapshot`] so a P5 `inspect_task_graph` read sees the
+///    real-time graph (ids, owner, scope, status) without touching the driver's
+///    own registry.
+/// 2. Drain [`LiveRun::inbox`] and hand each directive to the workers its scope
+///    reaches — an in-flight handle via `send_note` (the loop turns it into a
+///    high-priority steer), a not-yet-dispatched assignment by folding the note
+///    into its brief so the worker meets the amendment on its first turn. Every
+///    hand-off is written to the delivery ledger, which is what "did the amend
+///    reach every in-flight assignment" is actually checked against.
+fn publish_and_drain(
+    live: Option<&LiveRun>,
+    graph: &TaskGraph,
+    registry: &OrchestratorRegistry,
+    by_id: &HashMap<TaskId, &RoleTask>,
+    handles: &mut HashMap<TaskId, Box<dyn WorkerHandle>>,
+    assignment_by_id: &mut HashMap<TaskId, WorkerAssignment>,
+    wave: u32,
+    elapsed: Duration,
+) {
+    let Some(live) = live else {
+        return;
+    };
+
+    // 1. Publish the snapshot.
+    let mut views: Vec<TaskView> = Vec::new();
+    for (id, status) in registry.statuses.iter() {
+        if *id == graph.root {
+            continue;
+        }
+        let rt = by_id.get(id).copied();
+        views.push(TaskView {
+            task_id: id.0,
+            member_id: rt.map(|r| r.member_id.clone()).unwrap_or_default(),
+            role: rt.map(|r| r.role.clone()).unwrap_or_default(),
+            scope: rt.map(|r| r.task.scope.clone()).unwrap_or_default(),
+            status: status_label(status).to_string(),
+        });
+    }
+    views.sort_by_key(|v| v.task_id);
+    {
+        let mut snap = live.snapshot.lock().unwrap();
+        snap.wave = wave;
+        snap.elapsed_secs = elapsed.as_secs();
+        snap.tasks = views;
+    }
+
+    // 2. Drain the inbox.
+    let drained = live.inbox.lock().unwrap().take_pending();
+    if drained.is_empty() {
+        return;
+    }
+    // Build the steerable roster once. A task is Running while its handle is
+    // live, Pending while it still has an unspawned assignment, and Terminal
+    // otherwise (the planner drops a Terminal entry, but we skip building it).
+    let roster: Vec<RosterEntry> = registry
+        .statuses
+        .iter()
+        .filter(|(id, _)| **id != graph.root)
+        .filter_map(|(id, status)| {
+            let state = if handles.contains_key(id) {
+                WorkerState::Running
+            } else if assignment_by_id.contains_key(id) {
+                WorkerState::Pending
+            } else {
+                WorkerState::Terminal
+            };
+            if state == WorkerState::Terminal {
+                return None;
+            }
+            let _ = status;
+            let rt = by_id.get(id).copied();
+            Some(RosterEntry {
+                task_id: id.0,
+                role: rt.map(|r| r.role.clone()).unwrap_or_default(),
+                scope: rt.map(|r| r.task.scope.clone()).unwrap_or_default(),
+                state,
+            })
+        })
+        .collect();
+
+    for planned in plan_directive_deliveries(&drained, &roster) {
+        let id = TaskId(planned.task_id);
+        let delivered = if let Some(handle) = handles.get_mut(&id) {
+            handle.send_note(planned.note.clone())
+        } else if let Some(assignment) = assignment_by_id.get_mut(&id) {
+            assignment.instructions.push_str("\n\n");
+            assignment.instructions.push_str(&planned.note);
+            true
+        } else {
+            false
+        };
+        if delivered {
+            live.inbox
+                .lock()
+                .unwrap()
+                .record_delivery(planned.directive_id, planned.task_id);
+        }
+    }
+}
+
+/// Mark the live run's terminal counts on the shared status slot. No-op for a
+/// synchronous run.
+pub fn finish_live_run(live: Option<&LiveRun>, outcome: &PipelineOutcome) {
+    if let Some(live) = live {
+        *live.status.lock().unwrap() = RunStatus::Finished {
+            succeeded: outcome.succeeded,
+            failed: outcome.failed,
+            blocked: outcome.blocked,
+            wall_secs: outcome.wall_elapsed.as_secs(),
+        };
+    }
 }
 
 /// Mark a polled result Done/Failed/Blocked using the same rules as the panel:
