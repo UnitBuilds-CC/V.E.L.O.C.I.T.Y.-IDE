@@ -4,7 +4,10 @@
 //! strategies to optimize token usage while preserving critical information.
 
 use super::super::models::{AiProvider, ChatMessage};
-use super::utils::{compress_history, estimate_tokens, find_mission_anchor, LOCAL_OLLAMA_NUM_CTX};
+use super::utils::{
+    compress_history_with_elisions, estimate_tokens, find_mission_anchor, LOCAL_OLLAMA_NUM_CTX,
+};
+use crate::registry::ToolSurface;
 use serde_json::Value;
 
 /// Default context budget (32k tokens) for unknown models.
@@ -401,7 +404,7 @@ fn contains_code_blocks(content: &str) -> bool {
 
 /// Compress conversation history with model-specific budget awareness.
 ///
-/// This function extends the base [`compress_history`] with intelligent
+/// This function extends the base [`super::utils::compress_history`] with intelligent
 /// budget-aware compression that:
 ///
 /// 1. Looks up the model's context budget
@@ -421,6 +424,9 @@ fn contains_code_blocks(content: &str) -> bool {
 /// * `model` - The model identifier for budget lookup
 /// * `supports_tools` - Whether the model supports native tool calling
 /// * `tools` - The tool schemas that will be attached to the request
+/// * `surface` - The tool groups this turn advertises, which decides what the
+///   inline tool catalog re-injected for models that get no schema array lists
+///   (see [`ToolSurface`])
 ///
 /// # Returns
 ///
@@ -430,8 +436,15 @@ pub fn compress_history_with_budget(
     model: &str,
     supports_tools: bool,
     tools: &[Value],
+    surface: &ToolSurface,
 ) -> Vec<ChatMessage> {
-    compress_history_to_window(messages, get_model_budget(model), supports_tools, tools)
+    compress_history_to_window(
+        messages,
+        get_model_budget(model),
+        supports_tools,
+        tools,
+        surface,
+    )
 }
 
 /// Same compression, against a window the caller has already chosen.
@@ -444,9 +457,32 @@ pub fn compress_history_to_window(
     window_tokens: usize,
     supports_tools: bool,
     tools: &[Value],
+    surface: &ToolSurface,
 ) -> Vec<ChatMessage> {
-    // First apply base compression (cleans up malformed messages, etc.)
-    let base_compressed = compress_history(messages, supports_tools);
+    compress_history_to_window_with_drops(messages, window_tokens, supports_tools, tools, surface).0
+}
+
+/// [`compress_history_to_window`], plus what the window could not hold.
+///
+/// Compression is not a summary: everything in the second half of the returned
+/// pair stops being sent, and a headless run has no way to read it back — the
+/// only complete copy of its history goes to the encrypted `chatlogs.nda`. The
+/// caller writes that pair to a plaintext ledger and names the file to the model,
+/// so "what did I see three turns ago" has an answer other than re-reading the
+/// workspace or inventing the bytes.
+pub fn compress_history_to_window_with_drops(
+    messages: &[ChatMessage],
+    window_tokens: usize,
+    supports_tools: bool,
+    tools: &[Value],
+    surface: &ToolSurface,
+) -> (Vec<ChatMessage>, Vec<ChatMessage>) {
+    // First apply base compression (cleans up malformed messages, etc.). What it
+    // elides — a tool result stubbed to a hash, a long body cut to head-and-tail,
+    // a turn the character floor stopped carrying — is a loss in its own right,
+    // and the most common one on a long exploration run.
+    let (base_compressed, elided) =
+        compress_history_with_elisions(messages, supports_tools, surface);
 
     // Get model-specific budget
     let max_tokens = window_tokens;
@@ -466,11 +502,44 @@ pub fn compress_history_to_window(
 
     // If already within budget, return as-is
     if current_tokens <= history_target {
-        return base_compressed;
+        return (base_compressed, elided);
     }
 
     // Need to compress further - apply budget-aware compression
-    apply_budget_compression(&base_compressed, history_target)
+    let kept = apply_budget_compression(&base_compressed, history_target);
+    let mut dropped = elided;
+    dropped.extend(dropped_messages(&base_compressed, &kept));
+    (kept, dropped)
+}
+
+/// Everything in `before` that did not survive into `after`, in original order.
+///
+/// Matched as a multiset of `(role, content)` rather than by index: the kept
+/// messages arrive shifted, and a history holding three identical "No matches
+/// found" tool results lost exactly as many of them as the rebuilt context
+/// dropped — treating the survivors as present is what keeps the ledger faithful
+/// instead of full of copies that were actually sent.
+pub(crate) fn dropped_messages(before: &[ChatMessage], after: &[ChatMessage]) -> Vec<ChatMessage> {
+    let mut owed: std::collections::HashMap<(&str, &str), usize> = std::collections::HashMap::new();
+    for message in after {
+        *owed
+            .entry((message.role.as_str(), message.content.as_str()))
+            .or_default() += 1;
+    }
+    before
+        .iter()
+        .filter(|message| {
+            let key = (message.role.as_str(), message.content.as_str());
+            match owed.get_mut(&key) {
+                Some(count) if *count > 0 => {
+                    *count -= 1;
+                    false
+                }
+                _ => true,
+            }
+        })
+        .cloned()
+        .collect()
 }
 
 /// Apply progressive budget compression to fit within target tokens.
@@ -940,7 +1009,13 @@ mod tests {
         ];
 
         // With unknown model (32k budget), small messages should fit
-        let compressed = compress_history_with_budget(&messages, "unknown-model", false, &[]);
+        let compressed = compress_history_with_budget(
+            &messages,
+            "unknown-model",
+            false,
+            &[],
+            &ToolSurface::broad(),
+        );
         assert!(!compressed.is_empty());
         // System message should be preserved
         assert!(compressed.iter().any(|m| m.role == "system"));
@@ -966,7 +1041,8 @@ mod tests {
         ];
 
         // With GPT-4o (128k budget), these messages easily fit
-        let compressed = compress_history_with_budget(&messages, "gpt-4o", false, &[]);
+        let compressed =
+            compress_history_with_budget(&messages, "gpt-4o", false, &[], &ToolSurface::broad());
         assert_eq!(compressed.len(), 2);
     }
 
@@ -989,7 +1065,13 @@ mod tests {
             },
         ];
 
-        let compressed = compress_history_with_budget(&messages, "gpt-3.5-turbo", false, &[]);
+        let compressed = compress_history_with_budget(
+            &messages,
+            "gpt-3.5-turbo",
+            false,
+            &[],
+            &ToolSurface::broad(),
+        );
         assert!(compressed
             .iter()
             .any(|m| m.role == "system" && m.content.contains("Important system instructions")));
@@ -1023,7 +1105,13 @@ mod tests {
             });
         }
 
-        let roomy = compress_history_with_budget(&messages, "gpt-3.5-turbo", true, &[]);
+        let roomy = compress_history_with_budget(
+            &messages,
+            "gpt-3.5-turbo",
+            true,
+            &[],
+            &ToolSurface::broad(),
+        );
         assert_eq!(roomy.len(), messages.len());
 
         let huge_tool = serde_json::json!({
@@ -1033,7 +1121,13 @@ mod tests {
                 "description": "detailed description ".repeat(4_000),
             },
         });
-        let squeezed = compress_history_with_budget(&messages, "gpt-3.5-turbo", true, &[huge_tool]);
+        let squeezed = compress_history_with_budget(
+            &messages,
+            "gpt-3.5-turbo",
+            true,
+            &[huge_tool],
+            &ToolSurface::broad(),
+        );
         assert!(
             squeezed.len() < roomy.len(),
             "tool schemas must reserve budget and force history compression"
@@ -1124,8 +1218,14 @@ mod tests {
                 tool_calls: None,
             })
             .collect();
-        let wide = compress_history_to_window(&fat, 128_000, false, &[]);
-        let narrow = compress_history_to_window(&fat, LOCAL_OLLAMA_NUM_CTX as usize, false, &[]);
+        let wide = compress_history_to_window(&fat, 128_000, false, &[], &ToolSurface::broad());
+        let narrow = compress_history_to_window(
+            &fat,
+            LOCAL_OLLAMA_NUM_CTX as usize,
+            false,
+            &[],
+            &ToolSurface::broad(),
+        );
         let (wide_tokens, narrow_tokens) = (
             estimate_messages_tokens(&wide),
             estimate_messages_tokens(&narrow),
@@ -1133,6 +1233,153 @@ mod tests {
         assert!(
             narrow_tokens < wide_tokens / 2,
             "narrow {narrow_tokens} vs wide {wide_tokens}: the window was ignored"
+        );
+    }
+
+    fn msg(role: &str, content: &str) -> ChatMessage {
+        ChatMessage {
+            role: role.to_string(),
+            content: content.to_string(),
+            name: None,
+            tool_call_id: None,
+            tool_calls: None,
+        }
+    }
+
+    /// The ledger is only faithful if it names exactly what stopped being sent.
+    ///
+    /// A history carrying three identical "No matches found" results that loses
+    /// two of them must report two: set semantics would report three, and
+    /// first-match-wins would report one. `ChatMessage` derives no `PartialEq`, so
+    /// the diff is a count keyed on `(role, content)` rather than equality.
+    #[test]
+    fn dropped_messages_counts_the_multiplicity_that_actually_vanished() {
+        let before: Vec<ChatMessage> = vec![
+            msg("user", "alpha"),
+            msg("tool", "No matches found"),
+            msg("assistant", "gamma"),
+            msg("tool", "No matches found"),
+            msg("tool", "No matches found"),
+        ];
+        let after: Vec<ChatMessage> = vec![msg("tool", "No matches found"), msg("user", "alpha")];
+        let dropped = dropped_messages(&before, &after);
+        let landed: Vec<(&str, &str)> = dropped
+            .iter()
+            .map(|m| (m.role.as_str(), m.content.as_str()))
+            .collect();
+        assert_eq!(
+            landed,
+            vec![
+                ("assistant", "gamma"),
+                ("tool", "No matches found"),
+                ("tool", "No matches found")
+            ],
+            "the message that went entirely plus the two surplus results, in original order"
+        );
+        // Nothing lost is nothing to write: an empty second half is what keeps the
+        // overflow notice out of a context that overflowed nothing.
+        assert!(dropped_messages(&before, &before).is_empty());
+    }
+
+    /// A run spills to disk only when something actually stopped being sent, and
+    /// the pair must agree with the single-value form the rest of the loop trusts.
+    #[test]
+    fn the_window_reports_what_it_could_not_hold() {
+        let fat: Vec<ChatMessage> = (0..40)
+            .map(|i| {
+                msg(
+                    "user",
+                    &format!("turn {i}\n{}", "fn body line\n".repeat(600)),
+                )
+            })
+            .collect();
+        let (kept, dropped) = compress_history_to_window_with_drops(
+            &fat,
+            LOCAL_OLLAMA_NUM_CTX as usize,
+            false,
+            &[],
+            &ToolSurface::broad(),
+        );
+        assert!(!kept.is_empty(), "the window still has to send something");
+        assert!(
+            !dropped.is_empty(),
+            "a 40-turn fat history cannot fit a 20k window without losing turns"
+        );
+        // `ChatMessage` has no `PartialEq`, so the two forms are compared on the
+        // fields a request actually sends.
+        let shape = |messages: &[ChatMessage]| -> Vec<(String, String)> {
+            messages
+                .iter()
+                .map(|m| (m.role.clone(), m.content.clone()))
+                .collect()
+        };
+        let (wide, wide_dropped) =
+            compress_history_to_window_with_drops(&fat, 128_000, false, &[], &ToolSurface::broad());
+        assert_eq!(
+            shape(&wide),
+            shape(&compress_history_to_window(
+                &fat,
+                128_000,
+                false,
+                &[],
+                &ToolSurface::broad()
+            ))
+        );
+        // Against a window that could have held all of it, the loss reported is the
+        // one the base pass's own character floor inflicted — which is a loss, and
+        // the one a long run actually hits.
+        assert!(
+            !wide_dropped.is_empty(),
+            "the 200k character floor dropped turns and said nothing"
+        );
+        // A conversation that fits everywhere reports nothing.
+        let (_, quiet) = compress_history_to_window_with_drops(
+            &[msg("user", "short task"), msg("assistant", "short answer")],
+            128_000,
+            false,
+            &[],
+            &ToolSurface::broad(),
+        );
+        assert!(
+            quiet.is_empty(),
+            "a conversation that lost nothing: {quiet:?}"
+        );
+    }
+
+    /// The loss a long exploration run actually meets is not the window: it is the
+    /// base pass cutting a big tool result to head-and-tail, which throws away the
+    /// middle an later `edit_file` needle has to be copied from verbatim.
+    #[test]
+    fn an_elided_tool_result_is_reported_with_its_full_bytes() {
+        let body: String = (0..2000).map(|i| format!("line {i:04}\n")).collect();
+        let history = vec![
+            msg("user", "Port this file."),
+            ChatMessage {
+                role: "tool".to_string(),
+                content: body.clone(),
+                name: Some("read_file".to_string()),
+                tool_call_id: Some("call_1".to_string()),
+                tool_calls: None,
+            },
+        ];
+        let (kept, losses) = compress_history_to_window_with_drops(
+            &history,
+            128_000,
+            true,
+            &[],
+            &ToolSurface::broad(),
+        );
+        assert_eq!(losses.len(), 1, "one tool result was elided");
+        assert_eq!(
+            losses[0].content.len(),
+            body.len(),
+            "the ledger has to hold the bytes the request lost, not a summary of them"
+        );
+        assert!(
+            kept.iter()
+                .any(|m| m.content.len() < body.len() && m.content.contains("Truncated middle")),
+            "the form that gets sent is the truncated one: {:?}",
+            kept.iter().map(|m| m.content.len()).collect::<Vec<_>>()
         );
     }
 }

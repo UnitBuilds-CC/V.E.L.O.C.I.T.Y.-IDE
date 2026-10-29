@@ -126,10 +126,14 @@ impl TeamBuilderChat {
             scoped_files: None,
             max_turns: None,
             // The panel polls this thread but cannot cancel it, so the shared
-            // unattended budget is the only thing that stops a stalled
-            // provider call from running forever in the background.
-            budget: Some(crate::agent::unattended_budget()),
+            // unattended budget is what stops a wedged run in the background. An
+            // operator who removes it still gets the loop's stall window, which
+            // is what actually catches a provider that stopped streaming.
+            budget: crate::agent::unattended_budget(),
             requires_artifact: false,
+            // This panel's whole subject is expert teams.
+            tool_surface: crate::registry::ToolSurface::team_work(),
+            ramble: crate::agent::RambleLedger::default(),
         };
 
         // Spawn the headless sub-agent on a background thread.

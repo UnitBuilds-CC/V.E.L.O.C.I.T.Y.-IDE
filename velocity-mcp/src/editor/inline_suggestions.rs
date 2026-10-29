@@ -409,6 +409,9 @@ impl InlineSuggestionEngine {
                 // hard bound instead of the unattended dispatch budget.
                 budget: Some(std::time::Duration::from_secs(60)),
                 requires_artifact: false,
+                // An inline suggestion edits one file and nothing else.
+                tool_surface: crate::registry::ToolSurface::code(),
+                ramble: crate::agent::RambleLedger::default(),
             };
             let result = crate::agent::run_headless_subagent(req);
             let completion = sanitize_completion(&result.transcript, max_chars, allow_multiline);

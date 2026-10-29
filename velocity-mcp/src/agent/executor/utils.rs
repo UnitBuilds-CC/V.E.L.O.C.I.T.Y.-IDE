@@ -72,9 +72,99 @@ pub const SYSTEM_PROMPT_BASE: &str = concat!(
     "plainly; an accurate sparse summary beats a polished fabricated one.",
 );
 
-pub fn build_inline_tool_docs() -> String {
-    use crate::registry::get_tools;
-    let tools = get_tools();
+pub(crate) use crate::registry::ToolSurface;
+
+/// Tells an inline-tool model that its catalog is the whole of its surface, and
+/// what it would have to ask for to see more. Without this it probes for the
+/// browsing and messaging tools it has been given on other turns and wastes the
+/// turn when they are refused.
+const SURFACE_NOTE: &str = "This turn advertises only the tool groups its task needs: \
+the tools below are the only ones you can call.";
+
+/// The leading sentence of `text`, whitespace-collapsed and clamped to
+/// `max_chars` on a character boundary.
+///
+/// Registry descriptions are a one-line summary followed by pages of guidance —
+/// `plan_org_browser_login` alone runs to 12 KB — and rendering them verbatim
+/// costs tens of thousands of tokens per request, which on the small local
+/// windows that take the inline path *is* the entire context. The first sentence
+/// is what identifies the tool; the rest is advice for a caller that can already
+/// read the schema.
+fn brief(text: &str, max_chars: usize) -> String {
+    let collapsed = text.split_whitespace().collect::<Vec<_>>().join(" ");
+    let sentence = match collapsed.find(". ") {
+        Some(dot) => &collapsed[..dot + 1],
+        None => collapsed.as_str(),
+    };
+    let clipped = clamp_chars(sentence, max_chars);
+    if clipped.len() < sentence.len() {
+        format!("{}…", clipped)
+    } else {
+        clipped.to_string()
+    }
+}
+
+/// `text` truncated to `max_chars` characters, on a byte-safe boundary.
+fn clamp_chars(text: &str, max_chars: usize) -> &str {
+    match text.char_indices().nth(max_chars) {
+        Some((cut, _)) => &text[..cut],
+        None => text,
+    }
+}
+
+/// The declared type of one parameter, for the line a schema-less model reads to
+/// decide whether a value needs quoting. Union types are joined, and a schema
+/// with no `type` (a bare `enum`, or one nested under `anyOf`) reports `any`.
+fn schema_type(schema: &Value) -> String {
+    match &schema["type"] {
+        Value::String(t) => t.clone(),
+        Value::Array(parts) => parts
+            .iter()
+            .filter_map(|p| p.as_str())
+            .collect::<Vec<_>>()
+            .join("|"),
+        _ => "any".to_string(),
+    }
+}
+
+/// The allowed values of an enumerated parameter, which no parameter name
+/// conveys: `capability: "deploy"` and `capability: "read"` are unguessable.
+fn enum_values(schema: &Value) -> Option<String> {
+    let values = schema["enum"].as_array()?;
+    let rendered = values
+        .iter()
+        .map(|v| {
+            v.as_str()
+                .map(|s| s.to_string())
+                .unwrap_or_else(|| v.to_string())
+        })
+        .collect::<Vec<_>>()
+        .join("|");
+    (!rendered.is_empty()).then(|| clamp_chars(&rendered, 60).to_string())
+}
+
+/// Prose documentation of the tools this turn can actually call, for models that
+/// receive no native schema array (inline-tool and OpenRouter requests).
+///
+/// `surface` must be the one the loop builds its schema array from — see
+/// [`ToolSurface`] — because for these models this text *is* the tool list. A
+/// narrowed surface states which groups it withheld and how to ask for them, the
+/// same escape hatch the native schema array carries.
+pub fn build_inline_tool_docs(surface: &ToolSurface) -> String {
+    const TOOL_DOC_CHARS: usize = 160;
+    const PARAM_DOC_CHARS: usize = 120;
+    const PROSE_SURFACE_LIMIT: usize = 12;
+    let advertised = surface.tools();
+    let narrow = surface.is_narrow();
+    // Per-parameter prose is only affordable while the advertised set is small.
+    // Measured over the registry: 347 tools and 1,183 parameter descriptions
+    // render 141k characters (~40k tokens) verbatim, of which the descriptions
+    // alone are 52k — more than several local windows hold in total, on exactly
+    // the models that read their toolset from this prose. A broad surface
+    // therefore states name, type, requiredness and allowed values, which is what
+    // a call needs to be *valid*; the narrow one keeps the guidance, which is
+    // what `edit_file`'s verbatim-match parameter needs to be useful.
+    let verbose_params = advertised.len() <= PROSE_SURFACE_LIMIT;
     let mut doc = String::from(
         "\n\n## Available Tools\n\
         Call tools using this exact syntax (one block per call):\n\
@@ -83,21 +173,53 @@ pub fn build_inline_tool_docs() -> String {
         <parameter=PARAM_NAME>VALUE</parameter>\n\
         </function>\n\n",
     );
-    for t in &tools {
-        doc.push_str(&format!("### {}\n{}\n", t.name, t.description));
+    if narrow {
+        doc.push_str(SURFACE_NOTE);
+        doc.push_str("\n\n");
+        // Stated in prose for the same reason the schema array carries it: with
+        // no schema, the model cannot discover the one tool that widens its own
+        // surface.
+        doc.push_str(&crate::registry::request_tool_groups_prose(
+            &surface.hidden_slugs(),
+        ));
+        doc.push('\n');
+    }
+    for t in &advertised {
+        doc.push_str(&format!(
+            "### {}\n{}\n",
+            t.name,
+            brief(&t.description, TOOL_DOC_CHARS)
+        ));
         if let Some(props) = t.input_schema["properties"].as_object() {
             let required: Vec<&str> = t.input_schema["required"]
                 .as_array()
                 .map(|a| a.iter().filter_map(|v| v.as_str()).collect())
                 .unwrap_or_default();
             for (param, schema) in props {
-                let desc = schema["description"].as_str().unwrap_or("");
-                let req = if required.contains(&param.as_str()) {
-                    " (required)"
+                let obligation = if required.contains(&param.as_str()) {
+                    "required"
                 } else {
-                    " (optional)"
+                    "optional"
                 };
-                doc.push_str(&format!("  - `{}`{}: {}\n", param, req, desc));
+                doc.push_str(&format!(
+                    "  - `{}` ({}, {})",
+                    param,
+                    schema_type(schema),
+                    obligation
+                ));
+                if let Some(values) = enum_values(schema) {
+                    doc.push_str(&format!(": one of {values}"));
+                }
+                if verbose_params {
+                    doc.push_str(&format!(
+                        " — {}",
+                        brief(
+                            schema["description"].as_str().unwrap_or(""),
+                            PARAM_DOC_CHARS
+                        )
+                    ));
+                }
+                doc.push('\n');
             }
         }
         doc.push('\n');
@@ -167,6 +289,43 @@ pub fn ollama_think_value(model: &str, thinking: bool) -> Value {
 /// 20480 is the largest window measured to complete a multi-KB write on an 8 GB
 /// host running a 22 GB model (32768 overflowed VRAM and returned empty turns).
 pub const LOCAL_OLLAMA_NUM_CTX: u32 = 20480;
+
+/// What an operator typed into an env var that bounds one part of a run.
+pub(crate) enum LimitSetting {
+    /// Nothing set, or a value that is not a number: keep the built-in default.
+    Default,
+    /// An explicit "no limit" word, which means the caller must not set the
+    /// field at all and let the provider decide.
+    Unbounded,
+    /// A number the operator chose.
+    Value(u64),
+}
+
+/// Parse a limit whose ceiling the operator may raise — or remove.
+///
+/// Three rules, learned from the wall clock this mirrors: a number means that
+/// number, the "off" words mean no limit, and anything else means the default
+/// rather than a silent unbounded run. A typo must never launch a limit-free
+/// request, because then the operator's mistake becomes the next person's
+/// nine-hour investigation of why one turn filled a 131k window.
+///
+/// Split from every caller so tests exercise each spelling without mutating the
+/// environment the rest of the process reads.
+pub(crate) fn parse_limit_setting(raw: Option<&str>) -> LimitSetting {
+    const UNBOUNDED_WORDS: [&str; 6] = ["0", "off", "none", "unbounded", "unlimited", "infinite"];
+    let Some(value) = raw.map(str::trim).filter(|value| !value.is_empty()) else {
+        return LimitSetting::Default;
+    };
+    let normalized = value.to_ascii_lowercase();
+    if UNBOUNDED_WORDS.contains(&normalized.as_str()) {
+        LimitSetting::Unbounded
+    } else {
+        match normalized.parse::<u64>() {
+            Ok(number) => LimitSetting::Value(number),
+            Err(_) => LimitSetting::Default,
+        }
+    }
+}
 
 pub fn build_request(
     profile: &ModelInfo,
@@ -282,7 +441,7 @@ pub fn find_mission_anchor(messages: &[ChatMessage]) -> Option<usize> {
 /// baseline request past 300 KB). Unlike the previous wholesale rebuild, this
 /// preserves the real base prompt plus the runtime-injected
 /// "## Previously Learned Patterns" / "## Recalled Context" sections.
-fn dedupe_inline_tool_docs(sys_msg: &mut ChatMessage, supports_tools: bool) {
+fn dedupe_inline_tool_docs(sys_msg: &mut ChatMessage, supports_tools: bool, surface: &ToolSurface) {
     const DOCS_MARKER: &str = "## Available Tools";
     const TRAILING_SECTIONS: [&str; 2] = ["## Previously Learned Patterns", "## Recalled Context"];
     if let Some(docs_start) = sys_msg.content.find(DOCS_MARKER) {
@@ -295,7 +454,7 @@ fn dedupe_inline_tool_docs(sys_msg: &mut ChatMessage, supports_tools: bool) {
         let preserved_tail = rest[tail_rel..].trim_end().to_string();
         let mut base = sys_msg.content[..docs_start].trim_end().to_string();
         if !supports_tools {
-            base.push_str(&build_inline_tool_docs());
+            base.push_str(&build_inline_tool_docs(surface));
         }
         if !preserved_tail.is_empty() {
             base.push_str("\n\n");
@@ -304,7 +463,7 @@ fn dedupe_inline_tool_docs(sys_msg: &mut ChatMessage, supports_tools: bool) {
         }
         sys_msg.content = base;
     } else if !supports_tools {
-        sys_msg.content.push_str(&build_inline_tool_docs());
+        sys_msg.content.push_str(&build_inline_tool_docs(surface));
     }
 }
 
@@ -343,7 +502,27 @@ fn read_file_source_path(
     None
 }
 
-pub fn compress_history(messages: &[ChatMessage], supports_tools: bool) -> Vec<ChatMessage> {
+pub fn compress_history(
+    messages: &[ChatMessage],
+    supports_tools: bool,
+    surface: &ToolSurface,
+) -> Vec<ChatMessage> {
+    compress_history_with_elisions(messages, supports_tools, surface).0
+}
+
+/// [`compress_history`], plus every message whose bytes did not survive it.
+///
+/// The base pass loses history three ways, all of them silent today: a tool
+/// result replaced by a hash stub, a long message cut to head-and-tail, and the
+/// character floor that summarizes the older turns or stops carrying them at all.
+/// A run cannot get any of it back from inside itself — the only complete copy of
+/// its transcript is the encrypted `chatlogs.nda` — so the caller writes these
+/// originals to the overflow ledger and names that file to the model.
+pub fn compress_history_with_elisions(
+    messages: &[ChatMessage],
+    supports_tools: bool,
+    surface: &ToolSurface,
+) -> (Vec<ChatMessage>, Vec<ChatMessage>) {
     const VALID_ROLES: &[&str] = &[
         "system",
         "user",
@@ -397,11 +576,14 @@ pub fn compress_history(messages: &[ChatMessage], supports_tools: bool) -> Vec<C
                 .content
                 .starts_with("You are Velocity, the native AI agent")
         {
-            dedupe_inline_tool_docs(sys_msg, supports_tools);
+            dedupe_inline_tool_docs(sys_msg, supports_tools, surface);
         }
     }
 
     let mut compressed: Vec<ChatMessage> = Vec::new();
+    // The originals whose bytes this pass replaces with a stub or a head-and-tail
+    // excerpt, in the order they were elided.
+    let mut elided: Vec<ChatMessage> = Vec::new();
     for (idx, m) in messages.iter().enumerate() {
         let mut m_copy = m.clone();
         if m_copy.role == "assistant" {
@@ -551,6 +733,10 @@ pub fn compress_history(messages: &[ChatMessage], supports_tools: bool) -> Vec<C
                     _ => "Query site_map to retrieve specific symbol details.",
                 };
 
+                // The whole payload goes to the ledger before the stub replaces
+                // it: the hash proves the model saw it, and nothing in the run can
+                // show it what it saw.
+                elided.push(m.clone());
                 m_copy.content = format!(
                     "[Tool output of '{}' compressed to optimize context budget.\n\
                      Merkle Hash: {:016x}\n\
@@ -577,6 +763,9 @@ pub fn compress_history(messages: &[ChatMessage], supports_tools: bool) -> Vec<C
                 }
                 let head = &m_copy.content[..head_end];
                 let tail_str = &m_copy.content[tail_start..];
+                // The middle is what disappears, and it is the part a model needs
+                // to copy verbatim into an `edit_file` needle.
+                elided.push(m.clone());
                 m_copy.content = format!(
                     "{}\n\n[... Truncated middle output of '{}' ({} chars total) to optimize context budget ...]\n\n{}",
                     head, tool_name, m_copy.content.len(), tail_str
@@ -784,7 +973,29 @@ pub fn compress_history(messages: &[ChatMessage], supports_tools: bool) -> Vec<C
         result.push(summary);
     }
     result.extend(tail);
-    result
+
+    // The floor's own losses: it summarizes the older turns or stops carrying them
+    // outright, and both leave no trace in `result`. Matched as a `(role, content)`
+    // multiset because the survivors are shifted, and only the surplus of a
+    // repeated message is actually gone.
+    if needs_truncation {
+        let mut owed: std::collections::HashMap<(&str, &str), usize> =
+            std::collections::HashMap::new();
+        for m in result.iter().filter(|m| m.role != "system") {
+            *owed
+                .entry((m.role.as_str(), m.content.as_str()))
+                .or_default() += 1;
+        }
+        for m in &non_system {
+            let key = (m.role.as_str(), m.content.as_str());
+            match owed.get_mut(&key) {
+                Some(count) if *count > 0 => *count -= 1,
+                _ => elided.push(m.clone()),
+            }
+        }
+    }
+
+    (result, elided)
 }
 
 /// Extract the value of a `key="value"` attribute from an XML-like tag string.
@@ -1681,5 +1892,213 @@ mod tests {
             AiProvider::OpenRouter,
         );
         assert!(req.get("options").is_none());
+    }
+
+    /// One parser, three ceilings (wall clock, preload bytes, write-turn
+    /// tokens): a number means that number, the "off" words mean no limit, and a
+    /// typo means the default — never an accidental limit-free run.
+    #[test]
+    fn an_operators_limit_reads_as_a_number_off_or_a_typo() {
+        assert!(matches!(parse_limit_setting(None), LimitSetting::Default));
+        assert!(matches!(
+            parse_limit_setting(Some("")),
+            LimitSetting::Default
+        ));
+        assert!(matches!(
+            parse_limit_setting(Some("eighteen thousand")),
+            LimitSetting::Default
+        ));
+        assert!(matches!(
+            parse_limit_setting(Some("32000")),
+            LimitSetting::Value(32000)
+        ));
+        assert!(matches!(
+            parse_limit_setting(Some(" 32000 ")),
+            LimitSetting::Value(32000)
+        ));
+        for off in [
+            "0",
+            "off",
+            "OFF",
+            "none",
+            "unbounded",
+            "unlimited",
+            "infinite",
+        ] {
+            assert!(
+                matches!(parse_limit_setting(Some(off)), LimitSetting::Unbounded),
+                "`{off}` must mean no limit"
+            );
+        }
+    }
+
+    fn sys_msg(content: String) -> ChatMessage {
+        ChatMessage {
+            role: "system".to_string(),
+            content,
+            name: None,
+            tool_call_id: None,
+            tool_calls: None,
+        }
+    }
+
+    fn user_msg(content: &str) -> ChatMessage {
+        ChatMessage {
+            role: "user".to_string(),
+            content: content.to_string(),
+            name: None,
+            tool_call_id: None,
+            tool_calls: None,
+        }
+    }
+
+    #[test]
+    fn narrow_docs_advertise_only_the_tools_the_loop_accepts() {
+        // Regression: the inline catalog used to be rendered from the whole
+        // registry, so a dispatch told a model that gets no schema array about
+        // 347 tools while the loop refused all but the file tools. Every call to
+        // anything else was a guaranteed wasted turn.
+        let surface = ToolSurface::code();
+        let docs = build_inline_tool_docs(&surface);
+        for tool in surface.tools() {
+            assert!(
+                docs.contains(&format!("\n### {}\n", tool.name)),
+                "the code surface advertises {} but its prose does not",
+                tool.name
+            );
+        }
+        for withheld in [
+            "generate_image",
+            "team_dispatch",
+            "web_navigate",
+            "browser_native_assert",
+            "wa_registry_write",
+            "plan_org_browser_login",
+        ] {
+            assert!(
+                !docs.contains(&format!("\n### {withheld}\n")),
+                "{withheld} is on no group this turn offers, so listing it is a lie"
+            );
+        }
+        assert!(
+            docs.contains(SURFACE_NOTE),
+            "a narrowed surface must say it is the whole of it"
+        );
+        // The escape hatch has to be reachable without a schema array, or
+        // narrowing costs the run a capability it cannot ask back.
+        assert!(docs.contains("\n### request_tool_groups\n"));
+        assert!(docs.contains("ui_verify"), "withheld groups must be named");
+    }
+
+    #[test]
+    fn broad_docs_cover_every_registered_tool() {
+        // The other half of the invariant above: the broad surface keeps the full
+        // registry, so a media or browser tool can never silently vanish from the
+        // surface a tool-less model reads its syntax from.
+        let docs = build_inline_tool_docs(&ToolSurface::broad());
+        let missing: Vec<String> = crate::registry::get_tools()
+            .iter()
+            .filter(|t| !docs.contains(&format!("\n### {}\n", t.name)))
+            .map(|t| t.name.clone())
+            .collect();
+        assert!(missing.is_empty(), "advertised on no turn: {missing:?}");
+        assert!(
+            !docs.contains("\n### request_tool_groups\n"),
+            "nothing is withheld, so there is nothing to ask for"
+        );
+    }
+
+    #[test]
+    fn inline_catalog_is_bounded() {
+        // Measured over the registry as it stands: 347 tools and 1,183 parameters
+        // rendered verbatim are 140,629 characters (~40k tokens) — more than the
+        // whole 20,480-token window a local Ollama turn declares, so the server
+        // dropped the front of the prompt silently. Leading-sentence tool
+        // descriptions plus name/type/required parameters bring the broad render
+        // to 85,739; a segmented surface does not have to be rendered at all.
+        let broad = build_inline_tool_docs(&ToolSurface::broad());
+        let longest_line = broad
+            .lines()
+            .map(|l| l.chars().count())
+            .max()
+            .unwrap_or_default();
+        assert!(
+            longest_line <= 320,
+            "one line ran to {longest_line} chars, so the clamp is not applied"
+        );
+        let chars = broad.chars().count();
+        assert!(
+            chars < 95_000,
+            "catalog renders {chars} chars against a 140,629-char verbatim baseline"
+        );
+        let narrow = build_inline_tool_docs(&ToolSurface::code()).chars().count();
+        assert!(
+            narrow * 8 < chars,
+            "the surface a dispatched worker actually reads is {narrow} of {chars} chars"
+        );
+    }
+
+    #[test]
+    fn narrow_surfaces_keep_the_parameter_guidance() {
+        // The 1,183 parameter descriptions are only dropped when the whole
+        // registry is advertised: they cost 52k characters there, and nothing on a
+        // twelve-tool surface is worth that. Narrow stays verbose because the
+        // guidance is load-bearing — a model that cannot see the schema still has
+        // to learn that the path is relative to the workspace root.
+        let code = tool_docs(build_inline_tool_docs(&ToolSurface::code()), "edit_file");
+        assert!(
+            code.contains("`relativeFilePath` (string, required) — Path of the existing file"),
+            "narrow surface must keep parameter prose: {code}"
+        );
+        let general = tool_docs(build_inline_tool_docs(&ToolSurface::broad()), "edit_file");
+        assert!(
+            !general.contains(" — "),
+            "the broad surface must not re-add the 52k of parameter prose: {general}"
+        );
+        assert!(
+            general.contains("`relativeFilePath` (string, required)"),
+            "the broad surface must still name the parameter and its type: {general}"
+        );
+    }
+
+    fn tool_docs(docs: String, name: &str) -> String {
+        docs.split(&format!("\n### {name}\n"))
+            .nth(1)
+            .and_then(|rest| rest.split("\n### ").next())
+            .unwrap_or_default()
+            .to_string()
+    }
+
+    #[test]
+    fn compression_reinjects_the_narrowed_surface() {
+        // Compression strips the inline catalog and rebuilds it on every request,
+        // so rebuilding it from the registry undid the dispatch's narrowing after
+        // the first compressed turn. The surface has to ride along with the
+        // message, and the runtime-appended sections after the catalog survive it.
+        let stale = format!(
+            "{}{}\n\n## Recalled Context\nkeep me",
+            SYSTEM_PROMPT_BASE,
+            build_inline_tool_docs(&ToolSurface::broad())
+        );
+        let compressed = compress_history(
+            &[sys_msg(stale), user_msg("port the file")],
+            false,
+            &ToolSurface::code(),
+        );
+        let out = &compressed
+            .iter()
+            .find(|m| m.role == "system")
+            .expect("system message survives")
+            .content;
+        assert!(
+            !out.contains("\n### generate_image\n"),
+            "compression re-widened the dispatched surface"
+        );
+        assert!(out.contains(SURFACE_NOTE));
+        assert!(out.contains("keep me"), "Recalled Context must survive");
+        assert!(
+            out.starts_with("You are Velocity"),
+            "the base prompt must survive"
+        );
     }
 }

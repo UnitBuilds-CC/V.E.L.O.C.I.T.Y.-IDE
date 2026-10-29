@@ -111,6 +111,18 @@ pub enum ProviderRequestError {
     Exhausted { detail: String },
     /// Transport-level failure: DNS, TLS, connect/read timeout, reset.
     Transport { detail: String },
+    /// The server generated a tool call and could not parse its arguments.
+    ///
+    /// This is the shape a local server takes when our own output ceiling stops
+    /// generation inside the arguments string: llama-server builds the call as it
+    /// decodes and parses it only when decoding ends, so an unclosed string is an
+    /// HTTP error quoting the half-written file back at us. Recorded as its own
+    /// cause because it is none of the things the other variants mean: the model
+    /// answered, the socket is fine, and the credentials are not the problem. The
+    /// ceiling is ours, so the fix is ours — which is exactly why resending the
+    /// byte-identical request is listed as futile and switching provider is not
+    /// what this is asking for.
+    ToolCallArgsUnparsed { detail: String },
 }
 
 impl ProviderRequestError {
@@ -123,6 +135,7 @@ impl ProviderRequestError {
             ProviderRequestError::Rejected { detail, .. } => detail.clone(),
             ProviderRequestError::Exhausted { detail } => detail.clone(),
             ProviderRequestError::Transport { detail } => detail.clone(),
+            ProviderRequestError::ToolCallArgsUnparsed { detail } => detail.clone(),
         }
     }
 
@@ -130,8 +143,16 @@ impl ProviderRequestError {
     /// A caller that is choosing between "try the next model here" and "move to
     /// the next provider" branches on this, so it must be a property of the
     /// variant and never of the message text.
+    ///
+    /// A tool call the server could not parse is not provider-wide: a model that
+    /// emits a shorter call answers the same server fine, and another provider
+    /// with the same ceiling cuts the call at the same token.
     pub fn is_provider_wide(&self) -> bool {
-        !matches!(self, ProviderRequestError::Rejected { .. })
+        !matches!(
+            self,
+            ProviderRequestError::Rejected { .. }
+                | ProviderRequestError::ToolCallArgsUnparsed { .. }
+        )
     }
 
     /// Whether sending this exact request again could produce a different answer.
@@ -149,6 +170,11 @@ impl ProviderRequestError {
             ProviderRequestError::Rejected { .. }
                 | ProviderRequestError::AuthRejected { .. }
                 | ProviderRequestError::NoCredentials { .. }
+                // Futile *as sent*: the same ceiling cuts the same call at the
+                // same token. The one move that is not a resend — lifting the
+                // ceiling before reissuing — lives in the loop, and it is what
+                // this variant exists to make reachable.
+                | ProviderRequestError::ToolCallArgsUnparsed { .. }
         )
     }
 }
@@ -1168,6 +1194,140 @@ pub fn execute_bedrock_request(
     )
 }
 
+/// Whether a server's error body complains about the tool call it generated
+/// instead of about anything the caller could have got wrong.
+///
+/// The live convert of `litellm/_service_logger.py` is the case this reads: the
+/// turn was capped at 18000 output tokens, the model spent most of them
+/// reasoning, and the `write_file` call ran out of ceiling inside its arguments
+/// string. llama-server then answered
+/// `Failed to parse tool call arguments as JSON: … invalid string: missing
+/// closing quote` at column 18575 — quoting the arguments it had half-written,
+/// which the loop threw away as a transport error and resent twice.
+///
+/// Matching here, at the failure site, is what keeps the loop's decision a
+/// property of the variant rather than a string match on a message some other
+/// layer formatted.
+fn is_tool_call_parse_rejection(body: &str) -> bool {
+    let lowered = body.to_lowercase();
+    lowered.contains("tool call arguments")
+        && (lowered.contains("parse") || lowered.contains("invalid json"))
+}
+
+/// Classify an HTTP status answered by the local llama-server, from its body.
+///
+/// Three stories, not the two the status code alone tells. A tool call the
+/// server could not parse is neither a dead socket (it answered) nor a refusal
+/// of the request (it ran it and lost the answer at the end), and each of the
+/// three gets a different move from the loop: resend, refuse, or lift the
+/// ceiling. Split out from [`execute_llama_request`] so the live convert's own
+/// error body — the one the loop resent twice — can be fed to it in a test.
+fn llama_status_error(code: u16, model: &str, url: &str, why: &str) -> ProviderRequestError {
+    const LABEL: &str = "Local llama.cpp";
+    let snippet: String = why.chars().take(400).collect();
+    if is_tool_call_parse_rejection(why) {
+        return ProviderRequestError::ToolCallArgsUnparsed {
+            detail: format!(
+                "{LABEL} generated a tool call it could not parse ({code}) for model \
+                 '{model}' at {url}: {snippet}"
+            ),
+        };
+    }
+    // 4xx (bar rate-limit/timeout) are deterministic for a local server too — an
+    // unknown model or a body it rejects on its own content will not change on
+    // retry, so name the cause and fail fast.
+    if (400..=499).contains(&code) && code != 408 && code != 429 {
+        ProviderRequestError::Rejected {
+            status: code,
+            detail: format!(
+                "{LABEL} rejected the request ({code}) for model '{model}' at {url}: {snippet}"
+            ),
+        }
+    } else {
+        ProviderRequestError::Transport {
+            detail: format!("{LABEL} returned HTTP {code} at {url}: {snippet}"),
+        }
+    }
+}
+
+/// Local llama.cpp server (llama-server) — OpenAI-compatible
+/// `/v1/chat/completions` endpoint with no API key. Base URL comes from
+/// `LLAMA_CPP_HOST` (default `http://localhost:8080`).
+///
+/// The request body is already the streaming OpenAI shape the loop builds for
+/// every compatible provider (`stream: true` + `messages`/`tools`), so nothing
+/// is transformed here — llama-server emits SSE that the loop's parser and the
+/// heartbeat stall window already understand. It reuses `slow_stream_agent()`
+/// because 3-tier MoE offload keeps experts on CPU/RAM: prefill of a multi-KB
+/// prompt can sit silent for minutes before the first token, well past the
+/// 90 s window that would otherwise abort a healthy turn.
+pub fn execute_llama_request(
+    request_body: &Value,
+    ui_tx: &Sender<AgentToUiMessage>,
+) -> Option<ureq::Response> {
+    let host =
+        std::env::var("LLAMA_CPP_HOST").unwrap_or_else(|_| "http://localhost:8080".to_string());
+    let url = format!("{}/v1/chat/completions", host.trim_end_matches('/'));
+    let label = "Local llama.cpp";
+
+    // Connection errors are retried like Ollama's: a server still warming up
+    // (loading a 21 GB GGUF into the tiered memory) refuses the socket for a
+    // while before it is ready, and that is transient, not a dead provider.
+    const MAX_RETRIES: u32 = 3;
+    const BASE_DELAY_MS: u64 = 2000;
+    for attempt in 0..MAX_RETRIES {
+        match slow_stream_agent()
+            .post(&url)
+            // llama-server ignores auth; a fixed dummy bearer keeps the
+            // OpenAI client shape uniform and satisfies a server run behind
+            // `--api-key`. It is never a secret.
+            .set("Authorization", "Bearer llama-cpp-local")
+            .set("Content-Type", "application/json")
+            .send_json(request_body)
+        {
+            Ok(res) => return Some(res),
+            Err(ureq::Error::Status(code, resp)) => {
+                let why = resp.into_string().unwrap_or_default();
+                let model = request_body
+                    .get("model")
+                    .and_then(Value::as_str)
+                    .unwrap_or("?");
+                return fail_request(ui_tx, llama_status_error(code, model, &url, &why));
+            }
+            Err(e) => {
+                let is_last = attempt == MAX_RETRIES - 1;
+                let error_str = format!("{:?}", e);
+                let is_transient = error_str.contains("TimedOut")
+                    || error_str.contains("ConnectionRefused")
+                    || error_str.contains("ConnectionReset")
+                    || error_str.contains("BrokenPipe")
+                    || error_str.contains("NetworkUnreachable")
+                    || error_str.contains("HostUnreachable");
+                if is_transient && !is_last {
+                    let delay_ms = BASE_DELAY_MS * (1 << attempt);
+                    ui_tx
+                        .send(AgentToUiMessage::StatusUpdate(format!(
+                            "llama.cpp connection error (attempt {}/{}), retrying in {}ms...",
+                            attempt + 1,
+                            MAX_RETRIES,
+                            delay_ms
+                        )))
+                        .ok();
+                    std::thread::sleep(std::time::Duration::from_millis(delay_ms));
+                    continue;
+                }
+                return fail_request(
+                    ui_tx,
+                    ProviderRequestError::Transport {
+                        detail: format!("{label} connection error at {url}: {e:?}"),
+                    },
+                );
+            }
+        }
+    }
+    None
+}
+
 /// Convert an OpenAI-format request body into an Anthropic Messages API body.
 ///
 /// Returns `Ok(body)` ready to POST, or `Err(message)` when the input is
@@ -1433,7 +1593,9 @@ mod tests {
 
     /// Everything except a per-model rejection covers the whole provider, so
     /// `team_dispatch` moves to the next provider instead of burning attempts
-    /// on model names that cannot help.
+    /// on model names that cannot help. A tool call the server could not parse
+    /// is in the same exemption: a model that emits a shorter call answers the
+    /// same server fine, so the provider is not what failed.
     #[test]
     fn only_a_model_rejection_leaves_the_provider_worth_retrying() {
         let provider_wide = [
@@ -1493,6 +1655,67 @@ mod tests {
         for err in transient {
             assert!(!err.is_resend_futile(), "{err:?} may recover on its own");
         }
+    }
+
+    /// The exact body that ended the live convert of `litellm/_service_logger.py`
+    /// on the llama.cpp route. The server had decoded the model's `write_file`
+    /// call, run out of the 18000-token output ceiling inside its arguments
+    /// string, and answered by quoting the half-written file back. Nothing about
+    /// that is a dead socket, but it was recorded as `Transport` because nothing
+    /// else fitted — and `Transport` is the one class `is_resend_futile` calls
+    /// retryable. So the identical request went out twice more, was cut at the
+    /// identical token both times, and the run blocked on a 0-byte artifact with
+    /// the port already generated.
+    #[test]
+    fn a_tool_call_the_server_could_not_parse_is_not_a_transport_blip() {
+        const LIVE_BODY: &str = r##"{"error":{"code":500,"message":"Failed to parse tool call arguments as JSON: [json.exception.parse_error.101] parse error at line 1, column 18575: syntax error while parsing value - invalid string: missing closing quote; last read: \"//! Port of `litellm/_service_logger.py`"##;
+        let err = llama_status_error(
+            500,
+            "qwen3.6-35b-a3b",
+            "http://192.168.0.4:8080/v1/chat/completions",
+            LIVE_BODY,
+        );
+        assert!(
+            matches!(err, ProviderRequestError::ToolCallArgsUnparsed { .. }),
+            "{err:?} is the server losing an answer it generated, not a socket"
+        );
+        assert!(
+            err.is_resend_futile(),
+            "the same ceiling cuts the call at the same token"
+        );
+        assert!(
+            !err.is_provider_wide(),
+            "a model that emits a shorter call answers this same server"
+        );
+        // The operator has to see the column the server stopped at: it is the
+        // difference between "the model failed" and "our number failed".
+        assert!(err.describe().contains("18575"), "{}", err.describe());
+    }
+
+    /// The classifier must not be a catch-all, or every server hiccup reads as a
+    /// truncated call and skips the resends that a real blip recovers from. A 500
+    /// that says nothing about tool call arguments is still a blip, and a 4xx
+    /// still a refusal.
+    #[test]
+    fn an_ordinary_llama_error_is_still_a_blip_and_a_refusal_still_a_refusal() {
+        let blip = llama_status_error(500, "m", "http://localhost:8080", "server is overloaded");
+        assert!(
+            matches!(blip, ProviderRequestError::Transport { .. }),
+            "{blip:?}"
+        );
+        assert!(!blip.is_resend_futile(), "a busy server may free up");
+
+        let refusal = llama_status_error(
+            400,
+            "qwen3.6-35b-a3b",
+            "http://localhost:8080",
+            "unknown model: qwen3.6-35b-a3b",
+        );
+        assert!(
+            matches!(refusal, ProviderRequestError::Rejected { status: 400, .. }),
+            "{refusal:?}"
+        );
+        assert!(refusal.is_resend_futile());
     }
 
     /// The native `/api/chat` path classified *every* HTTP status as

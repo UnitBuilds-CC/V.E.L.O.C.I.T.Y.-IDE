@@ -2236,6 +2236,158 @@ fn superseded_site_message(hay: &str, line: usize) -> String {
     )
 }
 
+/// The nearest line that tells the first two matched sites apart, and where it
+/// sits relative to each of them.
+struct SiteDivergence {
+    /// The parting line lies after both matches rather than before them.
+    down: bool,
+    /// How many lines the two sites share before they part.
+    shared: usize,
+    /// Zero-based index and text of the parting line at each site.
+    at_first: usize,
+    at_second: usize,
+    text_first: String,
+    text_second: String,
+}
+
+/// How far the file has to be read before two matched sites actually differ.
+///
+/// "Widen until unique" is only an instruction if some line does differ, and a
+/// faithful port of a module holding two copies of the same loop is exactly where
+/// it does not: run #82 matched byte-identical blocks at lines 341 and 380, was
+/// told to widen, and re-sent the same needle for five hours because the quoted
+/// window showed it two blocks it could not tell apart. So count the lines they
+/// share, name the first line where they part at both sites, and quote it — that
+/// line is the thing to widen to. And when nothing parts them, say that, because
+/// an instruction no `oldString` can obey is worse than no instruction.
+fn site_divergence(lines: &[&str], sites: &[(usize, usize)]) -> Option<SiteDivergence> {
+    if sites.len() < 2 {
+        return None;
+    }
+    let (a_first, a_last) = sites[0];
+    let (b_first, b_last) = sites[1];
+    // Each direction yields (lines shared, index of the parting line at each site,
+    // the file's own text at each). `k` counts from the line next to the match
+    // outward, so the shared count and the divergence are read off the same walk.
+    let mut forward: Option<(usize, usize, usize, String, String)> = None;
+    let mut k = 0usize;
+    while a_last + 1 + k < lines.len() && b_last + 1 + k < lines.len() {
+        let (ta, tb) = (lines[a_last + 1 + k], lines[b_last + 1 + k]);
+        if ta != tb {
+            forward = Some((
+                k,
+                a_last + 1 + k,
+                b_last + 1 + k,
+                ta.to_string(),
+                tb.to_string(),
+            ));
+            break;
+        }
+        k += 1;
+    }
+    let mut backward: Option<(usize, usize, usize, String, String)> = None;
+    let mut k = 0usize;
+    while a_first > k && b_first > k {
+        let (ta, tb) = (lines[a_first - 1 - k], lines[b_first - 1 - k]);
+        if ta != tb {
+            backward = Some((
+                k,
+                a_first - 1 - k,
+                b_first - 1 - k,
+                ta.to_string(),
+                tb.to_string(),
+            ));
+            break;
+        }
+        k += 1;
+    }
+    let nearer = match (&forward, &backward) {
+        (Some(f), Some(b)) => {
+            if f.0 <= b.0 {
+                Some((f.clone(), true))
+            } else {
+                Some((b.clone(), false))
+            }
+        }
+        (Some(f), None) => Some((f.clone(), true)),
+        (None, Some(b)) => Some((b.clone(), false)),
+        (None, None) => None,
+    };
+    let ((shared, at_first, at_second, text_first, text_second), down) = nearer?;
+    Some(SiteDivergence {
+        down,
+        shared,
+        at_first,
+        at_second,
+        text_first,
+        text_second,
+    })
+}
+
+/// The sentence that goes under the quoted sites.
+///
+/// `quoted` says whether the blocks above actually reach the parting line. They
+/// do when the two sites share a handful of lines, and then the model can copy
+/// its way to uniqueness. They do not when the shared run is long, and then
+/// "widen to line 407" would have it invent 60 lines of a file it emitted an
+/// hour ago — so name the read that gets those bytes instead.
+fn divergence_note(d: &SiteDivergence, quoted: bool, rel_path: &str, site_line: usize) -> String {
+    let quote = |t: &str| {
+        let t = t.trim();
+        if t.chars().count() > 96 {
+            format!("{}…", t.chars().take(96).collect::<String>())
+        } else {
+            t.to_string()
+        }
+    };
+    let direction = if d.down {
+        "after the match"
+    } else {
+        "before the match"
+    };
+    let widen = if d.down { "down" } else { "up" };
+    let la = d.at_first + 1;
+    let lb = d.at_second + 1;
+    let head = format!(
+        "The first two of them are identical for the {} line(s) {direction}; the nearest line \
+         that tells them apart is line {la} (`{}`) at the first against line {lb} (`{}`) at the \
+         second.",
+        d.shared,
+        quote(&d.text_first),
+        quote(&d.text_second)
+    );
+    if quoted {
+        format!(
+            "{head} Widen the `oldString` {widen} to reach that line and only the site you mean \
+             still matches -- both blocks above already carry the lines between the match and \
+             that point, so copy one of them instead of recalling it."
+        )
+    } else {
+        let span = d.shared + 1;
+        let (lo, hi) = if d.down {
+            (site_line, la)
+        } else {
+            (la, site_line)
+        };
+        format!(
+            "{head} Widen the `oldString` {widen} to reach that line and only the site you mean \
+             still matches. That is a {span}-line span, more than this message quotes, so read \
+             {rel_path} from line {lo} to line {hi} and build the `oldString` from what that read \
+             returns."
+        )
+    }
+}
+
+/// The refusal for two sites that no `oldString` can separate.
+fn inseparable_sites_note() -> String {
+    "No `oldString` separates the first two of them: the text around both is identical as far \
+     as the file reaches in each direction, so anything that matches one matches the other. \
+     Widening is not an instruction you can follow here — replace the whole enclosing block \
+     instead, starting at the line each `[line N]` marker names, or make the change at both \
+     places."
+        .to_string()
+}
+
 /// Where an over-fitting `oldString` actually matches, and what the file puts
 /// around each site.
 ///
@@ -2246,10 +2398,14 @@ fn superseded_site_message(hay: &str, line: usize) -> String {
 /// then guessed at an indentation and voided a third batch. The lines that make
 /// a site unique are in the file, so the tool hands them over instead of asking
 /// for them.
-fn explain_ambiguous_edit(hay: &str, needle: &str, hits: usize) -> String {
+fn explain_ambiguous_edit(hay: &str, needle: &str, hits: usize, rel_path: &str) -> String {
     const SITES: usize = 3;
     const BEFORE: usize = 2;
     const AFTER: usize = 2;
+    // How far a quoted block is stretched to reach the line that parts two
+    // sites. Past this the block would swallow most of the file to hand over a
+    // single distinguishing line, so the refusal sends the model to a read.
+    const MAX_QUOTED_SPAN: usize = 24;
     let lines: Vec<&str> = hay.lines().collect();
     let mut sites: Vec<(usize, usize)> = Vec::new();
     let mut pos = 0usize;
@@ -2276,10 +2432,43 @@ fn explain_ambiguous_edit(hay: &str, needle: &str, hits: usize) -> String {
             String::new()
         }
     );
-    for (first, last) in sites {
-        let a = first.saturating_sub(BEFORE);
-        let b = (last + AFTER + 1).min(lines.len());
-        out.push_str(&format!("\n[line {}]\n{}", a + 1, lines[a..b].join("\n")));
+    let mut windows: Vec<(usize, usize)> = sites
+        .iter()
+        .map(|(first, last)| {
+            (
+                first.saturating_sub(BEFORE),
+                (last + AFTER + 1).min(lines.len()),
+            )
+        })
+        .collect();
+    let divergence = site_divergence(&lines, &sites);
+    let mut quoted = false;
+    if let Some(d) = &divergence {
+        if d.shared < MAX_QUOTED_SPAN {
+            quoted = true;
+            if d.down {
+                windows[0].1 = windows[0].1.max(d.at_first + 1);
+                windows[1].1 = windows[1].1.max(d.at_second + 1);
+            } else {
+                windows[0].0 = windows[0].0.min(d.at_first);
+                windows[1].0 = windows[1].0.min(d.at_second);
+            }
+        }
+    }
+    for (start, end) in &windows {
+        out.push_str(&format!(
+            "\n[line {}]\n{}",
+            start + 1,
+            lines[*start..*end].join("\n")
+        ));
+    }
+    if sites.len() >= 2 {
+        let note = match &divergence {
+            Some(d) => divergence_note(d, quoted, rel_path, sites[0].0 + 1),
+            None => inseparable_sites_note(),
+        };
+        out.push('\n');
+        out.push_str(&note);
     }
     out
 }
@@ -2724,6 +2913,39 @@ fn bytes_on_disk(path: &Path, sent: usize) -> usize {
     fs::metadata(path).map(|m| m.len() as usize).unwrap_or(sent)
 }
 
+/// `run_command` gives the child whatever console codepage the parent happens to
+/// have, and on a Windows desktop that is cp1252. A Python probe of a source file
+/// then dies encoding the file, not reading it: run #88's model piped three
+/// different scripts into `python -` to see the LiteLLM module it had been told
+/// was pre-loaded, and three times the tool result was
+/// `UnicodeEncodeError: 'charmap' codec can't encode character '\u2192'` — the
+/// arrow was in the *source*, and the probe never got to print it. Nothing in that
+/// traceback tells the model its command was fine, so it rewrites the probe and
+/// pays for another turn. Python's own switch for this is the environment
+/// variable below, so set it for every command the loop runs. An operator who has
+/// set it themselves wins; their value is left alone.
+fn force_python_io_utf8(cmd: &mut Command) {
+    if std::env::var_os("PYTHONIOENCODING").is_none() {
+        cmd.env("PYTHONIOENCODING", "utf-8");
+    }
+}
+
+/// The one thing a dead probe's traceback cannot say for itself: the characters
+/// that broke it came from the file being read, so nothing the model rewrites
+/// about the *command* will help. `None` when the output merely mentions the
+/// exception — a port that migrates error handling has the name in its own text,
+/// and an advice line on every such result is noise.
+fn console_encoding_fault(output: &str) -> Option<&'static str> {
+    if !output.contains("UnicodeEncodeError") || !output.contains("in encode") {
+        return None;
+    }
+    Some(
+        "[encoding] The child's console codepage, not the command, failed: Python could not \
+         encode the characters it was printing. The harness now forces UTF-8 for command \
+         output, so re-run the same command rather than rewriting it.",
+    )
+}
+
 pub fn handle_system_tool(
     root: &Path,
     name: &str,
@@ -2815,10 +3037,12 @@ pub fn handle_system_tool(
             let full_path = resolve_workspace_path(root, rel_path, false)?;
             let current = fs::read_to_string(&full_path)?;
 
-            // Apply the batch to an in-memory copy and write only if EVERY edit
-            // matched. A half-applied batch leaves the file in a state the model
-            // has never seen, so its next `oldString` guess is worse than the
-            // error it started from.
+            // Apply the batch to an in-memory copy, edit by edit, so each one is
+            // matched against the file as the edits before it left it. A refusal
+            // discards only itself: what located is written and named in the reply,
+            // because run #82 measured the cost of the older all-or-nothing rule --
+            // one ambiguous needle vetoed a four-edit repair turn, and the artifact
+            // stayed frozen for five hours of resends. See the `applied` count below.
             let mut working = current.clone();
             let mut rejected: Vec<String> = Vec::new();
             let mut rescued: Vec<String> = Vec::new();
@@ -3169,7 +3393,7 @@ pub fn handle_system_tool(
                     }
                     rejected.push(msg);
                 } else if hits > 1 {
-                    let why = explain_ambiguous_edit(&working, &needle, hits);
+                    let why = explain_ambiguous_edit(&working, &needle, hits, rel_path);
                     let mut msg = format!(
                         "edit {n}: its `oldString` matches {hits} places in {rel_path} \u{2014} \
                          widen it with the surrounding lines until it is unique."
@@ -3230,7 +3454,20 @@ pub fn handle_system_tool(
                     }
                 }
             }
-            if !rejected.is_empty() {
+            // A refusal only refuses *itself* once the batch has anything left to
+            // write. Refusing everything was the old contract, and run #82 is what
+            // it costs: a four-edit repair turn with one needle that matches two
+            // identical blocks in the port threw away the three edits that located,
+            // so `service_logger.rs` sat frozen at 36,980 bytes for five hours while
+            // each byte-identical resend of that batch cost an hour of inference.
+            // The file being untouched is not a state the model is shown any more —
+            // every other path here reports per edit what is on disk — so "the file
+            // is unchanged" after an hour of work is the one answer a repair turn
+            // cannot build on. Keep that exact wording for the case where nothing
+            // landed: `replay_advice` and the repeat detectors branch on it, and a
+            // batch that located nothing genuinely did nothing.
+            let applied = edits.len() - noop.len() - rejected.len();
+            if !rejected.is_empty() && applied == 0 {
                 return Err(format!(
                     "no edits were applied to {rel_path}; the file is unchanged:\n{}",
                     rejected.join("\n")
@@ -3244,14 +3481,14 @@ pub fn handle_system_tool(
                 )
                 .into());
             }
-            // Only the edits that wrote bytes are counted from here on: a dropped
-            // no-op is not part of the batch that reached the file, and saying it
-            // was would tell a repair turn that more of its patch landed than did.
-            let applied = edits.len() - noop.len();
             // The sum of the per-edit drifts, which is the number the single
             // accumulator used to hold: an edit that changes nothing adds zero to
             // either, and the batch is refused on the total while the report below
-            // is written per edit.
+            // is written per edit. A refused edit adds nothing because it was never
+            // spliced, so the total is over the edits that would reach the disk --
+            // which is why the count in the message below subtracts them. This
+            // guard still refuses the whole batch: unbalanced braces are a syntax
+            // fact about the file that would result, not a property of one edit.
             let brace_drift: i32 = drifted.iter().map(|d| d.drift).sum();
             if is_rust && brace_drift != 0 {
                 let (moved, glyph) = if brace_drift > 0 {
@@ -3287,11 +3524,24 @@ pub fn handle_system_tool(
             fs::write(&full_path, &working)?;
             let format_note = crate::automation::formatter::format_written_file(&full_path).note();
 
-            let mut message = format!(
-                "Success: applied {applied} edit(s) to {rel_path} ({} \u{2192} {} bytes).",
-                current.len(),
-                bytes_on_disk(&full_path, working.len())
-            );
+            let mut message = if rejected.is_empty() {
+                format!(
+                    "Success: applied {applied} edit(s) to {rel_path} ({} \u{2192} {} bytes).",
+                    current.len(),
+                    bytes_on_disk(&full_path, working.len())
+                )
+            } else {
+                format!(
+                    "Success: applied {applied} of {} edit(s) to {rel_path} ({} \u{2192} {} bytes). \
+                     The file does not carry the {} that were refused, and re-sending this batch \
+                     would only re-land the {applied} that are already in it:\n{}",
+                    edits.len(),
+                    current.len(),
+                    bytes_on_disk(&full_path, working.len()),
+                    rejected.len(),
+                    rejected.join("\n")
+                )
+            };
             for note in &rescued {
                 message.push(' ');
                 message.push_str(note);
@@ -3466,7 +3716,9 @@ pub fn handle_system_tool(
                 ("sh", "-c")
             };
 
-            let output = Command::new(shell)
+            let mut command = Command::new(shell);
+            force_python_io_utf8(&mut command);
+            let output = command
                 .args(arg.split_whitespace())
                 .arg(cmd_str)
                 .current_dir(root)
@@ -3490,6 +3742,9 @@ pub fn handle_system_tool(
             // growth beside the action that caused it.
             if let Some(note) = crate::disk_hygiene::note_build_growth(root, cmd_str) {
                 outcome.push_str(&format!("\n[disk hygiene] {note}"));
+            }
+            if let Some(note) = console_encoding_fault(&outcome) {
+                outcome.push_str(&format!("\n{note}"));
             }
             outcome
         }
@@ -4772,6 +5027,66 @@ fn run_in_dll_sandbox(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Run #88's model piped three probes into `python -` to read the LiteLLM
+    /// module it had been told was pre-loaded, and got three copies of one dead
+    /// interpreter: the `→` it was printing could not be encoded into the console
+    /// codepage, so the probe died before it printed anything and the model spent
+    /// the turns rewriting a command that was never at fault. The guard is the
+    /// child's stream, so it is proven by a child that really prints non-ASCII.
+    #[test]
+    fn a_command_child_printing_non_ascii_reaches_the_model_instead_of_dying() {
+        let root = std::env::temp_dir().join(format!("run_cmd_encoding_{}", std::process::id()));
+        let _ = fs::create_dir_all(&root);
+        let text = match handle_system_tool(
+            &root,
+            "run_command",
+            // ASCII-only argv on purpose: the escape is decoded by the child, which
+            // is the half that has to encode it again on its way out. Quoting that
+            // survives both PowerShell and sh, because the run happens in either.
+            &json!({"command": "python -c \"print('done \\u2192 ok')\""}),
+        ) {
+            Ok(Some(text)) => text,
+            Ok(None) => return,
+            Err(e) => {
+                println!("skipping: no shell to run python here ({e})");
+                return;
+            }
+        };
+        if text.contains("not found")
+            || text.contains("not recognized")
+            || text.contains("no such file")
+        {
+            println!("skipping: python is not installed here");
+            return;
+        }
+        assert!(
+            !text.contains("UnicodeEncodeError"),
+            "the child died on its output encoding: {text}"
+        );
+        assert!(text.contains("done → ok"), "got: {text}");
+    }
+
+    /// The advice line has to fire on the death it was written for and stay quiet
+    /// on a port that merely contains the exception's name — a Python module's
+    /// error handling is a common thing to port, and a note on every result that
+    /// mentions it would be noise the model has to reason around.
+    #[test]
+    fn a_console_encoding_death_is_named_and_a_mention_of_it_is_not() {
+        let death = r#"Traceback (most recent call last):
+  File "<stdin>", line 12, in <module>
+  File "C:\Users\visse\AppData\Local\Python\pythoncore-3.12-64\Lib\encodings\cp1252.py", line 19, in encode
+    return codecs.charmap_encode(input,self.errors,encoding_table)[0]
+UnicodeEncodeError: 'charmap' codec can't encode character '\u2192' in position 6: character maps to <undefined>"#;
+        let note = console_encoding_fault(death).expect("run #88's own traceback is a fault");
+        assert!(note.contains("console codepage"), "{note}");
+        assert!(note.contains("re-run the same command"), "{note}");
+        assert_eq!(
+            console_encoding_fault("except UnicodeEncodeError as exc:\n    raise PortError(exc)"),
+            None,
+            "porting the exception is not a console fault"
+        );
+    }
 
     #[test]
     fn git_clone_validation_guards_run_before_any_network_call() {

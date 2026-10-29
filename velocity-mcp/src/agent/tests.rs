@@ -381,7 +381,7 @@ fn compress_history_flattens_tools_when_unsupported() {
         },
     ];
 
-    let compressed = compress_history(&original_messages, false);
+    let compressed = compress_history(&original_messages, false, &ToolSurface::broad());
     assert_eq!(compressed.len(), 2);
 
     assert_eq!(compressed[0].role, "assistant");
@@ -486,7 +486,7 @@ fn test_eager_merkle_compaction() {
         },
     ];
 
-    let compressed = compress_history(&original_messages, true);
+    let compressed = compress_history(&original_messages, true, &ToolSurface::broad());
     assert_eq!(compressed.len(), 3);
     assert_eq!(compressed[1].role, "tool");
 
@@ -539,7 +539,7 @@ fn prose_read_file_stub_gets_excerpt_not_fake_declarations() {
         },
     ];
 
-    let compressed = compress_history(&messages, true);
+    let compressed = compress_history(&messages, true, &ToolSurface::broad());
     let stub = &compressed[1].content;
     assert!(stub.contains("compressed to optimize context"), "{stub}");
     assert!(
@@ -605,7 +605,7 @@ fn code_read_file_stub_still_indexes_declarations() {
         },
     ];
 
-    let compressed = compress_history(&messages, true);
+    let compressed = compress_history(&messages, true, &ToolSurface::broad());
     let stub = &compressed[1].content;
     assert!(
         stub.contains("Parsed Declarations"),
@@ -634,7 +634,7 @@ fn mid_slice_truncation_snaps_to_char_boundaries() {
         tool_calls: None,
     }];
 
-    let compressed = compress_history(&messages, true);
+    let compressed = compress_history(&messages, true, &ToolSurface::broad());
     assert!(compressed[0]
         .content
         .contains("Truncated middle output of 'read_file'"));
@@ -680,7 +680,7 @@ fn a_compressed_read_file_stub_does_not_invite_a_reread_loop() {
         },
     ];
 
-    let compressed = compress_history(&messages, true);
+    let compressed = compress_history(&messages, true, &ToolSurface::broad());
     let stub = &compressed[1].content;
     assert!(
         stub.contains("compressed to optimize context budget"),
@@ -811,7 +811,7 @@ fn an_enriched_read_reaches_the_turn_that_has_to_copy_from_it() {
             tool_calls: None,
         },
     ];
-    let compressed = compress_history(&messages, true);
+    let compressed = compress_history(&messages, true, &ToolSurface::broad());
     assert_eq!(
         compressed[1].content, enriched,
         "an enriched read must arrive at the next turn whole"
@@ -866,7 +866,7 @@ fn test_compress_history_truncates_giant_uncompressed_tool_output() {
         tool_calls: None,
     }];
 
-    let compressed = compress_history(&messages, true);
+    let compressed = compress_history(&messages, true, &ToolSurface::broad());
     assert_eq!(compressed.len(), 1);
     assert!(compressed[0]
         .content
@@ -884,7 +884,7 @@ fn test_compress_history_converts_orphan_tool_messages() {
         tool_calls: None,
     };
 
-    let compressed = compress_history(&[orphan_tool], true);
+    let compressed = compress_history(&[orphan_tool], true, &ToolSurface::broad());
     assert_eq!(compressed.len(), 1);
     assert_eq!(compressed[0].role, "user");
     assert!(compressed[0]
@@ -914,7 +914,7 @@ fn test_compress_history_strips_inline_docs_for_native_tool_models() {
     // so the inline "## Available Tools" block must be stripped from the system
     // prompt while the runtime-injected sections survive.
     let messages = vec![antigravity_prompt_with_docs()];
-    let compressed = compress_history(&messages, true);
+    let compressed = compress_history(&messages, true, &ToolSurface::broad());
     let sys = compressed.iter().find(|m| m.role == "system").unwrap();
     assert!(!sys.content.contains("## Available Tools"));
     assert!(sys.content.contains("Mode: Coder"));
@@ -929,7 +929,7 @@ fn test_compress_history_rebuilds_inline_docs_for_inline_tool_models() {
     // Models without native tool calling must keep receiving the full inline
     // tool catalog in the system prompt.
     let messages = vec![antigravity_prompt_with_docs()];
-    let compressed = compress_history(&messages, false);
+    let compressed = compress_history(&messages, false, &ToolSurface::broad());
     let sys = compressed.iter().find(|m| m.role == "system").unwrap();
     assert!(sys.content.contains("## Available Tools"));
     // Fresh catalog content (built from the live registry), not the stale copy.
@@ -947,7 +947,7 @@ fn test_compress_history_dedupes_new_velocity_identity_prompt() {
     msg.content = msg.content.replace(
         "You are Antigravity, a high-performance agent running directly in V.E.L.O.C.I.T.Y.-IDE workspace.",
         "You are Velocity, the native AI agent of V.E.L.O.C.I.T.Y.-IDE, running directly in this workspace.");
-    let compressed = compress_history(&[msg], true);
+    let compressed = compress_history(&[msg], true, &ToolSurface::broad());
     let sys = compressed.iter().find(|m| m.role == "system").unwrap();
     assert!(sys
         .content
@@ -982,7 +982,7 @@ fn test_system_prompt_base_carries_grounding_clause() {
     };
     sys.content
         .push_str("\n\n## Available Tools\n### read_file\nold copy\n");
-    let compressed = compress_history(&[sys], true);
+    let compressed = compress_history(&[sys], true, &ToolSurface::broad());
     let out = compressed.iter().find(|m| m.role == "system").unwrap();
     assert!(!out.content.contains("## Available Tools"));
 }
@@ -1022,7 +1022,7 @@ fn test_mission_anchor_survives_base_truncation() {
         });
     }
 
-    let compressed = compress_history(&messages, true);
+    let compressed = compress_history(&messages, true, &ToolSurface::broad());
     assert!(
         compressed.iter().any(|m| m.content == mission),
         "mission brief must survive truncation verbatim"

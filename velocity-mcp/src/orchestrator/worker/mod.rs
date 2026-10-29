@@ -53,6 +53,60 @@ mod tests {
     }
 
     #[test]
+    fn the_scope_diff_does_not_claim_the_build_gate_writes() {
+        // The porting worker runs `cargo test` inside its own scope root to
+        // validate the deliverable, and every build rewrote the artifact
+        // directory. The 2026-10-25 dispatch reported 257 "created" and 246
+        // "deleted" files for a run whose real output was one `.rs`: the out-of-scope
+        // scan already ignores generated directories, so the scope diff has to
+        // agree — otherwise two parallel workers "collide" on the same `.rmeta`
+        // and reconciliation blocks both for work neither claimed.
+        let workspace = tempdir().unwrap();
+        let workspace_root = workspace.path();
+        fs::create_dir_all(workspace_root.join("rust_port").join("src")).unwrap();
+        fs::write(
+            workspace_root.join("rust_port").join("src").join("lib.rs"),
+            "pub fn a() {}\n",
+        )
+        .unwrap();
+        let artifacts = workspace_root
+            .join("rust_port")
+            .join("target")
+            .join("debug");
+        fs::create_dir_all(&artifacts).unwrap();
+        fs::write(artifacts.join("stale.rmeta"), "old bytes").unwrap();
+
+        let scoped_paths = collect_scoped_paths(workspace_root, &["rust_port/".to_string()]);
+        let snapshot_root = workspace_root.join("snapshot");
+        let before = snapshot_scope(&scoped_paths, workspace_root, &snapshot_root).unwrap();
+        assert!(
+            !snapshot_root.join("rust_port").join("target").exists(),
+            "the snapshot copied the build directory it does not own"
+        );
+
+        fs::write(
+            workspace_root
+                .join("rust_port")
+                .join("src")
+                .join("_internal_context.rs"),
+            "pub struct Ctx;\n",
+        )
+        .unwrap();
+        fs::write(artifacts.join("fresh.rlib"), "new bytes").unwrap();
+        fs::write(artifacts.join("stale.rmeta"), "rewritten").unwrap();
+
+        let (changed, created, deleted): (Vec<String>, Vec<String>, Vec<String>) =
+            detect_scoped_changes(&scoped_paths, &before, workspace_root).unwrap();
+        assert_eq!(created.len(), 1, "build output claimed: {created:?}");
+        assert!(created[0].contains("_internal_context.rs"));
+        assert!(
+            changed.is_empty(),
+            "rewritten artifact claimed: {changed:?}"
+        );
+        assert!(deleted.is_empty(), "artifact deletion claimed: {deleted:?}");
+    }
+
+    #[test]
     fn ignores_new_files_outside_exact_file_scope() {
         let workspace = tempdir().unwrap();
         let workspace_root = workspace.path();

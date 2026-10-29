@@ -143,10 +143,14 @@ impl BrowseState {
             scoped_files: None,
             max_turns: None,
             // The panel polls this thread but cannot cancel it, so the shared
-            // unattended budget is the only thing that stops a stalled
-            // provider call from running forever in the background.
-            budget: Some(crate::agent::unattended_budget()),
+            // unattended budget is what stops a wedged run in the background. An
+            // operator who removes it still gets the loop's stall window, which
+            // is what actually catches a provider that stopped streaming.
+            budget: crate::agent::unattended_budget(),
             requires_artifact: false,
+            // A panel turn is a chat turn: whatever the human clicks next.
+            tool_surface: crate::registry::ToolSurface::interactive(),
+            ramble: crate::agent::RambleLedger::default(),
         };
 
         std::thread::spawn(move || {

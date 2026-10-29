@@ -18,8 +18,8 @@ pub use context_budget::{
     get_model_budget,
 };
 pub use headless::{
-    budget_left, max_restarts, run_headless_subagent, stall_window, turn_ceiling_for,
-    unattended_budget,
+    attempt_budget, max_restarts, run_headless_subagent, stall_window, turn_ceiling_for,
+    unattended_budget, AttemptBudget, UNBOUNDED_TURN_CEILING,
 };
 pub use provider_router::{ProviderHealth, ProviderRouter};
 pub use thread::run_agent_thread;

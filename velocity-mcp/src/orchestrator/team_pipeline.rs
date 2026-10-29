@@ -17,7 +17,8 @@
 //! plus `complete_reconcile_root` after every wave. Load-balancer seat admission
 //! and the UI watchdog are deliberately absent. With no human on the panel,
 //! the only useful back-pressure is the mediator's file lock, and every
-//! worker already caps its own wall clock through `budget_left`.
+//! worker already caps its own wall clock through `attempt_budget` (unless the
+//! operator removed the cap).
 
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -444,13 +445,23 @@ fn build_worker_brief(
     if !member.skills.is_empty() {
         out.push_str(&format!("Expertise: {}\n", member.skills.join(", ")));
     }
+    // The task text leads, and the domain follows. That order is load-bearing,
+    // not stylistic: the loop locates the deliverable by scanning the prompt for
+    // the first `.rs` path, falling back to the first path that exists on disk
+    // (`artifact_targets`, `existing_file_named_by_task`), and a domain line
+    // naming `rust_port/src/lib.rs` ahead of a task that says
+    // "write the port to rust_port/src/budget_manager.rs" makes every artifact
+    // guard — the gutting-write refusal, the surface baseline, the off-target
+    // check — aim at the crate's stub instead of the file being ported. Measured
+    // on the first pipeline-path artifact probe, where a two-line write over a
+    // 678-line port was graded as a hit on the wrong target.
+    out.push_str(&format!("\n## Task\n{}\n", prompt));
     if !scope.is_empty() {
         out.push_str(&format!(
             "Your domain (own this; other members own other paths): {}\n",
             scope.join(", ")
         ));
     }
-    out.push_str(&format!("\n## Task\n{}\n", prompt));
     if !files.is_empty() {
         out.push_str(&format!(
             "\n## Files you own in this run\n{}\n",
@@ -458,7 +469,10 @@ fn build_worker_brief(
         ));
     }
     if !contexts.is_empty() {
-        out.push_str("\n## Target Files (pre-loaded)\n");
+        out.push_str(&format!(
+            "\n{}\n",
+            crate::registry::team_tools::PRELOAD_SECTION_HEADER
+        ));
         for ctx in contexts {
             out.push_str(ctx);
             out.push('\n');
@@ -1100,6 +1114,61 @@ mod tests {
             members,
             is_preset: false,
         }
+    }
+
+    #[test]
+    fn the_worker_brief_leads_with_the_task_so_the_deliverable_scan_finds_the_port() {
+        // The loop finds the deliverable by scanning the prompt for the first
+        // `.rs` path, and — when the task owes no Rust — the FIRST path in the
+        // prompt that is a file on disk. With the domain line ahead of the task,
+        // a pipeline port's artifact guards aimed at the crate's `lib.rs`, and the
+        // measured run replaced a 678-line port with two lines while the surface
+        // gate watched the wrong file.
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(tmp.path().join("rust_port/src")).unwrap();
+        std::fs::write(
+            tmp.path().join("rust_port/src/lib.rs"),
+            "pub mod budget_manager;\n",
+        )
+        .unwrap();
+        std::fs::write(
+            tmp.path().join("rust_port/src/budget_manager.rs"),
+            "pub struct BudgetManager;\n",
+        )
+        .unwrap();
+        let team = team_with(&[("Porter", &["rust_port/", "rust_port/src/lib.rs"])]);
+        let brief = build_worker_brief(
+            &team.members[0],
+            &team,
+            "Convert 'budget_manager.py' and write_file the port to 'rust_port/src/budget_manager.rs'.",
+            &["rust_port/".to_string(), "rust_port/src/lib.rs".to_string()],
+            &["rust_port/src/lib.rs".to_string()],
+            &[],
+            "artifact",
+        );
+        assert_eq!(
+            crate::agent::executor::loop_runner::existing_file_named_by_task(tmp.path(), &brief)
+                .as_deref(),
+            Some("rust_port/src/budget_manager.rs"),
+            "the scan found a path that is not the task's deliverable; brief was:\n{brief}"
+        );
+        // The same brief on the run that needs the scan most: the port is not on
+        // disk yet, so a scan keyed to the disk resolves to whatever the brief
+        // mentions that does exist — run #90's `Cargo.toml`, the crate's `lib.rs`.
+        // Every guard then watches the stub while the deliverable is created.
+        std::fs::remove_file(tmp.path().join("rust_port/src/budget_manager.rs")).unwrap();
+        let (target, already_there) =
+            crate::agent::executor::loop_runner::artifact_targets(tmp.path(), &brief, true, true);
+        assert_eq!(
+            target.as_deref(),
+            Some("rust_port/src/budget_manager.rs"),
+            "a brief whose deliverable does not exist yet must still name it; brief was:\n\
+             {brief}"
+        );
+        assert!(
+            !already_there,
+            "and the run is told, honestly, that it has to create the file"
+        );
     }
 
     #[test]

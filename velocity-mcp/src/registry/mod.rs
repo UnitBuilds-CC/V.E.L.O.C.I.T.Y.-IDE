@@ -11,12 +11,17 @@ pub mod skills;
 pub mod system_tools;
 pub mod team_tools;
 pub mod tool_definitions;
+pub mod tool_groups;
 pub mod types;
 pub mod wa_tools;
 
 pub use dispatch::call_tool_in_workspace;
 pub use lazy::{LazyToolRegistry, LruToolCache, ToolMetrics, ToolTimer, DEFAULT_CACHE_CAPACITY};
 pub use tool_definitions::get_tools;
+pub use tool_groups::{
+    request_tool_groups_prose, request_tool_groups_schema, ToolGroup, ToolSurface,
+    REQUEST_TOOL_GROUPS_TOOL,
+};
 
 use serde_json::Value;
 use std::error::Error;

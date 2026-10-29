@@ -5,15 +5,23 @@ use serde_json::json;
 /// capability grants, approval policies, permission checks and the
 /// request/approve pipeline).
 pub fn get_company_tools() -> Vec<Tool> {
-    let capability_enum = json!([
-        "read",
-        "write",
-        "communicate",
-        "spend",
-        "deploy",
-        "approve",
-        "manage"
-    ]);
+    // `items` must be a *schema*, not the bare list of allowed values. A lax
+    // frontend ignores the malformed `items: ["read", ...]`; llama.cpp's tool
+    // grammar compiler validates it and 500s the whole request with
+    // "JSON schema error at #/properties/capabilities/items/0: schema must be
+    // an object", which fails every turn before the model is ever consulted.
+    let capability_enum = json!({
+        "type": "string",
+        "enum": [
+            "read",
+            "write",
+            "communicate",
+            "spend",
+            "deploy",
+            "approve",
+            "manage"
+        ]
+    });
     vec![
         Tool {
             name: "get_company_org".to_string(),

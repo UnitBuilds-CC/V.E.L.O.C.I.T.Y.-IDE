@@ -5,6 +5,7 @@ use super::loop_runner::run_agent_reasoning_loop;
 use crate::editor::expert_team::ExpertTeam;
 use crate::editor::skill_file::{is_builtin_skill, load_skill_file};
 use crate::editor::team_router::{parse_team_directive, resolve_team, route_member};
+use crate::registry::ToolSurface;
 use crate::usage::*;
 use crossbeam_channel::{Receiver, Sender};
 use serde_json::{json, Value};
@@ -188,6 +189,7 @@ pub fn try_route_team_prompt(
     ui_rx: &Receiver<UiToAgentMessage>,
     ui_tx: &Sender<AgentToUiMessage>,
     deferred_messages: &mut Vec<UiToAgentMessage>,
+    tool_surface: &mut ToolSurface,
 ) -> bool {
     let Some(directive) = parse_team_directive(prompt) else {
         return false;
@@ -313,6 +315,10 @@ pub fn try_route_team_prompt(
         None,  // interactive @-mention routing: the user can cancel, no budget
         None,  // interactive @-mention routing: no stall window, the socket may block
         false, // @-mention chat: a text answer is a valid completion
+        tool_surface,
+        // One interactive reply, no failover chain under it: the prose allowance
+        // starts and ends with this call.
+        &mut crate::agent::models::RambleLedger::default(),
     );
 
     true

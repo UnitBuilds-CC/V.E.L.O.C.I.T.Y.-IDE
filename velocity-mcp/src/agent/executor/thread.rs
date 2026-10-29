@@ -9,6 +9,7 @@ use super::team_routing::try_route_team_prompt;
 use super::utils::{build_inline_tool_docs, send_usage_update, SYSTEM_PROMPT_BASE};
 use crate::automation::MediatorArena;
 use crate::editor::expert_team::{load_expert_teams, ExpertTeam};
+use crate::registry::ToolSurface;
 use crate::safety::SafeMutex;
 use crate::usage::*;
 use crossbeam_channel::{Receiver, Sender};
@@ -102,6 +103,7 @@ fn fetch_models_for_provider(
         AiProvider::OpenRouter => fetch_openrouter_models(or_accounts, usage_tracker),
         AiProvider::AzureOpenAi => fetch_azure_models(azure_accounts),
         AiProvider::LocalOllama => fetch_local_ollama_models(ollama_accounts),
+        AiProvider::LocalLlama => fetch_llama_models(),
         AiProvider::OpenAI => {
             let key = resolve_api_key(workspace_root, "openai", "OPENAI_API_KEY");
             fetch_openai_models(&key)
@@ -252,6 +254,13 @@ pub fn run_agent_thread(
     }
     let mut model_catalog = vec![selected_profile.clone()];
 
+    // What this session advertises, owned here so a group unlocked mid-session
+    // (`request_tool_groups`) stays unlocked for the prompts after it. The
+    // interactive surface is every family a local chat turn uses except browser,
+    // desktop-automation, team, org and remote-node — 81% of the catalog's bytes,
+    // and any of them one call away when the human actually asks for that work.
+    let mut tool_surface = ToolSurface::interactive();
+
     let mut message_history = match load_chatlogs_nda(&workspace_root) {
         Some(history) => {
             ui_tx
@@ -276,7 +285,7 @@ pub fn run_agent_thread(
             // Inline tool docs only for models that receive no native tool
             // schemas; otherwise the same catalog ships twice per request.
             if provider == AiProvider::OpenRouter || !selected_profile.supports_tools {
-                sys.push_str(&build_inline_tool_docs());
+                sys.push_str(&build_inline_tool_docs(&tool_surface));
             }
             vec![ChatMessage {
                 role: "system".to_string(),
@@ -345,6 +354,7 @@ pub fn run_agent_thread(
             &mut deferred_messages,
             &coordination_bus,
             &router_settings,
+            &mut tool_surface,
         );
 
         while !deferred_messages.is_empty() {
@@ -369,6 +379,7 @@ pub fn run_agent_thread(
                 &mut deferred_messages,
                 &coordination_bus,
                 &router_settings,
+                &mut tool_surface,
             );
         }
     }
@@ -394,6 +405,7 @@ fn process_ui_message(
     deferred_messages: &mut Vec<UiToAgentMessage>,
     coordination_bus: &CoordinationBus,
     router_settings: &WorkspaceRouterSettings,
+    tool_surface: &mut ToolSurface,
 ) {
     match msg {
         UiToAgentMessage::RefreshModels => {
@@ -594,7 +606,7 @@ fn process_ui_message(
                             "{}{}",
                             SYSTEM_PROMPT_BASE,
                             if use_inline {
-                                build_inline_tool_docs()
+                                build_inline_tool_docs(tool_surface)
                             } else {
                                 String::new()
                             }
@@ -622,7 +634,7 @@ fn process_ui_message(
         UiToAgentMessage::ClearHistory => {
             let mut sys = String::from(SYSTEM_PROMPT_BASE);
             if *provider == AiProvider::OpenRouter || !selected_profile.supports_tools {
-                sys.push_str(&build_inline_tool_docs());
+                sys.push_str(&build_inline_tool_docs(tool_surface));
             }
             *message_history = vec![ChatMessage {
                 role: "system".to_string(),
@@ -658,6 +670,7 @@ fn process_ui_message(
                 ui_rx,
                 ui_tx,
                 deferred_messages,
+                tool_surface,
             );
             if routed {
                 return;
@@ -706,6 +719,7 @@ fn process_ui_message(
                             ui_rx,
                             ui_tx,
                             deferred_messages,
+                            tool_surface,
                         );
                         if routed {
                             return;
@@ -752,6 +766,10 @@ fn process_ui_message(
                 None,  // interactive session: the user cancels, no wall-clock budget
                 None,  // interactive session: no stall window, the socket may block
                 false, // interactive chat: a text answer is a valid completion
+                tool_surface,
+                // One interactive session, no failover chain under it: the prose
+                // allowance starts and ends with this call.
+                &mut crate::agent::models::RambleLedger::default(),
             );
         }
         UiToAgentMessage::ReloadTeams => {

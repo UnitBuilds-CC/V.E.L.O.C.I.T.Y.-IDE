@@ -176,6 +176,11 @@ pub fn collect_existing_files(path: &Path, files: &mut Vec<PathBuf>) -> Result<(
             entry.map_err(|err| format!("read scope dir entry {}: {err}", path.display()))?;
         let entry_path = entry.path();
         if entry_path.is_dir() {
+            // A scope root that contains a build directory would otherwise report
+            // the compile gate's own writes as the task's output.
+            if is_generated_dir(&entry_path) {
+                continue;
+            }
             collect_existing_files(&entry_path, files)?;
         } else if entry_path.is_file() {
             push_unique_path(files, entry_path);
@@ -252,22 +257,32 @@ fn collect_workspace_files_recursive(
     Ok(())
 }
 
+/// The directory names that hold generated content rather than the workspace's
+/// own files. One list decides both what the out-of-scope scan ignores and what
+/// a scope walk refuses to claim as a task's output, so the two cannot disagree
+/// about whether `rust_port/target/debug/foo.rlib` is something a worker did.
+fn is_generated_dir_name(name: &str) -> bool {
+    matches!(
+        name,
+        ".git" | ".velocity" | "target" | "node_modules" | "archive"
+    )
+}
+
+fn is_generated_dir(path: &Path) -> bool {
+    match path.file_name().and_then(|name| name.to_str()) {
+        Some(name) => is_generated_dir_name(name),
+        None => false,
+    }
+}
+
 fn should_skip_workspace_dir(rel_path: &Path) -> bool {
-    rel_path.components().any(|component| {
-        matches!(
-            component.as_os_str().to_str(),
-            Some(".git" | ".velocity" | "target" | "node_modules" | "archive")
-        )
-    })
+    rel_path
+        .components()
+        .any(|component| is_generated_dir_name(component.as_os_str().to_str().unwrap_or("")))
 }
 
 fn should_skip_workspace_file(rel_path: &Path) -> bool {
-    rel_path.components().any(|component| {
-        matches!(
-            component.as_os_str().to_str(),
-            Some(".git" | ".velocity" | "target" | "node_modules" | "archive")
-        )
-    })
+    should_skip_workspace_dir(rel_path)
 }
 
 fn is_path_within_scope(

@@ -1,3 +1,4 @@
+use crate::registry::ToolSurface;
 use crossbeam_channel::Receiver;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -103,6 +104,27 @@ pub struct HeadlessSubAgentProgress {
     pub operator_notes: Vec<String>,
 }
 
+/// What a run has paid for replies that streamed and never named a tool call.
+///
+/// The loop's cut allowance is a ceiling on prose, and prose is priced by the
+/// route: the measured spans for one cut turn were 901, 907, 919, 926 and 928
+/// seconds on the same model. A ceiling held per *attempt* is therefore re-paid
+/// by every model a fallback chain tries — run #26 spent 5,500s of its 6,025s on
+/// six cut turns across three copies of one model and wrote nothing. Carrying the
+/// tally across the chain makes the allowance a property of the dispatch, and
+/// keeping the seconds makes the cost readable by a caller that cannot guess it
+/// from status prose.
+///
+/// A hop receives the ledger as it stood and returns it with its own turns added,
+/// so the number a caller reads after a hop is the dispatch total, not the hop's.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct RambleLedger {
+    /// Cut turns paid for so far.
+    pub cuts: u32,
+    /// Wall-clock seconds those turns streamed.
+    pub secs: u64,
+}
+
 #[derive(Debug, Clone)]
 pub struct HeadlessSubAgentRequest {
     pub workspace_root: PathBuf,
@@ -131,6 +153,18 @@ pub struct HeadlessSubAgentRequest {
     /// empty deliverable is never a silent success. `false` leaves the text
     /// answer as a valid ending (reports, chat, read-only analysis).
     pub requires_artifact: bool,
+    /// The tool groups this run advertises. The registry has 347 tools whose
+    /// schemas render to ~68,700 tokens — three and a half times the window a
+    /// local turn declares — so a dispatched worker ships only the families its
+    /// use case needs ([`ToolSurface::for_task_kind`]) and gains the rest with one
+    /// `request_tool_groups` call. A caller that has not decided gets the
+    /// interactive surface rather than the whole catalog.
+    pub tool_surface: ToolSurface,
+    /// What the dispatch this hop belongs to has already spent on rambling
+    /// replies. A single hop passes a fresh ledger; a fallback chain passes the
+    /// one every hop before it left, which is what turns the loop's cut allowance
+    /// from a per-model budget into a per-run one. See [`RambleLedger`].
+    pub ramble: RambleLedger,
 }
 
 /// Why the agent reasoning loop stopped, as a structured signal.
@@ -247,6 +281,9 @@ pub struct HeadlessSubAgentResult {
     /// Whether the sub-agent actually finished its mission. Read this instead
     /// of pattern-matching the transcript.
     pub outcome: AgentLoopOutcome,
+    /// The [`HeadlessSubAgentRequest::ramble`] ledger with this hop's cut turns
+    /// added — the dispatch total once a chain has threaded it through.
+    pub ramble: RambleLedger,
 }
 
 #[derive(Debug, Clone)]
@@ -274,6 +311,10 @@ pub enum AiProvider {
     OpenRouter,
     AzureOpenAi,
     LocalOllama,
+    /// A locally-run llama.cpp `llama-server` (OpenAI-compatible endpoint, no
+    /// key). Reached with 3-tier MoE offload so a model far larger than VRAM
+    /// still runs, trading throughput for an effectively unbounded context.
+    LocalLlama,
     OpenAI,
     Anthropic,
     GoogleVertex,
@@ -304,6 +345,7 @@ impl AiProvider {
             AiProvider::OpenRouter => "OpenRouter",
             AiProvider::AzureOpenAi => "Azure OpenAI",
             AiProvider::LocalOllama => "Local Ollama",
+            AiProvider::LocalLlama => "Local llama.cpp",
             AiProvider::OpenAI => "OpenAI Direct",
             AiProvider::Anthropic => "Anthropic Claude",
             AiProvider::GoogleVertex => "Google Vertex AI",
@@ -326,6 +368,7 @@ impl AiProvider {
             AiProvider::OpenRouter => "openrouter",
             AiProvider::AzureOpenAi => "azure",
             AiProvider::LocalOllama => "ollama",
+            AiProvider::LocalLlama => "llamacpp",
             AiProvider::OpenAI => "openai",
             AiProvider::Anthropic => "anthropic",
             AiProvider::GoogleVertex => "vertex",
@@ -353,6 +396,7 @@ impl AiProvider {
             "OpenRouter" => Some(AiProvider::OpenRouter),
             "Azure OpenAI" => Some(AiProvider::AzureOpenAi),
             "Local Ollama" => Some(AiProvider::LocalOllama),
+            "Local llama.cpp" => Some(AiProvider::LocalLlama),
             "OpenAI Direct" => Some(AiProvider::OpenAI),
             "Anthropic Claude" => Some(AiProvider::Anthropic),
             "Google Vertex AI" => Some(AiProvider::GoogleVertex),
@@ -379,6 +423,7 @@ impl AiProvider {
             "openrouter" | "or" => Some(AiProvider::OpenRouter),
             "azure" | "azure_openai" | "azureopenai" => Some(AiProvider::AzureOpenAi),
             "ollama" | "local" | "localollama" => Some(AiProvider::LocalOllama),
+            "llamacpp" | "llama" | "localllama" | "llamaserver" => Some(AiProvider::LocalLlama),
             "openai" | "openai_direct" => Some(AiProvider::OpenAI),
             "anthropic" | "claude" => Some(AiProvider::Anthropic),
             "vertex" | "googlevertex" | "google_vertex" | "google" => {
@@ -578,6 +623,7 @@ mod tests {
             AiProvider::OpenRouter,
             AiProvider::AzureOpenAi,
             AiProvider::LocalOllama,
+            AiProvider::LocalLlama,
             AiProvider::OpenAI,
             AiProvider::Anthropic,
             AiProvider::GoogleVertex,
@@ -668,6 +714,7 @@ mod tests {
             AiProvider::OpenRouter,
             AiProvider::AzureOpenAi,
             AiProvider::LocalOllama,
+            AiProvider::LocalLlama,
             AiProvider::OpenAI,
             AiProvider::Anthropic,
             AiProvider::GoogleVertex,
@@ -695,6 +742,7 @@ mod tests {
             AiProvider::OpenRouter,
             AiProvider::AzureOpenAi,
             AiProvider::LocalOllama,
+            AiProvider::LocalLlama,
             AiProvider::OpenAI,
             AiProvider::Anthropic,
             AiProvider::GoogleVertex,
@@ -721,6 +769,7 @@ mod tests {
             AiProvider::OpenRouter,
             AiProvider::AzureOpenAi,
             AiProvider::LocalOllama,
+            AiProvider::LocalLlama,
             AiProvider::OpenAI,
             AiProvider::Anthropic,
             AiProvider::GoogleVertex,
@@ -748,12 +797,13 @@ mod tests {
     }
 
     #[test]
-    fn provider_count_is_16() {
+    fn provider_count_is_17() {
         let providers = vec![
             AiProvider::CloudflareWorkersAi,
             AiProvider::OpenRouter,
             AiProvider::AzureOpenAi,
             AiProvider::LocalOllama,
+            AiProvider::LocalLlama,
             AiProvider::OpenAI,
             AiProvider::Anthropic,
             AiProvider::GoogleVertex,
@@ -767,7 +817,7 @@ mod tests {
             AiProvider::Perplexity,
             AiProvider::Cerebras,
         ];
-        assert_eq!(providers.len(), 16, "Expected 16 providers");
+        assert_eq!(providers.len(), 17, "Expected 17 providers");
     }
 
     #[test]

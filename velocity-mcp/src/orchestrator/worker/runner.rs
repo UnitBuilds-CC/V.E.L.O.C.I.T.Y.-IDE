@@ -306,17 +306,22 @@ pub fn execute_live_task(
         base_instructions = format!("{base_instructions}\n\n{skills_block}");
     }
 
-    // One budget for the whole route chain rather than one per route: a worker
-    // is unattended, so no single run may be unbounded and a failover chain may
-    // not multiply the ceiling by its own length. This is the last-resort
-    // backstop only — a normal dead end is a *stall* or a *loop* the loop
-    // reports as `Blocked`, and the worker re-issues that pass from the
-    // continuation ledger instead of waiting the clock out (see `should_restart`).
+    // One budget for the whole route chain rather than one per route: a failover
+    // chain may not multiply the ceiling by its own length. It is a *last-resort*
+    // backstop, and an operator can now remove it outright
+    // (`VELOCITY_DISPATCH_BUDGET_SECS=0`), because what should end a run is a
+    // stall or a structural loop the loop reports as `Blocked` — after which the
+    // worker re-issues that pass from the continuation ledger (see `should_restart`)
+    // — not elapsed seconds.
     let worker_start = Instant::now();
     let worker_budget = crate::agent::unattended_budget();
     let max_restarts = crate::agent::max_restarts();
     let mut restarts_used: u32 = 0;
     let mut restart_notes: Vec<String> = Vec::new();
+    // One decision, used three ways below (turn ceiling, the loop's artifact
+    // contract, the success rule), so the worker cannot call a task a write
+    // while telling the loop it produces no artifact.
+    let artifact_required = requires_artifact_for(assignment.task_kind);
     // Set at the head of every pass, so it is always assigned before the
     // failure message reads it after the loop.
     let mut budget_spent;
@@ -326,13 +331,20 @@ pub fn execute_live_task(
     // the ledger the previous pass carried forward, up to `max_restarts` times.
     'passes: loop {
         budget_spent = false;
+        // One prose allowance for the pass, shared by every route in it: a chain
+        // that re-paid the loop's cut ceiling per candidate spent 5,500s of a
+        // 6,025s run on turns that executed nothing (run #26). A *restart* does
+        // re-pay it, which is the point of resuming from the continuation ledger
+        // with a fresh context — a hop to another model is not a fresh attempt.
+        let mut pass_ramble = crate::agent::RambleLedger::default();
         for route in routes.iter() {
             let route_start = Instant::now();
-            // `None` means the budget is gone, and forwarding `None` to the request
-            // would mean the opposite ("no deadline") — so this is the stop
-            // condition, not a default.
+            // `None` means the backstop is spent, and stopping is the only safe
+            // reading of it: the request field takes an `Option` whose `None`
+            // means "no deadline", so forwarding a spent clock as `None` would
+            // launch an unbounded run out of a timeout.
             let Some(attempt_budget) =
-                crate::agent::budget_left(worker_budget, worker_start.elapsed())
+                crate::agent::attempt_budget(worker_budget, worker_start.elapsed())
             else {
                 budget_spent = true;
                 break;
@@ -344,10 +356,10 @@ pub fn execute_live_task(
             // left, not from a constant — a fixed 20 was another wall-clock cap in
             // disguise, binding early on a fast model and never on a slow one.
             // Read-only kinds keep the loop's default.
-            let attempt_max_turns = if assignment.task_kind.is_read_only() {
-                None
-            } else {
+            let attempt_max_turns = if artifact_required {
                 Some(crate::agent::turn_ceiling_for(attempt_budget))
+            } else {
+                None
             };
             let subagent = run_headless_subagent(HeadlessSubAgentRequest {
                 workspace_root: assignment.workspace_root.clone(),
@@ -359,12 +371,16 @@ pub fn execute_live_task(
                 progress: Some(progress.clone()),
                 scoped_files: assignment.scoped_files.clone(),
                 max_turns: attempt_max_turns,
-                budget: Some(attempt_budget),
-                // The worker already gates a file-modification task by diffing the
-                // filesystem (`detect_scoped_changes`), so it does not need the
-                // loop's in-run artifact gate too; keep the prior behaviour.
-                requires_artifact: false,
+                budget: attempt_budget.deadline(),
+                requires_artifact: artifact_required,
+                // The router already classified this assignment, so the worker ships
+                // the families that kind of work uses — not all 347 tools.
+                tool_surface: crate::registry::ToolSurface::for_task_kind(
+                    assignment.task_kind.as_str(),
+                ),
+                ramble: pass_ramble,
             });
+            pass_ramble = subagent.ramble;
             last_status_updates = subagent.status_updates.clone();
             last_transcript = subagent.transcript.clone();
             last_outcome = subagent.outcome.clone();
@@ -383,15 +399,15 @@ pub fn execute_live_task(
             // Read-only task kinds (Analysis, Planning) succeed when the loop
             // actually finished and said something; file-modification kinds require
             // changes on disk.
-            let success = if assignment.task_kind.is_read_only() {
+            let success = if artifact_required {
+                !changed_files.is_empty() || !created_files.is_empty() || !deleted_files.is_empty()
+            } else {
                 // The loop's own structured outcome, not a substring hunt through
                 // its status lines. Scanning for "error" failed a run whenever the
                 // analysis merely *quoted* one — a build log, a compiler diagnostic
                 // it was asked to explain — and passed a run that blew its whole
                 // turn budget without ever producing an answer.
                 subagent.outcome.is_completed() && !subagent.transcript.trim().is_empty()
-            } else {
-                !changed_files.is_empty() || !created_files.is_empty() || !deleted_files.is_empty()
             };
             let message = if success {
                 if assignment.task_kind.is_read_only() {
@@ -559,10 +575,13 @@ pub fn execute_live_task(
         // Say so explicitly: "no route produced changes" reads like a model
         // problem, and the fix for a spent budget is a bigger budget or a
         // smaller task, not a different provider.
-        message = format!(
-            "{message} (wall-clock budget of {}s spent)",
-            worker_budget.as_secs()
-        );
+        let detail = match worker_budget {
+            Some(total) => format!("wall-clock budget of {}s spent", total.as_secs()),
+            // Unreachable today — a spent clock requires a configured backstop —
+            // so the sentence stays true if that ever changes.
+            None => "wall-clock budget spent".to_string(),
+        };
+        message = format!("{message} ({detail})");
     }
     if restarts_used > 0 {
         message = format!(
@@ -634,6 +653,28 @@ fn attempt_prompt(instructions: &str, ledger_prompt: Option<&str>) -> String {
     )
 }
 
+/// Whether the worker's loop must police a file deliverable for this kind.
+///
+/// `false` here used to be justified by "`detect_scoped_changes` already gates
+/// a modification task by diffing the filesystem", but that diff only answers
+/// *did anything change* — it cannot see a write that changed the deliverable
+/// for the worse. The loop's guards arm on this flag and on nothing else: the
+/// pre-write refusal of a `write_file` that drops items the artifact arrived
+/// with, the post-repair refusal of a "fix" bought by deletion, the
+/// deliverable-path check that turns an off-target nested write into a failed
+/// run, and the exploration lock that lets a repair turn read the file it is
+/// patching. With the flag false, a pipeline port gutted its own deliverable
+/// and the worker scored it `success` on the strength of the diff — the
+/// `convert22` false green, where the run reported 52 tests passing over a
+/// crate the task never touched.
+///
+/// The predicate is deliberately the same one the worker already uses to
+/// demand changes on disk, so a task is never "a write" for the score and "a
+/// report" for the loop.
+fn requires_artifact_for(kind: AgentTaskKind) -> bool {
+    !kind.is_read_only()
+}
+
 /// Whether the worker should run the fallback chain again after a pass ended
 /// without success.
 ///
@@ -659,7 +700,52 @@ fn should_restart(
 #[cfg(test)]
 mod tests {
     use super::attempt_prompt;
+    use super::requires_artifact_for;
     use super::should_restart;
+    use crate::automation::instruction_registry::AgentTaskKind;
+
+    #[test]
+    fn a_write_kind_on_the_pipeline_path_arms_the_loops_artifact_guards() {
+        // Every kind the worker scores by changes on disk must also be a kind the
+        // loop guards, or the two halves disagree: `lr7b`-era pipeline ports wrote
+        // a 3-line file over a 40-item deliverable and were graded `success`
+        // because the diff was non-empty. `Documentation` is in the armed set on
+        // purpose — a doc task that deletes code to make the build go green is the
+        // same failure.
+        const ARTIFACT_KINDS: [AgentTaskKind; 6] = [
+            AgentTaskKind::Refactor,
+            AgentTaskKind::BugFix,
+            AgentTaskKind::Test,
+            AgentTaskKind::Documentation,
+            AgentTaskKind::Merge,
+            AgentTaskKind::DesktopAutomation,
+        ];
+        for kind in ARTIFACT_KINDS {
+            assert!(
+                requires_artifact_for(kind),
+                "{} produced no artifact contract",
+                kind.as_str()
+            );
+        }
+        for kind in [AgentTaskKind::Analysis, AgentTaskKind::Planning] {
+            assert!(
+                !requires_artifact_for(kind),
+                "{} answers in prose; the write guards must not refuse its run",
+                kind.as_str()
+            );
+        }
+        // The two lists above are the whole enum, so a new variant is caught here
+        // rather than silently defaulting to whatever `is_read_only` says.
+        for kind in AgentTaskKind::ALL {
+            let covered = ARTIFACT_KINDS.contains(&kind)
+                || matches!(kind, AgentTaskKind::Analysis | AgentTaskKind::Planning);
+            assert!(
+                covered,
+                "{} is unclassified for the artifact contract",
+                kind.as_str()
+            );
+        }
+    }
 
     #[test]
     fn first_attempt_prompt_is_plain_instructions() {

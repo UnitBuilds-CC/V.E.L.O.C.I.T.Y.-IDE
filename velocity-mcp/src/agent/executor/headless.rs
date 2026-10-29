@@ -11,34 +11,120 @@ use crate::usage::{
 };
 use std::sync::{Arc, Mutex};
 
-/// Last-resort wall-clock backstop for a headless run nobody is watching.
+/// A wall-clock backstop of last resort, when the operator set none explicitly.
 ///
-/// This is deliberately NOT the primary limiter any more. A local model does
-/// not run at cloud throughput — measured, `qwen3.6:35b-a3b` resident on one
-/// 8 GB GPU shared by four parallel specialists produced ~6 tok/s, so a
-/// legitimate first port generation ran for many minutes and a 900 s cap
-/// killed work that was alive, merely slow, never stalled. Normal dead ends are
-/// now caught much sooner and more honestly by [`stall_window`] (no output for
-/// a window) and by the loop's repeat/no-action detectors (a structural loop,
-/// not a clock). This value only has to be large enough to stop a pathological
-/// run that keeps trickling bytes yet never finishes logically.
+/// A backstop, not a target: 3600 s is far above any single attempt that is
+/// actually making progress, so it should never be the thing that ends a healthy
+/// run — a stall or a loop fires first.
+const DEFAULT_BACKSTOP_SECS: u64 = 3600;
+
+/// How an unattended run's wall-clock backstop is configured.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum BackstopSetting {
+    /// The variable is absent or unreadable, so the default applies.
+    Unset,
+    /// The operator deliberately removed the clock.
+    Unbounded,
+    /// The operator named a number of seconds.
+    Seconds(u64),
+}
+
+/// Read `VELOCITY_DISPATCH_BUDGET_SECS` without pretending a typo is a choice.
+///
+/// Split out from [`unattended_budget`] so tests can exercise every spelling
+/// without mutating the environment the rest of the process reads — the same
+/// reason the loop's other budget helpers are pure.
+fn parse_backstop_setting(raw: &str) -> BackstopSetting {
+    use super::utils::{parse_limit_setting, LimitSetting};
+    // An explicit `0`/`off`/`unlimited` means no clock, which is the operator's
+    // decision — unlike a typo, which falls back to the default rather than
+    // silently launching unbounded runs. Same reading as every other knob the
+    // loop exposes, so the accepted spellings live in one parser.
+    match parse_limit_setting(Some(raw)) {
+        LimitSetting::Default => BackstopSetting::Unset,
+        LimitSetting::Unbounded => BackstopSetting::Unbounded,
+        LimitSetting::Value(secs) => BackstopSetting::Seconds(secs),
+    }
+}
+
+/// What an unattended caller sets as its wall-clock backstop, if anything.
+///
+/// `None` is a real, operator-chosen value — it means "this run has no clock and
+/// ends only when the loop ends it" — so it must never be conflated with `Some`
+/// and never be produced by arithmetic failure. Two measured cases drove this:
+/// a LiteLLM port whose single legitimate `write_file` turn needed 1999 s ran to
+/// completion at 1800 s and 3600 s ceilings, and an operator who asked to be
+/// able to let one task run as long as it has to. The loop's own limiters are
+/// what should end a run — [`stall_window`] (no streamed output for a window),
+/// the repeat/no-action detectors, and the artifact gates — not elapsed seconds.
 ///
 /// Shared by every unattended caller (`team_dispatch`, workflow agent steps,
 /// orchestrator workers) so one knob bounds them all. An interactive session
 /// passes `None` instead — a human at the keyboard is the deadline there.
-pub fn unattended_budget() -> std::time::Duration {
-    // A backstop, not a target: 3600 s is far above any single attempt that is
-    // actually making progress, so it should never be the thing that ends a
-    // healthy run — a stall or a loop fires first.
-    const DEFAULT_SECS: u64 = 3600;
-    std::env::var("VELOCITY_DISPATCH_BUDGET_SECS")
+pub fn unattended_budget() -> Option<std::time::Duration> {
+    let setting = std::env::var("VELOCITY_DISPATCH_BUDGET_SECS")
         .ok()
-        .and_then(|raw| raw.trim().parse::<u64>().ok())
-        // Zero or garbage falls back to the default: a zero budget would abort
-        // a run before it completed a single turn.
-        .filter(|secs| *secs > 0)
-        .map(std::time::Duration::from_secs)
-        .unwrap_or_else(|| std::time::Duration::from_secs(DEFAULT_SECS))
+        .map(|raw| parse_backstop_setting(&raw))
+        .unwrap_or(BackstopSetting::Unset);
+    match setting {
+        BackstopSetting::Unbounded => None,
+        BackstopSetting::Seconds(secs) => Some(std::time::Duration::from_secs(secs)),
+        BackstopSetting::Unset => Some(std::time::Duration::from_secs(DEFAULT_BACKSTOP_SECS)),
+    }
+}
+
+/// What one fresh unattended attempt is allowed to run for, given what earlier
+/// attempts of the same dispatch already spent.
+///
+/// Two variants, deliberately: the shape this replaces was `Option<Duration>`
+/// where `None` meant "the clock is gone", while the very same `None` handed to
+/// [`HeadlessSubAgentRequest::budget`] means "there is no deadline". A caller
+/// that forwarded the first as the second turned a timeout into an infinite run,
+/// which is why "spent" is not representable here — see [`attempt_budget`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AttemptBudget {
+    /// No backstop is configured; the attempt ends on the loop's own signals.
+    Unbounded,
+    /// `left` remains of the backstop, for *this* attempt alone. Handing the
+    /// original total to every attempt lets a failover chain multiply the
+    /// ceiling by its own length.
+    Remaining(std::time::Duration),
+}
+
+impl AttemptBudget {
+    /// The value for `HeadlessSubAgentRequest::budget`.
+    ///
+    /// `Unbounded` becomes `None` — genuinely "no deadline" — which is safe to
+    /// express here and nowhere else, because a spent clock never reaches this
+    /// type.
+    pub fn deadline(self) -> Option<std::time::Duration> {
+        match self {
+            AttemptBudget::Unbounded => None,
+            AttemptBudget::Remaining(left) => Some(left),
+        }
+    }
+}
+
+/// [`AttemptBudget`] for a new attempt, or `None` when the backstop is spent and
+/// no further attempt may start.
+///
+/// Pure so the arithmetic is testable without a clock. `total: None` (no
+/// backstop) always yields [`AttemptBudget::Unbounded`] — an unbounded dispatch
+/// never runs out of time, by construction.
+pub fn attempt_budget(
+    total: Option<std::time::Duration>,
+    elapsed: std::time::Duration,
+) -> Option<AttemptBudget> {
+    match total {
+        None => Some(AttemptBudget::Unbounded),
+        Some(total) => total
+            .checked_sub(elapsed)
+            // Exactly spent is "no time left" too: a zero-length budget handed
+            // to the loop would abort the run before its first turn, which reads
+            // as a model failure instead of a timeout.
+            .filter(|left| !left.is_zero())
+            .map(AttemptBudget::Remaining),
+    }
 }
 
 /// How long a run may go with no streamed output before the generation is
@@ -56,8 +142,9 @@ pub fn stall_window() -> Option<std::time::Duration> {
     const DEFAULT_SECS: u64 = 300;
     match std::env::var("VELOCITY_STALL_WINDOW_SECS") {
         Ok(raw) => match raw.trim().parse::<u64>() {
-            // An explicitly-zero window means "no stall check", which is a
-            // legitimate operator choice, unlike the budget's zero-means-default.
+            // An explicitly-zero window means "no stall check" — a legitimate
+            // operator choice, and the only limiter left for a run that also
+            // removed the wall-clock backstop.
             Ok(0) => None,
             Ok(secs) => Some(std::time::Duration::from_secs(secs)),
             Err(_) => Some(std::time::Duration::from_secs(DEFAULT_SECS)),
@@ -70,8 +157,9 @@ pub fn stall_window() -> Option<std::time::Duration> {
 /// it on a *restartable* dead end (a stall or a structural loop, reported as
 /// `Blocked`), resuming from the continuation ledger rather than the clock.
 ///
-/// Bounded so a task the model genuinely cannot do cannot restart forever; the
-/// [`unattended_budget`] backstop still caps the total across every restart.
+/// Bounded so a task the model genuinely cannot do cannot restart forever; with
+/// a backstop configured it also caps the total across every restart, and with
+/// none the count alone is what bounds the re-issue loop.
 pub fn max_restarts() -> u32 {
     const DEFAULT: u32 = 2;
     std::env::var("VELOCITY_MAX_RESTARTS")
@@ -80,21 +168,22 @@ pub fn max_restarts() -> u32 {
         .unwrap_or(DEFAULT)
 }
 
-/// What is left of `total` once `elapsed` has been spent.
-///
-/// Pure so the arithmetic is testable without a clock. `None` means "nothing
-/// left — do not start another run", which is why callers must never forward
-/// `None` to [`HeadlessSubAgentRequest::budget`]: there it means the exact
-/// opposite ("no deadline"), and silently turning "out of time" into "run
-/// forever" is the bug this exists to prevent.
-pub fn budget_left(
-    total: std::time::Duration,
-    elapsed: std::time::Duration,
-) -> Option<std::time::Duration> {
-    total.checked_sub(elapsed).filter(|left| !left.is_zero())
-}
+/// The highest turn count a time-boxed attempt is ever handed.
+const MAX_BOUNDED_TURN_CEILING: usize = 48;
 
-/// How many turns one unattended attempt may take, from the seconds left to it.
+/// The turn count for a dispatch that sets no wall-clock backstop.
+pub const UNBOUNDED_TURN_CEILING: usize = 512;
+
+// Checked where the number is defined rather than in a test that has to be run:
+// an unbounded run's turn count is a sanity bound, and if it ever sat at or below
+// what a time-boxed attempt gets, removing the clock would install a *tighter*
+// ceiling than keeping it — the opposite of what the operator asked for.
+const _: () = assert!(
+    UNBOUNDED_TURN_CEILING > MAX_BOUNDED_TURN_CEILING,
+    "the unbounded ceiling must not become the new binding limit"
+);
+
+/// How many turns one unattended attempt may take, from its budget.
 ///
 /// Shared by every unattended dispatcher (`team_dispatch`, orchestrator
 /// workers) for the same reason [`unattended_budget`] is: a fixed count is a
@@ -109,8 +198,20 @@ pub fn budget_left(
 /// first), and the ceiling stops a run that only ever reads from running for the
 /// whole budget. The ~20 s per turn is the assumption behind both bounds: below
 /// it the count cannot bind, above it the deadline does.
-pub fn turn_ceiling_for(attempt_budget: std::time::Duration) -> usize {
-    (attempt_budget.as_secs() / 20).clamp(16, 48) as usize
+pub fn turn_ceiling_for(attempt_budget: AttemptBudget) -> usize {
+    match attempt_budget {
+        AttemptBudget::Remaining(left) => {
+            (left.as_secs() / 20).clamp(16, MAX_BOUNDED_TURN_CEILING as u64) as usize
+        }
+        // No clock, so the count has to be a sanity bound rather than a limit:
+        // high enough that no real task reaches it (a 3600 s dispatch, the
+        // default backstop, is 48 turns) and finite because with no deadline the
+        // loop's other long-run guard is offline — `wasted_time_ends_the_run`
+        // only fires when `budget_secs > 0`, so an unbounded run that trickles
+        // fresh bytes while achieving nothing is stopped only here and by the
+        // stall window.
+        AttemptBudget::Unbounded => UNBOUNDED_TURN_CEILING,
+    }
 }
 
 pub fn run_headless_subagent(request: HeadlessSubAgentRequest) -> HeadlessSubAgentResult {
@@ -158,15 +259,23 @@ pub fn run_headless_subagent(request: HeadlessSubAgentRequest) -> HeadlessSubAge
         String::new()
     };
 
+    // The dispatch's ramble tally as this hop received it. The loop adds what it
+    // pays for, and the hop hands the total back, so a fallback chain bounds the
+    // prose allowance once for the run instead of once per candidate.
+    let mut ramble = request.ramble;
     let use_inline_tools =
         request.provider == AiProvider::OpenRouter || !selected_profile.supports_tools;
+    // Owned here, so a group the model unlocks mid-run changes the prompt this
+    // run rebuilds on every later turn but never leaks back to the caller's
+    // template.
+    let mut tool_surface = request.tool_surface.clone();
     let mut message_history = vec![ChatMessage {
         role: "system".to_string(),
         content: format!(
             "{}{}{}",
             SYSTEM_PROMPT_BASE,
             if use_inline_tools {
-                build_inline_tool_docs()
+                build_inline_tool_docs(&tool_surface)
             } else {
                 String::new()
             },
@@ -300,6 +409,8 @@ pub fn run_headless_subagent(request: HeadlessSubAgentRequest) -> HeadlessSubAge
         deadline,
         stall_window(),
         request.requires_artifact,
+        &mut tool_surface,
+        &mut ramble,
     );
 
     drop(agent_event_tx);
@@ -311,6 +422,7 @@ pub fn run_headless_subagent(request: HeadlessSubAgentRequest) -> HeadlessSubAge
         status_updates,
         transcript,
         outcome,
+        ramble,
     }
 }
 
@@ -321,16 +433,36 @@ mod tests {
 
     #[test]
     fn an_exhausted_budget_reads_as_none_so_callers_stop_instead_of_running_unbounded() {
-        let total = Duration::from_secs(10);
+        let total = Some(Duration::from_secs(10));
         assert_eq!(
-            budget_left(total, Duration::from_secs(4)),
-            Some(Duration::from_secs(6))
+            attempt_budget(total, Duration::from_secs(4)),
+            Some(AttemptBudget::Remaining(Duration::from_secs(6)))
         );
         // Exactly spent is `None` too: a zero-length budget handed to the loop
         // would abort the run before its first turn, which looks like a model
         // failure rather than a timeout.
-        assert_eq!(budget_left(total, total), None);
-        assert_eq!(budget_left(total, Duration::from_secs(11)), None);
+        assert_eq!(attempt_budget(total, Duration::from_secs(10)), None);
+        assert_eq!(attempt_budget(total, Duration::from_secs(11)), None);
+    }
+
+    /// The whole point of the type: "no clock" and "clock spent" were both
+    /// `None` in the shape this replaces, and the request field reads `None` as
+    /// "no deadline" — so a caller that mapped spent onto it launched an
+    /// unbounded run out of a timeout. Reverted, this assertion fails to compile
+    /// the old way because spent is not a value of `AttemptBudget` at all.
+    #[test]
+    fn a_spent_clock_cannot_be_mistaken_for_no_clock() {
+        assert_eq!(
+            attempt_budget(Some(Duration::from_secs(10)), Duration::from_secs(10))
+                .map(|budget| budget.deadline()),
+            None,
+            "spent must stop the caller before a deadline is ever built"
+        );
+        assert_eq!(
+            attempt_budget(None, Duration::from_secs(10_000)).map(|b| b.deadline()),
+            Some(None),
+            "no backstop is 'no deadline', however much time has gone by"
+        );
     }
 
     #[test]
@@ -341,20 +473,78 @@ mod tests {
         // stopped at the count with 1154 of its 1200 seconds unspent and a compile
         // repair still owed — the budget, not the count, is what should end an
         // attempt.
-        assert_eq!(turn_ceiling_for(Duration::from_secs(1200)), 48);
+        assert_eq!(
+            turn_ceiling_for(AttemptBudget::Remaining(Duration::from_secs(1200))),
+            48
+        );
         // The floor keeps a slow model's behavior identical: at 15 turns' worth of
         // seconds the deadline stops that attempt before the count ever could.
-        assert_eq!(turn_ceiling_for(Duration::from_secs(300)), 16);
-        assert_eq!(turn_ceiling_for(Duration::from_secs(20)), 16);
+        assert_eq!(
+            turn_ceiling_for(AttemptBudget::Remaining(Duration::from_secs(300))),
+            16
+        );
+        assert_eq!(
+            turn_ceiling_for(AttemptBudget::Remaining(Duration::from_secs(20))),
+            16
+        );
         // And the ceiling bounds the other direction — an hour of budget must not
         // license a run that only ever reads files.
-        assert_eq!(turn_ceiling_for(Duration::from_secs(3600)), 48);
+        assert_eq!(
+            turn_ceiling_for(AttemptBudget::Remaining(Duration::from_secs(3600))),
+            MAX_BOUNDED_TURN_CEILING
+        );
+        // Removing the clock must not remove the turn bound as well: with no
+        // deadline `wasted_time_ends_the_run` is offline, so the count is the
+        // only thing between a read-only run and running forever. The const block
+        // above proves it sits above the bounded ceiling; this proves the unbounded
+        // attempt actually receives it.
+        assert_eq!(
+            turn_ceiling_for(AttemptBudget::Unbounded),
+            UNBOUNDED_TURN_CEILING
+        );
     }
 
     #[test]
-    fn the_unattended_budget_is_never_zero() {
-        // Whatever the environment says, the value returned must be usable as a
-        // deadline: zero would make every unattended run time out immediately.
-        assert!(!unattended_budget().is_zero());
+    fn a_named_backstop_is_read_as_seconds_and_garbage_is_not_reinterpreted() {
+        assert_eq!(
+            parse_backstop_setting("1800"),
+            BackstopSetting::Seconds(1800)
+        );
+        assert_eq!(
+            parse_backstop_setting(" 1800 "),
+            BackstopSetting::Seconds(1800)
+        );
+        // Garbage is not a request to run forever.
+        assert_eq!(parse_backstop_setting("soon"), BackstopSetting::Unset);
+        assert_eq!(parse_backstop_setting(""), BackstopSetting::Unset);
+    }
+
+    #[test]
+    fn the_backstop_can_be_removed_by_saying_so() {
+        for word in [
+            "0",
+            "OFF",
+            "off",
+            "none",
+            "unbounded",
+            "unlimited",
+            "INFINITE",
+        ] {
+            assert_eq!(
+                parse_backstop_setting(word),
+                BackstopSetting::Unbounded,
+                "{word} must mean no wall-clock ceiling"
+            );
+        }
+    }
+
+    #[test]
+    fn an_unattended_budget_is_either_a_usable_deadline_or_explicitly_absent() {
+        // Whatever the environment says, a `Some` must be usable as a deadline:
+        // one second of budget would make every unattended run time out before
+        // its first turn completes, and zero would be a silent unbounded run.
+        if let Some(budget) = unattended_budget() {
+            assert!(budget.as_secs() >= 1, "{budget:?} is not a usable deadline");
+        }
     }
 }

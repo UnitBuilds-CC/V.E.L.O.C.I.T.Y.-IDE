@@ -197,6 +197,9 @@ fn usable_catalog_for(root: &Path, provider: AiProvider) -> Option<Vec<crate::ag
         // Static/benchmark catalog, no key to gate on: only when explicitly
         // requested (it never enters the enablement scan).
         AiProvider::AwsBedrock => Ok(p::fetch_bedrock_models().unwrap_or_default()),
+        // Local server, no key: catalog is whatever llama-server loaded. Also
+        // excluded from the enablement scan (see SCANNABLE_PROVIDERS).
+        AiProvider::LocalLlama => Ok(p::fetch_llama_models().unwrap_or_default()),
     };
     models.ok().filter(|m| !m.is_empty())
 }
@@ -955,6 +958,9 @@ fn repo_rewrite(root: &Path, arguments: &Value) -> Result<String, Box<dyn Error>
                 "chunks": st.chunks,
                 "cycles_broken": st.cycles_broken,
                 "units_over_ceiling": st.units_over_ceiling,
+                // The count above is meaningless without the ceiling it is a
+                // count against, so it travels with it.
+                "unit_ceiling_bytes": st.unit_ceiling_bytes,
                 "generated_skipped": st.generated_skipped,
                 "generated_bytes": st.generated_bytes,
                 "generated_examples": st.generated_examples,
@@ -2225,6 +2231,50 @@ fn best_local_ollama_model(root: &Path) -> Option<String> {
     Some(ids.remove(0))
 }
 
+/// Which model a fallback hop actually is, as the prose allowance sees it.
+///
+/// Run #26 tried `qwen3.6-35b-a3b` over llama.cpp, then
+/// `/home/ian/models/qwen3.6-35b-a3b.gguf`, then `qwen3.6:35b-a3b` under Ollama.
+/// Three chain entries, one set of weights, and the cut allowance paid for all
+/// three: 6 tool-call-free turns costing 5,500s of a 6,025s dispatch. Rambling
+/// is what a model does, not what an endpoint does, so the copies are compared
+/// by name with the path, the file extension and the tag separator removed.
+///
+/// Deliberately conservative: anything that does not reduce to a name returns an
+/// empty key, and an empty key is never a reason to skip a fallback.
+fn ramble_key(model: &str) -> String {
+    let name = model.rsplit(['/', '\\']).next().unwrap_or(model);
+    let name = name.strip_suffix(".gguf").unwrap_or(name);
+    let name = name.strip_suffix(".safetensors").unwrap_or(name);
+    name.trim().to_lowercase().replace([':', '_'], "-")
+}
+
+/// The share of the run's prose allowance one hop spent.
+///
+/// The hop returns the ledger it was handed with its own turns added, so the
+/// attempt log records the difference: `2 turns / 1,829s` for the model that
+/// rambled and `1 turn / 901s` for the next one, rather than a running total
+/// that makes every late hop look as expensive as everything before it.
+fn ledger_delta(
+    before: crate::agent::RambleLedger,
+    after: crate::agent::RambleLedger,
+) -> crate::agent::RambleLedger {
+    crate::agent::RambleLedger {
+        cuts: after.cuts.saturating_sub(before.cuts),
+        secs: after.secs.saturating_sub(before.secs),
+    }
+}
+
+/// Whether a candidate is another name for a model this run has already paid to
+/// have ramble.
+///
+/// An empty key never matches — not even another empty key. A candidate the
+/// normalizer cannot name is a candidate whose fallback is still worth trying.
+fn already_paid_for(model: &str, paid: &[String]) -> bool {
+    let key = ramble_key(model);
+    !key.is_empty() && paid.contains(&key)
+}
+
 /// One entry of the dispatch `fallback_attempts` log.
 ///
 /// Kept as a pure function because the decision it records is the one that
@@ -2237,6 +2287,7 @@ fn attempt_log_entry(
     model: &str,
     outcome: &crate::agent::models::AgentLoopOutcome,
     status_count: usize,
+    ramble: crate::agent::RambleLedger,
 ) -> Value {
     let succeeded = outcome.is_completed();
     let mut entry = json!({
@@ -2252,6 +2303,14 @@ fn attempt_log_entry(
     });
     if !succeeded {
         entry["blocked_reason"] = json!(outcome.reason());
+    }
+    // What this hop streamed without ever naming a call. Without it the entry
+    // says `blocked_reason: reply cut for streaming without a tool call` and the
+    // price of that cut — 900s on a contended local route — belongs to no line a
+    // caller reads, which is how a 6,025s dispatch presents as ~620s of work.
+    if ramble.cuts > 0 {
+        entry["ramble_turns"] = json!(ramble.cuts);
+        entry["ramble_secs"] = json!(ramble.secs);
     }
     entry
 }
@@ -2323,6 +2382,39 @@ fn should_restore_artifact(
     !chain_succeeded
         && guard_soundness == ArtifactSoundness::Builds
         && final_soundness == ArtifactSoundness::Broken
+}
+
+/// Once one attempt has left a deliverable that compiles, another model in the
+/// chain has nothing left to give the dispatch.
+///
+/// `convert10` (see [`AttemptArtifact`]) got the *bytes* protected and still
+/// lost the run: the guard stopped later attempts from overwriting them, but
+/// the failover kept going and spent the rest of the dispatch re-earning what
+/// was already on disk. With no wall clock that remainder is every candidate in
+/// the chain for as long as each one likes — which is how run #89 reached a
+/// small local model in a 20,480-token window, still editing the file, after its
+/// pinned route had got the port compiling with 186 of 189 tests passing.
+fn chain_stops_on_sound_artifact(held: &Option<AttemptArtifact>) -> bool {
+    held.as_ref()
+        .is_some_and(|guard| guard.soundness == ArtifactSoundness::Builds)
+}
+
+/// The sentence the caller gets when the chain stops on a compiling artifact.
+///
+/// Two facts or it reads as a success: whose bytes these are, and that the
+/// gates still report failures. It quotes the gate's own report rather than a
+/// restatement of it, because the one number a caller needs here — how many
+/// tests still fail — is exactly the thing a summary gets wrong.
+fn sound_artifact_stop_note(guard: &AttemptArtifact, gate_report: &str) -> String {
+    let gate: String = gate_report.chars().take(400).collect();
+    format!(
+        "Stopped the fallback chain on a compiling deliverable: {} / {} wrote Rust that cargo \
+         builds, so no further candidate was run. This is not a success — the gates still \
+         report: {}",
+        guard.provider.slug(),
+        guard.model,
+        gate,
+    )
 }
 
 /// Read the bytes of the files this attempt wrote, skipping any it has since
@@ -2598,6 +2690,15 @@ pub(crate) fn build_fallback_chain(
         if let Some(pos) = chain.iter().position(|(p, _)| p == ap) {
             let entry = chain.remove(pos);
             chain.insert(0, (entry.0, am.clone()));
+        } else {
+            // The selected provider was never seeded into the chain. A local
+            // llama.cpp endpoint needs no credentials, so `configured_providers`
+            // never lists it and steps 1-6 don't add it; without this branch the
+            // position() lookup misses, step 7 becomes a no-op, and a member
+            // provisioned with a cloud provider keeps that route at the front —
+            // which VELOCITY_SINGLE_MODEL_DISPATCH's truncate(1) then makes the
+            // *only* attempt, so every worker 403s and llama.cpp is never called.
+            chain.insert(0, (*ap, am.clone()));
         }
     }
 
@@ -2658,6 +2759,44 @@ fn deliverable_requires_artifact(deliverable: &str) -> bool {
     )
 }
 
+/// How much of one target file the brief holds. Twelve kilobytes is a judgement
+/// about the prompt, not about the file: the bytes on disk are whole, and a
+/// model that is only told "truncated" has no way back to them.
+pub(crate) const DEFAULT_PRELOAD_MAX_BYTES: usize = 12_000;
+
+/// Read `VELOCITY_PRELOAD_MAX_BYTES` without pretending a typo is a choice.
+///
+/// Split from [`preload_max_bytes`] so tests can exercise every spelling
+/// without mutating the environment the rest of the process reads — and it
+/// shares [`parse_limit_setting`] with the other adjustable ceilings so their
+/// "off" words cannot drift apart.
+fn parse_preload_cap(raw: Option<&str>) -> usize {
+    use crate::agent::executor::utils::{parse_limit_setting, LimitSetting};
+    match parse_limit_setting(raw) {
+        LimitSetting::Default => DEFAULT_PRELOAD_MAX_BYTES,
+        LimitSetting::Unbounded => usize::MAX,
+        LimitSetting::Value(bytes) => usize::try_from(bytes).unwrap_or(usize::MAX),
+    }
+}
+
+pub(crate) fn preload_max_bytes() -> usize {
+    parse_preload_cap(std::env::var("VELOCITY_PRELOAD_MAX_BYTES").ok().as_deref())
+}
+
+/// The heading the dispatch brief puts over the bytes of every path it named.
+pub(crate) const PRELOAD_SECTION_HEADER: &str = "## Target Files (pre-loaded)";
+
+/// The line a preload block writes when the path it named cannot be read.
+///
+/// [`crate::agent::executor::loop_runner::unreadable_preloads`] reads this
+/// marker back out of the brief. It is a constant rather than an inline string
+/// because two modules now agree on its exact bytes, and the agreement is what
+/// makes a conversion whose source never arrived decidable after the fact — run
+/// #101 named `router_utils.pattern_match_deployments.py`, which exists nowhere,
+/// the block said exactly this, and the run still ended `Repair validated — 186
+/// passed` over a port that shares no symbol with the real module.
+pub(crate) const PRELOAD_UNREADABLE_TAG: &str = "[Could not read";
+
 /// The `## Target Files (pre-loaded)` blocks for the paths a dispatch names.
 ///
 /// Callers use this field two ways: as a list of files to work on, and as a
@@ -2669,10 +2808,13 @@ fn deliverable_requires_artifact(deliverable: &str) -> bool {
 /// about what actually exists. Name the entries instead — that is the answer to
 /// the question the scope was asking.
 fn preload_target_files(root: &Path, files: &[String]) -> Vec<String> {
-    // Prompt budget per file, and per directory listing. Both bounds exist to
-    // keep a dispatch on a large crate from spending the whole context window
-    // before the task text is even reached.
-    const MAX_BYTES: usize = 12_000;
+    preload_target_files_capped(root, files, preload_max_bytes())
+}
+
+fn preload_target_files_capped(root: &Path, files: &[String], max_bytes: usize) -> Vec<String> {
+    // Prompt budget per directory listing. Bounded so a dispatch on a large
+    // crate cannot spend the whole context window before the task text is even
+    // reached; the per-file byte cap is the caller's `max_bytes`.
     const MAX_LISTED: usize = 25;
 
     let mut contexts = Vec::new();
@@ -2707,28 +2849,59 @@ fn preload_target_files(root: &Path, files: &[String]) -> Vec<String> {
             continue;
         }
         match std::fs::read_to_string(&full_path) {
+            Ok(contents) if contents.len() <= max_bytes => {
+                contexts.push(format!("### {file}\n```\n{contents}\n```"));
+            }
             Ok(contents) => {
-                // Truncate very large files to keep the prompt manageable — at a
-                // character boundary. Slicing at the raw byte index panics the
-                // dispatch thread on any file whose 12,000th byte falls inside a
-                // multi-byte character, which is every non-ASCII source.
-                let truncated = if contents.len() > MAX_BYTES {
-                    let mut cut = MAX_BYTES;
-                    while cut > 0 && !contents.is_char_boundary(cut) {
-                        cut -= 1;
-                    }
+                // Cut at a character boundary: slicing at the raw byte index
+                // panics the dispatch thread on any file whose nth byte falls
+                // inside a multi-byte character, which is every non-ASCII source.
+                let mut cut = max_bytes;
+                while cut > 0 && !contents.is_char_boundary(cut) {
+                    cut -= 1;
+                }
+                // …and at a line boundary, because the note below names a line
+                // number and a half-line would make it point one row early.
+                let whole_lines = contents[..cut].contains('\n');
+                let kept = match contents[..cut].rfind('\n') {
+                    Some(newline) => &contents[..newline],
+                    None => &contents[..cut],
+                };
+                let kept_lines = kept.lines().count();
+                let total_lines = contents.lines().count();
+                let note = if whole_lines {
                     format!(
-                        "{}\n... [truncated, {} bytes total]",
-                        &contents[..cut],
-                        contents.len()
+                        "\nThat block is lines 1-{kept_lines} of {file} ({len} of {total} bytes; \
+                         the file has {total_lines} lines). The file on disk is complete — only \
+                         this preload is capped at {max_bytes} bytes \
+                         (VELOCITY_PRELOAD_MAX_BYTES; `off` means no cap). Do not hunt for \
+                         another copy of it, and do not write the deliverable from the part you \
+                         can see: read the rest with read_file relativeFilePath=\"{file}\" \
+                         startLine={next}. That returns one bounded window and names the next \
+                         startLine, so follow it to line {total_lines} before writing.",
+                        len = kept.len(),
+                        total = contents.len(),
+                        next = kept_lines + 1,
                     )
                 } else {
-                    contents
+                    // Only reachable when the cap is smaller than the file's
+                    // first line, i.e. an operator set a tiny one. There is no
+                    // line range to name, so point at the plain read.
+                    format!(
+                        "\nThat block is the first {len} bytes of {file} ({total} bytes, \
+                         {total_lines} lines), which is all the preload holds \
+                         (VELOCITY_PRELOAD_MAX_BYTES={max_bytes}). The file on disk is complete: \
+                         read it with read_file relativeFilePath=\"{file}\".",
+                        len = kept.len(),
+                        total = contents.len(),
+                    )
                 };
-                contexts.push(format!("### {file}\n```\n{truncated}\n```"));
+                contexts.push(format!("### {file}\n```\n{kept}\n```{note}"));
             }
             Err(e) => {
-                contexts.push(format!("### {file}\n[Could not read {file}: {e}]\n"));
+                contexts.push(format!(
+                    "### {file}\n{PRELOAD_UNREADABLE_TAG} {file}: {e}]\n"
+                ));
             }
         }
     }
@@ -2779,9 +2952,34 @@ pub(crate) fn pipeline_branch_for(
 /// must not be cut off by an inherited 90-minute UI default. Any positive
 /// value becomes a hard `Duration::from_secs(n)` the tick loop enforces by
 /// marking every unfinished task Failed at the deadline boundary.
+///
+/// `budget_secs` is accepted as the same ceiling under the name the routed
+/// single-member chain uses, so one argument bounds a dispatch whichever branch
+/// it takes.
 pub(crate) fn deadline_from_args(arguments: &Value) -> std::time::Duration {
-    let secs = arguments["max_wall_secs"].as_u64().unwrap_or(0);
+    let secs = arguments["max_wall_secs"]
+        .as_u64()
+        .or_else(|| arguments["budget_secs"].as_u64())
+        .unwrap_or(0);
     std::time::Duration::from_secs(secs)
+}
+
+/// The wall-clock backstop for one routed `team_dispatch`.
+///
+/// A caller that names `budget_secs` bounds *this* dispatch instead of having to
+/// set a process-wide environment variable — which matters because the ceiling is
+/// the thing that killed the LiteLLM ports: one legitimate `write_file` turn
+/// measured 1999 s, so a run that was alive and merely slow on a shared GPU kept
+/// ending as a failure. `budget_secs: 0` removes the clock, and the loop's own
+/// limiters (the stall window, the repeat and no-action detectors, the artifact
+/// gates) become the only things that end the run. An absent argument keeps the
+/// shared [`crate::agent::unattended_budget`] default.
+fn dispatch_backstop(arguments: &Value) -> Option<std::time::Duration> {
+    match arguments["budget_secs"].as_u64() {
+        Some(0) => None,
+        Some(secs) => Some(std::time::Duration::from_secs(secs)),
+        None => crate::agent::unattended_budget(),
+    }
 }
 
 fn team_dispatch(root: &Path, arguments: &Value) -> Result<String, Box<dyn Error>> {
@@ -2915,7 +3113,7 @@ fn team_dispatch(root: &Path, arguments: &Value) -> Result<String, Box<dyn Error
     prompt.push_str(&format!("\n## Task\n{}\n", task));
 
     if !file_contexts.is_empty() {
-        prompt.push_str("\n## Target Files (pre-loaded)\n");
+        prompt.push_str(&format!("\n{PRELOAD_SECTION_HEADER}\n"));
         for ctx in &file_contexts {
             prompt.push_str(ctx);
             prompt.push('\n');
@@ -3004,8 +3202,13 @@ fn team_dispatch(root: &Path, arguments: &Value) -> Result<String, Box<dyn Error
     // chain can hand it back rather than hand the caller a workspace the last
     // attempt broke. See `AttemptArtifact`.
     let mut artifact_guard: Option<AttemptArtifact> = None;
+    // The prose allowance for the whole dispatch, carried into every hop so a
+    // fallback chain cannot re-pay it once per model, and the models that have
+    // already spent part of it — under any of the names one model arrives with.
+    let mut dispatch_ramble = crate::agent::RambleLedger::default();
+    let mut rambled_models: Vec<String> = Vec::new();
     let dispatch_start = std::time::Instant::now();
-    let budget = crate::agent::unattended_budget();
+    let budget = dispatch_backstop(arguments);
     // Inferred once, from the prompt every attempt receives, so all candidates
     // are ranked against each other on the same terms.
     let task_kind = crate::editor::app::helpers::infer_task_kind_from_goal(&prompt);
@@ -3028,18 +3231,50 @@ fn team_dispatch(root: &Path, arguments: &Value) -> Result<String, Box<dyn Error
             // ceiling was only consulted *before starting another attempt*,
             // which left an in-flight run unbounded: a LiteLLM port went 21
             // minutes past it and had to be killed by hand.
-            let Some(attempt_budget) = crate::agent::budget_left(budget, dispatch_start.elapsed())
+            let Some(attempt_budget) =
+                crate::agent::attempt_budget(budget, dispatch_start.elapsed())
             else {
-                log::warn!(
-                    "team_dispatch: budget of {}s spent, stopping fallback attempts",
-                    budget.as_secs()
-                );
-                final_transcript.push_str(&format!(
-                    "\n\n[Dispatch budget exhausted: no model succeeded within {} seconds]",
-                    budget.as_secs()
-                ));
+                // Only reachable with a backstop configured — an unbounded
+                // dispatch never runs out of time. Say what was spent rather
+                // than "no model succeeded", which sent the investigation to the
+                // models instead of the ceiling.
+                let spent = match budget {
+                    Some(total) => format!("no model succeeded within {} seconds", total.as_secs()),
+                    None => "the wall-clock backstop was spent".to_string(),
+                };
+                log::warn!("team_dispatch: budget spent, stopping fallback attempts ({spent})");
+                final_transcript.push_str(&format!("\n\n[Dispatch budget exhausted: {spent}]"));
                 break 'chain;
             };
+            // One model reached under three names is still one model, and the
+            // allowance it spent is the run's. Skipping the copy costs the chain
+            // nothing it had not already learned; a hop at a genuinely different
+            // model is untouched.
+            let model_key = ramble_key(try_model);
+            if already_paid_for(try_model, &rambled_models) {
+                let reason = format!(
+                    "'{try_model}' is attempt {} of this run at a model it has already stopped \
+                     for streaming prose that named no tool call ({}s of the run spent on it so \
+                     far). That model's share of the prose allowance is gone, so the hop is not \
+                     paid for again.",
+                    attempt_log.len() + 1,
+                    dispatch_ramble.secs
+                );
+                log::warn!("team_dispatch: skipping fallback hop on '{try_model}'");
+                all_status_updates.push(format!("Skipping fallback model: {try_model}"));
+                final_transcript.push_str(&format!("\n\n[{reason}]"));
+                attempt_log.push(json!({
+                    "provider": provider.slug(),
+                    "model": try_model,
+                    "succeeded": false,
+                    "quality": "ok",
+                    "status_count": 0,
+                    "skipped": "ramble_allowance_spent",
+                    "blocked_reason": reason,
+                }));
+                continue;
+            }
+
             // The collector is what makes the guard possible: the loop reports
             // every file it wrote through its event channel, and only those
             // files — never the whole workspace — are snapshotted and, if the
@@ -3063,11 +3298,16 @@ fn team_dispatch(root: &Path, arguments: &Value) -> Result<String, Box<dyn Error
                     // dispatch budget bounds the wall clock, and the ceiling
                     // now comes from it — see `turn_ceiling_for`.
                     max_turns: Some(turn_ceiling_for(attempt_budget)),
-                    budget: Some(attempt_budget),
+                    budget: attempt_budget.deadline(),
                     // Honor the prompt's own contract: when the deliverable is
                     // files, the loop must not certify a text-only answer as
                     // success.
                     requires_artifact,
+                    // The classification that already chose the output contract and
+                    // the fallback models also chooses the toolset, so a porting
+                    // dispatch ships ~12 tools instead of all 347 schemas.
+                    tool_surface: crate::registry::ToolSurface::for_task_kind(task_kind.as_str()),
+                    ramble: dispatch_ramble,
                 });
 
             all_status_updates.extend(result.status_updates.clone());
@@ -3084,11 +3324,21 @@ fn team_dispatch(root: &Path, arguments: &Value) -> Result<String, Box<dyn Error
             let has_error = !result.outcome.is_completed();
 
             let degraded_small = !has_error && is_small_model(try_model);
+            // The hop returns the run's ledger with its own cut turns added, so
+            // the difference is what this model cost and the total is what seeds
+            // the next one. A hop that paid for a cut has said what the other
+            // copies of it will say, so its name is retired for this dispatch.
+            let hop_ramble = ledger_delta(dispatch_ramble, result.ramble);
+            if hop_ramble.cuts > 0 && !model_key.is_empty() {
+                rambled_models.push(model_key);
+            }
+            dispatch_ramble = result.ramble;
             attempt_log.push(attempt_log_entry(
                 *provider,
                 try_model,
                 &result.outcome,
                 result.status_updates.len(),
+                hop_ramble,
             ));
 
             if !has_error {
@@ -3154,15 +3404,33 @@ fn team_dispatch(root: &Path, arguments: &Value) -> Result<String, Box<dyn Error
             // A spent budget ends the whole chain rather than just this
             // attempt: the next model would be handed an even smaller slice, and
             // "retry weaker with less time" is how one dispatch ends up
-            // reporting a timeout that was really several stacked.
-            if result.outcome.is_timed_out() {
+            // reporting a timeout that was really several stacked. The number
+            // comes from the outcome, not from the dispatch's own configured
+            // backstop, because an attempt is handed only what was left to it.
+            if let crate::agent::models::AgentLoopOutcome::TimedOut { budget_secs, .. } =
+                &result.outcome
+            {
                 log::warn!(
-                    "team_dispatch: {}s budget spent on {} / {}, abandoning fallback chain",
-                    budget.as_secs(),
+                    "team_dispatch: {budget_secs}s budget spent on {} / {}, abandoning fallback chain",
                     provider.slug(),
                     try_model
                 );
                 break 'chain;
+            }
+
+            // An attempt whose own gates reported failures, but whose Rust
+            // compiles, has delivered the thing the chain exists to find. Keep
+            // the verdict as the answer and stop: trying the next candidate buys
+            // an attempt to re-earn these bytes, and with no wall clock there is
+            // no longer a clock to limit how many candidates get that attempt.
+            if has_error && chain_stops_on_sound_artifact(&artifact_guard) {
+                if let Some(guard) = artifact_guard.as_ref() {
+                    let note = sound_artifact_stop_note(guard, &result.outcome.reason());
+                    log::warn!("team_dispatch: {note}");
+                    all_status_updates.push(note.clone());
+                    final_transcript.push_str(&format!("\n\n[{note}]"));
+                    break 'chain;
+                }
             }
 
             // If the provider itself is unavailable (no keys/accounts) rather
@@ -3295,10 +3563,20 @@ fn team_dispatch(root: &Path, arguments: &Value) -> Result<String, Box<dyn Error
         },
         "provider": used_provider.slug(),
         "model": used_model,
-        "budget_secs": budget.as_secs(),
+        "budget_secs": budget.map(|total| total.as_secs()),
+        // `budget_secs: null` is only meaningful next to this flag: a reader
+        // that treats a missing number as zero would conclude the dispatch was
+        // given no time, when it was given unlimited time.
+        "wall_clock_limited": budget.is_some(),
         "degraded": degraded_note.is_some(),
         "degraded_reason": degraded_note,
         "fallback_attempts": attempt_log,
+        // The run's total spent on replies that streamed and named no call, and
+        // how many of them there were. A reader of the per-turn cost lines can
+        // add them up; a reader of this JSON could not, which is how run #26
+        // reported 6,025 wall-clock seconds as ~620 seconds of model time.
+        "ramble_turns": dispatch_ramble.cuts,
+        "ramble_secs": dispatch_ramble.secs,
         "artifact_restored": restored_artifact,
         "status_updates": all_status_updates,
         "transcript": final_transcript,
@@ -4170,6 +4448,44 @@ mod tests {
         assert_eq!(explicit, std::time::Duration::from_secs(42));
         let zero = deadline_from_args(&serde_json::json!({ "max_wall_secs": 0u64 }));
         assert_eq!(zero, std::time::Duration::ZERO);
+        // The routed chain's `budget_secs` is the same ceiling under the other
+        // name, so a caller who does not know which branch the task takes gets
+        // one answer either way — and `max_wall_secs` still wins when both are
+        // present, because it is the more specific knob.
+        assert_eq!(
+            deadline_from_args(&serde_json::json!({ "budget_secs": 900u64 })),
+            std::time::Duration::from_secs(900)
+        );
+        assert_eq!(
+            deadline_from_args(
+                &serde_json::json!({ "max_wall_secs": 1200u64, "budget_secs": 900u64 })
+            ),
+            std::time::Duration::from_secs(1200)
+        );
+    }
+
+    /// The ceiling a dispatch runs under used to be readable only from the
+    /// process environment, which is why every long port had to be relaunched
+    /// with a bigger `VELOCITY_DISPATCH_BUDGET_SECS` — and why `0` had to become
+    /// a real answer rather than a typo for the default.
+    #[test]
+    fn a_dispatch_can_name_its_own_ceiling_or_remove_it() {
+        assert_eq!(
+            dispatch_backstop(&serde_json::json!({ "budget_secs": 7200u64 })),
+            Some(std::time::Duration::from_secs(7200))
+        );
+        assert_eq!(
+            dispatch_backstop(&serde_json::json!({ "budget_secs": 0u64 })),
+            None,
+            "an explicit zero means run until the task ends, not until the clock does"
+        );
+        // Absent is the only case that consults the environment, and it must
+        // consult exactly the shared knob rather than a second hardcoded default
+        // that can drift from it.
+        assert_eq!(
+            dispatch_backstop(&serde_json::json!({})),
+            crate::agent::unattended_budget()
+        );
     }
 
     #[test]
@@ -4283,6 +4599,54 @@ mod tests {
         assert!(!super::should_restore_artifact(false, Builds, NotMeasured));
     }
 
+    /// Run #89's ending: the pinned route got the port compiling (186 of 189
+    /// tests passing) and the dispatch answered that attempt's gate failure by
+    /// walking the chain — three cloud models that 403, one that 404, then a
+    /// small local model that carried on editing the same file in a fifth of the
+    /// window. Guarding its bytes was never going to be enough on its own: with
+    /// no wall clock there is nothing to bound how far that walk goes, so the
+    /// chain has to stop where the deliverable stopped being in question.
+    #[test]
+    fn fallback_chain_stops_once_the_artifact_on_disk_compiles() {
+        use super::ArtifactSoundness::*;
+        assert!(super::chain_stops_on_sound_artifact(&Some(guard_artifact(
+            Builds
+        ))));
+        // Nothing on disk yet, and something on disk that does not build: both
+        // are exactly when the next candidate is worth running.
+        assert!(!super::chain_stops_on_sound_artifact(&None));
+        assert!(!super::chain_stops_on_sound_artifact(&Some(
+            guard_artifact(Broken)
+        )));
+        // And a workspace cargo could not be run against is not evidence that
+        // any attempt succeeded.
+        assert!(!super::chain_stops_on_sound_artifact(&Some(
+            guard_artifact(NotMeasured)
+        )));
+    }
+
+    /// Stopping is only an honest report if it says the run did not pass. The
+    /// note names the model that wrote the bytes and quotes the gate's own
+    /// words, so a caller reading `success: false` can tell "3 tests still fail"
+    /// from "nothing was produced" without re-running cargo.
+    #[test]
+    fn fallback_stop_note_names_the_bytes_and_refuses_to_call_them_a_success() {
+        let note = super::sound_artifact_stop_note(
+            &guard_artifact(super::ArtifactSoundness::Builds),
+            "post-run validation failed: The crate BUILDS, but its own tests do NOT pass. \
+             Real `cargo test` output (test result: FAILED. 186 passed; 3 failed)",
+        );
+        assert!(note.contains("qwen3.6:35b-a3b"), "{note}");
+        assert!(note.contains("not a success"), "{note}");
+        assert!(note.contains("186 passed; 3 failed"), "{note}");
+        // A long cargo report is not a status line.
+        let long = super::sound_artifact_stop_note(
+            &guard_artifact(super::ArtifactSoundness::Builds),
+            &"e".repeat(9_000),
+        );
+        assert!(long.chars().count() < 700, "{} chars", long.chars().count());
+    }
+
     fn guard_artifact(soundness: super::ArtifactSoundness) -> AttemptArtifact {
         AttemptArtifact {
             provider: AiProvider::LocalOllama,
@@ -4325,6 +4689,123 @@ mod tests {
         assert!(super::restore_builds(Builds));
     }
 
+    /// The measurement behind run #26: `qwen3.6-35b-a3b`, its `.gguf` path and
+    /// Ollama's `qwen3.6:35b-a3b` tag are one set of weights reached three ways,
+    /// and the chain paid the prose allowance for all three — 6 cut turns,
+    /// 5,500s of a 6,025s dispatch. The key has to collapse them for the skip to
+    /// exist, and must not collapse two models that differ only in size, or the
+    /// chain would drop a real fallback.
+    #[test]
+    fn one_model_reached_three_ways_is_one_share_of_the_prose_allowance() {
+        assert_eq!(
+            ramble_key("qwen3.6-35b-a3b"),
+            ramble_key("/home/ian/models/qwen3.6-35b-a3b.gguf"),
+            "the served file path is the same model as the name llama.cpp gave it"
+        );
+        assert_eq!(
+            ramble_key("qwen3.6-35b-a3b"),
+            ramble_key("qwen3.6:35b-a3b"),
+            "Ollama's tag separator is not a different model"
+        );
+        assert_ne!(
+            ramble_key("qwen2.5-coder:32b"),
+            ramble_key("qwen2.5-coder:0.5b"),
+            "a size the chain can actually differ on must not be normalized away"
+        );
+        assert_ne!(
+            ramble_key("glm-4.6"),
+            ramble_key("kimi-k2"),
+            "unrelated models are never the same hop"
+        );
+        // Nothing to compare on means nothing to skip on: an empty key is inert
+        // rather than a wildcard that matches every later candidate.
+        assert_eq!(ramble_key("   /   "), "");
+    }
+
+    /// The chain hands each hop the run's tally and gets it back larger. What the
+    /// attempt log needs is the hop's own share, because a running total would
+    /// report the eighth attempt as having spent everything the first seven did —
+    /// and because a caller that returns a *smaller* ledger than it was given must
+    /// not be credited with a negative cost.
+    #[test]
+    fn an_attempt_is_charged_what_it_spent_not_what_the_run_had_spent() {
+        use crate::agent::RambleLedger;
+
+        let before = RambleLedger {
+            cuts: 2,
+            secs: 1829,
+        };
+        let after = RambleLedger {
+            cuts: 3,
+            secs: 2730,
+        };
+        assert_eq!(
+            ledger_delta(before, after),
+            RambleLedger { cuts: 1, secs: 901 },
+            "the second rambling model cost one turn, not three"
+        );
+        assert_eq!(ledger_delta(after, after), RambleLedger::default());
+        assert_eq!(
+            ledger_delta(after, before),
+            RambleLedger::default(),
+            "a ledger that came back smaller is not a negative spend"
+        );
+    }
+
+    /// The skip is the part that can throw away a real fallback, so its two
+    /// failure directions are both asserted: the same weights reached three ways
+    /// are one paid-for model, and a candidate the normalizer cannot name is
+    /// never treated as a duplicate of anything.
+    #[test]
+    fn a_model_this_run_paid_for_is_skipped_under_its_other_names_only() {
+        let paid = [ramble_key("qwen3.6-35b-a3b")];
+        assert!(already_paid_for("qwen3.6:35b-a3b", &paid));
+        assert!(already_paid_for(
+            "/home/ian/models/qwen3.6-35b-a3b.gguf",
+            &paid
+        ));
+        assert!(!already_paid_for("qwen2.5-coder:32b", &paid));
+        // Two candidates with no name to compare on are not evidence that they
+        // are the same model; dropping one would drop a fallback unseen.
+        assert!(!already_paid_for("/", &["".to_string()]));
+    }
+
+    /// The attempt log is what a caller reads when it decides whether a dispatch
+    /// was slow or merely long. A blocked ramble used to report only its label,
+    /// and the 900s the cut cost appeared nowhere in the JSON — the run looked
+    /// like ~620s of model time while the wall clock said 6,025s.
+    #[test]
+    fn an_attempt_that_paid_for_rambling_reports_what_it_paid() {
+        use crate::agent::models::AgentLoopOutcome;
+
+        let rambling = attempt_log_entry(
+            AiProvider::LocalLlama,
+            "qwen3.6-35b-a3b",
+            &AgentLoopOutcome::Blocked {
+                reason: "reply cut for streaming without a tool call".to_string(),
+            },
+            34,
+            crate::agent::RambleLedger {
+                cuts: 2,
+                secs: 1829,
+            },
+        );
+        assert_eq!(rambling["ramble_turns"], json!(2));
+        assert_eq!(rambling["ramble_secs"], json!(1829));
+
+        let quiet = attempt_log_entry(
+            AiProvider::LocalLlama,
+            "qwen3.6-35b-a3b",
+            &AgentLoopOutcome::Completed,
+            12,
+            crate::agent::RambleLedger::default(),
+        );
+        assert!(
+            quiet.get("ramble_turns").is_none(),
+            "a hop that paid for no prose invents a zero cost line: {quiet}"
+        );
+    }
+
     /// The crucible regression. A dispatch attempt that ran 13 turns, wrote a
     /// Rust port and then reported "Compiler validation succeeded!" used to be
     /// logged `succeeded: false`, because success was inferred by scanning its
@@ -4341,6 +4822,7 @@ mod tests {
             "glm-5.2",
             &AgentLoopOutcome::Completed,
             55,
+            crate::agent::RambleLedger::default(),
         );
         assert_eq!(entry["succeeded"], json!(true));
         assert_eq!(entry["status_count"], json!(55));
@@ -4363,6 +4845,7 @@ mod tests {
                 reason: "Alibaba Qwen rejected the request (404)".to_string(),
             },
             10,
+            crate::agent::RambleLedger::default(),
         );
         assert_eq!(dead_model["succeeded"], json!(false));
         assert!(
@@ -4380,6 +4863,7 @@ mod tests {
                 reason: "turn budget of 16 exhausted without a final answer".to_string(),
             },
             3,
+            crate::agent::RambleLedger::default(),
         );
         assert_eq!(small["succeeded"], json!(false));
         assert_eq!(small["quality"], json!("ok"));
@@ -4390,6 +4874,7 @@ mod tests {
             "qwen2.5-coder:0.5b",
             &AgentLoopOutcome::Completed,
             9,
+            crate::agent::RambleLedger::default(),
         );
         assert_eq!(degraded["succeeded"], json!(true));
         assert_eq!(degraded["quality"], json!("degraded"));
@@ -4412,6 +4897,7 @@ mod tests {
                 turns: 11,
             },
             42,
+            crate::agent::RambleLedger::default(),
         );
         assert_eq!(entry["succeeded"], json!(false));
         let reason = entry["blocked_reason"].as_str().unwrap();
@@ -5154,6 +5640,48 @@ mod tests {
         assert!(blocks[1].contains("# real file"), "{}", blocks[1]);
     }
 
+    /// The unreadable-source marker is a contract with a reader: run #101 ended
+    /// `success: true` on a 328-line Rust module invented from the model's memory
+    /// of LiteLLM, because the brief said `[Could not read …]` where the Python
+    /// should have been and nothing downstream looked for that sentence. This
+    /// builds the brief the way `build_dispatch_prompt` does — real producer, real
+    /// bytes — and reads it back with the gate's own parser, so the two halves
+    /// cannot drift apart unnoticed.
+    #[test]
+    fn the_gate_reads_back_the_unreadable_source_the_preload_marks() {
+        let tmp = tempfile::tempdir().unwrap();
+        let source = tmp.path().join("litellm").join("router_utils");
+        std::fs::create_dir_all(&source).unwrap();
+        std::fs::write(
+            source.join("real_module.py"),
+            "class PatternUtils:\n    def sorted_patterns(self):\n        return []\n",
+        )
+        .unwrap();
+
+        let files = vec![
+            // The dotted-path bug of run #101: a module named the way Python
+            // spells it is a file that does not exist on disk.
+            "litellm/router_utils.pattern_match_deployments.py".to_string(),
+            "litellm/router_utils/real_module.py".to_string(),
+        ];
+        let blocks = preload_target_files(tmp.path(), &files);
+        let mut prompt = String::from("## Task\nPort the module to Rust.\n");
+        prompt.push_str(&format!("\n{PRELOAD_SECTION_HEADER}\n"));
+        for ctx in &blocks {
+            prompt.push_str(ctx);
+            prompt.push('\n');
+        }
+        prompt.push_str("\n## Constraints\nstd only.\n");
+
+        let unreadable = crate::agent::executor::loop_runner::unreadable_preloads(&prompt);
+        assert_eq!(
+            unreadable,
+            vec!["litellm/router_utils.pattern_match_deployments.py".to_string()],
+            "the file that arrived must not be reported as missing, and the one that \
+             did not must not be silently accepted: {unreadable:?}"
+        );
+    }
+
     /// The truncation cut at a fixed BYTE index. A source file whose 12,000th
     /// byte lands inside a multi-byte character (a `—`, an accented identifier,
     /// a CJK comment — all ordinary in real code) panicked the dispatch thread
@@ -5171,9 +5699,9 @@ mod tests {
         let blocks = preload_target_files(tmp.path(), &["big.rs".to_string()]);
         let one = &blocks[0];
         assert!(
-            one.contains("[truncated, ") && one.contains("bytes total"),
-            "a large file must say it was cut: {}",
-            &one[..one.len().min(120)]
+            one.contains("the first 11999 bytes of big.rs") && one.contains("16002 bytes"),
+            "a large file must say how much of it was cut: {}",
+            &one[..one.len().min(200)]
         );
         assert!(
             !one.contains("\u{fffd}"),
@@ -5181,6 +5709,126 @@ mod tests {
         );
         // No panic, and the ASCII tail before the cut survived intact.
         assert!(one.contains(&"a".repeat(4_000)));
+    }
+
+    /// Live convert24: the dispatch preloaded a 17,626-byte Python module at the
+    /// 12,000-byte cap and marked the cut with `... [truncated, 17626 bytes
+    /// total]` — no path, no line numbers, nothing to act on. The model's next
+    /// turn was "The source file was already provided in the task description,
+    /// but it was truncated. Let me look at the workspace to find the full
+    /// source," then three `File or directory not found` errors for paths it had
+    /// invented, then a write of a port it could not have grounded. A marker
+    /// that says only "this is incomplete" reads as "the brief is broken", and
+    /// the model goes looking for a copy that does not exist. The cut has to
+    /// name the path it cut and the exact range that follows it, because
+    /// `read_file` can fetch it.
+    #[test]
+    fn a_truncated_preload_names_the_path_and_the_line_range_that_follows() {
+        let tmp = tempfile::tempdir().unwrap();
+        // A nested path: the recovery line must restate the whole thing, since
+        // that is what the model has to pass to read_file.
+        let clone_dir = tmp.path().join("litellm").join("litellm");
+        std::fs::create_dir_all(&clone_dir).unwrap();
+        let body: String = (1..=1200).map(|i| format!("// row {i:05}\n")).collect();
+        std::fs::write(clone_dir.join("_service_logger.py"), &body).unwrap();
+        let file = "litellm/litellm/_service_logger.py";
+
+        let blocks = preload_target_files(tmp.path(), &[file.to_string()]);
+        let one = &blocks[0];
+
+        // Where did it stop? Derive the last preloaded row from the bytes rather
+        // than duplicating the cap arithmetic, so the assertion tests the marker
+        // against the block it was written for.
+        let last_visible = (1..=1200usize)
+            .rev()
+            .find(|i| one.contains(&format!("// row {i:05}")))
+            .expect("some rows preload before the cap");
+        assert!(last_visible < 1200, "the fixture must be over the cap");
+
+        assert!(
+            one.contains(&format!("relativeFilePath=\"{file}\"")),
+            "the marker must hand back the exact path, not only the heading above the fence: {one}"
+        );
+        assert!(
+            one.contains(&format!("startLine={}", last_visible + 1)),
+            "and the first line it did NOT include, so the range is directly usable: {one}"
+        );
+        assert!(
+            one.contains("read the rest with read_file"),
+            "and name the tool that fetches it: {one}"
+        );
+        // `read_file` answers one bounded window per call and names the next
+        // startLine itself. A preload note that promised `endLine=1200` would be
+        // promising a window the tool clamps, so the instruction has to be the
+        // chain rather than a range.
+        assert!(
+            !one.contains("endLine="),
+            "no promised end line the read cannot return in one window: {one}"
+        );
+        assert!(
+            one.contains("the file has 1200 lines"),
+            "but it must state the true size, so the model knows when it has \
+             reached the end: {one}"
+        );
+        // The two lies this replaces: the file is not broken, and there is no
+        // other copy of it to find.
+        assert!(
+            one.contains("file on disk is complete"),
+            "say the bytes are there, so the model reads instead of hunting: {one}"
+        );
+        assert!(
+            !one.contains("Could not read"),
+            "a capped preload is not a failed read: {one}"
+        );
+    }
+
+    /// The cap itself is the second half of the same complaint. An operator who
+    /// wants the whole module in the brief — with llama.cpp's 131k window sitting
+    /// behind it — had no way to say so, and `0` meant "give me nothing".
+    #[test]
+    fn the_preload_cap_is_adjustable_and_can_be_removed() {
+        let tmp = tempfile::tempdir().unwrap();
+        let body: String = (1..=1200).map(|i| format!("// row {i:05}\n")).collect();
+        std::fs::write(tmp.path().join("module.py"), &body).unwrap();
+        let files = vec!["module.py".to_string()];
+
+        let capped = preload_target_files_capped(tmp.path(), &files, 12_000);
+        assert!(
+            capped[0].contains("startLine="),
+            "a cap below the file size truncates and says so"
+        );
+        let wide = preload_target_files_capped(tmp.path(), &files, usize::MAX);
+        assert!(
+            !wide[0].contains("startLine=") && wide[0].contains("// row 01200"),
+            "an unbounded cap preloads the whole file: {}",
+            &wide[0][..wide[0].len().min(200)]
+        );
+        // A cap that raises the default must not report a cut either.
+        let raised = preload_target_files_capped(tmp.path(), &files, 40_000);
+        assert!(!raised[0].contains("startLine="), "40k holds a 15.6k file");
+
+        assert_eq!(parse_preload_cap(None), 12_000);
+        assert_eq!(parse_preload_cap(Some("40000")), 40_000);
+        assert_eq!(parse_preload_cap(Some(" 40000 ")), 40_000);
+        for off in [
+            "0",
+            "off",
+            "none",
+            "unbounded",
+            "unlimited",
+            "infinite",
+            "UNBOUNDED",
+        ] {
+            assert_eq!(
+                parse_preload_cap(Some(off)),
+                usize::MAX,
+                "`{off}` must mean no cap, like the wall-clock setting it mirrors"
+            );
+        }
+        // A typo is not a choice: it falls back to the default rather than
+        // silently preloading every crate file whole.
+        assert_eq!(parse_preload_cap(Some("twelve thousand")), 12_000);
+        assert_eq!(parse_preload_cap(Some("")), 12_000);
     }
 
     #[test]
@@ -5231,6 +5879,36 @@ mod tests {
         assert_eq!(chain[0].1, "qwen2.5-coder:14b");
         // The member's original (cloud) provider remains available as fallback.
         assert!(chain.iter().any(|(p, _)| *p == AiProvider::AlibabaQwen));
+    }
+
+    #[test]
+    fn selected_local_llama_provider_is_inserted_when_absent_from_the_chain() {
+        // Regression: a user-selected provider that is never otherwise seeded
+        // into the chain. LocalLlama needs no credentials, so configured_providers
+        // omits it and steps 1-6 never add it — the old step 7 only *reordered* a
+        // provider already present, so "Local llama.cpp" silently lost to the
+        // member's cloud route and (under single-model dispatch) the doomed Alibaba
+        // entry became the sole attempt. Fixing step 7 to insert-when-absent makes
+        // the selected provider lead the chain; reverting that branch fails this.
+        std::env::remove_var("VELOCITY_SINGLE_MODEL_DISPATCH");
+        let tmp = tempfile::tempdir().unwrap();
+        let vel = tmp.path().join(".velocity");
+        std::fs::create_dir_all(&vel).unwrap();
+        std::fs::write(
+            vel.join("workspace-preferences.json"),
+            "{\"selected_model\":\"qwen3.6-35b-a3b\",\"provider\":\"Local llama.cpp\"}",
+        )
+        .unwrap();
+        let mut member: ExpertMember = serde_json::from_str("{}").unwrap();
+        member.provider = AiProvider::AlibabaQwen;
+        let chain = build_fallback_chain(&member, tmp.path());
+        assert_eq!(
+            chain.first().map(|(p, _)| *p),
+            Some(AiProvider::LocalLlama),
+            "a selected provider absent from the chain must still lead it, got {:?}",
+            chain.iter().map(|(p, _)| p.slug()).collect::<Vec<_>>()
+        );
+        assert_eq!(chain[0].1, "qwen3.6-35b-a3b");
     }
 
     /// P4 guard: `amend_running_team` must queue an unconditional broadcast

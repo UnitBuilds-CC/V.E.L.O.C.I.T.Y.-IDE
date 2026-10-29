@@ -438,6 +438,15 @@ pub struct SectorTotals {
     /// Units that still exceed `max_unit_bytes` after chunking — a single line
     /// too long to split. These cannot be handed to a model whole.
     pub units_over_ceiling: usize,
+    /// The `max_unit_bytes` this plan was actually chunked against.
+    ///
+    /// Recorded rather than re-read from the default because the count above is
+    /// meaningless without it: `units_over_ceiling` means units over *that*
+    /// ceiling, and a note that quotes a different number — as the preload cap
+    /// once was quoted here — sends an operator chasing a limit the chunker
+    /// never applied. Old persisted plans predate the field, so
+    /// [`SectorPlan::from_json`] reads it leniently.
+    pub unit_ceiling_bytes: u64,
     /// Files excluded as generated, minified or vendored.
     pub generated_skipped: usize,
     pub generated_bytes: u64,
@@ -573,6 +582,7 @@ impl SectorPlan {
                 "chunks": self.totals.chunks,
                 "cycles_broken": self.totals.cycles_broken,
                 "units_over_ceiling": self.totals.units_over_ceiling,
+                "unit_ceiling_bytes": self.totals.unit_ceiling_bytes,
                 "generated_skipped": self.totals.generated_skipped,
                 "generated_bytes": self.totals.generated_bytes,
                 "generated_examples": self.totals.generated_examples,
@@ -639,6 +649,13 @@ impl SectorPlan {
             chunks: usz_v(t, "chunks")?,
             cycles_broken: usz_v(t, "cycles_broken")?,
             units_over_ceiling: usz_v(t, "units_over_ceiling")?,
+            // Lenient for the same reason as the scope fields below: a plan
+            // written before this number was recorded still has to resume, and
+            // the only ceiling the chunker has ever run at is its default.
+            unit_ceiling_bytes: t
+                .get("unit_ceiling_bytes")
+                .and_then(|x| x.as_u64())
+                .unwrap_or_else(|| SectorOptions::default().max_unit_bytes),
             generated_skipped: usz_v(t, "generated_skipped")?,
             generated_bytes: u64_v(t, "generated_bytes")?,
             generated_examples: strs_v(t, "generated_examples")?,
@@ -2020,6 +2037,7 @@ fn summarise(
     t.largest_wave = plan.waves.iter().map(|w| w.len()).max().unwrap_or(0);
     t.cycles_broken = cycles_broken;
     t.parallelism = parallelism;
+    t.unit_ceiling_bytes = opts.max_unit_bytes;
     t.generated_skipped = skipped.files;
     t.generated_bytes = skipped.bytes;
     t.generated_examples = skipped.examples.clone();
@@ -2658,6 +2676,13 @@ mod tests {
         });
         let plan = SectorPlan::from_json(&v).expect("an older plan must still load");
         assert_eq!(plan.totals.outside_root_files, 0);
+        // The unit ceiling was not recorded either, and a note that named 0
+        // would be a fresh lie rather than an old one: fall back to the ceiling
+        // the chunker has always used.
+        assert_eq!(
+            plan.totals.unit_ceiling_bytes,
+            SectorOptions::default().max_unit_bytes
+        );
         assert!(plan.totals.root_declined.is_empty());
         // Absent means "no scope accounting was recorded", which must not be
         // reported as "this plan dropped everything".
@@ -2672,6 +2697,30 @@ mod tests {
         assert_eq!(partial.totals.outside_root_files, 3);
         assert!((partial.totals.root_coverage() - 0.25).abs() < 1e-9);
         assert!(partial.totals.feasibility().contains("SCOPE WARNING"));
+    }
+
+    /// The over-ceiling count is meaningless without the number it is a count
+    /// against, and the mission note quotes that number to an operator. So it is
+    /// recorded in the plan — and a plan chunked at a non-default ceiling has to
+    /// come back reading what it was chunked at, not the current default.
+    #[test]
+    fn the_plan_records_the_unit_ceiling_it_was_chunked_against() {
+        let d = tmp();
+        let root = d.path();
+        fs::create_dir_all(root.join("pkg")).unwrap();
+        fs::write(root.join("pkg/a.py"), "value = 1\n").unwrap();
+        let opts = SectorOptions {
+            max_unit_bytes: 7_777,
+            ..Default::default()
+        };
+        let plan = plan_sectors_scoped(root, &opts, 1);
+        assert_eq!(plan.totals.unit_ceiling_bytes, 7_777);
+        let back = SectorPlan::from_json(&plan.to_json()).unwrap();
+        assert_eq!(
+            back.totals.unit_ceiling_bytes, 7_777,
+            "a resumed plan must name the ceiling its own units were measured against"
+        );
+        assert_eq!(back.totals, plan.totals);
     }
 
     #[test]

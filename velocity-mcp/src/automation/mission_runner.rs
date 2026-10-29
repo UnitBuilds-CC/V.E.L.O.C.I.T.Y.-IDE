@@ -52,11 +52,15 @@ use std::time::{Duration, Instant};
 /// Bytes above which [`crate::registry::team_tools`] truncates a pre-loaded
 /// file in a dispatch prompt.
 ///
-/// Mirrored rather than shared because the constant lives inline in that
-/// handler. Passing a file larger than this in `files` does not fail loudly —
-/// it silently hands the model the first 12 KB and a `... [truncated]` marker,
-/// which for a porting task means porting a file nobody has read.
-/// [`split_units_for_prompt`] exists to keep that from happening.
+/// The *default*: the dispatcher reads `VELOCITY_PRELOAD_MAX_BYTES` per call, so
+/// what a run actually preloads comes from [`prompt_preload_cap_bytes`], and this
+/// constant is kept equal to the default by a test rather than by sharing the
+/// number. Passing a file larger than the live cap in `files` does not fail loudly
+/// — the model gets the first part plus a note naming the path and the `read_file`
+/// `startLine` that returns the rest, so the loss is recoverable only if the run
+/// actually reads. [`split_units_for_prompt`] keeps even that from happening by
+/// never pre-loading an over-cap unit; an operator who raises the cap only makes
+/// it defer units it no longer has to, which is the safe direction.
 pub const PROMPT_PRELOAD_CAP_BYTES: u64 = 12_000;
 
 /// Default per-gate wall-clock ceiling.
@@ -1245,21 +1249,62 @@ pub fn target_rel(unit: &SectorUnit, source_root: &str, lang: &str) -> String {
     format!("src/{dir}{file}")
 }
 
+/// The byte ceiling a dispatch actually preloads to *right now*.
+///
+/// [`PROMPT_PRELOAD_CAP_BYTES`] is that cap's default, but the dispatcher reads
+/// `VELOCITY_PRELOAD_MAX_BYTES` on every call, so this is the only number the
+/// "pre-loaded below in full" claim can honestly be tested against. Reading it
+/// rather than the constant is what keeps an operator who *lowers* the cap from
+/// getting a task that swears the source arrived whole when the brief cut it.
+pub fn prompt_preload_cap_bytes() -> u64 {
+    crate::registry::team_tools::preload_max_bytes() as u64
+}
+
+/// The note a plan earns when a unit is one unbreakable line longer than the
+/// ceiling the chunker was told to fit.
+///
+/// Extracted because the sentence names a number, and the number it used to name
+/// was `PROMPT_PRELOAD_CAP_BYTES` — the preload cap — while `units_over_ceiling`
+/// counts units over `SectorOptions::max_unit_bytes`. Two different limits: the
+/// note told an operator to raise a cap that had nothing to do with the units
+/// being reported. Reading the ceiling out of the plan is what keeps the count
+/// and the number it is a count against from ever parting company.
+fn over_ceiling_note(totals: &crate::automation::sectors::SectorTotals) -> Option<String> {
+    if totals.units_over_ceiling == 0 {
+        return None;
+    }
+    Some(format!(
+        "{} units are a single line longer than the {}-byte per-unit ceiling this plan was chunked against and cannot be handed to a model whole",
+        totals.units_over_ceiling, totals.unit_ceiling_bytes
+    ))
+}
+
 /// Split a sector's units into what is safe to pre-load into the dispatch
 /// prompt and what the agent must read itself.
 ///
-/// The split exists because `team_dispatch` truncates any pre-loaded file above
-/// [`PROMPT_PRELOAD_CAP_BYTES`] with a `... [truncated]` marker and still
-/// reports success. For a porting task that is silent data loss: the model ports
-/// the first third of a file and nobody finds out until the parity review, if
-/// then. Partial units are never pre-loaded either — a line span is not a file,
-/// and pre-loading the whole file hands over exactly the context the chunker was
-/// built to avoid.
+/// The split exists because `team_dispatch` pastes at most
+/// [`prompt_preload_cap_bytes`] of each pre-loaded file and marks the cut with a
+/// note naming the path and the `read_file` `startLine` that returns the rest.
+/// That note is what makes the loss recoverable for an agent that goes and
+/// reads, but a porting task whose contract is "port this unit whole" still gets
+/// silent data loss if it does not: the model ports the first third of a file
+/// and nobody finds out until the parity review, if then. Partial units are
+/// never pre-loaded either — a line span is not a file, and pre-loading the
+/// whole file hands over exactly the context the chunker was built to avoid.
 pub fn split_units_for_prompt(units: &[SectorUnit]) -> (Vec<&SectorUnit>, Vec<&SectorUnit>) {
+    split_units_for_prompt_at_cap(units, prompt_preload_cap_bytes())
+}
+
+/// The split with its ceiling passed in, so a test can pin a size instead of
+/// inheriting whatever the ambient environment happens to set.
+fn split_units_for_prompt_at_cap(
+    units: &[SectorUnit],
+    cap_bytes: u64,
+) -> (Vec<&SectorUnit>, Vec<&SectorUnit>) {
     let mut preload = Vec::new();
     let mut deferred = Vec::new();
     for u in units {
-        if !u.is_partial() && u.bytes <= PROMPT_PRELOAD_CAP_BYTES {
+        if !u.is_partial() && u.bytes <= cap_bytes {
             preload.push(u);
         } else {
             deferred.push(u);
@@ -2299,7 +2344,7 @@ fn run_sector(
             break;
         }
 
-        let preloaded = !unit.is_partial() && unit.bytes <= PROMPT_PRELOAD_CAP_BYTES;
+        let preloaded = !unit.is_partial() && unit.bytes <= prompt_preload_cap_bytes();
         let task = porting_task(
             unit,
             manifest,
@@ -3060,12 +3105,8 @@ pub fn run_mission(
             plan.totals.cycles_broken
         ));
     }
-    if plan.totals.units_over_ceiling > 0 {
-        notes.push(format!(
-            "{} units are a single line longer than the {}-byte ceiling and cannot be handed to a model whole",
-            plan.totals.units_over_ceiling,
-            PROMPT_PRELOAD_CAP_BYTES
-        ));
+    if let Some(note) = over_ceiling_note(&plan.totals) {
+        notes.push(note);
     }
 
     // ── Porting ────────────────────────────────────────────────────
@@ -3662,10 +3703,9 @@ mod tests {
         assert_eq!(target_rel(&u3, "litellm", "rust"), "src/Dockerfile.rs");
     }
 
-    /// The load-bearing one. `team_dispatch` truncates a pre-loaded file above
-    /// 12 KB and still reports success, so pre-loading a big file means porting
-    /// a file nobody read. Chunks are never pre-loaded either: the agent gets a
-    /// whole file or nothing.
+    /// The load-bearing one. A pre-loaded file the dispatcher cuts short becomes a
+    /// port of a file nobody read, so a chunk is never pre-loaded and neither is
+    /// anything over the ceiling: the agent gets a whole file or nothing.
     #[test]
     fn split_units_for_prompt_never_preloads_a_chunk_or_an_oversized_file() {
         let units = vec![
@@ -3673,7 +3713,7 @@ mod tests {
             whole("big.py", PROMPT_PRELOAD_CAP_BYTES + 1),
             unit("huge.py", 9_000, 2, 3, 100, 200),
         ];
-        let (preload, deferred) = split_units_for_prompt(&units);
+        let (preload, deferred) = split_units_for_prompt_at_cap(&units, PROMPT_PRELOAD_CAP_BYTES);
         assert_eq!(preload.len(), 1, "{preload:?}");
         assert_eq!(preload[0].rel, "small.py");
         assert_eq!(deferred.len(), 2);
@@ -3684,9 +3724,61 @@ mod tests {
     #[test]
     fn a_file_exactly_at_the_cap_is_still_preloaded() {
         let units = vec![whole("edge.py", PROMPT_PRELOAD_CAP_BYTES)];
-        let (preload, deferred) = split_units_for_prompt(&units);
+        let (preload, deferred) = split_units_for_prompt_at_cap(&units, PROMPT_PRELOAD_CAP_BYTES);
         assert_eq!(preload.len(), 1);
         assert!(deferred.is_empty());
+    }
+
+    /// The ceiling is adjustable, and the task text swears the source arrived
+    /// whole, so the split has to follow the number the dispatcher will actually
+    /// use. Pinning the smaller cap here is what an operator's
+    /// `VELOCITY_PRELOAD_MAX_BYTES=4000` does to a 9 KB unit: deferred and read
+    /// by the agent, never pre-loaded under a claim that it came in full.
+    #[test]
+    fn a_lowered_ceiling_defers_units_the_default_would_have_preloaded() {
+        let units = vec![
+            whole("mid.py", 9_000),
+            whole("tiny.py", 100),
+            whole("big.py", PROMPT_PRELOAD_CAP_BYTES + 1),
+        ];
+        let (preload, deferred) = split_units_for_prompt_at_cap(&units, 4_000);
+        assert_eq!(preload.len(), 1, "{preload:?}");
+        assert_eq!(preload[0].rel, "tiny.py");
+        assert!(deferred.iter().any(|u| u.rel == "mid.py"));
+        assert!(deferred.iter().any(|u| u.rel == "big.py"));
+    }
+
+    /// `PROMPT_PRELOAD_CAP_BYTES` is a mirror of the dispatcher's default, not a
+    /// second source of truth. This is the check that keeps the mirror from
+    /// drifting; the live number comes from [`prompt_preload_cap_bytes`].
+    #[test]
+    fn the_mirrored_default_equals_the_dispatchers_own() {
+        assert_eq!(
+            PROMPT_PRELOAD_CAP_BYTES as usize,
+            crate::registry::team_tools::DEFAULT_PRELOAD_MAX_BYTES
+        );
+    }
+
+    /// The over-ceiling note sends an operator to a limit they can raise, so the
+    /// number it names has to be the ceiling those units were actually measured
+    /// against. `units_over_ceiling` counts against the chunker's per-unit
+    /// ceiling; the prompt preload cap is a different, smaller number, and
+    /// quoting it here made the note a dead end.
+    #[test]
+    fn the_over_ceiling_note_names_the_ceiling_the_plan_was_chunked_at() {
+        let totals = SectorTotals {
+            units_over_ceiling: 2,
+            unit_ceiling_bytes: 7_777,
+            ..Default::default()
+        };
+        let note = over_ceiling_note(&totals).expect("two over-ceiling units must be reported");
+        assert!(note.contains("2 units"), "{note}");
+        assert!(note.contains("7777"), "{note}");
+        assert!(
+            !note.contains(&PROMPT_PRELOAD_CAP_BYTES.to_string()),
+            "the preload cap is not the ceiling these units were measured against: {note}"
+        );
+        assert!(over_ceiling_note(&SectorTotals::default()).is_none());
     }
 
     #[test]

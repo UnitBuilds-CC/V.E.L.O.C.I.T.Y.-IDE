@@ -362,6 +362,7 @@ pub fn fallback_provider(current: AiProvider) -> AiProvider {
         AiProvider::OpenRouter => AiProvider::AzureOpenAi,
         AiProvider::AzureOpenAi => AiProvider::LocalOllama,
         AiProvider::LocalOllama => AiProvider::CloudflareWorkersAi,
+        AiProvider::LocalLlama => AiProvider::LocalOllama,
         AiProvider::OpenAI => AiProvider::CloudflareWorkersAi,
         AiProvider::Anthropic => AiProvider::CloudflareWorkersAi,
         AiProvider::GoogleVertex => AiProvider::CloudflareWorkersAi,
@@ -386,6 +387,7 @@ pub fn default_provider_model(provider: AiProvider) -> String {
         AiProvider::GoogleVertex => "gemini-1.5-pro".to_string(),
         AiProvider::AzureOpenAi => "gpt-4o".to_string(),
         AiProvider::LocalOllama => "qwen2.5-coder:0.5b".to_string(),
+        AiProvider::LocalLlama => "qwen3.6:35b-a3b".to_string(),
         AiProvider::Deepseek => "deepseek-chat".to_string(),
         AiProvider::AlibabaQwen => "qwen-max".to_string(),
         AiProvider::AwsBedrock => "anthropic.claude-3-sonnet-20240229-v1:0".to_string(),
@@ -965,6 +967,15 @@ pub fn fetch_anthropic_models(api_key: &str) -> Result<Vec<ModelInfo>, String> {
 }
 
 /// AWS Bedrock — uses BEDROCK_PROXY_URL as an OpenAI-compatible gateway.
+pub fn fetch_llama_models() -> Result<Vec<ModelInfo>, String> {
+    let host =
+        std::env::var("LLAMA_CPP_HOST").unwrap_or_else(|_| "http://localhost:8080".to_string());
+    let base = host.trim_end_matches('/');
+    // llama-server ignores auth; the dummy bearer only keeps the generic
+    // OpenAI-compatible fetcher from short-circuiting on an empty key.
+    fetch_openai_compatible_models(base, "llama-cpp-local", "Local llama.cpp")
+}
+
 pub fn fetch_bedrock_models() -> Result<Vec<ModelInfo>, String> {
     if let Ok(proxy_url) = std::env::var("BEDROCK_PROXY_URL") {
         if !proxy_url.trim().is_empty() {

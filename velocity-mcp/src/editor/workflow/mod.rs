@@ -679,9 +679,15 @@ fn run_step(
                 max_turns: None,
                 // A workflow runs unattended and this step has no cancel
                 // channel, so without a budget a stalled provider call would
-                // hang the whole workflow forever.
-                budget: Some(crate::agent::unattended_budget()),
+                // hang the whole workflow forever — which is why the loop's
+                // stall window stays on even when the operator removes the
+                // wall-clock backstop.
+                budget: crate::agent::unattended_budget(),
                 requires_artifact: false,
+                // A workflow step edits, runs and records; the far families stay
+                // one `request_tool_groups` call away.
+                tool_surface: crate::registry::ToolSurface::code_and_workspace(),
+                ramble: crate::agent::RambleLedger::default(),
             };
             let result = crate::agent::run_headless_subagent(request);
             // Success is the loop's structured outcome, not a substring hunt

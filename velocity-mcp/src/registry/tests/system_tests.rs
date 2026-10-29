@@ -301,6 +301,42 @@ fn read_file_errors_on_missing_file() {
     assert!(result.is_err());
 }
 
+/// A dispatch brief that says "read the rest with read_file at this path and
+/// this line" is only an instruction if the path is reachable. The source a port
+/// is built from lives under `.velocity/clones/<repo>/` — which `grep_search`
+/// and the site-map walker both skip, so an agent that has only grepped believes
+/// the clone is invisible. One test holds both halves: the ranged read works, and
+/// it works at the exact path shape the preload note names.
+#[test]
+fn a_cloned_source_file_is_readable_by_the_path_a_truncated_preload_names() {
+    let (_temp, root) = setup_root();
+    let clone = root
+        .join(".velocity")
+        .join("clones")
+        .join("litellm")
+        .join("litellm");
+    fs::create_dir_all(&clone).unwrap();
+    let body: String = (1..=400).map(|i| format!("def f{i}(): pass\n")).collect();
+    fs::write(clone.join("_service_logger.py"), body).unwrap();
+
+    let output = call_tool_in_workspace(
+        &root,
+        "read_file",
+        &json!({
+            "relativeFilePath": ".velocity/clones/litellm/litellm/_service_logger.py",
+            "startLine": 201,
+        }),
+    )
+    .unwrap();
+
+    assert!(
+        output.contains("Lines 201-"),
+        "the note's next startLine has to land in a real window: {}",
+        &output[..output.len().min(200)]
+    );
+    assert!(output.contains("def f201"), "{output}");
+}
+
 /// A model repairing one line of a 25 KB port currently has to ask for the
 /// whole file, and the context budget elides most of what comes back — so the
 /// verbatim `oldString` `edit_file` demands is unobtainable and the only move
@@ -904,17 +940,18 @@ fn an_insert_the_file_lacks_is_still_written_at_its_unique_site() {
     );
 }
 
-/// A batch is all-or-nothing, so one replayed edit in a batch of two refuses the
-/// other one with it. That is the contract every other refusal here follows, and
-/// it is the honest one: reporting "applied 2 edit(s)" when one of them was
-/// skipped is the lie the success message exists not to tell.
+/// A refusal refuses itself. Run #82 is the cost of the older rule: a repair turn
+/// whose batch carried one already-landed edit lost the *other* edit with it, the
+/// file stayed exactly as it was, and the model re-sent the same batch for hours
+/// because that is the only answer it had been given. The reply now says which
+/// edit landed and which did not, so the next turn has one thing to fix.
 #[test]
-fn a_replayed_edit_refuses_its_whole_batch_and_leaves_the_other_edit_out() {
+fn a_replayed_edit_refuses_itself_and_lands_the_edit_beside_it() {
     let (_temp, root) = setup_root();
     let before = "fn a() {\n    let x = 1;\n    let _ = self.save_data();\n}\n\nfn b() {\n    let y = 2;\n}\n";
     fs::write(root.join("port.txt"), before).unwrap();
 
-    let err = call_tool_in_workspace(
+    let ok = call_tool_in_workspace(
         &root,
         "edit_file",
         &json!({
@@ -932,23 +969,280 @@ fn a_replayed_edit_refuses_its_whole_batch_and_leaves_the_other_edit_out() {
             "context": "two changes"
         }),
     )
-    .err()
-    .map(|e| e.to_string())
-    .unwrap_or_else(|| "one replayed edit has to refuse the batch".to_string());
+    .unwrap_or_else(|e| panic!("the edit that located has to reach the file: {e}"));
 
-    assert!(err.contains("no edits were applied"), "{err}");
     assert!(
-        err.contains("edit 1: this change is already on disk"),
-        "{err}"
+        ok.contains("applied 1 of 2 edit(s)"),
+        "the count says how much of the batch landed: {ok}"
     );
     assert!(
-        !err.contains("edit 2:"),
-        "the second edit was applicable and is not blamed: {err}"
+        ok.contains("edit 1: this change is already on disk"),
+        "and the refused edit is named with its own reason: {ok}"
+    );
+    assert!(
+        !ok.contains("edit 2:"),
+        "the edit that landed is not blamed: {ok}"
     );
     assert_eq!(
         fs::read_to_string(root.join("port.txt")).unwrap(),
-        before,
-        "a refused batch leaves every byte alone"
+        before.replace("    let y = 2;", "    let y = compute();"),
+        "the surviving edit is on disk and nothing else moved"
+    );
+}
+
+/// The shape run #82 died in: a Rust repair batch carrying one needle that matches
+/// two byte-identical blocks in the ported file — which is what a faithful port of
+/// a Python module with two copies of the same loop produces. The two edits beside
+/// it located cleanly, so they belong on disk; only the ambiguous one is refused,
+/// and the reply has to say both halves.
+#[test]
+fn an_ambiguous_edit_lands_the_two_edits_either_side_of_it() {
+    let (_temp, root) = setup_root();
+    let src = "fn first() {\n    let id = key as usize;\n    if !emitted.contains(&id) {\n        emitted.insert(id);\n    }\n}\n\nfn second() {\n    let id = key as usize;\n    if !emitted.contains(&id) {\n        emitted.insert(id);\n    }\n}\n";
+    fs::write(root.join("port.rs"), src).unwrap();
+
+    let ok = call_tool_in_workspace(
+        &root,
+        "edit_file",
+        &json!({
+            "relativeFilePath": "port.rs",
+            "edits": [
+                { "oldString": "fn first() {", "newString": "fn first_checked() {" },
+                {
+                    "oldString": "    let id = key as usize;\n    if !emitted.contains(&id) {",
+                    "newString": "    let id = key as usize;\n    if !seen_before(&id) {"
+                },
+                { "oldString": "fn second() {", "newString": "fn second_checked() {" }
+            ],
+            "context": "rename both entry points and tighten the guard"
+        }),
+    )
+    .unwrap_or_else(|e| panic!("the two edits that located have to reach the file: {e}"));
+
+    assert!(ok.contains("applied 2 of 3 edit(s)"), "{ok}");
+    assert!(
+        ok.contains("edit 2:") && ok.contains("matches 2 places"),
+        "and the refused one keeps its own number and reason: {ok}"
+    );
+    let on_disk = fs::read_to_string(root.join("port.rs")).unwrap();
+    assert!(
+        on_disk.contains("fn first_checked() {") && on_disk.contains("fn second_checked() {"),
+        "both neighbours are on disk:\n{on_disk}"
+    );
+    assert_eq!(
+        on_disk.matches("if !emitted.contains(&id) {").count(),
+        2,
+        "and neither copy of the ambiguous block was rewritten:\n{on_disk}"
+    );
+}
+
+/// The advice has to be obeyable, and "widen until unique" is not when the quoted
+/// window shows two blocks that are identical inside it — which is the shape run
+/// #82 was stuck in for five hours. The refusal now counts the lines the sites
+/// share and names the first line that parts them, so the needle has somewhere to
+/// reach.
+#[test]
+fn an_ambiguous_edit_names_the_line_that_first_parts_the_two_sites() {
+    let (_temp, root) = setup_root();
+    let src = "fn first() {\n    let id = key as usize;\n    emit(&id);\n    total += 1;\n}\n\nfn second() {\n    let id = key as usize;\n    emit(&id);\n    spans += 1;\n}\n";
+    fs::write(root.join("lib.txt"), src).unwrap();
+
+    let err = call_tool_in_workspace(
+        &root,
+        "edit_file",
+        &json!({
+            "relativeFilePath": "lib.txt",
+            "edits": [{
+                "oldString": "    let id = key as usize;\n    emit(&id);",
+                "newString": "    let id = key as usize;\n    note(&id);\n    emit(&id);"
+            }]
+        }),
+    )
+    .expect_err("two matches is a refusal, not a guess")
+    .to_string();
+
+    assert!(err.contains("matches 2 places"), "{err}");
+    assert!(
+        err.contains("identical for the 0 line(s) after the match"),
+        "it says how far the two runs are the same: {err}"
+    );
+    assert!(
+        err.contains("line 4 (`total += 1;`)") && err.contains("line 10 (`spans += 1;`)"),
+        "and names the first line that parts them at each site: {err}"
+    );
+    assert!(
+        err.contains("Widen the `oldString` down to reach that line"),
+        "so the instruction has a target: {err}"
+    );
+}
+
+/// The same walk runs upward: when the two sites are the last thing in the file,
+/// everything after both is nothing, and the only difference sits above them.
+#[test]
+fn an_ambiguous_edit_widens_upward_when_the_file_ends_below_both_sites() {
+    let (_temp, root) = setup_root();
+    let src = "fn a() {\n    let v = 1;\n}\nfn b() {\n    let v = 1;\n}\n";
+    fs::write(root.join("lib.txt"), src).unwrap();
+
+    let err = call_tool_in_workspace(
+        &root,
+        "edit_file",
+        &json!({
+            "relativeFilePath": "lib.txt",
+            "edits": [{ "oldString": "    let v = 1;", "newString": "    let v = 1 + delta;" }]
+        }),
+    )
+    .expect_err("two matches is a refusal, not a guess")
+    .to_string();
+
+    assert!(
+        err.contains("identical for the 0 line(s) before the match"),
+        "{err}"
+    );
+    assert!(
+        err.contains("line 1 (`fn a() {`)") && err.contains("line 4 (`fn b() {`)"),
+        "{err}"
+    );
+    assert!(
+        err.contains("Widen the `oldString` up to reach that line"),
+        "{err}"
+    );
+}
+
+/// Naming the parting line is only half the instruction: the model has to put
+/// the lines between the match and that line into the `oldString`, and the two
+/// blocks quoted two lines either side never showed them. So the blocks are
+/// stretched to reach it when the shared run is short enough to paste, and the
+/// refusal says the copy is available instead of asking for a memory of it.
+#[test]
+fn an_ambiguous_edit_quotes_the_lines_between_the_match_and_the_line_that_parts_them() {
+    let (_temp, root) = setup_root();
+    let src = "    prep();\n    let id = key;\n    a();\n    b();\n    c();\n    total += 1;\n\n    prep();\n    let id = key;\n    a();\n    b();\n    c();\n    spans += 1;\n";
+    fs::write(root.join("lib.txt"), src).unwrap();
+
+    let err = call_tool_in_workspace(
+        &root,
+        "edit_file",
+        &json!({
+            "relativeFilePath": "lib.txt",
+            "edits": [{
+                "oldString": "    let id = key;",
+                "newString": "    let id = key;\n    note();"
+            }]
+        }),
+    )
+    .expect_err("two matches is a refusal, not a guess")
+    .to_string();
+
+    assert!(
+        err.contains("identical for the 3 line(s) after the match"),
+        "{err}"
+    );
+    let first_block = err
+        .split("[line 1]\n")
+        .nth(1)
+        .unwrap_or_default()
+        .split("\n[line 7]")
+        .next()
+        .unwrap_or_default()
+        .to_string();
+    assert!(
+        first_block.contains("    total += 1;"),
+        "the first block is stretched down to the parting line: {err}"
+    );
+    let second_block = err
+        .split("[line 7]\n")
+        .nth(1)
+        .unwrap_or_default()
+        .to_string();
+    assert!(
+        second_block.contains("    spans += 1;"),
+        "and so is the second: {err}"
+    );
+    assert!(
+        err.contains("both blocks above already carry"),
+        "and it tells the model the copy is there for the taking: {err}"
+    );
+}
+
+/// Past a quoteable span, stretching the block would paste most of the file to
+/// hand over one line, so the refusal stops pretending the copy is nearby and
+/// names the read that returns it -- a range in the file the tool is refusing to
+/// guess at, which is the only thing the model can actually issue.
+#[test]
+fn an_ambiguous_edit_names_the_read_that_reaches_a_distant_parting_line() {
+    let (_temp, root) = setup_root();
+    let steps = "    step();\n".repeat(30);
+    let src = format!(
+        "    prep();\n    let v = 1;\n{steps}    total += 1;\n\n    prep();\n    let v = 1;\n{steps}    spans += 1;\n"
+    );
+    fs::write(root.join("lib.txt"), &src).unwrap();
+
+    let err = call_tool_in_workspace(
+        &root,
+        "edit_file",
+        &json!({
+            "relativeFilePath": "lib.txt",
+            "edits": [{ "oldString": "    let v = 1;", "newString": "    let v = 1 + delta;" }]
+        }),
+    )
+    .expect_err("two matches is a refusal, not a guess")
+    .to_string();
+
+    assert!(
+        err.contains("identical for the 30 line(s) after the match"),
+        "{err}"
+    );
+    let first_block = err
+        .split("[line 1]\n")
+        .nth(1)
+        .unwrap_or_default()
+        .split("\n[line 34]")
+        .next()
+        .unwrap_or_default()
+        .to_string();
+    assert!(
+        !first_block.contains("total += 1;"),
+        "a 31-line span is not pasted into a refusal: {err}"
+    );
+    assert!(err.contains("more than this message quotes"), "{err}");
+    assert!(
+        err.contains("read lib.txt from line 2 to line 33"),
+        "and it names the read that does reach it: {err}"
+    );
+}
+
+/// And when no line parts them, the tool must not prescribe widening at all. This
+/// is the lie the run #82 loop was fed: an instruction that no `oldString` can
+/// obey, repeated for hours.
+#[test]
+fn an_ambiguous_edit_says_so_when_no_line_can_separate_the_two_sites() {
+    let (_temp, root) = setup_root();
+    let src = "fn a() {\n    let v = 1;\n}\nfn a() {\n    let v = 1;\n}\n";
+    fs::write(root.join("lib.txt"), src).unwrap();
+
+    let err = call_tool_in_workspace(
+        &root,
+        "edit_file",
+        &json!({
+            "relativeFilePath": "lib.txt",
+            "edits": [{ "oldString": "    let v = 1;", "newString": "    let v = 1 + delta;" }]
+        }),
+    )
+    .expect_err("two matches is a refusal, not a guess")
+    .to_string();
+
+    assert!(
+        err.contains("No `oldString` separates the first two of them"),
+        "{err}"
+    );
+    assert!(
+        !err.contains("Widen the `oldString`"),
+        "and it sends no instruction the file cannot support: {err}"
+    );
+    assert!(
+        err.contains("enclosing block"),
+        "it says what to do instead: {err}"
     );
 }
 
@@ -2128,11 +2422,13 @@ fn a_no_op_is_not_counted_in_the_brace_drift_it_did_not_cause() {
     assert_eq!(fs::read_to_string(root.join("port.rs")).unwrap(), src);
 }
 
-/// A batch is still all-or-nothing for anything actually refused. Dropping a
-/// no-op is a licence to write the edits that meant something, not to write half
-/// of a batch that contains a mistake.
+/// A batch that lands nothing still says "the file is unchanged" in the exact
+/// words `replay_advice` and the repeat detectors branch on. That wording is only
+/// for the file genuinely not moving: here the one applicable-looking edit is a
+/// no-op and the other matches two places, so no byte would be written either
+/// way and the refusal is the truth rather than a veto.
 #[test]
-fn a_refused_edit_still_refuses_the_batch_a_no_op_sits_in() {
+fn a_batch_that_lands_nothing_keeps_the_unchanged_wording_a_replay_keys_on() {
     let (_temp, root) = setup_root();
     let src = "fn a() {\n    let x = 1;\n}\n\nfn b() {\n    let x = 2;\n}\n";
     fs::write(root.join("port.txt"), src).unwrap();
@@ -2151,7 +2447,7 @@ fn a_refused_edit_still_refuses_the_batch_a_no_op_sits_in() {
     )
     .err()
     .map(|e| e.to_string())
-    .unwrap_or_else(|| "an edit that matches two places still refuses its batch".to_string());
+    .unwrap_or_else(|| panic!("a batch with nothing left to write is still refused"));
 
     assert!(err.contains("no edits were applied"), "{err}");
     assert!(
@@ -2383,13 +2679,19 @@ fn edit_file_rejects_an_ambiguous_oldstring_and_writes_nothing() {
     assert_eq!(fs::read_to_string(root.join("lib.txt")).unwrap(), original);
 }
 
+/// The half-applied batch is the answer, not the hazard. The old rule refused the
+/// whole batch on the theory that a model re-tries "against the file it already
+/// knows" — but every other path in `edit_file` already tells the model per edit
+/// what is on disk, and run #82 measured what the theory costs: one needle matching
+/// two identical blocks threw away three edits that located, and the artifact stayed
+/// frozen for five hours of byte-identical resends.
 #[test]
-fn edit_file_is_atomic_when_one_edit_of_a_batch_is_wrong() {
+fn a_batch_with_one_missing_edit_lands_the_other_and_names_the_missing_one() {
     let (_temp, root) = setup_root();
     let original = "fn a() {}\nfn b() {}\n";
     fs::write(root.join("lib.txt"), original).unwrap();
 
-    let err = call_tool_in_workspace(
+    let msg = call_tool_in_workspace(
         &root,
         "edit_file",
         &json!({
@@ -2400,16 +2702,21 @@ fn edit_file_is_atomic_when_one_edit_of_a_batch_is_wrong() {
             ]
         }),
     )
-    .expect_err("an edit absent from the file must refuse the whole batch");
+    .unwrap_or_else(|e| panic!("the edit that located has to reach the file: {e}"));
 
-    // The good edit must not survive on its own: the model re-tries against the
-    // file it already knows, so a half-applied batch corrupts its next guess.
-    let msg = err.to_string();
     assert!(
-        msg.contains("edit 2") && msg.contains("not in lib.txt") && msg.contains("unchanged"),
-        "refusal must name the bad edit: {msg}"
+        msg.contains("applied 1 of 2 edit(s)"),
+        "the count says what landed: {msg}"
     );
-    assert_eq!(fs::read_to_string(root.join("lib.txt")).unwrap(), original);
+    assert!(
+        msg.contains("edit 2") && msg.contains("not in lib.txt"),
+        "and the refusal still names the bad edit: {msg}"
+    );
+    assert_eq!(
+        fs::read_to_string(root.join("lib.txt")).unwrap(),
+        "fn a() { /* ok */ }\nfn b() {}\n",
+        "the good edit is on disk and the missing one is not"
+    );
 }
 
 #[test]
@@ -4184,14 +4491,15 @@ fn a_hole_the_replacement_does_not_write_back_falls_through_to_the_line_that_dif
     );
 }
 
-/// A batch is all-or-nothing, and the hole is a refusal like any other: the
-/// second edit is never reached and nothing is written.
+/// The hole is a refusal like any other, and it now refuses only itself: the
+/// second edit is reached, lands, and is reported as landed, because "nothing
+/// happened, resend the lot" cost run #82 five hours of identical resends.
 #[test]
-fn a_holed_edit_refuses_its_whole_batch_and_leaves_the_other_edit_out() {
+fn a_holed_edit_refuses_itself_and_lands_the_edit_beside_it() {
     let (_temp, root) = setup_root();
     fs::write(root.join("port.rs"), HOLED_FILE).unwrap();
 
-    let err = call_tool_in_workspace(
+    let ok = call_tool_in_workspace(
         &root,
         "edit_file",
         &json!({
@@ -4206,23 +4514,28 @@ fn a_holed_edit_refuses_its_whole_batch_and_leaves_the_other_edit_out() {
             "context": "two changes, one of them holed"
         }),
     )
-    .err()
-    .map(|e| e.to_string())
-    .unwrap_or_else(|| "one refused edit refuses the batch".into());
+    .unwrap_or_else(|e| panic!("the edit that located has to reach the file: {e}"));
 
-    assert!(err.contains("no edits were applied"), "{err}");
     assert!(
-        err.contains("edit 1: its `oldString` is not in port.rs, and it is not one line wrong"),
-        "{err}"
+        ok.contains("applied 1 of 2 edit(s)"),
+        "the count is of what landed, not of what was sent: {ok}"
     );
     assert!(
-        !err.contains("edit 2:"),
-        "the second edit is never reached: {err}"
+        ok.contains("edit 1: its `oldString` is not in port.rs, and it is not one line wrong"),
+        "the refused edit keeps its own diagnosis: {ok}"
     );
-    assert_eq!(
-        fs::read_to_string(root.join("port.rs")).unwrap(),
-        HOLED_FILE,
-        "every byte alone"
+    assert!(
+        !ok.contains("edit 2:"),
+        "the edit that landed is not blamed: {ok}"
+    );
+    let on_disk = fs::read_to_string(root.join("port.rs")).unwrap();
+    assert!(
+        on_disk.contains("        let record = self.input(user).clone();"),
+        "the surviving edit is in the file:\n{on_disk}"
+    );
+    assert!(
+        on_disk.contains("                .unwrap_or(&mut PersistedUserRecord {"),
+        "and the holed edit's site is untouched, not flattened by its patch:\n{on_disk}"
     );
 }
 
