@@ -11,9 +11,17 @@ of the activity bar, or palette `Settings`. It has four sections: **Appearance**
 ## Appearance
 
 - **Workspace profile** — Coder / Automation Operator / Mission Control /
-  Accessibility (with each profile's description). Switching a profile also
-  applies its theme, density, and scale and rebuilds the layout.
-- **Theme** — Midnight / Daylight / Operator / Mission / High Contrast.
+  Accessibility (with each profile's description). Switching a profile applies
+  its density and scale and rebuilds the layout; it also applies its theme
+  unless you have named one below.
+- **Theme** — Midnight / Daylight / Operator / Mission / High Contrast. The
+  dropdown shows the palette actually in use. A theme named here survives later
+  profile switches.
+- **Follow system light/dark** — offered where the OS publishes the preference
+  (Windows today): the desktop decides Daylight or Midnight, re-checked on a
+  short throttle. Naming a theme turns it off, and so does switching profile —
+  each profile is advertised by its own palette. `VELOCITY_OS_THEME`
+  (`light`/`dark`/`off`) stands in for a desktop that publishes nothing.
 - **Density** — Compact / Comfortable / Spacious.
 - **Scale** — **UI scale** slider (0.85–1.35) and **Code scale** slider
   (0.5–3.0); **Reset defaults** and **Reset layout**.

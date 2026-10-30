@@ -309,6 +309,24 @@ Velocity IDE ships with 5 color themes:
 2. Navigate to **Appearance**
 3. Select a theme from the dropdown
 
+**Following the desktop:** the same panel offers **Follow system light/dark**
+(where the operating system publishes the preference — Windows today). With it
+on, a light desktop opens the IDE in Daylight and a dark one in Midnight, and a
+desktop that changes while the window is open is picked up shortly after. A new
+workspace starts with this option already on. Naming a theme in the dropdown
+turns it off, because an explicit choice outranks the desktop — and so does
+switching work modes, since each mode is advertised by its own palette and
+following the desktop would otherwise keep repainting over the higher-contrast
+mode you just asked for. `VELOCITY_OS_THEME` (`light`, `dark`, `off`) answers
+for the desktop on a machine that publishes no preference, such as a headless
+frame server.
+
+**A theme you chose is not overwritten.** Each work mode has a signature
+palette, so a mode switch recolours the window — until you have picked a theme
+yourself. After that, `Ctrl+1`–`Ctrl+4` change layout, density and type scale
+only, and the choice is what gets saved. **Reset defaults** hands the mode its
+signature palette back.
+
 **Density settings:**
 - **Compact** — Tight spacing, maximum information density
 - **Comfortable** — Balanced spacing (default for Coder mode)
@@ -1914,6 +1932,8 @@ Open Settings with `Ctrl+,` and navigate to **Appearance**:
 
 - **Profile** — Coder, Automation Operator, Mission Control, Accessibility
 - **Theme** — Midnight, Daylight, Operator, Mission, High Contrast
+- **Follow system light/dark** — when the desktop publishes a light/dark
+  preference, let it settle the palette; naming a theme here stops it
 - **Density** — Compact, Comfortable, Spacious
 - **UI Scale** — Float multiplier for interface fonts (default 1.15)
 - **Code Scale** — Float multiplier for code fonts (default 1.12)

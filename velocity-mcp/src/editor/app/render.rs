@@ -88,6 +88,13 @@ impl<'a> TabViewer for TabViewerImpl<'a> {
                 // the widget; the jump itself runs after this closure, once the
                 // mutable buffer borrow is gone (same collect-then-run shape).
                 let mut ctrl_goto: Option<usize> = None;
+                // Read once, outside the buffer borrow below. `palette()` and
+                // `effective_appearance()` take `&self`, so calling them inside
+                // the frame closure would capture all of `self.app` while `buf`
+                // still holds a mutable borrow of `self.app.buffers`. Both are
+                // `Copy`, so the closure can keep using the locals.
+                let palette = self.app.palette();
+                let effective = self.app.effective_appearance();
                 if let Some(buf) = self.app.buffers.get_mut(buffer_id) {
                     egui::Frame::new().inner_margin(egui::Margin::same(4)).show(
                         ui,
@@ -98,7 +105,6 @@ impl<'a> TabViewer for TabViewerImpl<'a> {
 
                             // Find/Replace overlay
                             if buf.find_replace.visible {
-                                let palette = self.app.appearance.palette();
                                 crate::editor::find_replace::render_find_replace(
                                     ui,
                                     &mut buf.find_replace,
@@ -190,7 +196,13 @@ impl<'a> TabViewer for TabViewerImpl<'a> {
                                             path.as_deref(),
                                             self.app.pending_cursor_line,
                                             &locks,
-                                            self.app.appearance,
+                                            // The palette the window is painted
+                                            // with, not the one on disk: an
+                                            // editor that read the stored
+                                            // appearance stayed dark while a
+                                            // followed light system lit the
+                                            // rest of the frame.
+                                            effective,
                                             &diff_marks,
                                             &options,
                                         );
@@ -324,7 +336,6 @@ impl<'a> TabViewer for TabViewerImpl<'a> {
                                         // Show inline diagnostic popup if cursor is on a diagnostic line.
                                         if let Some(file_path) = path.as_deref() {
                                             let cursor_line = self.app.current_cursor_line;
-                                            let palette = self.app.appearance.palette();
                                             // Use the editor's cursor position for popup placement.
                                             let cursor_pos = ui.cursor().min;
                                             self.app
@@ -343,7 +354,6 @@ impl<'a> TabViewer for TabViewerImpl<'a> {
 
                                 // Minimap
                                 if self.app.show_minimap {
-                                    let palette = self.app.appearance.palette();
                                     let highlights: Vec<crate::editor::minimap::MinimapHighlight> =
                                         buf.breakpoints
                                             .iter()
@@ -374,7 +384,6 @@ impl<'a> TabViewer for TabViewerImpl<'a> {
 
                             // Completion popup
                             if self.app.completion_state.active {
-                                let palette = self.app.appearance.palette();
                                 crate::editor::completion::render_completion_popup(
                                     ui,
                                     &self.app.completion_state,
@@ -1129,7 +1138,12 @@ impl<'a> TabViewerImpl<'a> {
                         ui.columns(2, |columns| {
                             columns[0].group(|ui| {
                                 ui.label(egui::RichText::new("Theme").strong());
-                                let mut theme = self.app.appearance.theme;
+                                // Offer the palette actually being painted: a
+                                // workspace following the system stores a theme
+                                // it is not showing, and a picker that named the
+                                // stored one would contradict the window.
+                                let shown_theme = self.app.effective_appearance().theme;
+                                let mut theme = shown_theme;
                                 egui::ComboBox::from_id_salt("appearance_theme")
                                     .selected_text(theme.label())
                                     .show_ui(ui, |ui| {
@@ -1141,10 +1155,24 @@ impl<'a> TabViewerImpl<'a> {
                                             );
                                         }
                                     });
-                                if theme != self.app.appearance.theme {
-                                    self.app.appearance.theme = theme;
+                                if theme != shown_theme {
+                                    self.app.appearance.set_theme(theme);
                                     self.app.apply_appearance(ui.ctx());
                                     self.app.save_workspace_preferences();
+                                }
+
+                                // Only offered where the preference is readable,
+                                // so no checkbox that can silently do nothing.
+                                if self.app.os_prefers_dark.is_some() {
+                                    let mut follow = self.app.appearance.follow_system_theme;
+                                    if ui
+                                        .checkbox(&mut follow, "Follow system light/dark")
+                                        .changed()
+                                    {
+                                        self.app.appearance.follow_system_theme = follow;
+                                        self.app.apply_appearance(ui.ctx());
+                                        self.app.save_workspace_preferences();
+                                    }
                                 }
 
                                 ui.add_space(6.0);
@@ -1196,6 +1224,11 @@ impl<'a> TabViewerImpl<'a> {
 
                                 ui.add_space(6.0);
                                 if ui.button("Reset defaults").clicked() {
+                                    // The one path allowed to discard a chosen
+                                    // palette: asking for defaults is asking for
+                                    // the mode as it ships, signature theme and
+                                    // system-following both off.
+                                    self.app.appearance.reset_to_profile_preset();
                                     let profile = self.app.appearance.profile;
                                     self.app.apply_workspace_profile(profile);
                                     self.app.apply_appearance(ui.ctx());

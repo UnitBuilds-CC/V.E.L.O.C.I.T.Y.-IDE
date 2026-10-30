@@ -200,6 +200,8 @@ impl VelocityApp {
             central_area,
             active_section,
             mode: self.appearance.profile.label().to_string(),
+            theme: self.effective_appearance().theme.label().to_string(),
+            follow_system_theme: self.appearance.follow_system_theme,
             open_overlays: self
                 .open_transient_ui()
                 .into_iter()
@@ -3297,5 +3299,43 @@ mod tests {
         );
         assert!(blank.success, "{:?}", blank.error);
         assert_eq!(app.nodes.target_id, None);
+    }
+
+    // ─── Appearance reported as painted ───────────────────────────────────
+
+    #[test]
+    fn the_bridge_reports_the_palette_actually_painted() {
+        let (mut app, _ctx) = harness();
+        app.appearance.follow_system_theme = true;
+        app.os_prefers_dark = Some(false);
+
+        let state = app.ide_state();
+        assert_eq!(state.theme, "Daylight");
+        assert!(state.follow_system_theme);
+        assert_eq!(
+            app.palette().bg_primary,
+            egui::Color32::from_rgb(255, 255, 255),
+            "hand-painted panels must use the same palette egui was given"
+        );
+    }
+
+    #[test]
+    fn a_mode_switch_leaves_a_chosen_theme_painted() {
+        let (mut app, ctx) = harness();
+        app.appearance
+            .set_theme(crate::editor::theme::ThemeVariant::Daylight);
+
+        let ran = app.execute_gui_command(
+            GuiCommand::RunCommand {
+                label: "Mode: Accessibility".to_string(),
+                allow_unsafe: Some(true),
+            },
+            &ctx,
+        );
+        assert!(ran.success, "{:?}", ran.error);
+
+        let state = app.ide_state();
+        assert_eq!(state.mode, "Accessibility");
+        assert_eq!(state.theme, "Daylight");
     }
 }

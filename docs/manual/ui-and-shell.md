@@ -147,9 +147,10 @@ Four profiles, each a full layout + theme + density + palette-filter preset
 | **Mission Control** | `Ctrl+3` | ◉ | Mission | Spacious | Agent, Workspace | Build, File | `worker`, `task`, `approval` |
 | **Accessibility** | `Ctrl+4` | 👁 | High Contrast | Spacious | View, File | Build | `theme`, `contrast`, `scale` |
 
-Switching a profile applies its theme + density + scale, rebuilds the dock with
+Switching a profile applies its density + scale, and its theme unless you have
+named one in Settings → Appearance, rebuilds the dock with
 its primary tabs, swaps the right-panel sections, and re-filters / re-prioritises
-the command palette.
+the command palette. **Reset defaults** returns the profile's own theme.
 
 ### 2.2 Themes
 
@@ -157,8 +158,15 @@ Five palettes: **Midnight** (dark), **Daylight** (light), **Operator**,
 **Mission**, **High Contrast**. Each is a set of 14 semantic tokens
 (`bg_primary`, `bg_secondary`, `bg_tertiary`, `text`, `text_muted`,
 `text_disabled`, `accent`, `info`, `border`, `success`, `warning`, `error`,
-`surface_hover`, `text_on_accent`) — pick one in Settings → Appearance. Fonts are
-Inter (UI) and JetBrains Mono (code), plus the Phosphor icon family.
+`surface_hover`, `text_on_accent`) — pick one in Settings → Appearance.
+Where the OS publishes a light/dark preference (Windows today), **Follow system
+light/dark** lets it settle the palette instead: light desktop → Daylight, dark
+desktop → Midnight, re-checked on a short throttle while the window is open. A
+workspace with no stored preferences starts with that option on; picking a theme
+by hand, or switching profile, turns it off — the last deliberate appearance
+action wins, and each profile is advertised by its own palette. `VELOCITY_OS_THEME`
+(`light`/`dark`/`off`) supplies the preference on a machine that publishes none.
+Fonts are Inter (UI) and JetBrains Mono (code), plus the Phosphor icon family.
 
 ### 2.3 Density
 

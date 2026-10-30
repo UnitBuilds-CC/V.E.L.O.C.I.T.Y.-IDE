@@ -259,6 +259,11 @@ pub struct VelocityApp {
     pub appearance: AppearanceSettings,
     /// Last-applied appearance snapshot; used to avoid re-applying theme/style every frame.
     pub last_applied_appearance: Option<AppearanceSettings>,
+    /// Cached OS light/dark preference, re-read on a throttle while the
+    /// workspace follows the system. `None` until the first read succeeds.
+    pub os_prefers_dark: Option<bool>,
+    /// Throttle for re-reading `os_prefers_dark`.
+    pub last_os_theme_check: Option<Instant>,
     pub provider_settings: WorkspaceProviderSettings,
     pub left_sidebar_visible: bool,
     pub left_sidebar_width: f32,
@@ -724,6 +729,11 @@ impl VelocityApp {
             // that default is Cloudflare plus a `@cf/` model, which a
             // brand-new workspace may hold no key for at all. Reconcile before
             // letting the first save pin the unreachable choice to disk.
+            //
+            // A workspace with no stored appearance has also expressed no
+            // palette preference, so let the OS settle light-versus-dark rather
+            // than opening every new user into Midnight on a light desktop.
+            self.appearance.follow_system_theme = self.os_prefers_dark.is_some();
             self.reconcile_provider_with_credentials();
             return;
         };
@@ -866,15 +876,46 @@ impl VelocityApp {
     }
 
     pub fn palette(&self) -> IdePalette {
-        self.appearance.palette()
+        self.effective_appearance().palette()
+    }
+
+    /// The appearance actually being painted: the stored settings with the
+    /// system light/dark preference folded in when the workspace follows it.
+    /// Every surface must read palette through this, or egui's `Visuals` and the
+    /// hand-painted panels disagree — half-light, half-dark.
+    pub fn effective_appearance(&self) -> AppearanceSettings {
+        self.appearance.resolved(self.os_prefers_dark)
+    }
+
+    /// Re-read the system preference while it is being followed. The registry
+    /// value is cheap but not free, so the poll is throttled; a desktop that
+    /// switches to light mode is picked up within the window rather than never.
+    fn refresh_os_prefers_dark(&mut self) {
+        if !self.appearance.follow_system_theme {
+            return;
+        }
+        let stale = match self.last_os_theme_check {
+            Some(last) => last.elapsed().as_secs_f32() > 2.0,
+            None => true,
+        };
+        if !stale {
+            return;
+        }
+        self.last_os_theme_check = Some(Instant::now());
+        if let Some(prefers_dark) = crate::editor::theme::os_prefers_dark() {
+            self.os_prefers_dark = Some(prefers_dark);
+        }
     }
 
     pub fn apply_appearance(&mut self, ctx: &egui::Context) {
         // Avoid rebuilding and reapplying the full egui Style every frame. Only
-        // re-apply when the appearance settings actually change.
-        if self.last_applied_appearance != Some(self.appearance) {
-            apply_theme(ctx, self.appearance);
-            self.last_applied_appearance = Some(self.appearance);
+        // re-apply when the appearance settings actually change — including when
+        // a followed system preference flips underneath them.
+        self.refresh_os_prefers_dark();
+        let effective = self.effective_appearance();
+        if self.last_applied_appearance != Some(effective) {
+            apply_theme(ctx, effective);
+            self.last_applied_appearance = Some(effective);
         }
     }
 
@@ -1230,6 +1271,8 @@ impl VelocityApp {
             status_message: String::from("Ready"),
             appearance,
             last_applied_appearance: Some(appearance),
+            os_prefers_dark: crate::editor::theme::os_prefers_dark(),
+            last_os_theme_check: Some(Instant::now()),
             provider_settings,
             left_sidebar_visible: true,
             left_sidebar_width: 240.0,
@@ -1591,6 +1634,8 @@ impl VelocityApp {
             status_message: String::new(),
             appearance: AppearanceSettings::default(),
             last_applied_appearance: None,
+            os_prefers_dark: None,
+            last_os_theme_check: None,
             provider_settings: WorkspaceProviderSettings::default(),
             left_sidebar_visible: true,
             left_sidebar_width: 240.0,

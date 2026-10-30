@@ -183,6 +183,16 @@ pub struct IdeState {
     /// so a refusal needs it to be explainable.
     #[serde(default)]
     pub mode: String,
+    /// The palette the window is painting, after the system light/dark
+    /// preference is folded in. `mode` records what the driver asked for; this
+    /// records what the user can see, which is the only one worth screenshotting
+    /// against.
+    #[serde(default)]
+    pub theme: String,
+    /// Whether [`IdeState::theme`] is being derived from the OS rather than
+    /// from the theme stored for this workspace.
+    #[serde(default)]
+    pub follow_system_theme: bool,
     /// Transient overlays currently on screen: command palette, quick open, the
     /// in-app file dialogs, find/replace, ... A driver raises these and needs to
     /// know both that one took and that it has since stood them back down --

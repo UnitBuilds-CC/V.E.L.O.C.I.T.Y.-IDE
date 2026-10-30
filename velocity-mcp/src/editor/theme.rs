@@ -287,6 +287,18 @@ pub struct AppearanceSettings {
     pub density: Density,
     pub ui_scale: f32,
     pub code_scale: f32,
+    /// Fold the OS light/dark preference into [`Self::resolved`]. A workspace
+    /// that has never stored a preference opts in (so a light-mode desktop does
+    /// not open into Midnight); choosing a theme by hand opts back out.
+    #[serde(default)]
+    pub follow_system_theme: bool,
+    /// `theme` is a choice the person made rather than the mode preset's
+    /// signature palette. Work modes are documented to bring their own colors
+    /// ("operator colors", "higher contrast"), so a preset may only recolour a
+    /// theme nobody picked — otherwise switching modes silently throws away a
+    /// light theme and persists the loss.
+    #[serde(default)]
+    pub theme_chosen: bool,
 }
 
 impl Default for AppearanceSettings {
@@ -305,6 +317,8 @@ impl AppearanceSettings {
                 // Match Accessibility scale for consistent readability across panels
                 ui_scale: 1.15,
                 code_scale: 1.12,
+                follow_system_theme: false,
+                theme_chosen: false,
             },
             WorkspaceProfile::AutomationOperator => Self {
                 profile,
@@ -313,6 +327,8 @@ impl AppearanceSettings {
                 // Larger UI for better legibility like Accessibility preset
                 ui_scale: 1.15,
                 code_scale: 1.12,
+                follow_system_theme: false,
+                theme_chosen: false,
             },
             WorkspaceProfile::MissionControl => Self {
                 profile,
@@ -321,6 +337,8 @@ impl AppearanceSettings {
                 // Match Accessibility preset scale for consistency
                 ui_scale: 1.15,
                 code_scale: 1.12,
+                follow_system_theme: false,
+                theme_chosen: false,
             },
             WorkspaceProfile::Accessibility => Self {
                 profile,
@@ -328,12 +346,69 @@ impl AppearanceSettings {
                 density: Density::Spacious,
                 ui_scale: 1.15,
                 code_scale: 1.12,
+                follow_system_theme: false,
+                theme_chosen: false,
             },
         }
     }
 
+    /// Apply a work mode's density, scale and palette.
+    ///
+    /// A palette nobody chose still follows the mode, because the mode
+    /// descriptions promise its colors. A palette the user picked does not: it
+    /// used to be reassigned wholesale here, so switching modes threw away e.g.
+    /// a hand-picked Daylight *and persisted that overwrite*, which is what made
+    /// light themes look like they "don't apply".
+    ///
+    /// Switching modes also stops following the desktop. The modes are sold by
+    /// their palettes — Accessibility *is* higher contrast — so a followed system
+    /// preference would quietly keep painting that mode's own promise away. The
+    /// rule throughout is that the last deliberate appearance action wins.
     pub fn apply_profile(&mut self, profile: WorkspaceProfile) {
+        let preset = Self::preset(profile);
+        self.profile = profile;
+        self.density = preset.density;
+        self.ui_scale = preset.ui_scale;
+        self.code_scale = preset.code_scale;
+        self.follow_system_theme = false;
+        if !self.theme_chosen {
+            self.theme = preset.theme;
+        }
+    }
+
+    /// Throw away every choice for the current mode and take its full preset,
+    /// signature theme included. This is the one place a saved theme is allowed
+    /// to be replaced, because the user asked for a reset.
+    pub fn reset_to_profile_preset(&mut self) {
+        let profile = self.profile;
         *self = Self::preset(profile);
+    }
+
+    /// Choose a palette by hand. An explicit choice outranks both the mode
+    /// preset and the system preference from here on.
+    pub fn set_theme(&mut self, theme: ThemeVariant) {
+        self.theme = theme;
+        self.theme_chosen = true;
+        self.follow_system_theme = false;
+    }
+
+    /// The appearance to paint with, given the OS light/dark preference. Only
+    /// `theme` can change here, and only while following the system with a
+    /// preference actually read — an unreadable preference keeps the saved
+    /// theme rather than guessing at a palette.
+    pub fn resolved(self, os_prefers_dark: Option<bool>) -> Self {
+        if !self.follow_system_theme {
+            return self;
+        }
+        let mut resolved = self;
+        if let Some(prefers_dark) = os_prefers_dark {
+            resolved.theme = if prefers_dark {
+                ThemeVariant::Midnight
+            } else {
+                ThemeVariant::Daylight
+            };
+        }
+        resolved
     }
 
     pub fn palette(self) -> IdePalette {
@@ -440,6 +515,74 @@ pub fn setup_fonts(fonts: &mut FontDefinitions) -> FontId {
 /// the text still renders (the icon family carries no usable Latin coverage).
 pub fn icon_font_id(size: f32) -> FontId {
     FontId::new(size, FontFamily::Name("phosphor-icons".into()))
+}
+
+/// The OS light/dark preference, or `None` where the platform does not expose
+/// one cheaply. Windows keeps this under a single registry value; reading it
+/// directly (rather than through a shell) is what makes it affordable to poll
+/// from the render loop while a workspace follows the system.
+///
+/// `VELOCITY_OS_THEME` (`light`, `dark`, `off`) answers before the registry is
+/// consulted, so a headless frame server or a CI box with no theme service —
+/// and anyone checking that the follow path actually repaints — can state the
+/// preference instead of reconfiguring the desktop. An unrecognised value falls
+/// through to the real read.
+pub fn os_prefers_dark() -> Option<bool> {
+    match std::env::var("VELOCITY_OS_THEME")
+        .unwrap_or_default()
+        .to_ascii_lowercase()
+        .as_str()
+    {
+        "light" => return Some(false),
+        "dark" => return Some(true),
+        "off" => return None,
+        _ => {}
+    }
+    #[cfg(windows)]
+    {
+        use windows::core::PWSTR;
+        use windows::Win32::System::Registry::{
+            RegGetValueW, HKEY_CURRENT_USER, REG_VALUE_TYPE, RRF_RT_DWORD,
+        };
+
+        let to_utf16 =
+            |s: &str| -> Vec<u16> { s.encode_utf16().chain(std::iter::once(0)).collect() };
+        let mut subkey = to_utf16(r"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize");
+        let mut value_name = to_utf16("AppsUseLightTheme");
+
+        let mut value: u32 = 0;
+        let mut size = std::mem::size_of::<u32>() as u32;
+        let mut kind = REG_VALUE_TYPE(0);
+        // SAFETY: `RegGetValueW` reads into `value`, `kind` and `size`, all of
+        // which are live, correctly sized objects for the whole call; the two
+        // UTF-16 buffers are null-terminated and kept alive by this scope, and
+        // they are only borrowed as `PWSTR` because the API treats them as
+        // read-only inputs. Nothing else mutates them while the pointers are
+        // in flight.
+        let result = unsafe {
+            RegGetValueW(
+                HKEY_CURRENT_USER,
+                PWSTR(subkey.as_mut_ptr()),
+                PWSTR(value_name.as_mut_ptr()),
+                RRF_RT_DWORD,
+                Some(&mut kind),
+                Some(std::ptr::addr_of_mut!(value).cast()),
+                Some(&mut size),
+            )
+        };
+        // REG_DWORD is 4; anything else (a hand-edited key, a missing value)
+        // leaves `value` unset, so report "unknown" instead of guessing.
+        if result.0 == 0 && kind.0 == 4 && size == 4 {
+            // `AppsUseLightTheme` is 1 for a light desktop and 0 for a dark one.
+            Some(value == 0)
+        } else {
+            None
+        }
+    }
+    #[cfg(not(windows))]
+    {
+        None
+    }
 }
 
 pub fn apply_theme(ctx: &egui::Context, appearance: AppearanceSettings) {
@@ -587,4 +730,169 @@ pub fn code_font_id() -> FontId {
 /// font without needing an [`AppearanceSettings`] instance.
 pub fn ui_font_id() -> FontId {
     AppearanceSettings::default().ui_font_id()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The way a person picks a palette in Settings.
+    fn chosen(theme: ThemeVariant) -> AppearanceSettings {
+        let mut appearance = AppearanceSettings::default();
+        appearance.set_theme(theme);
+        appearance
+    }
+
+    #[test]
+    fn a_chosen_theme_survives_a_mode_switch() {
+        let mut appearance = chosen(ThemeVariant::Daylight);
+        appearance.apply_profile(WorkspaceProfile::Accessibility);
+
+        assert_eq!(appearance.profile, WorkspaceProfile::Accessibility);
+        assert_eq!(appearance.theme, ThemeVariant::Daylight);
+        // The mode still brings the density and type it advertises.
+        assert_eq!(appearance.density, Density::Spacious);
+        assert_eq!(appearance.ui_scale, 1.15);
+    }
+
+    #[test]
+    fn an_unchosen_theme_still_follows_the_mode_palette() {
+        // Modes are documented to carry their own colors, so a workspace that
+        // never picked a palette is recoloured when it switches.
+        let mut appearance = AppearanceSettings::default();
+        appearance.apply_profile(WorkspaceProfile::AutomationOperator);
+        assert_eq!(appearance.theme, ThemeVariant::Operator);
+
+        appearance.apply_profile(WorkspaceProfile::MissionControl);
+        assert_eq!(appearance.theme, ThemeVariant::Mission);
+    }
+
+    #[test]
+    fn a_mode_switch_stops_following_the_desktop() {
+        // The Accessibility mode advertises higher contrast. A workspace that was
+        // following a light desktop had to stop doing that the moment it asked
+        // for this mode, or the mode would keep promising a palette it never
+        // painted.
+        let mut appearance = AppearanceSettings::default();
+        appearance.follow_system_theme = true;
+        appearance.apply_profile(WorkspaceProfile::Accessibility);
+
+        assert!(!appearance.follow_system_theme);
+        assert_eq!(
+            appearance.resolved(Some(false)).theme,
+            ThemeVariant::HighContrast
+        );
+    }
+
+    #[test]
+    fn resetting_defaults_gives_the_mode_its_signature_palette_back() {
+        let mut appearance = chosen(ThemeVariant::Daylight);
+        appearance.apply_profile(WorkspaceProfile::Accessibility);
+        appearance.reset_to_profile_preset();
+
+        assert_eq!(appearance.theme, ThemeVariant::HighContrast);
+        assert!(!appearance.theme_chosen);
+        assert!(!appearance.follow_system_theme);
+    }
+
+    #[test]
+    fn following_the_system_paints_light_on_a_light_desktop() {
+        let mut appearance = AppearanceSettings::default();
+        appearance.follow_system_theme = true;
+        let resolved = appearance.resolved(Some(false));
+
+        assert_eq!(resolved.theme, ThemeVariant::Daylight);
+        assert!(!resolved.theme.is_dark());
+        assert_eq!(
+            resolved.palette().bg_primary,
+            Color32::from_rgb(255, 255, 255)
+        );
+    }
+
+    #[test]
+    fn following_the_system_paints_dark_on_a_dark_desktop() {
+        let mut appearance = AppearanceSettings::default();
+        appearance.follow_system_theme = true;
+        assert_eq!(
+            appearance.resolved(Some(true)).theme,
+            ThemeVariant::Midnight
+        );
+    }
+
+    #[test]
+    fn following_the_system_keeps_the_saved_theme_when_the_preference_is_unreadable() {
+        let mut appearance = AppearanceSettings::default();
+        appearance.follow_system_theme = true;
+        appearance.theme = ThemeVariant::Mission;
+        assert_eq!(appearance.resolved(None).theme, ThemeVariant::Mission);
+    }
+
+    #[test]
+    fn a_theme_picked_by_hand_is_not_overridden_by_the_system() {
+        let appearance = chosen(ThemeVariant::Midnight);
+        assert!(!appearance.follow_system_theme);
+        assert_eq!(
+            appearance.resolved(Some(false)).theme,
+            ThemeVariant::Midnight
+        );
+    }
+
+    #[test]
+    fn preferences_saved_before_the_follow_option_still_load() {
+        // The two new fields arrived without a container default, so an older
+        // workspace-preferences.json must still deserialize; if it did not, the
+        // whole restore would silently fall through to shipped defaults.
+        let stored = r#"{
+            "profile": "MissionControl",
+            "theme": "Daylight",
+            "density": "Spacious",
+            "ui_scale": 1.15,
+            "code_scale": 1.12
+        }"#;
+        let appearance: AppearanceSettings =
+            serde_json::from_str(stored).expect("pre-existing preferences must parse");
+
+        assert_eq!(appearance.theme, ThemeVariant::Daylight);
+        assert!(!appearance.follow_system_theme);
+        assert!(!appearance.theme_chosen);
+
+        let round_tripped: AppearanceSettings =
+            serde_json::from_str(&serde_json::to_string(&appearance).unwrap()).unwrap();
+        assert_eq!(round_tripped, appearance);
+    }
+
+    #[test]
+    fn every_variant_resolves_to_a_paintable_palette() {
+        for variant in ThemeVariant::ALL {
+            let palette = variant.palette();
+            assert_ne!(
+                palette.bg_primary,
+                palette.text,
+                "{} is unreadable",
+                variant.label()
+            );
+            assert_eq!(
+                variant.is_dark(),
+                !matches!(variant, ThemeVariant::Daylight)
+            );
+        }
+    }
+
+    #[test]
+    fn a_declared_os_theme_answers_before_the_registry() {
+        // Without this seam the light half of the follow path can only be proven
+        // on a machine already running a light desktop — and a declaration that
+        // lost to the real registry would leave `resolved` never seeing a light
+        // signal at all. `off` is the third state, not a fourth theme: it is the
+        // "no preference readable" answer the fallback is written for.
+        let previous = std::env::var("VELOCITY_OS_THEME").ok();
+        for (declared, expected) in [("light", Some(false)), ("DARK", Some(true)), ("off", None)] {
+            std::env::set_var("VELOCITY_OS_THEME", declared);
+            assert_eq!(os_prefers_dark(), expected, "as {declared}");
+        }
+        match previous {
+            Some(value) => std::env::set_var("VELOCITY_OS_THEME", value),
+            None => std::env::remove_var("VELOCITY_OS_THEME"),
+        }
+    }
 }
