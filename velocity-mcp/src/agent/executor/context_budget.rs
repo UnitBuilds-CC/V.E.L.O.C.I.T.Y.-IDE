@@ -5,7 +5,7 @@
 
 use super::super::models::{AiProvider, ChatMessage};
 use super::utils::{
-    compress_history_with_elisions, estimate_tokens, find_mission_anchor, LOCAL_OLLAMA_NUM_CTX,
+    compress_history_with_elisions, estimate_tokens, find_mission_anchor, local_ollama_num_ctx,
 };
 use crate::registry::ToolSurface;
 use serde_json::Value;
@@ -19,6 +19,16 @@ const DEFAULT_BUDGET_TOKENS: usize = 32_000;
 
 /// Reserve tokens for model response (output generation).
 const RESERVED_OUTPUT_TOKENS: usize = 4_096;
+
+/// The least output a local request is ever given, even when its prompt filled
+/// the window.
+///
+/// Zero is not a bound, it is a turn that cannot answer at all, and arriving here
+/// means the tool surface alone overflowed the window: a request the compression
+/// pass is supposed to prevent, which deserves a report rather than silence.
+/// Anything larger would over-subscribe the window on purpose, which is the defect
+/// [`crate::agent::executor::loop_runner::write_turn_ceiling`] exists to stop.
+pub const MIN_LOCAL_WRITE_CEILING: usize = 512;
 
 /// Minimum messages to always preserve (last 2).
 const MIN_PRESERVE_MESSAGES: usize = 2;
@@ -248,7 +258,7 @@ pub fn get_model_budget(model: &str) -> usize {
 ///
 /// `get_model_budget` answers what the *model* can hold; a local Ollama server
 /// answers for what it will *allocate*, and `build_request` declares
-/// [`LOCAL_OLLAMA_NUM_CTX`]. Building a 28k-token prompt against a 20480-token
+/// [`local_ollama_num_ctx`]. Building a 28k-token prompt against a 20480-token
 /// window does not error — Ollama drops the FRONT of the prompt, which is the
 /// task anchor and the preloaded source, and the model then goes and re-reads
 /// files it was already handed. That reads as a wandering agent and has cost
@@ -259,7 +269,7 @@ pub fn get_model_budget(model: &str) -> usize {
 pub fn declared_window(provider: AiProvider, model: &str) -> usize {
     let catalog = get_model_budget(model);
     match provider {
-        AiProvider::LocalOllama => catalog.min(LOCAL_OLLAMA_NUM_CTX as usize),
+        AiProvider::LocalOllama => catalog.min(local_ollama_num_ctx(model) as usize),
         _ => catalog,
     }
 }
@@ -304,6 +314,28 @@ pub fn estimate_messages_tokens(messages: &[ChatMessage]) -> usize {
         .iter()
         .map(|m| estimate_tokens(&m.content) as usize)
         .sum()
+}
+
+/// Estimated KV cost of the `tools[]` array as it goes on the wire: the whole
+/// serialized JSON, property names and delimiters included.
+pub fn tool_surface_tokens(tools: &[Value]) -> usize {
+    serde_json::to_string(tools)
+        .map(|s| estimate_tokens(&s) as usize)
+        .unwrap_or(0)
+}
+
+/// What a request built from these messages and this tool surface costs the
+/// window before the model has said anything.
+///
+/// The conversation and the tool schema are both sent and both occupy the same
+/// KV cache, but only the first is a message. Compression has always charged both
+/// against the window (see [`compress_history_to_window_with_drops`]); a caller
+/// that sizes the *reply* against the messages alone disagrees with it about the
+/// same window and reports room that was never there — on a local route, where
+/// the derived ceiling is the only bound the turn gets, that difference is the
+/// size of the tool surface.
+pub fn request_input_tokens(messages: &[ChatMessage], tools: &[Value]) -> usize {
+    estimate_messages_tokens(messages).saturating_add(tool_surface_tokens(tools))
 }
 
 /// Compression strategy result indicating what action to take.
@@ -492,10 +524,7 @@ pub fn compress_history_to_window_with_drops(
     // history, so reserve their estimated cost before budgeting the conversation.
     // Without this, a ~50k-token tool surface silently overflowed the window and
     // the provider rejected otherwise-valid requests.
-    let tools_tokens = serde_json::to_string(tools)
-        .map(|s| estimate_tokens(&s) as usize)
-        .unwrap_or(0);
-    let history_target = target_tokens.saturating_sub(tools_tokens);
+    let history_target = target_tokens.saturating_sub(tool_surface_tokens(tools));
 
     // Estimate current usage
     let current_tokens = estimate_messages_tokens(&base_compressed);
@@ -720,6 +749,7 @@ fn build_conversation_summary(snippets: &[String]) -> String {
 
 #[cfg(test)]
 mod tests {
+    use super::super::utils::LOCAL_OLLAMA_NUM_CTX;
     use super::*;
 
     // ===== Budget lookup tests =====
@@ -1185,10 +1215,33 @@ mod tests {
     }
 
     #[test]
+    fn an_operators_window_reaches_the_prompt_budget_too() {
+        // The budget and the allocation are read in different files, so they are
+        // the pair most likely to drift: a loop that assembles 30k tokens of
+        // prompt against a window it asked the server to make 20480 loses the
+        // front of its own task, silently. Every local model whose catalog window
+        // is at least as large as the clamp must see one number in both places.
+        for model in ["qwen2.5-coder:7b", "qwen3.6:35b-a3b", "llama3.1:8b"] {
+            assert_eq!(
+                declared_window(AiProvider::LocalOllama, model),
+                local_ollama_num_ctx(model) as usize,
+                "{model}: the built budget and the asked window differ"
+            );
+        }
+        // The coder GGUF is the reason this is not one constant: it is measured
+        // to serve a larger window than the MoE the floor was set by.
+        assert!(
+            declared_window(AiProvider::LocalOllama, "qwen2.5-coder:7b")
+                > declared_window(AiProvider::LocalOllama, "qwen3.6:35b-a3b")
+        );
+    }
+
+    #[test]
     fn a_local_window_clamps_the_catalog_budget() {
         // The catalog entry says what the *model* can hold; a local server only
-        // allocates what build_request declares (LOCAL_OLLAMA_NUM_CTX) and drops
-        // the front of a prompt that overflows instead of rejecting it.
+        // allocates what build_request declares (`local_ollama_num_ctx`, whose
+        // floor is LOCAL_OLLAMA_NUM_CTX) and drops the front of a prompt that
+        // overflows instead of rejecting it.
         assert_eq!(
             declared_window(AiProvider::LocalOllama, "gpt-4o"),
             LOCAL_OLLAMA_NUM_CTX as usize

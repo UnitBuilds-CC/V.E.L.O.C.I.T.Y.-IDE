@@ -1,4 +1,5 @@
 use super::super::models::*;
+use super::context_budget;
 use crate::registry::event_store::MAX_TOOL_RESULT_FOR_CONTEXT;
 use crate::usage::{CloudflareAccount, OpenRouterAccount, UsageTracker};
 use crossbeam_channel::Sender;
@@ -288,7 +289,80 @@ pub fn ollama_think_value(model: &str, thinking: bool) -> Value {
 ///
 /// 20480 is the largest window measured to complete a multi-KB write on an 8 GB
 /// host running a 22 GB model (32768 overflowed VRAM and returned empty turns).
+/// It is now the *floor*: [`local_ollama_num_ctx`] raises it for a model
+/// measured to serve more on the host it is actually running on.
 pub const LOCAL_OLLAMA_NUM_CTX: u32 = 20480;
+
+/// The window each local model is measured to serve on an 8 GB host.
+///
+/// The floor above was set by the largest thing this harness runs locally — a
+/// 22.6 GB MoE whose weights alone nearly fill the card — and applying it
+/// unchanged to a 4.7 GB coder GGUF spends the headroom on nothing. Measured on
+/// Colossus (RX 9060 XT, 8 GB, Ollama 0.40.9) with one request and a
+/// 24,080-token prompt, `num_predict` held at 9000 so only the window varied:
+///
+/// | num_ctx | `prompt_eval_count` | outcome |
+/// |---|---|---|
+/// | 20480 | **10,242** | 13,838 prompt tokens dropped off the FRONT, 81 bytes of answer in 15.7 s |
+/// | 32768 | 24,080 | whole prompt kept, 9,000 tokens to the output bound in 310 s |
+/// | 40960 | 24,080 | whole prompt kept, 1,676 tokens, natural stop in 64.8 s |
+///
+/// So the clamp is not a smaller request, it is a request the model answers
+/// without its source — and the front it drops is the task anchor. 32768 is the
+/// row's number because it is that GGUF's own trained length, which the table
+/// must not exceed; the 40960 column shows the card had more to give.
+///
+/// A row here is a measurement of a model on a host, not a property of the
+/// model: the same GGUF on a 6 GB card does not fit 32768, and the operator says
+/// so with `VELOCITY_LOCAL_OLLAMA_NUM_CTX`. Unknown models keep the floor.
+const MEASURED_LOCAL_NUM_CTX: &[(&str, u32)] = &[("qwen2.5-coder:7b", 32768)];
+
+/// The smallest window an operator may state.
+///
+/// This is Ollama's own default when `num_ctx` is left out, and it is already too
+/// small for a convert turn: the segmented tool surface plus one multi-KB source
+/// goes past it before the task text does. A setting below it is a typo, not a
+/// request, so `local_ollama_num_ctx_for` treats it as one.
+const MIN_USABLE_LOCAL_WINDOW: u32 = 2048;
+
+/// The context window to ask a local Ollama server to allocate for this model.
+///
+/// Split from the environment so every caller — the request body's
+/// `options.num_ctx`, the forced-write turn's override, and
+/// [`super::context_budget::declared_window`], which is what bounds how much
+/// prompt the loop assembles — reads one number. Those three drifting apart is
+/// how a run ends up building a 30k-token prompt against a window the server was
+/// told to make smaller.
+pub fn local_ollama_num_ctx(model: &str) -> u32 {
+    local_ollama_num_ctx_for(model, std::env::var("VELOCITY_LOCAL_OLLAMA_NUM_CTX").ok())
+}
+
+/// The rule behind [`local_ollama_num_ctx`], with the operator's setting passed
+/// in rather than read.
+///
+/// Unlike the run ceilings this mirrors, the window has no honest "off": taking
+/// `num_ctx` out does not mean unlimited, it means Ollama's own 2048-token
+/// default, which silently drops all but the tail of the prompt. So a number is
+/// that number *down to* [`MIN_USABLE_LOCAL_WINDOW`], and every other spelling —
+/// `off`, `0`, `32k`, a number too small to hold a turn — keeps the measured
+/// value. The worst outcome of an operator's mistake must be a smaller window,
+/// never a request with no room to stand up in.
+pub(crate) fn local_ollama_num_ctx_for(model: &str, env_raw: Option<String>) -> u32 {
+    let stated = env_raw
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .and_then(|value| value.parse::<u32>().ok());
+    if let Some(number) = stated.filter(|number| *number >= MIN_USABLE_LOCAL_WINDOW) {
+        return number;
+    }
+    let model_lower = model.to_lowercase();
+    MEASURED_LOCAL_NUM_CTX
+        .iter()
+        .find(|(pattern, _)| model_lower.contains(pattern))
+        .map(|(_, window)| *window)
+        .unwrap_or(LOCAL_OLLAMA_NUM_CTX)
+}
 
 /// What an operator typed into an env var that bounds one part of a run.
 pub(crate) enum LimitSetting {
@@ -392,11 +466,28 @@ pub fn build_request(
         // reloading multi-GB weights on the buildbox (and the reload is dead
         // time on the socket that can trip read timeouts). Hold it resident.
         request["keep_alive"] = json!("30m");
-        if ollama_model_reasons(model) {
-            request["options"] = json!({ "num_ctx": LOCAL_OLLAMA_NUM_CTX, "num_predict": 14000 });
+        let num_ctx = local_ollama_num_ctx(model);
+        let preferred = if ollama_model_reasons(model) {
+            14_000
         } else {
-            request["options"] = json!({ "num_ctx": LOCAL_OLLAMA_NUM_CTX, "num_predict": 8192 });
-        }
+            8_192
+        };
+        // The default is a wish, and Ollama grants it by deleting the prompt.
+        // Measured on this host against `qwen2.5-coder:7b`: `num_ctx` 2048, a
+        // 1088-token prompt, so 960 tokens of room, and `num_predict` 6000 — the
+        // server produced all 6000 tokens, slid ~5,000 of the oldest KV out of the
+        // window to do it, and reported `done_reason: "stop"` as though it had run
+        // out of things to say. A turn cannot tell the difference and neither can
+        // the loop, which is why this number is clamped here rather than left to
+        // the sampler: what the window holds back is the most any request may ask
+        // for, and the derived write ceiling uses the same room.
+        let room = (num_ctx as usize)
+            .saturating_sub(context_budget::request_input_tokens(messages, tools))
+            .max(context_budget::MIN_LOCAL_WRITE_CEILING);
+        request["options"] = json!({
+            "num_ctx": num_ctx,
+            "num_predict": preferred.min(room),
+        });
     }
     request
 }
@@ -1877,11 +1968,21 @@ mod tests {
             );
             assert_eq!(
                 req["options"]["num_ctx"],
-                json!(LOCAL_OLLAMA_NUM_CTX),
+                json!(local_ollama_num_ctx(model)),
                 "{model} got no window"
             );
             assert_eq!(req["options"]["num_predict"], json!(num_predict), "{model}");
         }
+        // … and the window is per model, not one number for every local route.
+        // The floor was measured on a 22.6 GB MoE whose weights nearly fill an
+        // 8 GB card; holding a 4.7 GB coder GGUF to it spends headroom on nothing
+        // and costs the prompt, because an overflowing window drops its front —
+        // the task anchor and the preloaded source — rather than refusing.
+        assert_eq!(local_ollama_num_ctx("qwen2.5-coder:7b"), 32768);
+        assert_eq!(
+            local_ollama_num_ctx("qwen3.6:35b-a3b"),
+            LOCAL_OLLAMA_NUM_CTX
+        );
         // A cloud provider must not gain the Ollama-only `options` block.
         let req = build_request(
             &profile("qwen-plus"),
@@ -1892,6 +1993,123 @@ mod tests {
             AiProvider::OpenRouter,
         );
         assert!(req.get("options").is_none());
+    }
+
+    /// The window is one allocation shared by the prompt and the reply, and Ollama
+    /// does not police the pairing for us. Measured on this host against
+    /// `qwen2.5-coder:7b`: `num_ctx` 2048, a 1088-token prompt, and
+    /// `num_predict` 6000 — the server generated all 6000 tokens, sliding more than
+    /// 5,000 of the oldest prompt KV out of the window, then reported
+    /// `done_reason: "stop"` with a coherent completion and no change in tokens/s.
+    /// Nothing downstream can see that the task anchor had been eaten, so the
+    /// planted default has to be inside the room it leaves: the same arithmetic the
+    /// loop's write ceiling uses, tool surface included, at every turn rather than
+    /// only the forced one.
+    #[test]
+    fn a_fat_local_prompt_shrinks_num_predict_instead_of_evicting_itself() {
+        let profile = ModelInfo {
+            id: "qwen2.5-coder:7b".to_string(),
+            label: "qwen2.5-coder:7b".to_string(),
+            api_style: ApiStyle::OpenAiTools,
+            supports_tools: true,
+            supports_thinking: false,
+        };
+        let tools = vec![json!({"name": "write_file"})];
+        // A source body big enough that the 8192 default no longer fits behind it:
+        // the clamp is what binds here rather than the minimum, and the assertion
+        // below checks that the fixture still bites instead of passing vacuously.
+        let fat = user_msg(&"fn main() {}\n".repeat(7000));
+        let req = build_request(
+            &profile,
+            "qwen2.5-coder:7b",
+            &[sys_msg("You are a porting agent.".to_string()), fat.clone()],
+            &tools,
+            false,
+            AiProvider::LocalOllama,
+        );
+        let num_ctx = req["options"]["num_ctx"].as_u64().unwrap() as usize;
+        let predict = req["options"]["num_predict"].as_u64().unwrap() as usize;
+        let input = context_budget::request_input_tokens(
+            &[sys_msg("You are a porting agent.".to_string()), fat],
+            &tools,
+        );
+        assert!(
+            input + predict <= num_ctx,
+            "prompt {input} + num_predict {predict} in a window of {num_ctx} \
+             over-subscribes it, which the server answers by dropping the front"
+        );
+        assert_eq!(
+            predict,
+            num_ctx - input,
+            "and it is given exactly its room, not the 8192 default"
+        );
+        // Non-vacuity: had the prompt left 8192 tokens or more of room, the two
+        // assertions above would pass with the clamp absent. It is the room being
+        // *smaller* than the default that this test is about.
+        assert!(
+            input > num_ctx - 8_192,
+            "fixture too small to exercise the clamp: prompt {input} in a window \
+             of {num_ctx} still leaves room for the 8192 default, so the branch \
+             under test was never reached"
+        );
+        // An empty request still gets the model's full default: the clamp only
+        // takes away room the prompt actually consumed, so it cannot shrink a turn
+        // that has the whole window in front of it.
+        let bare = build_request(
+            &profile,
+            "qwen2.5-coder:7b",
+            &[],
+            &tools,
+            false,
+            AiProvider::LocalOllama,
+        );
+        assert_eq!(bare["options"]["num_predict"], json!(8192));
+    }
+
+    /// The window is a fact about a model *on a host*, so the operator has to be
+    /// able to state it: the same 4.7 GB GGUF that serves 32768 on an 8 GB card
+    /// does not fit one on a 6 GB card. Unlike the run ceilings this mirrors,
+    /// there is no honest "off" — removing `num_ctx` does not mean unlimited, it
+    /// means Ollama's 2048-token default, which silently keeps only the tail of
+    /// the prompt. So every non-number spelling buys the measured value, and a
+    /// typo degrades the window rather than destroying it.
+    #[test]
+    fn an_operators_window_number_outranks_the_measured_table() {
+        assert_eq!(local_ollama_num_ctx_for("qwen2.5-coder:7b", None), 32768);
+        assert_eq!(
+            local_ollama_num_ctx_for("qwen2.5-coder:7b", Some("16384".to_string())),
+            16384,
+            "a smaller stated window is what the host gets"
+        );
+        assert_eq!(
+            local_ollama_num_ctx_for("qwen3.6:35b-a3b", Some(" 65536 ".to_string())),
+            65536,
+            "the stated number is not clamped to the table's floor"
+        );
+        for spelling in ["off", "0", "1024", "unbounded", "32k", ""] {
+            assert_eq!(
+                local_ollama_num_ctx_for("qwen3.6:35b-a3b", Some(spelling.to_string())),
+                LOCAL_OLLAMA_NUM_CTX,
+                "`{spelling}` must not mean an unset window"
+            );
+        }
+        // The floor of what an operator may state is Ollama's own default, so a
+        // stated 2048 is a choice, not a typo.
+        assert_eq!(
+            local_ollama_num_ctx_for("qwen3.6:35b-a3b", Some("2048".to_string())),
+            2048
+        );
+        // The table is keyed on the id as it arrives, tag and all.
+        assert_eq!(
+            local_ollama_num_ctx_for("Qwen2.5-Coder:7b", None),
+            32768,
+            "the match is case-insensitive, like the budget table"
+        );
+        assert_eq!(
+            local_ollama_num_ctx_for("qwen2.5-coder:14b", None),
+            LOCAL_OLLAMA_NUM_CTX,
+            "a model nobody has measured keeps the floor"
+        );
     }
 
     /// One parser, three ceilings (wall clock, preload bytes, write-turn
