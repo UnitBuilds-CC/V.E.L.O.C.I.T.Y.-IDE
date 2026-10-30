@@ -2231,6 +2231,61 @@ fn best_local_ollama_model(root: &Path) -> Option<String> {
     Some(ids.remove(0))
 }
 
+/// Rewrite an Ollama hop that names a toy into a model the host can work with.
+///
+/// `default_provider_model(LocalOllama)` is `qwen2.5-coder:0.5b`, and every step
+/// of `build_fallback_chain` except the last-resort one asks `model_for` for a
+/// name — only step 6 knows to ask the host what it actually serves. So a chain
+/// that reaches Ollama through the "other configured providers" arm gets the 0.5b
+/// while a chain that reaches it as a last resort gets the biggest coder
+/// installed, and nothing about the two runs says they used different models.
+/// Live run #104 is what the first shape costs: the llama.cpp hop failed a
+/// post-run build, the prose guard blocked the GGUF after 1,800 s, three Alibaba
+/// models 403'd, and the closing hop of a 3,000 s dispatch ran on
+/// `qwen2.5-coder:0.5b` — a model that cannot hold a tool call — while the port
+/// sat on disk unvalidated.
+///
+/// `discover` is called only when the chain actually carries a toy hop, so the
+/// normal cloud chain pays no `/api/tags` round trip, and only when the operator
+/// did not pick Ollama themselves: a workspace deliberately set to a small local
+/// model is a probe of that model, and upgrading it would answer a question
+/// nobody asked. `is_small_model` already marks whatever such a run produces.
+fn upgrade_small_ollama_hops(
+    chain: &mut Vec<(AiProvider, String)>,
+    active: Option<&(AiProvider, String)>,
+    discover: impl FnOnce() -> Option<String>,
+) {
+    if active.is_some_and(|picked| picked.0 == AiProvider::LocalOllama) {
+        return;
+    }
+    let has_toy_hop = chain
+        .iter()
+        .any(|(p, m)| *p == AiProvider::LocalOllama && is_small_model(m));
+    if !has_toy_hop {
+        return;
+    }
+    let Some(replacement) = discover().filter(|id| !is_small_model(id)) else {
+        // No reachable model that can work. Keep the toy: a hop that runs and gets
+        // flagged as degraded beats a provider the operator installed being
+        // silently dropped from the chain.
+        return;
+    };
+    if chain
+        .iter()
+        .any(|(p, m)| *p == AiProvider::LocalOllama && m == &replacement)
+    {
+        // Two entries, one set of weights — the shape run #26 paid the prose
+        // allowance twice for. Drop the toy rather than rename it into a duplicate.
+        chain.retain(|(p, m)| !(*p == AiProvider::LocalOllama && is_small_model(m)));
+        return;
+    }
+    for (p, m) in chain.iter_mut() {
+        if *p == AiProvider::LocalOllama && is_small_model(m) {
+            *m = replacement.clone();
+        }
+    }
+}
+
 /// Which model a fallback hop actually is, as the prose allowance sees it.
 ///
 /// Run #26 tried `qwen3.6-35b-a3b` over llama.cpp, then
@@ -2701,6 +2756,13 @@ pub(crate) fn build_fallback_chain(
             chain.insert(0, (*ap, am.clone()));
         }
     }
+
+    // A local hop that fell out of the static default is a model the task cannot
+    // be done with. Ask the host what it serves instead — see the helper for why
+    // this is not already true of every Ollama entry.
+    upgrade_small_ollama_hops(&mut chain, active.as_ref(), || {
+        best_local_ollama_model(root)
+    });
 
     // Honest single-model evaluation: when pinned, the selected provider is the
     // ONLY one tried. A credential-less cloud fallback (a 403 Alibaba key) must
@@ -5851,6 +5913,106 @@ mod tests {
             .find(|(p, _)| *p == AiProvider::LocalOllama)
             .expect("chain always ends with a LocalOllama entry");
         assert_eq!(ollama.1, "qwen2.5-coder:14b");
+    }
+
+    /// The chain shape live run #104 died on: Ollama entered through the
+    /// "other configured providers" arm, which reads the static default, so the
+    /// hop was `qwen2.5-coder:0.5b` and the last 68 s of a 3,000 s dispatch ran on
+    /// a model that cannot hold a tool call.
+    #[test]
+    fn a_toy_ollama_hop_is_rewritten_to_a_model_that_can_work() {
+        let mut chain = vec![
+            (AiProvider::LocalLlama, "qwen3.6-35b-a3b".to_string()),
+            (AiProvider::AlibabaQwen, "deepseek-v4-pro".to_string()),
+            (AiProvider::LocalOllama, "qwen2.5-coder:0.5b".to_string()),
+        ];
+        upgrade_small_ollama_hops(&mut chain, None, || Some("qwen2.5-coder:7b".to_string()));
+        assert_eq!(
+            chain,
+            vec![
+                (AiProvider::LocalLlama, "qwen3.6-35b-a3b".to_string()),
+                (AiProvider::AlibabaQwen, "deepseek-v4-pro".to_string()),
+                (AiProvider::LocalOllama, "qwen2.5-coder:7b".to_string()),
+            ],
+            "the local hop is upgraded in place and no other hop moves"
+        );
+    }
+
+    /// Renaming a toy hop onto a model the chain already tries is two entries for
+    /// one set of weights — run #26's double charge against the prose allowance.
+    #[test]
+    fn a_toy_hop_that_would_become_a_duplicate_is_dropped_instead() {
+        let mut chain = vec![
+            (AiProvider::LocalOllama, "qwen2.5-coder:0.5b".to_string()),
+            (AiProvider::AlibabaQwen, "deepseek-v4-pro".to_string()),
+            (AiProvider::LocalOllama, "qwen2.5-coder:7b".to_string()),
+        ];
+        upgrade_small_ollama_hops(&mut chain, None, || Some("qwen2.5-coder:7b".to_string()));
+        assert_eq!(
+            chain,
+            vec![
+                (AiProvider::AlibabaQwen, "deepseek-v4-pro".to_string()),
+                (AiProvider::LocalOllama, "qwen2.5-coder:7b".to_string()),
+            ],
+            "one local hop survives, in its original order"
+        );
+    }
+
+    /// Nothing is probed unless the chain actually carries a toy hop, so the
+    /// ordinary cloud chain pays no `/api/tags` round trip per dispatch.
+    #[test]
+    fn a_chain_without_a_toy_hop_never_asks_the_host() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        let probed = AtomicBool::new(false);
+        let mut chain = vec![
+            (AiProvider::LocalOllama, "qwen2.5-coder:7b".to_string()),
+            (AiProvider::AlibabaQwen, "qwen-max".to_string()),
+        ];
+        upgrade_small_ollama_hops(&mut chain, None, || {
+            probed.store(true, Ordering::SeqCst);
+            Some("qwen2.5-coder:14b".to_string())
+        });
+        assert!(!probed.load(Ordering::SeqCst), "no hop needed replacing");
+        assert_eq!(chain[0].1, "qwen2.5-coder:7b");
+    }
+
+    /// A workspace pinned to a small local model is a probe of that model. The
+    /// attempt log already grades whatever it produces; rewriting the pin would
+    /// answer a question nobody asked.
+    #[test]
+    fn the_operators_own_small_local_model_is_left_alone() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        let probed = AtomicBool::new(false);
+        let mut chain = vec![(AiProvider::LocalOllama, "qwen2.5-coder:0.5b".to_string())];
+        let active = (AiProvider::LocalOllama, "qwen2.5-coder:0.5b".to_string());
+        upgrade_small_ollama_hops(&mut chain, Some(&active), || {
+            probed.store(true, Ordering::SeqCst);
+            Some("qwen2.5-coder:7b".to_string())
+        });
+        assert_eq!(chain[0].1, "qwen2.5-coder:0.5b");
+        assert!(
+            !probed.load(Ordering::SeqCst),
+            "a pinned selection must not trigger discovery"
+        );
+    }
+
+    /// An unreachable host is not a reason to drop the operator's local provider:
+    /// the toy hop stays, and `is_small_model` marks the outcome degraded rather
+    /// than letting it read as a pass.
+    #[test]
+    fn an_unreachable_host_keeps_the_toy_hop() {
+        let mut chain = vec![(AiProvider::LocalOllama, "qwen2.5-coder:0.5b".to_string())];
+        upgrade_small_ollama_hops(&mut chain, None, || None);
+        assert_eq!(chain[0].1, "qwen2.5-coder:0.5b");
+    }
+
+    /// A host that only serves toys must not have its smallest name swapped for
+    /// another toy the chain cannot work with either.
+    #[test]
+    fn a_discovered_toy_is_not_an_upgrade() {
+        let mut chain = vec![(AiProvider::LocalOllama, "qwen2.5-coder:0.5b".to_string())];
+        upgrade_small_ollama_hops(&mut chain, None, || Some("llama3.2:1b".to_string()));
+        assert_eq!(chain[0].1, "qwen2.5-coder:0.5b");
     }
 
     #[test]
