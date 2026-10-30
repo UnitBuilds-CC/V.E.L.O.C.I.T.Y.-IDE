@@ -6,8 +6,8 @@ use super::super::nda::*;
 use super::super::provider::*;
 use super::super::self_improve::ImprovementEngine;
 use super::context_budget::{
-    compress_history_to_window_with_drops, declared_window, dropped_messages,
-    estimate_messages_tokens,
+    compress_history_to_window_with_drops, declared_window, dropped_messages, request_input_tokens,
+    MIN_LOCAL_WRITE_CEILING,
 };
 use super::router_client::{
     self, AssignmentRequest, AssignmentStatus, ExecutionMode, ExecutionTier,
@@ -17,9 +17,9 @@ use super::thread::{
     run_written_tests, TestVerdict,
 };
 use super::utils::{
-    build_request, estimate_tokens, ollama_model_reasons, parse_bare_json_tool_calls,
-    parse_claude_inline_tool_calls, parse_dsml_tool_calls, sanitize_chat_token, send_usage_update,
-    LOCAL_OLLAMA_NUM_CTX,
+    build_request, estimate_tokens, local_ollama_num_ctx, ollama_model_reasons,
+    parse_bare_json_tool_calls, parse_claude_inline_tool_calls, parse_dsml_tool_calls,
+    sanitize_chat_token, send_usage_update,
 };
 use crate::registry;
 use crate::registry::types::Tool;
@@ -736,6 +736,11 @@ pub fn run_agent_reasoning_loop(
     // Every path a `read_file` actually returned bytes for. The completion gate
     // needs the positive fact, not just the refusals — see `remember_run_read`.
     let mut run_reads: Vec<String> = Vec::new();
+    // Every file this run has asked to `edit_file`. A write-locked turn refuses
+    // exploration, but a read of the file the run is already trying to patch is
+    // not exploration — it is the precondition of the edit the lock is asking
+    // for. See `read_of_patched_file`.
+    let mut patch_attempts: Vec<String> = Vec::new();
     // How many times a green grade has been withheld because this run never read
     // the source it was told to convert.
     let mut unread_source_refusals: u32 = 0;
@@ -1327,9 +1332,23 @@ pub fn run_agent_reasoning_loop(
         // Compress to the window this request will actually declare, not to the
         // window the model advertises: a local server silently drops the front of
         // a prompt that overflows its allocation.
+        //
+        // On the escalated retry the window it is given is the window minus the
+        // room the retry is buying. A local `num_predict` cannot exceed the space
+        // left by the prompt — measured, Ollama answers an over-large number by
+        // sliding the KV cache and generating anyway — so the only way this loop
+        // can hand a cut-off write turn more output is to spend prompt tokens for
+        // it. That is a trade the retry is entitled to make and the first pass is
+        // not, which is why it is made here instead of in the ceiling.
+        let window = declared_window(current_provider, &current_model);
+        let compress_window = if force_write_only && write_ceiling_escalated {
+            window.saturating_sub(write_ceiling_reserve(window))
+        } else {
+            window
+        };
         let (mut compressed_history, window_dropped) = compress_history_to_window_with_drops(
             &pruned_history,
-            declared_window(current_provider, &current_model),
+            compress_window,
             current_profile.supports_tools,
             turn_tools,
             tool_surface,
@@ -1380,34 +1399,35 @@ pub fn run_agent_reasoning_loop(
         // clean context makes the write_file call the overwhelmingly likely
         // continuation. Set on both the OpenAI-style field and Ollama's
         // `options` block so whichever shim reads it gets the low value.
-        let window = declared_window(current_provider, &current_model);
         let env_ceiling = std::env::var("VELOCITY_WRITE_TURN_MAX_TOKENS").ok();
+        // What this request costs the window before the model says anything: the
+        // messages AND the serialized tool surface, which is sent alongside them
+        // and occupies the same cache. Sizing the reply against the messages alone
+        // reports room equal to the tool surface that does not exist.
+        let request_input = request_input_tokens(&compressed_history, turn_tools);
         if force_write_only {
             // `write_ceiling_escalated` is only ever set when the ceiling in
             // force was the one this loop derived on a local route (see the
             // failure arm), so the escalated number cannot contradict an
-            // operator who named a number or already said "off". It asks for the
-            // whole window rather than "no ceiling", because leaving the field
-            // unset lets `build_request`'s smaller default stand — on the native
-            // Ollama body that is `options.num_predict: 14000`, so "no ceiling"
-            // would have been a downgrade.
-            let ceiling = if write_ceiling_escalated {
-                Some(window as u64)
-            } else {
-                write_turn_ceiling(
-                    env_ceiling.as_deref(),
-                    current_provider,
-                    window,
-                    estimate_messages_tokens(&compressed_history),
-                )
-            };
+            // operator who named a number or already said "off". The retry buys
+            // its extra output from the history it no longer sends (see
+            // `compress_window`), not from a bigger number here: on these routes
+            // the window ceilings prompt plus reply, and the server enforces that
+            // pairing by deleting the front of the prompt rather than by clamping
+            // the request.
+            let ceiling = write_turn_ceiling(
+                env_ceiling.as_deref(),
+                current_provider,
+                window,
+                request_input,
+            );
             apply_forced_write_sampling(&mut request_body, ceiling);
         } else if let Some(ceiling) = unforced_llama_ceiling(
             current_provider,
             &request_body,
             env_ceiling.as_deref(),
             window,
-            estimate_messages_tokens(&compressed_history),
+            request_input,
         ) {
             // A llama.cpp turn whose body carries no `max_tokens` is read by
             // llama-server as `n_predict: -1`, "generate until the window is
@@ -2683,6 +2703,44 @@ pub fn run_agent_reasoning_loop(
             }
         }
 
+        // --- Fenced Rust handed back as the artifact itself ---
+        // The same hole, one turn earlier: a convert whose model does the port and
+        // answers in prose. Run #101b streamed an 8,954-byte module back as 34
+        // ```rust fences — `pub fn` 65 times, zero tool_calls — the loop saw a final
+        // answer, the deliverable stayed 0 bytes, and the dispatch blocked. The
+        // destination is as certain as the repair arm's, because the brief names the
+        // path, and the arm only opens on a task that owes a file, has written
+        // nothing, and has nothing at the target but a placeholder. The write is
+        // graded by the crate's build and tests like any other, so reading the prose
+        // wrong costs a repair turn rather than a false green.
+        if accumulated_tools.is_empty()
+            && requires_artifact
+            && !produced_artifact
+            && !deliverable_has_content(workspace_root, named_target.as_deref())
+        {
+            if let Some(rel) = named_target.as_deref() {
+                if let Some(body) = collect_fenced_rust_blocks(&assistant_content, 600) {
+                    ui_tx
+                        .send(AgentToUiMessage::StatusUpdate(format!(
+                            "Model returned the port as fenced Rust, not a tool call \u{2014} \
+                             recovering it as a {} byte write to '{}'",
+                            body.len(),
+                            rel
+                        )))
+                        .ok();
+                    accumulated_tools.push(ToolCallAccumulator {
+                        id: format!("fenced_artifact_{}", accumulated_tools.len()),
+                        name: "write_file".to_string(),
+                        arguments: serde_json::to_string(&json!({
+                            "relativeFilePath": rel,
+                            "content": body,
+                        }))
+                        .unwrap_or_else(|_| "{}".to_string()),
+                    });
+                }
+            }
+        }
+
         // Unparsed tool-call markup: a stream cut mid-call can leave residue
         // none of the parsers above consumed — e.g. the inline parser ate the
         // opener and function name, and only the lone function-close tag (plus
@@ -2900,13 +2958,20 @@ pub fn run_agent_reasoning_loop(
                 let write_names = turn_write_tools.join(" / ");
                 let target_read_allowed_now = force_write_only
                     && target_now_on_disk
-                    && read_of_named_target(&tool_name, &arguments, named_target.as_deref())
+                    && (read_of_named_target(&tool_name, &arguments, named_target.as_deref())
+                        || read_of_patched_file(&tool_name, &arguments, &patch_attempts))
                     && deliverable_read_still_allowed(write_pressure_nudges);
                 if target_read_allowed_now {
+                    let read_what =
+                        if read_of_named_target(&tool_name, &arguments, named_target.as_deref()) {
+                            "the deliverable itself"
+                        } else {
+                            "the file this run is already editing"
+                        };
                     ui_tx
                         .send(AgentToUiMessage::StatusUpdate(format!(
-                            "Exploration locked \u{2014} allowing '{tool_name}' of the \
-                             deliverable itself"
+                            "Exploration locked \u{2014} allowing '{tool_name}' of \
+                             {read_what}"
                         )))
                         .ok();
                 }
@@ -2914,11 +2979,28 @@ pub fn run_agent_reasoning_loop(
                     && !turn_write_tools.contains(&tool_name.as_str())
                     && !target_read_allowed_now
                 {
+                    // The second lane, named only while it is actually open. A
+                    // refusal that lists one readable path while two are readable
+                    // sends the model hunting for a door it never tried.
+                    let patched_read = if target_now_on_disk
+                        && deliverable_read_still_allowed(write_pressure_nudges)
+                    {
+                        patch_attempts.last().cloned().filter(|path| {
+                            !read_of_named_target(
+                                "read_file",
+                                &serde_json::json!({ "relativeFilePath": path }),
+                                named_target.as_deref(),
+                            )
+                        })
+                    } else {
+                        None
+                    };
                     let refusal_text = exploration_lock_refusal(
                         target_now_on_disk,
                         named_target.as_deref(),
                         &write_names,
                         deliverable_read_still_allowed(write_pressure_nudges),
+                        patched_read.as_deref(),
                     );
                     ui_tx
                         .send(AgentToUiMessage::StatusUpdate(format!(
@@ -3194,6 +3276,15 @@ pub fn run_agent_reasoning_loop(
                 let surface_names = surface_names.clone();
                 let lock_readable = lock_readable.clone();
 
+                // Recorded before the call runs, because what licenses the read
+                // later is the intent to patch, not whether this particular
+                // locator happened to match. Outside the thread below, which
+                // moves its captures and would take this set with it.
+                if tool_name == "edit_file" {
+                    if let Some(rel) = _original_arguments["relativeFilePath"].as_str() {
+                        remember_patch_attempt(&mut patch_attempts, rel);
+                    }
+                }
                 let handle = std::thread::spawn(move || {
                     let (tool_result, file_buffer_update, changelog_entry) = if let Some(
                         approved_args,
@@ -4923,6 +5014,52 @@ fn read_of_named_target(tool_name: &str, args: &Value, named_target: Option<&str
     !write_misses_named_target(Some(path), Some(target))
 }
 
+/// How many patch attempts a run may be remembered for. The same bound as the
+/// reads and writes: a set of names, not a transcript.
+const MAX_TRACKED_PATCHES: usize = 32;
+
+/// Record one file the run asked to `edit_file`, de-duplicated by the same rule
+/// as the reads and the writes.
+fn remember_patch_attempt(patches: &mut Vec<String>, rel: &str) {
+    let normalised = rel.replace('\\', "/");
+    if patches.len() >= MAX_TRACKED_PATCHES
+        || patches.iter().any(|p| p.replace('\\', "/") == normalised)
+    {
+        return;
+    }
+    patches.push(rel.to_string());
+}
+
+/// Whether this call reads a file the run has already tried to patch.
+///
+/// The lock's exception used to be the deliverable alone, and a run whose repair
+/// lives in a *different* file therefore could not open the one file its own
+/// directive told it to read. Measured on the live `qwen2.5-coder:7b` convert of
+/// `litellm_core_utils.cli_keyring` (2026-10-30, 65 s, 16 turns): the deliverable
+/// built but nothing declared it, the directive said "Add `pub mod
+/// litellm_core_utils_cli_keyring;` to `rust_port/src/lib.rs` with `edit_file`",
+/// and the refusal after each failed locator said "Call `read_file` with
+/// `startLine` and `endLine` over that region" — for a path the lock then refused
+/// to open. The model guessed three anchors for a file it had never read in that
+/// run (`""`, `// Add module declarations here`, and `// pub mod
+/// _internal_context;`, whose real line 5 is the same text without the `// `) and
+/// then replayed the third byte-identically four times until the run ended with
+/// the deliverable orphaned. A half-remembered line is exactly what one read
+/// corrects, and `edit_file` had already proved the run was not browsing.
+///
+/// Bounded by the caller's `deliverable_read_still_allowed`, so widening which
+/// path the exception names does not reopen the read loop that closed it.
+fn read_of_patched_file(tool_name: &str, args: &Value, patches: &[String]) -> bool {
+    if tool_name != "read_file" || patches.is_empty() {
+        return false;
+    }
+    let Some(path) = read_call_target(args) else {
+        return false;
+    };
+    let wanted = path.replace('\\', "/");
+    patches.iter().any(|p| p.replace('\\', "/") == wanted)
+}
+
 /// The answer a locked turn gives to an exploration call.
 ///
 /// The lock fires in two states that are nothing alike, and run #90 measured
@@ -4937,11 +5074,23 @@ fn read_of_named_target(tool_name: &str, args: &Value, named_target: Option<&str
 /// an incomplete file beats no file; once it exists the run is told the file is
 /// there and this turn edits it. The read exception only ever names a path the
 /// turn can actually open.
+///
+/// And the count follows the lanes. The caller passes `patched_read` for the one
+/// other path the gate lets through — a file this run has already tried to
+/// `edit_file`. Measured cost of the sentence that named only the deliverable: the
+/// live `qwen2.5-coder:7b` convert of `litellm_core_utils.cli_keyring` (2026-10-30,
+/// 16 turns) was refused every read of `rust_port/src/lib.rs` and told, each time,
+/// that the deliverable was the one file it could open — so it guessed anchors four
+/// times over a file it had never seen and ended with the deliverable orphaned.
+/// `read_of_patched_file` opens that file; a refusal that still names only the
+/// deliverable omits the lane that exists for exactly this case, and a model that
+/// is not told a door is open does not try it.
 fn exploration_lock_refusal(
     deliverable_on_disk: bool,
     named_target: Option<&str>,
     write_names: &str,
     read_still_allowed: bool,
+    patched_read: Option<&str>,
 ) -> String {
     let (state, advice) = if deliverable_on_disk {
         (
@@ -4954,22 +5103,38 @@ fn exploration_lock_refusal(
             " An incomplete file is acceptable and far better than no file.",
         )
     };
-    // A model refused once may not ask again, so the refusal names the one read
-    // the lock still allows — the file it must edit. Once the nudge budget is
-    // spent that exception has already carried the run past every directive it
-    // was given, so the refusal has to say the read is closed too.
-    let readable_note = if !read_still_allowed || !deliverable_on_disk {
-        String::new()
+    // A model refused once may not ask again, so the refusal names the reads the
+    // lock still allows. Once the nudge budget is spent that exception has already
+    // carried the run past every directive it was given, so the refusal has to say
+    // the read is closed too.
+    let open_reads: Vec<String> = if read_still_allowed && deliverable_on_disk {
+        let mut lanes = Vec::new();
+        if let Some(t) = named_target {
+            lanes.push(format!("`read_file` with relativeFilePath \"{t}\""));
+        }
+        if let Some(p) = patched_read {
+            lanes.push(format!("`read_file` with relativeFilePath \"{p}\""));
+        }
+        lanes
     } else {
-        named_target
-            .map(|t| {
-                format!(
-                    " One read is still allowed, and it is the one you need: `read_file` with \
-                     relativeFilePath \"{t}\", plus startLine and endLine to bring back just the \
-                     region the diagnostics name."
-                )
-            })
-            .unwrap_or_default()
+        Vec::new()
+    };
+    let readable_note = match open_reads.len() {
+        0 => String::new(),
+        // The deliverable is the read the diagnostics ask for, so the single-lane
+        // wording stays the one the repair loop was measured against.
+        1 => format!(
+            " One read is still allowed, and it is the one you need: {}, plus startLine and \
+             endLine to bring back just the region the diagnostics name.",
+            open_reads[0]
+        ),
+        _ => format!(
+            " Two reads are still allowed, and the second is the one you need: {}, plus \
+             startLine and endLine to bring back just the region the diagnostics name. It is \
+             also the file your last `edit_file` tried to change, so its bytes are the anchor \
+             you are missing.",
+            open_reads.join(" and ")
+        ),
     };
     let closed_note = if read_still_allowed {
         String::new()
@@ -6050,6 +6215,21 @@ pub(crate) fn artifact_targets(
     };
     let preexisting = named.as_deref().is_some_and(|rel| root.join(rel).is_file());
     (named, preexisting)
+}
+
+/// Whether the deliverable's path holds bytes a prose write would destroy.
+///
+/// `preexisting_target` cannot answer this: a from-scratch convert usually finds
+/// an empty module file already in the crate, because `lib.rs` declares it and the
+/// seed wants the crate to build. Run #101b's deliverable read 0 bytes and still
+/// counted as preexisting, which is the difference between protecting a port
+/// somebody wrote and protecting a placeholder nobody did.
+fn deliverable_has_content(root: &std::path::Path, named: Option<&str>) -> bool {
+    named.is_some_and(|rel| {
+        std::fs::read_to_string(root.join(rel))
+            .map(|text| !text.trim().is_empty())
+            .unwrap_or(false)
+    })
 }
 
 /// The names of the items a Rust file declares.
@@ -8745,12 +8925,13 @@ fn force_write_directive(write_names: &str) -> String {
     )
 }
 
-/// The floor of the derived ceiling, and the whole answer on a cloud route.
+/// The output a cloud write turn is given, and the most an escalated local retry
+/// ever buys.
 const DEFAULT_WRITE_TURN_MAX_TOKENS: usize = 18_000;
 
 /// The output ceiling a write-forced turn asks for, and whether to ask at all.
 ///
-/// 18000 out of the 20480-token Ollama window is a measured number: at the
+/// On a cloud route this is a constant, and 18000 is a measured number: at the
 /// standard 14000 a slow sample hit `finish_reason=length` mid-reasoning and
 /// never reached the call. It is also, on a llama.cpp route whose window is
 /// 131072, the binding limit on how large one write can be — and when it binds,
@@ -8760,33 +8941,45 @@ const DEFAULT_WRITE_TURN_MAX_TOKENS: usize = 18_000;
 /// `_service_logger.py` died that way at column 18575 with the port already on
 /// its way out.
 ///
-/// So the default is not a constant, it is the room the turn has: the window
-/// this provider declares minus what the prompt already holds, never below the
-/// measured 18000 floor. `VELOCITY_WRITE_TURN_MAX_TOKENS` overrides the
-/// derivation — a number is that number, and its "off" words mean the loop sets
-/// nothing and the provider's own default applies.
+/// On a route whose server we own it is the room that window has left after the
+/// request it was given, and never more than that room. A `num_predict` above the
+/// room is not a larger ceiling — it is no ceiling, because the server does not
+/// honour the pairing. Measured on this host against Ollama's `qwen2.5-coder:7b`:
+/// one `num_ctx` of 2048, one prompt of 1088 tokens, so 960 tokens of room. Asked
+/// for 900 it generated 900 (16.8 s); asked for 2000 it generated **2000**
+/// (35.9 s), which means it slid the KV cache and discarded more than a thousand
+/// of the oldest prompt tokens to keep decoding. Nothing in the response marks
+/// that: the completion was coherent and the per-token rate did not change (53.5
+/// against 55.7 tok/s), so the only evidence the task anchor had been eaten is the
+/// model's own behaviour a turn later.
+///
+/// So a ceiling the window cannot pay for is a turn with no bound *and* no
+/// instruction, and on these routes the ceiling is the only bound such a turn gets
+/// once the operator removes the wall clock. Where the measured 18000 need exceeds
+/// the room, the prompt is what has to give way; that trade is made on the
+/// escalated retry, which compresses to a smaller window — see
+/// [`write_ceiling_reserve`] — rather than by sending an impossible number here.
+///
+/// `VELOCITY_WRITE_TURN_MAX_TOKENS` overrides the derivation — a number is that
+/// number, and its "off" words mean the loop sets nothing and the provider's own
+/// default applies.
 ///
 /// The derivation is deliberately limited to the local routes. A cloud endpoint
 /// rejects an over-large `max_tokens` outright (OpenAI's chat completions caps
 /// well under the 128k it will accept as a window), so asking a cloud model for
 /// its whole remaining window converts a turn that worked into a 400 — the
-/// operator's env value is the way to raise those. On a local route the only
-/// ceiling is the context, and the cost of asking for all of it is decode time
-/// on a model that rambles; the run already accepts slow (see the unbounded
-/// wall clock).
+/// operator's env value is the way to raise those.
 fn write_turn_ceiling(
     env_raw: Option<&str>,
     provider: AiProvider,
     window: usize,
-    prompt_tokens: usize,
+    input_tokens: usize,
 ) -> Option<u64> {
     use super::utils::{parse_limit_setting, LimitSetting};
     match parse_limit_setting(env_raw) {
         LimitSetting::Default => {
             let ceiling = if is_local_route(provider) {
-                window
-                    .saturating_sub(prompt_tokens)
-                    .max(DEFAULT_WRITE_TURN_MAX_TOKENS)
+                local_write_room(window, input_tokens)
             } else {
                 DEFAULT_WRITE_TURN_MAX_TOKENS
             };
@@ -8795,6 +8988,36 @@ fn write_turn_ceiling(
         LimitSetting::Unbounded => None,
         LimitSetting::Value(tokens) => Some(tokens),
     }
+}
+
+/// The output tokens a local request has room for, which is never more than the
+/// window holds back.
+///
+/// `input_tokens` has to be [`request_input_tokens`], not the message total: the
+/// serialized tool surface is sent in the same request and occupies the same
+/// cache, so leaving it out overstates the room by exactly the size of the tool
+/// surface — tens of percent of an 8 GB-class window.
+///
+/// A prompt that already filled the window gets [`MIN_LOCAL_WRITE_CEILING`] rather
+/// than zero. Zero is not a bound, it is a turn that cannot answer at all, and
+/// arriving here means the tool surface alone overflowed the window: a request the
+/// compression pass is supposed to prevent, which deserves a report rather than a
+/// silent empty turn.
+fn local_write_room(window: usize, input_tokens: usize) -> usize {
+    window
+        .saturating_sub(input_tokens)
+        .max(MIN_LOCAL_WRITE_CEILING)
+}
+
+/// How much of the window the escalated write retry buys back for its output.
+///
+/// More output on a route we own is paid for in prompt tokens (see
+/// [`write_turn_ceiling`]), so the retry compresses to `window - reserve` and its
+/// ceiling derives the room that leaves. A quarter of the window caps the buy: a
+/// retry holding less than that would be trading away the source it is being
+/// retried to write.
+fn write_ceiling_reserve(window: usize) -> usize {
+    DEFAULT_WRITE_TURN_MAX_TOKENS.min(window / 4)
 }
 
 /// The ceiling a turn on our own llama.cpp server needs when nothing else has
@@ -8869,9 +9092,16 @@ fn apply_forced_write_sampling(body: &mut Value, max_tokens: Option<u64>) {
     if let Some(tokens) = max_tokens {
         body["max_tokens"] = json!(tokens);
     }
+    // Read before the `get_mut` below: the window is a property of the model the
+    // body already names, and the options block is about to be borrowed mutably.
+    let num_ctx = local_ollama_num_ctx(body["model"].as_str().unwrap_or(""));
     if let Some(opts) = body.get_mut("options").and_then(|o| o.as_object_mut()) {
         opts.insert("temperature".to_string(), json!(0.2));
-        opts.insert("num_ctx".to_string(), json!(LOCAL_OLLAMA_NUM_CTX));
+        // The window this turn may use is the window the model is measured to
+        // serve, not the floor set for the largest local model: a write-forced
+        // turn carries the whole source and the reconstructed context, so an
+        // over-clamped window drops exactly the bytes the call is made of.
+        opts.insert("num_ctx".to_string(), json!(num_ctx));
         match max_tokens {
             Some(tokens) => {
                 opts.insert("num_predict".to_string(), json!(tokens));
@@ -9927,19 +10157,21 @@ fn enum_problems_in_object(
     out
 }
 
-/// Extract a complete fenced code block from model prose.
+/// One complete fenced code block, and where the scan resumes after it.
+struct FencedBlock<'a> {
+    /// The language tag from the opening line, lowercased, without its trailing
+    /// modifiers (`` ```rust,ignore `` reads as `rust`).
+    lang: String,
+    /// The text between the fences, exactly as the model wrote it.
+    body: &'a str,
+    /// Byte offset just past the closing fence.
+    next: usize,
+}
+
+/// The next fenced block at or after `from`.
 ///
-/// A local MoE asked to repair a file often does the work and then hands it back
-/// as prose: the probe replay of a real failed convert turn streamed 10,558
-/// characters of corrected Rust with `done_reason=stop`, fenced as ```rust, and
-/// emitted **no** native `tool_calls` at all. The structured-call parsers above
-/// (DSML, Claude-inline, bare-JSON) none match a plain code fence, so the loop
-/// saw "no tool call", recompiled the unchanged file, and burned a repair
-/// attempt. Returning the largest balanced block lets that turn still land.
-///
-/// Deliberately conservative, because a code fence is also how a model illustrates
-/// a snippet: an unbalanced block (a truncated stream, or an excerpt with an elided
-/// body) and anything under `min_len` come back as `None`.
+/// `None` means no opener past `from` has a closing fence — which is how both
+/// callers learn the stream was cut, rather than that the reply simply ended.
 ///
 /// Both scans compare `bytes` slices, never `&content[i..i + 3]`: the index steps
 /// one BYTE at a time, so it lands inside multi-byte characters constantly, and a
@@ -9947,11 +10179,10 @@ fn enum_problems_in_object(
 /// "end byte index N is not a char boundary". Matching an ASCII fence on bytes is
 /// also what keeps every later `content[i..]` legal — a match means the index sits
 /// on a backtick, which is always a boundary.
-fn extract_fenced_code_block(content: &str, min_len: usize) -> Option<String> {
+fn next_fenced_block(content: &str, from: usize) -> Option<FencedBlock<'_>> {
     let bytes = content.as_bytes();
     const FENCE: &[u8] = b"```";
-    let mut best: Option<String> = None;
-    let mut i = 0usize;
+    let mut i = from;
     while i + FENCE.len() <= bytes.len() {
         if &bytes[i..i + FENCE.len()] != FENCE {
             i += 1;
@@ -9962,6 +10193,12 @@ fn extract_fenced_code_block(content: &str, min_len: usize) -> Option<String> {
             .find('\n')
             .map(|o| i + o + 1)
             .unwrap_or(content.len());
+        let lang = content[i + FENCE.len()..open_end]
+            .trim()
+            .split([' ', ',', ':'])
+            .next()
+            .unwrap_or_default()
+            .to_lowercase();
         // Closing fence: a ``` at column 0 of some line after the opener.
         let mut close = None;
         let mut j = open_end;
@@ -9975,29 +10212,95 @@ fn extract_fenced_code_block(content: &str, min_len: usize) -> Option<String> {
             }
             j += 1;
         }
-        let Some(close_at) = close else {
-            // Unterminated fence: the model ran out of stream mid-block. Nothing
-            // safe to write — skip this opener entirely rather than emit a
-            // truncated file.
-            break;
-        };
-        let body = &content[open_end..close_at];
+        let close_at = close?;
+        return Some(FencedBlock {
+            lang,
+            body: &content[open_end..close_at],
+            next: close_at + FENCE.len(),
+        });
+    }
+    None
+}
+
+/// Extract a complete fenced code block from model prose.
+///
+/// A local MoE asked to repair a file often does the work and then hands it back
+/// as prose: the probe replay of a real failed convert turn streamed 10,558
+/// characters of corrected Rust with `done_reason=stop`, fenced as ```rust, and
+/// emitted **no** native `tool_calls` at all. The structured-call parsers above
+/// (DSML, Claude-inline, bare-JSON) none match a plain code fence, so the loop
+/// saw "no tool call", recompiled the unchanged file, and burned a repair
+/// attempt. Returning the largest balanced block lets that turn still land.
+///
+/// Deliberately conservative, because a code fence is also how a model illustrates
+/// a snippet: an unbalanced block (a truncated stream, or an excerpt with an elided
+/// body) and anything under `min_len` come back as `None`.
+fn extract_fenced_code_block(content: &str, min_len: usize) -> Option<String> {
+    let mut best: Option<String> = None;
+    let mut from = 0usize;
+    while let Some(block) = next_fenced_block(content, from) {
         // "Looks like a whole file" is what the gate is for, and a truncated
         // stream is what it must catch. Counting `{` naively would reject a
         // legitimate port whose strings carry braces — a template renderer, a
         // lexer port holding `"{"` — which is the model's one correct answer
         // thrown away, so the balance half asks the Rust-aware counter.
-        let balanced = body.contains('{') && crate::registry::system_tools::brace_delta(body) == 0;
+        let balanced =
+            block.body.contains('{') && crate::registry::system_tools::brace_delta(block.body) == 0;
         let longer = match &best {
             None => true,
-            Some(b) => body.len() > b.len(),
+            Some(b) => block.body.len() > b.len(),
         };
-        if body.trim().len() >= min_len && balanced && longer {
-            best = Some(body.to_string());
+        if block.body.trim().len() >= min_len && balanced && longer {
+            best = Some(block.body.to_string());
         }
-        i = close_at + FENCE.len();
+        from = block.next;
     }
     best
+}
+
+/// Every Rust block in a reply, concatenated in the order the model wrote them.
+///
+/// [`extract_fenced_code_block`] answers a repair turn, where the model pastes the
+/// one corrected file; a convert that answers in prose pastes the port in pieces —
+/// a fence per function — so its deliverable is the whole sequence and taking the
+/// largest member would write one function over a module. Run #101b is the
+/// measurement: an 8,954-byte source came back as 34 `rust` fences holding `pub fn`
+/// 65 times, with no tool call in the reply, and the dispatch blocked over a
+/// deliverable of 0 bytes.
+///
+/// Blocks that declare no item are skipped: `let x = 1;` under a ```rust tag is the
+/// model illustrating a point, not the file it owes, and a block whose braces do
+/// not close is an elided body — writing either would give rustc a file it cannot
+/// read. What survives is the join of the functions the model actually finished,
+/// and the crate's build and tests grade it like any other write, so a mis-read of
+/// the prose costs a repair turn rather than a false green. A fence that never
+/// closes ends the collection: the blocks ahead of it are the part of the port the
+/// stream finished.
+fn collect_fenced_rust_blocks(content: &str, min_len: usize) -> Option<String> {
+    let mut pieces: Vec<&str> = Vec::new();
+    let mut from = 0usize;
+    while let Some(block) = next_fenced_block(content, from) {
+        from = block.next;
+        let rust_tagged = matches!(block.lang.as_str(), "rust" | "rs");
+        if !(rust_tagged || block.lang.is_empty()) {
+            continue;
+        }
+        if rust_item_names(block.body).is_empty() {
+            continue;
+        }
+        if crate::registry::system_tools::brace_delta(block.body) != 0 {
+            continue;
+        }
+        pieces.push(block.body);
+    }
+    if pieces.is_empty() {
+        return None;
+    }
+    let joined = pieces.join("\n");
+    if joined.trim().len() < min_len {
+        return None;
+    }
+    Some(joined)
 }
 
 /// Render an unknown-tool failure for the model. Keeps the "Error executing
@@ -10060,13 +10363,16 @@ mod tests {
     use crate::registry::{ToolGroup, ToolSurface, REQUEST_TOOL_GROUPS_TOOL};
     use serde_json::{json, Value};
 
+    use super::super::context_budget::{estimate_messages_tokens, tool_surface_tokens};
+    use super::super::utils::LOCAL_OLLAMA_NUM_CTX;
     use super::{
         advertised_arrays, apply_forced_write_sampling, arm_compile_repair,
         artifact_delivery_directive, artifact_targets, backstop_note, call_identity,
-        ceiling_escalation_offers_relief, compile_repair_directive, context_overflow_notice,
-        correct_missing_crate_help, counts_as_artifact, crate_roots, cut_reply_excerpt,
-        decide_no_tool_call_ending, declared_dependencies, declared_name, degenerate_repeat_window,
-        deliver_nudge, deliverable_read_still_allowed, dependency_repair_rule, enclosing_fn_block,
+        ceiling_escalation_offers_relief, collect_fenced_rust_blocks, compile_repair_directive,
+        context_overflow_notice, correct_missing_crate_help, counts_as_artifact, crate_roots,
+        cut_reply_excerpt, decide_no_tool_call_ending, declared_dependencies, declared_name,
+        degenerate_repeat_window, deliver_nudge, deliverable_has_content,
+        deliverable_read_still_allowed, dependency_repair_rule, enclosing_fn_block,
         error_code_recipes, existing_file_named_by_task, exploration_lock_refusal,
         extract_fenced_code_block, force_write_directive, gate_failure_label, gate_failure_note,
         grade_write, gutting_rewrite_refusal, handover_for_outcome, is_refusal,
@@ -10074,9 +10380,10 @@ mod tests {
         is_unread_source_report, item_head_keyword, items_a_rewrite_would_delete,
         message_fingerprint, missing_crate_help, mod_declarations, no_tool_call_nudge,
         no_tool_call_turn_cost, note_refusal_repeat, note_unarmed_repair, off_target_refusal,
-        parse_function_fragments, read_call_target, read_of_named_target, record_dropped_context,
-        recv_wait, remember_run_read, remember_run_write, repair_api_context, repair_budget,
-        repair_error_excerpt, repeated_refusal_note, replay_advice, report_carries_new_error,
+        parse_function_fragments, read_call_target, read_of_named_target, read_of_patched_file,
+        record_dropped_context, recv_wait, remember_patch_attempt, remember_run_read,
+        remember_run_write, repair_api_context, repair_budget, repair_error_excerpt,
+        repeated_refusal_note, replay_advice, report_carries_new_error, request_input_tokens,
         rust_item_names, salvage_complete_calls, should_arm_write_repair, should_close_validate,
         should_cut_uncommitted_turn, should_grade_tests_now, should_lock_exploration,
         should_note_unarmed_repair, should_nudge_missing_artifact, should_nudge_unarmed_validation,
@@ -10088,19 +10395,19 @@ mod tests {
         unfinished_announced_turn, unforced_llama_ceiling, unknown_tool_message,
         unread_source_deliverable, unread_source_directive, unread_source_summary,
         unreadable_preloads, validate_tool_call, wasted_time_ends_the_run, workspace_lists,
-        write_context_directive, write_context_tail, write_misses_named_target,
-        write_pressure_directive, write_turn_ceiling, writes_miss_named_target,
-        wrong_path_directive, AgentLoopOutcome, AgentToUiMessage, AiProvider, ArtifactSurface,
-        ChatMessage, NoToolCallEnding, RunEnding, TestVerdict, ToolCallAccumulator, UncommittedCut,
-        WriteGrade, CONTEXT_OVERFLOW_LEDGER_CAP_BYTES, CONTEXT_OVERFLOW_PATH,
-        DEFAULT_UNCOMMITTED_TURN_MAX_SECS, DEFAULT_UNCOMMITTED_TURN_MAX_TOKENS,
-        DEFAULT_WRITE_TURN_MAX_TOKENS, FILE_EDITING_TOOLS, LOCAL_OLLAMA_NUM_CTX,
+        write_ceiling_reserve, write_context_directive, write_context_tail,
+        write_misses_named_target, write_pressure_directive, write_turn_ceiling,
+        writes_miss_named_target, wrong_path_directive, AgentLoopOutcome, AgentToUiMessage,
+        AiProvider, ArtifactSurface, ChatMessage, NoToolCallEnding, RunEnding, TestVerdict,
+        ToolCallAccumulator, UncommittedCut, WriteGrade, CONTEXT_OVERFLOW_LEDGER_CAP_BYTES,
+        CONTEXT_OVERFLOW_PATH, DEFAULT_UNCOMMITTED_TURN_MAX_SECS,
+        DEFAULT_UNCOMMITTED_TURN_MAX_TOKENS, DEFAULT_WRITE_TURN_MAX_TOKENS, FILE_EDITING_TOOLS,
         MAX_ARTIFACT_NUDGES, MAX_AUTO_CONTINUATIONS, MAX_COMPILE_REPAIR_TURNS,
         MAX_OFF_TARGET_REFUSALS, MAX_REFUNDED_REPAIR_ATTEMPTS, MAX_SURFACE_REFUSALS,
-        MAX_TEST_REPAIR_TURNS, MAX_TRACKED_RUN_READS, MAX_TRACKED_RUN_WRITES,
+        MAX_TEST_REPAIR_TURNS, MAX_TRACKED_PATCHES, MAX_TRACKED_RUN_READS, MAX_TRACKED_RUN_WRITES,
         MAX_UNARMED_REPAIR_NOTES, MAX_UNCOMMITTED_TURN_CUTS, MAX_UNREAD_SOURCE_REFUSALS,
-        MAX_WRITE_PRESSURE_NUDGES, MEDIA_GENERATION_TOOLS, ONE_ERROR_AT_A_TIME_NOTE,
-        WRITE_PRESSURE_STREAK,
+        MAX_WRITE_PRESSURE_NUDGES, MEDIA_GENERATION_TOOLS, MIN_LOCAL_WRITE_CEILING,
+        ONE_ERROR_AT_A_TIME_NOTE, WRITE_PRESSURE_STREAK,
     };
 
     // The file-free forms of the repeat detector. Most of these tests feed
@@ -11565,6 +11872,60 @@ mod tests {
         ));
     }
 
+    /// The live run this closes read the file it was ordered to patch exactly
+    /// once: never. `read_of_named_target` admits the deliverable and nothing
+    /// else, so the directive that said "add `pub mod …;` to
+    /// `rust_port/src/lib.rs` with `edit_file`" pointed at a file the same lock
+    /// refused to open, and the model guessed three locators for bytes it had not
+    /// seen before replaying the third until the run ended orphaned.
+    #[test]
+    fn a_locked_turn_may_read_the_file_it_is_already_editing() {
+        let lib = json!({"relativeFilePath": "rust_port/src/lib.rs"});
+        let deliverable = json!({"relativeFilePath": "rust_port/src/cli_keyring.rs"});
+
+        // Empty set: the rule is unchanged, so this cannot quietly become "reads
+        // are always allowed while patched".
+        let none: Vec<String> = Vec::new();
+        assert!(!read_of_patched_file("read_file", &lib, &none));
+
+        let mut patches = Vec::new();
+        remember_patch_attempt(&mut patches, "rust_port/src/lib.rs");
+        assert!(read_of_patched_file("read_file", &lib, &patches));
+        // A file the run never tried to edit is still exploration.
+        assert!(!read_of_patched_file("read_file", &deliverable, &patches));
+        // Not a read.
+        assert!(!read_of_patched_file("list_dir", &lib, &patches));
+        // Same path, the other separator spelling — the tracker compares
+        // normalised but stores verbatim, like the reads and the writes.
+        assert!(read_of_patched_file(
+            "read_file",
+            &json!({"relativeFilePath": "rust_port\\src\\lib.rs"}),
+            &patches
+        ));
+        // And it does not replace the deliverable exception.
+        assert!(read_of_named_target(
+            "read_file",
+            &deliverable,
+            Some("rust_port/src/cli_keyring.rs")
+        ));
+    }
+
+    #[test]
+    fn patch_attempts_are_deduplicated_and_bounded() {
+        let mut patches = Vec::new();
+        remember_patch_attempt(&mut patches, "a/lib.rs");
+        remember_patch_attempt(&mut patches, "a\\lib.rs");
+        assert_eq!(patches.len(), 1, "one path is one entry");
+        for i in 0..(MAX_TRACKED_PATCHES * 2) {
+            remember_patch_attempt(&mut patches, &format!("m{i}.rs"));
+        }
+        assert_eq!(
+            patches.len(),
+            MAX_TRACKED_PATCHES,
+            "the set is names, not a transcript, and it stops growing"
+        );
+    }
+
     #[test]
     fn write_pressure_directive_covers_both_mission_shapes() {
         let directive = write_pressure_directive(&FILE_EDITING_TOOLS);
@@ -11718,6 +12079,22 @@ mod tests {
             "the sampling override also sets the window it was measured against"
         );
 
+        // … and the window it sets is the one *this* model is measured to serve.
+        // The write turn is the turn that carries the whole source, so a floor
+        // chosen for a 22 GB MoE is exactly where a small coder loses its prompt.
+        let mut coder = json!({"model": "qwen2.5-coder:7b", "options": {}});
+        apply_forced_write_sampling(&mut coder, Some(18_000));
+        assert_eq!(
+            coder["options"]["num_ctx"],
+            json!(super::local_ollama_num_ctx("qwen2.5-coder:7b")),
+            "a named small model must not inherit the MoE's window"
+        );
+        assert_ne!(
+            coder["options"]["num_ctx"],
+            json!(LOCAL_OLLAMA_NUM_CTX),
+            "… which only shows if the number it gets is not the floor"
+        );
+
         // `off` means the loop says nothing about length and the provider decides.
         let mut cloud = json!({"max_tokens": 4096});
         apply_forced_write_sampling(&mut cloud, None);
@@ -11799,17 +12176,154 @@ mod tests {
             write_turn_ceiling(None, AiProvider::LocalLlama, 128_000, 20_000),
             Some(108_000)
         );
-        // The measured floor still holds on a window smaller than it: 18000 out
-        // of 20480 is the value proven necessary on the Ollama route, and the
-        // server clamps whatever of it the context cannot actually give.
+        // The 18000 floor does not survive the window. It was written believing
+        // the server clamps an unaffordable `num_predict` down to the room;
+        // measured here, it does not — a 2048-token window holding a 1088-token
+        // prompt generated 2000 tokens when asked, sliding over a thousand of the
+        // oldest prompt tokens to do it. So the number that used to be a floor is
+        // the number that switched the bound off, and the room is the answer.
         assert_eq!(
             write_turn_ceiling(None, AiProvider::LocalOllama, 20_480, 18_000),
-            Some(DEFAULT_WRITE_TURN_MAX_TOKENS as u64)
+            Some(2_480),
+            "a window smaller than the old floor gets its room, not a fiction"
         );
         assert_eq!(
             write_turn_ceiling(None, AiProvider::OpenAI, 128_000, 20_000),
             Some(DEFAULT_WRITE_TURN_MAX_TOKENS as u64)
         );
+    }
+
+    /// The invariant the ceiling is now built to satisfy, swept rather than
+    /// spot-checked: a local request never asks for more output than its window
+    /// has left after it. Outside the degenerate corner below, this is arithmetic
+    /// the server will not enforce for us, and paying for it in prompt tokens
+    /// happens silently.
+    #[test]
+    fn a_local_ceiling_never_over_subscribes_its_window() {
+        for window in [512usize, 1_024, 2_048, 8_192, 20_480, 32_768, 131_072] {
+            for input in [0usize, 1, window / 3, window / 2, window - 1, window] {
+                let ceiling = write_turn_ceiling(None, AiProvider::LocalOllama, window, input)
+                    .expect("the default arm always sets a ceiling");
+                let room = window - input;
+                if room >= MIN_LOCAL_WRITE_CEILING {
+                    assert_eq!(
+                        ceiling as usize, room,
+                        "window {window} with input {input} must be given exactly its room"
+                    );
+                } else {
+                    assert_eq!(
+                        ceiling as usize, MIN_LOCAL_WRITE_CEILING,
+                        "a window with {room} left still has to be able to answer"
+                    );
+                }
+            }
+        }
+    }
+
+    /// The room has to be measured against the whole request, not the
+    /// conversation. `compress_history_to_window_with_drops` has always charged
+    /// the serialized tool surface to the window, and the ceiling is the other
+    /// half of the same arithmetic: read the messages alone and every local turn
+    /// is handed an output bound larger than the space left after the schemas —
+    /// by the size of the schemas, which the crucible's own tool surface has run
+    /// to tens of thousands of tokens.
+    #[test]
+    fn the_room_counts_the_tool_surface_the_request_sends() {
+        let messages = vec![ChatMessage {
+            role: "user".to_string(),
+            content: "port this module".to_string(),
+            name: None,
+            tool_call_id: None,
+            tool_calls: None,
+        }];
+        let tools: Vec<Value> = (0..24)
+            .map(|i| {
+                json!({
+                    "type": "function",
+                    "function": {
+                        "name": format!("tool_{i}"),
+                        "description": "a tool with a paragraph of description text \
+                                        so its serialized cost is not negligible: \
+                                        it reads files, edits files, runs commands.",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "relativeFilePath": {"type": "string"},
+                                "content": {"type": "string"},
+                                "offset": {"type": "integer"},
+                            },
+                            "required": ["relativeFilePath"],
+                        },
+                    }
+                })
+            })
+            .collect();
+
+        let with_tools = request_input_tokens(&messages, &tools);
+        let messages_only = estimate_messages_tokens(&messages);
+        assert!(
+            with_tools > messages_only,
+            "the schemas are part of the request: {with_tools} vs {messages_only}"
+        );
+        assert_eq!(
+            with_tools - messages_only,
+            tool_surface_tokens(&tools),
+            "and the difference is exactly their serialized cost"
+        );
+
+        let window = 20_480;
+        let honest = write_turn_ceiling(None, AiProvider::LocalOllama, window, with_tools)
+            .expect("the default arm always sets a ceiling");
+        let overstated = write_turn_ceiling(None, AiProvider::LocalOllama, window, messages_only)
+            .expect("the default arm always sets a ceiling");
+        assert_eq!(
+            overstated - honest,
+            tool_surface_tokens(&tools) as u64,
+            "counting only the messages would have asked for the tool surface twice"
+        );
+    }
+
+    /// Escalation cannot buy output with a bigger number on these routes, so it
+    /// buys it by sending less history. The reserve is that purchase, capped at a
+    /// quarter of the window so a retry never surrenders the source it exists to
+    /// rewrite.
+    #[test]
+    fn the_escalated_retry_buys_room_from_the_prompt_not_from_the_number() {
+        assert_eq!(
+            write_ceiling_reserve(131_072),
+            DEFAULT_WRITE_TURN_MAX_TOKENS,
+            "a wide window can pay the whole measured need out of its history"
+        );
+        assert_eq!(
+            write_ceiling_reserve(32_768),
+            8_192,
+            "and a quarter of an 8 GB-class window is the cap, not the need"
+        );
+        for window in [512usize, 1_024, 2_048, 8_192, 32_768, 131_072] {
+            let reserve = write_ceiling_reserve(window);
+            assert!(
+                reserve <= window / 4 && reserve <= window,
+                "a reserve of {reserve} on a window of {window} would leave no prompt to retry"
+            );
+            // And the purchase is real: the retry's ceiling exceeds the one that
+            // was cut off by exactly what the pruned history gives back. Only where
+            // both turns were bounded by their room — below that, the minimum has
+            // already taken over and there is no room to move.
+            let input = window / 2;
+            let first = write_turn_ceiling(None, AiProvider::LocalOllama, window, input)
+                .expect("the default arm always sets a ceiling");
+            if window - input >= MIN_LOCAL_WRITE_CEILING {
+                let after =
+                    write_turn_ceiling(None, AiProvider::LocalOllama, window, input - reserve)
+                        .expect("the default arm always sets a ceiling");
+                assert_eq!(
+                    after - first,
+                    reserve as u64,
+                    "window {window}: pruning {reserve} tokens of history must buy \
+                     {reserve} tokens of output"
+                );
+            }
+        }
     }
 
     /// The turn that killed run #83 was not a write turn: it was an ordinary
@@ -12442,6 +12956,114 @@ mod tests {
         assert!(
             !got.contains('\u{2014}'),
             "prose must not leak into the file"
+        );
+    }
+
+    /// The #101b shape: a convert whose model did the port and pasted it back a
+    /// function at a time. One block per piece, in order — the largest-member rule
+    /// the repair arm uses would write one function over a whole module.
+    #[test]
+    fn a_port_pasted_as_many_rust_fences_becomes_one_deliverable() {
+        let a = real_rust_body("alpha");
+        let prose = format!(
+            "Here is the port, one piece at a time.\n```rust\n{a}```\n\
+             Then the helper:\n```rust\npub fn beta() -> u32 {{\n    2\n}}\n```\n\
+             And the record it reads:\n```rust\npub struct Gamma {{\n    pub v: u32,\n}}\n```\n\
+             That is the whole module."
+        );
+        let got =
+            collect_fenced_rust_blocks(&prose, 600).expect("the port must be recovered as a file");
+        let (ia, ib, ig) = (
+            got.find("alpha").unwrap(),
+            got.find("beta").unwrap(),
+            got.find("Gamma").unwrap(),
+        );
+        assert!(
+            ia < ib && ib < ig,
+            "the pieces keep the model's order: {got}"
+        );
+        assert!(
+            !got.contains("```"),
+            "no fence may leak into the file: {got}"
+        );
+        assert!(
+            !got.contains("Then the helper"),
+            "the prose between fences must not ride along: {got}"
+        );
+        assert_eq!(crate::registry::system_tools::brace_delta(&got), 0);
+    }
+
+    /// A reply cut mid-block is what the scanner has to survive: the functions
+    /// inside the fences that closed are more of the deliverable than the 0-byte
+    /// file the run would otherwise report, and the crate's build is what decides
+    /// whether the prefix is worth keeping.
+    #[test]
+    fn a_stream_cut_mid_fence_still_contributes_the_blocks_it_finished() {
+        let prose =
+            "```rust\npub fn one() {}\n```\n```rust\npub fn two() {\n    inner();\n```\ncut";
+        let got = collect_fenced_rust_blocks(prose, 4).expect("the finished block survives");
+        assert!(got.contains("one"), "{got}");
+        assert!(
+            !got.contains("two"),
+            "the half-streamed block is not a file: {got}"
+        );
+    }
+
+    /// A closed fence whose braces do not balance is the model eliding a body
+    /// (`// … the rest unchanged`). Glued into the deliverable it is a file rustc
+    /// cannot read; dropped, every function the model really finished still lands.
+    #[test]
+    fn a_block_with_an_elided_body_is_dropped_not_glued_in() {
+        let prose = "```rust\npub fn a() {\n    if true {\n```\n```rust\npub fn b() {}\n```";
+        let got = collect_fenced_rust_blocks(prose, 4).expect("the whole function survives");
+        assert!(got.contains("pub fn b"), "{got}");
+        assert!(
+            !got.contains("if true"),
+            "the elided function must not land: {got}"
+        );
+    }
+
+    /// An artifact turn is full of explanations, and an explanation written as Rust
+    /// is not the deliverable. A block that declares no item never reaches the file.
+    #[test]
+    fn an_illustrative_snippet_is_never_concatenated_into_the_deliverable() {
+        let prose = "```rust\nlet x = 1;\n```\n```rust\npub fn real() {\n    let x = 1;\n}\n```";
+        let got = collect_fenced_rust_blocks(prose, 4).unwrap();
+        assert!(got.contains("pub fn real"), "{got}");
+        assert_eq!(
+            got.matches("let x = 1;").count(),
+            1,
+            "the lone statement stays out, the one inside the fn stays in: {got}"
+        );
+    }
+
+    /// The language tag is what separates the module the task owes from the
+    /// manifest the model showed alongside it — and a TOML `type = "…"` line looks
+    /// exactly like a Rust declaration to a keyword scan.
+    #[test]
+    fn a_mixed_language_answer_contributes_only_its_rust() {
+        let prose = "```toml\ntype = \"lib\"\nname = \"litellm-port\"\n```\n\
+                     ```rust\npub fn only_the_rust() {}\n```";
+        let got = collect_fenced_rust_blocks(prose, 4).unwrap();
+        assert!(got.contains("only_the_rust"), "{got}");
+        assert!(
+            !got.contains("litellm-port"),
+            "the manifest is not the module: {got}"
+        );
+    }
+
+    #[test]
+    fn a_reply_with_no_rust_items_is_left_as_prose() {
+        assert_eq!(
+            collect_fenced_rust_blocks("I could not do it.\n```rust\nlet x = 1;\n```", 4),
+            None
+        );
+        assert_eq!(collect_fenced_rust_blocks("No code here at all.", 4), None);
+        // Above the piece rules but below the size floor: an answer that is one
+        // stub is not yet a deliverable worth writing over the task's path.
+        assert_eq!(
+            collect_fenced_rust_blocks("```rust\npub fn t() {}\n```", 600),
+            None
         );
     }
 
@@ -14859,8 +15481,13 @@ mod tests {
     #[test]
     fn the_lock_still_closes_every_other_read() {
         let target = "rust_port/src/budget_manager.rs";
-        // Wandering is what the lock exists to stop, so the exception is one path
-        // wide rather than "reads are allowed now".
+        // Wandering is what the lock exists to stop, so the exception is a list of
+        // paths the run has a proven reason to open, not "reads are allowed now".
+        // Two lanes qualify: the deliverable the task named, and a file this run
+        // has already sent an `edit_file` for (see `read_of_patched_file` — the
+        // second lane is what the undeclared-module repair needs, and it opens
+        // only on evidence the run was patching, never on a bare read). Anything
+        // else stays shut, which is what the rest of this test grades.
         assert!(!read_of_named_target(
             "read_file",
             &json!({"relativeFilePath": "rust_port/src/lib.rs"}),
@@ -14882,6 +15509,37 @@ mod tests {
         }
         // And a read that names no path is not a read of the deliverable.
         assert!(!read_of_named_target("read_file", &json!({}), Some(target)));
+
+        // The third path. Opening `lib.rs` because the run tried to edit it must
+        // not turn into "the lock now permits reading": a file neither named nor
+        // patched is refused by BOTH lanes, and the patch lane stays empty-list
+        // specific rather than matching on a directory or a prefix.
+        let mut patches = Vec::new();
+        remember_patch_attempt(&mut patches, "rust_port/src/lib.rs");
+        for tool in ["read_file", "list_dir", "grep_search", "edit_file"] {
+            assert!(
+                !read_of_patched_file(
+                    tool,
+                    &json!({"relativeFilePath": "rust_port/src/some_other.rs"}),
+                    &patches
+                ),
+                "`{tool}` on an unpatched path is still wandering"
+            );
+        }
+        // The trap a `starts_with` implementation would fall into: a path that
+        // *begins* with the patched one is not the patched one, and the directory
+        // the patched file sits in is not a file at all.
+        for near in [
+            "rust_port/src/lib.rs.orig",
+            "rust_port/src/lib.rs.backup",
+            "rust_port/src",
+            "rust_port",
+        ] {
+            assert!(
+                !read_of_patched_file("read_file", &json!({"relativeFilePath": near}), &patches),
+                "`{near}` is not the file the run tried to edit"
+            );
+        }
     }
 
     #[test]
@@ -15980,6 +16638,50 @@ mod tests {
         );
     }
 
+    /// The recovery that hands a prose port its file must not overwrite a port
+    /// somebody already wrote, and `preexisting_target` is not that question: the
+    /// crucible's `lib.rs` declares the module, so a from-scratch convert finds the
+    /// path present with nothing in it — run #101b's deliverable read 0 bytes and
+    /// still counted as preexisting. What decides the write is whether there are
+    /// bytes worth losing.
+    #[test]
+    fn a_placeholder_at_the_target_is_not_content_the_loop_must_protect() {
+        let temp = tempfile::TempDir::new().unwrap();
+        std::fs::create_dir_all(temp.path().join("rust_port").join("src")).unwrap();
+        let rel = "rust_port/src/service_logger.rs";
+        let at = temp
+            .path()
+            .join("rust_port")
+            .join("src")
+            .join("service_logger.rs");
+
+        assert!(
+            !deliverable_has_content(temp.path(), Some(rel)),
+            "an absent path holds nothing to destroy"
+        );
+        std::fs::write(&at, "").unwrap();
+        assert!(
+            !deliverable_has_content(temp.path(), Some(rel)),
+            "a 0-byte placeholder is not a port"
+        );
+        std::fs::write(&at, "\n\n   \n").unwrap();
+        assert!(
+            !deliverable_has_content(temp.path(), Some(rel)),
+            "whitespace is the same placeholder in disguise"
+        );
+        std::fs::write(&at, "pub struct ServiceLogger;\n").unwrap();
+        assert!(
+            deliverable_has_content(temp.path(), Some(rel)),
+            "bytes somebody wrote are"
+        );
+        // No target named (a task that owes no file, a scope instead of a path):
+        // there is nothing to protect and nothing to write, so the arm stays shut.
+        assert!(
+            !deliverable_has_content(temp.path(), None),
+            "no named path means no prose write"
+        );
+    }
+
     /// The lock fires in two states with nothing in common, and run #90 paid for
     /// one sentence covering both: after its 36 KB port landed, the refusal still
     /// asserted the deliverable was "not yet on disk" and offered a read of the
@@ -15988,7 +16690,7 @@ mod tests {
     fn the_lock_refusal_describes_the_bytes_actually_on_disk() {
         let target = "rust_port/src/service_logger.rs";
         let after_write =
-            exploration_lock_refusal(true, Some(target), "write_file / edit_file", true);
+            exploration_lock_refusal(true, Some(target), "write_file / edit_file", true, None);
         assert!(after_write.contains("already on disk"), "{after_write}");
         assert!(
             !after_write.contains("not yet on disk"),
@@ -16004,7 +16706,7 @@ mod tests {
             "the one read it offers is the deliverable itself: {after_write}"
         );
 
-        let before_write = exploration_lock_refusal(false, Some(target), "write_file", true);
+        let before_write = exploration_lock_refusal(false, Some(target), "write_file", true, None);
         assert!(before_write.contains("not yet on disk"), "{before_write}");
         assert!(
             before_write.contains("incomplete file is acceptable"),
@@ -16016,7 +16718,7 @@ mod tests {
         );
 
         let read_closed =
-            exploration_lock_refusal(true, Some(target), "write_file / edit_file", false);
+            exploration_lock_refusal(true, Some(target), "write_file / edit_file", false, None);
         assert!(
             read_closed.contains("read_file` of the deliverable is now closed"),
             "{read_closed}"
@@ -16024,6 +16726,75 @@ mod tests {
         assert!(
             !read_closed.contains("One read is still allowed"),
             "the refusal may not offer what the nudge budget just withdrew: {read_closed}"
+        );
+    }
+
+    /// The refusal's count has to match the gate's lanes, or it sends the model
+    /// hunting for a door it will not open and hides the one it will.
+    /// `read_of_patched_file` opens a second read for the file the run is already
+    /// editing, so a refusal naming only the deliverable would keep the live 7b
+    /// convert's dead end — four guessed anchors in `rust_port/src/lib.rs` — alive
+    /// even after the lane existed.
+    #[test]
+    fn the_lock_refusal_names_every_read_the_gate_actually_opens() {
+        let target = "rust_port/src/budget_manager.rs";
+        let patched = "rust_port/src/lib.rs";
+
+        let both = exploration_lock_refusal(
+            true,
+            Some(target),
+            "write_file / edit_file",
+            true,
+            Some(patched),
+        );
+        assert!(
+            both.contains(target),
+            "the deliverable is still named: {both}"
+        );
+        assert!(
+            both.contains(patched),
+            "and so is the file this run is editing — that is the read its directive asks \
+             for: {both}"
+        );
+        assert!(
+            both.contains("Two reads are still allowed"),
+            "one sentence cannot describe two lanes: {both}"
+        );
+        assert!(
+            !both.contains("One read is still allowed"),
+            "the singular wording is now false: {both}"
+        );
+
+        // Each lane-closing condition has to close its sentence with it. The nudge
+        // budget withdraws both reads, and an absent deliverable means the gate's
+        // `target_now_on_disk` was never true, so no read is open on either path.
+        let nudges_spent = exploration_lock_refusal(
+            true,
+            Some(target),
+            "write_file / edit_file",
+            false,
+            Some(patched),
+        );
+        assert!(
+            !nudges_spent.contains(patched) && !nudges_spent.contains("Two reads"),
+            "a withdrawn lane must not be advertised: {nudges_spent}"
+        );
+
+        let no_bytes_yet =
+            exploration_lock_refusal(false, Some(target), "write_file", true, Some(patched));
+        assert!(
+            !no_bytes_yet.contains(patched) && !no_bytes_yet.contains("reads are still allowed"),
+            "with nothing on disk the gate opens no read, so the refusal may not name one: \
+             {no_bytes_yet}"
+        );
+
+        // The branch the added lane must not disturb: with no patch attempt the
+        // text is the one the repair loop was measured against.
+        let single =
+            exploration_lock_refusal(true, Some(target), "write_file / edit_file", true, None);
+        assert!(
+            single.contains("One read is still allowed") && !single.contains(patched),
+            "the single-lane wording stays for a single lane: {single}"
         );
     }
 
