@@ -15,7 +15,7 @@ impl VelocityApp {
                 ui.label(
                     egui::RichText::new("\u{1f4be}")
                         .size(22.0)
-                        .color(palette.text_muted.gamma_multiply(0.6)),
+                        .color(palette.faded_muted(0.6)),
                 );
                 ui.add_space(4.0);
                 ui.label(
@@ -42,7 +42,7 @@ impl VelocityApp {
                 ui.label(
                     egui::RichText::new("\u{1f4be}")
                         .size(22.0)
-                        .color(palette.accent.gamma_multiply(0.6)),
+                        .color(palette.faded(palette.accent, 0.6)),
                 );
                 ui.add_space(4.0);
                 ui.label(

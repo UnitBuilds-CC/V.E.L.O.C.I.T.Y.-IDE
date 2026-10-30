@@ -43,6 +43,10 @@ impl VelocityApp {
 
         self.apply_appearance(&ctx);
         let palette = self.palette();
+        // DWM paints the caption from the desktop's own light/dark key, so a
+        // Daylight window on a dark desktop is a white editor under a black bar
+        // unless this thread asks for the immersive attribute itself.
+        crate::editor::theme::sync_caption(palette.is_dark());
         self.handle_agent_messages();
         // ─── Repaint heartbeat ─────────────────────────────────────────────
         // Background threads (agent executor, file-tree builder, model-catalog
@@ -1060,7 +1064,7 @@ impl VelocityApp {
                             } else if hovered {
                                 palette.text
                             } else {
-                                palette.text_muted.gamma_multiply(0.7)
+                                palette.faded_muted(0.7)
                             };
                             let label_pos = egui::pos2(rect.center().x, rect.min.y + 35.0);
                             ui.painter().text(
@@ -1144,7 +1148,7 @@ impl VelocityApp {
                                 if gear_resp.hovered() {
                                     palette.text
                                 } else {
-                                    palette.text_muted.gamma_multiply(0.6)
+                                    palette.faded_muted(0.6)
                                 },
                             );
                             gear_resp.on_hover_text("Settings  (Ctrl+,)");
@@ -1494,7 +1498,7 @@ impl VelocityApp {
                             ui.label(
                                 egui::RichText::new("\u{25cc}")
                                     .size(28.0)
-                                    .color(palette.text_muted.gamma_multiply(0.6)),
+                                    .color(palette.faded_muted(0.6)),
                             );
                             ui.add_space(6.0);
                             ui.label(
@@ -2171,7 +2175,7 @@ impl VelocityApp {
                                                         egui_phosphor::regular::GEAR,
                                                     )
                                                     .size(20.0)
-                                                    .color(palette.text_muted.gamma_multiply(0.6)),
+                                                    .color(palette.faded_muted(0.6)),
                                                 );
                                                 ui.add_space(4.0);
                                                 ui.label(

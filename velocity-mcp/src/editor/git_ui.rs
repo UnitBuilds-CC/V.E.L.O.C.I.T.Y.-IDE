@@ -52,14 +52,43 @@ impl GitFileStatus {
         }
     }
 
-    /// RGB for the explorer decoration color of this status (VS Code-like:
-    /// greens for new things, amber for edits, red for removals/conflicts).
-    pub fn decoration_rgb(&self) -> (u8, u8, u8) {
+    /// RGB for the explorer decoration color of this status.
+    ///
+    /// Two ramps, because these colors paint *text* — a filename in the tree —
+    /// and the dark ramp is a set of pastels that measures 2.4:1 against a
+    /// Daylight window. A decorated file is exactly the file a person is looking
+    /// for, so the light ramp keeps each hue but takes it down until it reads
+    /// at 4.5:1 or better on white.
+    pub fn decoration_rgb(&self, light: bool) -> (u8, u8, u8) {
         match self {
-            Self::Added | Self::Renamed | Self::Untracked => (129, 184, 90),
-            Self::Modified => (222, 179, 92),
-            Self::Deleted => (205, 92, 92),
-            Self::Conflicted => (224, 108, 117),
+            Self::Added | Self::Renamed | Self::Untracked => {
+                if light {
+                    (46, 125, 50)
+                } else {
+                    (129, 184, 90)
+                }
+            }
+            Self::Modified => {
+                if light {
+                    (156, 101, 0)
+                } else {
+                    (222, 179, 92)
+                }
+            }
+            Self::Deleted => {
+                if light {
+                    (192, 57, 43)
+                } else {
+                    (205, 92, 92)
+                }
+            }
+            Self::Conflicted => {
+                if light {
+                    (176, 48, 80)
+                } else {
+                    (224, 108, 117)
+                }
+            }
         }
     }
 }
@@ -410,7 +439,7 @@ pub fn render_recent_changes_timeline(
                             ui.label(
                                 egui::RichText::new("staged")
                                     .size(8.0)
-                                    .color(palette.success.gamma_multiply(0.7)),
+                                    .color(palette.faded(palette.success, 0.7)),
                             );
                         }
                     });
@@ -479,7 +508,7 @@ pub fn render_recent_changes_timeline(
                                 ui.label(
                                     egui::RichText::new(&commit.date)
                                         .size(8.0)
-                                        .color(palette.text_muted.gamma_multiply(0.7)),
+                                        .color(palette.faded_muted(0.7)),
                                 );
                             });
                         });
@@ -491,7 +520,7 @@ pub fn render_recent_changes_timeline(
                             ui.label(
                                 egui::RichText::new("\u{2502}")
                                     .size(8.0)
-                                    .color(palette.text_muted.gamma_multiply(0.4)),
+                                    .color(palette.faded_muted(0.4)),
                             );
                         });
                     }
@@ -740,5 +769,50 @@ mod tests {
         assert!(branch_matches_filter("main", ""));
         assert!(!branch_matches_filter("develop", "prod"));
         assert!(branch_matches_filter("release/v2", "V2"));
+    }
+
+    #[test]
+    fn light_explorer_decorations_read_on_white() {
+        // These colours paint filenames, and the dark ramp is a set of pastels
+        // that measures 2.4:1 against a Daylight window — the decorated file is
+        // precisely the one the reader is hunting for.
+        let luminance = |c: (u8, u8, u8)| {
+            crate::editor::theme::relative_luminance(egui::Color32::from_rgb(c.0, c.1, c.2))
+        };
+        let on_white = |c: (u8, u8, u8)| (1.0 + 0.05) / (luminance(c) + 0.05);
+        for status in [
+            GitFileStatus::Added,
+            GitFileStatus::Modified,
+            GitFileStatus::Deleted,
+            GitFileStatus::Renamed,
+            GitFileStatus::Untracked,
+            GitFileStatus::Conflicted,
+        ] {
+            let light = status.decoration_rgb(true);
+            let ratio = on_white(light);
+            assert!(
+                ratio >= 4.5,
+                "{status:?} decorates as rgb({},{},{}) = {ratio:.2}:1 on white",
+                light.0,
+                light.1,
+                light.2
+            );
+            assert!(
+                on_white(status.decoration_rgb(false)) < 4.5,
+                "{status:?}: the dark ramp was supposed to be the illegible one"
+            );
+        }
+        // The two reds stay distinguishable from each other in the light ramp.
+        let deleted = egui::Color32::from_rgb(
+            GitFileStatus::Deleted.decoration_rgb(true).0,
+            GitFileStatus::Deleted.decoration_rgb(true).1,
+            GitFileStatus::Deleted.decoration_rgb(true).2,
+        );
+        let conflicted = egui::Color32::from_rgb(
+            GitFileStatus::Conflicted.decoration_rgb(true).0,
+            GitFileStatus::Conflicted.decoration_rgb(true).1,
+            GitFileStatus::Conflicted.decoration_rgb(true).2,
+        );
+        assert_ne!(deleted, conflicted);
     }
 }

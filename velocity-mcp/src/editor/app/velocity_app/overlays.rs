@@ -123,9 +123,7 @@ impl VelocityApp {
                                                     egui::RichText::new(shortcut)
                                                         .small()
                                                         .monospace()
-                                                        .color(
-                                                            palette.text_muted.gamma_multiply(0.8),
-                                                        ),
+                                                        .color(palette.faded_muted(0.8)),
                                                 );
                                             },
                                         );
@@ -1774,13 +1772,11 @@ impl VelocityApp {
         fn deco_color(
             decorations: &std::collections::HashMap<PathBuf, crate::editor::git_ui::GitFileStatus>,
             path: &Path,
+            light: bool,
         ) -> Option<egui::Color32> {
             decorations.get(path).map(|s| {
-                egui::Color32::from_rgb(
-                    s.decoration_rgb().0,
-                    s.decoration_rgb().1,
-                    s.decoration_rgb().2,
-                )
+                let (r, g, b) = s.decoration_rgb(light);
+                egui::Color32::from_rgb(r, g, b)
             })
         }
         if node.is_dir {
@@ -1798,9 +1794,10 @@ impl VelocityApp {
                     // No manual "▸": CollapsingHeader already paints its own
                     // disclosure triangle, and the U+25B8 glyph isn't covered by the
                     // bundled fonts, so the hand-added arrow rendered as a tofu box.
-                    egui::RichText::new(dir_name)
-                        .size(10.0)
-                        .color(deco_color(decorations, &node.path).unwrap_or(palette.text)),
+                    egui::RichText::new(dir_name).size(10.0).color(
+                        deco_color(decorations, &node.path, !palette.is_dark())
+                            .unwrap_or(palette.text),
+                    ),
                 )
                 .default_open(node.path == workspace_root)
                 .show(ui, |ui| {
@@ -1823,7 +1820,9 @@ impl VelocityApp {
                     }
                     None => header,
                 };
-                header.context_menu(|ui| Self::tree_context_menu(ui, &node.path, true, actions));
+                header.context_menu(|ui| {
+                    Self::tree_context_menu(ui, &node.path, true, palette, actions)
+                });
             }
         } else {
             let rel = node
@@ -1833,7 +1832,8 @@ impl VelocityApp {
                 .to_string_lossy()
                 .to_string();
             let icon = crate::editor::search::icon_for_path(&node.path);
-            let file_color = deco_color(decorations, &node.path).unwrap_or(palette.text);
+            let file_color =
+                deco_color(decorations, &node.path, !palette.is_dark()).unwrap_or(palette.text);
             let resp = ui.add(
                 egui::Button::new(
                     egui::RichText::new(format!("{} {}", icon, rel))
@@ -1849,7 +1849,9 @@ impl VelocityApp {
                 Some(status) => resp.on_hover_text(status.label()),
                 None => resp,
             };
-            resp.context_menu(|ui| Self::tree_context_menu(ui, &node.path, false, actions));
+            resp.context_menu(|ui| {
+                Self::tree_context_menu(ui, &node.path, false, palette, actions)
+            });
         }
     }
 
@@ -1861,12 +1863,13 @@ impl VelocityApp {
         ui: &mut egui::Ui,
         path: &Path,
         is_dir: bool,
+        palette: crate::editor::theme::IdePalette,
         actions: &mut Vec<crate::editor::file_ops::TreeAction>,
     ) {
         use crate::editor::file_ops::TreeAction;
         let danger =
             egui::RichText::new(format!("{} Delete\u{2026}", egui_phosphor::regular::TRASH))
-                .color(egui::Color32::from_rgb(205, 92, 92));
+                .color(palette.error);
         if is_dir {
             if ui
                 .button(format!(
@@ -2203,7 +2206,7 @@ impl VelocityApp {
                 let status = decorations.get(&node.path);
                 let text_color = status
                     .map(|s| {
-                        let (r, g, b) = s.decoration_rgb();
+                        let (r, g, b) = s.decoration_rgb(!palette.is_dark());
                         egui::Color32::from_rgb(r, g, b)
                     })
                     .unwrap_or(palette.text);
@@ -2222,7 +2225,9 @@ impl VelocityApp {
                     Some(status) => resp.on_hover_text(status.label()),
                     None => resp,
                 };
-                resp.context_menu(|ui| Self::tree_context_menu(ui, &node.path, false, actions));
+                resp.context_menu(|ui| {
+                    Self::tree_context_menu(ui, &node.path, false, palette, actions)
+                });
                 true
             } else {
                 false

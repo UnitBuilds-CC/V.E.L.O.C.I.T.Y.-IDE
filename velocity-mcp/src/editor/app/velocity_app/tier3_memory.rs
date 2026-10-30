@@ -82,7 +82,7 @@ impl VelocityApp {
                 ui.label(
                     RichText::new(egui_phosphor::regular::BRAIN)
                         .size(22.0)
-                        .color(palette.text_muted.gamma_multiply(0.5)),
+                        .color(palette.faded_muted(0.5)),
                 );
                 ui.add_space(4.0);
                 ui.label(
@@ -97,7 +97,7 @@ impl VelocityApp {
                         "Memories build up while agents run. Start a mission to fill this store.",
                     )
                     .size(9.0)
-                    .color(palette.text_muted.gamma_multiply(0.7)),
+                    .color(palette.faded_muted(0.7)),
                 );
                 ui.add_space(8.0);
                 if primary_button(
@@ -230,7 +230,7 @@ impl VelocityApp {
                         ui.label(
                             RichText::new(egui_phosphor::regular::BOOKS)
                                 .size(24.0)
-                                .color(palette.text_muted.gamma_multiply(0.5)),
+                                .color(palette.faded_muted(0.5)),
                         );
                         ui.add_space(ITEM_SPACING);
                         ui.label(
@@ -298,7 +298,7 @@ impl VelocityApp {
                         ui.label(
                             RichText::new(egui_phosphor::regular::LOCK)
                                 .size(24.0)
-                                .color(palette.text_muted.gamma_multiply(0.5)),
+                                .color(palette.faded_muted(0.5)),
                         );
                         ui.add_space(ITEM_SPACING);
                         ui.label(

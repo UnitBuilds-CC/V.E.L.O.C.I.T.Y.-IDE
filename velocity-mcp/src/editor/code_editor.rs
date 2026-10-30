@@ -23,6 +23,11 @@ struct EditorCaches {
     syntax_hash: u64,
     /// File extension the spans were tokenized for.
     syntax_ext: String,
+    /// Syntect theme the spans were coloured for. Content and language are not
+    /// enough: switching Daylight on and off changes every foreground while
+    /// leaving both identical, and a cache keyed without it keeps serving the
+    /// old scheme's colours until the file is edited.
+    syntax_theme: &'static str,
     /// Highlighted spans: `(text, foreground_color)` per span.
     spans: Vec<(String, highlighting::Color)>,
     /// Laid-out galley for the current spans (avoids re-shaping every frame).
@@ -144,25 +149,36 @@ fn color_eq(a: highlighting::Color, b: highlighting::Color) -> bool {
     a.r == b.r && a.g == b.g && a.b == b.b && a.a == b.a
 }
 
-/// Map an LSP semantic token to a base16-ocean-compatible foreground colour.
-/// Returns `None` for types we intentionally leave to syntect, so ordinary
-/// keywords/strings keep the theme's own palette.
+/// Map an LSP semantic token to a foreground colour in the ramp of the scheme
+/// being painted. Returns `None` for types we intentionally leave to syntect, so
+/// ordinary keywords/strings keep the theme's own palette.
+///
+/// The dark ramp is base16-ocean-compatible, matching `base16-ocean.dark`. The
+/// light ramp matches `InspiredGitHub` and every entry clears 4.5:1 on
+/// Daylight's white code background, which the dark one does not: its
+/// (192,197,206) default is 1.7:1 there.
 fn semantic_token_color(
     tok: &crate::editor::lsp_client::LspSemanticToken,
+    light: bool,
 ) -> Option<highlighting::Color> {
     let c = |r, g, b| highlighting::Color { r, g, b, a: 255 };
+    // One call site per class, picking the scheme's own value.
+    let pick = |dark: (u8, u8, u8), lit: (u8, u8, u8)| {
+        let (r, g, b) = if light { lit } else { dark };
+        c(r, g, b)
+    };
     // A modifier outranks the type: deprecated members read as muted.
     if tok.modifiers.iter().any(|m| m == "deprecated") {
-        return Some(c(0x77, 0x7c, 0x7d));
+        return Some(pick((0x77, 0x7c, 0x7d), (0x6a, 0x73, 0x7d)));
     }
     match tok.token_type.as_str() {
         "namespace" | "type" | "class" | "struct" | "enum" | "interface" | "typeParameter" => {
-            Some(c(0xa3, 0xbe, 0x8c))
+            Some(pick((0xa3, 0xbe, 0x8c), (0x6f, 0x42, 0xc1)))
         }
-        "enumMember" | "macro" | "event" => Some(c(0xd0, 0x87, 0x71)),
-        "function" | "method" => Some(c(0x8f, 0xbc, 0xbb)),
-        "property" | "variable" | "parameter" => Some(c(0xbf, 0x61, 0x6a)),
-        "decorator" => Some(c(0xf2, 0x77, 0x7a)),
+        "enumMember" | "macro" | "event" => Some(pick((0xd0, 0x87, 0x71), (0xb0, 0x60, 0x00))),
+        "function" | "method" => Some(pick((0x8f, 0xbc, 0xbb), (0x00, 0x5c, 0xc5))),
+        "property" | "variable" | "parameter" => Some(pick((0xbf, 0x61, 0x6a), (0x10, 0x75, 0x6a))),
+        "decorator" => Some(pick((0xf2, 0x77, 0x7a), (0xa7, 0x1d, 0x5d))),
         _ => None,
     }
 }
@@ -176,6 +192,7 @@ fn apply_semantic_line(
     line_text: &str,
     spans: Vec<(String, highlighting::Color)>,
     tokens: &[&crate::editor::lsp_client::LspSemanticToken],
+    light: bool,
 ) -> Vec<(String, highlighting::Color)> {
     let chars: Vec<char> = line_text.chars().collect();
     if chars.is_empty() {
@@ -183,7 +200,7 @@ fn apply_semantic_line(
     }
     let mut over: Vec<Option<highlighting::Color>> = vec![None; chars.len()];
     for t in tokens {
-        if let Some(col) = semantic_token_color(t) {
+        if let Some(col) = semantic_token_color(t, light) {
             let start = t.start_char.min(chars.len());
             let end = (t.start_char + t.length).min(chars.len());
             for slot in over.iter_mut().take(end).skip(start) {
@@ -329,10 +346,12 @@ impl CodeEditor {
         let palette = appearance.palette();
         let code_font = appearance.code_font_id();
 
+        let theme_name = appearance.theme.syntect_theme();
         let theme = THEME_SET
             .themes
-            .get("base16-ocean.dark")
-            .unwrap_or(&THEME_SET.themes["InspiredGitHub"]);
+            .get(theme_name)
+            .unwrap_or(&THEME_SET.themes["base16-ocean.dark"]);
+        let light_syntax = !appearance.theme.is_dark();
         let syntax = SYNTAX_SET
             .find_syntax_by_extension(extension)
             .cloned()
@@ -357,11 +376,13 @@ impl CodeEditor {
         // mutable borrow of `cache` below. The gutter is built from this.
         let prev_viewport = cache.viewport;
 
-        // Re-tokenize when the content, the language, OR the semantic-token
-        // overlay changed (the token stream arrives asynchronously after the
-        // text, so a text-only key would freeze syntect-only colours).
+        // Re-tokenize when the content, the language, the syntect theme, OR the
+        // semantic-token overlay changed (the token stream arrives
+        // asynchronously after the text, so a text-only key would freeze
+        // syntect-only colours).
         if cache.syntax_hash != text_hash
             || cache.syntax_ext != extension
+            || cache.syntax_theme != theme_name
             || cache.sem_hash != sem_hash
         {
             let ss = &*SYNTAX_SET;
@@ -386,7 +407,8 @@ impl CodeEditor {
                     .collect();
                 if !sem_by_line.is_empty() {
                     if let Some(toks) = sem_by_line.get(&li) {
-                        line_out = apply_semantic_line(line_without_nl, line_out, toks);
+                        line_out =
+                            apply_semantic_line(line_without_nl, line_out, toks, light_syntax);
                     }
                 }
                 spans.extend(line_out);
@@ -404,6 +426,7 @@ impl CodeEditor {
             }
             cache.syntax_hash = text_hash;
             cache.syntax_ext = extension.to_string();
+            cache.syntax_theme = theme_name;
             cache.sem_hash = sem_hash;
             cache.spans = spans;
             cache.galley = None; // content changed → force a reshape
@@ -880,7 +903,7 @@ impl CodeEditor {
             if open_line != close_line {
                 ui.horizontal(|ui| {
                     ui.colored_label(
-                        palette.accent.gamma_multiply(0.7),
+                        palette.faded(palette.accent, 0.7),
                         format!(
                             "Bracket match: line {} \u{2194} line {}",
                             open_line, close_line
@@ -917,17 +940,18 @@ fn syntect_color_to_egui(c: highlighting::Color) -> Color32 {
 }
 
 /// Render a gutter with line numbers next to a code text edit.
-pub fn code_block_with_gutter(ui: &mut egui::Ui, text: &mut String) -> Response {
+///
+/// The caller's appearance, not `AppearanceSettings::default()`: a chat code
+/// block inside a Daylight window that highlights itself with the Coder
+/// preset's dark ramp is unreadable, and the preset is exactly what the
+/// reporter had switched away from.
+pub fn code_block_with_gutter(
+    ui: &mut egui::Ui,
+    text: &mut String,
+    appearance: AppearanceSettings,
+) -> Response {
     let mut editor = CodeEditor::default();
-    editor.show(
-        ui,
-        text,
-        None,
-        None,
-        &[],
-        AppearanceSettings::default(),
-        &[],
-    )
+    editor.show(ui, text, None, None, &[], appearance, &[])
 }
 
 #[cfg(test)]
@@ -987,15 +1011,104 @@ mod tests {
 
     #[test]
     fn semantic_token_color_maps_types_and_leaves_unknowns() {
-        assert!(semantic_token_color(&tok(0, 0, 3, "function")).is_some());
+        assert!(semantic_token_color(&tok(0, 0, 3, "function"), false).is_some());
         assert!(
-            semantic_token_color(&tok(0, 0, 3, "operator")).is_none(),
+            semantic_token_color(&tok(0, 0, 3, "operator"), false).is_none(),
             "defer to syntect"
         );
         // A deprecated modifier mutes regardless of the base type.
         let mut t = tok(0, 0, 3, "function");
         t.modifiers = vec!["deprecated".to_string()];
-        assert_eq!(semantic_token_color(&t).unwrap().r, 0x77);
+        assert_eq!(semantic_token_color(&t, false).unwrap().r, 0x77);
+        assert_eq!(semantic_token_color(&t, true).unwrap().r, 0x6a);
+    }
+
+    /// The whole point of the light ramp: an entry that is legible on white.
+    /// The dark ramp's own values fail this — (192,197,206) is 1.7:1 there —
+    /// which is the defect this test exists to keep fixed.
+    #[test]
+    fn light_semantic_ramp_is_legible_on_the_daylight_code_background() {
+        let white = (255u8, 255u8, 255u8);
+        for ty in [
+            "type",
+            "struct",
+            "enumMember",
+            "macro",
+            "function",
+            "method",
+            "property",
+            "variable",
+            "parameter",
+            "decorator",
+        ] {
+            let c = semantic_token_color(&tok(0, 0, 3, ty), true)
+                .unwrap_or_else(|| panic!("{ty} has no light-ramp colour"));
+            let ratio = contrast_ratio((c.r, c.g, c.b), white);
+            assert!(
+                ratio >= 4.5,
+                "{ty} lights to rgb({},{},{}) = {ratio:.2}:1 on white",
+                c.r,
+                c.g,
+                c.b
+            );
+        }
+    }
+
+    fn contrast_ratio(fg: (u8, u8, u8), bg: (u8, u8, u8)) -> f32 {
+        fn lum(c: (u8, u8, u8)) -> f32 {
+            let c = egui::Color32::from_rgb(c.0, c.1, c.2);
+            crate::editor::theme::relative_luminance(c)
+        }
+        let (lo, hi) = match (lum(fg), lum(bg)) {
+            (a, b) if a > b => (b, a),
+            (a, b) => (a, b),
+        };
+        (hi + 0.05) / (lo + 0.05)
+    }
+
+    /// The dark ramp is what the light ramp must not be, so the comparison that
+    /// motivated the fix stays visible in the suite rather than in a comment.
+    #[test]
+    fn dark_semantic_ramp_would_be_illegible_on_white() {
+        let white = (255u8, 255u8, 255u8);
+        let c = semantic_token_color(&tok(0, 0, 3, "function"), false).unwrap();
+        assert!(
+            contrast_ratio((c.r, c.g, c.b), white) < 2.5,
+            "expected the dark ramp to fail on white"
+        );
+    }
+
+    /// The palette cannot supply source colours — readable code needs a dozen
+    /// hues and `IdePalette` carries fourteen semantic ones — so the editor has a
+    /// second theme switch, by syntect table name. This proves the name is real
+    /// and that its own default foreground reads on the background it will sit
+    /// on; a typo'd name would silently fall through to the dark table.
+    #[test]
+    fn each_scheme_highlights_from_a_real_table_that_reads_on_its_own_background() {
+        use crate::editor::theme::ThemeVariant;
+        for variant in ThemeVariant::ALL {
+            let name = variant.syntect_theme();
+            let theme = THEME_SET
+                .themes
+                .get(name)
+                .unwrap_or_else(|| panic!("{name} is not in syntect's default set"));
+            let bg = variant.palette().bg_primary;
+            let fg = theme
+                .settings
+                .foreground
+                .unwrap_or_else(|| panic!("{name} declares no default foreground"));
+            let ratio = contrast_ratio((fg.r, fg.g, fg.b), (bg.r(), bg.g(), bg.b()));
+            assert!(
+                ratio >= 4.5,
+                "{variant:?} defaults to rgb({},{},{}) on rgb({},{},{}) = {ratio:.2}:1",
+                fg.r,
+                fg.g,
+                fg.b,
+                bg.r(),
+                bg.g(),
+                bg.b()
+            );
+        }
     }
 
     #[test]
@@ -1009,7 +1122,7 @@ mod tests {
         // One syntect span covering the whole line; recolor chars 2..3 ("b").
         let spans = vec![("a b".to_string(), base)];
         let tokens = [&tok(0, 2, 1, "function")];
-        let out = apply_semantic_line("a b", spans, &tokens);
+        let out = apply_semantic_line("a b", spans, &tokens, false);
         // Text is preserved exactly across the split.
         let joined: String = out.iter().map(|(s, _)| s.as_str()).collect();
         assert_eq!(joined, "a b");
@@ -1030,7 +1143,7 @@ mod tests {
         let spans = vec![("abc".to_string(), base)];
         // Token type maps to None → no override, spans returned unchanged.
         let tokens = [&tok(0, 0, 3, "operator")];
-        let out = apply_semantic_line("abc", spans, &tokens);
+        let out = apply_semantic_line("abc", spans, &tokens, false);
         assert_eq!(out.len(), 1);
         assert_eq!(out[0], ("abc".to_string(), base));
     }

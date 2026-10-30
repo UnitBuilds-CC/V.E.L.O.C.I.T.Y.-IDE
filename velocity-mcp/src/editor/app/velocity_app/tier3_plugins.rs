@@ -46,7 +46,7 @@ impl VelocityApp {
                         ui.label(
                             RichText::new("\u{1f4e6}")
                                 .size(24.0)
-                                .color(palette.text_muted.gamma_multiply(0.5)),
+                                .color(palette.faded_muted(0.5)),
                         );
                         ui.add_space(ITEM_SPACING);
                         ui.label(
@@ -133,7 +133,7 @@ impl VelocityApp {
                         ui.label(
                             RichText::new("\u{1f4dc}")
                                 .size(24.0)
-                                .color(palette.text_muted.gamma_multiply(0.5)),
+                                .color(palette.faded_muted(0.5)),
                         );
                         ui.add_space(ITEM_SPACING);
                         ui.label(

@@ -96,7 +96,7 @@ impl MerkleGraphView {
                         ui.label(
                             egui::RichText::new("\u{25c7}")
                                 .size(28.0)
-                                .color(palette.accent.gamma_multiply(0.7)),
+                                .color(palette.faded(palette.accent, 0.7)),
                         );
                         ui.add_space(6.0);
                         ui.label(
@@ -356,7 +356,7 @@ impl MerkleGraphView {
                                     ui.label(
                                         egui::RichText::new("\u{25cc}")
                                             .size(28.0)
-                                            .color(palette.accent.gamma_multiply(0.7)),
+                                            .color(palette.faded(palette.accent, 0.7)),
                                     );
                                     ui.add_space(6.0);
                                     ui.label(

@@ -212,7 +212,7 @@ impl WikiView {
                     ui.label(
                         egui::RichText::new("\u{25c7}")
                             .size(28.0)
-                            .color(palette.accent.gamma_multiply(0.7)),
+                            .color(palette.faded(palette.accent, 0.7)),
                     );
                     ui.add_space(6.0);
                     ui.label(egui::RichText::new(message).color(palette.text_muted));
@@ -475,7 +475,7 @@ and any notable relationships. Use Markdown. Do not repeat the raw lists verbati
             egui::RichText::new(label)
                 .size(10.0)
                 .strong()
-                .color(palette.text_muted.gamma_multiply(0.8)),
+                .color(palette.faded_muted(0.8)),
         );
     }
 
@@ -527,7 +527,7 @@ and any notable relationships. Use Markdown. Do not repeat the raw lists verbati
                 ui.label(
                     egui::RichText::new("\u{25cc}")
                         .size(28.0)
-                        .color(palette.accent.gamma_multiply(0.7)),
+                        .color(palette.faded(palette.accent, 0.7)),
                 );
                 ui.add_space(6.0);
                 ui.label(

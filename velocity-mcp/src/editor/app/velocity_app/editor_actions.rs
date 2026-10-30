@@ -1427,7 +1427,7 @@ impl VelocityApp {
                 ui.label(
                     egui::RichText::new(egui_phosphor::regular::BUG)
                         .size(22.0)
-                        .color(palette.text_muted.gamma_multiply(0.6)),
+                        .color(palette.faded_muted(0.6)),
                 );
                 ui.add_space(4.0);
                 ui.label(

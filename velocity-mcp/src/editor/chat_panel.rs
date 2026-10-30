@@ -1,5 +1,5 @@
 use crate::agent::{ModelInfo, UiToAgentMessage};
-use crate::editor::theme::IdePalette;
+use crate::editor::theme::{AppearanceSettings, IdePalette};
 use crossbeam_channel::Sender;
 use egui;
 
@@ -176,11 +176,15 @@ impl ChatPanelState {
     }
 }
 
+/// The chat panel. `appearance` travels with the palette because a code block
+/// rendered here highlights itself, and it has to pick the scheme the window is
+/// painted in rather than the preset default.
 pub fn render_chat_panel(
     ui: &mut egui::Ui,
     state: &mut ChatPanelState,
     agent_tx: &Sender<UiToAgentMessage>,
     palette: IdePalette,
+    appearance: AppearanceSettings,
 ) -> bool {
     let mut preferences_changed = false;
     egui::Frame::new()
@@ -191,7 +195,7 @@ pub fn render_chat_panel(
                 preferences_changed |= render_header(ui, state, agent_tx, palette);
                 ui.add_space(4.0);
                 ui.separator();
-                render_messages(ui, state, palette);
+                render_messages(ui, state, palette, appearance);
                 render_pending_approvals(ui, state, agent_tx, palette);
                 ui.add_space(6.0);
                 render_input(ui, state, agent_tx, palette);
@@ -371,7 +375,12 @@ fn render_header(
     preferences_changed
 }
 
-fn render_messages(ui: &mut egui::Ui, state: &mut ChatPanelState, palette: IdePalette) {
+fn render_messages(
+    ui: &mut egui::Ui,
+    state: &mut ChatPanelState,
+    palette: IdePalette,
+    appearance: AppearanceSettings,
+) {
     let scroll_height = ui.available_height() - 160.0;
 
     egui::ScrollArea::vertical()
@@ -388,7 +397,7 @@ fn render_messages(ui: &mut egui::Ui, state: &mut ChatPanelState, palette: IdePa
                     ui.label(
                         egui::RichText::new(egui_phosphor::regular::SPARKLE)
                             .size(28.0)
-                            .color(palette.accent.gamma_multiply(0.6)),
+                            .color(palette.faded(palette.accent, 0.6)),
                     );
                     ui.add_space(8.0);
                     ui.label(
@@ -444,7 +453,7 @@ fn render_messages(ui: &mut egui::Ui, state: &mut ChatPanelState, palette: IdePa
                 if msg.role == ChatRole::Thought && !state.show_thoughts {
                     continue;
                 }
-                render_message_bubble(ui, msg, palette);
+                render_message_bubble(ui, msg, palette, appearance);
             }
 
             if state.agent_active {
@@ -513,7 +522,12 @@ fn sanitize_display_text(s: &str) -> String {
     result
 }
 
-fn render_markdown(ui: &mut egui::Ui, text: &str, palette: IdePalette) {
+fn render_markdown(
+    ui: &mut egui::Ui,
+    text: &str,
+    palette: IdePalette,
+    appearance: AppearanceSettings,
+) {
     let mut in_code_block = false;
     let mut code_accumulator = String::new();
     let mut code_language = String::new();
@@ -565,7 +579,9 @@ fn render_markdown(ui: &mut egui::Ui, text: &str, palette: IdePalette) {
                         ui.add_space(4.0);
                         // Use syntax-highlighted code editor for blocks with 3+ lines
                         if line_count >= 3 {
-                            crate::editor::code_editor::code_block_with_gutter(ui, &mut code);
+                            crate::editor::code_editor::code_block_with_gutter(
+                                ui, &mut code, appearance,
+                            );
                         } else {
                             ui.horizontal_wrapped(|ui| {
                                 ui.add(
@@ -758,7 +774,12 @@ fn render_inline_markdown(ui: &mut egui::Ui, text: &str, palette: IdePalette) {
     });
 }
 
-fn render_message_bubble(ui: &mut egui::Ui, msg: &UiChatMessage, palette: IdePalette) {
+fn render_message_bubble(
+    ui: &mut egui::Ui,
+    msg: &UiChatMessage,
+    palette: IdePalette,
+    appearance: AppearanceSettings,
+) {
     let (role_label, bg, border, align, accent) = match msg.role {
         ChatRole::User => (
             "You",
@@ -811,7 +832,7 @@ fn render_message_bubble(ui: &mut egui::Ui, msg: &UiChatMessage, palette: IdePal
                         .selectable(true),
                     );
                 } else {
-                    render_markdown(ui, &text, palette);
+                    render_markdown(ui, &text, palette, appearance);
                 }
             });
         // Copy affordance: a quiet icon on the bubble's right edge that only

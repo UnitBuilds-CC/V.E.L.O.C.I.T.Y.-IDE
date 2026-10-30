@@ -120,7 +120,7 @@ impl VelocityApp {
                         ui.label(
                             RichText::new(egui_phosphor::regular::MICROPHONE)
                                 .size(18.0)
-                                .color(palette.text_muted.gamma_multiply(0.5)),
+                                .color(palette.faded_muted(0.5)),
                         );
                         ui.add_space(2.0);
                         ui.label(
@@ -132,7 +132,7 @@ impl VelocityApp {
                         ui.label(
                             RichText::new("Try an example:")
                                 .size(FONT_CAPTION)
-                                .color(palette.text_muted.gamma_multiply(0.8)),
+                                .color(palette.faded_muted(0.8)),
                         );
                         ui.add_space(2.0);
                         for phrase in [
@@ -226,7 +226,7 @@ impl VelocityApp {
                         ui.label(
                             RichText::new(egui_phosphor::regular::PAPERCLIP)
                                 .size(24.0)
-                                .color(palette.text_muted.gamma_multiply(0.5)),
+                                .color(palette.faded_muted(0.5)),
                         );
                         ui.add_space(ITEM_SPACING);
                         ui.label(

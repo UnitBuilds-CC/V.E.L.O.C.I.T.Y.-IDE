@@ -156,7 +156,7 @@ impl StatusBar {
                             egui::RichText::new(ann)
                                 .size(10.5)
                                 .italics()
-                                .color(palette.text_muted.gamma_multiply(0.85)),
+                                .color(palette.faded_muted(0.85)),
                         );
                     }
 

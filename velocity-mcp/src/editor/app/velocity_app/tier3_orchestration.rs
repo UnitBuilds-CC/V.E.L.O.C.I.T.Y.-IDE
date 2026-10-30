@@ -138,7 +138,7 @@ impl VelocityApp {
                         ui.label(
                             RichText::new(egui_phosphor::regular::PULSE)
                                 .size(22.0)
-                                .color(palette.text_muted.gamma_multiply(0.5)),
+                                .color(palette.faded_muted(0.5)),
                         );
                         ui.add_space(4.0);
                         ui.label(
@@ -238,7 +238,7 @@ impl VelocityApp {
                         ui.label(
                             RichText::new(egui_phosphor::regular::CLIPBOARD)
                                 .size(24.0)
-                                .color(palette.text_muted.gamma_multiply(0.5)),
+                                .color(palette.faded_muted(0.5)),
                         );
                         ui.add_space(ITEM_SPACING);
                         ui.label(
@@ -362,7 +362,7 @@ impl VelocityApp {
                         ui.label(
                             RichText::new(egui_phosphor::regular::ROBOT)
                                 .size(24.0)
-                                .color(palette.text_muted.gamma_multiply(0.5)),
+                                .color(palette.faded_muted(0.5)),
                         );
                         ui.add_space(ITEM_SPACING);
                         ui.label(
@@ -457,7 +457,7 @@ impl VelocityApp {
                         ui.label(
                             RichText::new(egui_phosphor::regular::CHECK)
                                 .size(24.0)
-                                .color(palette.success.gamma_multiply(0.5)),
+                                .color(palette.faded(palette.success, 0.5)),
                         );
                         ui.add_space(ITEM_SPACING);
                         ui.label(
@@ -556,7 +556,7 @@ impl VelocityApp {
                         ui.label(
                             RichText::new(egui_phosphor::regular::USERS)
                                 .size(24.0)
-                                .color(palette.text_muted.gamma_multiply(0.5)),
+                                .color(palette.faded_muted(0.5)),
                         );
                         ui.add_space(ITEM_SPACING);
                         ui.label(

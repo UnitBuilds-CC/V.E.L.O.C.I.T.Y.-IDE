@@ -173,7 +173,7 @@ impl VelocityApp {
                 ui.label(
                     RichText::new(egui_phosphor::regular::BOOKMARK)
                         .size(24.0)
-                        .color(palette.text_muted.gamma_multiply(0.5)),
+                        .color(palette.faded_muted(0.5)),
                 );
                 ui.add_space(ITEM_SPACING);
                 ui.label(
@@ -183,7 +183,7 @@ impl VelocityApp {
                 );
                 ui.label(
                     RichText::new("Add bookmarks from the Accessibility layout")
-                        .color(palette.text_muted.gamma_multiply(0.7))
+                        .color(palette.faded_muted(0.7))
                         .size(9.0),
                 );
             });
@@ -223,7 +223,7 @@ impl VelocityApp {
                     ui.label(
                         RichText::new(format!("  {}:{}", rel.display(), bm.line))
                             .size(9.0)
-                            .color(palette.text_muted.gamma_multiply(0.7)),
+                            .color(palette.faded_muted(0.7)),
                     );
                 }
                 for &i in to_remove.iter().rev() {
@@ -254,7 +254,7 @@ impl VelocityApp {
                 ui.label(
                     RichText::new(egui_phosphor::regular::STAR)
                         .size(24.0)
-                        .color(palette.text_muted.gamma_multiply(0.5)),
+                        .color(palette.faded_muted(0.5)),
                 );
                 ui.add_space(ITEM_SPACING);
                 ui.label(
@@ -264,7 +264,7 @@ impl VelocityApp {
                 );
                 ui.label(
                     RichText::new("Star files from the editor tab context menu")
-                        .color(palette.text_muted.gamma_multiply(0.7))
+                        .color(palette.faded_muted(0.7))
                         .size(9.0),
                 );
             });
@@ -306,7 +306,7 @@ impl VelocityApp {
                         ui.label(
                             RichText::new(format!("  {}", dir))
                                 .size(9.0)
-                                .color(palette.text_muted.gamma_multiply(0.7)),
+                                .color(palette.faded_muted(0.7)),
                         );
                     }
                 }
@@ -352,7 +352,7 @@ impl VelocityApp {
                 ui.label(
                     RichText::new(egui_phosphor::regular::LIST_BULLETS)
                         .size(24.0)
-                        .color(palette.text_muted.gamma_multiply(0.5)),
+                        .color(palette.faded_muted(0.5)),
                 );
                 ui.add_space(ITEM_SPACING);
                 ui.label(
@@ -409,7 +409,7 @@ impl VelocityApp {
                         ui.label(
                             RichText::new(format!("{}", sym.line))
                                 .size(9.0)
-                                .color(palette.text_muted.gamma_multiply(0.7)),
+                                .color(palette.faded_muted(0.7)),
                         );
                     });
                 });
@@ -463,7 +463,7 @@ impl VelocityApp {
                 ui.label(
                     RichText::new(egui_phosphor::regular::CHECK_CIRCLE)
                         .size(24.0)
-                        .color(palette.success.gamma_multiply(0.6)),
+                        .color(palette.faded(palette.success, 0.6)),
                 );
                 ui.add_space(ITEM_SPACING);
                 ui.label(
@@ -474,7 +474,7 @@ impl VelocityApp {
                 ui.add_space(2.0);
                 ui.label(
                     RichText::new("Changes appear here as you edit and stage files.")
-                        .color(palette.text_muted.gamma_multiply(0.7))
+                        .color(palette.faded_muted(0.7))
                         .size(FONT_CAPTION),
                 );
                 ui.add_space(ITEM_SPACING);
@@ -822,7 +822,7 @@ impl VelocityApp {
                 ui.label(
                     RichText::new(egui_phosphor::regular::SCROLL)
                         .size(22.0)
-                        .color(palette.text_muted.gamma_multiply(0.5)),
+                        .color(palette.faded_muted(0.5)),
                 );
                 ui.add_space(ITEM_SPACING);
                 ui.label(
@@ -834,7 +834,7 @@ impl VelocityApp {
                 ui.add_space(2.0);
                 ui.label(
                     RichText::new("Ensure git is initialized in the workspace")
-                        .color(palette.text_muted.gamma_multiply(0.7))
+                        .color(palette.faded_muted(0.7))
                         .size(9.0),
                 );
             });
@@ -868,7 +868,7 @@ impl VelocityApp {
                             ui.label(
                                 RichText::new(&entry.author)
                                     .size(9.0)
-                                    .color(palette.text_muted.gamma_multiply(0.8)),
+                                    .color(palette.faded_muted(0.8)),
                             );
                         });
                     ui.add_space(2.0);
@@ -901,7 +901,7 @@ impl VelocityApp {
                 ui.label(
                     RichText::new(format!("{} msg(s)", self.chat.messages.len()))
                         .size(9.0)
-                        .color(palette.text_muted.gamma_multiply(0.7)),
+                        .color(palette.faded_muted(0.7)),
                 );
             }
 
@@ -1019,7 +1019,7 @@ impl VelocityApp {
                     ui.label(
                         RichText::new(egui_phosphor::regular::CHAT_CIRCLE)
                             .size(24.0)
-                            .color(palette.text_muted.gamma_multiply(0.5)),
+                            .color(palette.faded_muted(0.5)),
                     );
                     ui.add_space(ITEM_SPACING);
                     ui.label(
@@ -1029,7 +1029,7 @@ impl VelocityApp {
                     );
                     ui.label(
                         RichText::new("Start a conversation with the AI agent")
-                            .color(palette.text_muted.gamma_multiply(0.7))
+                            .color(palette.faded_muted(0.7))
                             .size(9.0),
                     );
                 });
@@ -1120,7 +1120,7 @@ impl VelocityApp {
                 ui.label(
                     RichText::new(egui_phosphor::regular::PAPERCLIP)
                         .size(24.0)
-                        .color(palette.text_muted.gamma_multiply(0.5)),
+                        .color(palette.faded_muted(0.5)),
                 );
                 ui.add_space(ITEM_SPACING);
                 ui.label(
@@ -1130,7 +1130,7 @@ impl VelocityApp {
                 );
                 ui.label(
                     RichText::new("Attach images, audio, or documents for the agent")
-                        .color(palette.text_muted.gamma_multiply(0.7))
+                        .color(palette.faded_muted(0.7))
                         .size(9.0),
                 );
                 ui.add_space(ITEM_SPACING);
@@ -1282,7 +1282,7 @@ impl VelocityApp {
                 ui.label(
                     RichText::new(egui_phosphor::regular::SQUARES_FOUR)
                         .size(22.0)
-                        .color(palette.text_muted.gamma_multiply(0.5)),
+                        .color(palette.faded_muted(0.5)),
                 );
                 ui.add_space(4.0);
                 ui.label(
@@ -1744,7 +1744,7 @@ impl VelocityApp {
                 ui.label(
                     RichText::new(egui_phosphor::regular::HAMMER)
                         .size(22.0)
-                        .color(palette.accent.gamma_multiply(0.5)),
+                        .color(palette.faded(palette.accent, 0.5)),
                 );
                 ui.add_space(4.0);
                 ui.label(
@@ -2099,7 +2099,7 @@ impl VelocityApp {
                 ui.label(
                     RichText::new(egui_phosphor::regular::LOCK)
                         .size(24.0)
-                        .color(palette.text_muted.gamma_multiply(0.5)),
+                        .color(palette.faded_muted(0.5)),
                 );
                 ui.add_space(ITEM_SPACING);
                 ui.label(
@@ -2109,7 +2109,7 @@ impl VelocityApp {
                 );
                 ui.label(
                     RichText::new("Open .nda files from the workspace to view them here")
-                        .color(palette.text_muted.gamma_multiply(0.7))
+                        .color(palette.faded_muted(0.7))
                         .size(9.0),
                 );
             });
@@ -2165,7 +2165,7 @@ impl VelocityApp {
                                 ui.label(
                                     RichText::new(format!("{} triple(s)", doc.doc.triples.len()))
                                         .size(9.0)
-                                        .color(palette.text_muted.gamma_multiply(0.8)),
+                                        .color(palette.faded_muted(0.8)),
                                 );
                             });
                         if frame
@@ -2211,7 +2211,7 @@ impl VelocityApp {
                 ui.label(
                     RichText::new(egui_phosphor::regular::PUZZLE_PIECE)
                         .size(24.0)
-                        .color(palette.text_muted.gamma_multiply(0.5)),
+                        .color(palette.faded_muted(0.5)),
                 );
                 ui.add_space(ITEM_SPACING);
                 ui.label(
@@ -2221,7 +2221,7 @@ impl VelocityApp {
                 );
                 ui.label(
                     RichText::new("Plugins are discovered from the workspace plugins/ directory")
-                        .color(palette.text_muted.gamma_multiply(0.7))
+                        .color(palette.faded_muted(0.7))
                         .size(9.0),
                 );
             });
@@ -2264,7 +2264,7 @@ impl VelocityApp {
                                     ui.label(
                                         RichText::new(format!("by {}", plugin.author))
                                             .size(9.0)
-                                            .color(palette.text_muted.gamma_multiply(0.8)),
+                                            .color(palette.faded_muted(0.8)),
                                     );
                                 }
                                 ui.with_layout(
@@ -2282,7 +2282,7 @@ impl VelocityApp {
                                 ui.label(
                                     RichText::new(plugin.tool_names.join(", "))
                                         .size(9.0)
-                                        .color(palette.text_muted.gamma_multiply(0.7)),
+                                        .color(palette.faded_muted(0.7)),
                                 );
                             }
                         });
@@ -2337,7 +2337,7 @@ impl VelocityApp {
         if self.skill_files.is_empty() {
             ui.add_space(16.0);
             ui.vertical_centered(|ui| {
-                ui.label(RichText::new(egui_phosphor::regular::TARGET).size(24.0).color(palette.text_muted.gamma_multiply(0.5)));
+                ui.label(RichText::new(egui_phosphor::regular::TARGET).size(24.0).color(palette.faded_muted(0.5)));
                 ui.add_space(ITEM_SPACING);
                 ui.label(RichText::new("No skills defined").size(FONT_BODY).strong().color(palette.text));
                 ui.add_space(2.0);
@@ -2406,7 +2406,7 @@ impl VelocityApp {
                                     ui.label(
                                         RichText::new(format!("{}\u{2026}", preview))
                                             .size(9.0)
-                                            .color(palette.text_muted.gamma_multiply(0.7)),
+                                            .color(palette.faded_muted(0.7)),
                                     );
                                 }
                             });
@@ -2424,7 +2424,7 @@ impl VelocityApp {
                 ui.label(
                     RichText::new(egui_phosphor::regular::CHART_BAR)
                         .size(24.0)
-                        .color(palette.text_muted.gamma_multiply(0.5)),
+                        .color(palette.faded_muted(0.5)),
                 );
                 ui.add_space(ITEM_SPACING);
                 ui.label(

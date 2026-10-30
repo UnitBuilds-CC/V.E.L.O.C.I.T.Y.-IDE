@@ -411,7 +411,14 @@ impl<'a> TabViewer for TabViewerImpl<'a> {
             }
             TabKind::Chat => {
                 let palette = self.app.palette();
-                if render_chat_panel(ui, &mut self.app.chat, &self.app.agent_tx, palette) {
+                let appearance = self.app.effective_appearance();
+                if render_chat_panel(
+                    ui,
+                    &mut self.app.chat,
+                    &self.app.agent_tx,
+                    palette,
+                    appearance,
+                ) {
                     self.app.auto_approve = self.app.chat.auto_approve;
                     self.app.selected_model = self.app.chat.selected_model.clone();
                     self.app.thinking_enabled = self.app.chat.thinking_enabled;
@@ -1738,7 +1745,7 @@ impl<'a> TabViewerImpl<'a> {
                                 egui::RichText::new("\u{203a}_")
                                     .monospace()
                                     .size(26.0)
-                                    .color(palette.accent.gamma_multiply(0.7)),
+                                    .color(palette.faded(palette.accent, 0.7)),
                             );
                             ui.add_space(6.0);
                             ui.label(
@@ -2077,7 +2084,7 @@ impl<'a> TabViewerImpl<'a> {
                                 ui.label(
                                     egui::RichText::new("\u{25c7}")
                                         .size(28.0)
-                                        .color(palette.accent.gamma_multiply(0.7)),
+                                        .color(palette.faded(palette.accent, 0.7)),
                                 );
                                 ui.add_space(6.0);
                                 ui.label(
@@ -2287,7 +2294,7 @@ impl<'a> TabViewerImpl<'a> {
                         if running_tasks.is_empty() {
                             ui.add_space(16.0);
                             ui.vertical_centered(|ui| {
-                                ui.label(egui::RichText::new("\u{26a1}").size(28.0).color(palette.accent.gamma_multiply(0.7)));
+                                ui.label(egui::RichText::new("\u{26a1}").size(28.0).color(palette.faded(palette.accent, 0.7)));
                                 ui.add_space(6.0);
                                 ui.label(egui::RichText::new("No agents running \u{2014} launch a mission to see live telemetry").color(palette.text_muted));
                             });
@@ -2368,7 +2375,7 @@ impl<'a> TabViewerImpl<'a> {
                                                 }
 
                                                 // Event count
-                                                ui.label(egui::RichText::new(format!("{} events \u{00b7} {} notes", thread.events.len(), thread.operator_notes.len())).small().color(palette.text_muted.gamma_multiply(0.7)));
+                                                ui.label(egui::RichText::new(format!("{} events \u{00b7} {} notes", thread.events.len(), thread.operator_notes.len())).small().color(palette.faded_muted(0.7)));
                                             } else {
                                                 ui.label(egui::RichText::new("Spawning\u{2026}").small().color(palette.text_muted));
                                             }

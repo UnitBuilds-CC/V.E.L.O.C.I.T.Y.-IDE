@@ -816,8 +816,15 @@ impl TerminalState {
         let code_font = egui::FontId::monospace(13.0);
         // Monospace: one glyph's advance gives the cell width for hit-testing.
         let char_width = ui.ctx().fonts_mut(|tf| tf.glyph_width(&code_font, 'M'));
-        // Selection wash painted behind selected cells.
-        const SEL_BG: egui::Color32 = egui::Color32::from_rgb(41, 63, 92);
+        // Selection wash painted behind selected cells. The dark value is what
+        // this panel has always used; a light palette gets a tint of its own
+        // surface instead, because that navy under Daylight's near-black text
+        // is unreadable.
+        let sel_bg = if palette.is_dark() {
+            egui::Color32::from_rgb(41, 63, 92)
+        } else {
+            palette.accent.linear_multiply(0.28)
+        };
         const MAX_SB_SHOWN: usize = 1000;
 
         // Ctrl (or Cmd) turns the grid into a link surface: rows get link
@@ -957,7 +964,7 @@ impl TerminalState {
                                 fmt.background = bg;
                             }
                             if is_selected(ri, ci) {
-                                fmt.background = SEL_BG;
+                                fmt.background = sel_bg;
                             }
                             if cell.attrs.underline {
                                 fmt.underline = egui::Stroke::new(1.0, color);

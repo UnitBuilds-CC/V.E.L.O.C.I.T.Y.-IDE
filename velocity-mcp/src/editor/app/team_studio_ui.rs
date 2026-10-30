@@ -291,7 +291,7 @@ impl VelocityApp {
                     if self.expert_teams.is_empty() {
                         ui.add_space(20.0);
                         ui.vertical_centered(|ui| {
-                            ui.label(RichText::new("\u{1f465}").size(22.0).color(palette.text_muted.gamma_multiply(0.5)));
+                            ui.label(RichText::new("\u{1f465}").size(22.0).color(palette.faded_muted(0.5)));
                             ui.add_space(4.0);
                             ui.label(RichText::new("No teams yet").strong().size(11.0).color(palette.text));
                             ui.add_space(2.0);

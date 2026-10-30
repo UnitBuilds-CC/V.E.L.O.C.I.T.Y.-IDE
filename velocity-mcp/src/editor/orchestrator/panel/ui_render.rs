@@ -117,19 +117,19 @@ impl OrchestratorPanel {
                     ui.label(
                         RichText::new("\u{00b7}")
                             .small()
-                            .color(palette.text_muted.gamma_multiply(0.6)),
+                            .color(palette.faded_muted(0.6)),
                     );
                     ui.label(RichText::new(format!("Phases: {}", plan.phases.len())).small());
                     ui.label(
                         RichText::new("\u{00b7}")
                             .small()
-                            .color(palette.text_muted.gamma_multiply(0.6)),
+                            .color(palette.faded_muted(0.6)),
                     );
                     ui.label(RichText::new(format!("BFS order: {}", bfs_order.len())).small());
                     ui.label(
                         RichText::new("\u{00b7}")
                             .small()
-                            .color(palette.text_muted.gamma_multiply(0.6)),
+                            .color(palette.faded_muted(0.6)),
                     );
                     ui.label(
                         RichText::new(format!("Done: {}", completed_count))
@@ -140,7 +140,7 @@ impl OrchestratorPanel {
                         ui.label(
                             RichText::new("\u{00b7}")
                                 .small()
-                                .color(palette.text_muted.gamma_multiply(0.6)),
+                                .color(palette.faded_muted(0.6)),
                         );
                         ui.label(
                             RichText::new(format!("Blocked: {}", retryable_blocked))
@@ -152,7 +152,7 @@ impl OrchestratorPanel {
                         ui.label(
                             RichText::new("\u{00b7}")
                                 .small()
-                                .color(palette.text_muted.gamma_multiply(0.6)),
+                                .color(palette.faded_muted(0.6)),
                         );
                         ui.label(
                             RichText::new(format!(
@@ -406,7 +406,7 @@ impl OrchestratorPanel {
                                             ui.label(
                                                 RichText::new("\u{25cb}")
                                                     .size(28.0)
-                                                    .color(palette.accent.gamma_multiply(0.7)),
+                                                    .color(palette.faded(palette.accent, 0.7)),
                                             );
                                             ui.add_space(6.0);
                                             ui.label(

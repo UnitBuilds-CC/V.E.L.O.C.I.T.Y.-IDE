@@ -168,7 +168,7 @@ impl DiagnosticsState {
                                 ui.label(
                                     egui::RichText::new(source)
                                         .size(9.0)
-                                        .color(palette.text_muted.gamma_multiply(0.7)),
+                                        .color(palette.faded_muted(0.7)),
                                 );
                             }
                         });

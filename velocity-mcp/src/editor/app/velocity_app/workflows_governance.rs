@@ -1303,8 +1303,9 @@ impl VelocityApp {
 
             // Canvas area
             let canvas_size = egui::vec2(ui.available_width(), 350.0);
+            let canvas_palette = self.palette();
             if let Some(canvas) = self.workflow_state.workflow_canvases.get_mut(&sel_id) {
-                let _action = canvas.draw(ui, canvas_size);
+                let _action = canvas.draw(ui, canvas_size, canvas_palette);
             }
             ui.add_space(4.0);
 

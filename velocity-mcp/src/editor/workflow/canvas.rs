@@ -338,17 +338,26 @@ impl WorkflowCanvas {
 /// Render the visual workflow canvas with drag-and-drop, zoom, and pan.
 impl WorkflowCanvas {
     /// Draw the full canvas UI. Returns actions the caller should process.
-    pub fn draw(&mut self, ui: &mut egui::Ui, available_size: egui::Vec2) -> CanvasAction {
+    ///
+    /// Takes the palette because this panel paints its own background, grid and
+    /// node bodies: on a Daylight window the hardcoded charcoal it used to
+    /// carry left a midnight rectangle sitting inside a white workspace.
+    pub fn draw(
+        &mut self,
+        ui: &mut egui::Ui,
+        available_size: egui::Vec2,
+        palette: crate::editor::theme::IdePalette,
+    ) -> CanvasAction {
         let mut action = CanvasAction::None;
-        let palette_bg = egui::Color32::from_rgb(30, 30, 30);
-        let palette_grid = egui::Color32::from_rgb(45, 45, 45);
+        let canvas_bg = palette.bg_secondary;
+        let grid_dot = palette.border;
 
         let (response, painter) =
             ui.allocate_painter(available_size, egui::Sense::click_and_drag());
         let rect = response.rect;
 
         // Background
-        painter.rect_filled(rect, 0.0, palette_bg);
+        painter.rect_filled(rect, 0.0, canvas_bg);
 
         // Grid dots
         let zoom = self.zoom;
@@ -360,7 +369,7 @@ impl WorkflowCanvas {
         while y < rect.max.y {
             let mut x = rect.min.x + offset_x;
             while x < rect.max.x {
-                painter.circle_filled(egui::pos2(x, y), 1.0, palette_grid);
+                painter.circle_filled(egui::pos2(x, y), 1.0, grid_dot);
                 x += grid_spacing;
             }
             y += grid_spacing;
@@ -392,7 +401,7 @@ impl WorkflowCanvas {
         let hover_pos = response.hover_pos().unwrap_or(egui::pos2(0.0, 0.0));
         let mut node_rects: Vec<(NodeId, egui::Rect)> = Vec::new();
         for node in &self.nodes {
-            let node_rect = draw_node_fn(&painter, node, rect, zoom, pan);
+            let node_rect = draw_node_fn(&painter, node, rect, zoom, pan, palette);
             node_rects.push((node.id.clone(), node_rect));
         }
 
@@ -437,6 +446,7 @@ fn draw_node_fn(
     canvas_rect: egui::Rect,
     zoom: f32,
     pan: egui::Vec2,
+    palette: crate::editor::theme::IdePalette,
 ) -> egui::Rect {
     let node_width = 160.0 * zoom;
     let node_height = 80.0 * zoom;
@@ -452,10 +462,20 @@ fn draw_node_fn(
     );
 
     let border_color = node.kind.color();
-    let bg_color = if node.selected {
-        egui::Color32::from_rgb(50, 50, 60)
+    // A card sits *above* its canvas, which means lighter on a dark palette and
+    // whiter on a light one; the two directions are not interchangeable, so the
+    // pair is chosen per scheme rather than by a single step of `bg_tertiary`.
+    let body_bg = if palette.is_dark() {
+        palette.bg_tertiary
     } else {
-        egui::Color32::from_rgb(38, 38, 38)
+        palette.bg_primary
+    };
+    let bg_color = if node.selected {
+        palette
+            .accent
+            .linear_multiply(if palette.is_dark() { 0.30 } else { 0.16 })
+    } else {
+        body_bg
     };
 
     // Body
@@ -463,7 +483,7 @@ fn draw_node_fn(
     painter.rect_stroke(
         body_rect,
         0.0,
-        egui::Stroke::new(1.0, egui::Color32::from_rgb(60, 60, 60)),
+        egui::Stroke::new(1.0, palette.border),
         egui::StrokeKind::Inside,
     );
 
@@ -475,7 +495,7 @@ fn draw_node_fn(
         egui::Align2::CENTER_CENTER,
         node.kind.label(),
         egui::FontId::proportional(label_size),
-        egui::Color32::WHITE,
+        crate::editor::theme::text_on(border_color),
     );
 
     // Description
@@ -486,27 +506,19 @@ fn draw_node_fn(
         egui::Align2::CENTER_CENTER,
         &desc,
         egui::FontId::proportional(desc_size),
-        egui::Color32::from_rgb(180, 180, 180),
+        palette.text_muted,
     );
 
     // Output port (right side)
     let port_pos = egui::pos2(rect.max.x, rect.center().y);
     painter.circle_filled(port_pos, 5.0 * zoom, border_color);
-    painter.circle_stroke(
-        port_pos,
-        5.0 * zoom,
-        egui::Stroke::new(1.0, egui::Color32::WHITE),
-    );
+    painter.circle_stroke(port_pos, 5.0 * zoom, egui::Stroke::new(1.0, palette.text));
 
     // Input port (left side) — not on Start node
     if !matches!(node.kind, CanvasNodeKind::Start) {
         let in_pos = egui::pos2(rect.min.x, rect.center().y);
         painter.circle_filled(in_pos, 5.0 * zoom, border_color);
-        painter.circle_stroke(
-            in_pos,
-            5.0 * zoom,
-            egui::Stroke::new(1.0, egui::Color32::WHITE),
-        );
+        painter.circle_stroke(in_pos, 5.0 * zoom, egui::Stroke::new(1.0, palette.text));
     }
 
     rect

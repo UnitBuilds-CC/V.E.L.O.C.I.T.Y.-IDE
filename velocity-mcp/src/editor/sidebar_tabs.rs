@@ -181,7 +181,7 @@ pub fn render_git_content(
             ui.label(
                 egui::RichText::new("Changes will appear here when you edit files.")
                     .size(8.0)
-                    .color(palette.text_muted.gamma_multiply(0.7)),
+                    .color(palette.faded_muted(0.7)),
             );
         });
     } else if has_entries {
@@ -350,7 +350,7 @@ pub fn render_flows_content(ui: &mut egui::Ui, flows: &[FlowEntry], palette: Ide
             ui.label(
                 egui::RichText::new("\u{29c9}")
                     .size(18.0)
-                    .color(palette.text_muted.gamma_multiply(0.6)),
+                    .color(palette.faded_muted(0.6)),
             );
             ui.add_space(4.0);
             ui.label(
@@ -364,7 +364,7 @@ pub fn render_flows_content(ui: &mut egui::Ui, flows: &[FlowEntry], palette: Ide
                     "Press the \u{25cf} Record button in the toolbar to capture one.",
                 )
                 .size(8.0)
-                .color(palette.accent.gamma_multiply(0.8)),
+                .color(palette.faded(palette.accent, 0.8)),
             );
         });
     } else {
@@ -414,7 +414,7 @@ pub fn render_targets_content(ui: &mut egui::Ui, targets: &[TargetEntry], palett
             ui.label(
                 egui::RichText::new("\u{25ce}")
                     .size(18.0)
-                    .color(palette.text_muted.gamma_multiply(0.6)),
+                    .color(palette.faded_muted(0.6)),
             );
             ui.add_space(4.0);
             ui.label(
@@ -426,7 +426,7 @@ pub fn render_targets_content(ui: &mut egui::Ui, targets: &[TargetEntry], palett
             ui.label(
                 egui::RichText::new("Add projects to .velocity_projects.nda to see them here.")
                     .size(8.0)
-                    .color(palette.accent.gamma_multiply(0.8)),
+                    .color(palette.faded(palette.accent, 0.8)),
             );
         });
     } else {
@@ -479,7 +479,7 @@ pub fn render_recordings_content(ui: &mut egui::Ui, recordings: &[String], palet
             ui.label(
                 egui::RichText::new("\u{25cf}")
                     .size(18.0)
-                    .color(palette.text_muted.gamma_multiply(0.6)),
+                    .color(palette.faded_muted(0.6)),
             );
             ui.add_space(4.0);
             ui.label(
@@ -491,7 +491,7 @@ pub fn render_recordings_content(ui: &mut egui::Ui, recordings: &[String], palet
             ui.label(
                 egui::RichText::new("Click the \u{25cf} Record button in the toolbar to start.")
                     .size(8.0)
-                    .color(palette.accent.gamma_multiply(0.8)),
+                    .color(palette.faded(palette.accent, 0.8)),
             );
         });
     } else {
@@ -538,7 +538,7 @@ pub fn render_logs_content(
             ui.label(
                 egui::RichText::new("\u{2261}")
                     .size(18.0)
-                    .color(palette.text_muted.gamma_multiply(0.6)),
+                    .color(palette.faded_muted(0.6)),
             );
             ui.add_space(4.0);
             ui.label(
@@ -550,7 +550,7 @@ pub fn render_logs_content(
             ui.label(
                 egui::RichText::new("Run a build or task to see execution logs here.")
                     .size(8.0)
-                    .color(palette.text_muted.gamma_multiply(0.7)),
+                    .color(palette.faded_muted(0.7)),
             );
         });
     } else {
@@ -582,7 +582,7 @@ pub fn render_agents_content(ui: &mut egui::Ui, agents: &[AgentEntry], palette: 
             ui.label(
                 egui::RichText::new("\u{2299}")
                     .size(18.0)
-                    .color(palette.text_muted.gamma_multiply(0.6)),
+                    .color(palette.faded_muted(0.6)),
             );
             ui.add_space(4.0);
             ui.label(
@@ -594,7 +594,7 @@ pub fn render_agents_content(ui: &mut egui::Ui, agents: &[AgentEntry], palette: 
             ui.label(
                 egui::RichText::new("Deploy an agent from Mission Control mode (Ctrl+3).")
                     .size(8.0)
-                    .color(palette.accent.gamma_multiply(0.8)),
+                    .color(palette.faded(palette.accent, 0.8)),
             );
         });
     } else {
@@ -681,7 +681,7 @@ pub fn render_queue_content(ui: &mut egui::Ui, queue: &[QueueEntry], palette: Id
             ui.label(
                 egui::RichText::new("New tasks appear here when agents are working.")
                     .size(8.0)
-                    .color(palette.text_muted.gamma_multiply(0.7)),
+                    .color(palette.faded_muted(0.7)),
             );
         });
     } else {
@@ -872,7 +872,7 @@ pub fn render_favorites_content(
             ui.label(
                 egui::RichText::new("\u{2605}")
                     .size(18.0)
-                    .color(palette.text_muted.gamma_multiply(0.6)),
+                    .color(palette.faded_muted(0.6)),
             );
             ui.add_space(4.0);
             ui.label(
@@ -884,7 +884,7 @@ pub fn render_favorites_content(
             ui.label(
                 egui::RichText::new("Open a file and click \u{2605} to pin it for quick access.")
                     .size(8.0)
-                    .color(palette.accent.gamma_multiply(0.8)),
+                    .color(palette.faded(palette.accent, 0.8)),
             );
         });
     } else {
@@ -934,7 +934,7 @@ pub fn render_bookmarks_content(
             ui.label(
                 egui::RichText::new("\u{229b}")
                     .size(18.0)
-                    .color(palette.text_muted.gamma_multiply(0.6)),
+                    .color(palette.faded_muted(0.6)),
             );
             ui.add_space(4.0);
             ui.label(
@@ -946,7 +946,7 @@ pub fn render_bookmarks_content(
             ui.label(
                 egui::RichText::new("Use Ctrl+Shift+B while editing to bookmark a line.")
                     .size(8.0)
-                    .color(palette.accent.gamma_multiply(0.8)),
+                    .color(palette.faded(palette.accent, 0.8)),
             );
         });
     } else {
@@ -995,7 +995,7 @@ pub fn render_audit_content(ui: &mut egui::Ui, findings: &[AuditFinding], palett
             ui.label(
                 egui::RichText::new("\u{267f}")
                     .size(18.0)
-                    .color(palette.text_muted.gamma_multiply(0.6)),
+                    .color(palette.faded_muted(0.6)),
             );
             ui.add_space(4.0);
             ui.label(
@@ -1009,7 +1009,7 @@ pub fn render_audit_content(ui: &mut egui::Ui, findings: &[AuditFinding], palett
                     "Run an audit via the toolbar \u{2713} button to check WCAG compliance.",
                 )
                 .size(8.0)
-                .color(palette.accent.gamma_multiply(0.8)),
+                .color(palette.faded(palette.accent, 0.8)),
             );
         });
     } else {

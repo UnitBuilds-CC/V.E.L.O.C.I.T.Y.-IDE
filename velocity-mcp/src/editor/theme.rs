@@ -38,7 +38,108 @@ pub const FONT_SMALL: f32 = 11.0;
 pub const FONT_BODY: f32 = 13.0;
 pub const FONT_HEADING: f32 = 15.0;
 
+/// WCAG relative luminance of an opaque colour, 0.0 (black) to 1.0 (white).
+///
+/// The switch from sRGB bytes to luminance is the standard piecewise transfer
+/// curve, not a plain square: below the knee the channel is linear, and using a
+/// power law there overstates the brightness of dark colours.
+pub fn relative_luminance(c: Color32) -> f32 {
+    fn linear(v: u8) -> f32 {
+        let s = v as f32 / 255.0;
+        if s <= 0.03928 {
+            s / 12.92
+        } else {
+            ((s + 0.055) / 1.055).powf(2.4)
+        }
+    }
+    0.2126 * linear(c.r()) + 0.7152 * linear(c.g()) + 0.0722 * linear(c.b())
+}
+
+/// A colour `t` of the way from `a` to `b` in sRGB bytes.
+fn mix(a: Color32, b: Color32, t: f32) -> Color32 {
+    let lerp = |x: u8, y: u8| {
+        (x as f32 + (y as f32 - x as f32) * t)
+            .round()
+            .clamp(0.0, 255.0) as u8
+    };
+    Color32::from_rgb(lerp(a.r(), b.r()), lerp(a.g(), b.g()), lerp(a.b(), b.b()))
+}
+
+/// WCAG contrast ratio between two colours, 1.0 (identical) to 21.0.
+pub fn contrast_ratio(a: Color32, b: Color32) -> f32 {
+    let (la, lb) = (relative_luminance(a), relative_luminance(b));
+    let (hi, lo) = if la > lb { (la, lb) } else { (lb, la) };
+    (hi + 0.05) / (lo + 0.05)
+}
+
+/// The text colour that reads on a swatch filled with this colour.
+///
+/// Hand-painted chips — workflow node headers, status badges — choose their own
+/// fill, so no palette text colour is guaranteed to sit on one. Whichever of
+/// black or white wins outright is the only scheme-independent answer.
+pub fn text_on(c: Color32) -> Color32 {
+    let l = relative_luminance(c);
+    let on_white = 1.05 / (l + 0.05);
+    let on_black = (l + 0.05) / 0.05;
+    if on_black > on_white {
+        Color32::BLACK
+    } else {
+        Color32::WHITE
+    }
+}
+
 impl IdePalette {
+    /// Whether this palette paints dark, judged from the surface it fills.
+    ///
+    /// `ThemeVariant::is_dark` answers the same question one level up, but
+    /// several hand-painted surfaces receive only a palette — the terminal's
+    /// selection wash, the workflow canvas, the file tree's git decorations —
+    /// and each has to pick a colour that reads against the text on it. Derived
+    /// from the background rather than stored, so a hand-built palette cannot
+    /// claim to be its own opposite.
+    pub fn is_dark(&self) -> bool {
+        relative_luminance(self.bg_primary) < 0.5
+    }
+
+    /// `ink` faded back from the page, `keep` being the fraction left standing —
+    /// the same factor [`egui::Color32::gamma_multiply`] takes.
+    ///
+    /// Ninety-odd quiet labels in this app were written
+    /// `palette.something.gamma_multiply(k)`, which scales channels toward
+    /// *black* and, because it scales alpha too, composites the result back over
+    /// the page. On a dark panel that reads as a deliberate step down. On a
+    /// white panel the reduced alpha wins: `keep = 0.5` lands at 2.6:1 for the
+    /// accent blue and 2.8:1 for a muted grey — present in the layout,
+    /// unreadable in the eye. Dark keeps its exact previous bytes so nothing that
+    /// shipped changes; light takes the deepest fade that still clears 3:1
+    /// against a panel, which is the quietest a label can be and still be text.
+    ///
+    /// For fills and strokes the raw `gamma_multiply` stays correct: a faint
+    /// accent *wash* is meant to disappear into the surface it tints, and on
+    /// white it does exactly that. Only ink needs the floor.
+    pub fn faded(&self, ink: Color32, keep: f32) -> Color32 {
+        let keep = keep.clamp(0.0, 1.0);
+        if self.is_dark() {
+            return ink.gamma_multiply(keep);
+        }
+        const FLOOR: f32 = 3.0;
+        let mut quietest = ink;
+        for step in 1..=10 {
+            let fade = (1.0 - keep) * step as f32 / 10.0;
+            let candidate = mix(ink, self.bg_primary, fade);
+            if contrast_ratio(candidate, self.bg_secondary) < FLOOR {
+                break;
+            }
+            quietest = candidate;
+        }
+        quietest
+    }
+
+    /// [`IdePalette::faded`] applied to the secondary label colour.
+    pub fn faded_muted(&self, keep: f32) -> Color32 {
+        self.faded(self.text_muted, keep)
+    }
+
     pub fn dark() -> Self {
         // Modern AI-first IDE: deep neutral backgrounds with vivid green accent.
         Self {
@@ -183,6 +284,24 @@ impl ThemeVariant {
 
     pub fn is_dark(self) -> bool {
         !matches!(self, Self::Daylight)
+    }
+
+    /// The syntect colour table source code is highlighted with.
+    ///
+    /// A palette cannot supply this: readable source needs a dozen distinct
+    /// hues, and `IdePalette` deliberately carries fourteen *semantic* colours
+    /// instead. So the editor has a second theme switch, by name — and it has
+    /// to follow the palette. The dark ramp's default foreground is
+    /// (192,197,206), which measures 1.7:1 against Daylight's white code
+    /// background, and that single line is most of what issue #1 ("light
+    /// themes aren't applying properly") was actually seeing: the chrome
+    /// recoloured, the code did not.
+    pub fn syntect_theme(self) -> &'static str {
+        if self.is_dark() {
+            "base16-ocean.dark"
+        } else {
+            "InspiredGitHub"
+        }
     }
 }
 
@@ -732,6 +851,241 @@ pub fn ui_font_id() -> FontId {
     AppearanceSettings::default().ui_font_id()
 }
 
+/// The window last painted, 0 while nothing has been claimed.
+#[cfg(windows)]
+static CAPTION_HWND: std::sync::atomic::AtomicIsize = std::sync::atomic::AtomicIsize::new(0);
+
+/// Milliseconds since an arbitrary origin at the last full sweep.
+#[cfg(windows)]
+static CAPTION_SCANNED_AT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// How long a settled caption may go without re-checking for new windows.
+#[cfg(windows)]
+const CAPTION_RESCAN_MS: u64 = 1000;
+
+/// Move the window's title bar to the palette's scheme.
+///
+/// The caption is the one surface in a Daylight window that Velocity does not
+/// draw: DWM colours it from the *desktop's* light/dark setting, so anyone on a
+/// dark desktop who picks Daylight gets a white editor under a black bar — the
+/// screenshot that opened issue #1, and the reason "the theme didn't apply" was
+/// the report rather than "the theme is ugly".
+///
+/// Called on every frame, so it has to be cheap, and it has to be able to change
+/// its mind. Both were learned the hard way: the scheme was cached once on a
+/// flag, and a Daylight caption then stayed black because the first frame the
+/// render loop drew had no IDE window to find — the window belongs to another
+/// thread and appears later — so the only visible window at that moment was
+/// winit's 14x14 event target, the attribute landed on it, every call reported
+/// success, and the cache refused to look again. So what is remembered is the
+/// *window*, re-read from DWM rather than trusted, and the sweep that claims it
+/// runs every frame until one is painted and then once a second after that,
+/// which is what catches a window created later or a second one opened.
+#[cfg(windows)]
+pub fn sync_caption(dark: bool) {
+    use std::sync::atomic::Ordering::Relaxed;
+    let want = dark as i8;
+    let claimed = CAPTION_HWND.load(Relaxed);
+    if claimed != 0 && caption_scheme(claimed) == Some(want) && !scan_due() {
+        return;
+    }
+    match paint_captions(dark) {
+        Ok(largest) => {
+            if let Some(hwnd) = largest {
+                CAPTION_HWND.store(hwnd, Relaxed);
+            }
+        }
+        // A caption that will not move is invisible in a screenshot and
+        // unloggable in a bug report, so say it once, loudly, on the console.
+        Err(why) => {
+            static WARNED: std::sync::Once = std::sync::Once::new();
+            WARNED.call_once(|| log::warn!("title-bar scheme not applied: {why}"))
+        }
+    }
+    CAPTION_SCANNED_AT.store(now_millis(), Relaxed);
+}
+
+/// A monotonic-enough clock for a one-second throttle; a wall-clock jump at
+/// worst buys one extra sweep.
+#[cfg(windows)]
+fn now_millis() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0)
+}
+
+/// Whether it is time to look for windows again.
+#[cfg(windows)]
+fn scan_due() -> bool {
+    use std::sync::atomic::Ordering::Relaxed;
+    let seen = CAPTION_SCANNED_AT.load(Relaxed);
+    seen == 0 || now_millis().saturating_sub(seen) >= CAPTION_RESCAN_MS
+}
+
+/// What DWM reports for a window's caption scheme, or `None` if the handle has
+/// stopped being a window of this process that it will talk about.
+///
+/// The handle is remembered across frames, and handles are recycled: without
+/// the pid check, a destroyed window whose value the OS handed to another
+/// process's window would have its caption repainted by us.
+#[cfg(windows)]
+fn caption_scheme(hwnd: isize) -> Option<i8> {
+    use windows::Win32::Foundation::BOOL;
+    use windows::Win32::Graphics::Dwm::{DwmGetWindowAttribute, DWMWA_USE_IMMERSIVE_DARK_MODE};
+    use windows::Win32::System::Threading::GetCurrentProcessId;
+    use windows::Win32::UI::WindowsAndMessaging::{GetWindowThreadProcessId, IsWindow};
+    let handle = windows::Win32::Foundation::HWND(hwnd as *mut core::ffi::c_void);
+    let mut value = BOOL::default();
+    // SAFETY: `value` and `pid` are live locals this call writes through, and
+    // the handle is one this process took from its own window enumeration.
+    let (ours, read) = unsafe {
+        let mut pid = 0u32;
+        GetWindowThreadProcessId(handle, Some(&mut pid));
+        let still_ours = IsWindow(handle).as_bool() && pid == GetCurrentProcessId();
+        let read = DwmGetWindowAttribute(
+            handle,
+            DWMWA_USE_IMMERSIVE_DARK_MODE,
+            &mut value as *mut BOOL as *mut core::ffi::c_void,
+            std::mem::size_of::<BOOL>() as u32,
+        );
+        (still_ours, read)
+    };
+    if !ours || read.is_err() {
+        return None;
+    }
+    Some(value.0.clamp(0, 1) as i8)
+}
+
+/// No caption outside Win32 is painted by a palette, so there is nothing to
+/// move: the other platforms draw their own title bars from the same visuals
+/// the rest of the frame uses.
+#[cfg(not(windows))]
+pub fn sync_caption(_dark: bool) {}
+
+/// Paint every visible window this process owns, and answer with the largest.
+///
+/// Sweeping all of them rather than claiming one is the point: the IDE window
+/// does not exist on the frame that first asks, and a second window opened later
+/// would otherwise sit black under a palette that has already moved the first.
+/// The claim is only the *name* of the window to re-read between sweeps, so a
+/// new window is never forgotten — the throttle brings the sweep back.
+///
+/// `Ok(None)` means nothing was painted because everything already agreed; the
+/// largest handle is still returned so the claim lands.
+#[cfg(windows)]
+fn paint_captions(dark: bool) -> Result<Option<isize>, &'static str> {
+    use windows::Win32::Foundation::{BOOL, HWND, LPARAM, RECT};
+    use windows::Win32::Graphics::Dwm::{DwmSetWindowAttribute, DWMWA_USE_IMMERSIVE_DARK_MODE};
+    use windows::Win32::System::Threading::GetCurrentProcessId;
+    use windows::Win32::UI::WindowsAndMessaging::{
+        EnumWindows, GetWindowRect, GetWindowThreadProcessId, IsWindowVisible, SetWindowPos,
+        SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER,
+    };
+
+    /// SAFETY: Win32 calls this synchronously on the enumerating thread, once per
+    /// top-level window, with the `LPARAM` this call put there — a live `&mut
+    /// Vec` that outlives the walk. Reading the rect of a window belongs to
+    /// ordinary Win32 use, and the pid filter keeps it to this process's own.
+    unsafe extern "system" fn collect_ours(hwnd: HWND, lparam: LPARAM) -> BOOL {
+        let seen = &mut *(lparam.0 as *mut Vec<(HWND, i32)>);
+        let mut pid = 0u32;
+        GetWindowThreadProcessId(hwnd, Some(&mut pid));
+        if pid != GetCurrentProcessId() {
+            return BOOL(1);
+        }
+        if IsWindowVisible(hwnd).as_bool() {
+            let mut rect = RECT::default();
+            if GetWindowRect(hwnd, &mut rect).is_ok() {
+                let w = (rect.right - rect.left).max(0);
+                let h = (rect.bottom - rect.top).max(0);
+                seen.push((hwnd, w * h));
+            }
+        }
+        // TRUE: the walk has to finish before the widest window is known.
+        BOOL(1)
+    }
+
+    let want = dark as i8;
+    let mut visible: Vec<(HWND, i32)> = Vec::new();
+    // SAFETY: `collect_ours` matches the callback's ABI and receives a pointer
+    // to `visible`, which outlives the synchronous enumeration. Every call
+    // below is a plain Win32 entry point on a handle just enumerated from this
+    // process.
+    unsafe {
+        let _ = EnumWindows(
+            Some(collect_ours),
+            LPARAM(&mut visible as *mut Vec<(HWND, i32)> as isize),
+        );
+        if visible.is_empty() {
+            return Err("no visible window in this process");
+        }
+        let largest = caption_target(&visible).map(|hwnd| hwnd.0 as isize);
+        // The attribute is a Win32 BOOL, which is four bytes: handing DWM a
+        // Rust `bool` and `size_of::<bool>()` reads back whatever adjoins it.
+        let value: i32 = dark as i32;
+        let (mut painted, mut refused) = (0usize, 0usize);
+        for (hwnd, _) in &visible {
+            // Re-read before writing. A sweep that re-issues `SWP_FRAMECHANGED`
+            // on a caption already in the right scheme asks the window to
+            // relayout once a second, and on the IDE window that shows up as a
+            // flickering title bar for a theme that is already correct.
+            if caption_scheme(hwnd.0 as isize) == Some(want) {
+                continue;
+            }
+            if DwmSetWindowAttribute(
+                *hwnd,
+                DWMWA_USE_IMMERSIVE_DARK_MODE,
+                &value as *const i32 as *const core::ffi::c_void,
+                std::mem::size_of::<i32>() as u32,
+            )
+            .is_err()
+            {
+                refused += 1;
+                continue;
+            }
+            // DWM repaints the non-client area on a frame change; without this
+            // the bar keeps the colour it was created with until the window
+            // is moved.
+            let _ = SetWindowPos(
+                *hwnd,
+                None,
+                0,
+                0,
+                0,
+                0,
+                SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_FRAMECHANGED | SWP_NOACTIVATE,
+            );
+            painted += 1;
+        }
+        if painted == 0 && refused > 0 {
+            return Err("DwmSetWindowAttribute refused");
+        }
+        Ok(largest)
+    }
+}
+
+/// Of the visible top-level windows this process owns, the one the user is
+/// looking at.
+///
+/// Two wrong answers were measured before this one. "The first visible window"
+/// is wrong because winit registers a 14x14 event-target window that
+/// `IsWindowVisible` calls true and that enumerates ahead of the IDE window.
+/// "The first visible window *on this thread*" is wrong for the same reason
+/// with no clue in the reply: the render loop is not the thread that owns the
+/// window, so the enumeration returns that helper and nothing else, the
+/// attribute lands on an 18x18 pixel window nobody can see, and every call
+/// still reports success. Area is the only selector that survives both.
+#[cfg(windows)]
+fn caption_target(
+    visible: &[(windows::Win32::Foundation::HWND, i32)],
+) -> Option<windows::Win32::Foundation::HWND> {
+    visible
+        .iter()
+        .max_by_key(|(_, area)| *area)
+        .map(|(hwnd, _)| *hwnd)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -894,5 +1248,189 @@ mod tests {
             Some(value) => std::env::set_var("VELOCITY_OS_THEME", value),
             None => std::env::remove_var("VELOCITY_OS_THEME"),
         }
+    }
+
+    /// WCAG contrast ratio between two opaque colours.
+    fn contrast(a: Color32, b: Color32) -> f32 {
+        contrast_ratio(a, b)
+    }
+
+    #[test]
+    fn a_palette_and_its_variant_agree_on_which_scheme_they_are() {
+        // Several surfaces receive only a palette — the terminal's selection
+        // wash, the workflow canvas, the file tree's git decorations. They decide
+        // light-vs-dark from `bg_primary`, so that derivation has to land where
+        // `ThemeVariant::is_dark` already said it would.
+        for variant in ThemeVariant::ALL {
+            assert_eq!(
+                variant.palette().is_dark(),
+                variant.is_dark(),
+                "{} disagrees with itself",
+                variant.label()
+            );
+        }
+    }
+
+    #[test]
+    fn every_variant_routes_source_highlighting_to_a_table_for_its_scheme() {
+        for variant in ThemeVariant::ALL {
+            let table = variant.syntect_theme();
+            assert_eq!(
+                table,
+                if variant.is_dark() {
+                    "base16-ocean.dark"
+                } else {
+                    "InspiredGitHub"
+                },
+                "{} paints source from the wrong scheme's table",
+                variant.label()
+            );
+        }
+    }
+
+    #[test]
+    fn a_chip_picks_the_text_colour_that_actually_reads_on_it() {
+        // The workflow canvas fills node headers with a per-kind hue that no
+        // palette owns, so the answer has to come from the fill itself. Orange
+        // and green are bright enough that white text — what the canvas used —
+        // sits under 2.5:1 on them in *both* schemes.
+        assert_eq!(
+            text_on(Color32::from_rgb(255, 152, 0)),
+            Color32::BLACK,
+            "white on orange is 2.2:1"
+        );
+        assert_eq!(
+            text_on(Color32::from_rgb(76, 175, 80)),
+            Color32::BLACK,
+            "white on the canvas's start-node green is 2.8:1"
+        );
+        assert_eq!(
+            text_on(Color32::from_rgb(156, 39, 176)),
+            Color32::WHITE,
+            "black on purple is 3.6:1"
+        );
+        // Whichever way it chooses, it chooses the better of the two.
+        for fill in [
+            Color32::from_rgb(255, 152, 0),
+            Color32::from_rgb(156, 39, 176),
+            Color32::from_rgb(33, 150, 243),
+            Color32::from_rgb(158, 158, 158),
+        ] {
+            let chosen = text_on(fill);
+            let other = if chosen == Color32::BLACK {
+                Color32::WHITE
+            } else {
+                Color32::BLACK
+            };
+            assert!(
+                contrast(chosen, fill) >= contrast(other, fill),
+                "{:?} reads worse on {fill:?} than {:?}",
+                chosen,
+                other
+            );
+        }
+    }
+
+    #[test]
+    fn a_faded_label_stays_quiet_without_disappearing() {
+        // Every factor here is in use somewhere in the app. The old idiom scaled
+        // channels toward black, so on a white panel the halved alpha lifted the
+        // composite back toward the page: `keep = 0.5` measured 1.9:1, a label
+        // that occupies the layout and cannot be read.
+        let keeps = [0.3f32, 0.4, 0.5, 0.6, 0.7, 0.8, 0.85];
+        let inks: [(&str, fn(&IdePalette) -> Color32); 5] = [
+            ("muted", |p| p.text_muted),
+            ("accent", |p| p.accent),
+            ("success", |p| p.success),
+            ("warning", |p| p.warning),
+            ("error", |p| p.error),
+        ];
+        for variant in ThemeVariant::ALL {
+            let palette = variant.palette();
+            for keep in keeps {
+                for (name, pick) in inks {
+                    let ink = pick(&palette);
+                    let faded = palette.faded(ink, keep);
+                    if palette.is_dark() {
+                        assert_eq!(
+                            faded,
+                            ink.gamma_multiply(keep),
+                            "{}'s dark fade of {} repainted pixels that were never broken",
+                            variant.label(),
+                            name
+                        );
+                        continue;
+                    }
+                    let ratio = contrast(faded, palette.bg_secondary);
+                    assert!(
+                        ratio >= 3.0,
+                        "{} fades {} ink to {ratio:.1}:1 on its panels",
+                        variant.label(),
+                        name
+                    );
+                    assert!(
+                        ratio <= contrast(ink, palette.bg_secondary) + 0.01,
+                        "{}'s faded {} is louder than the plain colour it came from",
+                        variant.label(),
+                        name
+                    );
+                }
+            }
+        }
+        for variant in ThemeVariant::ALL {
+            let palette = variant.palette();
+            for keep in keeps {
+                let faded = palette.faded_muted(keep);
+                if palette.is_dark() {
+                    assert_eq!(
+                        faded,
+                        palette.text_muted.gamma_multiply(keep),
+                        "{}'s dark fade repainted pixels that were never broken",
+                        variant.label()
+                    );
+                    continue;
+                }
+                let ratio = contrast(faded, palette.bg_secondary);
+                assert!(
+                    ratio >= 3.0,
+                    "{} fades a secondary label to {ratio:.1}:1 on its panels",
+                    variant.label()
+                );
+                assert!(
+                    ratio < contrast(palette.text_muted, palette.bg_secondary),
+                    "{}'s faded label sits {} rather than between text_muted ({:.1}:1) and the page",
+                    variant.label(),
+                    if ratio > contrast(palette.text_muted, palette.bg_secondary) {
+                        "darker than the label it was meant to quiet"
+                    } else {
+                        "no quieter than the plain one"
+                    },
+                    contrast(palette.text_muted, palette.bg_secondary)
+                );
+            }
+        }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn the_caption_follows_the_window_the_user_sees() {
+        // Measured off a live Daylight window: the process owns the IDE window
+        // plus winit's 14x14 event target, and the helper enumerates first.
+        // Painting it left the caption black and returned Ok, so the failure
+        // was invisible from the outside.
+        use windows::Win32::Foundation::HWND;
+        let handle = |v: usize| HWND(v as *mut core::ffi::c_void);
+        let helper = handle(0x0075_0a18);
+        let ide = handle(0x011b_04fe);
+        assert_eq!(
+            caption_target(&[(helper, 14 * 14), (ide, 1618 * 1007), (handle(1), 0)]),
+            Some(ide),
+            "the palette must go to the window with the visible caption"
+        );
+        assert_eq!(
+            caption_target(&[]),
+            None,
+            "nothing to paint is not a success"
+        );
     }
 }
