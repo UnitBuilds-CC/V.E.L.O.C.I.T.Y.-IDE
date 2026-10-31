@@ -1317,24 +1317,11 @@ impl<'a> TabViewerImpl<'a> {
                                 .selected_text(provider.label())
                                 .width(180.0)
                                 .show_ui(ui, |ui| {
-                                    for prov in [
-                                        crate::agent::AiProvider::CloudflareWorkersAi,
-                                        crate::agent::AiProvider::OpenRouter,
-                                        crate::agent::AiProvider::AzureOpenAi,
-                                        crate::agent::AiProvider::LocalOllama,
-                                        crate::agent::AiProvider::OpenAI,
-                                        crate::agent::AiProvider::Anthropic,
-                                        crate::agent::AiProvider::GoogleVertex,
-                                        crate::agent::AiProvider::Deepseek,
-                                        crate::agent::AiProvider::AlibabaQwen,
-                                        crate::agent::AiProvider::Groq,
-                                        crate::agent::AiProvider::Mistral,
-                                        crate::agent::AiProvider::TogetherAi,
-                                        crate::agent::AiProvider::FireworksAi,
-                                        crate::agent::AiProvider::Perplexity,
-                                        crate::agent::AiProvider::Cerebras,
-                                        crate::agent::AiProvider::AwsBedrock,
-                                    ] {
+                                    // [`AiProvider::ALL`] is the picker: a
+                                    // hand-copied list here omitted llama.cpp,
+                                    // so the backend was dispatchable but
+                                    // unselectable from Settings.
+                                    for prov in crate::agent::AiProvider::ALL.iter().copied() {
                                         provider_changed |= ui
                                             .selectable_value(&mut provider, prov, prov.label())
                                             .changed();

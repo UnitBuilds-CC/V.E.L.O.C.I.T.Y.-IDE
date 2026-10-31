@@ -198,28 +198,44 @@ fn usable_catalog_for(root: &Path, provider: AiProvider) -> Option<Vec<crate::ag
         // requested (it never enters the enablement scan).
         AiProvider::AwsBedrock => Ok(p::fetch_bedrock_models().unwrap_or_default()),
         // Local server, no key: catalog is whatever llama-server loaded. Also
-        // excluded from the enablement scan (see SCANNABLE_PROVIDERS).
+        // excluded from the enablement scan (see UNSCANNABLE_PROVIDERS).
         AiProvider::LocalLlama => Ok(p::fetch_llama_models().unwrap_or_default()),
     };
     models.ok().filter(|m| !m.is_empty())
 }
 
-/// Providers worth scanning when the caller didn't name one: the key-gated
-/// HTTP catalogs, in display order. Account-scoped providers are excluded by
-/// design (see [`usable_catalog_for`]).
-const SCANNABLE_PROVIDERS: [AiProvider; 11] = [
-    AiProvider::OpenAI,
-    AiProvider::Anthropic,
-    AiProvider::GoogleVertex,
-    AiProvider::Deepseek,
-    AiProvider::AlibabaQwen,
-    AiProvider::Groq,
-    AiProvider::Mistral,
-    AiProvider::TogetherAi,
-    AiProvider::FireworksAi,
-    AiProvider::Perplexity,
-    AiProvider::Cerebras,
+/// Backends the no-provider enablement scan skips on purpose, each with the
+/// reason it cannot be polled the way a keyed HTTP catalog can.
+const UNSCANNABLE_PROVIDERS: [AiProvider; 5] = [
+    // Account-scoped: the scan walks the saved account list instead.
+    AiProvider::CloudflareWorkersAi,
+    AiProvider::LocalOllama,
+    // Endpoint-scoped: there is no shared catalog to poll without a deployment
+    // host, so a blind scan would only produce timeouts.
+    AiProvider::AzureOpenAi,
+    // Key-free: Bedrock's catalog is static and only served on explicit request;
+    // llama.cpp's catalog is whatever one local server happens to have loaded.
+    AiProvider::AwsBedrock,
+    AiProvider::LocalLlama,
 ];
+
+/// Providers worth scanning when the caller didn't name one: the key-gated
+/// HTTP catalogs, in display order.
+///
+/// Derived from the catalog rather than written out, because the written-out
+/// list had already drifted — it named eleven backends where twelve are
+/// scannable, and the missing one was OpenRouter. A workspace whose only key
+/// was an OpenRouter key therefore got "no usable models" from `select_model`
+/// even though `usable_catalog_for(OpenRouter)` answers fine when asked
+/// directly, which is exactly the failure this whole change is about: a hand
+/// copy of the catalog that silently loses a member.
+fn scannable_providers() -> Vec<AiProvider> {
+    AiProvider::ALL
+        .iter()
+        .copied()
+        .filter(|provider| !UNSCANNABLE_PROVIDERS.contains(provider))
+        .collect()
+}
 
 /// Expose the model-selection decision matrix: pick the best model for a task
 /// strictly from the catalogs of enabled provider APIs. Read-only — it never
@@ -253,7 +269,7 @@ fn select_model_tool(root: &Path, arguments: &Value) -> Result<String, Box<dyn E
             pool.push((p, models));
         }
     } else {
-        for p in SCANNABLE_PROVIDERS {
+        for p in scannable_providers() {
             if let Some(models) = usable_catalog_for(root, p) {
                 pool.push((p, models));
             }
@@ -1897,26 +1913,27 @@ fn team_health_check(root: &Path, arguments: &Value) -> Result<String, Box<dyn E
     ))
 }
 
-/// List all available AI providers with their slugs and labels.
+/// List all available AI providers with their slugs, labels and aliases.
+///
+/// Generated from [`AiProvider::ALL`] rather than kept as a second list: this
+/// payload used to enumerate 16 backends for a 17-variant enum, so a caller who
+/// trusted it never learned that llama.cpp existed, and a model told to write
+/// team JSON could not spell a provider the parser accepts. `variant` is the
+/// serde name that persisted files carry, and `aliases` are exactly the
+/// spellings `AiProvider::from_slug` resolves — the tool cannot advertise an
+/// alias that would then be rejected on read.
 fn list_providers(_root: &Path, _arguments: &Value) -> Result<String, Box<dyn Error>> {
-    let providers = vec![
-        json!({"slug": "cloudflare", "label": "Cloudflare Workers AI", "aliases": ["cf", "workers-ai"]}),
-        json!({"slug": "openrouter", "label": "OpenRouter", "aliases": ["or"]}),
-        json!({"slug": "azure", "label": "Azure OpenAI", "aliases": ["azure_openai"]}),
-        json!({"slug": "ollama", "label": "Local Ollama", "aliases": ["local"]}),
-        json!({"slug": "openai", "label": "OpenAI Direct", "aliases": []}),
-        json!({"slug": "anthropic", "label": "Anthropic Claude", "aliases": ["claude"]}),
-        json!({"slug": "vertex", "label": "Google Vertex AI", "aliases": ["google"]}),
-        json!({"slug": "deepseek", "label": "Deepseek", "aliases": []}),
-        json!({"slug": "alibaba", "label": "Alibaba Qwen", "aliases": ["qwen", "dashscope"]}),
-        json!({"slug": "bedrock", "label": "AWS Bedrock", "aliases": ["aws"]}),
-        json!({"slug": "groq", "label": "Groq", "aliases": []}),
-        json!({"slug": "mistral", "label": "Mistral AI", "aliases": ["mistralai"]}),
-        json!({"slug": "together", "label": "Together AI", "aliases": ["togetherai"]}),
-        json!({"slug": "fireworks", "label": "Fireworks AI", "aliases": ["fireworksai"]}),
-        json!({"slug": "perplexity", "label": "Perplexity", "aliases": ["pplx"]}),
-        json!({"slug": "cerebras", "label": "Cerebras", "aliases": []}),
-    ];
+    let providers: Vec<Value> = AiProvider::ALL
+        .iter()
+        .map(|p| {
+            json!({
+                "slug": p.slug(),
+                "label": p.label(),
+                "variant": p.variant_name(),
+                "aliases": p.aliases(),
+            })
+        })
+        .collect();
 
     Ok(format!(
         "Available AI providers ({}):\n{}",
@@ -4301,6 +4318,35 @@ fn generate_wiki(root: &Path, arguments: &Value) -> Result<String, Box<dyn Error
 mod tests {
     use super::*;
 
+    /// The enablement scan used to be a hand-written array of eleven against a
+    /// catalog of seventeen with five legitimate exemptions — so twelve were
+    /// scannable and one, OpenRouter, was silently out. A workspace holding only
+    /// an OpenRouter key got "no usable models" from `select_model` even though
+    /// asking for that provider directly answers fine. The scan is now the
+    /// catalog minus a named exemption list, and this test is the tripwire that
+    /// keeps those two lists a partition rather than two opinions.
+    #[test]
+    fn the_enablement_scan_partitions_the_catalog() {
+        let scanned = scannable_providers();
+        assert_eq!(
+            scanned.len() + UNSCANNABLE_PROVIDERS.len(),
+            AiProvider::ALL.len(),
+            "an exemption is duplicated, or the two lists no longer add up to the catalog"
+        );
+        for provider in AiProvider::ALL {
+            let in_scan = scanned.contains(provider);
+            let exempt = UNSCANNABLE_PROVIDERS.contains(provider);
+            assert_ne!(
+                in_scan, exempt,
+                "{provider:?} is in both the scan and the exemption list, or in neither"
+            );
+        }
+        assert!(
+            scanned.contains(&AiProvider::OpenRouter),
+            "OpenRouter is key-gated with a real catalog, so the no-provider scan must reach it"
+        );
+    }
+
     /// System C chokepoint: a governed workspace stops `team_dispatch` at the
     /// gate — before routing, so nothing is spent — and the denial itself is
     /// retrievable from the durable trail (INV-6).
@@ -5480,9 +5526,9 @@ mod tests {
             "SELECT_MODEL_LIVE resolved_backend={}",
             crate::agent::decision::resolve_backend().name()
         );
-        let report: Vec<(AiProvider, usize)> = SCANNABLE_PROVIDERS
-            .iter()
-            .filter_map(|p| usable_catalog_for(tmp.path(), *p).map(|m| (*p, m.len())))
+        let report: Vec<(AiProvider, usize)> = scannable_providers()
+            .into_iter()
+            .filter_map(|p| usable_catalog_for(tmp.path(), p).map(|m| (p, m.len())))
             .collect();
         if std::env::var("SELECT_MODEL_PROBE").is_ok() {
             if let Some(model) = crate::agent::decision::resolve_backend().model() {

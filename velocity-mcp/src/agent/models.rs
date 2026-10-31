@@ -307,147 +307,138 @@ pub enum ApiStyle {
     PromptCompletion,
 }
 
-/// Which AI backend to use for inference.
-/// Serialize keeps variant names; Deserialize is handwritten (below) so
-/// persisted files, UI labels, and hand-written LLM team JSON all parse.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
-pub enum AiProvider {
-    CloudflareWorkersAi,
-    OpenRouter,
-    AzureOpenAi,
-    LocalOllama,
+/// Declares the provider catalog once: the enum's variants and every string a
+/// person or a file can use to name them.
+///
+/// One row is one backend: `Variant, "display label", "slug", [extra
+/// spellings]`. The macro emits the enum, [`AiProvider::ALL`], `label`, `slug`,
+/// `aliases`, `variant_name`, `from_label` and `from_slug` from those rows, so
+/// the lists cannot disagree. The variant name is a parse key too (compared
+/// case-insensitively) because it is what persisted team JSON and NDA rows
+/// already carry, which is why no row has to repeat it.
+macro_rules! ai_provider_catalog {
+    ($($(#[$attr:meta])* $variant:ident, $label:literal, $slug:literal, [$($alias:literal),* $(,)?];)*) => {
+        #[doc = "Which AI backend to use for inference."]
+        #[doc = ""]
+        #[doc = "The variants, and every name each one answers to, come from the rows of the"]
+        #[doc = "[`ai_provider_catalog`] invocation: [`AiProvider::ALL`], `label`, `slug`,"]
+        #[doc = "`aliases`, `variant_name`, `from_label` and `from_slug` are all generated from"]
+        #[doc = "that one table. Serialize keeps variant names; Deserialize is handwritten so"]
+        #[doc = "persisted files, UI labels, and hand-written LLM team JSON all parse."]
+        #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+        pub enum AiProvider {
+            $($(#[$attr])* $variant,)*
+        }
+
+        impl AiProvider {
+            /// Every dispatchable backend, in the order the provider pickers,
+            /// `list_providers` and the manual present them.
+            ///
+            /// This is the one list. Before it, `label`, `slug`, `from_label`,
+            /// `from_slug`, the `list_providers` payload, both GUI combo boxes
+            /// and the credential table each held their own enumeration, and
+            /// they had already drifted: llama.cpp was dispatchable — it has
+            /// match arms in the executor, a fallback and a default model — but
+            /// appeared in none of the lists, so no person could select it and
+            /// `list_providers` reported 16 backends for a 17-variant enum.
+            pub const ALL: &[AiProvider] = &[$(AiProvider::$variant,)*];
+
+            /// The name a person reads, in the picker and in workspace preferences.
+            pub fn label(self) -> &'static str {
+                match self {
+                    $(AiProvider::$variant => $label,)*
+                }
+            }
+
+            /// Stable machine slug used for NDA serialization and tool arguments.
+            pub fn slug(self) -> &'static str {
+                match self {
+                    $(AiProvider::$variant => $slug,)*
+                }
+            }
+
+            /// The extra spellings [`AiProvider::from_slug`] accepts besides its
+            /// own slug and variant name — and exactly what `list_providers`
+            /// advertises, so the tool can never offer an alias that the parser
+            /// would then reject.
+            pub fn aliases(self) -> &'static [&'static str] {
+                match self {
+                    $(AiProvider::$variant => &[$($alias),*],)*
+                }
+            }
+
+            /// The serde variant name, which is the persisted form in team JSON.
+            pub fn variant_name(self) -> &'static str {
+                match self {
+                    $(AiProvider::$variant => stringify!($variant),)*
+                }
+            }
+
+            /// Parse a provider from the display label produced by
+            /// [`AiProvider::label`] (e.g. when restoring workspace preferences),
+            /// falling back to slug and alias parsing so older or
+            /// machine-formatted values still resolve. Both halves read
+            /// [`AiProvider::ALL`]. The label half used to be a hand-written
+            /// match over all seventeen labels whose own doc comment warned
+            /// "every `label()` arm must have a mirror here" — a correct list,
+            /// kept correct by a person remembering to duplicate each row, which
+            /// is the maintenance the macro now does instead.
+            pub fn from_label(value: &str) -> Option<AiProvider> {
+                let v = value.trim();
+                Self::ALL
+                    .iter()
+                    .copied()
+                    .find(|p| p.label() == v)
+                    .or_else(|| Self::from_slug(v))
+            }
+
+            /// Parse a provider from a slug, a declared alias, or the variant
+            /// name. Case-insensitive, and blank-safe: no key is empty, so an
+            /// empty string resolves to nothing.
+            pub fn from_slug(value: &str) -> Option<AiProvider> {
+                let v = value.trim().to_lowercase();
+                Self::ALL.iter().copied().find(|p| {
+                    p.slug() == v
+                        || p.variant_name().eq_ignore_ascii_case(&v)
+                        || p.aliases().iter().any(|a| a.eq_ignore_ascii_case(&v))
+                })
+            }
+        }
+    };
+}
+
+// The catalog itself. A doc comment here would be dropped (rustdoc does not
+// document macro invocations), so the enum's own docs are emitted by the macro.
+ai_provider_catalog! {
+    CloudflareWorkersAi, "Cloudflare Workers AI", "cloudflare", ["cf", "workers-ai"];
+    OpenRouter, "OpenRouter", "openrouter", ["or"];
+    AzureOpenAi, "Azure OpenAI", "azure", ["azure_openai"];
+    LocalOllama, "Local Ollama", "ollama", ["local"];
     /// A locally-run llama.cpp `llama-server` (OpenAI-compatible endpoint, no
     /// key). Reached with 3-tier MoE offload so a model far larger than VRAM
     /// still runs, trading throughput for an effectively unbounded context.
-    LocalLlama,
-    OpenAI,
-    Anthropic,
-    GoogleVertex,
+    LocalLlama, "Local llama.cpp", "llamacpp", ["llama", "llamaserver"];
+    OpenAI, "OpenAI Direct", "openai", ["openai_direct"];
+    Anthropic, "Anthropic Claude", "anthropic", ["claude"];
+    GoogleVertex, "Google Vertex AI", "vertex", ["google_vertex", "google"];
     /// Deepseek API (OpenAI-compatible endpoint).
-    Deepseek,
+    Deepseek, "Deepseek", "deepseek", [];
     /// Alibaba Cloud Qwen (DashScope API, OpenAI-compatible).
-    AlibabaQwen,
+    AlibabaQwen, "Alibaba Qwen", "alibaba", ["qwen", "dashscope", "alibaba_qwen"];
     /// AWS Bedrock (via OpenAI-compatible proxy or native API).
-    AwsBedrock,
+    AwsBedrock, "AWS Bedrock", "bedrock", ["aws_bedrock", "aws"];
     /// Groq (OpenAI-compatible endpoint for LPU inference).
-    Groq,
+    Groq, "Groq", "groq", [];
     /// Mistral AI (La Plateforme, OpenAI-compatible endpoint).
-    Mistral,
+    Mistral, "Mistral AI", "mistral", ["mistralai", "mistral_ai", "laplateforme"];
     /// Together AI (OpenAI-compatible endpoint).
-    TogetherAi,
+    TogetherAi, "Together AI", "together", ["together_ai"];
     /// Fireworks AI (OpenAI-compatible endpoint).
-    FireworksAi,
+    FireworksAi, "Fireworks AI", "fireworks", ["fireworks_ai"];
     /// Perplexity API (OpenAI-compatible endpoint).
-    Perplexity,
+    Perplexity, "Perplexity", "perplexity", ["pplx"];
     /// Cerebras (OpenAI-compatible endpoint for wafer-scale inference).
-    Cerebras,
-}
-
-impl AiProvider {
-    pub fn label(self) -> &'static str {
-        match self {
-            AiProvider::CloudflareWorkersAi => "Cloudflare Workers AI",
-            AiProvider::OpenRouter => "OpenRouter",
-            AiProvider::AzureOpenAi => "Azure OpenAI",
-            AiProvider::LocalOllama => "Local Ollama",
-            AiProvider::LocalLlama => "Local llama.cpp",
-            AiProvider::OpenAI => "OpenAI Direct",
-            AiProvider::Anthropic => "Anthropic Claude",
-            AiProvider::GoogleVertex => "Google Vertex AI",
-            AiProvider::Deepseek => "Deepseek",
-            AiProvider::AlibabaQwen => "Alibaba Qwen",
-            AiProvider::AwsBedrock => "AWS Bedrock",
-            AiProvider::Groq => "Groq",
-            AiProvider::Mistral => "Mistral AI",
-            AiProvider::TogetherAi => "Together AI",
-            AiProvider::FireworksAi => "Fireworks AI",
-            AiProvider::Perplexity => "Perplexity",
-            AiProvider::Cerebras => "Cerebras",
-        }
-    }
-
-    /// Stable machine slug used for NDA serialization and tool arguments.
-    pub fn slug(self) -> &'static str {
-        match self {
-            AiProvider::CloudflareWorkersAi => "cloudflare",
-            AiProvider::OpenRouter => "openrouter",
-            AiProvider::AzureOpenAi => "azure",
-            AiProvider::LocalOllama => "ollama",
-            AiProvider::LocalLlama => "llamacpp",
-            AiProvider::OpenAI => "openai",
-            AiProvider::Anthropic => "anthropic",
-            AiProvider::GoogleVertex => "vertex",
-            AiProvider::Deepseek => "deepseek",
-            AiProvider::AlibabaQwen => "alibaba",
-            AiProvider::AwsBedrock => "bedrock",
-            AiProvider::Groq => "groq",
-            AiProvider::Mistral => "mistral",
-            AiProvider::TogetherAi => "together",
-            AiProvider::FireworksAi => "fireworks",
-            AiProvider::Perplexity => "perplexity",
-            AiProvider::Cerebras => "cerebras",
-        }
-    }
-
-    /// Parse a provider from the display label produced by [`AiProvider::label`]
-    /// (e.g. when restoring workspace preferences). Falls back to slug parsing
-    /// so older or machine-formatted values still resolve. Every `label()`
-    /// arm must have a mirror here — the preferences round-trip used to cover
-    /// only 4 of the 16 providers, silently reverting the rest on restart.
-    pub fn from_label(value: &str) -> Option<AiProvider> {
-        let v = value.trim();
-        let exact = match v {
-            "Cloudflare Workers AI" => Some(AiProvider::CloudflareWorkersAi),
-            "OpenRouter" => Some(AiProvider::OpenRouter),
-            "Azure OpenAI" => Some(AiProvider::AzureOpenAi),
-            "Local Ollama" => Some(AiProvider::LocalOllama),
-            "Local llama.cpp" => Some(AiProvider::LocalLlama),
-            "OpenAI Direct" => Some(AiProvider::OpenAI),
-            "Anthropic Claude" => Some(AiProvider::Anthropic),
-            "Google Vertex AI" => Some(AiProvider::GoogleVertex),
-            "Deepseek" => Some(AiProvider::Deepseek),
-            "Alibaba Qwen" => Some(AiProvider::AlibabaQwen),
-            "AWS Bedrock" => Some(AiProvider::AwsBedrock),
-            "Groq" => Some(AiProvider::Groq),
-            "Mistral AI" => Some(AiProvider::Mistral),
-            "Together AI" => Some(AiProvider::TogetherAi),
-            "Fireworks AI" => Some(AiProvider::FireworksAi),
-            "Perplexity" => Some(AiProvider::Perplexity),
-            "Cerebras" => Some(AiProvider::Cerebras),
-            _ => None,
-        };
-        exact.or_else(|| Self::from_slug(v))
-    }
-
-    /// Parse a provider from a slug or common alias. Case-insensitive.
-    pub fn from_slug(value: &str) -> Option<AiProvider> {
-        match value.trim().to_lowercase().as_str() {
-            "cloudflare" | "cloudflareworkersai" | "cf" | "workers-ai" => {
-                Some(AiProvider::CloudflareWorkersAi)
-            }
-            "openrouter" | "or" => Some(AiProvider::OpenRouter),
-            "azure" | "azure_openai" | "azureopenai" => Some(AiProvider::AzureOpenAi),
-            "ollama" | "local" | "localollama" => Some(AiProvider::LocalOllama),
-            "llamacpp" | "llama" | "localllama" | "llamaserver" => Some(AiProvider::LocalLlama),
-            "openai" | "openai_direct" => Some(AiProvider::OpenAI),
-            "anthropic" | "claude" => Some(AiProvider::Anthropic),
-            "vertex" | "googlevertex" | "google_vertex" | "google" => {
-                Some(AiProvider::GoogleVertex)
-            }
-            "deepseek" => Some(AiProvider::Deepseek),
-            "alibaba" | "qwen" | "dashscope" | "alibaba_qwen" | "alibabaqwen" => {
-                Some(AiProvider::AlibabaQwen)
-            }
-            "bedrock" | "awsbedrock" | "aws_bedrock" | "aws" => Some(AiProvider::AwsBedrock),
-            "groq" => Some(AiProvider::Groq),
-            "mistral" | "mistralai" | "mistral_ai" | "laplateforme" => Some(AiProvider::Mistral),
-            "together" | "togetherai" | "together_ai" => Some(AiProvider::TogetherAi),
-            "fireworks" | "fireworksai" | "fireworks_ai" => Some(AiProvider::FireworksAi),
-            "perplexity" | "pplx" => Some(AiProvider::Perplexity),
-            "cerebras" => Some(AiProvider::Cerebras),
-            _ => None,
-        }
-    }
+    Cerebras, "Cerebras", "cerebras", [];
 }
 
 /// Lenient deserializer: accepts the serde variant name (`"AlibabaQwen"`),
@@ -620,35 +611,46 @@ mod tests {
     }
 
     #[test]
-    fn every_provider_label_round_trips_through_from_label() {
-        // Bug #9 regression: workspace preferences used to restore only 4 of
-        // the 16 provider labels, silently reverting the rest on restart.
-        let all = [
-            AiProvider::CloudflareWorkersAi,
-            AiProvider::OpenRouter,
-            AiProvider::AzureOpenAi,
-            AiProvider::LocalOllama,
-            AiProvider::LocalLlama,
-            AiProvider::OpenAI,
-            AiProvider::Anthropic,
-            AiProvider::GoogleVertex,
-            AiProvider::Deepseek,
-            AiProvider::AlibabaQwen,
-            AiProvider::AwsBedrock,
-            AiProvider::Groq,
-            AiProvider::Mistral,
-            AiProvider::TogetherAi,
-            AiProvider::FireworksAi,
-            AiProvider::Perplexity,
-            AiProvider::Cerebras,
-        ];
-        for p in all {
+    fn every_spelling_of_every_backend_resolves_back_to_it() {
+        // The parsers are generated from the same rows as the variants, so this
+        // is the check that no name a person, a preferences file or a hand-written
+        // team JSON can write lands on the wrong backend — or on none. It reads
+        // the names out of the catalog instead of restating them: the test it
+        // replaces carried its own array of seventeen variants and compared
+        // labels only, so an eighth spelling system never existed there and a
+        // row added to the catalog would not have joined the list that claims to
+        // cover every backend.
+        for p in AiProvider::ALL.iter().copied() {
+            assert_eq!(AiProvider::from_label(p.label()), Some(p), "label");
+            assert_eq!(AiProvider::from_slug(p.slug()), Some(p), "slug");
             assert_eq!(
-                AiProvider::from_label(p.label()),
+                AiProvider::from_slug(p.variant_name()),
                 Some(p),
-                "label {:?} failed to round-trip",
-                p.label()
+                "variant name (the persisted form)"
             );
+            assert_eq!(
+                AiProvider::from_label(p.variant_name()),
+                Some(p),
+                "variant name through the label parser"
+            );
+            for alias in p.aliases() {
+                assert_eq!(
+                    AiProvider::from_slug(alias),
+                    Some(p),
+                    "alias {alias:?} of {p:?}"
+                );
+                // Case-insensitive, because a model types "QWEN" as readily as "qwen".
+                let upper = alias.to_uppercase();
+                assert_eq!(
+                    AiProvider::from_slug(&upper),
+                    Some(p),
+                    "alias {alias:?} upper-cased"
+                );
+                let raw = format!("\"{alias}\"");
+                let parsed: AiProvider = serde_json::from_str(&raw)
+                    .unwrap_or_else(|e| panic!("{raw} should parse: {e}"));
+                assert_eq!(parsed, p, "alias {alias:?} through Deserialize");
+            }
         }
         // Slug fallback + whitespace tolerance for legacy files.
         assert_eq!(
@@ -657,6 +659,41 @@ mod tests {
         );
         assert_eq!(AiProvider::from_label("NoSuchProvider"), None);
         assert_eq!(AiProvider::from_label(""), None);
+        assert_eq!(AiProvider::from_slug(""), None);
+    }
+
+    #[test]
+    fn no_two_backends_answer_to_the_same_name() {
+        // `from_slug` returns the first catalog row whose keys match, so a
+        // spelling claimed by two backends would make one of them unreachable by
+        // name — and `list_providers` would advertise an alias that resolves to
+        // someone else. Labels matter the same way: they are what the picker
+        // draws and what a preferences file stores.
+        let mut owner: std::collections::HashMap<String, AiProvider> =
+            std::collections::HashMap::new();
+        for p in AiProvider::ALL.iter().copied() {
+            let mine: std::collections::HashSet<String> = [p.slug(), p.variant_name()]
+                .into_iter()
+                .chain(p.aliases().iter().copied())
+                .map(|key| key.trim().to_lowercase())
+                .collect();
+            assert!(
+                !mine.contains(""),
+                "{p:?} carries a blank spelling from the catalog"
+            );
+            for folded in mine {
+                if let Some(prev) = owner.insert(folded.clone(), p) {
+                    panic!("{folded:?} names both {prev:?} and {p:?}");
+                }
+            }
+        }
+        let labels: std::collections::HashSet<&str> =
+            AiProvider::ALL.iter().map(|p| p.label()).collect();
+        assert_eq!(
+            labels.len(),
+            AiProvider::ALL.len(),
+            "two backends share a picker label, so one cannot be chosen by name"
+        );
     }
 
     #[test]
@@ -713,161 +750,245 @@ mod tests {
     }
 
     #[test]
-    fn all_providers_have_unique_slugs() {
-        let providers = vec![
-            AiProvider::CloudflareWorkersAi,
-            AiProvider::OpenRouter,
-            AiProvider::AzureOpenAi,
-            AiProvider::LocalOllama,
-            AiProvider::LocalLlama,
-            AiProvider::OpenAI,
-            AiProvider::Anthropic,
-            AiProvider::GoogleVertex,
-            AiProvider::Deepseek,
-            AiProvider::AlibabaQwen,
-            AiProvider::AwsBedrock,
-            AiProvider::Groq,
-            AiProvider::Mistral,
-            AiProvider::TogetherAi,
-            AiProvider::FireworksAi,
-            AiProvider::Perplexity,
-            AiProvider::Cerebras,
-        ];
-        let mut slugs = std::collections::HashSet::new();
-        for p in &providers {
-            assert!(slugs.insert(p.slug()), "duplicate slug: {}", p.slug());
-        }
-        assert_eq!(slugs.len(), providers.len());
-    }
-
-    #[test]
-    fn all_providers_have_unique_labels() {
-        let providers = vec![
-            AiProvider::CloudflareWorkersAi,
-            AiProvider::OpenRouter,
-            AiProvider::AzureOpenAi,
-            AiProvider::LocalOllama,
-            AiProvider::LocalLlama,
-            AiProvider::OpenAI,
-            AiProvider::Anthropic,
-            AiProvider::GoogleVertex,
-            AiProvider::Deepseek,
-            AiProvider::AlibabaQwen,
-            AiProvider::AwsBedrock,
-            AiProvider::Groq,
-            AiProvider::Mistral,
-            AiProvider::TogetherAi,
-            AiProvider::FireworksAi,
-            AiProvider::Perplexity,
-            AiProvider::Cerebras,
-        ];
-        let mut labels = std::collections::HashSet::new();
-        for p in &providers {
-            assert!(labels.insert(p.label()), "duplicate label: {}", p.label());
+    fn the_catalog_has_no_duplicate_rows() {
+        // Every other guard in this module reads `ALL`, so a repeated row would
+        // make the backend count wrong in every report at once while still
+        // parsing fine. A 17-row pairwise scan needs no `Hash` derive, which
+        // `AiProvider` has never carried and no production code needs.
+        let all = AiProvider::ALL;
+        for (index, provider) in all.iter().enumerate() {
+            for other in &all[index + 1..] {
+                assert_ne!(
+                    provider, other,
+                    "{provider:?} appears twice in the provider catalog"
+                );
+            }
         }
     }
 
     #[test]
-    fn slug_from_slug_roundtrip_for_all_providers() {
-        let providers = vec![
-            AiProvider::CloudflareWorkersAi,
-            AiProvider::OpenRouter,
-            AiProvider::AzureOpenAi,
-            AiProvider::LocalOllama,
-            AiProvider::LocalLlama,
-            AiProvider::OpenAI,
-            AiProvider::Anthropic,
-            AiProvider::GoogleVertex,
-            AiProvider::Deepseek,
-            AiProvider::AlibabaQwen,
-            AiProvider::AwsBedrock,
-            AiProvider::Groq,
-            AiProvider::Mistral,
-            AiProvider::TogetherAi,
-            AiProvider::FireworksAi,
-            AiProvider::Perplexity,
-            AiProvider::Cerebras,
-        ];
-        for p in &providers {
-            let slug = p.slug();
-            let parsed = AiProvider::from_slug(slug);
-            assert_eq!(
-                parsed,
-                Some(*p),
-                "from_slug('{}') should return {:?}",
-                slug,
-                p
+    fn every_backend_is_dispatchable_and_has_a_fallback() {
+        // The executor's `match` arms are exhaustive, so the compiler already
+        // knows how to reach a new variant; what a stale hand-written list hid
+        // was whether the rest of the system could name it. Two provider.rs
+        // tests used to answer that over a 16-item list of their own — which is
+        // how llama.cpp kept a fallback and a default model in source while no
+        // list anywhere checked that llama.cpp had them.
+        for p in AiProvider::ALL.iter().copied() {
+            let model = crate::agent::provider::default_provider_model(p);
+            assert!(!model.trim().is_empty(), "{p:?} offers no default model");
+            let fb = crate::agent::provider::fallback_provider(p);
+            assert_ne!(fb, p, "{p:?} falls back to itself, so failover spins");
+            assert!(
+                AiProvider::ALL.contains(&fb),
+                "{p:?} falls back to {fb:?}, which the catalog does not carry"
             );
         }
     }
 
     #[test]
-    fn provider_count_is_17() {
-        let providers = vec![
-            AiProvider::CloudflareWorkersAi,
-            AiProvider::OpenRouter,
-            AiProvider::AzureOpenAi,
-            AiProvider::LocalOllama,
-            AiProvider::LocalLlama,
-            AiProvider::OpenAI,
-            AiProvider::Anthropic,
-            AiProvider::GoogleVertex,
-            AiProvider::Deepseek,
-            AiProvider::AlibabaQwen,
-            AiProvider::AwsBedrock,
-            AiProvider::Groq,
-            AiProvider::Mistral,
-            AiProvider::TogetherAi,
-            AiProvider::FireworksAi,
-            AiProvider::Perplexity,
-            AiProvider::Cerebras,
-        ];
-        assert_eq!(providers.len(), 17, "Expected 17 providers");
+    fn the_provider_pickers_read_the_catalog() {
+        // Both combo boxes carried their own arrays, in two different orders,
+        // and both had lost llama.cpp — the backend was dispatchable but could
+        // not be chosen by a person. A guard on the source is the honest form of
+        // "the picker shows the catalog", because egui draws nothing in a unit
+        // test: each file must loop over `AiProvider::ALL`, and must not name a
+        // backend inside a loop header or an array literal.
+        let crate_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let pickers = ["src/editor/chat_panel.rs", "src/editor/app/render.rs"];
+        for rel in pickers {
+            let text = std::fs::read_to_string(crate_dir.join(rel))
+                .unwrap_or_else(|e| panic!("{rel}: {e}"));
+            assert!(
+                text.lines()
+                    .any(|line| line.contains("for ") && line.contains("AiProvider::ALL")),
+                "{rel} no longer builds its provider picker from AiProvider::ALL"
+            );
+            for p in AiProvider::ALL {
+                let element = format!("AiProvider::{p:?},");
+                for line in text.lines() {
+                    let is_a_list = line.contains("for ") || line.contains('[');
+                    assert!(
+                        !(is_a_list && line.contains(&element)),
+                        "{rel} puts {element} back into a list of its own: {}",
+                        line.trim()
+                    );
+                }
+            }
+        }
     }
 
     #[test]
-    fn all_provider_aliases_resolve() {
-        // Cloudflare aliases
-        assert_eq!(
-            AiProvider::from_slug("cf"),
-            Some(AiProvider::CloudflareWorkersAi)
+    fn documented_backend_counts_match_the_catalog() {
+        // The number of backends a person can pick is a fact about the catalog,
+        // so the documents that state it are compared against it instead of
+        // trusted: `USER_GUIDE.md` and three manual pages said "16 providers"
+        // for a 17-variant enum.
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .expect("velocity-mcp sits at the repo root")
+            .to_path_buf();
+        let docs = [
+            "USER_GUIDE.md",
+            "README.md",
+            "docs/manual/README.md",
+            "docs/manual/getting-started.md",
+            "docs/manual/panels-reference.md",
+            "docs/manual/settings-providers.md",
+            "docs/manual/mcp-tools.md",
+        ];
+        let mut checked = 0usize;
+        for rel in docs {
+            let text =
+                std::fs::read_to_string(root.join(rel)).unwrap_or_else(|e| panic!("{rel}: {e}"));
+            for (n, sentence) in provider_count_claims(&text) {
+                checked += 1;
+                assert_eq!(
+                    n,
+                    AiProvider::ALL.len(),
+                    "{rel} counts the backends as {n}: {sentence}"
+                );
+            }
+        }
+        assert!(
+            checked >= 4,
+            "the count guard read only {checked} provider claims from the manuals; a rewrite \
+             that reworded all of them would otherwise pass this test by saying nothing"
         );
-        assert_eq!(
-            AiProvider::from_slug("workers-ai"),
-            Some(AiProvider::CloudflareWorkersAi)
+    }
+
+    #[test]
+    fn the_manual_lists_every_backend_the_picker_offers() {
+        // `panels-reference.md` documents the chat pill's combo box by name, so a
+        // backend missing from it is a backend a reader cannot discover even when
+        // the picker does show it.
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .expect("velocity-mcp sits at the repo root")
+            .to_path_buf();
+        let text = std::fs::read_to_string(root.join("docs/manual/panels-reference.md"))
+            .expect("panels-reference.md");
+        for p in AiProvider::ALL {
+            assert!(
+                text.contains(p.variant_name()),
+                "the manual's provider list never names {}",
+                p.variant_name()
+            );
+        }
+    }
+
+    #[test]
+    fn the_user_guide_table_matches_the_catalog() {
+        // `USER_GUIDE.md` carries a Provider/Default Model table, and every one
+        // of its columns had drifted: sixteen rows for a 17-variant enum, plus
+        // `llama3.2` for Local Ollama and `qwen-plus` for Alibaba Qwen where the
+        // code says `qwen2.5-coder:0.5b` and `qwen-max`. A count guard alone
+        // would not have caught the two stale model names, so the rows are
+        // compared cell by cell against `label()` and `default_provider_model`.
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .expect("velocity-mcp sits at the repo root")
+            .to_path_buf();
+        let text = std::fs::read_to_string(root.join("USER_GUIDE.md")).expect("USER_GUIDE.md");
+        let lines: Vec<&str> = text.lines().collect();
+
+        let expected: Vec<(String, String)> = AiProvider::ALL
+            .iter()
+            .map(|p| {
+                (
+                    p.label().to_string(),
+                    crate::agent::provider::default_provider_model(*p),
+                )
+            })
+            .collect();
+
+        let mut tables = 0usize;
+        let mut index = 0usize;
+        while index < lines.len() {
+            let header = lines[index].trim();
+            if !header.starts_with("| Provider | Default Model") {
+                index += 1;
+                continue;
+            }
+            tables += 1;
+            let mut rows: Vec<(String, String)> = Vec::new();
+            index += 1;
+            while index < lines.len() && lines[index].trim().starts_with('|') {
+                let cells: Vec<&str> = lines[index]
+                    .trim()
+                    .trim_matches('|')
+                    .split('|')
+                    .map(str::trim)
+                    .collect();
+                index += 1;
+                if cells.len() < 2 || cells[0].chars().all(|c| c == '-') {
+                    continue; // separator row
+                }
+                rows.push((cells[0].to_string(), cells[1].trim_matches('`').to_string()));
+            }
+            assert_eq!(
+                rows, expected,
+                "the Provider/Default Model table in USER_GUIDE.md no longer matches \
+                 AiProvider::ALL and default_provider_model (table #{tables})"
+            );
+        }
+        assert!(
+            tables >= 1,
+            "USER_GUIDE.md has no Provider/Default Model table at all, so this guard reads nothing"
         );
-        // OpenRouter aliases
-        assert_eq!(AiProvider::from_slug("or"), Some(AiProvider::OpenRouter));
-        // Azure aliases
-        assert_eq!(
-            AiProvider::from_slug("azure_openai"),
-            Some(AiProvider::AzureOpenAi)
-        );
-        // Ollama aliases
-        assert_eq!(
-            AiProvider::from_slug("local"),
-            Some(AiProvider::LocalOllama)
-        );
-        // Anthropic aliases
-        assert_eq!(AiProvider::from_slug("claude"), Some(AiProvider::Anthropic));
-        // Vertex aliases
-        assert_eq!(
-            AiProvider::from_slug("google"),
-            Some(AiProvider::GoogleVertex)
-        );
-        assert_eq!(
-            AiProvider::from_slug("google_vertex"),
-            Some(AiProvider::GoogleVertex)
-        );
-        // Alibaba aliases
-        assert_eq!(AiProvider::from_slug("qwen"), Some(AiProvider::AlibabaQwen));
-        assert_eq!(
-            AiProvider::from_slug("dashscope"),
-            Some(AiProvider::AlibabaQwen)
-        );
-        // Bedrock aliases
-        assert_eq!(AiProvider::from_slug("aws"), Some(AiProvider::AwsBedrock));
-        // Perplexity alias
-        assert_eq!(AiProvider::from_slug("pplx"), Some(AiProvider::Perplexity));
+    }
+
+    /// Every "<number> … providers" claim in `text`, with the line that carries it.
+    ///
+    /// Prose that counts something other than the platform's catalog is skipped
+    /// by wording, not by file: "at least 2 providers" is a setup instruction.
+    /// The scan is backwards from the word so that "16 AI providers" and "the
+    /// same 17 providers" both read as claims, and `providers_health (5)`, where
+    /// the number follows the word, does not.
+    fn provider_count_claims(text: &str) -> Vec<(usize, String)> {
+        const WORD: &str = "providers";
+        let mut claims = Vec::new();
+        for line in text.lines() {
+            let folded = line.to_lowercase();
+            let mut search = 0usize;
+            while let Some(offset) = folded[search..].find(WORD) {
+                let at = search + offset;
+                search = at + WORD.len();
+                let prev = folded[..at].chars().next_back();
+                let next = folded[at + WORD.len()..].chars().next();
+                let joined = |c: Option<char>| c.is_some_and(|c| c.is_alphanumeric() || c == '_');
+                if joined(prev) || joined(next) {
+                    continue; // "provider", "providers_health", part of a path
+                }
+                let window: String = folded[..at].chars().rev().take(18).collect::<String>();
+                let window: String = window.chars().rev().collect();
+                if window.contains("at least") {
+                    continue;
+                }
+                let end = match window.rfind(|c: char| c.is_ascii_digit()) {
+                    Some(i) => i + 1,
+                    None => continue,
+                };
+                let start = window[..end]
+                    .chars()
+                    .rev()
+                    .take_while(|c| c.is_ascii_digit())
+                    .count();
+                let gap = &window[end..];
+                let gap_ok = gap
+                    .chars()
+                    .all(|c| c.is_alphabetic() || c == ' ' || c == '-' || c == '\'');
+                let standalone = window[..end - start]
+                    .chars()
+                    .next_back()
+                    .map(|c| !c.is_alphanumeric())
+                    .unwrap_or(true);
+                if gap_ok && standalone {
+                    let n: usize = window[end - start..end].parse().unwrap();
+                    claims.push((n, line.trim().to_string()));
+                }
+            }
+        }
+        claims
     }
 }

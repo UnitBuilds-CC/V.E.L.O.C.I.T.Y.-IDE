@@ -911,17 +911,56 @@ fn team_health_check_detects_issues() {
 }
 
 #[test]
-fn list_providers_returns_all_providers() {
+fn list_providers_reports_every_backend_in_the_catalog() {
     let (_temp, root) = setup_root();
 
     let output = call_tool_in_workspace(&root, "list_providers", &json!({})).unwrap();
 
-    assert!(output.contains("Available AI providers"));
-    assert!(output.contains("cloudflare"));
-    assert!(output.contains("openrouter"));
-    assert!(output.contains("anthropic"));
-    assert!(output.contains("openai"));
-    assert!(output.contains("16")); // 16 providers
+    // This test used to assert `output.contains("16")`, which is the exact
+    // failure mode the ledger is about: a remembered number that stayed green
+    // while llama.cpp sat dispatchable-but-unlisted. Both the header count and
+    // the payload are compared to `AiProvider::ALL` instead, so adding or
+    // removing a catalog row moves the expectation with it and any hand-written
+    // copy of the list that stops matching goes red.
+    let count = crate::agent::AiProvider::ALL.len();
+    assert!(
+        output.starts_with(&format!("Available AI providers ({count})")),
+        "header should report the catalog size, got: {}",
+        output.chars().take(80).collect::<String>()
+    );
+
+    let payload = output
+        .find('[')
+        .and_then(|start| serde_json::from_str::<serde_json::Value>(&output[start..]).ok());
+    let rows = payload
+        .as_ref()
+        .and_then(|value| value.as_array())
+        .unwrap_or_else(|| panic!("list_providers should append a JSON array"));
+
+    let listed: Vec<&str> = rows
+        .iter()
+        .map(|row| row["slug"].as_str().unwrap_or("<missing slug>"))
+        .collect();
+    let expected: Vec<&str> = crate::agent::AiProvider::ALL
+        .iter()
+        .map(|provider| provider.slug())
+        .collect();
+    assert_eq!(
+        listed, expected,
+        "the list_providers payload and the provider catalog disagree"
+    );
+
+    assert!(
+        listed.contains(&"llamacpp"),
+        "llama.cpp is dispatchable, so it must also be listed: {listed:?}"
+    );
+    for row in rows {
+        assert!(
+            !row["label"].as_str().unwrap_or("").is_empty()
+                && !row["variant"].as_str().unwrap_or("").is_empty(),
+            "every listed backend needs a label and a variant name, got {row}"
+        );
+    }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════

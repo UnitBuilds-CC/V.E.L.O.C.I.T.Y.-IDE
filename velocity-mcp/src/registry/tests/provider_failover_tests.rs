@@ -438,28 +438,13 @@ fn resolve_team_returns_none_for_empty() {
 // ═══════════════════════════════════════════════════════════════════════════
 
 #[test]
-fn all_provider_labels_are_non_empty() {
-    let providers = vec![
-        AiProvider::CloudflareWorkersAi,
-        AiProvider::OpenRouter,
-        AiProvider::AzureOpenAi,
-        AiProvider::LocalOllama,
-        AiProvider::OpenAI,
-        AiProvider::Anthropic,
-        AiProvider::GoogleVertex,
-        AiProvider::Deepseek,
-        AiProvider::AlibabaQwen,
-        AiProvider::AwsBedrock,
-        AiProvider::Groq,
-        AiProvider::Mistral,
-        AiProvider::TogetherAi,
-        AiProvider::FireworksAi,
-        AiProvider::Perplexity,
-        AiProvider::Cerebras,
-    ];
-    for p in &providers {
-        assert!(!p.label().is_empty(), "provider {:?} has empty label", p);
-        assert!(!p.slug().is_empty(), "provider {:?} has empty slug", p);
+fn every_backend_has_a_label_and_a_slug() {
+    // Read the catalog instead of a copy of it: this test walked sixteen named
+    // variants while the enum held seventeen, so a new backend could have
+    // arrived with an empty label and this would not have noticed it.
+    for p in AiProvider::ALL.iter().copied() {
+        assert!(!p.label().is_empty(), "provider {p:?} has empty label");
+        assert!(!p.slug().is_empty(), "provider {p:?} has empty slug");
     }
 }
 

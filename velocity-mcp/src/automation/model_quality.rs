@@ -117,7 +117,13 @@ pub fn model_choice_probability_floor(n: usize) -> f32 {
 pub struct ModelQualityIndex;
 
 impl ModelQualityIndex {
-    pub fn provider_capabilities() -> [ProviderCapability; 16] {
+    /// One row per backend in [`AiProvider::ALL`], which the array length is
+    /// taken from so a table that has fallen behind the catalog does not
+    /// compile. The array carried sixteen rows for a seventeen-variant enum
+    /// until this was written, and the consumer's `unwrap_or` read that gap as
+    /// "this endpoint cannot be trusted with tool calls" — see
+    /// [`Self::rank_models`].
+    pub fn provider_capabilities() -> [ProviderCapability; AiProvider::ALL.len()] {
         [
             ProviderCapability {
                 provider: AiProvider::CloudflareWorkersAi,
@@ -151,6 +157,16 @@ impl ModelQualityIndex {
             },
             ProviderCapability {
                 provider: AiProvider::LocalOllama,
+                native_tools_reliable: true,
+                good_for_parallelism: false,
+            },
+            // The same route class as Ollama — the executor already treats the
+            // two local servers together (`is_local_route`): one process, one
+            // loaded model, an OpenAI-compatible tool endpoint the operator
+            // started with a tool parser. So tool calls are trusted and
+            // parallel fan-out is not: a second worker queues behind the first.
+            ProviderCapability {
+                provider: AiProvider::LocalLlama,
                 native_tools_reliable: true,
                 good_for_parallelism: false,
             },
@@ -621,10 +637,66 @@ mod tests {
         assert!(suggestion.is_none());
     }
 
+    /// The capability table is the third place a backend has to be named, after
+    /// the catalog itself and the credential table, and it had drifted the same
+    /// way: sixteen rows for seventeen backends, and `provider_capabilities()`
+    /// returning a fixed `[ProviderCapability; 16]` whose length a new variant
+    /// would not change. The length now comes from the catalog, so a table that
+    /// has not been updated fails to compile; what this test owns is the weaker
+    /// fact the type cannot express — that the seventeen rows are seventeen
+    /// *different* backends, and together cover the catalog.
     #[test]
-    fn provider_capabilities_count() {
+    fn the_capability_table_has_exactly_one_row_per_backend() {
         let caps = ModelQualityIndex::provider_capabilities();
-        assert_eq!(caps.len(), 16);
+        assert_eq!(
+            caps.len(),
+            AiProvider::ALL.len(),
+            "the capability table and the provider catalog count different backends"
+        );
+        for provider in AiProvider::ALL.iter().copied() {
+            let rows = caps.iter().filter(|c| c.provider == provider).count();
+            assert_eq!(
+                rows, 1,
+                "{provider:?} has {rows} rows in the capability table, so either it is \
+                 scored twice or `rank_models` answers for it from the not-in-the-table \
+                 fallback"
+            );
+        }
+    }
+
+    /// A backend absent from the table was not treated as unknown, it was
+    /// treated as untrustworthy: `rank_models` filled the gap with
+    /// `native_tools_reliable: false`, so llama.cpp lost the tool-reliability
+    /// bonus a task needing tools is worth 15 points, and
+    /// `should_switch_provider` returned `None` for it because the lookup used
+    /// `?`. Both local servers load one model into one process and speak the
+    /// same OpenAI-compatible dialect, so the ranking that judges them must be
+    /// the same ranking.
+    #[test]
+    fn the_two_local_routes_are_scored_as_the_same_class_of_server() {
+        let scored = |provider| {
+            ModelQualityIndex::rank_models(AgentTaskKind::Refactor, provider, &ten_catalog())
+                .into_iter()
+                .map(|c| (c.model_id, c.score))
+                .collect::<Vec<_>>()
+        };
+        let ollama = scored(AiProvider::LocalOllama);
+        let llama = scored(AiProvider::LocalLlama);
+        assert_eq!(
+            ollama, llama,
+            "the two local backends are ranked differently, so one of them is not in the \
+             capability table"
+        );
+        // Parity alone would also be satisfied by both rows reading as
+        // untrustworthy, so the reference has to be a backend the table *does*
+        // mark as unable to take a tool call. Perplexity is that row, and a
+        // tool-capable task is worth the reliability bonus this pair gets.
+        let untrusted = scored(AiProvider::Perplexity);
+        assert!(
+            ollama.iter().zip(&untrusted).all(|(a, b)| a.1 > b.1),
+            "the local routes are scored exactly like a backend the table calls \
+             tool-unreliable: ollama={ollama:?} perplexity={untrusted:?}"
+        );
     }
 
     #[test]

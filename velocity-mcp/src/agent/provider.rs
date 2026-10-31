@@ -1287,28 +1287,13 @@ mod tests {
 
     #[test]
     fn fallback_chain_all_providers_have_fallback() {
-        // Verify every provider has a fallback (doesn't panic)
-        let providers = vec![
-            AiProvider::CloudflareWorkersAi,
-            AiProvider::OpenRouter,
-            AiProvider::AzureOpenAi,
-            AiProvider::LocalOllama,
-            AiProvider::OpenAI,
-            AiProvider::Anthropic,
-            AiProvider::GoogleVertex,
-            AiProvider::Deepseek,
-            AiProvider::AlibabaQwen,
-            AiProvider::AwsBedrock,
-            AiProvider::Groq,
-            AiProvider::Mistral,
-            AiProvider::TogetherAi,
-            AiProvider::FireworksAi,
-            AiProvider::Perplexity,
-            AiProvider::Cerebras,
-        ];
-        for p in providers {
-            let fb = fallback_provider(p);
-            assert_ne!(fb, p, "fallback for {:?} should not be itself", p);
+        // Iterating the catalog means a backend added to `ai_provider_catalog!`
+        // without a `fallback_provider` arm fails here instead of silently
+        // inheriting another backend's behaviour. The catalog length itself is
+        // asserted once, in `models.rs`, so this test stays about coverage.
+        for p in AiProvider::ALL {
+            let fb = fallback_provider(*p);
+            assert_ne!(fb, *p, "fallback for {:?} should not be itself", p);
         }
     }
 
@@ -1316,26 +1301,8 @@ mod tests {
 
     #[test]
     fn default_model_per_provider_non_empty() {
-        let providers = vec![
-            AiProvider::CloudflareWorkersAi,
-            AiProvider::OpenRouter,
-            AiProvider::OpenAI,
-            AiProvider::Anthropic,
-            AiProvider::GoogleVertex,
-            AiProvider::AzureOpenAi,
-            AiProvider::LocalOllama,
-            AiProvider::Deepseek,
-            AiProvider::AlibabaQwen,
-            AiProvider::AwsBedrock,
-            AiProvider::Groq,
-            AiProvider::Mistral,
-            AiProvider::TogetherAi,
-            AiProvider::FireworksAi,
-            AiProvider::Perplexity,
-            AiProvider::Cerebras,
-        ];
-        for p in providers {
-            let model = default_provider_model(p);
+        for p in AiProvider::ALL {
+            let model = default_provider_model(*p);
             assert!(
                 !model.is_empty(),
                 "default model for {:?} should not be empty",

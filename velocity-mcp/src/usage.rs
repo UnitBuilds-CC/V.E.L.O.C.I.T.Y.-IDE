@@ -155,8 +155,10 @@ pub struct WorkspaceOllamaSettings {
     pub label: String,
 }
 
-/// Simple API-key provider settings — used by Deepseek, Groq, Mistral, OpenAI,
-/// Google, Together AI, Fireworks AI, Perplexity, Cerebras, Alibaba Qwen.
+/// Simple API-key provider settings — for every backend whose whole
+/// configuration is a key and a label. Which backends those are is answered by
+/// [`WorkspaceProviderSettings::credentials`], not by a list here, because a
+/// list here is how this one ended up naming ten of the twelve.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct WorkspaceApiKeySettings {
     #[serde(default)]
@@ -233,14 +235,37 @@ pub struct WorkspaceProviderSettings {
     pub velocity_router: WorkspaceRouterSettings,
 }
 
+/// Backends [`WorkspaceProviderSettings::credentials`] deliberately carries no
+/// row for, because this workspace holds no credential that could make them
+/// usable.
+///
+/// The table's own test requires every member of [`crate::agent::AiProvider::ALL`]
+/// to be either listed there or named here, so a new backend has to be decided
+/// — given a settings field, or written down as keyless — instead of quietly
+/// missing from a table whose failure message claimed "16 providers" while it
+/// held 15.
+pub const UNTRACKED_CREDENTIALS: &[crate::agent::AiProvider] = &[
+    // Authenticates through the AWS chain (instance profile, `~/.aws`), not a
+    // key stored per workspace.
+    crate::agent::AiProvider::AwsBedrock,
+    // A local `llama-server` has no key to store; what it can serve is whichever
+    // model was loaded into it, which the catalog reads from the server itself.
+    crate::agent::AiProvider::LocalLlama,
+];
+
 impl WorkspaceProviderSettings {
     /// Every dispatchable provider with whether this workspace actually holds
     /// credentials for it, in the order the IDE should prefer them.
     ///
-    /// Single source of truth for "is this provider usable". The team builder,
-    /// the workflow router and the editor's startup default each used to keep
-    /// their own answer, which is how the editor could open on a provider with
-    /// no key in a workspace that had exactly one configured.
+    /// Single source of truth for "is this provider usable" *among the backends
+    /// that take a stored credential*; the rest are in
+    /// [`UNTRACKED_CREDENTIALS`]. The team builder, the workflow router and the
+    /// editor's startup default each used to keep their own answer, which is how
+    /// the editor could open on a provider with no key in a workspace that had
+    /// exactly one configured.
+    ///
+    /// Order is the preference order, not the catalog order, and it is
+    /// deliberate: AlibabaQwen first, a local Ollama last.
     pub fn credentials(&self) -> Vec<(crate::agent::AiProvider, bool)> {
         use crate::agent::AiProvider;
         vec![
@@ -266,9 +291,9 @@ impl WorkspaceProviderSettings {
     }
 
     /// `Some(true)` / `Some(false)` when [`Self::credentials`] tracks the
-    /// provider, `None` when it does not appear at all. AwsBedrock is absent on
-    /// purpose (it authenticates via the AWS chain, not a stored key), so
-    /// "not listed" must not be read as "unusable".
+    /// provider, `None` when it does not appear at all. The untracked backends
+    /// are named in [`UNTRACKED_CREDENTIALS`], so "not listed" is a decision on
+    /// record rather than an accident, and must not be read as "unusable".
     pub fn is_usable(&self, provider: crate::agent::AiProvider) -> Option<bool> {
         self.credentials()
             .into_iter()
@@ -1378,15 +1403,49 @@ mod tests {
             Some(AiProvider::AlibabaQwen)
         );
         assert_eq!(table.last().map(|(p, _)| *p), Some(AiProvider::LocalOllama));
-        // Every dispatchable provider except the untracked one is listed.
+        // The count follows the catalog instead of a remembered number: every
+        // backend is either in this table or named as keyless, never both, and
+        // never silently neither. This assertion used to read
+        // `assert_eq!(table.len(), 15, "16 providers, Bedrock untracked")`,
+        // which was wrong twice over — and stayed green when llama.cpp joined
+        // the enum, because nothing compared the table to the enum at all.
+        // Slugs are compared rather than variants because `AiProvider` has no
+        // `Hash` derive, and giving a public type one to satisfy a test would
+        // be the wrong trade.
+        let mut listed: Vec<&str> = table.iter().map(|(p, _)| p.slug()).collect();
+        listed.sort_unstable();
+        for pair in listed.windows(2) {
+            assert_ne!(
+                pair[0], pair[1],
+                "{:?} has two rows, so the preference order is ambiguous",
+                pair[0]
+            );
+        }
+        let mut expected: Vec<&str> = AiProvider::ALL
+            .iter()
+            .filter(|p| !UNTRACKED_CREDENTIALS.contains(p))
+            .map(|p| p.slug())
+            .collect();
+        expected.sort_unstable();
         assert_eq!(
-            table
-                .iter()
-                .filter(|(p, _)| *p == AiProvider::AwsBedrock)
-                .count(),
-            0
+            listed, expected,
+            "the credential table and the provider catalog disagree"
         );
-        assert_eq!(table.len(), 15, "16 providers, Bedrock untracked");
+        assert_eq!(
+            table.len(),
+            AiProvider::ALL.len() - UNTRACKED_CREDENTIALS.len()
+        );
+        for untracked in UNTRACKED_CREDENTIALS {
+            assert!(
+                !listed.contains(&untracked.slug()),
+                "{untracked:?} is declared keyless but still has a row"
+            );
+            assert_eq!(
+                WorkspaceProviderSettings::default().is_usable(*untracked),
+                None,
+                "{untracked:?} should read as untracked, not as unusable"
+            );
+        }
     }
 
     /// The whole point of one shared table: an empty key must never read as

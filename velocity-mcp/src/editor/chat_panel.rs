@@ -284,24 +284,11 @@ fn render_header(
             .width(provider_w)
             .selected_text(provider_label)
             .show_ui(ui, |ui| {
-                for provider in [
-                    crate::agent::AiProvider::CloudflareWorkersAi,
-                    crate::agent::AiProvider::OpenRouter,
-                    crate::agent::AiProvider::OpenAI,
-                    crate::agent::AiProvider::Anthropic,
-                    crate::agent::AiProvider::GoogleVertex,
-                    crate::agent::AiProvider::AzureOpenAi,
-                    crate::agent::AiProvider::LocalOllama,
-                    crate::agent::AiProvider::Deepseek,
-                    crate::agent::AiProvider::AlibabaQwen,
-                    crate::agent::AiProvider::Groq,
-                    crate::agent::AiProvider::Mistral,
-                    crate::agent::AiProvider::TogetherAi,
-                    crate::agent::AiProvider::FireworksAi,
-                    crate::agent::AiProvider::Perplexity,
-                    crate::agent::AiProvider::Cerebras,
-                    crate::agent::AiProvider::AwsBedrock,
-                ] {
+                // The catalog, not a copy of it: this list used to carry 16 of
+                // the 17 backends in its own order, so llama.cpp could be
+                // dispatched but never picked, and the Settings picker offered
+                // the same set in a different order than the chat pill did.
+                for provider in crate::agent::AiProvider::ALL.iter().copied() {
                     if ui
                         .selectable_value(&mut state.provider, provider, provider.label())
                         .clicked()
