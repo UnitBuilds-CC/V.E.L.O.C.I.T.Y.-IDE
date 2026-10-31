@@ -111,6 +111,9 @@ mod tests {
         assert!(!app.is_favorite(&file));
     }
 
+    /// Windows volumes fold case and accept both separators, so these three
+    /// spellings name the file the first row already shows.
+    #[cfg(windows)]
     #[test]
     fn one_file_spelled_two_ways_is_one_row_not_two() {
         let root = workspace("spelling");
@@ -136,6 +139,35 @@ mod tests {
             app.favorite_files.is_empty(),
             "a case difference un-starred a copy of the path instead of the row the panel shows"
         );
+    }
+
+    /// The same assertion cannot run on CI's Linux runner, where the case
+    /// difference is a second file: `lib.rs` and `LIB.RS` are two rows there
+    /// because they are two names on disk, and a star that swallowed the second
+    /// would hide a file the person can still open. Reading the fold as a
+    /// universal rule is what let this test pass on the machine that wrote it and
+    /// fail on every Linux job.
+    #[cfg(not(windows))]
+    #[test]
+    fn a_case_sensitive_volume_keeps_two_casings_as_two_rows() {
+        let root = workspace("case_sensitive");
+        let other = file_in(&root, "lib.rs");
+        let mut app = app_at(&root);
+
+        app.toggle_favorite(&other);
+        let respelled = other.parent().unwrap().join("LIB.RS");
+        assert!(
+            app.toggle_favorite(&respelled),
+            "a second name is a second star"
+        );
+        assert_eq!(
+            app.favorite_files,
+            vec![other.clone(), respelled.clone()],
+            "the panel lost a row by folding two names that one volume distinguishes"
+        );
+        assert!(app.is_favorite(&other));
+        assert!(app.is_favorite(&respelled));
+        assert!(!app.is_favorite(&other.parent().unwrap().join("Lib.rs")));
     }
 
     #[test]
