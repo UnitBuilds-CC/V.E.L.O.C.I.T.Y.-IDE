@@ -321,6 +321,12 @@ Visual** (loads it onto the node canvas for editing).
 - **SECRETS:** named secret values (masked).
 - **CONNECTORS:** base URLs + secret handles; presets **GitHub** / **Slack**.
 
+This is the advisory policy file (`.velocity/policy.json`). The versioned, witnessed rule
+engine that refuses calls below the model is a separate surface: **Settings ▸ Rules**
+([settings-providers.md → Rules](settings-providers.md#rules), design in
+[rules-engine.md](../rules-engine.md)). The two are additive and enforced at the same
+dispatch choke point.
+
 ---
 
 ## Git
