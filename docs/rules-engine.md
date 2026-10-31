@@ -96,9 +96,13 @@ the live database is off limits, use the dev server. Instead, use "192.168.0.2".
 
 ## Tools
 
-`rules_list`, `rule_show`, `rule_create`, `rule_adjust`, `rule_retire`,
-`rule_bypass`, `rules_pending`. Adjust/retire/bypass return a pending request when
-the caller is the agent (the tool surface does not expose approval to the model).
+`rule_kinds` (the parameter contract per kind — call it first), `rules_list`, `rule_show`,
+`rule_create`, `rule_adjust`, `rule_retire`, `rule_bypass`, `rules_pending`.
+Adjust/retire/bypass return a pending request when the caller is the agent (the tool
+surface does not expose approval to the model). All eight ship on the core tool floor —
+every dispatched surface gets them whether or not it opted into a group — because the
+worker about to repeat the mistake is the one that can record the rule that stops it;
+`docs/manual/mcp-tools.md` lists them in the `rules` category.
 
 ## Interface
 
@@ -134,7 +138,9 @@ boundary, case-insensitive command text, budget window), witness rejection
 (a rule that never fires, a rule whose allow witness also fires, a regex-style
 command rule without witnesses), monotonicity and approval, grant expiry and
 single-use consumption, atomic persistence and corrupt-file fail-closed, and the
-gate itself through `call_tool_in_workspace`. The panel's own paths are tested
-where they meet the engine: a rule created from the form blocks the next
-dispatched call and its near-miss passes, and saving a tightened budget rebinds
+gate's own verdicts through `rules::gate_tool_call` — the function
+`registry::call_tool_in_workspace` delegates to, which is where the two gates run in
+order: governance policy first, then rules. The panel's own paths are tested
+where they meet the engine (`rules::gate_with_paths`): a rule created from the form
+blocks the next call and its near-miss passes, and saving a tightened budget rebinds
 the gate on the next call.
