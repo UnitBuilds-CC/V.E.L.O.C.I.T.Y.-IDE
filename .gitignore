@@ -29,6 +29,12 @@ target/bench-results/
 $null
 commit_msg.txt
 
+# A directory at the repository root whose name begins with a dash is a
+# command-line flag that was read as a workspace path, not a folder: launching
+# with `velocity_mcp --editor` once wrote `--editor/memory/` and it stayed in the
+# index for two months. No legitimate top-level entry looks like this.
+/-*
+
 # Local test/verification scratch dirs - regenerable, never committed
 .velocity_testing/
 .verify_tmp/
@@ -95,9 +101,17 @@ Thumbs.db
 *.nda
 
 # Memory (local agent state)
-memory/.account_state.json
-memory/.account_usage.json
-memory/.account_usage.nda
-memory/session.jsonl
-memory/summaries/
-memory/snapshots/
+#
+# Basename patterns, deliberately not `memory/…` ones: a gitignore pattern that
+# contains a slash is anchored to the directory holding this file, so the old
+# `memory/.account_usage.json` form said nothing about the same file under
+# `velocity-mcp/memory/` — which is how three copies of one machine's quota
+# counters got committed. `usage::UsageTracker::STATE_FILE_NAMES` is the list
+# these rules have to cover, and `usage::tests` checks each name against this
+# file at every depth. `.account_usage.nda` needs no line here: the `*.nda`
+# artifact rule above already matches it by basename.
+.account_state.json
+.account_usage.json
+session.jsonl
+**/memory/summaries/
+**/memory/snapshots/

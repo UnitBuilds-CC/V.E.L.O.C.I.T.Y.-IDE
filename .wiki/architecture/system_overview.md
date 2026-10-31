@@ -197,14 +197,22 @@ All persistent state lives under `.velocity/` in the workspace root:
 
 ## Build & Entry Points
 
-The workspace produces a single binary `velocity_mcp` with multiple modes:
+The workspace produces several binaries; the MCP server and the editor are two
+of them. `velocity_mcp` accepts `--mode`, `--buffer-path`, `--workspace`,
+`--tokenize`, `--check` and `--help`, and rejects anything else with
+`Unknown argument` and exit status 1 — there is no editor mode and no
+`--editor` or `--benchmark` flag in it. (A `--editor/memory/` directory, committed
+in August and untracked in October, is what the editor launch looked like back
+when a flag was read as a workspace root; `/.gitignore`'s `/-*` rule and the
+guards in `usage::tests` now keep that class of artifact out of the index.)
 
-| Command | Mode | Description |
-|---------|------|-------------|
-| `velocity_mcp` (no args) | Editor | Launch egui native IDE |
-| `velocity_mcp --editor` | Editor | Explicit editor launch |
+| Command | Binary | Description |
+|---------|--------|-------------|
+| `velocity_mcp` (no args) | MCP Server | stdio is the default mode: JSON-RPC over stdin/stdout |
 | `velocity_mcp --mode stdio` | MCP Server | JSON-RPC over stdin/stdout |
-| `velocity_mcp --mode shmem` | MCP Server | Binary protocol over shared memory |
-| `velocity_mcp --benchmark` | Benchmark | Run performance suite |
+| `velocity_mcp --mode shmem` | MCP Server | Binary protocol over shared memory (`--buffer-path <p>`) |
+| `velocity_mcp --workspace <path>` | either | `chdir` to the directory first, so file tools are relative to it |
 | `velocity_mcp --tokenize <text>` | Tokenizer | NDA embedded tokenizer demo |
-| `velocity_mcp --check` | Self-check | Run `cargo check` and exit |
+| `velocity_mcp --check` | Self-check | Run the built-in self check and exit |
+| `velocity_ide_gui` | Editor | egui native IDE (`--workspace <path>` to open a directory) |
+| `velocity_ide <subcommand>` | Inference CLI | `chat`, `generate`, `completions`, `providers`, `usage`, `login`, `seed` |

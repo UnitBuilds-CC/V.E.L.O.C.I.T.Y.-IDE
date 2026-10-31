@@ -400,12 +400,27 @@ pub struct UsageTracker {
 }
 
 impl UsageTracker {
+    /// Every file this tracker reads or writes under a workspace's `memory/`
+    /// directory, in the order [`UsageTracker::new`] binds them.
+    ///
+    /// This list is the thing the repository guards read: `.gitignore` must
+    /// protect each name at *every* depth, and the git index must hold none of
+    /// them. Deriving both the paths and the guards from one array is what stops
+    /// a fourth state file from being written into a workspace and committed the
+    /// first time somebody runs `git add -A`.
+    pub const STATE_FILE_NAMES: [&'static str; 3] = [
+        ".account_usage.json",
+        ".account_usage.nda",
+        ".account_state.json",
+    ];
+
     pub fn new(workspace_root: &Path) -> Self {
         let memory = workspace_root.join("memory");
+        let [path, nda_path, legacy_path] = Self::STATE_FILE_NAMES.map(|name| memory.join(name));
         let mut tracker = Self {
-            path: memory.join(".account_usage.json"),
-            nda_path: memory.join(".account_usage.nda"),
-            legacy_path: memory.join(".account_state.json"),
+            path,
+            nda_path,
+            legacy_path,
             data: UsageFile {
                 date: today_utc(),
                 accounts: HashMap::new(),
@@ -1593,5 +1608,156 @@ mod tests {
     fn empty_host_list_yields_no_accounts() {
         assert!(parse_ollama_host_list("").is_empty());
         assert!(parse_ollama_host_list(" , , ").is_empty());
+    }
+
+    // ---- repository guards ----------------------------------------------
+    //
+    // Quota state is per-machine and rewrites itself on every dispatch, so a
+    // tracked copy leaves the tree permanently dirty and puts merge conflicts in
+    // files nobody reads. The guards below keep it out of the index from both
+    // sides: the ignore file must reach every depth, and the index must hold
+    // none of it.
+
+    /// The repository root, or `None` when these sources are not inside a git
+    /// checkout. A guard that has to ask git a question returns early in that
+    /// case and prints why it had nothing to say.
+    fn repo_root() -> Option<PathBuf> {
+        let mut dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        loop {
+            if dir.join(".git").exists() {
+                return Some(dir);
+            }
+            if !dir.pop() {
+                return None;
+            }
+        }
+    }
+
+    /// Every path in the index, forward-slashed, or `None` when git is not on
+    /// PATH or this tree has no index to read.
+    fn tracked_paths(root: &Path) -> Option<Vec<String>> {
+        let out = std::process::Command::new("git")
+            .arg("ls-files")
+            .current_dir(root)
+            .output()
+            .ok()?;
+        if !out.status.success() {
+            return None;
+        }
+        Some(
+            String::from_utf8_lossy(&out.stdout)
+                .lines()
+                .map(|line| line.trim().replace('\\', "/"))
+                .filter(|line| !line.is_empty())
+                .collect(),
+        )
+    }
+
+    /// Does this `.gitignore` line keep `file_name` out of the index *at every
+    /// depth*?
+    ///
+    /// Git's rule is what makes the answer non-obvious: a pattern with no slash
+    /// is matched against the basename in every directory, while a pattern
+    /// containing a slash is anchored to the directory holding the ignore file —
+    /// so `memory/.account_usage.json` says nothing at all about
+    /// `velocity-mcp/memory/.account_usage.json`. A `**/` prefix re-opens the
+    /// depth; a `!` line un-ignores and so never protects.
+    fn protects_at_every_depth(pattern: &str, file_name: &str) -> bool {
+        let p = pattern.trim();
+        if p.is_empty() || p.starts_with('#') || p.starts_with('!') {
+            return false;
+        }
+        let basename_pattern = match p.strip_prefix("**/") {
+            Some(rest) if !rest.contains('/') => rest,
+            None if !p.contains('/') => p,
+            _ => return false,
+        };
+        match basename_pattern.strip_prefix('*') {
+            // `*.nda` style: whatever is left must be the name's suffix.
+            Some(suffix) => file_name.ends_with(suffix) && file_name.len() > suffix.len(),
+            None => basename_pattern == file_name,
+        }
+    }
+
+    #[test]
+    fn every_runtime_state_name_is_ignored_at_every_depth() {
+        let Some(root) = repo_root() else {
+            eprintln!("not a git checkout: nothing to ignore");
+            return;
+        };
+        let ignore = std::fs::read_to_string(root.join(".gitignore"))
+            .expect("a .gitignore at the repository root");
+        for name in UsageTracker::STATE_FILE_NAMES {
+            assert!(
+                ignore
+                    .lines()
+                    .any(|line| protects_at_every_depth(line, name)),
+                "{name} is protected only by a root-anchored pattern, so a crate-local \
+                 `memory/{name}` stays committable and the first `git add -A` records it. \
+                 Add a basename pattern or a `**/{name}` line to .gitignore."
+            );
+        }
+    }
+
+    #[test]
+    fn no_runtime_state_file_is_tracked() {
+        let Some(root) = repo_root() else {
+            eprintln!("not a git checkout: nothing tracked to judge");
+            return;
+        };
+        let Some(paths) = tracked_paths(&root) else {
+            eprintln!("git ls-files unavailable: nothing tracked to judge");
+            return;
+        };
+        let offenders: Vec<&str> = paths
+            .iter()
+            .map(String::as_str)
+            .filter(|path| {
+                UsageTracker::STATE_FILE_NAMES.contains(&path.rsplit('/').next().unwrap_or(path))
+            })
+            .collect();
+        assert!(
+            offenders.is_empty(),
+            "local quota state is in the index: {offenders:?}. It rewrites on every dispatch, \
+             so a tracked copy guarantees a dirty tree and conflicts in a file no one reviews."
+        );
+    }
+
+    #[test]
+    fn the_index_holds_no_memory_directory_and_no_flag_shaped_root() {
+        let Some(root) = repo_root() else {
+            eprintln!("not a git checkout: nothing tracked to judge");
+            return;
+        };
+        let Some(paths) = tracked_paths(&root) else {
+            eprintln!("git ls-files unavailable: nothing tracked to judge");
+            return;
+        };
+        // A workspace's `memory/` directory is runtime state at any depth. The
+        // repository's own memory *code* lives in `src/**/*memory*.rs`, so the
+        // rule is about directories, never about file names.
+        let under_memory: Vec<&str> = paths
+            .iter()
+            .map(String::as_str)
+            .filter(|path| path.split('/').any(|part| part == "memory"))
+            .collect();
+        assert!(
+            under_memory.is_empty(),
+            "these tracked files sit inside a `memory/` directory: {under_memory:?}"
+        );
+        // `--editor/memory/.account_usage.json` is what a launch that passed a
+        // flag where a path belongs writes when the flag still opens a root: the
+        // repository root must never contain a directory whose name begins with
+        // a dash, because it is a mistyped invocation, not a folder.
+        let flag_shaped: Vec<&str> = paths
+            .iter()
+            .map(String::as_str)
+            .filter(|path| path.split('/').any(|part| part.starts_with('-')))
+            .collect();
+        assert!(
+            flag_shaped.is_empty(),
+            "these tracked paths contain a dash-leading directory, the fingerprint of a \
+             command-line flag used as a workspace root: {flag_shaped:?}"
+        );
     }
 }
