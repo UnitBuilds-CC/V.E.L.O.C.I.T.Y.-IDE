@@ -887,7 +887,7 @@ pub fn render_favorites_content(
             );
             ui.add_space(2.0);
             ui.label(
-                egui::RichText::new("Open a file and click \u{2605} to pin it for quick access.")
+                egui::RichText::new("Open a file, then right-click its tab to add it here.")
                     .size(8.0)
                     .color(palette.faded(palette.accent, 0.8)),
             );

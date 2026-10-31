@@ -242,7 +242,7 @@ impl VelocityApp {
             );
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 if ui.small_button("Clear").clicked() {
-                    self.favorite_files.clear();
+                    self.clear_favorites();
                 }
             });
         });
@@ -311,7 +311,11 @@ impl VelocityApp {
                     }
                 }
                 for &i in to_remove.iter().rev() {
-                    self.favorite_files.remove(i);
+                    // Through the same entry point the star uses, so un-starring
+                    // from the panel also updates the workspace state file.
+                    if let Some(path) = self.favorite_files.get(i).cloned() {
+                        self.toggle_favorite(&path);
+                    }
                 }
             });
         }

@@ -1,6 +1,7 @@
 pub mod actions;
 pub mod agent_handlers;
 pub mod editor_actions;
+pub mod favorite_files;
 pub mod gui_commands;
 pub mod overlays;
 pub mod panel_sources;

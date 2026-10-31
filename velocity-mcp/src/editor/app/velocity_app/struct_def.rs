@@ -117,6 +117,12 @@ pub struct WorkspacePreferences {
     /// target across restarts instead of silently falling back to local.
     #[serde(default)]
     pub build_target_id: Option<String>,
+    /// Files the person starred in the Favorites panel. Persisted because the
+    /// panel is a place a person *returns to*; a star that lives until the next
+    /// restart is not a bookmark. Paths whose files are gone are dropped on
+    /// restore rather than drawn as dead rows.
+    #[serde(default)]
+    pub favorites: Vec<String>,
 }
 
 impl WorkspacePreferences {
@@ -163,6 +169,11 @@ impl WorkspacePreferences {
             auto_close_brackets: app.auto_close_brackets_enabled,
             trim_trailing_ws: app.trim_trailing_ws_on_save,
             build_target_id: app.nodes.target_id.clone(),
+            favorites: app
+                .favorite_files
+                .iter()
+                .map(|p| p.to_string_lossy().to_string())
+                .collect(),
         }
     }
 }
@@ -699,7 +710,12 @@ impl VelocityApp {
         AiProvider::from_label(label)
     }
 
-    fn load_workspace_preferences(workspace_root: &Path) -> Option<WorkspacePreferences> {
+    /// The saved workspace state file, or `None` when there is none or it does
+    /// not parse. Readable from inside the crate so a test can assert what
+    /// actually reached the disk instead of what the app remembers.
+    pub(crate) fn load_workspace_preferences(
+        workspace_root: &Path,
+    ) -> Option<WorkspacePreferences> {
         let path = Self::workspace_preferences_path(workspace_root);
         let raw = std::fs::read_to_string(path).ok()?;
         serde_json::from_str(&raw).ok()
@@ -784,6 +800,16 @@ impl VelocityApp {
             }
         });
         self.nodes.target_id = restored_target;
+
+        // Restore the Favorites panel. A starred file that no longer exists is
+        // dropped rather than drawn: the row's only purpose is to open the file.
+        self.favorite_files = preferences
+            .favorites
+            .iter()
+            .map(PathBuf::from)
+            .filter(|p| p.is_file())
+            .take(crate::editor::app::velocity_app::favorite_files::MAX_FAVORITES)
+            .collect();
 
         // Reopen last session's editor tabs (open_editor dedupes by path).
         for tab_path in &preferences.open_tabs {

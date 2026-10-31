@@ -74,6 +74,22 @@ impl<'a> TabViewer for TabViewerImpl<'a> {
             }
             ui.close();
         }
+        // The Favorites panel's input path: the star the panel's empty state has
+        // always told the person to look for here.
+        if let Some(p) = &tab_path {
+            let label = if self.app.is_favorite(p) {
+                "Remove from Favorites"
+            } else {
+                "Add to Favorites"
+            };
+            if ui
+                .button(format!("{} {label}", egui_phosphor::regular::STAR))
+                .clicked()
+            {
+                self.app.toggle_favorite(p);
+                ui.close();
+            }
+        }
     }
 
     fn ui(&mut self, ui: &mut egui::Ui, tab: &mut Self::Tab) {
