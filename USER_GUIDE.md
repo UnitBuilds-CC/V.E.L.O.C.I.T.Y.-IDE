@@ -1600,7 +1600,14 @@ The Site Map is the IDE's **semantic memory** — a persistent, content-addresse
 - **Compiler cache** — Checks site map for cache hits before recompiling
 - **Conflict resolution** — Semantic coupling detection uses triples to find related files
 
-**Merkle integrity:** Every NDA program is verified during generation. Corrupted objects cannot be stored because the hash would mismatch, ensuring the site map is always internally consistent.
+**Merkle integrity — what is actually checked.** Two separate layers, and they cover different failures:
+
+- **Per entry.** Every `index.json` record stores the SHA of its own file. That SHA is re-verified each time the record is read back, so a corrupted or truncated `nodes/…nda` or `kv/…kv` file fails closed: `get_node` returns nothing and `get_kv` refuses the cache fill. The `verify` / `verify_detailed` report checks every entry on demand.
+- **Index level.** `metadata.nda` and `metadata.json` store a root: SHA-256 over `IDX` plus all entry hashes, sorted, reduced to 8 bytes. Reading the site map now *verifies* that claim — the root is recomputed from the entries in `index.json` and compared — instead of quietly rebuilding it. A disagreement means the index and its integrity claim describe different sets of entries: an index edited by hand, a second writer, or a save interrupted between `index.json` and the metadata files.
+
+**If the two disagree** you get `[site_map] site map index does not match its persisted Merkle root…` on stderr from any process that opens the map, and the routed-planning path raises a warning toast naming the remedy. The `index_workspace` tool reports the verdict it found *before* indexing as `indexRootCheck`, with the full sentence in `indexRootIssue`, so an agent can see it without scraping stderr — before, because indexing rewrites the claim, and a tool that reported its own repair as the diagnosis would tell every later reader that nothing was ever wrong. `SiteMap::validate()` carries the same warning for programmatic callers; no dock panel renders it yet. The remedy is a rebuild: **Wiki panel → Rebuild Index**, or the `index_workspace` MCP tool. Either one indexes at least one file, and indexing flushes `index.json` and its metadata together, so the claim and the index agree again afterwards.
+
+**What the index-level check does not cover:** the root hashes the *set of entry keys*, not the bytes they point at — file contents are the per-entry SHA's job, and a key that was inserted with a matching-but-wrong payload is invisible to the root. The check runs when the map is opened and when it is saved, not continuously; a mismatch warns and names the remedy, it does not stop the IDE from using the index. An index whose metadata predates version 3, or one that has never been saved with content, has no claim to test — the IDE says so rather than reporting tampering.
 
 ### NDA Format
 
