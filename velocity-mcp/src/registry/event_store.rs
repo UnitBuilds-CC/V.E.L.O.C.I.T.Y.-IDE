@@ -45,6 +45,69 @@ use std::sync::{LazyLock, Mutex};
 /// is the shared-write conflict that matters for a monotonic decision trail.
 static APPEND_LOCK: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
 
+/// Bytes of the log each append reads to find the sequence number the next
+/// event takes.
+///
+/// A record is one line, so the newest event — and therefore the number the next
+/// one takes — is on the last complete line of the file. The window is a fast
+/// path, not a guarantee of one: `context` is capped at
+/// [`MAX_TOOL_RESULT_FOR_CONTEXT`] but `metadata` and `affected_files` are not,
+/// so a record can outgrow it. When the window holds no complete line the append
+/// falls back to reading the log, which costs what the old path always cost and
+/// numbers the event the same way.
+const SEQUENCE_TAIL_WINDOW_BYTES: u64 = 64 * 1024;
+
+/// What `events.jsonl` is allowed to grow to before the oldest half of it is
+/// dropped, and the environment variable that raises or removes the bound
+/// (`0`/`off`/`none`/`unbounded`/`unlimited`/`infinite` for no bound).
+///
+/// Eight megabytes is the same ceiling the context-spill ledger stops at, and it
+/// is not a guess at tidiness: every consumer of the trail — the Decision Trail
+/// appended to a `read_file` result, `event_context`, `history_brief` — loads
+/// the whole log, so the bound is also what keeps those reads from growing with
+/// the length of a workspace's history.
+pub const DEFAULT_EVENT_LOG_MAX_BYTES: u64 = 8 * 1024 * 1024;
+pub const EVENT_LOG_MAX_BYTES_ENV: &str = "VELOCITY_EVENT_STORE_MAX_BYTES";
+
+/// The floor of events a prune never takes away, so a bound set (or misset) to
+/// something tiny cannot empty the trail the next agent depends on.
+const RETENTION_FLOOR_EVENTS: usize = 256;
+
+thread_local! {
+    /// Times *this thread* re-read the whole event log.
+    ///
+    /// Instrumentation rather than product feature: the append path used to load
+    /// every event to find the highest sequence number, which is what made
+    /// recording the nth event cost n reads. A test can only prove that is gone
+    /// by counting the loads, and the counter is per thread because the suite
+    /// runs tests in parallel against stores that are nothing like each other.
+    static FULL_LOG_SCANS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+}
+
+fn note_full_log_scan() {
+    FULL_LOG_SCANS.with(|counter| counter.set(counter.get() + 1));
+}
+
+/// Full-log reads performed by the calling thread since the process started.
+pub fn full_log_scans() -> u64 {
+    FULL_LOG_SCANS.with(|counter| counter.get())
+}
+
+/// Spell the retention bound the way every other adjustable ceiling in the
+/// harness is spelled: a number is that many bytes, `0`/`off`/`none`/
+/// `unbounded`/`unlimited`/`infinite` means no bound at all, and anything else —
+/// including a typo — falls back to the built-in default rather than launching an
+/// unbounded log. `Unbounded` becomes `u64::MAX`, which is *never* exceeded by a
+/// file size, rather than a large number that a long run can outrun.
+pub fn retention_limit(raw: Option<&str>) -> u64 {
+    use crate::agent::executor::utils::{parse_limit_setting, LimitSetting};
+    match parse_limit_setting(raw) {
+        LimitSetting::Unbounded => u64::MAX,
+        LimitSetting::Value(bytes) => bytes,
+        LimitSetting::Default => DEFAULT_EVENT_LOG_MAX_BYTES,
+    }
+}
+
 // ─── Event model ────────────────────────────────────────────────────────────
 
 /// Outcome of a codebase event.
@@ -163,17 +226,32 @@ impl CodebaseEvent {
 ///
 /// Events are append-only; updates (outcome changes) rewrite the full file
 /// because the expected volume is low (hundreds to thousands of events, not
-/// millions).
+/// millions). An append reads only the log's last line to number itself, and the
+/// file is kept under [`DEFAULT_EVENT_LOG_MAX_BYTES`] — tunable with
+/// [`EVENT_LOG_MAX_BYTES_ENV`] — by dropping its oldest half when it passes.
 pub struct EventStore {
     dir: PathBuf,
+    max_bytes: u64,
 }
 
 impl EventStore {
     /// Open (or create) the event store at `<workspace>/.velocity/events/`.
+    ///
+    /// The retention bound is read from the environment once, here, so an append
+    /// does not pay a `getenv` to decide whether it needs a `stat`.
     pub fn open(workspace: &Path) -> Self {
         let dir = workspace.join(".velocity").join("events");
         let _ = fs::create_dir_all(&dir);
-        Self { dir }
+        Self {
+            dir,
+            max_bytes: retention_limit(std::env::var(EVENT_LOG_MAX_BYTES_ENV).ok().as_deref()),
+        }
+    }
+
+    /// Override the retention bound for this handle. `0` means no bound.
+    pub fn with_max_bytes(mut self, max_bytes: u64) -> Self {
+        self.max_bytes = if max_bytes == 0 { u64::MAX } else { max_bytes };
+        self
     }
 
     /// Path to the JSONL events file.
@@ -258,8 +336,16 @@ impl EventStore {
         let _guard = APPEND_LOCK
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
-        let events = self.load_all()?;
-        let next_seq = events.last().map(|e| e.sequence + 1).unwrap_or(1);
+        // The next sequence number comes from the log's last line, not from its
+        // whole contents: reading every event to number the next one made the
+        // nth append cost n reads, and the trail is written once per tool call.
+        let next_seq = match self.next_sequence_from_tail() {
+            Some(sequence) => sequence,
+            None => {
+                let events = self.load_all()?;
+                events.last().map(|event| event.sequence + 1).unwrap_or(1)
+            }
+        };
 
         let timestamp_ms = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -285,6 +371,9 @@ impl EventStore {
         };
 
         self.append_event(&event)?;
+        // Runs while `APPEND_LOCK` is held: a prune rewrites the same file every
+        // writer in here is appending to, so it cannot be left unlocked.
+        self.enforce_retention();
         Ok(next_seq)
     }
 
@@ -437,6 +526,7 @@ impl EventStore {
         }
         let file = fs::File::open(&path)
             .map_err(|e| format!("Failed to open events file {}: {}", path.display(), e))?;
+        note_full_log_scan();
         let reader = BufReader::new(file);
         let mut events = Vec::new();
         for (idx, line) in reader.lines().enumerate() {
@@ -536,10 +626,109 @@ impl EventStore {
 
     // ── Internal helpers ────────────────────────────────────────────────
 
+    /// The sequence number the next appended event should take, from the last
+    /// line of the log alone — or `None` when the tail cannot answer with
+    /// certainty and the caller has to read the whole file to say.
+    ///
+    /// Two things can make the tail unable to answer, and neither is unusual
+    /// enough to guess around: the newest bytes are a record a killed writer
+    /// left half-written, and the window's first line is itself a fragment of a
+    /// longer file. A half-written record is the more dangerous of the two,
+    /// because its sequence is unknowable — taking it would number the next
+    /// event after a record that may not exist, and the two would then collide.
+    fn next_sequence_from_tail(&self) -> Option<u64> {
+        use std::io::{Read, Seek, SeekFrom};
+        let path = self.events_path();
+        let mut file = fs::File::open(&path).ok()?;
+        let length = file.metadata().ok()?.len();
+        if length == 0 {
+            return Some(1);
+        }
+        let window = length.min(SEQUENCE_TAIL_WINDOW_BYTES);
+        let mut bytes = vec![0u8; window as usize];
+        file.seek(SeekFrom::Start(length - window)).ok()?;
+        file.read_exact(&mut bytes).ok()?;
+        // Lossy, because the cut can land inside a multi-byte character in a
+        // description. The replacement character is a legal string byte for the
+        // parser and no record's `sequence` depends on it.
+        let text = String::from_utf8_lossy(&bytes).into_owned();
+        let mut lines: Vec<&str> = text.split('\n').collect();
+        // Always drop the final element: when the window ends on a newline it is
+        // the empty string after it, and when it does not the writer was cut
+        // mid-record, so those bytes are a fragment, not the newest event.
+        lines.pop();
+        if length > window {
+            // Bytes before the first newline: the tail of a record that started
+            // outside the window. Drop it, and if nothing complete survives the
+            // window held exactly one record and it was this fragment.
+            if lines.len() <= 1 {
+                return None;
+            }
+            lines.remove(0);
+        }
+        let last_line = lines.last()?.trim();
+        if last_line.is_empty() {
+            return None;
+        }
+        highest_sequence_on_line(last_line).map(|sequence| sequence + 1)
+    }
+
+    /// Keep the log inside its byte bound by dropping its oldest half.
+    ///
+    /// The trigger is a `stat`, so an append that does not cross the bound pays
+    /// nothing; the rewrite halves what is there, so the work it does pay
+    /// amortises to a constant per event instead of re-reading the trail on every
+    /// one. Dropped events are gone for `get`/`mark_outcome`/`update_context`,
+    /// which report not-found rather than resurrecting them — that is the cost of
+    /// the bound, and the reason the default is generous and the knob exists.
+    ///
+    /// Callers must hold `APPEND_LOCK`.
+    fn enforce_retention(&self) {
+        let limit = self.max_bytes;
+        let path = self.events_path();
+        let Ok(metadata) = fs::metadata(&path) else {
+            return;
+        };
+        if metadata.len() <= limit {
+            return;
+        }
+        let Ok(events) = self.load_all() else {
+            return;
+        };
+        if events.len() <= RETENTION_FLOOR_EVENTS {
+            // Already at the floor and still over the bound: every record here is
+            // far larger than the cap on a record's context allows, so dropping
+            // more would take the trail rather than trim it. Leave it and say so
+            // instead of rewriting the same file on every append.
+            log::warn!(
+                "event_store: {} events use {} bytes, over the {} byte bound, and the store is \
+                 already at its {} event floor — nothing is dropped.",
+                events.len(),
+                metadata.len(),
+                limit,
+                RETENTION_FLOOR_EVENTS
+            );
+            return;
+        }
+        let keep = (events.len() / 2).max(RETENTION_FLOOR_EVENTS);
+        let dropped = events.len() - keep;
+        match self.save_all(&events[dropped..]) {
+            Ok(()) => log::info!(
+                "event_store: retention dropped the {} oldest events (sequences through {}) \
+                 to hold the log under {} bytes",
+                dropped,
+                events[dropped - 1].sequence,
+                limit
+            ),
+            Err(e) => log::warn!("event_store: retention rewrite failed, log left as is: {e}"),
+        }
+    }
+
     fn append_event(&self, event: &CodebaseEvent) -> Result<(), String> {
         let path = self.events_path();
         let line = serde_json::to_string(event)
             .map_err(|e| format!("Failed to serialize event: {}", e))?;
+        let needs_newline = !log_ends_on_a_line_break(&path);
         let mut file = fs::OpenOptions::new()
             .create(true)
             .append(true)
@@ -550,7 +739,10 @@ impl EventStore {
         // appenders cannot interleave between the two halves.  `writeln!`
         // internally issues two writes on some platforms which is how we
         // previously ended up with `}{` collisions in events.jsonl.
-        let mut payload = String::with_capacity(line.len() + 1);
+        let mut payload = String::with_capacity(line.len() + if needs_newline { 2 } else { 1 });
+        if needs_newline {
+            payload.push('\n');
+        }
         payload.push_str(&line);
         payload.push('\n');
         file.write_all(payload.as_bytes())
@@ -573,6 +765,47 @@ impl EventStore {
             .map_err(|e| format!("Failed to write events file {}: {}", path.display(), e))?;
         Ok(())
     }
+}
+
+/// Whether the log's last byte is a line break, or there is nothing to break.
+///
+/// A writer killed mid-record leaves bytes with no newline behind. Appending
+/// the next record straight onto them glues the two together, and `load_all`
+/// then loses the record that was *not* corrupted — so an unterminated tail has
+/// to be closed off before the following line is written. A file that cannot be
+/// read is treated as framed: this is a repair, not a precondition.
+fn log_ends_on_a_line_break(path: &Path) -> bool {
+    use std::io::{Read, Seek, SeekFrom};
+    let Ok(mut file) = fs::File::open(path) else {
+        return true;
+    };
+    if file.seek(SeekFrom::End(-1)).is_err() {
+        // Empty file: nothing to terminate.
+        return true;
+    }
+    let mut last = [0u8; 1];
+    match file.read(&mut last) {
+        Ok(1) => last[0] == b'\n',
+        _ => true,
+    }
+}
+
+/// The newest sequence number written on one physical line of the log.
+///
+/// Normally that is the line's own record. It is the maximum of several when a
+/// concurrent writer glued records together without a newline between them —
+/// the `}{` shape `load_all` recovers from — because then the *last* object on
+/// the line is the newest event, and taking the first would hand out a sequence
+/// that is already in use.
+fn highest_sequence_on_line(line: &str) -> Option<u64> {
+    if let Ok(event) = serde_json::from_str::<CodebaseEvent>(line) {
+        return Some(event.sequence);
+    }
+    recover_concatenated(line)
+        .iter()
+        .filter_map(|fragment| serde_json::from_str::<CodebaseEvent>(fragment).ok())
+        .map(|event| event.sequence)
+        .max()
 }
 
 /// Best-effort recovery of two or more JSON objects that were concatenated
@@ -1222,6 +1455,7 @@ pub fn auto_record_tool_event(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::io::Write;
     use tempfile::TempDir;
 
     fn open_store() -> (TempDir, EventStore) {
@@ -2154,5 +2388,173 @@ mod tests {
             .unwrap();
         assert!(conflict_file_groups(dir.path()).is_empty());
         assert!(conflict_file_groups(std::path::Path::new("nonexistent-workspace")).is_empty());
+    }
+
+    // ── the append path, and the bound on the log it writes ─────────────
+
+    /// Append `n` events and return the sequence numbers the store handed out.
+    fn record_n(store: &EventStore, n: usize) -> Vec<u64> {
+        (0..n)
+            .map(|i| {
+                store
+                    .record(
+                        "write_file",
+                        &format!("change {i}"),
+                        None,
+                        None,
+                        None,
+                        vec![format!("src/f{i}.rs")],
+                    )
+                    .unwrap()
+            })
+            .collect()
+    }
+
+    fn events_path_of(dir: &Path) -> PathBuf {
+        dir.join(".velocity").join("events").join("events.jsonl")
+    }
+
+    #[test]
+    fn recording_an_event_does_not_reread_the_log_to_number_itself() {
+        let (_dir, store) = open_store();
+        let before = full_log_scans();
+        let sequences = record_n(&store, 40);
+        assert_eq!(
+            full_log_scans() - before,
+            0,
+            "every append re-read the whole log to find the highest sequence number: \
+             40 events cost 40 full reads, and 40,000 would cost a billion records parsed"
+        );
+        assert_eq!(sequences.first().copied(), Some(1));
+        assert_eq!(sequences.last().copied(), Some(40));
+        // The counter measures the thing it claims: a read that should scan does.
+        store.load_all().unwrap();
+        assert_eq!(full_log_scans() - before, 1, "load_all is the scan");
+    }
+
+    #[test]
+    fn a_half_written_newest_record_does_not_steal_the_next_sequence() {
+        let (dir, store) = open_store();
+        record_n(&store, 2);
+        // What a killed writer leaves behind: bytes of a record with no newline
+        // and no end. Its sequence field is readable and it is not a record.
+        fs::OpenOptions::new()
+            .append(true)
+            .open(events_path_of(dir.path()))
+            .unwrap()
+            .write_all(b"{\"sequence\":9,\"context\":\"half-writt")
+            .unwrap();
+        let third = store
+            .record("write_file", "third", None, None, None, vec![])
+            .unwrap();
+        assert_eq!(
+            third, 3,
+            "the store numbered the next event off a fragment that may never have been a record"
+        );
+        let events = store.load_all().unwrap();
+        let sequences: Vec<u64> = events.iter().map(|e| e.sequence).collect();
+        assert_eq!(
+            sequences,
+            vec![1, 2, 3],
+            "the append was glued onto the unterminated fragment, so the record that \
+             was still intact is the one the log lost"
+        );
+    }
+
+    #[test]
+    fn a_newest_record_larger_than_the_window_falls_back_to_the_full_read() {
+        let (dir, store) = open_store();
+        record_n(&store, 1);
+        // A record too long for the tail window: the window is then one partial
+        // line and holds no complete record to read a number off.
+        use std::io::Write;
+        fs::OpenOptions::new()
+            .append(true)
+            .open(events_path_of(dir.path()))
+            .unwrap()
+            .write_all(b"y".repeat(70_000).as_slice())
+            .unwrap();
+        assert_eq!(
+            store.next_sequence_from_tail(),
+            None,
+            "the tail held no complete record, so guessing from it was not available"
+        );
+        let before = full_log_scans();
+        assert_eq!(
+            store
+                .record("write_file", "second", None, None, None, vec![])
+                .unwrap(),
+            2,
+            "the fallback has to produce the same number the full read always did"
+        );
+        assert_eq!(full_log_scans() - before, 1, "and it has to be the scan");
+    }
+
+    #[test]
+    fn retention_keeps_a_contiguous_suffix_of_newest_events() {
+        let (_dir, store) = open_store();
+        let store = store.with_max_bytes(4_096);
+        let recorded = record_n(&store, 320);
+        let events = store.load_all().unwrap();
+        let sequences: Vec<u64> = events.iter().map(|e| e.sequence).collect();
+        assert!(
+            events.len() < recorded.len(),
+            "the log never shrank under a 4 KiB bound ({} events kept)",
+            events.len()
+        );
+        assert!(
+            events.len() >= RETENTION_FLOOR_EVENTS,
+            "pruning went below the floor that is supposed to protect the trail: {}",
+            events.len()
+        );
+        assert_eq!(
+            sequences.last().copied(),
+            recorded.last().copied(),
+            "the newest event is the one an agent asks about; it cannot be the first thing dropped"
+        );
+        let contiguous = sequences.windows(2).all(|pair| pair[1] == pair[0] + 1);
+        assert!(
+            contiguous,
+            "a retained window with holes in it: {sequences:?}"
+        );
+        // With a bound this small the floor, not the bound, is what stops the
+        // prune: 256 records of this size are already far past 4 KiB, so the
+        // store keeps exactly the floor — the newest ones — instead of emptying
+        // the trail to obey a number that cannot be honoured.
+        assert_eq!(events.len(), RETENTION_FLOOR_EVENTS);
+        assert_eq!(
+            sequences.first().copied(),
+            Some(recorded.len() as u64 - RETENTION_FLOOR_EVENTS as u64 + 1),
+            "the retained window must be the newest suffix, not an arbitrary slice"
+        );
+    }
+
+    #[test]
+    fn the_default_bound_leaves_an_ordinary_log_alone() {
+        let (dir, store) = open_store();
+        record_n(&store, 60);
+        assert_eq!(store.count().unwrap(), 60);
+        assert!(
+            fs::metadata(events_path_of(dir.path())).unwrap().len() < DEFAULT_EVENT_LOG_MAX_BYTES,
+            "a 60-event log should not be anywhere near the default bound"
+        );
+    }
+
+    #[test]
+    fn the_bound_is_spelled_like_every_other_ceiling() {
+        assert_eq!(retention_limit(Some("2000000")), 2_000_000);
+        for off in ["0", "off", "none", "unbounded", "unlimited", "infinite"] {
+            assert_eq!(
+                retention_limit(Some(off)),
+                u64::MAX,
+                "{off} must mean no bound at all, never a number a long run can outrun"
+            );
+        }
+        assert_eq!(
+            retention_limit(Some("eight megabytes")),
+            DEFAULT_EVENT_LOG_MAX_BYTES,
+            "a typo falls back to the default rather than silently unbounding the log"
+        );
+        assert_eq!(retention_limit(None), DEFAULT_EVENT_LOG_MAX_BYTES);
     }
 }
