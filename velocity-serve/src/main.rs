@@ -30,9 +30,17 @@ struct Cli {
     #[arg(long, default_value = "7331")]
     port: u16,
 
-    /// Authentication token required on all API endpoints
+    /// Bind address. Loopback by default: the frame stream *is* the workspace
+    /// screen and `/input` drives it, so anything reachable off this machine is a
+    /// remote desktop over plain HTTP.
+    #[arg(long, default_value = "127.0.0.1")]
+    host: String,
+
+    /// Authentication token required on all API endpoints. Prefer
+    /// `VELOCITY_SERVE_TOKEN` — a command-line value is visible in the process
+    /// list and stays in shell history.
     #[arg(long)]
-    token: String,
+    token: Option<String>,
 
     /// Workspace root directory
     #[arg(long)]
@@ -45,6 +53,35 @@ struct Cli {
     /// Framebuffer height in pixels
     #[arg(long, default_value = "768")]
     height: u32,
+}
+
+/// The server's one secret: `--token`, else `VELOCITY_SERVE_TOKEN`, else a
+/// refusal. Blank is a refusal too, because an empty configured token used to
+/// authenticate nothing while every request still got the page that embedded it.
+fn resolve_token(cli_token: Option<&str>, env_token: Option<&str>) -> Result<String, &'static str> {
+    let candidate = cli_token
+        .map(str::to_string)
+        .or_else(|| env_token.map(str::to_string))
+        .unwrap_or_default();
+    if candidate.trim().is_empty() {
+        return Err(
+            "a token is required: pass --token or set VELOCITY_SERVE_TOKEN (a blank token \
+                    would guard nothing)",
+        );
+    }
+    Ok(candidate)
+}
+
+/// True when `host` can be reached from another machine.
+fn is_reachable_off_box(host: &str) -> bool {
+    let host = host.trim();
+    if host.eq_ignore_ascii_case("localhost") {
+        return false;
+    }
+    match host.parse::<std::net::IpAddr>() {
+        Ok(ip) => !ip.is_loopback(),
+        Err(_) => true, // a name we cannot parse is assumed to resolve outward
+    }
 }
 
 // ─── Input protocol (browser → server) ─────────────────────────────────────
@@ -476,7 +513,11 @@ fn encode_png(buf: &[u8], width: u32, height: u32) -> Vec<u8> {
 
 // ─── Thin-client HTML ──────────────────────────────────────────────────────
 
-fn client_html(width: u32, height: u32, token: &str) -> String {
+/// The thin-client page. It carries **no** secret: the old build embedded the
+/// server's bearer token into `GET /`, which required no token, so anyone who
+/// could reach the port read the key to the whole IDE off an unauthenticated
+/// response. The operator types the token once; it lives in `sessionStorage`.
+fn client_html(width: u32, height: u32) -> String {
     format!(
         r#"<!DOCTYPE html>
 <html><head><meta charset="utf-8"><title>Velocity IDE — Remote</title>
@@ -489,7 +530,18 @@ canvas{{display:block;width:100%;height:100%;object-fit:contain;image-rendering:
 <canvas id="c" width="{width}" height="{height}" tabindex="0"></canvas>
 <div id="status">connecting…</div>
 <script>
-const TOKEN = "{token}";
+let TOKEN = sessionStorage.getItem('velocity_token') || '';
+function askToken(refused) {{
+    const t = window.prompt(refused
+        ? 'Velocity frame server: that token was refused. Enter the --token the server was started with.'
+        : 'Velocity frame server: enter the --token this server was started with.', TOKEN);
+    if (t && t.trim()) {{
+        TOKEN = t.trim();
+        sessionStorage.setItem('velocity_token', TOKEN);
+    }}
+    return TOKEN.length > 0;
+}}
+if (!TOKEN) askToken(false);
 let W = {width}, H = {height};
 const VIEWONLY = location.hash.includes('viewonly');
 const canvas = document.getElementById('c');
@@ -514,6 +566,12 @@ async function pollLoop() {{
         try {{
             const r = await fetch('/frame?since=' + since, {{headers: {{'Authorization': 'Bearer ' + TOKEN}}}});
             if (r.status === 304) continue;           // nothing new, poll again
+            if (r.status === 401) {{                  // the page carries no secret: ask, then retry
+                sessionStorage.removeItem('velocity_token'); TOKEN = '';
+                status.textContent = 'token required';
+                askToken(since > 0);
+                await new Promise(s => setTimeout(s, 300)); continue;
+            }}
             if (!r.ok) {{ status.textContent = 'HTTP ' + r.status; await new Promise(s => setTimeout(s, 1000)); continue; }}
             const seq = +(r.headers.get('X-Frame-Seq') || 0);
             const cur = r.headers.get('X-Cursor') || 'default';
@@ -666,7 +724,6 @@ if (!VIEWONLY) {{
     }});
 }}
 </script></body></html>"#,
-        token = token,
         width = width,
         height = height
     )
@@ -680,15 +737,29 @@ fn main() {
 
     // A blank --token would otherwise make every request authenticate under a
     // prefix check; refuse to start rather than serve an unguarded control plane.
-    if cli.token.trim().is_empty() {
-        eprintln!("[velocity-serve] --token must be a non-empty secret");
-        std::process::exit(2);
-    }
+    let token = match resolve_token(
+        cli.token.as_deref(),
+        std::env::var("VELOCITY_SERVE_TOKEN").ok().as_deref(),
+    ) {
+        Ok(t) => t,
+        Err(reason) => {
+            eprintln!("[velocity-serve] {reason}");
+            std::process::exit(2);
+        }
+    };
 
     println!("[velocity-serve] Starting headless IDE frame server");
     println!("  Workspace : {}", cli.workspace.display());
-    println!("  Port      : {}", cli.port);
+    println!("  Listening : {}:{}", cli.host, cli.port);
     println!("  Size      : {}x{}", cli.width, cli.height);
+    if is_reachable_off_box(&cli.host) {
+        println!(
+            "  WARNING: this bind is reachable from other machines over plain HTTP.
+           The frame stream is your entire workspace screen and /input drives it,
+           and the bearer token crosses the wire unencrypted. Put a TLS or SSH
+           tunnel in front of it, or bind 127.0.0.1 and port-forward."
+        );
+    }
 
     // ── Infrastructure (mirrors velocity-ide-gui setup) ──
     let (ui_tx, agent_rx): (Sender<AgentToUiMessage>, Receiver<AgentToUiMessage>) =
@@ -729,13 +800,13 @@ fn main() {
     let frame_for_http = hub.clone();
     let input_for_http = input_tx.clone();
     let viewport_for_http = viewport.clone();
-    let token = cli.token.clone();
+    let host = cli.host.clone();
     let port = cli.port;
     let cli_width = cli.width;
     let cli_height = cli.height;
 
     std::thread::spawn(move || {
-        let addr = format!("0.0.0.0:{}", port);
+        let addr = format!("{}:{}", host, port);
         let server = Server::http(&addr).expect("bind HTTP");
         println!("[velocity-serve] HTTP listening on {}", addr);
 
@@ -743,9 +814,10 @@ fn main() {
             let url = request.url().to_string();
             let method = request.method().clone();
 
-            // GET / — serve thin-client HTML (no auth)
+            // GET / — the thin-client page. Unauthenticated on purpose: it is a
+            // shell for the real endpoints, and it now carries no secret at all.
             if method == Method::Get && (url == "/" || url == "/index.html") {
-                let html = client_html(cli_width, cli_height, &token);
+                let html = client_html(cli_width, cli_height);
                 let hdr = Header::from_bytes(&b"Content-Type"[..], &b"text/html"[..]).unwrap();
                 let resp = Response::from_string(html).with_header(hdr);
                 let _ = request.respond(resp);
@@ -1001,6 +1073,65 @@ mod tests {
         assert!(!bearer_ok("Basic secret123", "secret123")); // wrong scheme
         assert!(!bearer_ok("secret123", "secret123")); // no scheme at all
         assert!(!bearer_ok("Bearer whatever", "")); // empty configured token refuses all
+    }
+
+    /// The whole point of the page being unauthenticated was that it handed the
+    /// token to whoever asked. It must not carry one.
+    #[test]
+    fn the_served_page_embeds_no_secret() {
+        let html = client_html(1280, 768);
+        assert!(
+            !html.contains("TOKEN = \""),
+            "the page must not assign a literal token: {html}"
+        );
+        assert!(
+            html.contains("sessionStorage.getItem('velocity_token')"),
+            "the token comes from the operator, kept for the session"
+        );
+        assert!(
+            html.contains("function askToken"),
+            "a 401 has to lead to a prompt, not to a stalled canvas"
+        );
+        // …and the viewport still reaches the canvas.
+        assert!(html.contains(r#"<canvas id="c" width="1280" height="768""#));
+    }
+
+    #[test]
+    fn a_token_comes_from_the_flag_or_the_environment_but_never_from_blank() {
+        assert_eq!(
+            resolve_token(Some("from-flag"), Some("from-env")).unwrap(),
+            "from-flag",
+            "the explicit flag wins over the environment"
+        );
+        assert_eq!(
+            resolve_token(None, Some("from-env")).unwrap(),
+            "from-env",
+            "the environment is the way to keep the secret out of the process list"
+        );
+        for (flag, env) in [
+            (None, None),
+            (Some(""), None),
+            (Some("   "), None),
+            (None, Some("")),
+        ] {
+            assert!(
+                resolve_token(flag, env).is_err(),
+                "flag={flag:?} env={env:?} must refuse to start"
+            );
+        }
+    }
+
+    #[test]
+    fn only_a_loopback_bind_stays_on_this_machine() {
+        for host in ["127.0.0.1", "::1", "localhost", "LOCALHOST"] {
+            assert!(
+                !is_reachable_off_box(host),
+                "{host} cannot be reached from another machine"
+            );
+        }
+        for host in ["0.0.0.0", "::", "10.0.0.7", "ide.example.com"] {
+            assert!(is_reachable_off_box(host), "{host} is reachable off-box");
+        }
     }
 
     #[test]
