@@ -654,7 +654,7 @@ mod tests {
             "terraform apply -auto-approve",
             "taskkill /F /IM node.exe",
             "rm -rf /tmp/scratch",
-            "Remove-Item -Recurse -Force C:\\Users\\visse\\target",
+            "Remove-Item -Recurse -Force C:\\Users\\deploy\\target",
             "git reset --hard HEAD~3",
             "git clean -fd",
             "reg delete HKCU\\Software\\Foo",
