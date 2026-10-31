@@ -327,6 +327,16 @@ engine that refuses calls below the model is a separate surface: **Settings ▸ 
 [rules-engine.md](../rules-engine.md)). The two are additive and enforced at the same
 dispatch choke point.
 
+**Unattended runs park here.** A dispatched worker has no one to ask, so a call it is not
+allowed to make on its own is held and written to the **APPROVAL QUEUE** rather than
+auto-approved; the run's transcript says so and names this panel. Approving an item lets
+exactly that action through - the item carries the command text, so approving
+`run_command: git push origin main` does not authorise every `run_command` - and denying
+one tells the model not to retry it. A rule from the rule engine outranks either outcome:
+if a recorded rule refuses the call, approving the queue item does not release it.
+What reaches outside the workspace, and what does not, is classified in
+[rules-engine.md → Who answers an approval request](../rules-engine.md#who-answers-an-approval-request-when-no-person-is-watching).
+
 ---
 
 ## Git

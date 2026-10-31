@@ -85,6 +85,39 @@ action blocked — server "192.168.1.100"; rule "live-db" (workspace, rule-3f2a1
 the live database is off limits, use the dev server. Instead, use "192.168.0.2".
 ```
 
+## Who answers an approval request when no person is watching
+
+An unattended run (`team_dispatch`, orchestrator workers, anything through
+`headless.rs`) gets the same `RequestToolApproval` message a GUI user gets. It does
+not answer it itself. `velocity-mcp/src/agent/executor/unattended.rs` decides, from
+three authorities, applied in this order:
+
+1. **Rules** — `rules::gate_tool_call` on `.velocity/rules.json`. A recorded rule wins
+   over everything below, including a policy that says Allow and a queue item an
+   operator already approved. An unreadable rule file fails the call closed.
+2. **Policy** — `.velocity/policy.json`. `Deny` denies and names the authority that spent
+   itself (a rule versus an exhausted budget). `NeedsApproval` parks the request; the run
+   does not grant its own approval ask.
+3. **Reach** — what the call can affect, read off the `ToolGroup` segmentation the tool
+   surface already uses. Inside: Files, Memory, Workspace, Rules, CustomTools, WebContent,
+   `git_clone`, GET-only connector calls, and — decided per call by its command text, not
+   per tool — the build/verify commands of `run_command`. Outside: the groups that drive
+   something (`IdeGui`, `Media`, `Browser*`, `DesktopDrive`, `OsControl`, `UiVerify`,
+   `Team`, `Org*`, `Infra`) and shell commands that push, publish, post, delete, recurse,
+   or reach a remote host.
+
+Outside is **held**, not denied, and the hold says so in the model's transcript. Two
+routes lift it, and only these: an `allow` rule for that tool in `policy.json`
+(`Settings` → Governance), or approving the parked request in the same panel. Approving
+`run_command: git push origin main` authorises that command, not every `run_command` —
+the queue item carries the command text for exactly that reason, and a retried hold
+updates the existing item rather than adding a duplicate.
+
+A refusal reaches the model with its reason: `Error: \`tool\` was NOT executed.` followed
+by why — a rule's text, the policy's wording, the person's Decline note, or the fact that
+no answer arrived before the batch dispatched. A call that was approved runs; a call that
+was not is never silently skipped.
+
 ## Persistence and failure
 
 - Atomic write: pretty JSON to `<path>.tmp`, then rename.
