@@ -177,8 +177,10 @@ fn main() {
         return;
     }
 
-    println!("Starting V.E.L.O.C.I.T.Y. NMCP Server...");
-    println!("Mode: {}", mode);
+    // stdout is the JSON-RPC channel in stdio mode: a banner here lands in the
+    // client's message stream before its first request is answered.
+    eprintln!("Starting V.E.L.O.C.I.T.Y. NMCP Server...");
+    eprintln!("Mode: {}", mode);
 
     match mode {
         "stdio" => {
@@ -188,7 +190,7 @@ fn main() {
             }
         }
         "shmem" => {
-            println!("Shared Memory Path: {}", buffer_path);
+            eprintln!("Shared Memory Path: {}", buffer_path);
             if let Err(e) = protocol::nmcp_binary::run_shmem_loop(buffer_path) {
                 eprintln!("Shared Memory loop encountered error: {}", e);
                 process::exit(1);

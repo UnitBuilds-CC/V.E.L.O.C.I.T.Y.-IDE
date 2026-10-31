@@ -1,14 +1,15 @@
 use crate::ipc::shmem::{self, SharedMemoryBuffer};
-use crate::registry;
-use serde_json::{json, Value};
+use serde_json::json;
 use std::error::Error;
 
 pub fn run_shmem_loop(buffer_path: &str) -> Result<(), Box<dyn Error>> {
+    // stderr, not stdout: a harness that captures the child's output into a file
+    // stores whatever the server prints there as if it were protocol traffic.
     log::info!("Initializing Shared Memory Buffer at: {}", buffer_path);
-    println!("Initializing Shared Memory Buffer at: {}", buffer_path);
+    eprintln!("Initializing Shared Memory Buffer at: {}", buffer_path);
     let mut buffer = SharedMemoryBuffer::create_or_open(buffer_path)?;
     log::info!("Shared Memory Server ready. Waiting for host requests...");
-    println!("Shared Memory Server initialized. Waiting for host requests...");
+    eprintln!("Shared Memory Server initialized. Waiting for host requests...");
 
     loop {
         // Block until request event is signaled (native wait on Windows, sleep on non-Windows)
@@ -23,74 +24,25 @@ pub fn run_shmem_loop(buffer_path: &str) -> Result<(), Box<dyn Error>> {
             // Read the binary JSON-RPC input from the shared memory request region
             match buffer.read_input() {
                 Ok(input_str) => {
-                    let request: Value = match serde_json::from_str(&input_str) {
-                        Ok(v) => v,
-                        Err(e) => {
-                            let err_res = json!({
-                                "jsonrpc": "2.0",
-                                "error": { "code": -32700, "message": format!("Parse error: {}", e) },
-                                "id": null
-                            });
-                            let res_str = serde_json::to_string(&err_res)?;
-                            let _ = buffer.write_output(&res_str);
-                            buffer.set_state(shmem::STATE_ERROR);
-                            let _ = buffer.flush();
-                            buffer.signal_response();
-                            continue;
-                        }
+                    // One protocol face, one set of rules. This loop and the stdio
+                    // loop used to hold near-identical copies of the request
+                    // switch, and they had drifted: the shared-memory side answers
+                    // no `initialize`, no `ping`, and reported every failed tool
+                    // call as one prose string, so a workspace refusal and a
+                    // handler fault were the same fact to the host.
+                    let response = super::json_rpc::response_for_transport(&input_str);
+                    // STATE_ERROR means "there is no answer to read", which is the
+                    // one thing the host cannot act on. Anything else — including
+                    // a refusal or an unknown method — is an answer in the buffer,
+                    // and the host learns what kind from the payload.
+                    let state = if super::json_rpc::is_unanswerable(&response) {
+                        shmem::STATE_ERROR
+                    } else {
+                        shmem::STATE_RES_READY
                     };
-
-                    let method = request["method"].as_str().unwrap_or("");
-                    let id = &request["id"];
-
-                    let response = match method {
-                        "tools/list" => {
-                            let tools = registry::get_tools();
-                            json!({
-                                "jsonrpc": "2.0",
-                                "id": id,
-                                "result": { "tools": tools }
-                            })
-                        }
-                        "tools/call" => {
-                            let name = request["params"]["name"].as_str().unwrap_or("");
-                            let arguments = &request["params"]["arguments"];
-
-                            let mut is_error = false;
-                            let output_text = match registry::call_tool(name, arguments) {
-                                Ok(res) => res,
-                                Err(e) => {
-                                    is_error = true;
-                                    format!("Error running tool '{}': {}", name, e)
-                                }
-                            };
-
-                            json!({
-                                "jsonrpc": "2.0",
-                                "id": id,
-                                "result": {
-                                    "content": [
-                                        {
-                                            "type": "text",
-                                            "text": output_text
-                                        }
-                                    ],
-                                    "isError": is_error
-                                }
-                            })
-                        }
-                        _ => {
-                            json!({
-                                "jsonrpc": "2.0",
-                                "id": id,
-                                "error": { "code": -32601, "message": format!("Method '{}' not supported", method) }
-                            })
-                        }
-                    };
-
                     let res_str = serde_json::to_string(&response)?;
                     buffer.write_output(&res_str)?;
-                    buffer.set_state(shmem::STATE_RES_READY);
+                    buffer.set_state(state);
                     buffer.flush()?;
                     buffer.signal_response();
                 }

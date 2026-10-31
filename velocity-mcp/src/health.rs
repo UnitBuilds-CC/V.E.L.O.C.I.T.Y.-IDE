@@ -1,27 +1,13 @@
-//! Health check endpoints for Velocity MCP server.
+//! Health check payload for the Velocity MCP server.
 //!
-//! Provides JSON-RPC health check methods for monitoring and load balancing.
-//!
-//! # Usage
-//!
-//! ```json
-//! {"jsonrpc":"2.0","method":"health","id":1}
-//! ```
-//!
-//! Response:
-//! ```json
-//! {
-//!   "jsonrpc": "2.0",
-//!   "result": {
-//!     "status": "ok",
-//!     "version": "1.0.0",
-//!     "uptime_seconds": 3600,
-//!     "providers_available": 4,
-//!     "workspace": "/path/to/workspace"
-//!   },
-//!   "id": 1
-//! }
-//! ```
+//! These types describe a monitoring snapshot — status, version, uptime,
+//! workspace, provider count. They are **not** wired to the stdio JSON-RPC
+//! loop, which answers `initialize`, `ping`, `tools/list` and `tools/call`
+//! only; a client that sends `method: "health"` here gets `-32601 Method
+//! not found`. Use `ping` for liveness until a dispatch arm is added (and if
+//! it is, fill `providers_available` from the caller: `HealthChecker::check`
+//! reports zero, and `check_resources` and `count_recent_errors` are stubs
+//! that return 0.0 rather than measurements).
 
 use serde::{Deserialize, Serialize};
 use std::time::Instant;

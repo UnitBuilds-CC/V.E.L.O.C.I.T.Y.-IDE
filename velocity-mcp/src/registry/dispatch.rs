@@ -31,6 +31,16 @@ pub fn strip_verbatim_prefix(path: &Path) -> std::path::PathBuf {
     path.to_path_buf()
 }
 
+/// Wrap a gate's refusal in the type that says *a decision was made about this
+/// call*, not *something inside the tool broke*.
+///
+/// The message travels verbatim — each gate's text already names the authority
+/// (rule, policy, lifecycle hook) and the remedy that lifts it — so a caller
+/// tells the two facts apart by the variant rather than by grepping prose.
+fn refusal(message: String) -> Box<dyn Error> {
+    Box::new(ToolError::GovernanceDenied(message))
+}
+
 pub fn call_tool_in_workspace(
     root: &Path,
     name: &str,
@@ -55,7 +65,7 @@ pub fn call_tool_in_workspace(
     // no policy configured this allows everything (no behavior change).
     crate::editor::governance::gate_tool_call(&root, name, arguments).map_err(|e| {
         log::warn!("tool dispatch: governance denied '{}': {}", name, e);
-        e
+        refusal(e)
     })?;
 
     // Deterministic rules gate. The rule files are re-stamped on every call, so
@@ -66,7 +76,7 @@ pub fn call_tool_in_workspace(
     // agent can steer to the sanctioned path rather than retry blindly.
     crate::rules::gate_tool_call(&root, name, arguments).map_err(|e| {
         log::warn!("tool dispatch: rule blocked '{}': {}", name, e);
-        e
+        refusal(e)
     })?;
 
     // ── Lifecycle hook: pre_tool_use ──────────────────────────────────────
@@ -79,7 +89,7 @@ pub fn call_tool_in_workspace(
             name,
             reason
         );
-        return Err(format!("denied by lifecycle hook: {reason}").into());
+        return Err(refusal(format!("denied by lifecycle hook: {reason}")));
     }
 
     let start = Instant::now();
@@ -91,7 +101,7 @@ pub fn call_tool_in_workspace(
     // Try built-in tool handlers first (in priority order).
     let builtin = try_builtin_tools(&root, name, arguments);
 
-    match &builtin {
+    match builtin {
         Ok(Some(output)) => {
             // Capture the site map Merkle root after the tool call.
             let merkle_after = read_sitemap_merkle_root(&root);
@@ -99,7 +109,7 @@ pub fn call_tool_in_workspace(
             // a payload saying `"success": false` - including the bug #40
             // session refusals - was logged as a success, so the one record of
             // what touched a live session claimed the opposite of what happened.
-            let refused = in_band_failure(output);
+            let refused = in_band_failure(&output);
             let audit_outcome = match &refused {
                 None => ToolAuditOutcome::Success,
                 Some(note) => ToolAuditOutcome::Error(note.clone()),
@@ -149,11 +159,11 @@ pub fn call_tool_in_workspace(
             // agent sees *why* code exists, not just *what* it contains.
             if name == "read_file" {
                 if let Some(rel_path) = arguments["relativeFilePath"].as_str() {
-                    let enriched = event_store::enrich_read_response(&root, rel_path, output);
+                    let enriched = event_store::enrich_read_response(&root, rel_path, &output);
                     return Ok(enriched);
                 }
             }
-            Ok(output.clone())
+            Ok(output)
         }
         Ok(None) => {
             // No built-in handler — try custom tools.
@@ -209,7 +219,12 @@ pub fn call_tool_in_workspace(
                 event_store::EventOutcome::Failure,
                 Some(e.to_string()),
             );
-            Err(e.to_string().into())
+            // The typed error travels intact. Flattening it to a string here is
+            // what made a refusal and a fault indistinguishable one layer up: the
+            // audit trail above already has the prose, and a caller that wants to
+            // know *which kind* of failure this was can only learn it from the
+            // type.
+            Err(e)
         }
     }
 }
@@ -661,6 +676,108 @@ mod tests {
             note.chars().count() <= MAX_FAILURE_NOTE_CHARS + 1,
             "{} chars",
             note.chars().count()
+        );
+    }
+
+    // ─── Item 5: a refusal and a fault are different facts on the wire ─────
+
+    use crate::protocol::json_rpc::{classify, FailureKind};
+
+    /// A workspace policy that denies a tool, written the way the Governance panel
+    /// writes it.
+    fn denied_policy(root: &Path, tool: &str) {
+        use crate::editor::governance::{Budget, Decision, PolicyEngine, Rule, RuleEffect};
+        let engine = PolicyEngine {
+            default_decision: Decision::Allow,
+            rules: vec![Rule {
+                tool: tool.to_string(),
+                effect: RuleEffect::Deny,
+                path_prefix: None,
+                domain: None,
+            }],
+            budget: Budget::default(),
+        };
+        engine.save(root).expect("policy file must be writable");
+    }
+
+    /// The finding this closes: through `call_tool_in_workspace` a policy refusal
+    /// used to arrive as an untyped string, so the protocol layer could only call
+    /// it an internal error — the same label it gives a disk fault.
+    #[test]
+    fn a_policy_refusal_reaches_the_protocol_layer_as_a_refusal() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        denied_policy(root, "read_file");
+        let err = call_tool_in_workspace(root, "read_file", &json!({"relativeFilePath": "a.txt"}))
+            .expect_err("the policy denies this tool");
+        assert_eq!(
+            classify(err.as_ref()),
+            FailureKind::PermissionDenied,
+            "a decision about the workspace is not a broken handler"
+        );
+        // The refusal keeps its own words: no "governance denied:" prefix, no
+        // "Error running tool" wrapper. The text names what declined the call.
+        assert_eq!(
+            err.to_string(),
+            "blocked by policy: tool 'read_file' is denied"
+        );
+    }
+
+    /// The other half of the distinction, on the same real path.
+    #[test]
+    fn an_unregistered_tool_is_not_reported_as_a_refusal() {
+        let tmp = tempfile::tempdir().unwrap();
+        let err = call_tool_in_workspace(tmp.path(), "no_such_tool_at_all", &json!({}))
+            .expect_err("nothing by that name is registered");
+        assert_eq!(classify(err.as_ref()), FailureKind::ToolNotFound);
+    }
+
+    /// Both gates wrap; the second one is the rules engine, whose refusal text is
+    /// the longest-running contract in the workspace (it names the rule and the
+    /// remedy, and an agent steers by it).
+    #[test]
+    fn a_rule_refusal_also_arrives_typed() {
+        use crate::rules::{NewRule, ParamValue, RulePaths, RuleScope};
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().to_path_buf();
+        let paths = RulePaths::for_workspace(&root);
+        let mut params = std::collections::BTreeMap::new();
+        params.insert(
+            "tools".to_string(),
+            ParamValue::List(vec!["run_command".to_string()]),
+        );
+        crate::rules::lifecycle::create(
+            &paths,
+            &root,
+            NewRule {
+                name: "no-shell".to_string(),
+                description: "The agent does not get a raw shell.".to_string(),
+                kind: crate::rules::RuleKind::ToolBan,
+                params,
+                scope: RuleScope::Workspace,
+                remedy: Some("use the structured file tools".to_string()),
+                witnesses: None,
+                owner: crate::rules::AGENT.to_string(),
+                provenance: "dispatch test".to_string(),
+            },
+        )
+        .expect("the rule must be live for the very next call");
+
+        let err = call_tool_in_workspace(&root, "run_command", &json!({"command": "dir"}))
+            .expect_err("the rule bans this tool");
+        assert_eq!(
+            classify(err.as_ref()),
+            FailureKind::PermissionDenied,
+            "the rules gate is the authority the ledger item was about"
+        );
+        let text = err.to_string();
+        assert!(
+            text.contains("no-shell"),
+            "the rule must stay named: {text}"
+        );
+        assert!(
+            !text.starts_with("governance denied:"),
+            "the wrap must not restate the refusal in the server's voice: {text}"
         );
     }
 }

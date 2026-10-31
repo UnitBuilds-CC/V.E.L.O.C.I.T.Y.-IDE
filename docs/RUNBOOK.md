@@ -26,8 +26,8 @@ systemctl status velocity-mcp
 # View recent logs
 journalctl -u velocity-mcp -n 50 --no-pager
 
-# Check health
-echo '{"jsonrpc":"2.0","method":"health","id":1}' | velocity_mcp --mode stdio
+# Liveness: stdio answers `ping` with an empty result
+echo '{"jsonrpc":"2.0","method":"ping","id":1}' | velocity_mcp --mode stdio
 ```
 
 ### Emergency Contacts
@@ -76,8 +76,8 @@ journalctl -u velocity-mcp -f
 ### Health Checks
 
 ```bash
-# MCP server health (stdio JSON-RPC)
-echo '{"jsonrpc":"2.0","method":"health","id":1}' | \
+# MCP server liveness (stdio JSON-RPC)
+echo '{"jsonrpc":"2.0","method":"ping","id":1}' | \
   timeout 5 velocity_mcp --mode stdio
 
 # GUI process check
@@ -110,10 +110,10 @@ sudo chown velocity:velocity /opt/velocity/velocity_mcp
 # 5. Start service
 sudo systemctl start velocity-mcp
 
-# 6. Verify health
+# 6. Verify the server answers
 sleep 5
 systemctl status velocity-mcp
-echo '{"jsonrpc":"2.0","method":"health","id":1}' | velocity_mcp --mode stdio
+echo '{"jsonrpc":"2.0","method":"ping","id":1}' | velocity_mcp --mode stdio
 
 # 7. Monitor logs for 5 minutes
 journalctl -u velocity-mcp -f
@@ -147,8 +147,11 @@ sudo vim /opt/velocity/config.toml
 # 2. Restart service to pick up new keys
 sudo systemctl restart velocity-mcp
 
-# 3. Verify new keys work
-echo '{"jsonrpc":"2.0","method":"providers_list","id":1}' | \
+# 3. Verify the server sees the new configuration.
+# `list_providers` reports which providers are registered — it does not send a
+# request, so it does not prove the new key authenticates. The journal below
+# and one real generation are the evidence for that.
+echo '{"jsonrpc":"2.0","method":"tools/call","params":{"name":"list_providers","arguments":{}},"id":2}' | \
   velocity_mcp --mode stdio
 
 # 4. Monitor for authentication errors
@@ -209,10 +212,17 @@ journalctl -u velocity-mcp --since "15 minutes ago" | grep ERROR
 journalctl -u velocity-mcp --since "15 minutes ago" | \
   grep ERROR | awk '{print $5, $6}' | sort | uniq -c | sort -rn
 
-# Check provider status
-echo '{"jsonrpc":"2.0","method":"providers_status","id":1}' | \
+# Check which providers are registered and configured. There is no
+# "providers_status" method on the stdio face — it answers initialize, ping,
+# tools/list and tools/call, and anything else gets -32601.
+echo '{"jsonrpc":"2.0","method":"tools/call","params":{"name":"list_providers","arguments":{}},"id":1}' | \
   velocity_mcp --mode stdio
 ```
+
+The answer lists each provider with its configuration, not a live reachability
+probe: a provider that appears here can still reject your key with a 401. The
+server records the failures that matter in its own log, so correlate this list
+with the `journalctl` output above before deciding a provider is healthy.
 
 **Resolution:**
 1. If provider errors: Check provider status pages, consider failover
@@ -271,8 +281,10 @@ gdb /opt/velocity/velocity_mcp /var/lib/systemd/coredump/core.*
 # Check failover events
 journalctl -u velocity-mcp --since "1 hour ago" | grep -i "failover\|fallback"
 
-# Check provider health
-echo '{"jsonrpc":"2.0","method":"providers_health","id":1}' | \
+# Which providers is the server configured to fail over between?
+# (`providers_health` is not a stdio method; the list below is configuration,
+# not live reachability — live failover evidence is the journal above.)
+echo '{"jsonrpc":"2.0","method":"tools/call","params":{"name":"list_providers","arguments":{}},"id":2}' | \
   velocity_mcp --mode stdio
 ```
 
@@ -455,14 +467,17 @@ velocity_mcp --config show
 ### Useful Commands
 
 ```bash
-# Quick health check
-echo '{"jsonrpc":"2.0","method":"health","id":1}' | velocity_mcp --mode stdio | jq .
+# Liveness: the only dedicated method the stdio loop answers besides the
+# MCP handshake. `health` / `usage_stats` are not stdio methods (they answer
+# -32601); a per-provider view is the `list_providers` tool below.
+echo '{"jsonrpc":"2.0","method":"ping","id":1}' | velocity_mcp --mode stdio | jq .
 
 # List all providers
-echo '{"jsonrpc":"2.0","method":"providers_list","id":1}' | velocity_mcp --mode stdio | jq .
+echo '{"jsonrpc":"2.0","method":"tools/call","params":{"name":"list_providers","arguments":{}},"id":2}' | \
+  velocity_mcp --mode stdio | jq .
 
-# Get usage statistics
-echo '{"jsonrpc":"2.0","method":"usage_stats","id":1}' | velocity_mcp --mode stdio | jq .
+# The full tool surface, as the server currently registers it
+echo '{"jsonrpc":"2.0","method":"tools/list","id":3}' | velocity_mcp --mode stdio | jq '.result.tools[].name'
 
 # Reload configuration
 sudo systemctl reload velocity-mcp

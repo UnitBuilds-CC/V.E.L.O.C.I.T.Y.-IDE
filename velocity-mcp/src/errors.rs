@@ -17,7 +17,14 @@ pub enum ToolError {
     InvalidArgument(String),
 
     /// Tool governance policy denied or parked the call.
-    #[error("governance denied: {0}")]
+    ///
+    /// The message is delivered verbatim, with no `governance denied:` prefix: a
+    /// refusal already names the authority that declined it and the remedy that
+    /// would lift it, and a prefix restates in the server's voice what the rule
+    /// said in ours. The variant itself carries the classification — callers that
+    /// need to know this was a decision rather than a fault read the type, not
+    /// the text.
+    #[error("{0}")]
     GovernanceDenied(String),
 
     /// Filesystem / process I/O failure.

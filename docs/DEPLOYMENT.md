@@ -406,17 +406,22 @@ journalctl -u velocity-mcp -f
 
 ### Health Checks
 
-The MCP server responds to JSON-RPC health requests:
+The MCP server answers the JSON-RPC `ping` method; it has no `health` method
+(the handshake is `initialize`, everything else is a `tools/call`).
 
 ```bash
-echo '{"jsonrpc":"2.0","method":"health","id":1}' | \
+echo '{"jsonrpc":"2.0","method":"ping","id":1}' | \
   ./velocity_mcp --mode stdio
 ```
 
 Expected response:
 ```json
-{"jsonrpc":"2.0","result":{"status":"ok"},"id":1}
+{"id":1,"jsonrpc":"2.0","result":{}}
 ```
+
+stdout is the protocol channel and carries JSON only — the startup banner and
+the shared-memory path go to stderr, so `--mode stdio` output is safe to capture
+into a file or pipe through `jq`.
 
 ### Metrics
 

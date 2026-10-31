@@ -26,6 +26,26 @@ fn spawn_mcp_server() -> (
     (child, stdin, BufReader::new(stdout))
 }
 
+/// Read the next message off the protocol channel.
+///
+/// There is deliberately no "skip the startup banner" tolerance here: stdout *is*
+/// the JSON-RPC channel, and a reader that quietly stepped over prose is what let
+/// the server print its banner there in the first place.
+fn read_message(reader: &mut BufReader<std::process::ChildStdout>) -> serde_json::Value {
+    loop {
+        let mut response_line = String::new();
+        let read = reader.read_line(&mut response_line).unwrap();
+        assert_ne!(read, 0, "the server closed stdout before answering");
+        let trimmed = response_line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        return serde_json::from_str(trimmed).unwrap_or_else(|e| {
+            panic!("the first line on stdout must be the reply, not {trimmed:?} ({e})")
+        });
+    }
+}
+
 fn send_request(
     stdin: &mut std::process::ChildStdin,
     reader: &mut BufReader<std::process::ChildStdout>,
@@ -43,19 +63,7 @@ fn send_request(
     writeln!(stdin, "{}", line).unwrap();
     stdin.flush().unwrap();
 
-    // Skip any non-JSON startup lines (e.g. "Starting V.E.L.O.C.I.T.Y...")
-    loop {
-        let mut response_line = String::new();
-        reader.read_line(&mut response_line).unwrap();
-        let trimmed = response_line.trim();
-        if trimmed.is_empty() {
-            continue;
-        }
-        if let Ok(val) = serde_json::from_str::<serde_json::Value>(trimmed) {
-            return val;
-        }
-        // Not JSON — skip this startup banner line
-    }
+    read_message(reader)
 }
 
 #[test]
@@ -137,18 +145,7 @@ fn mcp_invalid_json_returns_parse_error() {
     writeln!(stdin, "{{not valid json").unwrap();
     stdin.flush().unwrap();
 
-    // Skip startup banner lines, then read the parse error response
-    let resp = loop {
-        let mut response_line = String::new();
-        reader.read_line(&mut response_line).unwrap();
-        let trimmed = response_line.trim();
-        if trimmed.is_empty() {
-            continue;
-        }
-        if let Ok(val) = serde_json::from_str::<serde_json::Value>(trimmed) {
-            break val;
-        }
-    };
+    let resp = read_message(&mut reader);
 
     assert_eq!(resp["jsonrpc"], "2.0");
     assert_eq!(resp["error"]["code"], -32700);
@@ -359,6 +356,111 @@ fn mcp_tools_list_names_are_unique() {
         names.len(),
         total,
         "tool names must be unique (no duplicates)"
+    );
+
+    let _ = child.kill();
+    let _ = child.wait();
+}
+
+/// `ping` is how a client asks whether the server is alive without spending a tool
+/// call. Until now it fell through to method-not-found, so a live server looked
+/// unreachable to any client that probed it.
+#[test]
+fn mcp_ping_is_answered_with_an_empty_result() {
+    let (mut child, mut stdin, mut reader) = spawn_mcp_server();
+
+    let resp = send_request(&mut stdin, &mut reader, "ping", serde_json::json!({}), 21);
+
+    assert_eq!(resp["id"], 21);
+    assert!(
+        resp["error"].is_null(),
+        "ping must not be reported as an unknown method: {}",
+        resp["error"]
+    );
+    assert_eq!(resp["result"], serde_json::json!({}));
+
+    // Still alive afterwards, on the same stream.
+    let again = send_request(&mut stdin, &mut reader, "ping", serde_json::json!({}), 22);
+    assert_eq!(again["id"], 22);
+
+    let _ = child.kill();
+    let _ = child.wait();
+}
+
+/// A declined call and a broken call are different facts, and the client has to be
+/// able to tell them apart without reading prose: it retries a fault and routes
+/// around a refusal.
+#[test]
+fn mcp_separates_a_policy_refusal_from_a_missing_tool() {
+    let workspace = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(workspace.path().join(".velocity")).unwrap();
+    std::fs::write(
+        workspace.path().join(".velocity").join("policy.json"),
+        serde_json::to_string_pretty(&serde_json::json!({
+            "default_decision": "Allow",
+            "rules": [{ "tool": "read_file", "effect": "Deny" }],
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+
+    let binary = velocity_e2e::workspace_binary("velocity_mcp");
+    let mut child = Command::new(&binary)
+        .args([
+            "--mode",
+            "stdio",
+            "--workspace",
+            &workspace.path().display().to_string(),
+        ])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap_or_else(|e| panic!("failed to spawn velocity_mcp: {e}"));
+
+    let mut stdin = child.stdin.take().expect("no stdin");
+    let mut reader = BufReader::new(child.stdout.take().expect("no stdout"));
+
+    let refused = send_request(
+        &mut stdin,
+        &mut reader,
+        "tools/call",
+        serde_json::json!({
+            "name": "read_file",
+            "arguments": { "relativeFilePath": "anything.txt" }
+        }),
+        31,
+    );
+    assert_eq!(refused["result"]["isError"], true);
+    assert_eq!(refused["result"]["errorKind"], "permission_denied");
+    let refusal_text = refused["result"]["content"][0]["text"]
+        .as_str()
+        .unwrap_or("")
+        .to_string();
+    assert!(
+        refusal_text.contains("blocked by policy"),
+        "the refusal keeps its own words: {refusal_text}"
+    );
+    assert!(
+        !refusal_text.starts_with("Error running tool"),
+        "a decision about the workspace is not a fault inside the tool: {refusal_text}"
+    );
+
+    let missing = send_request(
+        &mut stdin,
+        &mut reader,
+        "tools/call",
+        serde_json::json!({ "name": "no_such_tool_please", "arguments": {} }),
+        32,
+    );
+    assert_eq!(missing["result"]["isError"], true);
+    assert_eq!(
+        missing["result"]["errorKind"], "tool_not_found",
+        "the two kinds must not collapse into one label"
+    );
+    assert_ne!(
+        refused["result"]["errorKind"],
+        missing["result"]["errorKind"]
     );
 
     let _ = child.kill();
