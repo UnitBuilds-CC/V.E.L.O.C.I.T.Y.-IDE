@@ -368,7 +368,7 @@ spec:
 |----------|-------------|---------|
 | `VELOCITY_BASE_URL` | Router base URL for the standalone `velocity` CLI | read from `~/.velocity/config.toml` when unset |
 | `VELOCITY_API_KEY` | Router bearer token, paired with the URL above; the CLI honours the pair or neither | as above |
-| `VELOCITY_CONFIG_DIR` | Directory the user-level config, including `provider-settings.json`, is stored in | `%APPDATA%/Velocity` on Windows, `$XDG_CONFIG_HOME/velocity` elsewhere |
+| `VELOCITY_CONFIG_DIR` | Directory the user-level config, including `provider-settings.json`, is stored in | `%APPDATA%/Velocity` on Windows, `$XDG_CONFIG_HOME/velocity` or `$HOME/.config/velocity` elsewhere |
 | `RUST_LOG` | Log level (trace, debug, info, warn, error) | `info` |
 
 Provider credentials for the cloud backends are not read from a deployment-wide
@@ -382,22 +382,19 @@ and what happens when it is unset, is the environment-variable reference in
 
 Location: `~/.velocity/config.toml`
 
+This file configures the standalone `velocity` CLI's Router connection and
+nothing else — it is read by `VelocityConfig::load` in
+`velocity-ide/src/velocity_client.rs`, which takes exactly two top-level keys
+and ignores every table:
+
 ```toml
-[general]
-workspace = "/path/to/workspace"
-log_level = "info"
-
-[providers.openai]
-api_key = "sk-..."
-base_url = "https://api.openai.com/v1"
-
-[providers.anthropic]
-api_key = "sk-ant-..."
-
-[providers.cloudflare]
-api_key = "..."
-account_id = "..."
+base_url = "http://localhost:8787"
+api_key = "vr_standard_your_key_here"
 ```
+
+`velocity login` writes that file for you. Provider credentials for the IDE are
+**not** configured here: they go to the user-level `provider-settings.json`
+described above, or to the per-backend environment variables.
 
 ---
 
