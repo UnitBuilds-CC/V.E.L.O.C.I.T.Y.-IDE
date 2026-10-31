@@ -476,38 +476,42 @@ impl EventStore {
         outcome: EventOutcome,
         failure_reason: Option<String>,
     ) -> Result<bool, String> {
-        let mut events = self.load_all()?;
-        let mut found = false;
-        for event in events.iter_mut() {
-            if event.sequence == sequence {
-                event.outcome = outcome.clone();
-                event.failure_reason = failure_reason.clone();
-                found = true;
-                break;
-            }
-        }
-        if !found {
-            return Ok(false);
-        }
-        // Rewrite the full file with the updated event.
-        self.save_all(&events)?;
-        Ok(true)
+        self.rewrite_record(sequence, move |event| {
+            event.outcome = outcome;
+            event.failure_reason = failure_reason;
+        })
     }
 
     /// Attach or replace the agent context (the *why*) on an existing event.
     pub fn update_context(&self, sequence: u64, context: &str) -> Result<bool, String> {
+        let context = context.to_string();
+        self.rewrite_record(sequence, move |event| {
+            event.context = Some(context);
+        })
+    }
+
+    /// Edit one record in place: read the log, change the event, write it back.
+    ///
+    /// Both halves belong inside `APPEND_LOCK`. The rewrite replaces the whole
+    /// file, so a version read before another writer appended drops that append
+    /// on the way out - and the append path is the one every tool call takes,
+    /// while this one runs when an outcome arrives later, which is exactly when
+    /// something else has already been written. Held together, the newest state
+    /// on disk is the state the rewrite starts from, and "update one record"
+    /// cannot cost the trail an event it never saw.
+    fn rewrite_record(
+        &self,
+        sequence: u64,
+        edit: impl FnOnce(&mut CodebaseEvent),
+    ) -> Result<bool, String> {
+        let _guard = APPEND_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         let mut events = self.load_all()?;
-        let mut found = false;
-        for event in events.iter_mut() {
-            if event.sequence == sequence {
-                event.context = Some(context.to_string());
-                found = true;
-                break;
-            }
-        }
-        if !found {
+        let Some(index) = events.iter().position(|event| event.sequence == sequence) else {
             return Ok(false);
-        }
+        };
+        edit(&mut events[index]);
         self.save_all(&events)?;
         Ok(true)
     }
@@ -2556,5 +2560,177 @@ mod tests {
             "a typo falls back to the default rather than silently unbounding the log"
         );
         assert_eq!(retention_limit(None), DEFAULT_EVENT_LOG_MAX_BYTES);
+    }
+
+    // ── The whole-file rewrite and the append path share one lock ────────────
+
+    #[test]
+    fn an_outcome_rewrite_does_not_drop_an_event_appended_while_it_ran() {
+        // The race the retention bound exposed. `mark_outcome` lands after the
+        // tool call it describes, so by the time it runs other writers have
+        // appended; and it rewrites the whole file, so a snapshot taken before
+        // those appends publishes a log without them.
+        let dir = TempDir::new().unwrap();
+        let root = dir.path().to_path_buf();
+        let seed = EventStore::open(&root);
+        let mut seeded = Vec::new();
+        for i in 0..10 {
+            seeded.push(
+                seed.record("edit_file", &format!("seed {i}"), None, None, None, vec![])
+                    .unwrap(),
+            );
+        }
+
+        let writers = 4;
+        let per_writer = 40;
+        let seeded_count = seeded.len();
+        let mut handles = Vec::new();
+        for w in 0..writers {
+            let root = root.clone();
+            handles.push(std::thread::spawn(move || {
+                let store = EventStore::open(&root);
+                for i in 0..per_writer {
+                    store
+                        .record(
+                            "write_file",
+                            &format!("writer {w} event {i}"),
+                            None,
+                            None,
+                            None,
+                            vec![],
+                        )
+                        .unwrap();
+                }
+            }));
+        }
+        let rewriter = {
+            let root = root.clone();
+            std::thread::spawn(move || {
+                let store = EventStore::open(&root);
+                for i in 0..150 {
+                    let sequence = seeded[i % seeded.len()];
+                    store
+                        .mark_outcome(sequence, EventOutcome::Success, None)
+                        .unwrap();
+                    store
+                        .update_context(sequence, &format!("late outcome {i}"))
+                        .unwrap();
+                }
+            })
+        };
+        handles.push(rewriter);
+        for handle in handles {
+            handle.join().unwrap();
+        }
+
+        let store = EventStore::open(&root);
+        let events = store.load_all().unwrap();
+        let expected = seeded_count + writers * per_writer;
+        assert_eq!(
+            events.len(),
+            expected,
+            "a rewrite published a log that had never seen the appends"
+        );
+        let mut sequences: Vec<u64> = events.iter().map(|event| event.sequence).collect();
+        sequences.sort_unstable();
+        sequences.dedup();
+        assert_eq!(
+            sequences.len(),
+            expected,
+            "duplicate sequence in {sequences:?}"
+        );
+
+        // A rewrite that cuts across an append can also tear a record in half.
+        let raw = fs::read_to_string(events_path_of(dir.path())).unwrap();
+        assert_eq!(raw.lines().count(), expected, "lines glued or lost");
+        for line in raw.lines() {
+            serde_json::from_str::<CodebaseEvent>(line)
+                .unwrap_or_else(|error| panic!("torn line survived: {error}"));
+        }
+    }
+
+    #[test]
+    fn every_whole_file_rewrite_of_the_log_holds_the_append_lock() {
+        // Behaviour alone cannot pin this: the race needs two writers and the
+        // guard is about which of them is allowed to be mid-rewrite. So the
+        // shape is checked directly - a rewrite that stops holding the lock, or
+        // a new one that never started, fails here rather than in production.
+        let src = include_str!("event_store.rs");
+        // The tests in this file quote the very strings being scanned, so the
+        // guard reads the production side of the cfg(test) split only.
+        let production = &src[..src
+            .find("#[cfg(test)]")
+            .expect("the test module is cfg(test)-gated")];
+        let methods = methods_in(production);
+        let mut rewriters: Vec<&str> = methods
+            .iter()
+            .filter(|(_, body)| body.contains("self.save_all("))
+            .map(|(name, _)| *name)
+            .collect();
+        rewriters.sort_unstable();
+        assert_eq!(
+            rewriters,
+            vec!["enforce_retention", "rewrite_record"],
+            "every whole-file rewrite either takes APPEND_LOCK itself or is documented as \
+             running under a caller that does"
+        );
+        let rewrite = methods
+            .iter()
+            .find(|(name, _)| *name == "rewrite_record")
+            .map(|(_, body)| *body)
+            .unwrap();
+        assert!(
+            rewrite.contains("APPEND_LOCK"),
+            "the single-record rewrite reads and writes the log; it must hold the lock every \
+             appender holds"
+        );
+
+        // The retention pass is the one rewrite that borrows its caller's lock,
+        // so the caller has to be a method that actually takes it.
+        let callers: Vec<&str> = methods
+            .iter()
+            .filter(|(_, body)| body.contains("self.enforce_retention("))
+            .map(|(name, _)| *name)
+            .collect();
+        assert_eq!(
+            callers,
+            vec!["record_with_metadata"],
+            "a prune from anywhere else would rewrite the log unlocked"
+        );
+        let recorder = methods
+            .iter()
+            .find(|(name, _)| *name == "record_with_metadata")
+            .map(|(_, body)| *body)
+            .unwrap();
+        assert!(recorder.contains("APPEND_LOCK"));
+    }
+
+    /// Each `    fn name(` / `    pub fn name(` in `src` with the text up to the
+    /// next one, so a body check sees the whole method rather than its first
+    /// line. Only the lock-discipline guard above uses this.
+    fn methods_in(src: &str) -> Vec<(&str, &str)> {
+        let mut starts: Vec<(usize, &str)> = Vec::new();
+        for marker in ["\n    fn ", "\n    pub fn "] {
+            let mut at = 0;
+            while let Some(found) = src[at..].find(marker) {
+                let name_start = at + found + marker.len();
+                let name_end = src[name_start..]
+                    .find('(')
+                    .map(|offset| name_start + offset)
+                    .unwrap_or(name_start);
+                starts.push((name_start, &src[name_start..name_end]));
+                at = name_start;
+            }
+        }
+        starts.sort_unstable();
+        let mut methods = Vec::new();
+        for (index, (start, name)) in starts.iter().enumerate() {
+            let end = starts
+                .get(index + 1)
+                .map(|(next, _)| *next)
+                .unwrap_or(src.len());
+            methods.push((*name, &src[*start..end]));
+        }
+        methods
     }
 }
