@@ -96,11 +96,7 @@ fn load_file(path: &Path) -> Result<Arc<RuleFile>, String> {
         // Missing file is not an error: no rules configured for this scope.
         return Ok(Arc::new(RuleFile::default()));
     };
-    if let Some(hit) = cache()
-        .lock()
-        .unwrap_or_else(|e| e.into_inner())
-        .get(path)
-    {
+    if let Some(hit) = cache().lock().unwrap_or_else(|e| e.into_inner()).get(path) {
         if hit.stamp == stamp {
             return Ok(Arc::clone(&hit.file));
         }
@@ -111,16 +107,13 @@ fn load_file(path: &Path) -> Result<Arc<RuleFile>, String> {
     let file: RuleFile = serde_json::from_str(text)
         .map_err(|e| format!("rules file {} is not valid JSON: {e}", path.display()))?;
     let file = Arc::new(file);
-    cache()
-        .lock()
-        .unwrap_or_else(|e| e.into_inner())
-        .insert(
-            path.to_path_buf(),
-            CachedFile {
-                stamp,
-                file: Arc::clone(&file),
-            },
-        );
+    cache().lock().unwrap_or_else(|e| e.into_inner()).insert(
+        path.to_path_buf(),
+        CachedFile {
+            stamp,
+            file: Arc::clone(&file),
+        },
+    );
     Ok(file)
 }
 
@@ -156,14 +149,14 @@ pub fn task_file(root: &Path) -> RuleFile {
 }
 
 /// Load the rules for one scope. Errors fail closed at the gate.
-pub fn load_scoped(paths: &RulePaths, root: &Path, scope: RuleScope) -> Result<Arc<RuleFile>, String> {
+pub fn load_scoped(
+    paths: &RulePaths,
+    root: &Path,
+    scope: RuleScope,
+) -> Result<Arc<RuleFile>, String> {
     match scope {
         RuleScope::Task => Ok(Arc::new(task_file(root))),
-        _ => load_file(
-            paths
-                .for_scope(scope)
-                .expect("durable scopes have a path"),
-        ),
+        _ => load_file(paths.for_scope(scope).expect("durable scopes have a path")),
     }
 }
 
@@ -281,24 +274,20 @@ fn write_file(path: &Path, file: &RuleFile) -> Result<(), String> {
         fs::create_dir_all(parent)
             .map_err(|e| format!("cannot create rules directory {}: {e}", parent.display()))?;
     }
-    let text = serde_json::to_string_pretty(file)
-        .map_err(|e| format!("cannot serialize rules: {e}"))?;
+    let text =
+        serde_json::to_string_pretty(file).map_err(|e| format!("cannot serialize rules: {e}"))?;
     let tmp = path.with_extension("json.tmp");
-    fs::write(&tmp, text)
-        .map_err(|e| format!("cannot write rules temp {}: {e}", tmp.display()))?;
+    fs::write(&tmp, text).map_err(|e| format!("cannot write rules temp {}: {e}", tmp.display()))?;
     fs::rename(&tmp, path)
         .map_err(|e| format!("cannot replace rules file {}: {e}", path.display()))?;
     if let Some(stamp) = file_stamp(path) {
-        cache()
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .insert(
-                path.to_path_buf(),
-                CachedFile {
-                    stamp,
-                    file: Arc::new(file.clone()),
-                },
-            );
+        cache().lock().unwrap_or_else(|e| e.into_inner()).insert(
+            path.to_path_buf(),
+            CachedFile {
+                stamp,
+                file: Arc::new(file.clone()),
+            },
+        );
     }
     Ok(())
 }
@@ -344,11 +333,7 @@ where
 /// Consume a bypass for `rule_id`, if one is live. An event grant allows exactly
 /// one call and is persisted as consumed; timed grants allow every call until
 /// they expire.
-pub fn consume_grant(
-    paths: &RulePaths,
-    root: &Path,
-    rule_id: &str,
-) -> Result<bool, String> {
+pub fn consume_grant(paths: &RulePaths, root: &Path, rule_id: &str) -> Result<bool, String> {
     let now = now_secs();
     if let Some(grant) = task_file(root).live_grant(rule_id, now).cloned() {
         if grant.scope == super::model::BypassScope::Event {
@@ -381,9 +366,7 @@ pub fn consume_grant(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::rules::model::{
-        BypassGrant, BypassScope, ParamValue, Rule, RuleKind, RuleRecord,
-    };
+    use crate::rules::model::{BypassGrant, BypassScope, ParamValue, Rule, RuleKind, RuleRecord};
     use std::collections::BTreeMap;
 
     fn paths_in(dir: &Path) -> RulePaths {
@@ -392,10 +375,7 @@ mod tests {
 
     fn a_rule() -> Rule {
         let mut params = BTreeMap::new();
-        params.insert(
-            "tools".into(),
-            ParamValue::List(vec!["run_command".into()]),
-        );
+        params.insert("tools".into(), ParamValue::List(vec!["run_command".into()]));
         Rule {
             id: "rule-00000001".into(),
             name: "no-shell".into(),
@@ -504,8 +484,7 @@ mod tests {
         let two = tempfile::tempdir().unwrap();
         let paths = paths_in(one.path());
         update_scoped(&paths, one.path(), RuleScope::Task, |file| {
-            file.rules
-                .push(RuleRecord::new(RuleScope::Task, a_rule()));
+            file.rules.push(RuleRecord::new(RuleScope::Task, a_rule()));
             Ok(())
         })
         .unwrap();
@@ -571,7 +550,8 @@ mod tests {
         })
         .unwrap();
         update_scoped(&paths, tmp.path(), RuleScope::Global, |file| {
-            file.rules.push(RuleRecord::new(RuleScope::Global, a_rule()));
+            file.rules
+                .push(RuleRecord::new(RuleScope::Global, a_rule()));
             Ok(())
         })
         .unwrap();
