@@ -15551,7 +15551,7 @@ mod tests {
         // the code the error was reported in is gone.
         let temp = tempfile::TempDir::new().unwrap();
         let rel = "rust_port/src/budget_manager.rs";
-        let path = temp.path().join(rel.replace('/', "\\"));
+        let path = temp.path().join(rel);
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
         let with_fixture = "pub fn spend(&mut self) {}\n\
                             mod pendulum_fixture {\n\
@@ -15634,7 +15634,7 @@ mod tests {
         // 34,296 → smaller again with no refusal and no note.
         let temp = tempfile::TempDir::new().unwrap();
         let rel = "rust_port/src/service_logger.rs";
-        let path = temp.path().join(rel.replace('/', "\\"));
+        let path = temp.path().join(rel);
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
         let mut surface = ArtifactSurface::default();
 
