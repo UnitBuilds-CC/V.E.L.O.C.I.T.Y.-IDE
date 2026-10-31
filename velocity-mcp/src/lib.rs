@@ -30,6 +30,8 @@ pub mod compiler;
 pub mod connectors;
 pub mod disk_hygiene;
 pub mod editor;
+#[cfg(test)]
+mod env_knobs_doc_guard;
 pub mod errors;
 pub mod generation;
 pub mod health;
