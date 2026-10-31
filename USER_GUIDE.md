@@ -2106,7 +2106,7 @@ Each of these providers has a single **API key** field. Expand the provider sect
 After entering credentials:
 - Click **Save provider settings** (green button) to write credentials to the user-level provider settings file
 - Click **Reload** to re-read credentials from disk (useful if you edited the file externally)
-- Credentials are stored in `provider-settings.json` inside the user config directory — `%APPDATA%/Velocity` on Windows, `$XDG_CONFIG_HOME/velocity` elsewhere — and never in the workspace itself
+- Credentials are stored in `provider-settings.json` inside the user config directory — `%APPDATA%/Velocity` on Windows, `$XDG_CONFIG_HOME/velocity` or `$HOME/.config/velocity` elsewhere — and never in the workspace itself
 
 > **Security note:** Keeping the keys at user level is what stops a workspace folder synced to OneDrive or Dropbox from carrying them. The workspace's `.velocity/workspace-preferences.json` records which provider and model you selected, not the key that authorises them, so it is safe to share layout and selection with a teammate while the credential stays on your machine.
 
@@ -2134,7 +2134,7 @@ Once models are loaded:
 
 #### Workspace Provider Settings File
 
-The user-level `provider-settings.json` file stores all provider credentials in JSON format. Its path is `%APPDATA%/Velocity/provider-settings.json` on Windows and `$XDG_CONFIG_HOME/velocity/provider-settings.json` elsewhere, so a key never lands in a workspace directory that is synced to the cloud:
+The user-level `provider-settings.json` file stores all provider credentials in JSON format. Its path is `%APPDATA%/Velocity/provider-settings.json` on Windows and `$XDG_CONFIG_HOME/velocity/provider-settings.json`, falling back to `$HOME/.config/velocity/`, elsewhere (`VELOCITY_CONFIG_DIR` overrides both), so a key never lands in a workspace directory that is synced to the cloud:
 
 ```json
 {

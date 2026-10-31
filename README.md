@@ -144,7 +144,8 @@ Velocity-IDE/
 
 Provider credentials live in one user-level file, `provider-settings.json`,
 written by **Settings → Providers**: `%APPDATA%/Velocity/provider-settings.json`
-on Windows, `$XDG_CONFIG_HOME/velocity/provider-settings.json` elsewhere. Nothing
+on Windows, `$XDG_CONFIG_HOME/velocity/provider-settings.json` or
+`$HOME/.config/velocity/provider-settings.json` elsewhere. Nothing
 provider-shaped is stored in the workspace directory. The same backends can be
 configured from the environment, which the loaders ask only when that file does
 not already configure the provider:
