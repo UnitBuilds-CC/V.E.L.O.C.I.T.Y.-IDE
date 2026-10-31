@@ -128,8 +128,9 @@ A complete guide to using the V.E.L.O.C.I.T.Y. Cognitive IDE — a native, GPU-a
     - [Refreshing the Model Catalog](#refreshing-the-model-catalog)
     - [Selecting a Model](#selecting-a-model)
     - [Workspace Provider Settings File](#workspace-provider-settings-file)
-    - [Environment Variables](#environment-variables)
+    - [Provider Credentials From The Environment](#provider-credentials-from-the-environment)
     - [Automatic Failover](#automatic-failover)
+- [Environment Variables](#environment-variables)
 - [Keyboard Shortcuts Reference](#keyboard-shortcuts-reference)
 - [Troubleshooting](#troubleshooting)
   - [Common Issues](#common-issues)
@@ -1946,7 +1947,7 @@ Each workspace mode (Coder, Automation Operator, Mission Control, Accessibility)
 
 ### Manual Editing
 
-You can edit `.velocity/workspace-preferences.json` directly. Changes take effect after restarting the IDE or reloading provider settings from the Settings panel.
+You can edit `.velocity/workspace-preferences.json` directly; the IDE reads it when the workspace opens, so restart to be sure a hand edit lands. Provider credentials are not in this file — they live in the user-level `provider-settings.json` described under [Settings & Configuration](#settings--configuration).
 
 ---
 
@@ -2103,11 +2104,11 @@ Each of these providers has a single **API key** field. Expand the provider sect
 #### Saving & Reloading Credentials
 
 After entering credentials:
-- Click **Save provider settings** (green button) to write credentials to the workspace settings file
+- Click **Save provider settings** (green button) to write credentials to the user-level provider settings file
 - Click **Reload** to re-read credentials from disk (useful if you edited the file externally)
-- Credentials are stored in `.velocity/workspace-preferences.json` within your workspace root (NDA-encrypted)
+- Credentials are stored in `provider-settings.json` inside the user config directory — `%APPDATA%/Velocity` on Windows, `$XDG_CONFIG_HOME/velocity` elsewhere — and never in the workspace itself
 
-> **Security note:** API keys are stored locally in your workspace. Never commit the `.velocity/workspace-preferences.json` file to version control — it is already excluded by the default `.gitignore`.
+> **Security note:** Keeping the keys at user level is what stops a workspace folder synced to OneDrive or Dropbox from carrying them. The workspace's `.velocity/workspace-preferences.json` records which provider and model you selected, not the key that authorises them, so it is safe to share layout and selection with a teammate while the credential stays on your machine.
 
 #### Refreshing the Model Catalog
 
@@ -2133,7 +2134,7 @@ Once models are loaded:
 
 #### Workspace Provider Settings File
 
-The `.velocity/workspace-preferences.json` file stores all provider credentials in JSON format:
+The user-level `provider-settings.json` file stores all provider credentials in JSON format. Its path is `%APPDATA%/Velocity/provider-settings.json` on Windows and `$XDG_CONFIG_HOME/velocity/provider-settings.json` elsewhere, so a key never lands in a workspace directory that is synced to the cloud:
 
 ```json
 {
@@ -2178,21 +2179,9 @@ The `.velocity/workspace-preferences.json` file stores all provider credentials 
 
 You can edit this file directly and click **Reload** in Settings to apply changes.
 
-#### Environment Variables
+#### Provider Credentials From The Environment
 
-As an alternative to the settings file, you can configure providers via environment variables:
-
-| Variable | Description |
-|----------|-------------|
-| `VELOCITY_API_KEY` | Default API key (used when no provider-specific key is set) |
-| `CF_ACCOUNT_N_ID` | Cloudflare account ID (where N is the account number: 1, 2, ...) |
-| `CF_ACCOUNT_N_TOKEN` | Cloudflare API token |
-| `CF_ACCOUNT_N_DAILY_LIMIT` | Override daily request limit for a Cloudflare account |
-| `OPENROUTER_API_KEY` | OpenRouter API key |
-| `BEDROCK_PROXY_URL` | URL for the AWS Bedrock proxy endpoint |
-| `RUST_LOG` | Log level (`trace`, `debug`, `info`, `warn`, `error`) |
-
-Environment variables take precedence over the workspace settings file. This is useful for CI/CD pipelines or shared workstations where you don't want to write credentials to disk.
+Providers can also be configured through the environment, which is what you want on a CI runner or a shared machine where nothing should be written to disk. See [Environment Variables](#environment-variables) for every name the code reads, the values each one accepts, and what it does when the name is absent.
 
 #### Automatic Failover
 
@@ -2200,6 +2189,205 @@ Velocity IDE supports automatic failover across providers. If the active provide
 - Configure at least 2 providers
 - Keep Cloudflare Workers AI as a fallback (it has a generous free tier)
 - Ensure API keys are valid and not expired
+
+---
+
+## Environment Variables
+
+Every name below is one the shipped code looks up, with the values it accepts and
+what happens when the name is absent. Provider credentials themselves live in
+`provider-settings.json` (see [Workspace Provider Settings File](#workspace-provider-settings-file)):
+for Cloudflare, OpenRouter, Azure OpenAI and Ollama the loaders in `usage.rs`
+consult that file first and ask the environment only when it does not already
+configure the provider. Every one of those loaders calls `dotenvy::dotenv()`, so a
+`.env` file in the working directory is read exactly as the environment is.
+
+Where a row says a ceiling is adjustable, the usual spelling applies: a number is
+that many units, `0` / `off` / `none` / `unbounded` / `unlimited` / `infinite`
+removes the bound, and anything else — including a typo — keeps the built-in
+default rather than starting an unbounded run.
+
+### Cloudflare Workers AI
+
+| Name | Accepts | Default |
+|------|---------|---------|
+| `CF_ACCOUNT_{n}_ID` | Account id for slot `n` (`n` runs 1 to 30) | none |
+| `CF_ACCOUNT_{n}_TOKEN` | API token for slot `n`; the id and the token both have to be set for the account to exist | none |
+| `CF_ACCOUNT_{n}_TIER` | `free` or `paid`, case-insensitive | `free` |
+| `CF_ACCOUNT_{n}_LABEL` | Name shown in the account list | `account-{n}` |
+| `CF_ACCOUNT_{n}_DAILY_LIMIT` | Requests per day, as an integer | 500 when the tier is paid, 50 otherwise |
+| `CF_ACCOUNT_ID` | Single-account id; read only when no numbered slot exists | none |
+| `CF_API_TOKEN` | Single-account token; paired with the id above | none |
+| `CF_MODEL` | Model id the agent thread starts on | the provider's default model |
+| `CF_THINKING` | Any value keeps extended thinking on; `0` turns it off | on, and forced off when the selected model cannot think |
+
+### OpenRouter
+
+| Name | Accepts | Default |
+|------|---------|---------|
+| `OPENROUTER_ACCOUNT_{n}_KEY` | API key for slot `n` (1 to 30) | none |
+| `OPENROUTER_ACCOUNT_{n}_TIER` | `free` or `paid`, case-insensitive | `free` |
+| `OPENROUTER_ACCOUNT_{n}_LABEL` | Name shown in the account list | `OR-Account-{n}` |
+| `OPENROUTER_ACCOUNT_{n}_DAILY_LIMIT` | Requests per day, as an integer | 50 |
+| `OPENROUTER_API_KEY` | Key for the unnumbered account, used when the settings file holds no OpenRouter entry | none |
+| `OPENROUTER_MODEL` | Model id the agent thread starts on | the provider's default model |
+
+### Azure OpenAI
+
+| Name | Accepts | Default |
+|------|---------|---------|
+| `AZURE_OPENAI_ACCOUNT_{n}_KEY` | API key for slot `n` (1 to 30) | none |
+| `AZURE_OPENAI_ACCOUNT_{n}_ENDPOINT` | Resource endpoint for slot `n`; the key and the endpoint both have to be set | none |
+| `AZURE_OPENAI_ACCOUNT_{n}_DEPLOYMENT` | Deployment name for slot `n` | `gpt-4o` |
+| `AZURE_OPENAI_ACCOUNT_{n}_API_VERSION` | REST version for slot `n` | `2024-06-01` |
+| `AZURE_OPENAI_ACCOUNT_{n}_LABEL` | Name shown in the account list | `Azure-Account-{n}` |
+| `AZURE_OPENAI_ACCOUNT_{n}_TIER` | `free` or `paid`, case-insensitive | `paid` |
+| `AZURE_OPENAI_API_KEY` | Key for the unnumbered account | none |
+| `AZURE_OPENAI_ENDPOINT` | Endpoint for the unnumbered account | none |
+| `AZURE_OPENAI_DEPLOYMENT` | Deployment name, also the model id the agent thread starts on | `gpt-4o` |
+| `AZURE_OPENAI_API_VERSION` | REST version for the unnumbered account | `2024-06-01` |
+
+### Local model servers
+
+| Name | Accepts | Default |
+|------|---------|---------|
+| `OLLAMA_HOSTS` | Comma-separated list of server URLs. Merged with the host registered in Settings rather than replacing it | none |
+| `OLLAMA_HOST` | Single server URL | `http://localhost:11434` |
+| `OLLAMA_MODEL` | Model id to ask that server for | `llama3.2` from the loader; the thread falls back to the provider default |
+| `LLAMA_CPP_HOST` | URL of a local llama.cpp server. Its presence alone is what marks the llama.cpp backend available | `http://localhost:8080` for the catalog fetch |
+| `VELOCITY_LOCAL_OLLAMA_NUM_CTX` | Context window in tokens, honoured from 2048 up | 20480, or 32768 for a model whose name contains `qwen2.5-coder:7b` |
+| `VELOCITY_GPU` | `1` exactly selects the simulated GPU pipeline; any other value means no GPU | no GPU |
+| `VELOCITY_BITWISE_ATTN` | `1` or `true` (case-insensitive) takes the integer attention path, and only when the head dimension is byte-aligned | off |
+| `NDA_JIT_DEBUG` | Presence alone, whatever the value, prints the NDA JIT node trace to stderr | off |
+
+### Per-provider keys and endpoints
+
+A value here marks that backend as configured, which is what lets the failover
+ladder route to it; a blank string counts as absent.
+
+| Name | Accepts |
+|------|---------|
+| `OPENAI_API_KEY` | Key for OpenAI |
+| `ANTHROPIC_API_KEY` | Key for Anthropic |
+| `GOOGLE_API_KEY` | Key for Google Vertex |
+| `DEEPSEEK_API_KEY` | Key for DeepSeek |
+| `GROQ_API_KEY` | Key for Groq |
+| `MISTRAL_API_KEY` | Key for Mistral |
+| `TOGETHER_API_KEY` | Key for Together AI |
+| `FIREWORKS_API_KEY` | Key for Fireworks AI |
+| `PERPLEXITY_API_KEY` | Key for Perplexity |
+| `CEREBRAS_API_KEY` | Key for Cerebras |
+| `DASHSCOPE_API_KEY` | Key for Alibaba Qwen through DashScope |
+| `BEDROCK_PROXY_URL` | URL of an OpenAI-compatible gateway in front of AWS Bedrock; Bedrock has no usable route without it |
+| `BEDROCK_API_KEY` | Bearer token sent to that gateway |
+| `LLM_PROVIDER` | Which backend the agent thread starts on: `openrouter` or `or`, `azure` or `azure_openai`, `ollama` or `local`; anything else, including unset, means Cloudflare Workers AI |
+
+### Decision backends
+
+| Name | Accepts | Default |
+|------|---------|---------|
+| `VELOCITY_DECISION_BACKEND` | `laya`, `jev`, or anything else for the local heuristic | heuristic |
+| `VELOCITY_LAYA_ENDPOINT` | Base URL of the local Laya service; a bare host and port is served at `/v1/systemone`. Selecting `laya` without this degrades to the heuristic | none |
+| `VELOCITY_LAYA_TIMEOUT_MS` | Integer milliseconds | 500 |
+| `JEV_API_KEY` | Bearer token for the JEV endpoint; selecting `jev` without this degrades to the heuristic | none |
+| `VELOCITY_JEV_BASE_URL` | Base URL of the JEV service | `https://thejevai.com` |
+| `VELOCITY_JEV_MODEL` | Model id | `jev-latest` |
+| `VELOCITY_JEV_TIMEOUT_MS` | Integer milliseconds | 2000 |
+
+### Agent run ceilings
+
+`team_dispatch`, workflow agent steps and orchestrator workers all read these; an
+interactive session has a human at the keyboard and is bounded by that instead.
+
+| Name | Accepts | Default |
+|------|---------|---------|
+| `VELOCITY_DISPATCH_BUDGET_SECS` | Wall-clock budget for one unattended attempt, in seconds; the off words remove the clock | 3600 |
+| `VELOCITY_STALL_WINDOW_SECS` | Seconds a turn may stream nothing before it counts as stalled. Unlike the other ceilings, an explicit `0` means no stall check, and a non-integer falls back to the default | 300 |
+| `VELOCITY_MAX_RESTARTS` | How many times a worker re-issues a route that ended stalled or structurally looped, as an integer | 2 |
+| `VELOCITY_UNCOMMITTED_TURN_MAX_TOKENS` | Tokens a single turn may stream before it is cut for having named no tool call | 24000 |
+| `VELOCITY_UNCOMMITTED_TURN_MAX_SECS` | The same cut expressed in wall-clock seconds; whichever bound is reached first fires | 900 |
+| `VELOCITY_WRITE_TURN_MAX_TOKENS` | Room reserved for a forced write-only turn's reply, also clamped to a quarter of the model's window | 18000 |
+| `VELOCITY_PRELOAD_MAX_BYTES` | Bytes of named target files inlined into a dispatch brief | 12000 |
+| `VELOCITY_SINGLE_MODEL_DISPATCH` | `1` or `true` (case-insensitive) evaluates exactly one model: no provider fallback ladder and no chain widening | off |
+
+### Tool rate limiting
+
+| Name | Accepts | Default |
+|------|---------|---------|
+| `VELOCITY_RATE_LIMIT` | Sustained tool calls per second, as an integer | 20 |
+| `VELOCITY_RATE_BURST` | Burst allowance on top of that rate, as an integer | 100 |
+
+Each is read independently, so setting only one keeps the other at its default.
+
+### Browser, editor and appearance
+
+| Name | Accepts | Default |
+|------|---------|---------|
+| `VELOCITY_BROWSER_RUNTIME_API_BASE` | Base URL of the browser runtime API; a blank value is skipped | `http://127.0.0.1:8080` |
+| `VELOCITY_BROWSER_API_BASE` | Older spelling of the same setting, read when the runtime name is unset or blank | as above |
+| `VELOCITY_FORMAT_ON_WRITE` | `off`, `0`, `false`, `no` or `disabled` (case-insensitive) skips the format-after-write pass | formatting on |
+| `VELOCITY_OS_THEME` | `light` or `dark` states the preference without asking the desktop, `off` asks the desktop; an unrecognised value also falls through to the real read | read from the OS |
+
+### Servers and consent gates
+
+| Name | Accepts | Default |
+|------|---------|---------|
+| `DRONE_AUTH_TOKEN` | Bearer token the drone's shell endpoint requires. Without it the drone refuses to bind a non-loopback address and exits | none |
+| `DRONE_ALLOW_UNAUTHENTICATED_REMOTE` | `1` exactly is the operator accepting an unauthenticated remote shell; no other value opts in | refused |
+| `VELOCITY_SERVE_TOKEN` | Bearer token for velocity-serve. An empty value counts as missing and the server exits rather than serving unauthenticated; the `--token` argument is read before this name | none; binds `127.0.0.1:7331` |
+| `VELOCITY_WA_ALLOW_SESSION_CHANGE` | `1`, `true`, `yes` or `on` (case-insensitive) consents to tools that act on the interactive session | refused |
+| `VELOCITY_WA_ALLOW_SESSION_EFFECT` | Same spellings, for tools that mutate session-wide shared state such as the clipboard. The broader switch above implies this one; the reverse is not true | refused |
+| `VELOCITY_MCP_SERVER` | Path to the C# sidecar executable; when the file is not there the tool falls back to the Rust implementation | `C:\WUIAS\velocity_nda\VelocityMcpServer.exe` |
+| `WUIAS_SHIELD_DLL` | Path to the Windows sandbox DLL used to run a system tool under redirection | `C:\WUIAS\wuias_shield\wuias_shield.dll` |
+| `WUIAS_SANDBOX_REDIRECT` | Directory the per-session redirect folders are created under | `C:\WUIAS\sandbox\redirect` |
+
+### Recording, transcripts and configuration location
+
+| Name | Accepts | Default |
+|------|---------|---------|
+| `VELOCITY_EVENT_STORE_MAX_BYTES` | Size `events.jsonl` may reach before its oldest half is dropped; the off words remove the bound. A prune never takes the trail below 256 events whatever you set | 8 MiB |
+| `VELOCITY_TRANSCRIPT_DIR` | Directory holding the conversation transcript, read as `<dir>/<conversation id>/.system_generated/logs/transcript.jsonl` | the per-user transcript location under your home directory |
+| `VELOCITY_CONVERSATION_ID` | Which conversation id that path is built with | a fixed built-in id |
+| `VELOCITY_CONFIG_DIR` | Directory the user-level config, including `provider-settings.json`, is stored in | `%APPDATA%/Velocity` on Windows, `$XDG_CONFIG_HOME/velocity` or `$HOME/.config/velocity` elsewhere |
+| `VELOCITY_BASE_URL` | Router base URL for the standalone `velocity` CLI | read from `~/.velocity/config.toml` when unset |
+| `VELOCITY_API_KEY` | Router bearer token for that CLI, paired with the URL above | as above |
+
+`VELOCITY_API_KEY` is also on the scrub list: the sandbox strips it from a child
+process's environment, so a command the agent runs does not see it.
+
+### Diagnostics and logging
+
+| Name | Accepts | Default |
+|------|---------|---------|
+| `RUST_LOG` | Standard filter (`trace`, `debug`, `info`, `warn`, `error`, or a target-specific filter) | `info`; the MCP server initialises `env_logger` from this name |
+| `VELOCITY_LOG_FORMAT` | `json`, `compact`, or anything else for pretty | pretty |
+| `VELOCITY_LOG_OUTPUT` | `stdout`, `stderr`, or a file path | `stderr` |
+| `VELOCITY_TRACE_FORMAT` | `json`, `compact`, or anything else for pretty | pretty |
+| `VELOCITY_TRACE_DIR` | Directory for NDJSON trace files | no file output |
+| `VELOCITY_TRACE_LEVEL` | Level filter for the trace | `info` |
+| `VELOCITY_TRACE_TIMINGS` | Any value except `false` records timings | timings on |
+
+The six `VELOCITY_LOG_*` and `VELOCITY_TRACE_*` names are read by the config
+helpers `LoggingConfig::from_env` and `TracingConfig::from_env`, which no shipping
+binary calls yet — today the IDE's own logging is set up through `env_logger`, so
+only `RUST_LOG` changes what you see. They are listed because the code reads them,
+not because setting one has an effect you can observe.
+
+### Read from the platform
+
+These belong to the operating system or to conventions other tools already set;
+Velocity reads them rather than defining them.
+
+| Name | Used for | Fallback |
+|------|----------|----------|
+| `APPDATA` | Where the user-level config directory lives on Windows | — |
+| `XDG_CONFIG_HOME` | Same on Linux | `$HOME/.config/velocity` |
+| `HOME` | Config fallback on Unix, and part of transcript and cache paths | empty string |
+| `USERPROFILE` | Same on Windows | `$HOME` |
+| `USERNAME`, `USER`, `LOGNAME` | The ssh user the instance tools assume when you do not name one, tried in that order | — |
+| `HOSTNAME`, `COMPUTERNAME` | The machine label shown for the local instance | — |
+| `SHELL` | The terminal profile on non-Windows platforms | `/bin/bash` |
+| `PYTHONIOENCODING` | The encoding a child Python writes with. Velocity sets it to utf-8 for commands it runs, but leaves your own value alone | set to utf-8 |
 
 ---
 
