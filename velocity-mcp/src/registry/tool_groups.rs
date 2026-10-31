@@ -34,7 +34,7 @@ use std::collections::HashMap;
 use serde_json::{json, Value};
 
 use super::tool_definitions::{
-    self, browser, company, drone, generation, instances, system, team, wa,
+    self, browser, company, drone, generation, instances, rules, system, team, wa,
 };
 use super::types::Tool;
 
@@ -63,6 +63,13 @@ pub enum ToolGroup {
     /// The dynamic-registration tools themselves: `tool_register`,
     /// `tool_unregister`, `tool_list_custom`.
     CustomTools,
+    /// The rules lifecycle: `rule_create`, `rule_adjust`, `rule_retire`,
+    /// `rule_bypass` and the readers. Part of the core floor rather than an
+    /// opt-in because the call that repeats a mistake is made by whichever
+    /// worker is running — a run that cannot record "never query the live db"
+    /// mid-flight has to stop and ask for a group first, which is how a rule
+    /// ends up not existing.
+    Rules,
     /// Driving the IDE window: `gui_*`, `fetch_panel_data`.
     IdeGui,
     /// Image and video generation, generation-model registry, wiki rendering.
@@ -101,12 +108,13 @@ pub enum ToolGroup {
 }
 
 impl ToolGroup {
-    pub const ALL: [ToolGroup; 17] = [
+    pub const ALL: [ToolGroup; 18] = [
         ToolGroup::Files,
         ToolGroup::Shell,
         ToolGroup::Memory,
         ToolGroup::Workspace,
         ToolGroup::CustomTools,
+        ToolGroup::Rules,
         ToolGroup::IdeGui,
         ToolGroup::Media,
         ToolGroup::WebContent,
@@ -129,6 +137,7 @@ impl ToolGroup {
             ToolGroup::Memory => "memory",
             ToolGroup::Workspace => "workspace",
             ToolGroup::CustomTools => "custom_tools",
+            ToolGroup::Rules => "rules",
             ToolGroup::IdeGui => "ide",
             ToolGroup::Media => "media",
             ToolGroup::WebContent => "web",
@@ -158,6 +167,9 @@ impl ToolGroup {
                 "indexing, test and coverage analysis, knowledge, skills, workflows"
             }
             ToolGroup::CustomTools => "register and run custom shell-backed tools",
+            ToolGroup::Rules => {
+                "create, adjust, retire and bypass the deterministic rules that refuse tool calls"
+            }
             ToolGroup::IdeGui => "drive the IDE window and read its panels",
             ToolGroup::Media => "generate images, video and wiki pages",
             ToolGroup::WebContent => "read and extract from a web page without changing it",
@@ -177,12 +189,15 @@ impl ToolGroup {
         }
     }
 
-    /// The always-on floor of any surface: the file tools and the command runner.
-    /// Nothing a dispatched worker can do without them, and nothing a narrowed
-    /// surface should ever hide — the artifact gate, the write lock and the build
-    /// checks all reach the filesystem through these.
-    fn core() -> [ToolGroup; 2] {
-        [ToolGroup::Files, ToolGroup::Shell]
+    /// The always-on floor of any surface: the file tools, the command runner and
+    /// the rules lifecycle. Nothing a dispatched worker can do without them, and
+    /// nothing a narrowed surface should ever hide — the artifact gate, the write
+    /// lock and the build checks all reach the filesystem through these. `Rules`
+    /// is on the floor for the same reason the tools are: the worker that is
+    /// about to repeat the mistake is the one that can record the rule that stops
+    /// it, and a rule the user asked for cannot wait for a group request.
+    fn core() -> [ToolGroup; 3] {
+        [ToolGroup::Files, ToolGroup::Shell, ToolGroup::Rules]
     }
 }
 
@@ -449,6 +464,7 @@ fn group_of_system_tool(name: &str) -> Option<ToolGroup> {
 fn module_group_tools(group: ToolGroup) -> Vec<Tool> {
     match group {
         ToolGroup::Team => team::get_team_tools(),
+        ToolGroup::Rules => rules::get_rules_tools(),
         ToolGroup::Infra => {
             let mut both = drone::get_drone_tools();
             both.extend(instances::get_instance_tools());
@@ -470,7 +486,12 @@ fn module_group_tools(group: ToolGroup) -> Vec<Tool> {
 }
 
 /// The module-backed groups, in [`ToolGroup::ALL`] order.
-const MODULE_GROUPS: [ToolGroup; 3] = [ToolGroup::Media, ToolGroup::Team, ToolGroup::Infra];
+const MODULE_GROUPS: [ToolGroup; 4] = [
+    ToolGroup::Rules,
+    ToolGroup::Media,
+    ToolGroup::Team,
+    ToolGroup::Infra,
+];
 
 /// The three modules that hold more than one use case, walked tool by tool.
 /// `UiVerify` is drawn from both driver modules in this one pass, so a tool can
@@ -616,6 +637,7 @@ impl ToolSurface {
             ToolGroup::Memory,
             ToolGroup::Workspace,
             ToolGroup::CustomTools,
+            ToolGroup::Rules,
             ToolGroup::IdeGui,
             ToolGroup::Media,
         ])
@@ -1136,7 +1158,12 @@ mod tests {
         assert!(surface.contains(ToolGroup::UiVerify));
         assert_eq!(
             surface.groups(),
-            &[ToolGroup::Files, ToolGroup::Shell, ToolGroup::UiVerify][..]
+            &[
+                ToolGroup::Files,
+                ToolGroup::Shell,
+                ToolGroup::Rules,
+                ToolGroup::UiVerify
+            ][..]
         );
         assert_eq!(
             surface.request(&[ToolGroup::UiVerify]),

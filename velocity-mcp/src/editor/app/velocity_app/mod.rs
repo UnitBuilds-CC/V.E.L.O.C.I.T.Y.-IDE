@@ -3,6 +3,7 @@ pub mod agent_handlers;
 pub mod editor_actions;
 pub mod gui_commands;
 pub mod overlays;
+pub mod rules_panel;
 pub mod struct_def;
 pub mod substructs;
 pub mod tier3_activity;

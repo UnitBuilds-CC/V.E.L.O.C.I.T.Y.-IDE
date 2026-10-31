@@ -7,6 +7,7 @@ pub mod generation_tools;
 pub mod hooks;
 pub mod lazy;
 pub mod parsers;
+pub mod rules_tools;
 pub mod skills;
 pub mod system_tools;
 pub mod team_tools;

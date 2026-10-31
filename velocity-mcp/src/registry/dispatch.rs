@@ -4,6 +4,7 @@ use super::custom_tools;
 use super::event_store;
 use super::generation_tools::handle_generation_tool;
 use super::hooks;
+use super::rules_tools::handle_rules_tool;
 use super::system_tools::handle_system_tool;
 use super::team_tools::handle_team_tool;
 use super::wa_tools::handle_wa_tool;
@@ -54,6 +55,17 @@ pub fn call_tool_in_workspace(
     // no policy configured this allows everything (no behavior change).
     crate::editor::governance::gate_tool_call(&root, name, arguments).map_err(|e| {
         log::warn!("tool dispatch: governance denied '{}': {}", name, e);
+        e
+    })?;
+
+    // Deterministic rules gate. The rule files are re-stamped on every call, so
+    // a rule created mid-run — or edited in Settings — binds the very next call
+    // in every agent in the process. Unlike the policy above, this is not
+    // skippable: an unreadable rule file refuses the call instead of failing
+    // open, and the refusal text names the offending rule and its remedy so the
+    // agent can steer to the sanctioned path rather than retry blindly.
+    crate::rules::gate_tool_call(&root, name, arguments).map_err(|e| {
+        log::warn!("tool dispatch: rule blocked '{}': {}", name, e);
         e
     })?;
 
@@ -267,6 +279,9 @@ fn try_builtin_tools(
     arguments: &Value,
 ) -> Result<Option<String>, Box<dyn Error>> {
     if let Some(result) = handle_system_tool(root, name, arguments)? {
+        return Ok(Some(result));
+    }
+    if let Some(result) = handle_rules_tool(root, name, arguments)? {
         return Ok(Some(result));
     }
     if let Some(result) = handle_team_tool(root, name, arguments)? {

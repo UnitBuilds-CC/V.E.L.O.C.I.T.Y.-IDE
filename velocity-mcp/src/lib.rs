@@ -38,6 +38,7 @@ pub mod metrics;
 pub mod orchestrator;
 pub mod protocol;
 pub mod registry;
+pub mod rules;
 pub mod safety;
 pub mod security;
 pub mod shutdown;

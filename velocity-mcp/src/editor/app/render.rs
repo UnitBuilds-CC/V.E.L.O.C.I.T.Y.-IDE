@@ -1710,6 +1710,10 @@ impl<'a> TabViewerImpl<'a> {
                             }
                         });
                     });
+
+                    ui.group(|ui| {
+                        self.app.render_rules_section(ui);
+                    });
                 });
             });
     }

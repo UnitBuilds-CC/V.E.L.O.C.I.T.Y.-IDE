@@ -152,20 +152,31 @@ fn enum_values(schema: &Value) -> Option<String> {
 /// narrowed surface states which groups it withheld and how to ask for them, the
 /// same escape hatch the native schema array carries.
 pub fn build_inline_tool_docs(surface: &ToolSurface) -> String {
+    // Per-parameter prose is kept while the catalog it produces fits this many
+    // characters. What is being bounded is the model's window, not the number of
+    // advertised tools: measured over the registry, 347 tools with all 1,183
+    // parameter descriptions render 141k characters (~40k tokens) against 85,739
+    // compact, while the core floor a dispatched worker reads stays well inside
+    // the budget. Keying this on a tool count instead let one new group silently
+    // strip the guidance from every narrow run.
+    const PROSE_CHAR_BUDGET: usize = 14_000;
+    let verbose = render_inline_tool_docs(surface, true);
+    if verbose.chars().count() <= PROSE_CHAR_BUDGET {
+        verbose
+    } else {
+        render_inline_tool_docs(surface, false)
+    }
+}
+
+fn render_inline_tool_docs(surface: &ToolSurface, verbose_params: bool) -> String {
     const TOOL_DOC_CHARS: usize = 160;
     const PARAM_DOC_CHARS: usize = 120;
-    const PROSE_SURFACE_LIMIT: usize = 12;
     let advertised = surface.tools();
     let narrow = surface.is_narrow();
-    // Per-parameter prose is only affordable while the advertised set is small.
-    // Measured over the registry: 347 tools and 1,183 parameter descriptions
-    // render 141k characters (~40k tokens) verbatim, of which the descriptions
-    // alone are 52k — more than several local windows hold in total, on exactly
-    // the models that read their toolset from this prose. A broad surface
-    // therefore states name, type, requiredness and allowed values, which is what
-    // a call needs to be *valid*; the narrow one keeps the guidance, which is
-    // what `edit_file`'s verbatim-match parameter needs to be useful.
-    let verbose_params = advertised.len() <= PROSE_SURFACE_LIMIT;
+    // `verbose_params` adds each parameter's own description. The compact render
+    // still states name, type, requiredness and allowed values, which is what a
+    // call needs to be *valid*; the prose is what `edit_file`'s verbatim-match
+    // parameter needs to be *useful*.
     let mut doc = String::from(
         "\n\n## Available Tools\n\
         Call tools using this exact syntax (one block per call):\n\
@@ -2228,12 +2239,13 @@ mod tests {
 
     #[test]
     fn inline_catalog_is_bounded() {
-        // Measured over the registry as it stands: 347 tools and 1,183 parameters
-        // rendered verbatim are 140,629 characters (~40k tokens) — more than the
-        // whole 20,480-token window a local Ollama turn declares, so the server
-        // dropped the front of the prompt silently. Leading-sentence tool
-        // descriptions plus name/type/required parameters bring the broad render
-        // to 85,739; a segmented surface does not have to be rendered at all.
+        // Measured over the registry as it stands: 351 tools and their parameter
+        // descriptions rendered verbatim are 152,217 characters (~40k tokens) —
+        // more than the whole 20,480-token window a local Ollama turn declares, so
+        // the server dropped the front of the prompt silently. Leading-sentence
+        // tool descriptions plus name/type/required parameters bring the broad
+        // render to 87,703, and the 20-tool core floor a dispatched worker reads
+        // renders with its prose at 6,829.
         let broad = build_inline_tool_docs(&ToolSurface::broad());
         let longest_line = broad
             .lines()

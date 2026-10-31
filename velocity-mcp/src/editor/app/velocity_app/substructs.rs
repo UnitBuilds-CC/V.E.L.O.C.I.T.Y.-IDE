@@ -74,6 +74,57 @@ impl WorkflowAppState {
 
 // ─── GovernanceState ──────────────────────────────────────────────────────────
 
+/// Which view the Rules panel shows. `Active` is the live set the gate enforces,
+/// `Pending` is what an agent asked for and nobody signed yet, `History` keeps
+/// the retired tombstones visible so a removed rule can be traced.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum RulesTab {
+    #[default]
+    Active,
+    Pending,
+    History,
+}
+
+/// The Settings → Rules panel's view state.
+///
+/// The snapshot is a cache, not the source: the panel re-reads the rule files
+/// whenever their revision moves, which is how an edit made by another agent
+/// mid-run shows up here without a restart. The draft fields hold what is typed
+/// but not yet saved.
+#[derive(Debug, Clone, Default)]
+pub struct RulesUiState {
+    pub tab: RulesTab,
+    /// Last snapshot rendered, with the revision it was taken at.
+    pub snapshot: crate::rules::RuleSnapshot,
+    /// Rule whose parameter sub-panel is open.
+    pub selected: Option<String>,
+    /// Draft text per parameter key of the selected rule, keyed by spec key.
+    pub draft_params: Vec<(String, String)>,
+    pub draft_name: String,
+    pub draft_description: String,
+    pub draft_remedy: String,
+    /// Selected row in the "new rule" form.
+    pub new_kind: crate::rules::RuleKind,
+    pub new_scope: crate::rules::RuleScope,
+    pub new_params: Vec<(String, String)>,
+    pub new_name: String,
+    pub new_description: String,
+    pub new_remedy: String,
+    pub new_provenance: String,
+    /// A command-text rule must bring its proof pair; these are its two commands.
+    pub new_deny_command: String,
+    pub new_allow_command: String,
+    /// Bypass controls for the selected rule.
+    pub bypass_scope: crate::rules::BypassScope,
+    pub bypass_minutes: i64,
+    pub bypass_reason: String,
+    /// Retire has no undo, so the button arms first and fires on the second click.
+    pub retire_armed: bool,
+    /// One-line outcome of the last action, with whether it failed.
+    pub notice: String,
+    pub notice_is_error: bool,
+}
+
 /// Governance policy engine, approval queue, secrets, connectors, and related
 /// UI draft fields. Extracted from VelocityApp.
 #[derive(Debug, Clone, Default)]
@@ -102,6 +153,8 @@ pub struct GovernanceState {
     pub gov_connector_secret_input: String,
     /// Transient status line shown at the top of the Governance panel.
     pub gov_status: String,
+    /// The deterministic rules panel: view state and unsaved drafts.
+    pub rules: RulesUiState,
 }
 
 impl GovernanceState {
@@ -120,6 +173,7 @@ impl GovernanceState {
             gov_connector_url_input: String::new(),
             gov_connector_secret_input: String::new(),
             gov_status: String::new(),
+            rules: RulesUiState::default(),
         }
     }
 }

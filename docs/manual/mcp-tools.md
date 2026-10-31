@@ -1,6 +1,6 @@
 # MCP Tool Reference
 
-Every Model-Context-Protocol tool the IDE exposes to agents, grouped by the registry module that defines it. Descriptions are taken verbatim from the tool definitions in `velocity-mcp/src/registry/tool_definitions/`, so this table matches the running binary. **Total: 343 tools.**
+Every Model-Context-Protocol tool the IDE exposes to agents, grouped by the registry module that defines it. Descriptions are taken verbatim from the tool definitions in `velocity-mcp/src/registry/tool_definitions/`, so this table matches the running binary. **Total: 351 tools.**
 
 ## Categories
 
@@ -11,6 +11,7 @@ Every Model-Context-Protocol tool the IDE exposes to agents, grouped by the regi
 | [drone](#drone) | 10 | Distributed build-node (drone) tools: register, ping, remote build/run, and peer file operations. |
 | [generation](#generation) | 5 | Code generation tools driven by the agent. |
 | [instances](#instances) | 7 | Workspace instance management tools. |
+| [rules](#rules) | 8 | Deterministic runtime rules: scoped bans and budgets enforced at the dispatch gate, plus their create/adjust/retire/bypass lifecycle. |
 | [system](#system) | 55 | Core IDE/system tools: file & editor operations, build/test, git, search, knowledge, memory, and app control. |
 | [team](#team) | 27 | Expert-team orchestration tools: create teams, assign agents, route work. |
 | [wa](#wa) | 86 | Windows Automation (UIA) tools: desktop element discovery, action planning, snapshots, OCR, clipboard, and virtual desktops. |
@@ -235,6 +236,23 @@ Workspace instance management tools.
 | `instance_ping` | Query a registered instance's drone /peer/health and record the outcome: reachable nodes become 'online', an unreachable one drops to 'degraded' or 'offline' and that downgrade is persisted. If the record had no platform, it is adopted f... |
 | `instance_release` | Mark one in-flight item on a node as finished, undoing an instance_pick claim. The counter never goes below zero, so a double release is harmless. |
 | `instance_remove` | Remove a managed instance from the registry by id. Does not stop the drone process on the remote machine - only forgets it locally. |
+
+## rules
+
+Deterministic runtime rules: scoped bans and budgets refused at the tool-dispatch gate, with the lifecycle that creates, adjusts, retires and bypasses them. Approval is not on this surface — a durable loosening is signed off in Settings → Rules.
+
+8 tools.
+
+| Tool | Description |
+|------|-------------|
+| `rule_adjust` | Change a rule's name, description, parameters or remedy. On a task rule this applies at once. On a workspace or global rule an agent may only file the change for approval — it is applied when a human or the team supervisor appr... |
+| `rule_bypass` | Ask for a bypass of one rule instead of working around it. 'event' releases exactly one matching call; 'session' and 'workspace' release matches for a number of minutes (max 10080). An agent can only request; the grant is issued from ... |
+| `rule_create` | Create a rule that binds tool calls from the next call onward, in every agent sharing this workspace. Use it when the user says 'never do that again': the constraint belongs here, not in your notes, because a rule refuses the call det... |
+| `rule_kinds` | Describe every rule kind and the parameters it takes, including the ranges the editor enforces. Call this first if you are unsure which kind fits, or what a parameter has to hold for the rule to be able to fire at all. |
+| `rule_retire` | Retire a rule — a tombstone, never an erase: its history stays and the refusal trail can still name it. Use it when a rule is broken (it blocks work it should not) or no longer relevant. Task rules retire at once; workspace and global r... |
+| `rule_show` | Show one rule in full: current parameters with their allowed ranges, the witness pair that proves it fires, its version history, and any live bypass grant. Call this before rule_adjust so you change parameters you know the bounds of. |
+| `rules_list` | List the deterministic rules enforced on every tool call in this workspace, grouped by scope (task, workspace, global). Each entry shows its id, kind, live parameters and the intent a refusal will quote. Rules are re-read on every call, ... |
+| `rules_pending` | List the change requests waiting on an approver — adjustments, retirements and bypasses an agent filed against a durable rule. The rules themselves are unchanged until one is approved, so this is also how you check that a loosening you a... |
 
 ## system
 
