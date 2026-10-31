@@ -25,7 +25,15 @@ The code surface for any open file. Full detail on the
 *Navigate ▸ Chat (`Ctrl+J`); Chat rail sub-tab 0; palette `Chat`; `Ctrl+L` focuses input.*
 The primary agent conversation.
 - Header: `Chat` + `● Working`/`● Ready`; **Clear** (resets context) and **Interrupt** (while running).
-- Provider `ComboBox` (16 providers, in order: CloudflareWorkersAi, OpenRouter, OpenAI, Anthropic, GoogleVertex, AzureOpenAi, LocalOllama, Deepseek, AlibabaQwen, Groq, Mistral, TogetherAi, FireworksAi, Perplexity, Cerebras, AwsBedrock) and a **dynamic** model `ComboBox` (populated from the provider). An `👁 Reasoning` toggle shows/hides thoughts.
+- Provider `ComboBox` (the 17 providers, in catalog order: CloudflareWorkersAi,
+  OpenRouter, AzureOpenAi, LocalOllama, LocalLlama, OpenAI, Anthropic,
+  GoogleVertex, Deepseek, AlibabaQwen, AwsBedrock, Groq, Mistral, TogetherAi,
+  FireworksAi, Perplexity, Cerebras) and a **dynamic** model `ComboBox`
+  (populated from the provider). An `👁 Reasoning` toggle shows/hides thoughts.
+  Both pickers iterate `AiProvider::ALL`, so the list cannot lag the catalog;
+  `agent::models::tests::the_manual_lists_every_backend_the_picker_offers` names
+  every variant in this page and `the_provider_pickers_read_the_catalog` checks
+  the source still loops over the catalog.
 - Messages: user bubbles (accent, right), agent bubbles (left), reasoning blocks (warning, italic, shown only with *Show thoughts*). Hover a message → **Copy**. Max 200 messages.
 - Empty state offers 4 chips: *Explain this codebase*, *Find and fix bugs*, *Write tests for my code*, *Refactor a module*.
 - Pending-approval strip: per-tool **Approve**/**Decline** + an **Auto-approve** checkbox.

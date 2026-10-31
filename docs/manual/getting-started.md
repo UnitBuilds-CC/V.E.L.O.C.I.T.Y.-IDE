@@ -52,7 +52,7 @@ palette filters). Pick one from **Layouts ▾** or a chord:
 Open **Settings** (`Ctrl+,`) → **Providers & credentials**, paste an API key for
 at least one backend, and **Save provider settings**. Cloudflare Workers AI is
 the default (`@cf/moonshotai/kimi-k2.7-code`); OpenRouter, Azure OpenAI, and
-Local Ollama are the failover chain, but all 16 providers are configurable. Then
+Local Ollama are the failover chain, but all 17 providers are configurable. Then
 set your fallback **Agent defaults** (provider, model, thinking, auto-approve).
 Full field-by-field detail is on the
 [Settings & providers](settings-providers.md) page.

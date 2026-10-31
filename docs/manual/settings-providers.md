@@ -38,7 +38,7 @@ Sets the fallback agent configuration and pushes it live
 (`UiToAgentMessage::{SetProvider, SetModel, SetThinking, RefreshModels}`),
 persisting preferences.
 
-- **Provider** — the same 16 providers, in the same order, as the
+- **Provider** — the same 17 providers, in the same order, as the
   [Chat](panels-reference.md#chat) panel.
 - **Model** — **dynamic** per provider; **↻ Models** (↔ `Loading…`) refreshes the list.
 - **Thinking** (enabled only when the model supports it) · **Auto-approve tools** · **Show thoughts**.
@@ -68,6 +68,16 @@ re-reads it. Badges show `● {Provider}` plus **Workspace configured** (green) 
 | **AWS Bedrock** | no | API key (secret, *Bedrock proxy key — set `BEDROCK_PROXY_URL` env var*) · Label |
 | **Anthropic** | no | API key (secret) · Label |
 | **Alibaba Qwen** | no | API key (secret) · Label · **Pay-per-token plan**: *Use Token Plan API key* checkbox · Token plan API key (`sk-sp-…`) · Token plan base URL |
+
+**Local llama.cpp** is the one backend of the seventeen with no credential
+section here: a local `llama-server` takes no key, and its endpoint comes from
+the `LLAMA_CPP_HOST` environment variable of the process that runs the agent
+(default `http://localhost:8080`). You can select it from either provider picker
+and dispatch to it, but you cannot point it at a different host from this panel —
+and the failover chain only routes to it when that variable is set, since
+otherwise the loop has no way to know a server is listening. AWS Bedrock is the
+other key-free backend — it has a section because its optional proxy key lives
+there, but neither it nor llama.cpp is part of the workspace credential table.
 
 **Alibaba Qwen** is the one provider with the extra token-plan options: when the
 *Use Token Plan API key* box is enabled it takes precedence over the standard

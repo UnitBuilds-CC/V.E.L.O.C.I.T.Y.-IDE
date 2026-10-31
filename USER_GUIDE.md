@@ -739,26 +739,32 @@ The chat panel is your primary interface for AI-assisted development.
 
 ### Model Selection
 
-Velocity IDE supports 16 AI providers with automatic failover:
+Velocity IDE supports 17 AI providers with automatic failover:
 
 | Provider | Default Model | Notes |
 |----------|---------------|-------|
 | Cloudflare Workers AI | `@cf/moonshotai/kimi-k2.7-code` | Default, no API key needed |
 | OpenRouter | `tencent/hy3:free` | Access to 100+ models |
-| OpenAI | `gpt-4o` | Requires API key |
-| Anthropic | `claude-3-5-sonnet-20241022` | Requires API key |
 | Azure OpenAI | `gpt-4o` | Requires deployment endpoint |
-| Local Ollama | `llama3.2` | Runs locally, no API key |
+| Local Ollama | `qwen2.5-coder:0.5b` | Runs locally, no API key |
+| Local llama.cpp | `qwen3.6:35b-a3b` | OpenAI-compatible `llama-server`; 3-tier MoE offload for models larger than VRAM |
+| OpenAI Direct | `gpt-4o` | Requires API key |
+| Anthropic Claude | `claude-3-5-sonnet-20241022` | Requires API key |
+| Google Vertex AI | `gemini-1.5-pro` | Requires GCP credentials |
 | Deepseek | `deepseek-chat` | Requires API key |
-| Google Vertex | `gemini-1.5-pro` | Requires GCP credentials |
+| Alibaba Qwen | `qwen-max` | Requires API key |
+| AWS Bedrock | `anthropic.claude-3-sonnet-20240229-v1:0` | Requires AWS credentials |
 | Groq | `llama-3.3-70b-versatile` | Requires API key |
-| Mistral | `mistral-large-latest` | Requires API key |
+| Mistral AI | `mistral-large-latest` | Requires API key |
 | Together AI | `meta-llama/Meta-Llama-3.1-405B-Instruct-Turbo` | Requires API key |
 | Fireworks AI | `accounts/fireworks/models/llama-v3p3-70b-instruct` | Requires API key |
 | Perplexity | `sonar-pro` | Requires API key |
 | Cerebras | `llama-3.3-70b` | Requires API key |
-| AWS Bedrock | `anthropic.claude-3-sonnet-20240229-v1:0` | Requires AWS credentials |
-| Alibaba Qwen | `qwen-plus` | Requires API key |
+
+The provider names above are the picker labels, and a regression test
+(`agent::models::tests::the_user_guide_table_matches_the_catalog`) compares this
+table row by row against `AiProvider::ALL` and `default_provider_model`, so a
+row here cannot quietly disagree with the code.
 
 **Changing models:**
 1. Open Chat panel
