@@ -1965,7 +1965,7 @@ mod tests {
         std::fs::create_dir_all(crate_dir.join("src")).unwrap();
         let file = crate_dir.join("src").join("budget_manager.rs");
         std::fs::write(&file, "fn main() {}\n").unwrap();
-        let abs = file.to_string_lossy().replace('/', "\\");
+        let abs = file.to_string_lossy().to_string();
         let stderr = format!(
             "error[E0308]: mismatched types\n  --> {abs}:3:9\n   |\n3 |  bad\n   |   ^^^ expected found\n\n"
         );
@@ -2134,7 +2134,12 @@ mod tests {
         std::fs::write(&file, "fn main() {}\n").unwrap();
         let written = ["rust_port/src/budget_manager.rs"];
 
-        let abs = file.to_string_lossy().replace('/', "\\");
+        // A relative location is matched textually, so the Windows spelling is
+        // the same probe on either OS. An absolute one is resolved through the
+        // filesystem, so it has to be spelled the way this OS prints it —
+        // `/tmp/…` with backslashes substituted is not an absolute path on Linux
+        // at all, and rustc never emits one.
+        let abs = file.to_string_lossy().to_string();
         let both = format!(
             "failures:\n\n---- a::relative stdout ----\n\nthread 'a' panicked at src\\budget_manager.rs:5:1:\n\
              x\n\n---- a::absolute stdout ----\n\nthread 'a' panicked at {abs}:9:1:\ny\n\nfailures:\n"
