@@ -770,3 +770,67 @@ fn the_guard_is_not_evidence_about_itself() {
          name quoted a few lines above the assertion meant to notice"
     );
 }
+
+/// The pages that restate the credential story, apart from the guide the tests
+/// above already bind. Each one carried at least one of the claims below, found
+/// by hand rather than by the scan; a claim corrected in one place and left in
+/// five others is a claim that is still published, so this list is where the
+/// correction is held.
+const CONFIG_PAGES: [&str; 5] = [
+    "README.md",
+    "docs/DEPLOYMENT.md",
+    "docs/RUNBOOK.md",
+    "docs/manual/getting-started.md",
+    "docs/manual/settings-providers.md",
+];
+
+/// Spelling no loader honours, paired with the evidence. These are not style
+/// rules: each one sends a reader to a place the process never looks, which is
+/// the same failure as a guide row for a knob nothing reads.
+const UNHONOURED_CLAIMS: [(&str, &str); 5] = [
+    (
+        "CF_ACCOUNT_N_",
+        "no code looks up a name containing a literal `N` - the family is CF_ACCOUNT_{n}_ID for n \
+         in 1 to 30 - so a reader who set this got nothing",
+    ),
+    (
+        "[providers.",
+        "`VelocityConfig::load` in velocity-ide/src/velocity_client.rs reads top-level `base_url` \
+         and `api_key` from config.toml and no table, so no provider credential has ever been \
+         configured that way",
+    ),
+    (
+        "`VELOCITY_WORKSPACE`",
+        "nothing in any scanned crate reads that name",
+    ),
+    (
+        "`VELOCITY_CONFIG`",
+        "the name that relocates the user config is `VELOCITY_CONFIG_DIR`; this one was invented \
+         alongside it and reads as the same knob to a reader choosing between them",
+    ),
+    (
+        ".velocity/provider-settings.json",
+        "the credential file is the user-level one (`usage.rs::provider_settings_path`), never a \
+         workspace path, which is the point of it",
+    ),
+];
+
+#[test]
+fn the_other_config_pages_repeat_only_claims_the_code_honours() {
+    let root = repo_root();
+    for page in CONFIG_PAGES {
+        let text = std::fs::read_to_string(root.join(page)).unwrap_or_else(|error| {
+            panic!(
+                "{page} is one of the pages this test exists to check, and it is not readable: \
+                 {error} - if the page moved or was merged, update `CONFIG_PAGES` rather than \
+                 deleting this test"
+            )
+        });
+        for (claim, reason) in UNHONOURED_CLAIMS {
+            assert!(
+                !text.contains(claim),
+                "{page} still publishes `{claim}`: {reason}"
+            );
+        }
+    }
+}
