@@ -1742,6 +1742,15 @@ Drones are **lightweight, portable agent endpoints** deployable on any machine â
 3. Pair the drone with your IDE via `drone_pair` or `POST /peer/pair`
 4. Send files and tasks to the drone via MCP tools or the peer protocol
 
+**Drone authentication:** `/peer/task` runs whatever command it is handed, so a
+drone that answers requests with no secret is a remote shell. Set
+`DRONE_AUTH_TOKEN` on the drone and send `Authorization: Bearer <token>` (every
+endpoint but `/peer/health` then requires it). With no token the drone will only
+start on a loopback address; `drone_deploy` handles this for you by generating a
+token and storing it in a `600`-mode env file on the node. Running unattended on
+a routable interface without a token is possible only by setting
+`DRONE_ALLOW_UNAUTHENTICATED_REMOTE=1`, which means the network is trusted.
+
 **Quick start (MCP tools):**
 ```
 # Deploy drone to a remote machine
