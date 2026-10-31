@@ -448,4 +448,4 @@ This test suite specification provides a comprehensive roadmap for achieving ful
 **References:**
 - [TESTING_STRATEGY.md](./TESTING_STRATEGY.md) — Original testing strategy document
 - [Velocity Wiki](../.wiki/index.md) — Architecture documentation
-- [Expert Teams Specification](../.qoder/repowiki/en/content/Architecture/Expert%20Teams%20Enhancement%20Specification.md) — Feature specifications
+- [Expert Teams Specification](../.wiki/subsystems/multi_agent_orchestrator.md) — Feature specifications
