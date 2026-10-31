@@ -1795,9 +1795,9 @@ mod tests {
     #[test]
     fn detect_unix_file_line_and_drive_letter() {
         assert_eq!(
-            links("  /home/u/proj/main.go:42 | bug here")[0].kind,
+            links("  /home/dev/proj/main.go:42 | bug here")[0].kind,
             LinkKind::File {
-                path: "/home/u/proj/main.go".to_string(),
+                path: "/home/dev/proj/main.go".to_string(),
                 line: Some(42),
             }
         );

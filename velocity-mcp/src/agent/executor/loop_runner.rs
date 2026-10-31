@@ -13105,17 +13105,30 @@ mod tests {
         );
     }
 
+    /// The scratch directory the crucible probes leave behind - the container
+    /// directory above the repository. Located from the crate, not from one
+    /// account's home directory, so the same ignored test is runnable wherever
+    /// the checkout happens to live.
+    fn velocity_testing() -> std::path::PathBuf {
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../.velocity_testing")
+    }
+
+    /// The LiteLLM port the ignored repair probes below read their real
+    /// diagnostics from.
+    fn crucible_workspace() -> std::path::PathBuf {
+        velocity_testing().join("litellm_ws")
+    }
+
     #[test]
-    #[ignore = "requires the live-MoE probe dump at this absolute path"]
+    #[ignore = "requires the live-MoE probe dump in .velocity_testing beside the workspace"]
     fn fenced_recovery_on_real_moe_repair_output_is_well_formed_rust() {
-        let dir = r"C:\Users\visse\OneDrive\Documents\Velocity-IDE\.velocity_testing";
-        let raw = std::fs::read_to_string(format!("{dir}/probe_clean_content.txt"))
-            .expect("probe output present");
+        let dump = velocity_testing().join("probe_clean_content.txt");
+        let raw = std::fs::read_to_string(&dump).expect("probe output present");
         let body = extract_fenced_code_block(&raw, 600).expect("must recover the real repair");
         assert!(body.starts_with("use std::"), "lang tag stripped: {body}");
         assert!(!body.contains("```"), "fence must not leak");
         std::fs::write(
-            format!("{dir}/rust_port_extracted_budget_manager.rs"),
+            dump.with_file_name("rust_port_extracted_budget_manager.rs"),
             &body,
         )
         .unwrap();
@@ -16039,10 +16052,8 @@ mod tests {
         // has to keep Windows `--> src\file.rs` lines, and the excerpt has to
         // turn one into copyable text whose path the agent can actually pass to
         // edit_file. Run this against the live port the crucible is failing.
-        let root = std::path::Path::new(
-            r"C:\Users\visse\OneDrive\Documents\Velocity-IDE\.velocity_testing\litellm_ws",
-        );
-        let errors = match crate::agent::executor::thread::run_compilation_check(root) {
+        let root = crucible_workspace();
+        let errors = match crate::agent::executor::thread::run_compilation_check(&root) {
             Ok(()) => panic!("the crucible port is expected to fail cargo check"),
             Err(e) => e,
         };
@@ -16054,7 +16065,7 @@ mod tests {
             errors.contains("mutable borrow later used here"),
             "the span body carrying rustc's conclusion was filtered out again:\n{errors}"
         );
-        let excerpt = repair_error_excerpt(root, &errors);
+        let excerpt = repair_error_excerpt(&root, &errors);
         assert!(!excerpt.is_empty(), "empty excerpt for:\n{errors}");
         assert!(
             excerpt.contains("rust_port/src/budget_manager.rs"),
@@ -16080,14 +16091,12 @@ mod tests {
     #[test]
     #[ignore = "runs cargo check in the real LiteLLM crucible workspace"]
     fn the_real_red_port_gets_its_owning_function_and_declarations() {
-        let root = std::path::Path::new(
-            r"C:\Users\visse\OneDrive\Documents\Velocity-IDE\.velocity_testing\litellm_ws",
-        );
-        let errors = match crate::agent::executor::thread::run_compilation_check(root) {
+        let root = crucible_workspace();
+        let errors = match crate::agent::executor::thread::run_compilation_check(&root) {
             Ok(()) => panic!("the crucible port is expected to fail cargo check"),
             Err(e) => e,
         };
-        let api = repair_api_context(root, &errors);
+        let api = repair_api_context(&root, &errors);
         assert!(!api.is_empty(), "nothing was found to paste for:\n{errors}");
         println!("{api}");
         println!("=== recipes ===");
@@ -16095,7 +16104,7 @@ mod tests {
         println!("=== codes ===");
         println!(
             "{}",
-            compile_repair_directive(&errors, root)
+            compile_repair_directive(&errors, &root)
                 .lines()
                 .filter(|l| l.contains(": ") && l.starts_with('`'))
                 .collect::<Vec<_>>()

@@ -2306,7 +2306,7 @@ fn upgrade_small_ollama_hops(
 /// Which model a fallback hop actually is, as the prose allowance sees it.
 ///
 /// Run #26 tried `qwen3.6-35b-a3b` over llama.cpp, then
-/// `/home/ian/models/qwen3.6-35b-a3b.gguf`, then `qwen3.6:35b-a3b` under Ollama.
+/// `/home/<user>/models/qwen3.6-35b-a3b.gguf`, then `qwen3.6:35b-a3b` under Ollama.
 /// Three chain entries, one set of weights, and the cut allowance paid for all
 /// three: 6 tool-call-free turns costing 5,500s of a 6,025s dispatch. Rambling
 /// is what a model does, not what an endpoint does, so the copies are compared
@@ -4807,7 +4807,7 @@ mod tests {
     fn one_model_reached_three_ways_is_one_share_of_the_prose_allowance() {
         assert_eq!(
             ramble_key("qwen3.6-35b-a3b"),
-            ramble_key("/home/ian/models/qwen3.6-35b-a3b.gguf"),
+            ramble_key("/home/dev/models/qwen3.6-35b-a3b.gguf"),
             "the served file path is the same model as the name llama.cpp gave it"
         );
         assert_eq!(
@@ -4869,7 +4869,7 @@ mod tests {
         let paid = [ramble_key("qwen3.6-35b-a3b")];
         assert!(already_paid_for("qwen3.6:35b-a3b", &paid));
         assert!(already_paid_for(
-            "/home/ian/models/qwen3.6-35b-a3b.gguf",
+            "/home/dev/models/qwen3.6-35b-a3b.gguf",
             &paid
         ));
         assert!(!already_paid_for("qwen2.5-coder:32b", &paid));

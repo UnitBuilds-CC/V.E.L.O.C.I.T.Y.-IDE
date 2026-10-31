@@ -1,4 +1,4 @@
 @echo off
-cd /d C:\Users\visse\OneDrive\Documents\Velocity-IDE\Velocity-IDE
+cd /d "%~dp0"
 cargo test -p velocity-ide --lib --jobs 2
 echo EXIT_CODE=%ERRORLEVEL%

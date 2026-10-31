@@ -1325,7 +1325,7 @@ mod tests {
         let audit = CredentialBoundaryAudit {
             exposed_env_vars: vec!["A".into(), "B".into()],
             reachable_sockets: vec![("SSH_AUTH_SOCK".into(), "/tmp/s".into())],
-            accessible_config_dirs: vec!["/home/.ssh".into()],
+            accessible_config_dirs: vec!["/home/user/.ssh".into()],
             clean: false,
         };
         let json = serde_json::to_string(&audit).unwrap();
@@ -1616,10 +1616,10 @@ mod tests {
         let _g = ENV_LOCK.lock().unwrap();
         // HOME should take precedence if set
         let original_home = std::env::var("HOME").ok();
-        std::env::set_var("HOME", "/test/home/dir");
+        std::env::set_var("HOME", "/test/fixture-home");
         let dir = home_dir();
         assert!(dir.is_some());
-        assert_eq!(dir.unwrap().to_str().unwrap(), "/test/home/dir");
+        assert_eq!(dir.unwrap().to_str().unwrap(), "/test/fixture-home");
         // Restore
         match original_home {
             Some(v) => std::env::set_var("HOME", v),
@@ -1721,7 +1721,7 @@ mod tests {
         let a = CredentialBoundaryAudit {
             exposed_env_vars: vec!["KEY1".into(), "KEY2".into()],
             reachable_sockets: vec![("SSH".into(), "/tmp/s".into())],
-            accessible_config_dirs: vec!["/home/.ssh".into()],
+            accessible_config_dirs: vec!["/home/user/.ssh".into()],
             clean: false,
         };
         let v: serde_json::Value = serde_json::to_value(&a).unwrap();

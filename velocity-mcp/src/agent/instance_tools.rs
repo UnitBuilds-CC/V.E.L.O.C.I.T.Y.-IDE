@@ -509,8 +509,8 @@ mod tests {
     #[test]
     fn wrap_for_work_dir_prefixes_cd_only_when_set() {
         assert_eq!(
-            wrap_for_work_dir("/home/ian/vel", "cargo build --release"),
-            "cd /home/ian/vel && cargo build --release"
+            wrap_for_work_dir("/home/dev/vel", "cargo build --release"),
+            "cd /home/dev/vel && cargo build --release"
         );
         assert_eq!(wrap_for_work_dir("", "cargo run"), "cargo run");
         assert_eq!(wrap_for_work_dir("   ", "cargo run"), "cargo run");

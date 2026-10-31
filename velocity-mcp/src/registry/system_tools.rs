@@ -5082,7 +5082,7 @@ mod tests {
     fn a_console_encoding_death_is_named_and_a_mention_of_it_is_not() {
         let death = r#"Traceback (most recent call last):
   File "<stdin>", line 12, in <module>
-  File "C:\Users\visse\AppData\Local\Python\pythoncore-3.12-64\Lib\encodings\cp1252.py", line 19, in encode
+  File "C:\Users\dev\AppData\Local\Python\pythoncore-3.12-64\Lib\encodings\cp1252.py", line 19, in encode
     return codecs.charmap_encode(input,self.errors,encoding_table)[0]
 UnicodeEncodeError: 'charmap' codec can't encode character '\u2192' in position 6: character maps to <undefined>"#;
         let note = console_encoding_fault(death).expect("run #88's own traceback is a fault");

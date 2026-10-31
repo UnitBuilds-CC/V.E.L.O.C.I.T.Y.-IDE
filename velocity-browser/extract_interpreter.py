@@ -3,7 +3,7 @@
 import os
 import re
 
-BASE = r"c:\Users\visse\OneDrive\Documentos\Kimi Code\velocity-workspace\velocity-browser\src\js"
+BASE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "src", "js")
 SRC = os.path.join(BASE, "interpreter.rs")
 DST = os.path.join(BASE, "interpreter")
 
