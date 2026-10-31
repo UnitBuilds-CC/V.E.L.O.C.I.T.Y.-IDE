@@ -440,6 +440,11 @@ impl CodeEditor {
         }
 
         let highlight_bg = palette.accent.linear_multiply(0.18);
+        // The fill the glyphs actually sit on. `bg_secondary` is the darker of the
+        // two light-scheme candidates, so a colour that clears AA here clears it on
+        // the white panel too — the measured page inside a Daylight editor is
+        // (252,252,252), between `bg_primary` and this.
+        let code_surface = palette.bg_secondary;
         let hl_ranges = &options.highlight_ranges;
 
         let mut layouter = |ui: &egui::Ui, _string: &dyn egui::TextBuffer, wrap_width: f32| {
@@ -458,7 +463,10 @@ impl CodeEditor {
                     char_pos += 1;
                     continue;
                 }
-                let egui_color = syntect_color_to_egui(*color);
+                let egui_color = crate::editor::theme::ensure_contrast(
+                    syntect_color_to_egui(*color),
+                    code_surface,
+                );
                 let span_chars = word.chars().count();
 
                 if !crate::editor::word_highlight::span_overlaps(char_pos, span_chars, hl_ranges) {
@@ -1075,6 +1083,63 @@ mod tests {
         assert!(
             contrast_ratio((c.r, c.g, c.b), white) < 2.5,
             "expected the dark ramp to fail on white"
+        );
+    }
+
+    /// The semantic ramp only covers the token classes listed in
+    /// `semantic_token_color`; everything else is painted by the syntect table, and
+    /// InspiredGitHub's method green is under AA on a Daylight page. Measured on the
+    /// live GUI (2026-10-31): `to_string`, `max` and `min` at rgb(99,163,92) =
+    /// 2.89:1, the one defect a full Daylight tour still found.
+    #[test]
+    fn a_sub_aa_syntect_colour_is_blended_to_aa_on_the_light_page() {
+        let surface = egui::Color32::from_rgb(248, 248, 250);
+        let green = egui::Color32::from_rgb(99, 163, 92);
+        assert!(
+            crate::editor::theme::contrast_ratio(green, surface) < 4.5,
+            "the fixture must be the colour that failed, not one that passes"
+        );
+
+        let repaired = crate::editor::theme::ensure_contrast(green, surface);
+        let ratio = crate::editor::theme::contrast_ratio(repaired, surface);
+        assert!(
+            ratio >= 4.5,
+            "rgb({},{},{}) is {ratio:.2}:1 after repair",
+            repaired.r(),
+            repaired.g(),
+            repaired.b()
+        );
+        assert!(
+            repaired.g() > repaired.r() && repaired.g() > repaired.b(),
+            "the repaired colour keeps its hue: a green token must not read as the default ink"
+        );
+    }
+
+    #[test]
+    fn a_compliant_syntax_colour_is_returned_byte_identical() {
+        let surface = egui::Color32::from_rgb(248, 248, 250);
+        let ink = egui::Color32::from_rgb(51, 51, 51);
+        assert_eq!(
+            crate::editor::theme::ensure_contrast(ink, surface),
+            ink,
+            "a colour that already clears AA must not be nudged"
+        );
+    }
+
+    /// The direction is the surface's, not a fixed one: the same dark pastel that
+    /// reads on white is invisible on Midnight's page, and blending it darker there
+    /// would make it worse.
+    #[test]
+    fn a_dark_scheme_needs_the_pastel_lighter_not_darker() {
+        let surface = egui::Color32::from_rgb(24, 24, 28);
+        let pastel = egui::Color32::from_rgb(60, 60, 70);
+        assert!(crate::editor::theme::contrast_ratio(pastel, surface) < 4.5);
+
+        let repaired = crate::editor::theme::ensure_contrast(pastel, surface);
+        assert!(crate::editor::theme::contrast_ratio(repaired, surface) >= 4.5);
+        assert!(
+            repaired.r() >= pastel.r() && repaired.g() >= pastel.g() && repaired.b() >= pastel.b(),
+            "on a dark page the repair lightens"
         );
     }
 

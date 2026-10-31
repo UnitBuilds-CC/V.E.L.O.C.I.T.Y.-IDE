@@ -72,6 +72,9 @@ pub fn contrast_ratio(a: Color32, b: Color32) -> f32 {
     (hi + 0.05) / (lo + 0.05)
 }
 
+/// The WCAG AA floor for body-size text, which is the size code is painted at.
+pub const MIN_TEXT_CONTRAST: f32 = 4.5;
+
 /// The text colour that reads on a swatch filled with this colour.
 ///
 /// Hand-painted chips — workflow node headers, status badges — choose their own
@@ -86,6 +89,41 @@ pub fn text_on(c: Color32) -> Color32 {
     } else {
         Color32::WHITE
     }
+}
+
+/// Push `ink` away from `surface` until it clears [`MIN_TEXT_CONTRAST`], and
+/// leave it alone if it already does.
+///
+/// Syntax colours come from theme tables this project does not own: InspiredGitHub
+/// paints a method call in rgb(99,163,92), which measures 2.89:1 on a Daylight code
+/// page, and a glyph that fails AA is unreadable however correctly the theme was
+/// applied. Blending toward black or white — whichever direction the surface needs —
+/// keeps the hue, so a repaired entry still reads as its own token class instead of
+/// collapsing into the default foreground.
+pub fn ensure_contrast(ink: Color32, surface: Color32) -> Color32 {
+    if contrast_ratio(ink, surface) >= MIN_TEXT_CONTRAST {
+        return ink;
+    }
+    let anchor = if relative_luminance(surface) > 0.5 {
+        Color32::BLACK
+    } else {
+        Color32::WHITE
+    };
+    // Binary search on the blend, not a linear walk: a colour sitting a hair off the
+    // surface needs most of the range, and eight halvings land within one byte.
+    let (mut lo, mut hi) = (0.0f32, 1.0f32);
+    let mut best = anchor;
+    for _ in 0..8 {
+        let t = (lo + hi) * 0.5;
+        let candidate = mix(ink, anchor, t);
+        if contrast_ratio(candidate, surface) >= MIN_TEXT_CONTRAST {
+            best = candidate;
+            hi = t;
+        } else {
+            lo = t;
+        }
+    }
+    best
 }
 
 impl IdePalette {
