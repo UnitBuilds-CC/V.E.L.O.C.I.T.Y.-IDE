@@ -69,16 +69,13 @@ fn egress_ban(rule: &Rule, call: &ToolCall) -> Option<MatchDetail> {
 fn path_ban(rule: &Rule, call: &ToolCall) -> Option<MatchDetail> {
     let mut paths = Vec::new();
     collect_at_keys(&call.arguments, PATH_KEYS, &mut paths);
-    paths
-        .iter()
-        .find_map(|path| {
-            let normalized = normalize_path(path);
-            rule.list("paths").iter().find_map(|prefix| {
-                let prefix = normalize_path(prefix);
-                path_is_under(&normalized, &prefix)
-                    .then(|| format!("path \"{path}\""))
-            })
+    paths.iter().find_map(|path| {
+        let normalized = normalize_path(path);
+        rule.list("paths").iter().find_map(|prefix| {
+            let prefix = normalize_path(prefix);
+            path_is_under(&normalized, &prefix).then(|| format!("path \"{path}\""))
         })
+    })
 }
 
 fn command_pattern(rule: &Rule, call: &ToolCall) -> Option<MatchDetail> {
@@ -111,7 +108,14 @@ const PATH_KEYS: &[&str] = &[
     "destination",
 ];
 
-const COMMAND_KEYS: &[&str] = &["command", "cmd", "script", "powershell", "shell", "commandLine"];
+const COMMAND_KEYS: &[&str] = &[
+    "command",
+    "cmd",
+    "script",
+    "powershell",
+    "shell",
+    "commandLine",
+];
 
 /// Paths are compared as forward-slash strings, case-insensitively: the same
 /// workspace is edited on Windows and on remote Linux build hosts, and a rule
@@ -187,7 +191,11 @@ pub fn egress_observations(arguments: &Value) -> Vec<Observation> {
     }
     // Host-typed keys are targets even without a scheme: `{"host": "db.prod"}`.
     let mut hosts = Vec::new();
-    collect_at_keys(arguments, &["host", "hostname", "domain", "base_url", "url", "endpoint"], &mut hosts);
+    collect_at_keys(
+        arguments,
+        &["host", "hostname", "domain", "base_url", "url", "endpoint"],
+        &mut hosts,
+    );
     for host in hosts {
         if let Some(observation) = host_token(&host) {
             out.push(observation);
@@ -291,10 +299,7 @@ fn scan_at_hosts(text: &str, out: &mut Vec<Observation>) {
         let Some((_, rest)) = token.rsplit_once('@') else {
             continue;
         };
-        let host = rest
-            .split([':', '/', ',', ';'])
-            .next()
-            .unwrap_or(rest);
+        let host = rest.split([':', '/', ',', ';']).next().unwrap_or(rest);
         if host.contains('.') {
             if let Some(observation) = host_token(host) {
                 out.push(observation);
@@ -346,7 +351,11 @@ impl TargetPattern {
             if bits > 32 {
                 return None;
             }
-            let mask = if bits == 0 { 0 } else { u32::MAX << (32 - bits) };
+            let mask = if bits == 0 {
+                0
+            } else {
+                u32::MAX << (32 - bits)
+            };
             return Some(TargetPattern::Cidr {
                 network: u32::from(ip) & mask,
                 mask,
@@ -462,7 +471,10 @@ mod tests {
     #[test]
     fn egress_ban_finds_an_ip_in_a_shell_command() {
         let ban = rule(RuleKind::EgressBan, "targets", &["192.168.1.100"]);
-        let call = ToolCall::new("run_command", json!({"command": "psql -h 192.168.1.100 -U app"}));
+        let call = ToolCall::new(
+            "run_command",
+            json!({"command": "psql -h 192.168.1.100 -U app"}),
+        );
         assert_eq!(
             matches(&ban, &call).as_deref(),
             Some("server \"192.168.1.100\"")
@@ -502,7 +514,10 @@ mod tests {
         let ban = rule(RuleKind::EgressBan, "targets", &["db.prod.internal"]);
         assert!(matches(
             &ban,
-            &ToolCall::new("run_query", json!({"host": "db.prod.internal", "sql": "select 1"}))
+            &ToolCall::new(
+                "run_query",
+                json!({"host": "db.prod.internal", "sql": "select 1"})
+            )
         )
         .is_some());
     }
@@ -510,30 +525,48 @@ mod tests {
     #[test]
     fn egress_ban_allows_the_dev_server() {
         let ban = rule(RuleKind::EgressBan, "targets", &["192.168.1.100"]);
-        let call = ToolCall::new("run_command", json!({"command": "psql -h 192.168.0.2 -U app"}));
+        let call = ToolCall::new(
+            "run_command",
+            json!({"command": "psql -h 192.168.0.2 -U app"}),
+        );
         assert!(matches(&ban, &call).is_none());
     }
 
     #[test]
     fn path_ban_respects_component_boundaries() {
         let ban = rule(RuleKind::PathBan, "paths", &["src/secrets"]);
-        let blocked = ToolCall::new("read_file", json!({"relativeFilePath": "src/secrets/key.pem"}));
-        let allowed = ToolCall::new("read_file", json!({"relativeFilePath": "src/secretsfile.rs"}));
-        assert_eq!(matches(&ban, &blocked).as_deref(), Some("path \"src/secrets/key.pem\""));
+        let blocked = ToolCall::new(
+            "read_file",
+            json!({"relativeFilePath": "src/secrets/key.pem"}),
+        );
+        let allowed = ToolCall::new(
+            "read_file",
+            json!({"relativeFilePath": "src/secretsfile.rs"}),
+        );
+        assert_eq!(
+            matches(&ban, &blocked).as_deref(),
+            Some("path \"src/secrets/key.pem\"")
+        );
         assert!(matches(&ban, &allowed).is_none());
     }
 
     #[test]
     fn path_ban_is_case_and_separator_insensitive() {
         let ban = rule(RuleKind::PathBan, "paths", &["src/secrets"]);
-        let call = ToolCall::new("read_file", json!({"relativeFilePath": "SRC\\Secrets\\key.pem"}));
+        let call = ToolCall::new(
+            "read_file",
+            json!({"relativeFilePath": "SRC\\Secrets\\key.pem"}),
+        );
         assert!(matches(&ban, &call).is_some());
     }
 
     #[test]
     fn command_pattern_is_case_insensitive() {
         let ban = rule(RuleKind::CommandPattern, "patterns", &["DROP TABLE"]);
-        let call = ToolCall::new("run_command", json!({"command": "psql live -c 'drop table users'"}));
+        let call = ToolCall::new(
+            "run_command",
+            json!({"command": "psql live -c 'drop table users'"}),
+        );
         assert_eq!(
             matches(&ban, &call).as_deref(),
             Some("command containing \"DROP TABLE\"")
@@ -550,7 +583,11 @@ mod tests {
     #[test]
     fn an_empty_target_list_never_matches() {
         let ban = rule(RuleKind::EgressBan, "targets", &[]);
-        assert!(matches(&ban, &ToolCall::new("run_command", json!({"command": "ping 1.2.3.4"}))).is_none());
+        assert!(matches(
+            &ban,
+            &ToolCall::new("run_command", json!({"command": "ping 1.2.3.4"}))
+        )
+        .is_none());
     }
 
     #[test]
