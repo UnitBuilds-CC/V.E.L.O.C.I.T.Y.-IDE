@@ -302,9 +302,17 @@ fn dead_links_in(doc: &str, text: &str, root: &Path) -> Vec<DeadLink> {
     dead
 }
 
-/// Every prose markdown file, as repository-relative `/`-form paths.
-fn prose_files(root: &Path, dir: &Path, out: &mut Vec<String>) {
+/// Every prose markdown file, as repository-relative `/`-form paths. A
+/// directory that will not open is named rather than passed over - see
+/// [`corpus`].
+fn prose_files(root: &Path, dir: &Path, out: &mut Vec<String>, stuck: &mut Vec<String>) {
     let Ok(entries) = std::fs::read_dir(dir) else {
+        if let Ok(relative) = dir.strip_prefix(root) {
+            stuck.push(format!(
+                "{}: the directory will not open",
+                relative.to_string_lossy().replace('\\', "/")
+            ));
+        }
         return;
     };
     for entry in entries.flatten() {
@@ -316,7 +324,7 @@ fn prose_files(root: &Path, dir: &Path, out: &mut Vec<String>) {
             continue;
         }
         if path.is_dir() {
-            prose_files(root, &path, out);
+            prose_files(root, &path, out, stuck);
         } else if name.to_lowercase().ends_with(".md") {
             if let Ok(relative) = path.strip_prefix(root) {
                 out.push(relative.to_string_lossy().replace('\\', "/"));
@@ -325,27 +333,43 @@ fn prose_files(root: &Path, dir: &Path, out: &mut Vec<String>) {
     }
 }
 
-/// The corpus: `(repository-relative path, text)` for each prose document.
-fn shipped_docs() -> Vec<(String, String)> {
+/// The documents this project ships, and the ones the walk could not read.
+struct Corpus {
+    /// `(repository-relative path, text)`, sorted by path.
+    docs: Vec<(String, String)>,
+    /// Anything that was in the way of the sweep: a directory that would not
+    /// open, a file that would not read, a file that is not valid UTF-8.
+    stuck: Vec<String>,
+}
+
+/// Read the corpus.
+///
+/// This repository lives under a sync root, where a file whose contents have
+/// not been fetched and a folder that is still enumerating both fail to open,
+/// and a markdown file saved in somebody's legacy encoding is not valid UTF-8.
+/// A sweep that dropped those would report the same green as a corpus with no
+/// rot, so they are carried out separately and a test refuses them.
+fn corpus() -> Corpus {
     let root = repo_root();
     let mut files = Vec::new();
-    prose_files(&root, &root, &mut files);
+    let mut stuck = Vec::new();
+    prose_files(&root, &root, &mut files, &mut stuck);
     files.sort();
-    files
-        .into_iter()
-        .filter_map(|file| {
-            Some((
-                file.clone(),
-                std::fs::read_to_string(at(&root, &file)).ok()?,
-            ))
-        })
-        .collect()
+    let mut docs = Vec::with_capacity(files.len());
+    for file in files {
+        match std::fs::read_to_string(at(&root, &file)) {
+            Ok(text) => docs.push((file, text)),
+            Err(why) => stuck.push(format!("{file}: {why}")),
+        }
+    }
+    Corpus { docs, stuck }
 }
 
 /// Every dead link in the corpus.
 fn dead_links() -> Vec<DeadLink> {
     let root = repo_root();
-    shipped_docs()
+    corpus()
+        .docs
         .iter()
         .flat_map(|(doc, text)| dead_links_in(doc, text, &root))
         .collect()
@@ -377,7 +401,16 @@ mod tests {
     /// matching would report the same green as a corpus with no rot.
     #[test]
     fn the_corpus_being_graded_is_the_shipped_docs() {
-        let docs = shipped_docs();
+        let read = corpus();
+        assert!(
+            read.stuck.is_empty(),
+            "the sweep skipped {} document(s) it could not read: {} - a placeholder that has not \
+             fetched, a folder still enumerating or a file saved in a legacy encoding all leave a \
+             link inside them ungraded, and a green that means did not look is not a green",
+            read.stuck.len(),
+            read.stuck.join("; ")
+        );
+        let docs = read.docs;
         let names: Vec<&str> = docs.iter().map(|(name, _)| name.as_str()).collect();
         for expected in [
             "README.md",
