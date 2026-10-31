@@ -1,8 +1,8 @@
 # Settings & Providers
 
 The Settings panel — open with `Ctrl+,`, Help ▸ Settings, the gear at the bottom
-of the activity bar, or palette `Settings`. It has four sections: **Appearance**,
-**System**, **Agent defaults**, and **Providers & credentials**.
+of the activity bar, or palette `Settings`. It has five sections: **Appearance**,
+**System**, **Agent defaults**, **Providers & credentials**, and **Rules**.
 
 - [Interface & shell](ui-and-shell.md) · [Panel reference](panels-reference.md) · [Manual index](README.md)
 
@@ -82,6 +82,47 @@ endpoint when left empty.
   `CF_ACCOUNT_N_TOKEN` from `.env` (see [Usage](panels-reference.md#usage)).
 - Secrets are masked in the UI and scrubbed from logs; see
   [SECURITY.md → Credential Boundary](../../SECURITY.md).
+
+---
+
+## Rules
+
+The deterministic rule engine: constraints checked *below* the model, so a rule binds
+whether or not the agent remembers being told. Design and guarantees:
+[rules-engine.md](../rules-engine.md).
+
+- **Header** — *RULES — ENFORCED OUTSIDE THE MODEL*, with the promise that an edit here
+  takes effect on the next call, in every agent. A corrupt rule file replaces the list with
+  `⚠ rules unavailable — tool calls are being refused until this is fixed: …`, because a
+  silently disabled safety rule is worse than a stopped one.
+- **Tabs** — **Active (n)** · **Pending (n)** · **History (n)**, plus **Reload** to re-read
+  the files on demand. The panel also refreshes itself whenever a rule file changes, so a
+  rule an agent created mid-run appears without restarting the IDE.
+- **Active** — rules grouped **This task** / **This workspace** / **Every workspace**, most
+  specific first, with any **Bypasses in effect** listed above them. Selecting a rule opens
+  its editor: **Intent**, **Remedy**, the kind's own fields (comma-separated lists for the
+  bans; **Tool calls** 1–100,000 and **Window** 1–10,080 `min` for a budget), the version,
+  owner and provenance line, and under *The agent reads this when it fires:* the exact
+  sentence the refusal will carry. Then **Save changes**, **Retire** (the button arms on the
+  first click — a retire has no undo) and **Bypass** → **Grant**.
+- **Kinds** — `tool_ban` (banned tools) · `egress_ban` (banned targets: IPv4, CIDR or
+  hostname) · `path_ban` (banned paths, workspace-relative prefixes) · `command_pattern`
+  (banned text, case-insensitive) · `tool_budget` (a call ceiling over a rolling window).
+- **Pending** — what an agent proposed against a durable rule (adjust, retire, bypass), with
+  the diff it carries and **Approve** / **Reject**. Approval lives here and nowhere else: no
+  tool argument can grant an agent its own exemption.
+- **History** — retired rules, and the full version chain of the selected rule with owner
+  and age.
+- **Add a rule** — **Name** · **Intent** · **Kind** · **Scope** · the kind's parameters ·
+  **Remedy** · **Source** (what made this necessary), and for a command-text rule the two
+  proof fields **Blocks** and **Allows**. A rule whose witness pair does not actually fire
+  is refused at creation rather than stored as something that does nothing later.
+
+Rules persist to `<workspace>/.velocity/rules.json` and, for the global scope,
+`<user config>/rules.json`; task rules are memory-only and end with the process. The eight
+`rule*` MCP tools ([mcp-tools.md → rules](mcp-tools.md#rules)) are always on the surface,
+because the worker about to repeat the mistake is the one that can record the rule stopping
+it.
 
 ---
 
