@@ -308,12 +308,21 @@ impl ContinuationLedger {
     }
 
     /// Serialize the ledger to a compact NDA format for persistence.
+    ///
+    /// Every value stays on the line it was written on: text holding a newline,
+    /// a tab or a backslash goes through [`escape_field`] first. A ledger's goal
+    /// is the run's instructions verbatim, and those are multi-line almost every
+    /// time, so an unescaped newline drops the rest of that value onto a line no
+    /// reader recognises and shifts every field after it one row down.
     pub fn serialize(&self) -> String {
         let mut lines = Vec::new();
         lines.push("continuation-ledger version 1".to_string());
-        lines.push(format!("field\tid\t{}", self.id));
-        lines.push(format!("field\tgoal\t{}", self.mission.goal));
-        lines.push(format!("field\ttask_kind\t{}", self.mission.task_kind));
+        lines.push(format!("field\tid\t{}", escape_field(&self.id)));
+        lines.push(format!("field\tgoal\t{}", escape_field(&self.mission.goal)));
+        lines.push(format!(
+            "field\ttask_kind\t{}",
+            escape_field(&self.mission.task_kind)
+        ));
         lines.push(format!("field\tsite_map_root\t{:016x}", self.site_map_root));
         lines.push(format!(
             "field\tprogress_percent\t{:.0}",
@@ -325,8 +334,8 @@ impl ContinuationLedger {
             lines.push(format!(
                 "scope_file\t{}\t{}\t{}",
                 i,
-                file.path.display(),
-                file.role
+                escape_field(&file.path.display().to_string()),
+                escape_field(&file.role)
             ));
         }
 
@@ -334,7 +343,10 @@ impl ContinuationLedger {
         for (i, caller) in self.environment.external_callers.iter().enumerate() {
             lines.push(format!(
                 "ext_caller\t{}\t{}\t{}\t{}",
-                i, caller.name, caller.file, caller.relationship
+                i,
+                escape_field(&caller.name),
+                escape_field(&caller.file),
+                escape_field(&caller.relationship)
             ));
         }
 
@@ -343,15 +355,21 @@ impl ContinuationLedger {
             lines.push(format!(
                 "completed_edit\t{}\t{}\t{}",
                 i,
-                edit.path.display(),
-                edit.intent
+                escape_field(&edit.path.display().to_string()),
+                escape_field(&edit.intent)
             ));
         }
 
         // Partial edit (critical for continuation)
         if let Some(ref partial) = self.journal.partial_edit {
-            lines.push(format!("partial_edit_path\t{}", partial.path.display()));
-            lines.push(format!("partial_edit_intent\t{}", partial.intent));
+            lines.push(format!(
+                "partial_edit_path\t{}",
+                escape_field(&partial.path.display().to_string())
+            ));
+            lines.push(format!(
+                "partial_edit_intent\t{}",
+                escape_field(&partial.intent)
+            ));
             if let Some((start, end)) = partial.editing_region {
                 lines.push(format!("partial_edit_region\t{}\t{}", start, end));
             }
@@ -366,7 +384,7 @@ impl ContinuationLedger {
                 "step\t{}\t{}\t{}",
                 i,
                 step.status.label(),
-                step.description
+                escape_field(&step.description)
             ));
         }
 
@@ -375,21 +393,29 @@ impl ContinuationLedger {
             lines.push(format!(
                 "attempt\t{}\t{}\t{}\t{}\t{:.1}s",
                 i,
-                attempt.provider,
-                attempt.model_label,
+                escape_field(&attempt.provider),
+                escape_field(&attempt.model_label),
                 attempt.outcome.label(),
                 attempt.duration.as_secs_f64()
             ));
             if let Some(ref reason) = attempt.failure_reason {
-                lines.push(format!("attempt_failure\t{}\t{}", i, reason));
+                lines.push(format!("attempt_failure\t{}\t{}", i, escape_field(reason)));
             }
             for (j, decision) in attempt.key_decisions.iter().enumerate() {
-                lines.push(format!("attempt_decision\t{}\t{}\t{}", i, j, decision));
+                lines.push(format!(
+                    "attempt_decision\t{}\t{}\t{}",
+                    i,
+                    j,
+                    escape_field(decision)
+                ));
             }
         }
 
         // Narrative (compact environment summary for model system prompt)
-        lines.push(format!("narrative\t{}", self.environment.narrative));
+        lines.push(format!(
+            "narrative\t{}",
+            escape_field(&self.environment.narrative)
+        ));
 
         lines.join("\n") + "\n"
     }
@@ -491,6 +517,216 @@ impl ContinuationLedger {
     pub fn estimated_tokens(&self) -> usize {
         self.continuation_prompt().len() / 4
     }
+}
+
+// ─── Ledger file format: escaping and read-back ──────────────────────────────
+
+/// Escape the four characters that would otherwise let one value occupy more
+/// than one line of the ledger format. Backslash goes first, so the sequences
+/// written for the other three are not escaped a second time.
+pub fn escape_field(text: &str) -> String {
+    text.replace('\\', "\\\\")
+        .replace('\n', "\\n")
+        .replace('\r', "\\r")
+        .replace('\t', "\\t")
+}
+
+/// The reverse of [`escape_field`]. A lone trailing backslash, or one before a
+/// character this format never writes, is kept as itself: a value the writer
+/// never produced must not fail the read of the whole file.
+pub fn unescape_field(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut chars = text.chars().peekable();
+    while let Some(ch) = chars.next() {
+        if ch != '\\' {
+            out.push(ch);
+            continue;
+        }
+        match chars.next() {
+            Some('\\') => out.push('\\'),
+            Some('n') => out.push('\n'),
+            Some('r') => out.push('\r'),
+            Some('t') => out.push('\t'),
+            Some(other) => {
+                out.push('\\');
+                out.push(other);
+            }
+            None => out.push('\\'),
+        }
+    }
+    out
+}
+
+/// What one `ledger.nda` actually carries.
+///
+/// The file is a handoff **projection**, not a snapshot: it holds no diffs, no
+/// file contents, no expectations and no model ids, so this is deliberately not
+/// a `ContinuationLedger` reload. It is the set of facts the writer put on
+/// disk, which is what the Continuation Ledger panel quotes.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LedgerSummary {
+    /// The run directory the file was read from (`task-7`), so a panel row
+    /// can say which run it came from.
+    pub run_name: String,
+    /// `task-N-attempt-M` as the writer named it.
+    pub id: String,
+    /// The first non-blank line of the goal - the only part of a run's
+    /// instructions that fits a panel row.
+    pub goal_first_line: String,
+    /// How many non-blank lines the goal really had, so the panel can say that
+    /// what it shows is the head of something longer.
+    pub goal_lines: usize,
+    pub task_kind: String,
+    pub scoped_files: usize,
+    pub completed_edits: usize,
+    pub steps_done: usize,
+    pub steps_total: usize,
+    pub progress_percent: u32,
+    pub attempts: Vec<AttemptSummary>,
+}
+
+/// One model's turn at the task, as the ledger records it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AttemptSummary {
+    pub provider: String,
+    pub model_label: String,
+    /// The outcome label the writer emitted (`failed`, `partial_success`, ...).
+    /// Kept as text: an outcome this build does not know still has to be shown.
+    pub outcome: String,
+}
+
+/// Parse one `ledger.nda` into the fields the panel uses.
+///
+/// Unrecognised lines are skipped rather than fatal, because a reader written
+/// after the writer must not be taken down by a field it does not use. A first
+/// non-empty line that is not the version header is fatal: that is the file not
+/// being a ledger at all.
+pub fn parse_ledger_summary(raw: &str, run_name: &str) -> Option<LedgerSummary> {
+    let mut header_seen = false;
+    let mut id = String::new();
+    let mut goal = String::new();
+    let mut task_kind = String::new();
+    let mut progress_percent = 0u32;
+    let mut scoped_files = 0usize;
+    let mut completed_edits = 0usize;
+    let mut steps_done = 0usize;
+    let mut steps_total = 0usize;
+    let mut attempts: Vec<AttemptSummary> = Vec::new();
+
+    for line in raw.lines() {
+        let line = line.trim_end_matches('\r');
+        if line.is_empty() {
+            continue;
+        }
+        if !header_seen {
+            if !line.starts_with("continuation-ledger version ") {
+                return None;
+            }
+            header_seen = true;
+            continue;
+        }
+        let parts: Vec<&str> = line.split('\t').collect();
+        match parts[0] {
+            "field" => {
+                if parts.len() < 3 {
+                    continue;
+                }
+                match parts[1] {
+                    "id" => id = unescape_field(parts[2]),
+                    "goal" => goal = unescape_field(parts[2]),
+                    "task_kind" => task_kind = unescape_field(parts[2]),
+                    "progress_percent" => {
+                        progress_percent = parts[2].trim_end_matches('%').parse().unwrap_or(0);
+                    }
+                    _ => {}
+                }
+            }
+            "scope_file" => scoped_files += 1,
+            "completed_edit" => completed_edits += 1,
+            "step" => {
+                steps_total += 1;
+                if parts.get(2) == Some(&"done") {
+                    steps_done += 1;
+                }
+            }
+            "attempt" => attempts.push(AttemptSummary {
+                provider: parts
+                    .get(2)
+                    .copied()
+                    .map(unescape_field)
+                    .unwrap_or_default(),
+                model_label: parts
+                    .get(3)
+                    .copied()
+                    .map(unescape_field)
+                    .unwrap_or_default(),
+                outcome: parts.get(4).copied().unwrap_or_default().to_string(),
+            }),
+            _ => {}
+        }
+    }
+
+    if !header_seen {
+        return None;
+    }
+    let goal_lines: Vec<&str> = goal
+        .lines()
+        .map(|l| l.trim())
+        .filter(|l| !l.is_empty())
+        .collect();
+    Some(LedgerSummary {
+        run_name: run_name.to_string(),
+        id,
+        goal_first_line: goal_lines.first().copied().unwrap_or_default().to_string(),
+        goal_lines: goal_lines.len(),
+        task_kind,
+        scoped_files,
+        completed_edits,
+        steps_done,
+        steps_total,
+        progress_percent,
+        attempts,
+    })
+}
+
+/// The ledgers the panel should show, newest write first, at most `limit` of them.
+///
+/// `.velocity/agentic/runs/task-N/ledger.nda`, which is where
+/// [`ContinuationLedger::persist`] puts it - one file per task, overwritten by
+/// each later handoff, so the newest ledger in the workspace is the run that is
+/// currently being carried between models. A workspace with no runs directory
+/// returns nothing and, deliberately, creates none: opening a panel must not
+/// leave a store behind.
+pub fn latest_ledger_summaries(workspace_root: &Path, limit: usize) -> Vec<LedgerSummary> {
+    let runs_dir = workspace_root
+        .join(".velocity")
+        .join("agentic")
+        .join("runs");
+    let Ok(entries) = fs::read_dir(&runs_dir) else {
+        return Vec::new();
+    };
+    let mut found: Vec<(SystemTime, String, LedgerSummary)> = Vec::new();
+    for entry in entries.flatten() {
+        let dir = entry.path();
+        if !dir.is_dir() {
+            continue;
+        }
+        let ledger_path = dir.join("ledger.nda");
+        let Ok(raw) = fs::read_to_string(&ledger_path) else {
+            continue;
+        };
+        let written = ledger_path
+            .metadata()
+            .and_then(|m| m.modified())
+            .unwrap_or(SystemTime::UNIX_EPOCH);
+        let run_name = entry.file_name().to_string_lossy().to_string();
+        if let Some(summary) = parse_ledger_summary(&raw, &run_name) {
+            found.push((written, run_name, summary));
+        }
+    }
+    found.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| b.1.cmp(&a.1)));
+    found.truncate(limit);
+    found.into_iter().map(|(_, _, summary)| summary).collect()
 }
 
 // ─── Environment Brief Construction ─────────────────────────────────────────
@@ -1122,6 +1358,230 @@ mod tests {
         assert_eq!(
             infer_file_role(Path::new("src/app.rs"), &["main".into()]),
             "entry point"
+        );
+    }
+
+    fn scratch_root(label: &str) -> PathBuf {
+        let root =
+            std::env::temp_dir().join(format!("velocity_ledger_{}_{}", label, std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        root
+    }
+
+    fn summary_fixture(goal: &str) -> ContinuationLedger {
+        ContinuationLedger {
+            id: "task-3-attempt-2".into(),
+            mission: MissionSpec {
+                goal: goal.into(),
+                task_kind: "feature".into(),
+                expectations: vec![],
+                constraints: vec![],
+            },
+            environment: ScopeEnvironmentBrief {
+                scoped_files: vec![
+                    ScopedFileBrief {
+                        path: PathBuf::from("a.rs"),
+                        symbols: vec![],
+                        line_count: 1,
+                        role: "core".into(),
+                    },
+                    ScopedFileBrief {
+                        path: PathBuf::from("b.rs"),
+                        symbols: vec![],
+                        line_count: 2,
+                        role: "test".into(),
+                    },
+                ],
+                external_callers: vec![],
+                external_dependencies: vec![],
+                internal_relationships: vec![],
+                narrative: "two files".into(),
+            },
+            journal: EditJournal {
+                completed_edits: vec![FileEdit {
+                    path: PathBuf::from("a.rs"),
+                    diff: String::new(),
+                    intent: "added the field".into(),
+                }],
+                partial_edit: None,
+                created_files: vec![],
+                deleted_files: vec![],
+            },
+            progress: ProgressState {
+                steps: vec![
+                    ProgressStep {
+                        description: "capture".into(),
+                        status: StepStatus::Done,
+                    },
+                    ProgressStep {
+                        description: "render".into(),
+                        status: StepStatus::Pending,
+                    },
+                    ProgressStep {
+                        description: "poll".into(),
+                        status: StepStatus::Done,
+                    },
+                ],
+                overall_percent: 66.0,
+            },
+            provenance: vec![
+                ModelAttemptRecord {
+                    provider: "OpenRouter".into(),
+                    model_id: "m1".into(),
+                    model_label: "Model One".into(),
+                    started_at: SystemTime::now(),
+                    duration: Duration::from_secs(12),
+                    outcome: AttemptOutcome::Failed,
+                    key_decisions: vec![],
+                    failure_reason: None,
+                },
+                ModelAttemptRecord {
+                    provider: "Ollama".into(),
+                    model_id: "m2".into(),
+                    model_label: "Model Two".into(),
+                    started_at: SystemTime::now(),
+                    duration: Duration::from_secs(4),
+                    outcome: AttemptOutcome::PartialSuccess,
+                    key_decisions: vec![],
+                    failure_reason: None,
+                },
+            ],
+            captured_at: SystemTime::now(),
+            site_map_root: 9,
+        }
+    }
+
+    fn set_mtime(path: &Path, secs_ago: u64) {
+        let file = fs::OpenOptions::new().write(true).open(path).unwrap();
+        file.set_modified(SystemTime::now() - Duration::from_secs(secs_ago))
+            .unwrap();
+    }
+
+    #[test]
+    fn every_written_line_of_a_ledger_is_a_line_a_reader_recognises() {
+        // The worker captures the run's instructions as the goal, and those are
+        // multi-line almost every time. Unescaped, the goal's second line became
+        // a line of the file that is not a record at all.
+        let tags = [
+            "continuation-ledger version 1",
+            "field",
+            "scope_file",
+            "ext_caller",
+            "completed_edit",
+            "partial_edit_path",
+            "partial_edit_intent",
+            "partial_edit_region",
+            "partial_edit_compiles",
+            "step",
+            "attempt",
+            "attempt_failure",
+            "attempt_decision",
+            "narrative",
+        ];
+        let ledger = ContinuationLedger::capture(
+            "task-7",
+            "First line of the brief\nsecond line that used to leak\nthird line",
+            "refactor",
+            &[],
+            Path::new("/tmp/velocity-no-workspace"),
+            7,
+            "Decision: keep going\nThen the model stopped",
+            &[],
+            &[],
+            "OpenRouter",
+            "Claude Sonnet",
+            "claude-x",
+            Duration::from_secs(3),
+            false,
+        );
+        let raw = ledger.serialize();
+        for line in raw.lines() {
+            let head = line.split('\t').next().unwrap_or_default();
+            assert!(
+                tags.contains(&head),
+                "a ledger line is not a record the format defines: {line:?}"
+            );
+        }
+        let summary = parse_ledger_summary(&raw, "task-7").expect("parses back");
+        assert_eq!(summary.goal_lines, 3, "two of the goal's lines were lost");
+        assert_eq!(summary.goal_first_line, "First line of the brief");
+        assert_eq!(summary.id, "task-7-attempt-1");
+        assert_eq!(summary.task_kind, "refactor");
+        assert_eq!(summary.attempts.len(), 1);
+    }
+
+    #[test]
+    fn escape_and_unescape_round_trip_every_control_character() {
+        let awkward = "tab\there\nl\r backslash\\ then a lone \\".to_string();
+        let escaped = escape_field(&awkward);
+        assert!(!escaped.contains('\n'), "a raw newline survived escaping");
+        assert!(!escaped.contains('\t'), "a raw tab survived escaping");
+        assert!(!escaped.contains('\r'), "a raw CR survived escaping");
+        assert_eq!(unescape_field(&escaped), awkward);
+    }
+
+    #[test]
+    fn a_summary_counts_what_the_writer_wrote() {
+        let summary =
+            parse_ledger_summary(&summary_fixture("Wire the panel").serialize(), "task-3")
+                .expect("parses");
+        assert_eq!(summary.id, "task-3-attempt-2");
+        assert_eq!(summary.task_kind, "feature");
+        assert_eq!(summary.scoped_files, 2);
+        assert_eq!(summary.completed_edits, 1);
+        assert_eq!((summary.steps_done, summary.steps_total), (2, 3));
+        assert_eq!(summary.progress_percent, 66);
+        assert_eq!(summary.attempts.len(), 2);
+        assert_eq!(summary.attempts[0].outcome, "failed");
+        assert_eq!(summary.attempts[1].model_label, "Model Two");
+    }
+
+    #[test]
+    fn a_file_that_is_not_a_ledger_is_not_a_row_and_an_unknown_line_is_not_a_failure() {
+        assert!(parse_ledger_summary("just prose\ntabbed\tprose\nmore prose", "task-1").is_none());
+        assert!(parse_ledger_summary("", "task-1").is_none());
+        let raw = "continuation-ledger version 1\nfield\tid\ttask-1-attempt-1\nsome_future_line\tanything";
+        let summary = parse_ledger_summary(raw, "task-1").expect("unknown line skipped");
+        assert_eq!(summary.id, "task-1-attempt-1");
+    }
+
+    #[test]
+    fn a_persisted_ledger_is_read_back_newest_run_first_and_capped() {
+        let root = scratch_root("read_back");
+        let runs = root.join(".velocity").join("agentic").join("runs");
+        fs::create_dir_all(runs.join("task-1")).unwrap();
+        fs::create_dir_all(runs.join("task-2")).unwrap();
+        fs::create_dir_all(runs.join("task-3")).unwrap();
+
+        let ledger = summary_fixture("first line\nand a second");
+        ledger.persist(&runs.join("task-1")).unwrap();
+        ledger.persist(&runs.join("task-2")).unwrap();
+        // task-3 has a run directory and a scope snapshot but no ledger: a task
+        // that never handed off has nothing to show.
+        let older = runs.join("task-1").join("ledger.nda");
+        let newer = runs.join("task-2").join("ledger.nda");
+        set_mtime(&older, 3600);
+        set_mtime(&newer, 60);
+
+        let summaries = latest_ledger_summaries(&root, 8);
+        let names: Vec<String> = summaries.iter().map(|s| s.run_name.clone()).collect();
+        assert_eq!(names, vec!["task-2".to_string(), "task-1".to_string()]);
+        assert_eq!(summaries[0].goal_lines, 2);
+        assert_eq!(summaries[0].goal_first_line, "first line");
+
+        let capped = latest_ledger_summaries(&root, 1);
+        assert_eq!(capped.len(), 1);
+        assert_eq!(capped[0].run_name, "task-2");
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn a_workspace_with_no_runs_directory_reads_empty_and_stays_absent() {
+        let root = scratch_root("absent_runs");
+        assert!(latest_ledger_summaries(&root, 8).is_empty());
+        assert!(
+            !root.join(".velocity").join("agentic").join("runs").exists(),
+            "reading the ledger panel created a store the workspace never had"
         );
     }
 }
