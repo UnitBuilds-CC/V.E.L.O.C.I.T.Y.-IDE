@@ -18,7 +18,7 @@ source, so it matches the running binary.
 | [Interface & shell](ui-and-shell.md) | Menu bar, activity rails, sub-tab strip, sidebars, status bar, bottom panel, welcome screen, appearance (profiles/themes/density/scale), toasts, all overlays & dialogs |
 | [Editor surfaces](editor.md) | Code editor, gutter, minimap, completion, inline diagnostics, find/replace, terminal, smart sidebar, inline suggestions |
 | [Panel reference](panels-reference.md) | Every dock tab and rail sub-panel, grouped: core, orchestration, search/knowledge, agents, build/debug, automation, git, workspace/peers, rail-only |
-| [Settings & providers](settings-providers.md) | Appearance, system, agent defaults, and all 16 provider credential forms |
+| [Settings & providers](settings-providers.md) | Appearance, system, agent defaults, all 16 provider credential forms, and the enforced Rules engine |
 | [Keyboard shortcuts & commands](keyboard-and-commands.md) | The 57 default keybindings, special in-widget chords, and all 110 command-palette commands |
 | [MCP tool reference](mcp-tools.md) | All **336** agent-facing tools, grouped by registry module (browser · wa · system · team · company · drone · instances · generation) |
 
