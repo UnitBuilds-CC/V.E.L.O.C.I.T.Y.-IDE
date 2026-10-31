@@ -40,6 +40,8 @@ pub mod health;
 pub mod ipc;
 pub mod metrics;
 pub mod orchestrator;
+#[cfg(test)]
+mod personal_path_guard;
 pub mod protocol;
 pub mod registry;
 pub mod rules;
