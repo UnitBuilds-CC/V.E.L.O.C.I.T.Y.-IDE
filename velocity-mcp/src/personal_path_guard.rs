@@ -92,7 +92,7 @@ fn starts_with_at(hay: &[char], at: usize, needle: &str) -> bool {
 ///
 /// A drive letter reaches a `Users` directory as `C:\Users\`, and the only thing
 /// on the other side of that `C:` is whatever quotes, assigns or spaces the path -
-/// `r"C:\Users\…`, `"C:\\Users\\…`, `--dir=C:\Users\…`. Splitting on those is what
+/// `r"C:\Users\dev`, `"C:\\Users\\dev`, `--dir=C:\Users\dev`. Splitting on those is what
 /// makes the preceding token a drive rather than the whole line up to it.
 const TOKEN_ENDS: [char; 15] = [
     '"', '\'', '`', '(', ')', '[', ']', '{', '}', '<', '>', ';', ',', '=', '#',
