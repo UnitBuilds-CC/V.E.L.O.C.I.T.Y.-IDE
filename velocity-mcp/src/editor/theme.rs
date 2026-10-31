@@ -75,6 +75,13 @@ pub fn contrast_ratio(a: Color32, b: Color32) -> f32 {
 /// The WCAG AA floor for body-size text, which is the size code is painted at.
 pub const MIN_TEXT_CONTRAST: f32 = 4.5;
 
+/// The WCAG AA floor for large text. Nothing in the IDE is painted large enough
+/// to claim it by WCAG's own definition (18pt regular, or 14pt bold), so this is
+/// not a permission to be between the two numbers — it is the line the audit
+/// uses to separate "unreadable" from "below the standard", and the reason a
+/// ratio under it is reported as an error rather than a warning.
+pub const MIN_LARGE_TEXT_CONTRAST: f32 = 3.0;
+
 /// The text colour that reads on a swatch filled with this colour.
 ///
 /// Hand-painted chips — workflow node headers, status badges — choose their own
@@ -280,6 +287,91 @@ impl IdePalette {
             text_on_accent: Color32::BLACK,
         }
     }
+}
+
+/// One ink/surface pair a palette is expected to paint, with the contrast its
+/// text needs. The ratio is measured from the two colours, never remembered.
+#[derive(Clone, Copy, Debug)]
+pub struct ContrastCheck {
+    /// The palette field painted as text, named as the field so a person can
+    /// find it in this file: `text_muted`, not "the grey".
+    pub ink: &'static str,
+    /// The palette field painted behind it.
+    pub surface: &'static str,
+    pub ink_color: Color32,
+    pub surface_color: Color32,
+    /// Measured contrast, 1.0 (identical) to 21.0.
+    pub ratio: f32,
+    /// The AA floor this pair is held to.
+    pub required: f32,
+}
+
+impl ContrastCheck {
+    /// Whether the pair clears its floor. The tolerance exists because the ratio
+    /// is a float over eight-bit colours: a pair measuring 4.4999 is the same
+    /// pair as one measuring 4.5, and a checker that says otherwise on a
+    /// borderline colour is a checker nobody trusts on the others.
+    pub fn passes(&self) -> bool {
+        self.ratio + 0.005 >= self.required
+    }
+
+    /// The ink colour that would clear the floor without abandoning the hue.
+    pub fn remedy(&self) -> Color32 {
+        let pushed = ensure_contrast(self.ink_color, self.surface_color);
+        if contrast_ratio(pushed, self.surface_color) + 0.005 >= self.required {
+            return pushed;
+        }
+        // The ink is already at the end of its own range — white on a mid-tone
+        // accent — so blending it toward black or white moves it toward the
+        // colour it is failing against, and `ensure_contrast` returns the same
+        // failing colour. A filled button is exactly that case, and the only
+        // move left is the one `text_on` exists for: choose the ink that reads.
+        text_on(self.surface_color)
+    }
+}
+
+fn check(
+    ink: &'static str,
+    ink_color: Color32,
+    surface: &'static str,
+    surface_color: Color32,
+) -> ContrastCheck {
+    ContrastCheck {
+        ink,
+        surface,
+        ink_color,
+        surface_color,
+        ratio: contrast_ratio(ink_color, surface_color),
+        required: MIN_TEXT_CONTRAST,
+    }
+}
+
+/// The ink/surface pairs the IDE really paints, as far as the palette's own
+/// field names can claim: body text on the three fills it sits on, muted text
+/// on the two it is used over, accent as a label colour, the button ink on the
+/// button fill, and the three status colours as text on the panel fill.
+///
+/// Two roles are left out on purpose, and saying so is the difference between
+/// an audit and a list of complaints. `text_disabled` is not measured because
+/// WCAG 1.4.3 exempts disabled controls — grading it would report a
+/// deliberately recessive colour as a violation. `border` is not measured
+/// because 1.4.11 asks for 3:1 only where the border is what identifies the
+/// control; these are decorative hairlines, so a border rule would put five
+/// near-identical warnings in front of the pairs a person actually has to read.
+pub fn palette_contrast_checks(p: &IdePalette) -> Vec<ContrastCheck> {
+    vec![
+        check("text", p.text, "bg_primary", p.bg_primary),
+        check("text", p.text, "bg_secondary", p.bg_secondary),
+        check("text", p.text, "bg_tertiary", p.bg_tertiary),
+        check("text_muted", p.text_muted, "bg_primary", p.bg_primary),
+        check("text_muted", p.text_muted, "bg_secondary", p.bg_secondary),
+        check("accent", p.accent, "bg_primary", p.bg_primary),
+        check("accent", p.accent, "bg_secondary", p.bg_secondary),
+        check("text_on_accent", p.text_on_accent, "accent", p.accent),
+        check("success", p.success, "bg_secondary", p.bg_secondary),
+        check("warning", p.warning, "bg_secondary", p.bg_secondary),
+        check("error", p.error, "bg_secondary", p.bg_secondary),
+    ]
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -1469,6 +1561,124 @@ mod tests {
             caption_target(&[]),
             None,
             "nothing to paint is not a success"
+        );
+    }
+
+    /// A greyscale palette: every fill one brightness, every ink another. The
+    /// accent is an ink and the label on it is the fill colour, so all eleven
+    /// audited pairs measure the same ink-versus-surface ratio and a check's
+    /// verdict depends on exactly the two numbers under test.
+    fn greyscale_palette(surface: u8, ink: u8) -> IdePalette {
+        let bg = Color32::from_rgb(surface, surface, surface);
+        let fg = Color32::from_rgb(ink, ink, ink);
+        IdePalette {
+            bg_primary: bg,
+            bg_secondary: bg,
+            bg_tertiary: bg,
+            text: fg,
+            text_muted: fg,
+            text_disabled: fg,
+            accent: fg,
+            info: fg,
+            border: fg,
+            success: fg,
+            warning: fg,
+            error: fg,
+            surface_hover: bg,
+            text_on_accent: bg,
+        }
+    }
+
+    #[test]
+    fn a_check_measures_the_pair_it_names() {
+        let identical = palette_contrast_checks(&greyscale_palette(20, 20));
+        assert!(!identical.is_empty(), "a palette has audited pairs");
+        for check in &identical {
+            assert!(
+                !check.passes(),
+                "{} on {} is the same colour twice and cannot pass",
+                check.ink,
+                check.surface
+            );
+            assert!(
+                check.ratio < 1.01,
+                "{} on {} measured {} rather than ~1",
+                check.ink,
+                check.surface,
+                check.ratio
+            );
+            assert_eq!(check.required, MIN_TEXT_CONTRAST);
+        }
+
+        let legible = palette_contrast_checks(&greyscale_palette(20, 250));
+        assert!(
+            legible.iter().all(|c| c.passes()),
+            "near-white ink on near-black fills passes everywhere"
+        );
+    }
+
+    #[test]
+    fn the_exempt_roles_are_never_measured() {
+        // A checker that reports disabled text and decorative hairlines as
+        // violations buries the pairs a person has to read. The exemption is
+        // deliberate, so it is a promise and not an oversight.
+        for variant in ThemeVariant::ALL {
+            for check in palette_contrast_checks(&variant.palette()) {
+                assert_ne!(check.ink, "text_disabled", "disabled ink is exempt");
+                assert_ne!(check.surface, "text_disabled", "nothing sits on it");
+                assert_ne!(check.ink, "border", "a hairline is not text");
+                assert_ne!(check.surface, "border", "a hairline is not a fill");
+            }
+        }
+    }
+
+    #[test]
+    fn every_remedy_clears_the_floor_it_was_computed_for() {
+        // The button-ink case is what makes this non-trivial: white on a
+        // mid-tone accent cannot be pushed further toward white, so the remedy
+        // has to be the other ink. A suggestion that does not fix the number it
+        // quotes is worse than no suggestion.
+        for variant in ThemeVariant::ALL {
+            let palette = variant.palette();
+            for check in palette_contrast_checks(&palette) {
+                if check.passes() {
+                    continue;
+                }
+                let remedy = check.remedy();
+                let fixed = ContrastCheck {
+                    ink: check.ink,
+                    surface: check.surface,
+                    ink_color: remedy,
+                    surface_color: check.surface_color,
+                    ratio: contrast_ratio(remedy, check.surface_color),
+                    required: check.required,
+                };
+                assert!(
+                    fixed.passes(),
+                    "{}'s remedy for {} on {} measures {}, still under {}",
+                    variant.label(),
+                    check.ink,
+                    check.surface,
+                    fixed.ratio,
+                    check.required
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn the_high_contrast_theme_clears_every_audited_pair() {
+        // The theme is named for this property, so it is a promise about the
+        // palette rather than a description of intent.
+        let failures: Vec<String> = palette_contrast_checks(&ThemeVariant::HighContrast.palette())
+            .iter()
+            .filter(|c| !c.passes())
+            .map(|c| format!("{} on {} at {}", c.ink, c.surface, c.ratio))
+            .collect();
+        assert!(
+            failures.is_empty(),
+            "High Contrast fails its own name: {}",
+            failures.join(", ")
         );
     }
 }
