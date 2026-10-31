@@ -40,9 +40,15 @@ pub mod team_router;
 // have consumed them (`toolbar_actions`, the `SidebarTab` strip, the
 // `BottomPanelLayout` match arm) went with them rather than sitting tested
 // and unwired.
+pub mod access_panels;
 pub mod bottom_panel;
 pub mod mode_config;
 pub mod sidebar_tabs;
+
+// Test-only seam: drives one renderer through an egui frame and hands back the
+// text it painted, so a panel's claim is checked against what it draws.
+#[cfg(test)]
+pub(crate) mod headless_render;
 
 // IDE Core Editor Capabilities
 pub mod auto_indent;
