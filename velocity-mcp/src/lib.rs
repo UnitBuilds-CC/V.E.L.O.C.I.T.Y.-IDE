@@ -29,6 +29,8 @@ pub mod automation;
 pub mod compiler;
 pub mod connectors;
 pub mod disk_hygiene;
+#[cfg(test)]
+mod doc_links_guard;
 pub mod editor;
 #[cfg(test)]
 mod env_knobs_doc_guard;
