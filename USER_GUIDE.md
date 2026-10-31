@@ -127,7 +127,7 @@ A complete guide to using the V.E.L.O.C.I.T.Y. Cognitive IDE — a native, GPU-a
     - [Saving & Reloading Credentials](#saving--reloading-credentials)
     - [Refreshing the Model Catalog](#refreshing-the-model-catalog)
     - [Selecting a Model](#selecting-a-model)
-    - [Workspace Provider Settings File](#workspace-provider-settings-file)
+    - [Provider Settings File](#provider-settings-file)
     - [Provider Credentials From The Environment](#provider-credentials-from-the-environment)
     - [Automatic Failover](#automatic-failover)
 - [Environment Variables](#environment-variables)
@@ -2132,7 +2132,7 @@ Once models are loaded:
 3. The selected model is shown in the status bar provider pill (bottom-right)
 4. Your selection persists across sessions
 
-#### Workspace Provider Settings File
+#### Provider Settings File
 
 The user-level `provider-settings.json` file stores all provider credentials in JSON format. Its path is `%APPDATA%/Velocity/provider-settings.json` on Windows and `$XDG_CONFIG_HOME/velocity/provider-settings.json`, falling back to `$HOME/.config/velocity/`, elsewhere (`VELOCITY_CONFIG_DIR` overrides both), so a key never lands in a workspace directory that is synced to the cloud:
 
@@ -2196,7 +2196,7 @@ Velocity IDE supports automatic failover across providers. If the active provide
 
 Every name below is one the shipped code looks up, with the values it accepts and
 what happens when the name is absent. Provider credentials themselves live in
-`provider-settings.json` (see [Workspace Provider Settings File](#workspace-provider-settings-file)):
+`provider-settings.json` (see [Provider Settings File](#provider-settings-file)):
 for Cloudflare, OpenRouter, Azure OpenAI and Ollama the loaders in `usage.rs`
 consult that file first and ask the environment only when it does not already
 configure the provider. Every one of those loaders calls `dotenvy::dotenv()`, so a
