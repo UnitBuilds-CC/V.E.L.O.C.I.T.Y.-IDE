@@ -1,6 +1,6 @@
 # MCP Tool Reference
 
-Every Model-Context-Protocol tool the IDE exposes to agents, grouped by the registry module that defines it. Descriptions are taken verbatim from the tool definitions in `velocity-mcp/src/registry/tool_definitions/`, so this table matches the running binary. **Total: 351 tools.**
+Every Model-Context-Protocol tool the IDE exposes to agents, grouped by the registry module that defines it. Descriptions are taken verbatim from the tool definitions in `velocity-mcp/src/registry/tool_definitions/`, so this table matches the running binary. **Total: 355 tools.**
 
 ## Categories
 
@@ -13,7 +13,7 @@ Every Model-Context-Protocol tool the IDE exposes to agents, grouped by the regi
 | [instances](#instances) | 7 | Workspace instance management tools. |
 | [rules](#rules) | 8 | Deterministic runtime rules: scoped bans and budgets enforced at the dispatch gate, plus their create/adjust/retire/bypass lifecycle. |
 | [system](#system) | 55 | Core IDE/system tools: file & editor operations, build/test, git, search, knowledge, memory, and app control. |
-| [team](#team) | 27 | Expert-team orchestration tools: create teams, assign agents, route work. |
+| [team](#team) | 31 | Expert-team orchestration tools: create teams, assign agents, route work. |
 | [wa](#wa) | 86 | Windows Automation (UIA) tools: desktop element discovery, action planning, snapshots, OCR, clipboard, and virtual desktops. |
 
 
