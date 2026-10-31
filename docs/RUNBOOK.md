@@ -456,9 +456,11 @@ velocity_mcp --config show
 
 **Common Issues:**
 - Invalid TOML syntax
-- Missing required fields
+- Missing required fields (`base_url` and `api_key` are both read; the CLI needs
+  both)
 - Incorrect file permissions
-- Environment variable overrides
+- `VELOCITY_BASE_URL` and `VELOCITY_API_KEY` set in the environment: that pair is
+  read before this file and, when both are present, is what the CLI uses
 
 ---
 

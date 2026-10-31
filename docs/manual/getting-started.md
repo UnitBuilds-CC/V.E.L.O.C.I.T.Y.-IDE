@@ -57,9 +57,17 @@ set your fallback **Agent defaults** (provider, model, thinking, auto-approve).
 Full field-by-field detail is on the
 [Settings & providers](settings-providers.md) page.
 
-> You can also seed configuration via `~/.velocity/config.toml` or environment
-> variables (`VELOCITY_API_KEY`, `RUST_LOG`). Cloudflare usage dashboards read
-> `CF_ACCOUNT_N_ID` / `CF_ACCOUNT_N_TOKEN` from `.env`.
+> Provider credentials go in the user-level `provider-settings.json` that the
+> panel above writes. The environment can seed the same backends instead —
+> Cloudflare reads `CF_ACCOUNT_{n}_ID` with `CF_ACCOUNT_{n}_TOKEN`, OpenRouter
+> `OPENROUTER_ACCOUNT_{n}_KEY` or `OPENROUTER_API_KEY`, Azure
+> `AZURE_OPENAI_ACCOUNT_{n}_KEY` with its endpoint — and a `.env` file in the
+> working directory is loaded as part of that read. `~/.velocity/config.toml` and
+> the `VELOCITY_BASE_URL`/`VELOCITY_API_KEY` pair belong to the standalone
+> `velocity` CLI and its Router server, not to the IDE's provider list. Logging
+> is set with `RUST_LOG`. Every name the code actually looks up, with what it
+> accepts and what happens when it is absent, is in the
+> [environment-variable reference](../../USER_GUIDE.md#environment-variables).
 
 ## 5. Ask the agent
 

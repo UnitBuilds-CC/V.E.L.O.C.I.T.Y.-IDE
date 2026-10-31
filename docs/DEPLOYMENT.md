@@ -366,10 +366,17 @@ spec:
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `VELOCITY_API_KEY` | API key for cloud providers | (required) |
+| `VELOCITY_BASE_URL` | Router base URL for the standalone `velocity` CLI | read from `~/.velocity/config.toml` when unset |
+| `VELOCITY_API_KEY` | Router bearer token, paired with the URL above; the CLI honours the pair or neither | as above |
+| `VELOCITY_CONFIG_DIR` | Directory the user-level config, including `provider-settings.json`, is stored in | `%APPDATA%/Velocity` on Windows, `$XDG_CONFIG_HOME/velocity` elsewhere |
 | `RUST_LOG` | Log level (trace, debug, info, warn, error) | `info` |
-| `VELOCITY_WORKSPACE` | Workspace directory | `./workspace` |
-| `VELOCITY_CONFIG` | Config file path | `~/.velocity/config.toml` |
+
+Provider credentials for the cloud backends are not read from a deployment-wide
+variable: they live in `provider-settings.json`, and each backend also has an
+environment fallback (`CF_ACCOUNT_{n}_ID`/`_TOKEN`, `OPENROUTER_API_KEY`,
+`AZURE_OPENAI_API_KEY`, `OLLAMA_HOST`, …). The full list, with what each accepts
+and what happens when it is unset, is the environment-variable reference in
+[USER_GUIDE.md](../USER_GUIDE.md#environment-variables).
 
 ### Config File
 

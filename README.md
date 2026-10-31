@@ -142,33 +142,35 @@ Velocity-IDE/
 
 ## Configuration
 
-Configure your environment in `~/.velocity/config.toml`:
-
-```toml
-[general]
-workspace = "/path/to/workspace"
-log_level = "info"
-
-[providers.openai]
-api_key = "sk-..."
-base_url = "https://api.openai.com/v1"
-
-[providers.anthropic]
-api_key = "sk-ant-..."
-
-[providers.cloudflare]
-api_key = "..."
-account_id = "..."
-```
-
-Or use environment variables:
+Provider credentials live in one user-level file, `provider-settings.json`,
+written by **Settings → Providers**: `%APPDATA%/Velocity/provider-settings.json`
+on Windows, `$XDG_CONFIG_HOME/velocity/provider-settings.json` elsewhere. Nothing
+provider-shaped is stored in the workspace directory. The same backends can be
+configured from the environment, which the loaders ask only when that file does
+not already configure the provider:
 
 ```bash
-export VELOCITY_API_KEY=your-api-key
-export RUST_LOG=info
+export CF_ACCOUNT_1_ID=...              # with CF_ACCOUNT_1_TOKEN
+export OPENROUTER_API_KEY=sk-or-...     # or OPENROUTER_ACCOUNT_1_KEY
+export AZURE_OPENAI_API_KEY=...         # with AZURE_OPENAI_ENDPOINT
+export OLLAMA_HOST=http://localhost:11434
 ```
 
-See [Deployment Guide](docs/DEPLOYMENT.md) for full configuration options.
+The `velocity` CLI that talks to a Velocity Router server is configured
+separately, and honours both of its variables or neither:
+
+```bash
+export VELOCITY_BASE_URL=https://router.example
+export VELOCITY_API_KEY=vr_standard_...
+```
+
+When that pair is absent the CLI falls back to `~/.velocity/config.toml` with
+top-level `base_url` and `api_key` keys — the file `velocity login` writes.
+
+For every name the shipped code reads, with the values it accepts and what
+happens when it is unset, see the environment-variable reference in
+[USER_GUIDE.md](USER_GUIDE.md#environment-variables); service topology is in
+the [Deployment Guide](docs/DEPLOYMENT.md).
 
 ## Documentation
 
