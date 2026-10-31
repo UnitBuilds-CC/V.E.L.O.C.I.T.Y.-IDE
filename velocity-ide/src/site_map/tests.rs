@@ -111,8 +111,12 @@ fn persists_weight_root_to_nda_metadata() {
         SiteMap::read_persisted_weight_root(dir.path()),
         Some(0x1234_ABCD)
     );
-    // Root should also be persisted (non-zero for non-empty site map, zero for empty).
-    assert_eq!(SiteMap::read_persisted_root(dir.path()), Some(0));
+    // The claim persisted is the root the index hashes to, so the read path
+    // that verifies it has something to check against. An empty index used to
+    // persist `0` here because `open` left the field at its initial value;
+    // `root()` is now a pure function of content, so it persists the hash of
+    // an empty entry set instead.
+    assert_eq!(SiteMap::read_persisted_root(dir.path()), Some(sm.root()));
 }
 
 #[test]
@@ -142,6 +146,223 @@ fn falls_back_to_json_weight_root_metadata() {
     .unwrap();
 
     assert_eq!(SiteMap::read_persisted_weight_root(dir.path()), Some(0xCC));
+}
+
+// ── persisted Merkle root verification on read ──────────────────────────────
+
+#[cfg(test)]
+use super::store::IndexRootCheck;
+#[cfg(test)]
+use super::types::SiteMapEntry;
+
+/// Flush one KV entry and hand back (directory, root claimed by that flush).
+#[cfg(test)]
+fn flush_one_entry(dir: &std::path::Path) -> u64 {
+    let mut sm = SiteMap::open(dir, 0).unwrap();
+    sm.put_kv(7, 0, make_ndavec(8, 0xFF), make_ndavec(8, 0x00))
+        .unwrap();
+    sm.flush().unwrap();
+    let claimed = sm.root();
+    assert!(
+        claimed != 0,
+        "a flushed index with content must claim a real root"
+    );
+    claimed
+}
+
+/// Add an entry to `index.json` the way a second writer would: serialise a
+/// genuine entry with a distinct key, leaving the metadata claim untouched.
+#[cfg(test)]
+fn append_entry_behind_the_claim(dir: &std::path::Path) {
+    let raw = fs::read_to_string(dir.join("index.json")).unwrap();
+    let mut entries: Vec<SiteMapEntry> = serde_json::from_str(&raw).unwrap();
+    let mut extra = entries[0].clone();
+    extra.hash ^= 0x1;
+    entries.push(extra);
+    fs::write(
+        dir.join("index.json"),
+        serde_json::to_string_pretty(&entries).unwrap(),
+    )
+    .unwrap();
+}
+
+#[test]
+fn every_root_check_verdict_has_a_stable_label_and_only_mismatch_warns() {
+    let cases = [
+        (IndexRootCheck::NoIndexOnDisk, "no_index_on_disk"),
+        (IndexRootCheck::NoClaimedRoot, "no_claimed_root"),
+        (IndexRootCheck::Matches { root: 7 }, "matches"),
+        (IndexRootCheck::Unflushed, "unflushed"),
+        (
+            IndexRootCheck::Mismatch {
+                claimed: 1,
+                computed: 2,
+            },
+            "mismatch",
+        ),
+    ];
+    for (check, label) in cases {
+        assert_eq!(check.label(), label);
+        if label == "mismatch" {
+            assert!(check.warning().is_some(), "{label} must warn");
+        } else {
+            assert_eq!(check.warning(), None, "{label} is not a fault");
+        }
+    }
+}
+
+#[test]
+fn a_fresh_directory_has_no_persisted_root_to_verify() {
+    let dir = TempDir::new().unwrap();
+    let sm = SiteMap::open(dir.path(), 0).unwrap();
+    assert_eq!(sm.index_root_check(), IndexRootCheck::NoIndexOnDisk);
+    // Not a fault: nothing has ever been claimed, so nothing can disagree.
+    assert_eq!(sm.index_root_check().warning(), None);
+}
+
+#[test]
+fn a_cleanly_flushed_index_verifies_on_read() {
+    let dir = TempDir::new().unwrap();
+    let claimed = flush_one_entry(dir.path());
+
+    let sm = SiteMap::open(dir.path(), 0).unwrap();
+    assert_eq!(
+        sm.index_root_check(),
+        IndexRootCheck::Matches { root: claimed }
+    );
+    assert_eq!(sm.root(), claimed);
+    assert_eq!(sm.index_root_check().warning(), None);
+    // `info()` carries validation issues, so the healthy case must stay quiet
+    // about the root rather than warning on every open.
+    assert!(
+        sm.validate().iter().all(|w| !w.contains("Merkle root")),
+        "{:?}",
+        sm.validate()
+    );
+}
+
+#[test]
+fn an_index_written_behind_its_claim_is_reported_not_repaired_in_silence() {
+    let dir = TempDir::new().unwrap();
+    let claimed = flush_one_entry(dir.path());
+    append_entry_behind_the_claim(dir.path());
+
+    let sm = SiteMap::open(dir.path(), 0).unwrap();
+    let check = sm.index_root_check();
+    let IndexRootCheck::Mismatch { computed, .. } = check else {
+        panic!("a claim covering one entry must not certify an index of two: {check:?}");
+    };
+    assert_eq!(computed, sm.root(), "the rebuilt root is the one reported");
+    assert_ne!(computed, claimed);
+
+    let warning = check.warning().expect("a mismatch is a fault");
+    assert!(
+        warning.contains(&format!("{claimed:016x}")),
+        "names the claim: {warning}"
+    );
+    assert!(
+        warning.contains(&format!("{computed:016x}")),
+        "names what the entries hash to: {warning}"
+    );
+    assert!(
+        warning.contains("index_workspace"),
+        "names the remedy: {warning}"
+    );
+    assert!(
+        sm.validate().iter().any(|w| w.contains("Merkle root")),
+        "the verdict reaches validate()"
+    );
+}
+
+#[test]
+fn an_index_with_no_root_claim_is_unverified_not_broken() {
+    let dir = TempDir::new().unwrap();
+    // Pre-v3 metadata: the root field was never written.
+    fs::write(
+        dir.path().join("metadata.nda"),
+        "metadata version 2\nfield_count 1\nfield\tweight_root\t0000000000001234\n",
+    )
+    .unwrap();
+    fs::write(dir.path().join("index.json"), "[]").unwrap();
+
+    let sm = SiteMap::open(dir.path(), 0).unwrap();
+    assert_eq!(sm.index_root_check(), IndexRootCheck::NoClaimedRoot);
+    assert_eq!(sm.index_root_check().warning(), None);
+    assert!(
+        sm.validate().iter().all(|w| !w.contains("Merkle root")),
+        "{:?}",
+        sm.validate()
+    );
+}
+
+#[test]
+fn the_legacy_zero_root_over_an_empty_index_is_the_no_root_sentinel() {
+    let dir = TempDir::new().unwrap();
+    // What `flush` persisted before the root became a pure function of content:
+    // an untouched fresh site map wrote 0, not the hash of an empty index.
+    fs::write(dir.path().join("index.json"), "[]").unwrap();
+    fs::write(
+        dir.path().join("metadata.nda"),
+        "metadata version 3\nfield_count 2\nfield\tweight_root\t0000000000000000\nfield\troot\t0000000000000000\n",
+    )
+    .unwrap();
+
+    let sm = SiteMap::open(dir.path(), 0).unwrap();
+    assert_eq!(sm.index_root_check(), IndexRootCheck::NoClaimedRoot);
+    assert_eq!(sm.index_root_check().warning(), None);
+}
+
+#[test]
+fn entries_added_after_open_are_unflushed_not_a_broken_claim() {
+    let dir = TempDir::new().unwrap();
+    let mut sm = SiteMap::open(dir.path(), 0).unwrap();
+    sm.put_kv(3, 0, make_ndavec(8, 0x11), make_ndavec(8, 0x22))
+        .unwrap();
+
+    // Disk still holds the older (or absent) claim; that is normal traffic,
+    // not tampering, so it must not raise the tampering warning.
+    assert_eq!(sm.index_root_check(), IndexRootCheck::Unflushed);
+    assert_eq!(sm.index_root_check().warning(), None);
+
+    sm.flush().unwrap();
+    let root = sm.root();
+    assert_eq!(sm.index_root_check(), IndexRootCheck::Matches { root });
+
+    let reopened = SiteMap::open(dir.path(), 0).unwrap();
+    assert_eq!(
+        reopened.index_root_check(),
+        IndexRootCheck::Matches { root }
+    );
+}
+
+#[test]
+fn a_detected_mismatch_is_not_forgotten_by_the_next_mutation() {
+    let dir = TempDir::new().unwrap();
+    flush_one_entry(dir.path());
+    append_entry_behind_the_claim(dir.path());
+
+    let mut sm = SiteMap::open(dir.path(), 0).unwrap();
+    assert!(matches!(
+        sm.index_root_check(),
+        IndexRootCheck::Mismatch { .. }
+    ));
+
+    // A routine write must not downgrade the finding to "unflushed": the
+    // entries that broke the claim are still on disk and the next flush would
+    // bless them, so the warning has to stay reachable until that happens.
+    sm.put_kv(9, 0, make_ndavec(8, 0x33), make_ndavec(8, 0x44))
+        .unwrap();
+    assert!(
+        matches!(sm.index_root_check(), IndexRootCheck::Mismatch { .. }),
+        "{:?}",
+        sm.index_root_check()
+    );
+
+    sm.flush().unwrap();
+    assert_eq!(
+        sm.index_root_check(),
+        IndexRootCheck::Matches { root: sm.root() }
+    );
 }
 
 #[test]

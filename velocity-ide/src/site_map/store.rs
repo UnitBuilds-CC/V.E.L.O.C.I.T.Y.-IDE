@@ -26,6 +26,70 @@ const MAX_KV_CACHE_SIZE: usize = 4096;
 /// the hot RAM mirror, so long sessions cannot grow the map without limit.
 pub(crate) const MAX_STRING_CACHE_SIZE: usize = 4096;
 
+/// What `SiteMap::open` found when it compared the Merkle root persisted in
+/// `metadata.nda` / `metadata.json` against the root recomputed from the
+/// entries it just read out of `index.json`.
+///
+/// Before this existed the read path only ever *rebuilt* the root, so a claim
+/// that disagreed with the index it described — an index edited by hand, a
+/// second writer, a `flush` cut short between the two files — was silently
+/// repaired on load and never reported. The check turns that disagreement into
+/// a warning reachable from [`SiteMap::validate`] and [`SiteMap::index_root_check`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum IndexRootCheck {
+    /// No `index.json` on disk, so there is no persisted content to disagree
+    /// with. A brand-new site map.
+    NoIndexOnDisk,
+    /// `index.json` exists but no metadata file names a root — a site map
+    /// written before `metadata version 3`, or one whose metadata was lost.
+    /// Not a fault: there was no claim to test.
+    NoClaimedRoot,
+    /// The claimed root equals the root recomputed from the index on disk.
+    Matches {
+        /// The root both sides agree on.
+        root: u64,
+    },
+    /// The claimed root differs from the root computed from the entries on
+    /// disk. The index and its integrity claim disagree about what is stored.
+    Mismatch {
+        /// The root the metadata files claim.
+        claimed: u64,
+        /// The root the `index.json` entries actually hash to.
+        computed: u64,
+    },
+    /// Entries were added or removed since the last `flush`, so the claim on
+    /// disk describes an older index than the one now in RAM. Normal, and
+    /// cured by the next flush.
+    Unflushed,
+}
+
+impl IndexRootCheck {
+    /// A short, stable name for the verdict, for tool results and logs.
+    pub fn label(&self) -> &'static str {
+        match self {
+            IndexRootCheck::NoIndexOnDisk => "no_index_on_disk",
+            IndexRootCheck::NoClaimedRoot => "no_claimed_root",
+            IndexRootCheck::Matches { .. } => "matches",
+            IndexRootCheck::Mismatch { .. } => "mismatch",
+            IndexRootCheck::Unflushed => "unflushed",
+        }
+    }
+
+    /// The user-visible complaint for the one state that is a fault, `None`
+    /// for every state that is merely informational.
+    pub fn warning(&self) -> Option<String> {
+        match self {
+            IndexRootCheck::Mismatch { claimed, computed } => Some(format!(
+                "site map index does not match its persisted Merkle root: metadata claims {claimed:016x} \
+                 but the entries in index.json hash to {computed:016x}; the index was edited, written by \
+                 another process or flushed part-way since it was last verified. Rebuild it \
+                 (`index_workspace`, or the Wiki panel's Rebuild index action) to re-establish the root."
+            )),
+            _ => None,
+        }
+    }
+}
+
 /// Persistent, content-addressed KV store.
 pub struct SiteMap {
     /// Root directory on disk.
@@ -34,6 +98,10 @@ pub struct SiteMap {
     pub index: HashMap<u64, SiteMapEntry>,
     /// Merkle root of the index (hash of all entry hashes, sorted).
     root: u64,
+    /// Result of checking the root persisted on disk against the index read
+    /// from it. A `Mutex` because [`SiteMap::flush`] runs on a shared handle
+    /// and is the one thing that can retire a mismatch.
+    root_check: Mutex<IndexRootCheck>,
     /// Blake3-style root of the model weight files — embedded in token hashes
     /// so that weight updates automatically invalidate stale KV entries.
     weight_root: u64,
@@ -65,22 +133,45 @@ impl SiteMap {
         fs::create_dir_all(base_dir.join("programs"))?;
 
         let index_path = base_dir.join("index.json");
-        let (index, root) = if index_path.exists() {
+        let index: HashMap<u64, SiteMapEntry> = if index_path.exists() {
             let raw = fs::read_to_string(&index_path).context("reading site_map/index.json")?;
             let entries: Vec<SiteMapEntry> =
                 serde_json::from_str(&raw).context("parsing site_map/index.json")?;
-            let root = Self::compute_index_root(&entries);
-            let map = entries.into_iter().map(|e| (e.hash, e)).collect();
-            (map, root)
+            entries.into_iter().map(|e| (e.hash, e)).collect()
         } else {
-            (HashMap::new(), 0u64)
+            HashMap::new()
         };
+        // Hashed from the map, not the parsed vector: `flush` persists
+        // `index.values()`, so this is the root the claim on disk is supposed
+        // to be the claim of, duplicate hashes included.
+        let root = Self::compute_index_root(index.values());
+        let root_check = if !index_path.exists() {
+            IndexRootCheck::NoIndexOnDisk
+        } else {
+            match Self::read_persisted_root(base_dir) {
+                None => IndexRootCheck::NoClaimedRoot,
+                // `0` is the "no root yet" sentinel: before the read path
+                // recomputed anything, an index that was opened and flushed
+                // without a single put persisted exactly that. There is no
+                // claim to test, which is not the same as a broken claim.
+                Some(0) if index.is_empty() => IndexRootCheck::NoClaimedRoot,
+                Some(claimed) if claimed == root => IndexRootCheck::Matches { root },
+                Some(claimed) => IndexRootCheck::Mismatch {
+                    claimed,
+                    computed: root,
+                },
+            }
+        };
+        if let Some(warning) = root_check.warning() {
+            eprintln!("[site_map] {warning}");
+        }
         let persisted_weight_root = Self::read_weight_root(base_dir).unwrap_or(weight_root);
 
         Ok(Self {
             base: base_dir.to_path_buf(),
             index,
             root,
+            root_check: Mutex::new(root_check),
             weight_root: persisted_weight_root,
             kv_cache: HashMap::new(),
             kv_cache_keys: VecDeque::new(),
@@ -568,6 +659,14 @@ impl SiteMap {
 
     // ── Persistence ───────────────────────────────────────────────────────────
 
+    /// Persist the index and the integrity claim over it.
+    ///
+    /// `index.json` and the two metadata files are written in sequence, so a
+    /// failure between them leaves the index describing a different set of
+    /// entries than the metadata claims — precisely the state
+    /// [`SiteMap::open`] now reports as [`IndexRootCheck::Mismatch`]. The claim
+    /// is therefore re-read from disk here instead of assumed: a metadata write
+    /// that did not land cannot certify itself.
     pub fn flush(&self) -> Result<()> {
         let entries: Vec<&SiteMapEntry> = self.index.values().collect();
         let json = serde_json::to_string_pretty(&entries)?;
@@ -586,7 +685,26 @@ impl SiteMap {
                 "root": format!("{:016x}", self.root),
             }))?,
         )?;
+        let verified = match Self::read_persisted_root(&self.base) {
+            Some(claimed) if claimed == self.root => IndexRootCheck::Matches { root: self.root },
+            Some(claimed) => IndexRootCheck::Mismatch {
+                claimed,
+                computed: self.root,
+            },
+            None => IndexRootCheck::NoClaimedRoot,
+        };
+        if let Some(warning) = verified.warning() {
+            eprintln!("[site_map] {warning}");
+        }
+        *self.root_check.lock_safe() = verified;
         Ok(())
+    }
+
+    /// The verdict from the last time this site map's persisted Merkle root
+    /// was checked against the index it claims to describe: at `open`, or at
+    /// the `flush` that rewrote it.
+    pub fn index_root_check(&self) -> IndexRootCheck {
+        self.root_check.lock_safe().clone()
     }
 
     pub fn verify(&self) -> usize {
@@ -963,6 +1081,14 @@ impl SiteMap {
 
     fn recompute_root(&mut self) {
         self.root = Self::compute_index_root(self.index.values());
+        // The on-disk claim now describes an older index than the one in RAM.
+        // That is ordinary — `flush` cures it — so it is recorded, but it must
+        // not *erase* a mismatch found at open: the entries that caused it are
+        // still on disk and the next flush would silently bless them.
+        let mut check = self.root_check.lock_safe();
+        if !matches!(*check, IndexRootCheck::Mismatch { .. }) {
+            *check = IndexRootCheck::Unflushed;
+        }
     }
 
     fn compute_index_root<'a>(entries: impl IntoIterator<Item = &'a SiteMapEntry>) -> u64 {
@@ -1189,6 +1315,13 @@ impl SiteMap {
     /// Returns a list of warnings (empty = all good).
     pub fn validate(&self) -> Vec<String> {
         let mut warnings = Vec::new();
+
+        // First, because it is the one finding the caller can act on: a
+        // disagreeing root means the whole index is untrusted, not just one
+        // entry, and rebuilding is the remedy.
+        if let Some(warning) = self.root_check.lock_safe().warning() {
+            warnings.push(warning);
+        }
 
         if self.index.is_empty() {
             warnings.push("SiteMap index is empty".to_string());
@@ -2069,7 +2202,10 @@ mod tests {
         let dir = temp_dir("export1");
         let sm = SiteMap::open(&dir, 0xABCD).unwrap();
         let summary = sm.export_summary();
-        assert!(summary.root.contains("0000"));
+        // The summary renders the live root, however the root is derived —
+        // asserting on `0000` baked in the old empty-index special case.
+        assert_eq!(summary.root, format!("{:016x}", sm.root()));
+        assert_eq!(summary.root.len(), 16);
         assert!(summary.weight_root.contains("abcd"));
         assert!(summary.cache_utilization.contains("0.0%"));
         cleanup(&dir);
