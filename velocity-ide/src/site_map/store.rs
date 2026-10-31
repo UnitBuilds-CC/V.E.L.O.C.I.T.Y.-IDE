@@ -83,7 +83,7 @@ impl IndexRootCheck {
                 "site map index does not match its persisted Merkle root: metadata claims {claimed:016x} \
                  but the entries in index.json hash to {computed:016x}; the index was edited, written by \
                  another process or flushed part-way since it was last verified. Rebuild it \
-                 (`index_workspace`, or the Wiki panel's Rebuild index action) to re-establish the root."
+                 (`index_workspace`, or the Wiki panel's Rebuild Index action) to re-establish the root."
             )),
             _ => None,
         }

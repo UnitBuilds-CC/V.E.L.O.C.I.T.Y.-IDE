@@ -3972,6 +3972,10 @@ pub fn handle_system_tool(
                     .unwrap_or(0);
             let mut sm = velocity_ide::site_map::SiteMap::open(&sitemap_dir, weight_root)
                 .map_err(|e| format!("Failed to open site map: {e}"))?;
+            // Captured before indexing, because indexing rewrites the claim:
+            // this is whether the index that existed beforehand matched the
+            // root stored beside it.
+            let root_check_before = sm.index_root_check();
             let reports =
                 velocity_ide::compiler::rust_to_nda::RustToNda::compile_directory(&target, &mut sm)
                     .map_err(|e| format!("Indexing failed: {e}"))?;
@@ -3980,7 +3984,8 @@ pub fn handle_system_tool(
             let total_nodes: usize = reports.iter().map(|r| r.nodes_stored).sum();
             let total_calls: usize = reports.iter().map(|r| r.call_graph.len()).sum();
             let elapsed_ms: u128 = reports.iter().map(|r| r.elapsed_ms).sum();
-            // Drop the site map to flush the dictionary to disk before returning.
+            // Indexing flushed as it stored, so the map is already on disk;
+            // dropping here only releases it before the result is built.
             drop(sm);
             serde_json::to_string(&json!({
                 "success": true,
@@ -3990,6 +3995,8 @@ pub fn handle_system_tool(
                 "totalNodes": total_nodes,
                 "totalCallEdges": total_calls,
                 "elapsedMs": elapsed_ms,
+                "indexRootCheck": root_check_before.label(),
+                "indexRootIssue": root_check_before.warning(),
                 "sitemapDir": sitemap_dir.display().to_string()
             }))?
         }
@@ -7379,5 +7386,121 @@ fn a() {
             why.contains("write the replacement the error asks for"),
             "and the way out of it: {why}"
         );
+    }
+
+    // ── index_workspace and the persisted Merkle root ───────────────────────
+
+    /// A workspace with a site map directory and one indexable `.rs` file. The
+    /// file has to be there: indexing is what flushes a fresh claim, so a run
+    /// over an empty tree cannot show whether the reported verdict was read
+    /// before or after the repair.
+    fn site_map_fixture(tag: &str) -> PathBuf {
+        let root = std::env::temp_dir().join(format!("index_root_{tag}_{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(root.join(".velocity").join("site_map")).unwrap();
+        fs::write(
+            root.join("sample.rs"),
+            "pub fn indexed(a: u32) -> u32 { a + 2 }\n",
+        )
+        .unwrap();
+        root
+    }
+
+    /// Flush an index and hand back the root its metadata then claims.
+    fn flush_site_map_claim(root: &Path) -> u64 {
+        let dir = root.join(".velocity").join("site_map");
+        let sm = velocity_ide::site_map::SiteMap::open(&dir, 0).unwrap();
+        let claimed = sm.root();
+        sm.flush().unwrap();
+        assert_ne!(claimed, 0, "a flushed index claims a real root");
+        claimed
+    }
+
+    /// Add an entry to `index.json` the way a second writer would, leaving the
+    /// integrity claim stored beside it untouched.
+    fn append_entry_behind_the_claim(root: &Path) {
+        use velocity_ide::site_map::{EntryKind, SiteMapEntry};
+        let dir = root.join(".velocity").join("site_map");
+        let raw = fs::read_to_string(dir.join("index.json")).unwrap();
+        let mut entries: Vec<SiteMapEntry> = serde_json::from_str(&raw).unwrap();
+        entries.push(SiteMapEntry {
+            kind: EntryKind::Node,
+            hash: 0x0a11_ce00_0000_0001,
+            file: "nodes/tampered.nda".into(),
+            file_sha: "0".repeat(64),
+            size: 8,
+        });
+        fs::write(
+            dir.join("index.json"),
+            serde_json::to_string(&entries).unwrap(),
+        )
+        .unwrap();
+    }
+
+    fn run_index_workspace(root: &Path) -> Value {
+        let text = handle_system_tool(root, "index_workspace", &json!({}))
+            .expect("indexing a directory holding one .rs file")
+            .expect("index_workspace is a system tool");
+        serde_json::from_str(&text).unwrap_or_else(|e| panic!("not json ({e}): {text}"))
+    }
+
+    /// Run #101's lesson in miniature: a tool that is also the remedy must not
+    /// report its own repair as the diagnosis, or the next reader concludes
+    /// nothing was ever wrong. `index_workspace` is the rebuild the root check
+    /// names, so it has to carry the verdict it found on the way in.
+    #[test]
+    fn index_workspace_reports_the_root_verdict_it_found_before_indexing() {
+        let root = site_map_fixture("tampered");
+        let claimed = flush_site_map_claim(&root);
+        append_entry_behind_the_claim(&root);
+
+        let value = run_index_workspace(&root);
+        assert_eq!(
+            value["filesIndexed"].as_u64(),
+            Some(1),
+            "the run has to index for the ordering to mean anything: {value}"
+        );
+        assert_eq!(value["indexRootCheck"], "mismatch", "{value}");
+        let issue = value["indexRootIssue"]
+            .as_str()
+            .expect("a mismatch carries the sentence the gate wrote");
+        assert!(
+            issue.contains(&format!("{claimed:016x}")),
+            "names the claim that was on disk: {issue}"
+        );
+        assert!(issue.contains("Merkle root"), "{issue}");
+
+        // The same run cured what it reported, which is why the field cannot
+        // have been read afterwards: reopening now verifies clean.
+        let reopened =
+            velocity_ide::site_map::SiteMap::open(&root.join(".velocity").join("site_map"), 0)
+                .unwrap();
+        assert_eq!(
+            reopened.index_root_check().label(),
+            "matches",
+            "the rebuild is a remedy, not a promise"
+        );
+    }
+
+    #[test]
+    fn a_clean_index_is_reported_as_matching_with_nothing_wrong() {
+        let root = site_map_fixture("clean");
+        flush_site_map_claim(&root);
+
+        let value = run_index_workspace(&root);
+        assert_eq!(value["indexRootCheck"], "matches", "{value}");
+        assert!(
+            value["indexRootIssue"].is_null(),
+            "only a mismatch gets a complaint: {value}"
+        );
+    }
+
+    #[test]
+    fn a_site_map_that_has_never_been_written_is_not_called_broken() {
+        let root = site_map_fixture("fresh");
+
+        let value = run_index_workspace(&root);
+        assert_eq!(value["indexRootCheck"], "no_index_on_disk", "{value}");
+        assert!(value["indexRootIssue"].is_null(), "{value}");
     }
 }

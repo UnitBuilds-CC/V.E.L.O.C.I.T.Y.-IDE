@@ -207,6 +207,15 @@ impl VelocityApp {
             }
         };
 
+        // Routing trusts the index to say which files exist, so say out loud
+        // when the index disagrees with the integrity claim stored beside it.
+        // The sentence is the one the check itself writes — what the person
+        // reads is what the store's tests grade, not a second phrasing of it.
+        if let Some(issue) = site_map.index_root_check().warning() {
+            self.status_message = "Site map index disagrees with its persisted Merkle root".into();
+            self.toasts.push(crate::editor::toast::Toast::warn(issue));
+        }
+
         let model_catalogs = vec![(self.provider, self.available_models.clone())];
         let coordinator = WorkspaceCoordinator::new(self.mediator.clone());
         let routed_tasks = coordinator.plan_routed_tasks(
