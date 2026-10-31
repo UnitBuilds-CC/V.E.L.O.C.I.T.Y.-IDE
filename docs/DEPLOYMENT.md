@@ -216,6 +216,33 @@ Binaries are in `target/release/`:
 - `velocity-drone` — Autonomous drone agent
 - `velocity_serve` — Headless frame server (renders the IDE to PNG, served over HTTP)
 
+### 1b. Network exposure
+
+Both network binaries bind loopback by default, because both endpoints execute:
+`velocity-drone`'s `/peer/task` runs any command it is handed, and
+`velocity_serve` streams the entire workspace screen while `/input` drives it.
+
+| Service | Secret | Off-loopback bind |
+|---|---|---|
+| `velocity-drone` | `DRONE_AUTH_TOKEN` (every endpoint but `/peer/health`) | allowed with a token; refused without one unless `DRONE_ALLOW_UNAUTHENTICATED_REMOTE=1` |
+| `velocity_serve` | `--token` or `VELOCITY_SERVE_TOKEN` (every endpoint but `/`) | allowed with `--host`, with a start-up warning |
+
+Traffic is plain HTTP in both cases, so a bind that another machine can reach
+should sit behind a TLS or SSH tunnel; a bearer token on an unencrypted wire is
+only as good as the wire.
+
+Two things changed for anyone driving `velocity_serve` from another machine. The
+default bind moved from `0.0.0.0` to `127.0.0.1`, so a remote client must now be
+told to start it with `--host 0.0.0.0` (or a specific interface address); on a
+host that is loopback-only the port simply stops answering from off-box. And the
+browser page no longer receives the token from the server — the operator types
+it once and it stays in that tab's `sessionStorage` — so nothing that can reach
+the port can read the key off an unauthenticated response. A program that used
+to scrape the token out of `GET /` must keep it in its own configuration and
+send `Authorization: Bearer <token>`; `GET /` is now a secret-free shell, and
+the endpoints it proxies to (`/frame`, `/input`, `/clipboard`, `/resize`) all
+401 without that header.
+
 ### 2. Systemd Service (Linux)
 
 Create `/etc/systemd/system/velocity-mcp.service`:
