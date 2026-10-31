@@ -625,8 +625,9 @@ pub struct VelocityApp {
     // â”€â”€â”€ Remaining Module State â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     /// Multimodal attachments for chat.
     pub multimodal_attachments: Vec<crate::editor::multimodal::Attachment>,
-    /// Continuation ledger for cross-model context handoff.
-    pub continuation_ledger: Option<crate::editor::continuation_ledger::ContinuationLedger>,
+    /// Continuation Ledger panel: one row per persisted handoff, newest first.
+    /// Read from `.velocity/agentic/runs/task-N/ledger.nda` by the panel poll.
+    pub continuation_ledgers: Vec<crate::editor::continuation_ledger::LedgerSummary>,
     /// Plugin registry (distinct from extension registry).
     pub plugin_registry: crate::editor::plugin_registry::PluginRegistry,
     /// Agent skill file definitions.
@@ -1511,7 +1512,7 @@ impl VelocityApp {
             peer_state: PeerCollabState::new(&workspace_root),
             // Remaining Module State
             multimodal_attachments: Vec::new(),
-            continuation_ledger: None,
+            continuation_ledgers: Vec::new(),
             plugin_registry: crate::editor::plugin_registry::PluginRegistry::new(&workspace_root),
             skill_files: Vec::new(),
             target_entries: Vec::new(),
@@ -1847,7 +1848,7 @@ impl VelocityApp {
             governance: GovernanceState::default(),
             peer_state: PeerCollabState::default(),
             multimodal_attachments: Vec::new(),
-            continuation_ledger: None,
+            continuation_ledgers: Vec::new(),
             plugin_registry: crate::editor::plugin_registry::PluginRegistry::new(&workspace_root),
             skill_files: Vec::new(),
             target_entries: Vec::new(),

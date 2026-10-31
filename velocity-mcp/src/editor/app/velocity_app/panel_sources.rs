@@ -23,6 +23,11 @@ use super::struct_def::VelocityApp;
 /// while keeping the directory scans off the per-frame path.
 const PANEL_SOURCE_POLL: Duration = Duration::from_secs(5);
 
+/// How many handoffs the Continuation Ledger panel keeps on screen. Runs older
+/// than that stay on disk; the panel is a "what is being carried right now"
+/// list, not an archive browser.
+const MAX_CONTINUATION_LEDGERS: usize = 12;
+
 impl VelocityApp {
     /// The frame hook beside the other throttled polls. Throttled internally,
     /// so the call site can stay unconditional.
@@ -37,6 +42,7 @@ impl VelocityApp {
         self.refresh_skill_files();
         self.refresh_recordings();
         self.refresh_targets();
+        self.refresh_continuation_ledgers();
     }
 
     /// Skill Files panel: the `.nda` skills under `.velocity/skills/` - the
@@ -60,6 +66,18 @@ impl VelocityApp {
     /// in the crate reads or writes.
     pub fn refresh_targets(&mut self) {
         self.target_entries = browser_target_entries(&self.workspace_root);
+    }
+
+    /// Continuation Ledger panel: the handoffs a worker has persisted, newest
+    /// write first. `ContinuationLedger::persist` owns the file, so the panel
+    /// shows the same bytes a replacing model is handed rather than a parallel
+    /// idea of what a ledger is. A workspace that has never handed off a task
+    /// has no runs directory, and reading must not create one.
+    pub fn refresh_continuation_ledgers(&mut self) {
+        self.continuation_ledgers = crate::editor::continuation_ledger::latest_ledger_summaries(
+            &self.workspace_root,
+            MAX_CONTINUATION_LEDGERS,
+        );
     }
 }
 
@@ -241,6 +259,99 @@ mod tests {
         assert_eq!(app.target_entries.len(), 1);
         assert_eq!(app.target_entries[0].label, "Shop");
         assert_eq!(app.target_entries[0].url, "https://shop.example.test");
+    }
+
+    /// Write one handoff the way the worker does: capture from a real scoped
+    /// file, then persist it into that task's run directory.
+    fn persist_ledger(root: &Path, task: &str, goal: &str) {
+        let source = root.join("src").join("handshake.rs");
+        std::fs::create_dir_all(source.parent().expect("source parent")).expect("source dir");
+        std::fs::write(&source, "fn handshake() {}\n").expect("source file");
+        let ledger = crate::editor::continuation_ledger::ContinuationLedger::capture(
+            task,
+            goal,
+            "refactor",
+            &[source],
+            root,
+            7,
+            "Decision: keep the retry loop",
+            &[],
+            &["step one".to_string()],
+            "OpenRouter",
+            "Claude Sonnet",
+            "claude-x",
+            Duration::from_secs(5),
+            false,
+        );
+        let run_dir = root
+            .join(".velocity")
+            .join("agentic")
+            .join("runs")
+            .join(task);
+        std::fs::create_dir_all(&run_dir).expect("run dir");
+        ledger.persist(&run_dir).expect("persist ledger");
+    }
+
+    #[test]
+    fn the_continuation_ledger_panel_shows_the_handoff_the_worker_persisted() {
+        let root = workspace("ledgers");
+        persist_ledger(
+            &root,
+            "task-4",
+            "Refactor the TLS handshake\nand keep the retry loop",
+        );
+        let mut app = app_at(root);
+
+        app.refresh_continuation_ledgers();
+
+        assert_eq!(app.continuation_ledgers.len(), 1);
+        let row = &app.continuation_ledgers[0];
+        assert_eq!(row.run_name, "task-4");
+        assert_eq!(row.id, "task-4-attempt-1");
+        assert_eq!(row.goal_first_line, "Refactor the TLS handshake");
+        assert_eq!(row.goal_lines, 2, "the multi-line goal lost a line");
+        assert_eq!(row.scoped_files, 1);
+        assert_eq!(row.attempts[0].model_label, "Claude Sonnet");
+    }
+
+    #[test]
+    fn a_workspace_that_never_handed_off_has_no_ledgers_and_no_new_directory() {
+        let root = workspace("ledgers_absent");
+        let mut app = app_at(root.clone());
+
+        app.refresh_continuation_ledgers();
+
+        assert!(app.continuation_ledgers.is_empty());
+        assert!(
+            !root.join(".velocity").join("agentic").join("runs").exists(),
+            "listing the ledgers must not create the run directory it lists"
+        );
+    }
+
+    #[test]
+    fn the_continuation_ledger_panel_names_the_file_it_reads() {
+        // The panel rendered `self.continuation_ledger`, an Option no code ever
+        // wrote, and its empty state described a ledger "created when handing
+        // off" without naming where it went. Both halves are pinned here: the
+        // field the poll fills, and the path the text tells the person.
+        let panel = std::fs::read_to_string(format!(
+            "{}/src/editor/app/velocity_app/tier3_orchestration.rs",
+            env!("CARGO_MANIFEST_DIR")
+        ))
+        .expect("tier3_orchestration.rs");
+        let body = panel
+            .split("fn render_continuation_ledger_panel")
+            .nth(1)
+            .and_then(|rest| rest.split("fn render_background_agents_panel").next())
+            .expect("continuation ledger renderer");
+        assert!(
+            body.contains("self.continuation_ledgers"),
+            "the panel renders a field the poll never fills"
+        );
+        assert!(
+            body.contains(".velocity/agentic/runs"),
+            "the empty ledger panel must name the file it reads"
+        );
     }
 
     #[test]

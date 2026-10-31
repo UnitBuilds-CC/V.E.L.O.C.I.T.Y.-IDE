@@ -221,7 +221,7 @@ impl VelocityApp {
 
         ui.label(
             RichText::new(
-                "Captures mission state, edit journals, and model provenance so a different AI model can seamlessly resume work.",
+                "One card per persisted handoff, newest first. A worker writes the ledger when it hands a task to a different model, so this is what that model is given: mission, scope, progress and provenance. The file carries no diffs or file contents.",
             )
             .size(FONT_CAPTION)
             .color(palette.text_muted),
@@ -231,8 +231,8 @@ impl VelocityApp {
         let mut go_orchestrator = false;
         egui::ScrollArea::vertical()
             .id_salt("continuation_ledger_scroll")
-            .show(ui, |ui| match &self.continuation_ledger {
-                None => {
+            .show(ui, |ui| {
+                if self.continuation_ledgers.is_empty() {
                     ui.add_space(16.0);
                     ui.vertical_centered(|ui| {
                         ui.label(
@@ -242,7 +242,7 @@ impl VelocityApp {
                         );
                         ui.add_space(ITEM_SPACING);
                         ui.label(
-                            RichText::new("No active continuation ledger")
+                            RichText::new("No continuation ledger on disk")
                                 .size(FONT_SMALL)
                                 .strong()
                                 .color(palette.text),
@@ -250,7 +250,7 @@ impl VelocityApp {
                         ui.add_space(2.0);
                         ui.label(
                             RichText::new(
-                                "A ledger is created when handing off context between models.",
+                                "A handoff is written to .velocity/agentic/runs/<task>/ledger.nda when a worker is replaced mid-task. Until then this panel has nothing to show.",
                             )
                             .size(FONT_CAPTION)
                             .color(palette.text_muted),
@@ -266,65 +266,69 @@ impl VelocityApp {
                             go_orchestrator = true;
                         }
                     });
+                    return;
                 }
-                Some(ledger) => {
+                for ledger in &self.continuation_ledgers {
+                    let goal = if ledger.goal_lines > 1 {
+                        format!(
+                            "{} (+{} more lines)",
+                            ledger.goal_first_line,
+                            ledger.goal_lines - 1
+                        )
+                    } else {
+                        ledger.goal_first_line.clone()
+                    };
                     egui::Frame::new()
                         .fill(palette.bg_secondary)
                         .corner_radius(CARD_RADIUS)
                         .inner_margin(CARD_INNER_MARGIN)
                         .show(ui, |ui| {
                             ui.label(
-                                RichText::new(format!("Ledger: {}", ledger.id))
+                                RichText::new(format!("{} - {}", ledger.run_name, ledger.id))
                                     .strong()
                                     .color(palette.accent),
                             );
                             ui.add_space(ITEM_SPACING);
                             ui.label(
-                                RichText::new(format!("Mission: {}", ledger.mission.goal))
+                                RichText::new(format!("Mission: {goal}"))
                                     .size(FONT_CAPTION)
                                     .color(palette.text),
                             );
                             ui.label(
                                 RichText::new(format!(
-                                    "Scoped files: {}",
-                                    ledger.environment.scoped_files.len()
+                                    "Task kind: {} - scope {} file(s), {} edit(s)",
+                                    ledger.task_kind, ledger.scoped_files, ledger.completed_edits
                                 ))
                                 .size(FONT_CAPTION)
                                 .color(palette.text),
                             );
                             ui.label(
                                 RichText::new(format!(
-                                    "Edit journal: {} entries",
-                                    ledger.journal.completed_edits.len()
-                                ))
-                                .size(FONT_CAPTION)
-                                .color(palette.text),
-                            );
-                            ui.label(
-                                RichText::new(format!(
-                                    "Progress: {}/{} steps done",
-                                    ledger
-                                        .progress
-                                        .steps
-                                        .iter()
-                                        .filter(|s| matches!(
-                                            s.status,
-                                            crate::editor::continuation_ledger::StepStatus::Done
-                                        ))
-                                        .count(),
-                                    ledger.progress.steps.len()
+                                    "Progress: {}/{} steps done ({}%)",
+                                    ledger.steps_done,
+                                    ledger.steps_total,
+                                    ledger.progress_percent
                                 ))
                                 .size(FONT_CAPTION)
                                 .color(palette.success),
                             );
-                            ui.label(
-                                RichText::new(format!(
-                                    "Provenance: {} model attempt(s)",
-                                    ledger.provenance.len()
-                                ))
-                                .size(FONT_CAPTION)
-                                .color(palette.text_muted),
-                            );
+                            if ledger.attempts.is_empty() {
+                                ui.label(
+                                    RichText::new("Provenance: no model attempt recorded")
+                                        .size(FONT_CAPTION)
+                                        .color(palette.text_muted),
+                                );
+                            }
+                            for attempt in &ledger.attempts {
+                                ui.label(
+                                    RichText::new(format!(
+                                        "Attempt: {} / {} - {}",
+                                        attempt.provider, attempt.model_label, attempt.outcome
+                                    ))
+                                    .size(FONT_CAPTION)
+                                    .color(palette.text_muted),
+                                );
+                            }
                         });
                 }
             });
