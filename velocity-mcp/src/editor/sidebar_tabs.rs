@@ -46,7 +46,8 @@ pub struct FlowEntry {
     pub step_count: usize,
 }
 
-/// Target entry for the Targets sidebar tab.
+/// Target entry for the Targets sidebar tab: one saved browser workflow's
+/// starting site. [`crate::editor::app::velocity_app::panel_sources`] fills it.
 pub struct TargetEntry {
     pub url: String,
     pub label: String,
@@ -399,7 +400,7 @@ pub fn render_flows_content(ui: &mut egui::Ui, flows: &[FlowEntry], palette: Ide
     }
 }
 
-/// Render the Targets tab with registered site targets.
+/// Render the Targets tab with the starting site of each saved workflow.
 pub fn render_targets_content(ui: &mut egui::Ui, targets: &[TargetEntry], palette: IdePalette) {
     ui.label(
         egui::RichText::new("\u{25ce} Site Targets")
@@ -424,9 +425,11 @@ pub fn render_targets_content(ui: &mut egui::Ui, targets: &[TargetEntry], palett
             );
             ui.add_space(2.0);
             ui.label(
-                egui::RichText::new("Add projects to .velocity_projects.nda to see them here.")
-                    .size(8.0)
-                    .color(palette.faded(palette.accent, 0.8)),
+                egui::RichText::new(
+                    "Each saved browser workflow contributes the site it starts from.",
+                )
+                .size(8.0)
+                .color(palette.faded(palette.accent, 0.8)),
             );
         });
     } else {
@@ -489,7 +492,9 @@ pub fn render_recordings_content(ui: &mut egui::Ui, recordings: &[String], palet
             );
             ui.add_space(2.0);
             ui.label(
-                egui::RichText::new("Click the \u{25cf} Record button in the toolbar to start.")
+                egui::RichText::new(
+                    "Saved scripts appear here from .velocity/wa-scripts/ once the workflow tools record one.",
+                )
                     .size(8.0)
                     .color(palette.faded(palette.accent, 0.8)),
             );

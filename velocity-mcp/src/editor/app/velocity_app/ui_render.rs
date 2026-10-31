@@ -100,6 +100,11 @@ impl VelocityApp {
             self.check_external_file_changes();
         }
 
+        // Re-read the dock panels' disk-backed sources (throttled inside the
+        // poll) so the Skill Files, Recordings and Targets panels show what is
+        // actually in the workspace rather than an empty field.
+        self.poll_disk_panel_sources();
+
         // Poll background file-tree build results (non-blocking).
         while let Ok((tree, mtime)) = self.file_tree_rx.try_recv() {
             self.file_tree = Some(tree);

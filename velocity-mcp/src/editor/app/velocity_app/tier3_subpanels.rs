@@ -2341,7 +2341,7 @@ impl VelocityApp {
                 ui.add_space(ITEM_SPACING);
                 ui.label(RichText::new("No skills defined").size(FONT_BODY).strong().color(palette.text));
                 ui.add_space(2.0);
-                ui.label(RichText::new("Skills are markdown files in .qoder/skills/ that teach agents new capabilities.").color(palette.text_muted).size(FONT_CAPTION));
+                ui.label(RichText::new("Skills are files in .velocity/skills/ that teach agents new capabilities. Saved ones appear here automatically.").color(palette.text_muted).size(FONT_CAPTION));
             });
         } else {
             let filter_lower = self.skill_filter.to_lowercase();

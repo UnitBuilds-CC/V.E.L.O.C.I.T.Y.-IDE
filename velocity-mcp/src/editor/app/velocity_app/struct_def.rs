@@ -253,6 +253,9 @@ pub struct VelocityApp {
     pub last_diagnostics_poll: Option<Instant>,
     /// Throttle for scanning open buffers for on-disk changes.
     pub last_external_check: Option<Instant>,
+    /// Throttle for re-reading the dock panels' disk-backed sources
+    /// (see [`super::panel_sources`]).
+    pub last_panel_source_check: Option<Instant>,
     /// Throttle for syncing active buffer content to LSP server.
     pub last_lsp_sync: Option<Instant>,
     pub status_message: String,
@@ -1267,6 +1270,7 @@ impl VelocityApp {
             cached_deps: Vec::new(),
             last_diagnostics_poll: None,
             last_external_check: None,
+            last_panel_source_check: None,
             last_lsp_sync: None,
             status_message: String::from("Ready"),
             appearance,
@@ -1630,6 +1634,7 @@ impl VelocityApp {
             cached_deps: Vec::new(),
             last_diagnostics_poll: None,
             last_external_check: None,
+            last_panel_source_check: None,
             last_lsp_sync: None,
             status_message: String::new(),
             appearance: AppearanceSettings::default(),

@@ -32,7 +32,10 @@ pub fn is_builtin_skill(id: &str) -> bool {
     BUILTIN_SKILLS.contains(&id)
 }
 
-fn skills_dir(workspace_root: &Path) -> std::path::PathBuf {
+/// Where the `.nda` skill files live. The Skill Files panels name this
+/// directory to the person reading them, so it is public: a panel claiming a
+/// different one is a test failure, not a stale sentence.
+pub fn skills_dir(workspace_root: &Path) -> std::path::PathBuf {
     workspace_root.join(".velocity").join("skills")
 }
 
