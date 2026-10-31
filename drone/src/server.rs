@@ -251,10 +251,48 @@ fn route_request(
 /// The drone HTTP server.
 pub struct DroneServer {
     core: Arc<DroneCore>,
+    host: String,
     addr: String,
     /// Shared-secret token for authenticating requests.  When `None`, auth is
     /// disabled (development mode).  Set via `DRONE_AUTH_TOKEN` env var.
     auth_token: Option<String>,
+    /// Operator's explicit permission to run an unauthenticated drone on a
+    /// reachably-off-box interface. Set via `DRONE_ALLOW_UNAUTHENTICATED_REMOTE=1`.
+    allow_unauthenticated_remote: bool,
+}
+
+/// True when binding to `host` cannot be reached from another machine: the
+/// loopback range (`127.0.0.0/8`, `::1`) or its name. Anything else — including
+/// `0.0.0.0`, `::`, and a machine name that resolves outward — exposes the
+/// endpoint beyond this host's own user.
+fn is_loopback_only(host: &str) -> bool {
+    let host = host.trim();
+    if host.eq_ignore_ascii_case("localhost") {
+        return true;
+    }
+    match host.parse::<std::net::IpAddr>() {
+        Ok(ip) => ip.is_loopback(),
+        Err(_) => false,
+    }
+}
+
+/// The reason a drone refuses to start, or `None` when it may serve.
+///
+/// `/peer/task` hands its command string straight to `cmd /C` (or `sh -c`), so an
+/// unauthenticated drone reachable off-box is a remote shell for whoever can
+/// open a socket to it. A token makes that safe; a loopback bind makes it
+/// unreachable to anyone but this machine's own user; an explicit operator
+/// override is the only other door.
+fn startup_refusal(host: &str, token: Option<&str>, override_granted: bool) -> Option<String> {
+    if token.is_some() || is_loopback_only(host) || override_granted {
+        return None;
+    }
+    Some(format!(
+        "refusing to bind {host} without DRONE_AUTH_TOKEN: /peer/task executes arbitrary \
+         commands, so an off-loopback drone without a shared secret is a remote shell. Set \
+         DRONE_AUTH_TOKEN, bind 127.0.0.1, or set DRONE_ALLOW_UNAUTHENTICATED_REMOTE=1 if this \
+         machine's network is trusted."
+    ))
 }
 
 impl DroneServer {
@@ -264,13 +302,26 @@ impl DroneServer {
             .filter(|t| !t.is_empty());
         Self {
             core: Arc::new(core),
+            host: host.to_string(),
             addr: format!("{host}:{port}"),
+            allow_unauthenticated_remote: std::env::var("DRONE_ALLOW_UNAUTHENTICATED_REMOTE")
+                .ok()
+                .filter(|v| v == "1")
+                .is_some(),
             auth_token,
         }
     }
 
     /// Start serving (blocking).
     pub fn serve(&self) -> Result<(), String> {
+        if let Some(reason) = startup_refusal(
+            &self.host,
+            self.auth_token.as_deref(),
+            self.allow_unauthenticated_remote,
+        ) {
+            return Err(reason);
+        }
+
         let listener = TcpListener::bind(&self.addr).map_err(|e| format!("Bind: {e}"))?;
 
         // Save identity.
@@ -289,8 +340,14 @@ impl DroneServer {
         );
         if self.auth_token.is_some() {
             println!("  Auth:         Shared-secret token enabled");
+        } else if is_loopback_only(&self.host) {
+            println!(
+                "  Auth:         DISABLED — bound to loopback, so only this machine can reach it"
+            );
         } else {
-            println!("  Auth:         DISABLED (set DRONE_AUTH_TOKEN to enable)");
+            println!(
+                "  Auth:         DISABLED by operator override — every endpoint is a remote shell"
+            );
         }
         println!("Press Ctrl+C to stop.");
 
@@ -773,5 +830,103 @@ mod tests {
         let output = crate::core::execute_deploy_instructions("run echo hello", "/tmp/f.txt", &ws);
         assert!(output.contains("[run] echo hello"));
         assert!(!output.contains("BLOCKED"));
+    }
+
+    // ── Bind-policy tests ──
+    //
+    // `/peer/task` spawns `cmd /C` (Windows) or `sh -c` (elsewhere) with whatever
+    // command string the caller sent, so a drone that answers it without a shared
+    // secret is a remote shell for anyone who can open a socket to it. These tests
+    // pin the three doors: a token, a loopback bind, or an explicit override.
+
+    #[test]
+    fn only_loopback_spelling_counts_as_unreachable_off_box() {
+        for host in ["127.0.0.1", "127.5.5.5", "localhost", "LOCALHOST", "::1"] {
+            assert!(
+                is_loopback_only(host),
+                "{host} is reachable from this machine only"
+            );
+        }
+        for host in [
+            "0.0.0.0",
+            "::",
+            "192.168.1.10",
+            "10.0.0.5",
+            "buildbox.local",
+            "",
+        ] {
+            assert!(
+                !is_loopback_only(host),
+                "{host} can be reached from another machine"
+            );
+        }
+    }
+
+    #[test]
+    fn off_loopback_bind_without_a_token_is_refused() {
+        let reason =
+            startup_refusal("0.0.0.0", None, false).expect("0.0.0.0 with no token must refuse");
+        assert!(
+            reason.contains("refusing to bind 0.0.0.0 without DRONE_AUTH_TOKEN"),
+            "the refusal names the interface and the missing variable: {reason}"
+        );
+        // ...and tells the operator all three ways out, so the message is actionable.
+        assert!(reason.contains("DRONE_AUTH_TOKEN"));
+        assert!(reason.contains("127.0.0.1"));
+        assert!(reason.contains("DRONE_ALLOW_UNAUTHENTICATED_REMOTE"));
+    }
+
+    #[test]
+    fn a_token_a_loopback_bind_or_an_override_allows_starting() {
+        assert_eq!(startup_refusal("0.0.0.0", Some("s3cret"), false), None);
+        assert_eq!(startup_refusal("0.0.0.0", None, true), None);
+        assert_eq!(startup_refusal("127.0.0.1", None, false), None);
+        assert_eq!(startup_refusal("::1", None, false), None);
+    }
+
+    /// Regression: the server used to bind and serve regardless of the bind
+    /// address. The refusal has to happen *before* the listener opens, which is
+    /// why this asks for an address this machine cannot own — if the guard were
+    /// removed the bind would fail with a socket error, not the policy message.
+    #[test]
+    fn serve_refuses_an_unauthenticated_remote_bind_before_opening_a_socket() {
+        let ws = test_ws();
+        let core = DroneCore::new(crate::core::DroneIdentity::new("BindPolicy", 0), ws);
+        let server = DroneServer {
+            core: Arc::new(core),
+            host: "192.0.2.1".to_string(),
+            addr: "192.0.2.1:9191".to_string(),
+            auth_token: None,
+            allow_unauthenticated_remote: false,
+        };
+
+        let err = server.serve().expect_err("must not serve");
+        assert!(
+            err.starts_with("refusing to bind"),
+            "expected the bind-policy refusal, got a socket error: {err}"
+        );
+    }
+
+    #[test]
+    fn serve_proceeds_when_a_remote_bind_carries_a_token() {
+        let ws = test_ws();
+        let core = DroneCore::new(crate::core::DroneIdentity::new("BindOk", 0), ws);
+        let server = DroneServer {
+            core: Arc::new(core),
+            host: "192.0.2.1".to_string(),
+            addr: "192.0.2.1:9191".to_string(),
+            auth_token: Some("s3cret".to_string()),
+            allow_unauthenticated_remote: false,
+        };
+
+        // Past the guard, so the only failure left is the impossible bind — which
+        // proves the policy let a tokened drone through instead of refusing it.
+        let err = server
+            .serve()
+            .expect_err("this address is not ours to bind");
+        assert!(
+            err.starts_with("Bind:"),
+            "a tokened drone must reach the bind, got: {err}"
+        );
     }
 }

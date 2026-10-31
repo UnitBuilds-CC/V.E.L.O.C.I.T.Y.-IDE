@@ -23,6 +23,25 @@ remote execution endpoints for cross-device development and testing.
 - Default port: **9191** (configurable)
 - Content-Type: `application/json`
 
+### Authentication
+
+`POST /peer/task` hands its `command` string to `cmd /C` (Windows) or `sh -c`
+(elsewhere), so any client that can reach a drone can run programs on it. A
+drone therefore has to answer requests with a shared secret unless it is only
+reachable from its own machine:
+
+- **Token**: set `DRONE_AUTH_TOKEN=<secret>` on the drone. Every endpoint then
+  requires `Authorization: Bearer <secret>`. `/peer/health` stays public so a
+  link check can tell a dead drone from a locked one. A missing or wrong token
+  gets `401 {"error":"Unauthorized — missing or invalid Bearer token"}`.
+- **Loopback**: with no token, a drone bound to `127.0.0.1`, `::1` or
+  `localhost` will still start — nothing outside this machine can reach it.
+- **Override**: `DRONE_ALLOW_UNAUTHENTICATED_REMOTE=1` starts an unauthenticated
+  drone on a routable interface. Only set it where the network is trusted.
+
+With no token and no override, binding to anything else (including `0.0.0.0`)
+is refused at startup rather than served.
+
 ### Endpoints
 
 #### `GET /peer/health`

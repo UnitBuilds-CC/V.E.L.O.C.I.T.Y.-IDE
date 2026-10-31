@@ -113,10 +113,17 @@ OPTIONS:
     --capabilities <CAP>...    Advertised capabilities (space-separated)
     -h, --help                 Show this help
 
+SECURITY:
+    /peer/task runs any command it is handed, so a drone that answers requests
+    without a shared secret is a remote shell. Without DRONE_AUTH_TOKEN the
+    drone refuses to start on any address that is not loopback. Either set
+    DRONE_AUTH_TOKEN=<secret>, keep --host 127.0.0.1, or, if this machine's
+    network is trusted, set DRONE_ALLOW_UNAUTHENTICATED_REMOTE=1 to override.
+
 EXAMPLES:
     velocity-drone
     velocity-drone --port 9191 --name \"Build Machine\"
-    velocity-drone --host 0.0.0.0 --port 9191   # Listen on all interfaces
+    DRONE_AUTH_TOKEN=... velocity-drone --host 0.0.0.0 --port 9191   # Listen on all interfaces
     velocity-drone --workspace /home/user/drone --capabilities file_execution test_runner
 
 PROTOCOL:
