@@ -77,7 +77,8 @@ and dispatch to it, but you cannot point it at a different host from this panel 
 and the failover chain only routes to it when that variable is set, since
 otherwise the loop has no way to know a server is listening. AWS Bedrock is the
 other key-free backend — it has a section because its optional proxy key lives
-there, but neither it nor llama.cpp is part of the workspace credential table.
+there, but neither it nor llama.cpp takes a row in the credential file this
+panel writes.
 
 **Alibaba Qwen** is the one provider with the extra token-plan options: when the
 *Use Token Plan API key* box is enabled it takes precedence over the standard
@@ -86,10 +87,18 @@ endpoint when left empty.
 
 ### Where credentials live
 
-- Provider keys set here persist to the workspace provider-settings file
-  (`.velocity/provider-settings.json`).
-- Cloudflare **account usage** additionally reads `CF_ACCOUNT_N_ID` /
-  `CF_ACCOUNT_N_TOKEN` from `.env` (see [Usage](panels-reference.md#usage)).
+- Provider keys set here persist to the **user-level** `provider-settings.json`
+  — `%APPDATA%/Velocity/provider-settings.json` on Windows,
+  `$XDG_CONFIG_HOME/velocity/` or `$HOME/.config/velocity/provider-settings.json`
+  elsewhere (`VELOCITY_CONFIG_DIR` relocates that directory). Nothing
+  credential-shaped is stored in the workspace.
+- Every backend in that file also has an environment fallback, which the loaders
+  consult only when the file does not already configure that provider: Cloudflare
+  `CF_ACCOUNT_{n}_ID` with `CF_ACCOUNT_{n}_TOKEN` (`n` runs 1 to 30), OpenRouter
+  `OPENROUTER_ACCOUNT_{n}_KEY` or `OPENROUTER_API_KEY`, Azure
+  `AZURE_OPENAI_ACCOUNT_{n}_KEY` with its endpoint. A `.env` file in the working
+  directory is loaded as part of that read (see
+  [Usage](panels-reference.md#usage)).
 - Secrets are masked in the UI and scrubbed from logs; see
   [SECURITY.md → Credential Boundary](../../SECURITY.md).
 
