@@ -2438,7 +2438,14 @@ cargo clean
 | `.velocity/background_agents.json` | Background agent monitor configs |
 | `.velocity/collaboration.json` | Collaboration manager state |
 | `.velocity/shared_memory.json` | Shared knowledge entries |
+| `.velocity/events/events.jsonl` | Codebase event log — every tool call, its outcome, and the agent's recorded *why* |
 | `memory/.account_usage.nda` | API usage tracking (encrypted) |
+
+**How big can the event log get?**
+
+The log is append-only and it is written once per tool call, so a long-running workspace grows it continuously. It holds the newest 8 MiB by default and drops its oldest half when a record crosses that bound, so the trail is kept small enough to read in one pass rather than growing until every query pays for the whole file. Raise or remove the bound with `VELOCITY_EVENT_STORE_MAX_BYTES`, using the same spelling as the run limits: a number of bytes, or `0` / `off` / `none` / `unbounded` / `unlimited` / `infinite` for no bound at all; any other text falls back to 8 MiB rather than silently switching retention off. The value is read once when a workspace's log is first opened, so set it before starting the IDE or the MCP server.
+
+Dropping to the bound is lossy in one specific way: an event past the cut can no longer be fetched by `event_context`, `event_mark_outcome` or `event_attach_context`, and those tools report not-found instead of resurrecting it. The history and timeline queries only ever show what is still there. That is why the default is generous, why the rewrite keeps at least 256 events even on a workspace whose records are enormous, and why a log that is over the bound *while already at that floor* prints a warning and stops pruning instead of deleting the trail to satisfy a number.
 
 **Can I delete `.velocity/` to start fresh?**
 Yes, but you'll lose: wiki data, knowledge base, agent memory, provider settings, and all workspace preferences. The site map will be rebuilt from source files on next open. Provider settings and API keys will need to be re-entered.
