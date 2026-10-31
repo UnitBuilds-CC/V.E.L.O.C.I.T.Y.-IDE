@@ -126,7 +126,10 @@ mod tests {
         assert!(error.contains("server \"192.168.1.100\""), "{error}");
         assert!(error.contains("live-db"), "{error}");
         assert!(error.contains("off limits"), "{error}");
-        assert!(error.contains("Remedy: use 192.168.0.2 instead."), "{error}");
+        assert!(
+            error.contains("Remedy: use 192.168.0.2 instead."),
+            "{error}"
+        );
     }
 
     #[test]
