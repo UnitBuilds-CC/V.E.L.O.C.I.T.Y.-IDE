@@ -184,8 +184,6 @@ sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.1-dev libudev-dev
 
 ### First Launch
 
-![Velocity IDE Main Window](C:\Users\visse\AppData\Local\Temp\qoder-computer-use-images\c569a90c\img-1789211260374158000-175248.png)
-
 On first launch, you'll see the main IDE window with:
 
 - **Title bar** — "V.E.L.O.C.I.T.Y. IDE - Native Workspace Editor"
