@@ -342,4 +342,27 @@ mod tests {
         assert!(facts.contains("wa_field\tartifact_summary_present\ttrue"));
         assert!(facts.contains("transcript_line\t0\tdone"));
     }
+
+    #[test]
+    fn the_worker_persists_the_ledger_it_builds() {
+        // `ContinuationLedger::persist` and `serialize` existed with no
+        // production caller: the worker captured a ledger, wrote only the
+        // prompt dump beside it, and so the Continuation Ledger panel had
+        // nothing to read. This pins the call site and the run directory it
+        // shares with the other artifacts - not that a frame ever drew it.
+        let runner = std::fs::read_to_string(format!(
+            "{}/src/orchestrator/worker/runner.rs",
+            env!("CARGO_MANIFEST_DIR")
+        ))
+        .expect("runner.rs");
+        let ledger_block = runner
+            .split("ContinuationLedger::capture")
+            .nth(1)
+            .and_then(|rest| rest.split("carry_forward = Some").next())
+            .expect("the worker's ledger block");
+        assert!(
+            ledger_block.contains("ledger.persist(run_dir)"),
+            "the worker builds a continuation ledger it never writes to disk"
+        );
+    }
 }

@@ -522,6 +522,14 @@ pub fn execute_live_task(
                     &|hash| site_map.get_dependencies(hash),
                 );
             }
+            // Persist the structured ledger the Continuation Ledger panel reads
+            // (`ledger.nda`), then the human-readable prompt beside it. The
+            // structured form is the one a later reader can parse without
+            // guessing, so a failure to write it is worth a log line; the prompt
+            // dump stays best-effort as it always was.
+            if let Err(err) = ledger.persist(run_dir) {
+                log::warn!("worker: could not persist the continuation ledger: {err}");
+            }
             // Persist ledger for diagnostics and potential manual inspection.
             let ledger_path = run_dir.join(format!(
                 "continuation_ledger_attempt_{}.txt",
