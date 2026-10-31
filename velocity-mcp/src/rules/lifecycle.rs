@@ -44,8 +44,9 @@ pub fn create(paths: &RulePaths, root: &Path, request: NewRule) -> Result<Rule, 
         return Err("name is required".to_string());
     }
     if description.is_empty() {
-        return Err("description is required: it states the intent the refusal will quote"
-            .to_string());
+        return Err(
+            "description is required: it states the intent the refusal will quote".to_string(),
+        );
     }
     validate_params(request.kind, &request.params)?;
     let now = now_secs();
@@ -261,7 +262,9 @@ fn decide_request(
         if approve {
             apply_request(file, &request, decided_by)?;
         }
-        let stored = file.find_request_mut(request_id).expect("request located above");
+        let stored = file
+            .find_request_mut(request_id)
+            .expect("request located above");
         stored.status = if approve {
             RequestStatus::Approved
         } else {
@@ -275,7 +278,11 @@ fn decide_request(
     decided.ok_or_else(|| format!("request '{request_id}' was not resolved"))
 }
 
-fn apply_request(file: &mut RuleFile, request: &ChangeRequest, decided_by: &str) -> Result<(), String> {
+fn apply_request(
+    file: &mut RuleFile,
+    request: &ChangeRequest,
+    decided_by: &str,
+) -> Result<(), String> {
     match &request.action {
         ChangeAction::Adjust { patch } => {
             let record = file
@@ -418,19 +425,12 @@ fn validate_params(kind: RuleKind, params: &BTreeMap<String, ParamValue>) -> Res
     }
     for spec in kind.params() {
         let Some(value) = params.get(spec.key) else {
-            return Err(format!(
-                "{} rules need `{}`",
-                kind.label(),
-                spec.key
-            ));
+            return Err(format!("{} rules need `{}`", kind.label(), spec.key));
         };
         match (spec.kind, value) {
             (ParamKind::Int { min, max, .. }, ParamValue::Int(v)) => {
                 if *v < min || *v > max {
-                    return Err(format!(
-                        "`{}` must be between {min} and {max}",
-                        spec.key
-                    ));
+                    return Err(format!("`{}` must be between {min} and {max}", spec.key));
                 }
             }
             (ParamKind::Int { .. }, _) => {
@@ -439,10 +439,7 @@ fn validate_params(kind: RuleKind, params: &BTreeMap<String, ParamValue>) -> Res
             (ParamKind::List(_), ParamValue::List(items)) => {
                 let cleaned: Vec<&String> = items.iter().filter(|i| !i.trim().is_empty()).collect();
                 if cleaned.is_empty() {
-                    return Err(format!(
-                        "`{}` needs at least one non-empty entry",
-                        spec.key
-                    ));
+                    return Err(format!("`{}` needs at least one non-empty entry", spec.key));
                 }
             }
             (ParamKind::List(_), _) => {
@@ -463,7 +460,11 @@ fn find_rule_scope(paths: &RulePaths, root: &Path, rule_id: &str) -> Result<Rule
     Err(format!("rule '{rule_id}' not found"))
 }
 
-fn find_request_scope(paths: &RulePaths, root: &Path, request_id: &str) -> Result<RuleScope, String> {
+fn find_request_scope(
+    paths: &RulePaths,
+    root: &Path,
+    request_id: &str,
+) -> Result<RuleScope, String> {
     for scope in RuleScope::ALL {
         let file = store::load_scoped(paths, root, scope)?;
         if file.find_request(request_id).is_some() {
@@ -510,11 +511,16 @@ mod tests {
     fn a_created_rule_fires_immediately() {
         let tmp = tempfile::tempdir().unwrap();
         let paths = paths_in(tmp.path());
-        let rule = create(&paths, tmp.path(), egress("live-db", "192.168.1.100", RuleScope::Workspace))
-            .unwrap();
+        let rule = create(
+            &paths,
+            tmp.path(),
+            egress("live-db", "192.168.1.100", RuleScope::Workspace),
+        )
+        .unwrap();
         assert!(matcher::matches(&rule, &call("psql -h 192.168.1.100")).is_some());
-        let hits = crate::rules::engine::evaluate(&paths, tmp.path(), &call("psql -h 192.168.1.100"))
-            .unwrap();
+        let hits =
+            crate::rules::engine::evaluate(&paths, tmp.path(), &call("psql -h 192.168.1.100"))
+                .unwrap();
         assert_eq!(hits.len(), 1);
         assert_eq!(hits[0].scope, RuleScope::Workspace);
     }
@@ -546,13 +552,14 @@ mod tests {
     fn an_agent_adjust_is_pending_and_changes_nothing() {
         let tmp = tempfile::tempdir().unwrap();
         let paths = paths_in(tmp.path());
-        let rule = create(&paths, tmp.path(), egress("live-db", "10.0.0.5", RuleScope::Workspace))
-            .unwrap();
+        let rule = create(
+            &paths,
+            tmp.path(),
+            egress("live-db", "10.0.0.5", RuleScope::Workspace),
+        )
+        .unwrap();
         let mut params = BTreeMap::new();
-        params.insert(
-            "targets".into(),
-            ParamValue::List(vec!["10.0.0.6".into()]),
-        );
+        params.insert("targets".into(), ParamValue::List(vec!["10.0.0.6".into()]));
         let outcome = adjust(
             &paths,
             tmp.path(),
@@ -579,13 +586,14 @@ mod tests {
     fn a_user_adjust_applies_and_keeps_the_old_version() {
         let tmp = tempfile::tempdir().unwrap();
         let paths = paths_in(tmp.path());
-        let rule = create(&paths, tmp.path(), egress("live-db", "10.0.0.5", RuleScope::Workspace))
-            .unwrap();
+        let rule = create(
+            &paths,
+            tmp.path(),
+            egress("live-db", "10.0.0.5", RuleScope::Workspace),
+        )
+        .unwrap();
         let mut params = BTreeMap::new();
-        params.insert(
-            "targets".into(),
-            ParamValue::List(vec!["10.0.0.6".into()]),
-        );
+        params.insert("targets".into(), ParamValue::List(vec!["10.0.0.6".into()]));
         let outcome = adjust(
             &paths,
             tmp.path(),
@@ -612,8 +620,12 @@ mod tests {
     fn approving_a_request_applies_it_once() {
         let tmp = tempfile::tempdir().unwrap();
         let paths = paths_in(tmp.path());
-        let rule = create(&paths, tmp.path(), egress("live-db", "10.0.0.5", RuleScope::Workspace))
-            .unwrap();
+        let rule = create(
+            &paths,
+            tmp.path(),
+            egress("live-db", "10.0.0.5", RuleScope::Workspace),
+        )
+        .unwrap();
         let ChangeOutcome::Pending(request_id) = adjust(
             &paths,
             tmp.path(),
@@ -625,8 +637,7 @@ mod tests {
             AGENT,
             "clarify",
         )
-        .unwrap()
-        else {
+        .unwrap() else {
             panic!("pending expected");
         };
         let request = approve_request(&paths, tmp.path(), &request_id, "supervisor").unwrap();
@@ -643,10 +654,14 @@ mod tests {
     fn rejecting_a_request_leaves_the_rule_untouched() {
         let tmp = tempfile::tempdir().unwrap();
         let paths = paths_in(tmp.path());
-        let rule = create(&paths, tmp.path(), egress("live-db", "10.0.0.5", RuleScope::Workspace))
-            .unwrap();
-        let ChangeOutcome::Pending(request_id) = retire(&paths, tmp.path(), &rule.id, AGENT, "no longer needed")
-            .unwrap()
+        let rule = create(
+            &paths,
+            tmp.path(),
+            egress("live-db", "10.0.0.5", RuleScope::Workspace),
+        )
+        .unwrap();
+        let ChangeOutcome::Pending(request_id) =
+            retire(&paths, tmp.path(), &rule.id, AGENT, "no longer needed").unwrap()
         else {
             panic!("pending expected");
         };
@@ -659,8 +674,12 @@ mod tests {
     fn retiring_is_a_tombstone_not_an_erase() {
         let tmp = tempfile::tempdir().unwrap();
         let paths = paths_in(tmp.path());
-        let rule = create(&paths, tmp.path(), egress("live-db", "10.0.0.5", RuleScope::Workspace))
-            .unwrap();
+        let rule = create(
+            &paths,
+            tmp.path(),
+            egress("live-db", "10.0.0.5", RuleScope::Workspace),
+        )
+        .unwrap();
         retire(&paths, tmp.path(), &rule.id, USER, "done").unwrap();
         let snapshot = paths.snapshot(tmp.path());
         assert!(snapshot.find(&rule.id).unwrap().1.retired_at.is_some());
@@ -672,8 +691,12 @@ mod tests {
     fn a_task_rule_adjusted_by_an_agent_applies_at_once() {
         let tmp = tempfile::tempdir().unwrap();
         let paths = paths_in(tmp.path());
-        let rule = create(&paths, tmp.path(), egress("live-db", "10.0.0.5", RuleScope::Task))
-            .unwrap();
+        let rule = create(
+            &paths,
+            tmp.path(),
+            egress("live-db", "10.0.0.5", RuleScope::Task),
+        )
+        .unwrap();
         let outcome = adjust(
             &paths,
             tmp.path(),
@@ -693,8 +716,12 @@ mod tests {
     fn an_agent_bypass_is_pending_until_approved() {
         let tmp = tempfile::tempdir().unwrap();
         let paths = paths_in(tmp.path());
-        let rule = create(&paths, tmp.path(), egress("live-db", "10.0.0.5", RuleScope::Workspace))
-            .unwrap();
+        let rule = create(
+            &paths,
+            tmp.path(),
+            egress("live-db", "10.0.0.5", RuleScope::Workspace),
+        )
+        .unwrap();
         let outcome = bypass(
             &paths,
             tmp.path(),
@@ -721,8 +748,12 @@ mod tests {
     fn a_user_bypass_is_issued_with_an_expiry() {
         let tmp = tempfile::tempdir().unwrap();
         let paths = paths_in(tmp.path());
-        let rule = create(&paths, tmp.path(), egress("live-db", "10.0.0.5", RuleScope::Global))
-            .unwrap();
+        let rule = create(
+            &paths,
+            tmp.path(),
+            egress("live-db", "10.0.0.5", RuleScope::Global),
+        )
+        .unwrap();
         let outcome = bypass(
             &paths,
             tmp.path(),
@@ -746,8 +777,12 @@ mod tests {
     fn a_bypass_without_a_reason_is_rejected() {
         let tmp = tempfile::tempdir().unwrap();
         let paths = paths_in(tmp.path());
-        let rule = create(&paths, tmp.path(), egress("live-db", "10.0.0.5", RuleScope::Workspace))
-            .unwrap();
+        let rule = create(
+            &paths,
+            tmp.path(),
+            egress("live-db", "10.0.0.5", RuleScope::Workspace),
+        )
+        .unwrap();
         let error = bypass(
             &paths,
             tmp.path(),
@@ -767,8 +802,12 @@ mod tests {
     fn a_timed_bypass_is_capped() {
         let tmp = tempfile::tempdir().unwrap();
         let paths = paths_in(tmp.path());
-        let rule = create(&paths, tmp.path(), egress("live-db", "10.0.0.5", RuleScope::Workspace))
-            .unwrap();
+        let rule = create(
+            &paths,
+            tmp.path(),
+            egress("live-db", "10.0.0.5", RuleScope::Workspace),
+        )
+        .unwrap();
         let error = bypass(
             &paths,
             tmp.path(),
