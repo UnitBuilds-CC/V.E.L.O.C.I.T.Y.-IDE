@@ -343,13 +343,13 @@ pub fn get_system_tools() -> Vec<Tool> {
         // ── Custom Tool Management ───────────────────────────────────────────
         Tool {
             name: "tool_register".to_string(),
-            description: "Register a new custom tool backed by a shell command. The tool becomes immediately available for invocation without restarting the MCP server. Use {{param}} placeholders in the command to substitute argument values at call time. Custom tools are persisted to .velocity/custom_tools.json and survive restarts.".to_string(),
+            description: "Register a new custom tool backed by a shell command. The tool becomes immediately available for invocation without restarting the MCP server. A {{param}} placeholder in the command receives its argument through the child process's environment, never as command text, so an argument cannot add a statement, a pipe or a substitution to the command line. Every placeholder must have a matching argument or the call is refused. Custom tools are persisted to .velocity/custom_tools.json and survive restarts.".to_string(),
             input_schema: json!({
                 "type": "object",
                 "properties": {
                     "name":        { "type": "string",  "description": "Unique tool name (must not collide with built-in tools)." },
                     "description": { "type": "string",  "description": "Human-readable description shown in tools/list." },
-                    "command":     { "type": "string",  "description": "Shell command to execute. Use {{param}} for argument substitution." },
+                    "command":     { "type": "string",  "description": "Shell command to execute. Each {{param}} expands to its argument as one literal word; write it unquoted or wrapped in its own quote pair." },
                     "parameters":  { "type": "object",  "description": "JSON Schema properties object for the tool's input parameters (optional)." }
                 },
                 "required": ["name", "description", "command"]
