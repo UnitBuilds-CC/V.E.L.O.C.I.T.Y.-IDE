@@ -120,6 +120,7 @@ A complete guide to using the V.E.L.O.C.I.T.Y. Cognitive IDE — a native, GPU-a
 - [Workspace Preferences](#workspace-preferences)
 - [Settings & Configuration](#settings--configuration)
   - [Appearance Settings](#appearance-settings)
+  - [Runtime Rules](#runtime-rules)
   - [Keybindings](#keybindings)
   - [Provider Configuration](#provider-configuration)
     - [Registering a Provider](#registering-a-provider)
@@ -845,9 +846,10 @@ To connect an external AI assistant, add Velocity as an MCP server in the assist
 
 ### Available MCP Tools
 
-The server exposes 336 tools across 7 categories:
+The server exposes 355 tools across 9 categories (full list with verbatim descriptions in
+[docs/manual/mcp-tools.md](docs/manual/mcp-tools.md)):
 
-**System Tools** (53 tools — representative sample):
+**System Tools** (55 tools — representative sample):
 | Tool | Description |
 |------|-------------|
 | `read_file` | Read file contents |
@@ -884,7 +886,9 @@ The server exposes 336 tools across 7 categories:
 
 **Windows Automation Tools** (86 tools): UI automation, screenshot capture, registry access, advanced input simulation.
 
-**Team Tools** (22 tools): `create_expert_team`, `create_skill_file`, `list_expert_teams`, `list_skills`, `update_expert_team`, `update_team_member`, `add_team_member`, `remove_team_member`, `validate_team`, `check_scope_overlaps`, `clone_expert_team`, `export_expert_team`, `import_expert_team`, `debug_routing`, `team_analytics`, `team_health_check`, `list_providers`, `create_team_quick`, `bulk_import_members`, `team_changelog`, and more.
+**Team Tools** (31 tools): `create_expert_team`, `create_skill_file`, `list_expert_teams`, `list_skills`, `update_expert_team`, `update_team_member`, `add_team_member`, `remove_team_member`, `validate_team`, `check_scope_overlaps`, `clone_expert_team`, `export_expert_team`, `import_expert_team`, `debug_routing`, `team_analytics`, `team_health_check`, `list_providers`, `create_team_quick`, `bulk_import_members`, `team_changelog`, and more.
+
+**Rules Tools** (8 tools): `rule_kinds`, `rules_list`, `rule_show`, `rule_create`, `rule_adjust`, `rule_retire`, `rule_bypass`, `rules_pending` — the lifecycle of the deterministic rules enforced below the model (see [Runtime Rules](#runtime-rules)). They are on every agent's tool surface by default, because the worker that is about to repeat a mistake is the one that can record the rule that stops it.
 
 **Company Org Tools** (44 tools): `init_company_org`, `get_company_org`, `add_org_role`, `add_org_resource`, `grant_capability`, `request_org_action`, `approve_org_action`, `reject_org_action`, `add_org_playbook`, `list_org_playbooks`, `validate_org_playbooks`, `run_org_playbook`, `schedule_org_playbook`, `run_due_org_playbooks`, `rotate_org_resource_credential`, `list_org_credential_audit`, and more — the approval-gated governance layer (full descriptions in
 [docs/manual/mcp-tools.md](docs/manual/mcp-tools.md#company)).
@@ -1944,6 +1948,60 @@ In Settings → **Editor** section:
 
 - **Show breadcrumbs** — Toggle navigation breadcrumbs above the editor (default: on)
 - **Word wrap** — Toggle word wrap in the editor (also `Alt+Z`)
+
+### Runtime Rules
+
+A **rule** is a constraint the IDE enforces *below* the model: every tool call is matched
+against the active rules before its handler runs, in the embedded agent and in every
+external MCP client alike. An instruction the agent has to remember is a suggestion; a rule
+still holds after the context that carried it is gone.
+
+Open Settings (`Ctrl+,`) and scroll to **RULES — ENFORCED OUTSIDE THE MODEL**.
+
+| Tab | What it holds |
+|---|---|
+| **Active** | Rules grouped by scope: *This task* (this run, in memory), *This workspace* (`.velocity/rules.json`, committed with the project), *Every workspace* (your user config). Live bypass grants are listed above them. |
+| **Pending** | Changes an agent proposed to a durable rule, with the diff and **Approve** / **Reject**. |
+| **History** | Retired rules and the full version chain of the selected rule. |
+
+**What a rule can refuse:** a tool by name (`tool_ban`), a network target — IPv4, CIDR range
+or hostname (`egress_ban`), any path at or below a prefix (`path_ban`), a case-insensitive
+fragment of a command (`command_pattern`), or a call ceiling over a rolling window
+(`tool_budget`: **Tool calls** and **Window** in minutes).
+
+**Every refusal says what to do instead.** A rule carries an intent and, optionally, a
+remedy, and both are quoted in the message the agent reads:
+
+```text
+action blocked — server "192.168.1.100"; rule "live-db-off-limits" (workspace, rule-8fbea320):
+The host at 192.168.1.100 is the live production database; nothing in this workspace may send
+traffic to it. Query the dev database instead. Remedy: use the dev database at 192.168.0.2.
+```
+
+**Things worth knowing before you rely on the panel:**
+
+- **It takes effect on the next call**, in every agent sharing the workspace — no restart,
+  no reload, including for a rule created by the agent itself mid-run.
+- **A rule that cannot fire is rejected at creation.** Each rule carries a witness pair — one
+  call it must block, one near-miss it must allow — checked before the version is written. A
+  command-text rule asks you for both commands.
+- **Agents can tighten rules but not loosen them.** Creating is immediate; adjusting, retiring
+  or bypassing a workspace or global rule files a request only you can approve, on the
+  **Pending** tab. No tool argument reaches approval.
+- **A bypass is a separate, expiring grant**, not a flag on the rule: *event* allows exactly
+  one call, *session* and *workspace* expire after the minutes you set (1 to 10,080).
+- **Retiring has no undo** — the button arms on the first click. Versions are append-only, so
+  *which rule was in force on Tuesday* stays answerable.
+- **A corrupt rules file stops calls, not the rules.** The panel shows
+  `⚠ rules unavailable — tool calls are being refused until this is fixed: …` and the engine
+  refuses every call until the JSON parses again.
+- **Budgets count per process.** The window lives in the process that enforces it, so two
+  IDEs open on the same workspace keep two windows.
+
+The engine's guarantees and non-guarantees are specified in
+[docs/rules-engine.md](docs/rules-engine.md); the eight `rule*` MCP tools are listed in
+[docs/manual/mcp-tools.md](docs/manual/mcp-tools.md). This is distinct from **Tools ▸
+Automation ▸ Governance**, which is the older advisory policy file.
 
 ### Keybindings
 
