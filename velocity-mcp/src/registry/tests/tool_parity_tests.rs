@@ -344,3 +344,89 @@ fn documented_tool_catalog_lists_every_registered_tool() {
         stale
     );
 }
+
+/// The set above is checked; the *numbers* a reader quotes were not, and they
+/// drifted: the reference's sections listed 31 team tools while its summary table
+/// still said 27 and its header still said 351. A claim of "matches the running
+/// binary" has to survive its own arithmetic, so tie the header total and every
+/// per-category count to the rows actually rendered under that category.
+#[test]
+fn documented_tool_catalog_counts_match_its_rows() {
+    use std::collections::{BTreeMap, BTreeSet};
+
+    let doc = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .map(|repo| repo.join("docs").join("manual").join("mcp-tools.md"))
+        .expect("crate lives inside the workspace");
+    let text = std::fs::read_to_string(&doc)
+        .unwrap_or_else(|e| panic!("{} must be readable: {e}", doc.display()));
+
+    // Rows per category section, by the heading the summary table links to.
+    let mut rows: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
+    let mut section: Option<String> = None;
+    let mut summary: Vec<(String, usize)> = Vec::new();
+    let mut header_total: Option<usize> = None;
+    for line in text.lines() {
+        if let Some(title) = line.strip_prefix("## ") {
+            let title = title.trim();
+            section = if title == "Categories" {
+                None
+            } else {
+                rows.entry(title.to_string()).or_default();
+                Some(title.to_string())
+            };
+            continue;
+        }
+        if let Some(rest) = line.strip_prefix("| `") {
+            if let Some(name) = rest.split('`').next() {
+                if let Some(title) = &section {
+                    rows.get_mut(title).unwrap().insert(name.to_string());
+                }
+            }
+            continue;
+        }
+        if line.starts_with("| [") {
+            let cells: Vec<&str> = line.split('|').map(str::trim).collect();
+            if cells.len() < 3 {
+                continue;
+            }
+            let slug = cells[1]
+                .trim_start_matches('[')
+                .split(']')
+                .next()
+                .unwrap_or_default()
+                .to_string();
+            if let Ok(count) = cells[2].parse::<usize>() {
+                summary.push((slug, count));
+            }
+            continue;
+        }
+        if let Some(pos) = line.find("**Total: ") {
+            header_total = line[pos + "**Total: ".len()..]
+                .split_whitespace()
+                .next()
+                .and_then(|digits| digits.parse::<usize>().ok());
+        }
+    }
+
+    let mut total_from_rows = 0usize;
+    for (slug, count) in &summary {
+        let listed = rows.get(slug).unwrap_or_else(|| {
+            panic!("summary table names category '{slug}' but no '## {slug}' section exists")
+        });
+        assert_eq!(
+            *count,
+            listed.len(),
+            "category '{slug}': summary says {count} tool(s), the section lists {} — the table \
+             must be regenerated with its rows, or the rows corrected to it",
+            listed.len()
+        );
+        total_from_rows += listed.len();
+    }
+    assert!(!summary.is_empty(), "no category summary rows parsed");
+    assert_eq!(
+        header_total,
+        Some(total_from_rows),
+        "header total must equal the tools listed across all categories"
+    );
+}
