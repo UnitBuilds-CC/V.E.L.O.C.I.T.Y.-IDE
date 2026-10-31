@@ -90,8 +90,7 @@ pub fn auto_witnesses(rule: &Rule) -> Result<Witnesses, String> {
                     matcher::matches(rule, &call).is_none().then_some(*probe)
                 })
                 .ok_or_else(|| {
-                    "every probe address is banned; add a witness allow-call explicitly"
-                        .to_string()
+                    "every probe address is banned; add a witness allow-call explicitly".to_string()
                 })?;
             Ok(Witnesses {
                 deny: probe_call(&deny_host),
@@ -130,9 +129,9 @@ pub fn auto_witnesses(rule: &Rule) -> Result<Witnesses, String> {
              rule blocks) and `witnesses.allow` (a near-miss it allows)"
                 .to_string(),
         ),
-        RuleKind::ToolBudget => Err(
-            "a budget is verified by its parameters, not by a witness pair".to_string(),
-        ),
+        RuleKind::ToolBudget => {
+            Err("a budget is verified by its parameters, not by a witness pair".to_string())
+        }
     }
 }
 
@@ -210,7 +209,13 @@ mod tests {
         let mut rule = rule(
             RuleKind::EgressBan,
             "targets",
-            &["0.0.0.0/0", "127.0.0.1", "192.0.2.0/24", "198.51.100.0/24", "203.0.113.0/24"],
+            &[
+                "0.0.0.0/0",
+                "127.0.0.1",
+                "192.0.2.0/24",
+                "198.51.100.0/24",
+                "203.0.113.0/24",
+            ],
         );
         let error = prepare(&mut rule).unwrap_err();
         assert!(error.contains("every probe address is banned"), "{error}");
@@ -248,8 +253,7 @@ mod tests {
     #[test]
     fn a_budget_rule_is_verified_by_its_parameters() {
         let mut rule = rule(RuleKind::ToolBudget, "patterns", &[]);
-        rule.params
-            .insert("tool_calls".into(), ParamValue::Int(0));
+        rule.params.insert("tool_calls".into(), ParamValue::Int(0));
         rule.params
             .insert("window_minutes".into(), ParamValue::Int(60));
         assert!(prepare(&mut rule).is_err());
