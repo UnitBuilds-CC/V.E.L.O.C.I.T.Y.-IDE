@@ -1328,6 +1328,21 @@ impl VelocityApp {
                     ui.separator();
                     ui.add_space(4.0);
 
+                    // Mode panels that have content of their own draw it here,
+                    // above the generic sidebar. Access mode is the only one
+                    // that does today; measuring the palette is skipped for
+                    // every mode whose panels have no body, so the other modes
+                    // pay nothing for this check.
+                    if crate::editor::access_panels::owns_any_panel(right_panels) {
+                        let access_checks = self.contrast_checks_for_active_palette();
+                        crate::editor::access_panels::render_right_panel_bodies(
+                            right_panels,
+                            ui,
+                            &access_checks,
+                            palette,
+                        );
+                    }
+
                     self.smart_sidebar.clear();
                     if self.build_errors_count > 0 {
                         self.smart_sidebar.add_diagnostic(0, true, "workspace", 0, 0, "Build errors require attention");

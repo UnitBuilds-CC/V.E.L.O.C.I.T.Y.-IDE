@@ -10,9 +10,14 @@
 //! one file - and testable, because a refresh method is callable without an
 //! egui frame or a running editor.
 //!
-//! Only disk-backed *read* sources belong here. Panels whose content is typed
-//! by the person (favorites, bookmarks) or produced in-session (chat, agent
-//! timeline) are written by their own input paths, not by a poll.
+//! Only disk-backed *read* sources belong here, with one deliberate exception:
+//! the accessibility panel sources measure the palette catalog compiled into
+//! this binary, so they are derived rather than read. They live here because
+//! this is the file that answers "which panel reads what", and splitting the
+//! answer across two files is how a panel ends up rendering a field nobody
+//! writes. Panels whose content is typed by the person (favorites, bookmarks)
+//! or produced in-session (chat, agent timeline) are written by their own input
+//! paths, not by a poll.
 
 use std::time::Duration;
 
@@ -78,6 +83,25 @@ impl VelocityApp {
             &self.workspace_root,
             MAX_CONTINUATION_LEDGERS,
         );
+    }
+
+    /// Accessibility Audit panel: measure the shipped palettes and keep the
+    /// answer. Not a poll - the subject is the palette catalog compiled into
+    /// this binary, so it changes when the build changes, and a person pressing
+    /// the button is the right moment to recompute it. The field stays `None`
+    /// until this runs, because "no findings" and "nothing measured" are not the
+    /// same claim and the panel used to draw the second one as the first.
+    pub fn run_accessibility_audit(&mut self) {
+        self.audit_findings = Some(crate::editor::sidebar_tabs::audit_palette_contrast());
+    }
+
+    /// Contrast Checker panel: the palette this window is painted with, pair by
+    /// pair. Recomputed on the frame it is drawn - eleven ratios over colours
+    /// already in memory - because the alternative is a cache that goes stale the
+    /// instant the theme changes, and a stale contrast number is the exact thing
+    /// this panel exists to prevent.
+    pub fn contrast_checks_for_active_palette(&self) -> Vec<crate::editor::theme::ContrastCheck> {
+        crate::editor::theme::palette_contrast_checks(&self.palette())
     }
 }
 
@@ -474,6 +498,148 @@ mod tests {
                 "{name} assigns no VelocityApp field, so the panel it feeds stays sourceless"
             );
         }
+    }
+
+    // ── The accessibility panels ───────────────────────────────────────────
+    //
+    // These two do not read the workspace, so they are not part of the poll and
+    // the shape guard above does not speak for them. They are the audit panel's
+    // state transition and the checker's palette source, which are the two ways
+    // this pair could still be a false feature.
+
+    use crate::editor::theme::ThemeVariant;
+
+    fn crate_src(rel: &str) -> String {
+        std::fs::read_to_string(format!("{}/{}", env!("CARGO_MANIFEST_DIR"), rel))
+            .unwrap_or_else(|err| panic!("{rel}: {err}"))
+    }
+
+    #[test]
+    fn the_audit_panel_starts_unrun_rather_than_clean() {
+        let app = app_at(workspace("audit_unrun"));
+        assert!(
+            app.audit_findings.is_none(),
+            "a panel that has measured nothing must not present a finding list, not even an empty one"
+        );
+    }
+
+    #[test]
+    fn running_the_audit_fills_the_panel_with_every_pair_that_fails() {
+        let mut app = app_at(workspace("audit_run"));
+        app.run_accessibility_audit();
+        let rows = app
+            .audit_findings
+            .as_ref()
+            .expect("running the audit leaves the panel a list, not a maybe");
+
+        // Cross-check against measuring the catalog pair by pair: the panel must
+        // neither drop a failing pair, duplicate one, nor restate a ratio the
+        // measurement did not produce.
+        let mut expected: Vec<(String, String)> = Vec::new();
+        for variant in ThemeVariant::ALL {
+            for check in crate::editor::theme::palette_contrast_checks(&variant.palette()) {
+                if !check.passes() {
+                    expected.push((
+                        format!("WCAG 1.4.3 - {} on {}", check.ink, check.surface),
+                        format!("{} theme measures {:.2}:1", variant.label(), check.ratio),
+                    ));
+                }
+            }
+        }
+        let got: Vec<(String, String)> = rows
+            .iter()
+            .map(|finding| (finding.rule.clone(), finding.element.clone()))
+            .collect();
+        assert_eq!(
+            got, expected,
+            "the audit panel's rows are not the pairs that fail"
+        );
+        assert!(
+            !rows.is_empty(),
+            "the shipped palettes are expected to fail somewhere"
+        );
+        for finding in rows {
+            assert!(
+                finding.suggestion.contains("paint it with #"),
+                "{} tells the reader nothing to do",
+                finding.suggestion
+            );
+        }
+    }
+
+    #[test]
+    fn the_checker_measures_the_palette_on_screen_rather_than_a_fixed_one() {
+        let mut app = app_at(workspace("contrast_active"));
+        app.appearance.follow_system_theme = false;
+        app.appearance.theme_chosen = true;
+
+        app.appearance.theme = ThemeVariant::HighContrast;
+        let clean = app.contrast_checks_for_active_palette();
+        assert!(!clean.is_empty(), "the checker measured nothing");
+        assert!(
+            clean.iter().all(|check| check.passes()),
+            "High Contrast is the theme that must clear every audited pair"
+        );
+        let palette = app.palette();
+        assert!(
+            clean
+                .iter()
+                .any(|check| check.surface == "bg_primary"
+                    && check.surface_color == palette.bg_primary),
+            "the checker measured a surface other than the one being painted"
+        );
+
+        // Switch to a palette with a known failure and the panel follows.
+        app.appearance.theme = ThemeVariant::Midnight;
+        let on_screen = app.contrast_checks_for_active_palette();
+        assert!(
+            on_screen.iter().any(|check| check.ink == "text_on_accent"
+                && check.surface == "accent"
+                && !check.passes()),
+            "Midnight's button ink is the failure this panel exists to show"
+        );
+        assert_ne!(
+            on_screen
+                .iter()
+                .map(|check| check.ratio)
+                .collect::<Vec<_>>(),
+            clean.iter().map(|check| check.ratio).collect::<Vec<_>>(),
+            "the measurements did not change with the theme"
+        );
+    }
+
+    #[test]
+    fn the_panels_that_show_this_data_are_the_ones_wired_to_it() {
+        // Wiring, not wording: an audit nobody can run, or a checker no panel
+        // draws, would pass every test above.
+        let dock = crate_src("src/editor/app/render.rs");
+        assert!(
+            dock.contains("run_accessibility_audit()"),
+            "the Accessibility Audit tab never runs the audit"
+        );
+        assert!(
+            dock.contains("self.app.audit_findings"),
+            "the Accessibility Audit tab draws something other than what the audit wrote"
+        );
+        let sidebar = crate_src("src/editor/app/velocity_app/ui_render.rs");
+        assert!(
+            sidebar.contains("render_right_panel_bodies"),
+            "the right sidebar never draws the access-mode panel bodies"
+        );
+        assert!(
+            sidebar.contains("contrast_checks_for_active_palette"),
+            "the contrast checker is drawn from something other than the active palette"
+        );
+        assert!(
+            sidebar.contains("owns_any_panel"),
+            "the sidebar measures the palette for every mode, including the three whose panels have no bodies"
+        );
+        // The tab's own header has to say whether anything has been measured,
+        // or an unrun audit reads as a clean one from the dock strip.
+        assert!(
+            dock.contains("not run"),
+            "the Accessibility Audit tab shows a finding count before the audit has run"
+        );
     }
 
     #[test]

@@ -949,20 +949,34 @@ impl<'a> TabViewer for TabViewerImpl<'a> {
                             });
                     }
                     TabKind::AccessibilityAudit => {
-                        let count = self.app.audit_findings.len();
+                        let subtitle = match &self.app.audit_findings {
+                            None => "not run".to_string(),
+                            Some(rows) => format!("{} finding(s)", rows.len()),
+                        };
                         VelocityApp::tier3_header(
                             ui,
                             "Accessibility Audit",
-                            &format!("{count} finding(s)"),
+                            &subtitle,
                             palette.accent,
                             palette.text_muted,
                         );
+                        let run_audit = ui
+                            .small_button(
+                                egui::RichText::new("Run audit")
+                                    .size(10.0)
+                                    .color(palette.text),
+                            )
+                            .on_hover_text("Measure the shipped palettes against WCAG 1.4.3");
+                        if run_audit.clicked() {
+                            self.app.run_accessibility_audit();
+                        }
+                        ui.add_space(2.0);
                         egui::ScrollArea::vertical()
                             .id_salt("dock_audit_scroll")
                             .show(ui, |ui| {
                                 crate::editor::sidebar_tabs::render_audit_content(
                                     ui,
-                                    &self.app.audit_findings,
+                                    self.app.audit_findings.as_deref(),
                                     palette,
                                 );
                             });

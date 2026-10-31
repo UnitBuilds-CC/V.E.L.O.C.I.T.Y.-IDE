@@ -635,7 +635,12 @@ pub struct VelocityApp {
     /// Target URLs for the Targets dock panel.
     pub target_entries: Vec<crate::editor::sidebar_tabs::TargetEntry>,
     /// WCAG accessibility audit findings for the Audit dock panel.
-    pub audit_findings: Vec<crate::editor::sidebar_tabs::AuditFinding>,
+    ///
+    /// `None` means the audit has not been run this session; `Some(vec![])`
+    /// means it ran and every audited pair cleared its floor. The panel draws a
+    /// different sentence for each, because the first is not a clean bill of
+    /// health.
+    pub audit_findings: Option<Vec<crate::editor::sidebar_tabs::AuditFinding>>,
 
     // â”€â”€â”€ Agent Subsystem Panels â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     /// Self-improvement engine tracking failures and generating refinements.
@@ -1516,7 +1521,7 @@ impl VelocityApp {
             plugin_registry: crate::editor::plugin_registry::PluginRegistry::new(&workspace_root),
             skill_files: Vec::new(),
             target_entries: Vec::new(),
-            audit_findings: Vec::new(),
+            audit_findings: None,
             // Agent Subsystem Panels
             persistent_memory: crate::agent::memory_store::PersistentMemory::open(&workspace_root),
             improvement_engine: {
@@ -1852,7 +1857,7 @@ impl VelocityApp {
             plugin_registry: crate::editor::plugin_registry::PluginRegistry::new(&workspace_root),
             skill_files: Vec::new(),
             target_entries: Vec::new(),
-            audit_findings: Vec::new(),
+            audit_findings: None,
             persistent_memory: crate::agent::memory_store::PersistentMemory::open(&workspace_root),
             improvement_engine: {
                 let mem = crate::agent::memory_store::PersistentMemory::open(&workspace_root);

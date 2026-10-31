@@ -124,6 +124,58 @@ pub struct AuditFinding {
     pub suggestion: String,
 }
 
+/// The audit the Accessibility Audit panel runs: every shipped palette, every
+/// pair [`crate::editor::theme::palette_contrast_checks`] names, only the pairs
+/// that fail.
+///
+/// What this can see is the editor's own colours, which is a real and bounded
+/// claim: the IDE ships no document view, no focus ring and no accessible tree
+/// of its own (there is no AccessKit integration in the binary), so contrast is
+/// the one WCAG rule it can measure without inventing a subject. It does not
+/// repaint anything — a finding is a finding, and changing a palette is a
+/// decision a person makes with the hex in front of them.
+pub fn audit_palette_contrast() -> Vec<AuditFinding> {
+    let catalog: Vec<(&str, IdePalette)> = crate::editor::theme::ThemeVariant::ALL
+        .iter()
+        .map(|variant| ((*variant).label(), (*variant).palette()))
+        .collect();
+    audit_palettes(&catalog)
+}
+
+/// The audit over an explicit catalog, so a test can hand it a palette it owns
+/// instead of trusting whichever colours the shipped themes happen to have today.
+fn audit_palettes(entries: &[(&str, IdePalette)]) -> Vec<AuditFinding> {
+    use crate::editor::theme::MIN_LARGE_TEXT_CONTRAST;
+    let mut findings = Vec::new();
+    for (theme, palette) in entries {
+        for check in crate::editor::theme::palette_contrast_checks(palette) {
+            if check.passes() {
+                continue;
+            }
+            let remedy = check.remedy();
+            findings.push(AuditFinding {
+                // Under the large-text floor there is no reading of the rule
+                // this passes, so it is not a warning about style.
+                severity: if check.ratio < MIN_LARGE_TEXT_CONTRAST {
+                    "error"
+                } else {
+                    "warning"
+                },
+                rule: format!("WCAG 1.4.3 - {} on {}", check.ink, check.surface),
+                element: format!("{} theme measures {:.2}:1", theme, check.ratio),
+                suggestion: format!(
+                    "needs {:.1}:1 - paint it with #{:02X}{:02X}{:02X}",
+                    check.required,
+                    remedy.r(),
+                    remedy.g(),
+                    remedy.b()
+                ),
+            });
+        }
+    }
+    findings
+}
+
 // ═══════════════════════════════════════════════════════════════════════════
 // Sidebar Tab Content Renderers (data-driven)
 // ═══════════════════════════════════════════════════════════════════════════
@@ -985,8 +1037,17 @@ pub fn render_bookmarks_content(
     jump_to
 }
 
-/// Render the Accessibility Audit tab with WCAG findings.
-pub fn render_audit_content(ui: &mut egui::Ui, findings: &[AuditFinding], palette: IdePalette) {
+/// Render the Accessibility Audit tab.
+///
+/// `findings` is `None` until the audit runs, which is a different fact from
+/// `Some(&[])`: a panel that says "no findings" before anything has measured
+/// anything is the most misleading thing a checker can do, and it is exactly
+/// what this tab used to say every time it was opened.
+pub fn render_audit_content(
+    ui: &mut egui::Ui,
+    findings: Option<&[AuditFinding]>,
+    palette: IdePalette,
+) {
     ui.label(
         egui::RichText::new("\u{267f} Accessibility Audit")
             .size(11.0)
@@ -994,77 +1055,104 @@ pub fn render_audit_content(ui: &mut egui::Ui, findings: &[AuditFinding], palett
             .color(palette.text),
     );
     ui.add_space(4.0);
-    if findings.is_empty() {
-        ui.add_space(8.0);
-        ui.vertical_centered(|ui| {
-            ui.label(
-                egui::RichText::new("\u{267f}")
-                    .size(18.0)
-                    .color(palette.faded_muted(0.6)),
-            );
-            ui.add_space(4.0);
-            ui.label(
-                egui::RichText::new("No audit findings.")
+    match findings {
+        None | Some([]) => {
+            ui.add_space(8.0);
+            ui.vertical_centered(|ui| {
+                ui.label(
+                    egui::RichText::new("\u{267f}")
+                        .size(18.0)
+                        .color(palette.faded_muted(0.6)),
+                );
+                ui.add_space(4.0);
+                ui.label(
+                    egui::RichText::new(match findings {
+                        None => "The audit has not been run.",
+                        _ => "No contrast findings.",
+                    })
                     .size(9.0)
                     .color(palette.text_muted),
-            );
-            ui.add_space(2.0);
+                );
+                ui.add_space(2.0);
+                ui.label(
+                    egui::RichText::new(match findings {
+                        None => "Press Run audit to measure the shipped palettes.",
+                        _ => "Every audited pair clears the floor it is held to.",
+                    })
+                    .size(8.0)
+                    .color(palette.faded(palette.accent, 0.8)),
+                );
+                ui.add_space(4.0);
+                ui.label(
+                    egui::RichText::new(format!(
+                        "It measures the text colours of the {} shipped palettes \
+                         against the fills they are painted on, at the WCAG 1.4.3 \
+                         floor. Contrast is the whole of what it can see.",
+                        crate::editor::theme::ThemeVariant::ALL.len()
+                    ))
+                    .size(8.0)
+                    .color(palette.text_muted),
+                );
+                ui.label(
+                    egui::RichText::new(
+                        "No focus order, no keyboard traps, no document: the IDE \
+                         renders no page and builds no accessible tree, so there is \
+                         nothing here for those rules to be measured against.",
+                    )
+                    .size(8.0)
+                    .color(palette.text_muted),
+                );
+            });
+        }
+        Some(rows) => {
             ui.label(
-                egui::RichText::new(
-                    "Run an audit via the toolbar \u{2713} button to check WCAG compliance.",
-                )
-                .size(8.0)
-                .color(palette.faded(palette.accent, 0.8)),
+                egui::RichText::new(format!("{} issue(s) found", rows.len()))
+                    .size(10.0)
+                    .color(palette.warning),
             );
-        });
-    } else {
-        ui.label(
-            egui::RichText::new(format!("{} issue(s) found", findings.len()))
-                .size(10.0)
-                .color(palette.warning),
-        );
-        ui.add_space(4.0);
-        egui::ScrollArea::vertical()
-            .max_height(300.0)
-            .show(ui, |ui| {
-                for finding in findings {
-                    let severity_color = match finding.severity {
-                        "error" => palette.error,
-                        "warning" => palette.warning,
-                        _ => palette.text_muted,
-                    };
-                    egui::Frame::new()
-                        .fill(palette.bg_tertiary)
-                        .corner_radius(4.0)
-                        .inner_margin(4.0)
-                        .show(ui, |ui| {
-                            ui.horizontal(|ui| {
+            ui.add_space(4.0);
+            egui::ScrollArea::vertical()
+                .max_height(300.0)
+                .show(ui, |ui| {
+                    for finding in rows {
+                        let severity_color = match finding.severity {
+                            "error" => palette.error,
+                            "warning" => palette.warning,
+                            _ => palette.text_muted,
+                        };
+                        egui::Frame::new()
+                            .fill(palette.bg_tertiary)
+                            .corner_radius(4.0)
+                            .inner_margin(4.0)
+                            .show(ui, |ui| {
+                                ui.horizontal(|ui| {
+                                    ui.label(
+                                        egui::RichText::new(finding.severity)
+                                            .size(9.0)
+                                            .strong()
+                                            .color(severity_color),
+                                    );
+                                    ui.label(
+                                        egui::RichText::new(&finding.rule)
+                                            .size(9.0)
+                                            .color(palette.text),
+                                    );
+                                });
                                 ui.label(
-                                    egui::RichText::new(finding.severity)
+                                    egui::RichText::new(&finding.element)
                                         .size(9.0)
-                                        .strong()
-                                        .color(severity_color),
+                                        .color(palette.text_muted),
                                 );
                                 ui.label(
-                                    egui::RichText::new(&finding.rule)
+                                    egui::RichText::new(&finding.suggestion)
                                         .size(9.0)
-                                        .color(palette.text),
+                                        .color(palette.accent),
                                 );
                             });
-                            ui.label(
-                                egui::RichText::new(&finding.element)
-                                    .size(9.0)
-                                    .color(palette.text_muted),
-                            );
-                            ui.label(
-                                egui::RichText::new(&finding.suggestion)
-                                    .size(9.0)
-                                    .color(palette.accent),
-                            );
-                        });
-                    ui.add_space(2.0);
-                }
-            });
+                        ui.add_space(2.0);
+                    }
+                });
+        }
     }
 }
 
@@ -1103,6 +1191,263 @@ mod tests {
         assert_eq!(bm[1].file, Path::new("a.rs"));
         assert_eq!(bm[1].line, 20);
         assert_eq!(bm[2].file, Path::new("b.rs"));
+    }
+
+    // ── The contrast audit behind the Accessibility Audit panel ────────────
+    //
+    // The audit is this panel's whole claim, so these tests read the findings
+    // the way the panel does: which pairs appear, which do not, what the
+    // severity is meant to tell the reader, and whether the colour offered as a
+    // remedy actually clears the floor it was measured against.
+
+    use crate::editor::headless_render::painted_text;
+    use crate::editor::theme::{
+        contrast_ratio, ThemeVariant, MIN_LARGE_TEXT_CONTRAST, MIN_TEXT_CONTRAST,
+    };
+    use std::collections::HashSet;
+
+    fn rule_list(rows: &[AuditFinding]) -> Vec<String> {
+        rows.iter().map(|finding| finding.rule.clone()).collect()
+    }
+
+    /// A grey whose contrast against `surface` lands between the two floors:
+    /// readable as large text, short of the body-text standard. Scanned rather
+    /// than hard-coded, so the fixture cannot drift from the palette it was
+    /// drawn against.
+    fn ink_between_the_floors(surface: egui::Color32) -> egui::Color32 {
+        (0u8..=255)
+            .map(|g| egui::Color32::from_rgb(g, g, g))
+            .find(|ink| {
+                let ratio = contrast_ratio(*ink, surface);
+                (MIN_LARGE_TEXT_CONTRAST..MIN_TEXT_CONTRAST).contains(&ratio)
+            })
+            .expect("no grey lands between the two floors")
+    }
+
+    /// A grey that fails even the large-text floor.
+    fn ink_below_the_large_text_floor(surface: egui::Color32) -> egui::Color32 {
+        (0u8..=255)
+            .map(|g| egui::Color32::from_rgb(g, g, g))
+            .find(|ink| contrast_ratio(*ink, surface) < MIN_LARGE_TEXT_CONTRAST)
+            .expect("no grey falls below the large-text floor")
+    }
+
+    /// A palette that is clean everywhere except the one pair under test.
+    fn probe_palette(ink: egui::Color32) -> IdePalette {
+        let mut palette = ThemeVariant::HighContrast.palette();
+        palette.text = ink;
+        palette
+    }
+
+    fn text_on_bg_primary(rows: &[AuditFinding]) -> &AuditFinding {
+        rows.iter()
+            .find(|finding| finding.rule.ends_with("text on bg_primary"))
+            .unwrap_or_else(|| panic!("no text-on-bg_primary finding among {:?}", rule_list(rows)))
+    }
+
+    #[test]
+    fn the_audit_is_silent_about_a_palette_that_clears_every_pair() {
+        let rows = audit_palettes(&[("High Contrast", ThemeVariant::HighContrast.palette())]);
+        assert!(
+            rows.is_empty(),
+            "a clean palette produced findings: {:?}",
+            rule_list(&rows)
+        );
+    }
+
+    #[test]
+    fn the_audit_reports_each_failing_pair_once_and_names_its_theme() {
+        let rows = audit_palettes(&[("Daylight", ThemeVariant::Daylight.palette())]);
+        assert!(
+            !rows.is_empty(),
+            "Daylight is expected to fail at least one pair"
+        );
+        let mut seen = HashSet::new();
+        for finding in &rows {
+            assert!(
+                finding.rule.starts_with("WCAG 1.4.3 - "),
+                "{} carries no rule",
+                finding.rule
+            );
+            assert!(
+                finding.element.starts_with("Daylight theme measures "),
+                "{} does not name the theme it measured",
+                finding.element
+            );
+            assert!(
+                seen.insert(finding.rule.clone()),
+                "{} is reported twice",
+                finding.rule
+            );
+        }
+    }
+
+    #[test]
+    fn severity_separates_unreadable_from_merely_below_the_standard() {
+        let surface = ThemeVariant::HighContrast.palette().bg_primary;
+        let mid = audit_palettes(&[("Probe", probe_palette(ink_between_the_floors(surface)))]);
+        assert_eq!(
+            text_on_bg_primary(&mid).severity,
+            "warning",
+            "a pair that still reads as large text is not an error"
+        );
+        let bad = audit_palettes(&[(
+            "Probe",
+            probe_palette(ink_below_the_large_text_floor(surface)),
+        )]);
+        assert_eq!(
+            text_on_bg_primary(&bad).severity,
+            "error",
+            "a pair below the large-text floor passes the rule on no reading"
+        );
+    }
+
+    #[test]
+    fn the_colour_offered_as_a_remedy_clears_the_floor_it_was_asked_for() {
+        let palette = probe_palette(ink_below_the_large_text_floor(
+            ThemeVariant::HighContrast.palette().bg_primary,
+        ));
+        let rows = audit_palettes(&[("Probe", palette)]);
+        let finding = text_on_bg_primary(&rows);
+        assert!(
+            finding.suggestion.contains("needs 4.5:1"),
+            "{}",
+            finding.suggestion
+        );
+        let hex = finding
+            .suggestion
+            .rsplit_once('#')
+            .map(|(_, digits)| digits)
+            .unwrap_or_else(|| panic!("{} offers no hex colour", finding.suggestion));
+        let packed = u32::from_str_radix(hex, 16).unwrap_or_else(|_| panic!("{hex} is not hex"));
+        let remedy =
+            egui::Color32::from_rgb((packed >> 16) as u8, (packed >> 8) as u8, packed as u8);
+        let measured = contrast_ratio(remedy, palette.bg_primary);
+        assert!(
+            measured + 0.005 >= MIN_TEXT_CONTRAST,
+            "the offered remedy {hex} measures {measured:.2}:1 on the surface it was offered for"
+        );
+    }
+
+    #[test]
+    fn the_shipped_catalog_is_audited_in_theme_order_and_answers_twice_the_same() {
+        let first = audit_palette_contrast();
+        let again = audit_palette_contrast();
+        let key = |rows: &[AuditFinding]| {
+            rows.iter()
+                .map(|f| {
+                    (
+                        f.severity,
+                        f.rule.clone(),
+                        f.element.clone(),
+                        f.suggestion.clone(),
+                    )
+                })
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(key(&first), key(&again), "the audit is not deterministic");
+        assert!(
+            !first.is_empty(),
+            "the shipped palettes are expected to fail somewhere"
+        );
+        // Themes are walked in the order the theme picker offers them, so the
+        // panel lists findings in the order a reader thinks about themes.
+        let order: Vec<&str> = ThemeVariant::ALL
+            .iter()
+            .map(|variant| (*variant).label())
+            .collect();
+        let mut themes: Vec<&str> = Vec::new();
+        for finding in &first {
+            let named = order
+                .iter()
+                .copied()
+                .find(|label| finding.element.starts_with(&format!("{label} theme")))
+                .unwrap_or_else(|| panic!("{} names no shipped theme", finding.element));
+            if themes.last() != Some(&named) {
+                themes.push(named);
+            }
+        }
+        let mut sorted = themes.clone();
+        sorted.sort_by_key(|label| order.iter().position(|l| l == label).unwrap_or(usize::MAX));
+        assert_eq!(
+            themes, sorted,
+            "findings are not grouped in theme order: {themes:?}"
+        );
+    }
+
+    #[test]
+    fn the_panel_distinguishes_never_having_run_from_having_found_nothing() {
+        let palette = ThemeVariant::Midnight.palette();
+        let unrun = painted_text(|ui| render_audit_content(ui, None, palette));
+        let clean = painted_text(|ui| render_audit_content(ui, Some(&[]), palette));
+        assert!(unrun.contains("The audit has not been run."), "{unrun}");
+        assert!(unrun.contains("Press Run audit"), "{unrun}");
+        assert!(clean.contains("No contrast findings."), "{clean}");
+        assert!(
+            clean.contains("Every audited pair clears the floor"),
+            "{clean}"
+        );
+        // Two different facts, so the panel must not say the same sentence for
+        // both of them.
+        assert!(!unrun.contains("No contrast findings."), "{unrun}");
+        assert!(!clean.contains("has not been run"), "{clean}");
+        // And the old copy pointed the reader at a toolbar button that does not
+        // exist in this app.
+        for text in [&unrun, &clean] {
+            assert!(!text.contains("toolbar"), "{text}");
+        }
+        // Both empty states still state the bounded scope of the audit.
+        assert!(clean.contains("WCAG 1.4.3"), "{clean}");
+    }
+
+    #[test]
+    fn the_panel_prints_every_field_of_a_finding_it_is_given() {
+        let palette = ThemeVariant::Midnight.palette();
+        // A bounded list, because the findings rows live in a scroll area and
+        // the probe only sees the shapes inside that area's clip rect. The
+        // shipped catalog is longer than one viewport on purpose; the test asks
+        // only that a row the panel shows shows all four of its fields.
+        let surface = ThemeVariant::HighContrast.palette().bg_primary;
+        let rows = audit_palettes(&[(
+            "Probe",
+            probe_palette(ink_below_the_large_text_floor(surface)),
+        )]);
+        assert!(!rows.is_empty(), "the probe palette should fail somewhere");
+        let text = painted_text(|ui| render_audit_content(ui, Some(&rows), palette));
+        assert!(
+            text.contains(&format!("{} issue(s) found", rows.len())),
+            "{text}"
+        );
+        for finding in &rows {
+            assert!(
+                text.contains(&finding.rule),
+                "missing rule {}",
+                finding.rule
+            );
+            assert!(
+                text.contains(&finding.element),
+                "missing element {}",
+                finding.element
+            );
+            assert!(
+                text.contains(&finding.suggestion),
+                "missing suggestion {}",
+                finding.suggestion
+            );
+            assert!(
+                text.contains(finding.severity),
+                "missing severity {}",
+                finding.severity
+            );
+        }
+        // The heading counts what it was given even when the list is longer
+        // than the area it is drawn in.
+        let shipped = audit_palette_contrast();
+        let long = painted_text(|ui| render_audit_content(ui, Some(&shipped), palette));
+        assert!(
+            long.contains(&format!("{} issue(s) found", shipped.len())),
+            "{long}"
+        );
     }
 
     #[test]

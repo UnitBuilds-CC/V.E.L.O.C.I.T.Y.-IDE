@@ -490,7 +490,10 @@ mod tests {
             let body_at = text
                 .find(body)
                 .unwrap_or_else(|| panic!("{title} printed no body of its own: {text}"));
-            assert!(body_at > title_at, "{body} sits above its own {title} header");
+            assert!(
+                body_at > title_at,
+                "{body} sits above its own {title} header"
+            );
             drawn.push(body_at);
         }
         assert!(

@@ -589,7 +589,7 @@ fn mirror_worker_events_into_timeline_appends_only_new_events() {
         plugin_registry: crate::editor::plugin_registry::PluginRegistry::new(&PathBuf::from(".")),
         skill_files: Vec::new(),
         target_entries: Vec::new(),
-        audit_findings: Vec::new(),
+        audit_findings: None,
         improvement_engine: {
             let mem = crate::agent::memory_store::PersistentMemory::open(&PathBuf::from("."));
             crate::agent::self_improve::ImprovementEngine::new(&mem)
@@ -920,7 +920,7 @@ fn clearing_worker_event_tracking_allows_replay_after_replan() {
         plugin_registry: crate::editor::plugin_registry::PluginRegistry::new(&PathBuf::from(".")),
         skill_files: Vec::new(),
         target_entries: Vec::new(),
-        audit_findings: Vec::new(),
+        audit_findings: None,
         improvement_engine: {
             let mem = crate::agent::memory_store::PersistentMemory::open(&PathBuf::from("."));
             crate::agent::self_improve::ImprovementEngine::new(&mem)
