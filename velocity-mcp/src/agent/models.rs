@@ -27,6 +27,11 @@ pub enum UiToAgentMessage {
     },
     RejectTool {
         id: String,
+        /// Why this call was refused, in the words the model should read. A bare
+        /// "rejected" is not a steer: an unattended run that gets one retries the
+        /// same call next turn, and a person who declined in the panel cannot tell
+        /// the run what to do instead.
+        reason: String,
     },
     RunLocalBuild,
     RunLocalRun,

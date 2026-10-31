@@ -112,9 +112,14 @@ impl VelocityApp {
         }
 
         let (id, tool_name, _) = self.pending_approvals[idx].clone();
-        let _ = self
-            .agent_tx
-            .send(UiToAgentMessage::RejectTool { id: id.clone() });
+        let _ = self.agent_tx.send(UiToAgentMessage::RejectTool {
+            id: id.clone(),
+            reason: format!(
+                "the person reviewing this session declined '{tool_name}' from the approval \
+                 list. Do not retry it: work inside the files you already have, or say in your \
+                 reply what you needed it for and hand back."
+            ),
+        });
         self.pending_approvals.remove(idx);
         self.chat
             .pending_approvals

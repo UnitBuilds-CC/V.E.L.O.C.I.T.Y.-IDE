@@ -11,6 +11,7 @@ pub mod team_routing;
 pub mod thread;
 pub mod tool_executor;
 pub mod tracing;
+pub mod unattended;
 pub mod utils;
 
 pub use context_budget::{

@@ -892,8 +892,15 @@ fn render_pending_approvals(
                         );
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                             if ui.button("Decline").clicked() {
-                                let _ =
-                                    agent_tx.send(UiToAgentMessage::RejectTool { id: id.clone() });
+                                let _ = agent_tx.send(UiToAgentMessage::RejectTool {
+                                    id: id.clone(),
+                                    reason: format!(
+                                        "the person reviewing this session declined \
+                                         '{tool_name}' in the chat panel. Do not retry it: work \
+                                         inside the files you already have, or say in your reply \
+                                         what you needed it for and hand back."
+                                    ),
+                                });
                                 state.pending_approvals.retain(|(p_id, _, _)| p_id != &id);
                             }
                             if ui.button("Approve").clicked() {

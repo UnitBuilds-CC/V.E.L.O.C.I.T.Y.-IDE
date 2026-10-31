@@ -3160,7 +3160,14 @@ pub fn run_agent_reasoning_loop(
                 continue;
             }
 
-            let mut resolved_approvals = std::collections::HashMap::new();
+            // Each pending call resolves to the arguments to run with, or to the
+            // reason it was refused. The reason travels because "rejected" alone
+            // teaches a model nothing: an unattended run retries the identical call
+            // next turn, and a person's Decline cannot tell it what to do instead.
+            let mut resolved_approvals: std::collections::HashMap<
+                String,
+                Result<serde_json::Value, String>,
+            > = std::collections::HashMap::new();
 
             while !pending_ids.is_empty() {
                 if apply_headless_control_messages(cancel_rx, message_history, ui_tx, progress) {
@@ -3171,12 +3178,12 @@ pub fn run_agent_reasoning_loop(
                     match ui_msg {
                         UiToAgentMessage::ApproveTool { id, arguments } => {
                             if pending_ids.remove(&id) {
-                                resolved_approvals.insert(id, Some(arguments));
+                                resolved_approvals.insert(id, Ok(arguments));
                             }
                         }
-                        UiToAgentMessage::RejectTool { id } => {
+                        UiToAgentMessage::RejectTool { id, reason } => {
                             if pending_ids.remove(&id) {
-                                resolved_approvals.insert(id, None);
+                                resolved_approvals.insert(id, Err(reason));
                             }
                         }
                         UiToAgentMessage::CancelTask => {
@@ -3265,7 +3272,10 @@ pub fn run_agent_reasoning_loop(
             };
 
             for (call_id, tool_name, _original_arguments) in tool_specs {
-                let approval = resolved_approvals.get(&call_id).cloned().flatten();
+                let approval = resolved_approvals.get(&call_id).cloned();
+                // Computed before `approval` is moved into the thread below, so the
+                // refusal text is in hand wherever the call ends up not running.
+                let refusal = approval_refusal(&tool_name, approval.as_ref());
                 let workspace_root_clone = workspace_root.clone();
                 let ui_tx_clone = ui_tx.clone();
                 let bus = bus_clone.clone();
@@ -3286,9 +3296,9 @@ pub fn run_agent_reasoning_loop(
                     }
                 }
                 let handle = std::thread::spawn(move || {
-                    let (tool_result, file_buffer_update, changelog_entry) = if let Some(
+                    let (tool_result, file_buffer_update, changelog_entry) = if let Some(Ok(
                         approved_args,
-                    ) = approval
+                    )) = approval
                     {
                         // Schema gate: reject a call whose arguments violate the
                         // tool's declared contract before it runs. Executing
@@ -3516,11 +3526,10 @@ pub fn run_agent_reasoning_loop(
 
                         (tool_result, file_buffer_update, changelog_entry)
                     } else {
-                        (
-                            "Error: Tool execution rejected by the user.".to_string(),
-                            None,
-                            None,
-                        )
+                        // Only a refused call lands here, and `refusal` already
+                        // carries why: the reason the approver gave, or the fact
+                        // that no answer arrived at all.
+                        (refusal, None, None)
                     };
 
                     (
@@ -10358,6 +10367,35 @@ fn unknown_tool_message(name: &str, all_names: &[String]) -> String {
     )
 }
 
+/// The whole message a call that did not run hands back to the model.
+///
+/// The reason travels because "rejected" alone teaches nothing: an unattended run
+/// retries the identical call next turn, and a person's Decline cannot tell the
+/// model what it may do instead. An approved call owes no such text, so its arm
+/// is empty — only a refused call reads what this returns.
+fn approval_refusal(
+    tool_name: &str,
+    approval: Option<&Result<serde_json::Value, String>>,
+) -> String {
+    match approval {
+        Some(Err(reason)) => refusal_tool_result(tool_name, reason),
+        Some(Ok(_)) => String::new(),
+        None => refusal_tool_result(
+            tool_name,
+            "no approval arrived for it before the batch was dispatched \
+             (the run was cancelled, or the request was never answered)",
+        ),
+    }
+}
+
+/// The shape every refusal shares: the tool is named and the call is stated as
+/// not having run. A model that reads only "rejected by the user" has learned
+/// neither which action is closed to it nor that the file it believes it wrote
+/// is still unwritten, so it reports the deliverable as done.
+fn refusal_tool_result(tool_name: &str, reason: &str) -> String {
+    format!("Error: `{tool_name}` was NOT executed. {reason}")
+}
+
 #[cfg(test)]
 mod tests {
     use crate::registry::{ToolGroup, ToolSurface, REQUEST_TOOL_GROUPS_TOOL};
@@ -10366,7 +10404,7 @@ mod tests {
     use super::super::context_budget::{estimate_messages_tokens, tool_surface_tokens};
     use super::super::utils::LOCAL_OLLAMA_NUM_CTX;
     use super::{
-        advertised_arrays, apply_forced_write_sampling, arm_compile_repair,
+        advertised_arrays, apply_forced_write_sampling, approval_refusal, arm_compile_repair,
         artifact_delivery_directive, artifact_targets, backstop_note, call_identity,
         ceiling_escalation_offers_relief, collect_fenced_rust_blocks, compile_repair_directive,
         context_overflow_notice, correct_missing_crate_help, counts_as_artifact, crate_roots,
@@ -17386,5 +17424,79 @@ mod tests {
             "a bounded window is still a read of that file"
         );
         assert_eq!(read_call_target(&json!({"query": "anything"})), None);
+    }
+
+    #[test]
+    fn an_approved_call_owes_no_refusal_text() {
+        // The empty arm is what lets the dispatch branch hand `refusal` out
+        // unconditionally; a call that ran must not be told it was stopped.
+        assert_eq!(
+            approval_refusal("write_file", Some(&Ok(json!({"path": "a.rs"})))),
+            ""
+        );
+    }
+
+    #[test]
+    fn a_refused_call_hands_back_the_reason_that_refused_it() {
+        let declined = approval_refusal(
+            "run_command",
+            Some(&Err(
+                "git push is outward; approve it in Settings -> Governance".to_string(),
+            )),
+        );
+        assert!(declined.contains("run_command"), "{declined}");
+        assert!(declined.contains("was NOT executed"), "{declined}");
+        assert!(
+            declined.contains("Settings -> Governance"),
+            "the approver's own words, not a paraphrase, are what the model can act on: {declined}"
+        );
+
+        // Two refusals that differ in reason must differ in text. The blanket
+        // "rejected by the user" this replaced made every refusal the same
+        // message, so a run could not tell a policy hold from a person's Decline.
+        let other = approval_refusal(
+            "git_clone",
+            Some(&Err("network is off for this run".into())),
+        );
+        assert_ne!(declined, other);
+        assert!(other.contains("network is off for this run"), "{other}");
+        assert!(
+            !other.contains("rejected by the user"),
+            "the reason must not be flattened back into the old wording: {other}"
+        );
+
+        // The helper is only worth having if the dispatcher actually hands its
+        // result to the model. `refusal` is what the un-run branch returns, and the
+        // fixed sentence this replaced must not come back.
+        let source = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("src")
+            .join("agent")
+            .join("executor")
+            .join("loop_runner.rs");
+        let text = std::fs::read_to_string(&source)
+            .unwrap_or_else(|e| panic!("{} must be readable: {e}", source.display()));
+        assert!(
+            text.contains("(refusal, None, None)"),
+            "the refused branch must return the derived refusal, not a constant"
+        );
+        assert!(
+            !text.contains(concat!("Tool execution rejected by the ", "user")),
+            "a blanket refusal string tells the model nothing about which call died"
+        );
+    }
+
+    #[test]
+    fn a_call_that_never_got_an_answer_says_so_and_names_the_tool() {
+        let unanswered = approval_refusal("edit_file", None);
+        assert!(unanswered.contains("edit_file"), "{unanswered}");
+        assert!(unanswered.contains("was NOT executed"), "{unanswered}");
+        assert!(
+            unanswered.contains("no approval arrived"),
+            "silence is a distinct cause from a refusal and has to read as one: {unanswered}"
+        );
+        // Both shapes of silence the loop can produce are named, so a model that
+        // sees this knows whether retrying after a cancel is even possible.
+        assert!(unanswered.contains("cancelled"), "{unanswered}");
+        assert!(unanswered.contains("never answered"), "{unanswered}");
     }
 }

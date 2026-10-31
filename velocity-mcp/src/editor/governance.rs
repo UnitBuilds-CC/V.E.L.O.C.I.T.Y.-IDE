@@ -18,6 +18,24 @@ use serde::{Deserialize, Serialize};
 const POLICY_FILE: &str = "policy.json";
 const APPROVALS_FILE: &str = "approvals.json";
 
+/// Where a [`Decision`] came from.
+///
+/// The distinction an unattended approver needs and [`PolicyEngine::evaluate`]
+/// hides: an `Allow` that a rule stated is an authorisation, while an `Allow`
+/// that fell out of `default_decision` is the absence of any authorisation — and
+/// on a workspace with no policy file (the common case) that is every call. A
+/// caller that treats the two alike approves everything, which is the hole
+/// [`crate::agent::executor::unattended`] closes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DecisionSource {
+    /// The run's budget is spent, which denies whatever the rules would say.
+    Budget,
+    /// The first matching [`Rule`] stated the verdict.
+    Rule,
+    /// No rule matched, so [`PolicyEngine::default_decision`] decided.
+    Default,
+}
+
 /// The verdict for a proposed action.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Decision {
@@ -202,18 +220,24 @@ impl PolicyEngine {
     /// Evaluate an action: budget first (exhaustion denies), then the first
     /// matching rule, else the default verdict.
     pub fn evaluate(&self, action: &ActionContext) -> Decision {
+        self.evaluate_traced(action).0
+    }
+
+    /// The same verdict with the authority that produced it, so a caller can tell
+    /// an authorised `Allow` from an unopposed one — see [`DecisionSource`].
+    pub fn evaluate_traced(&self, action: &ActionContext) -> (Decision, DecisionSource) {
         if self
             .budget
             .exhausted(action.used_tokens, action.used_cost_cents)
         {
-            return Decision::Deny;
+            return (Decision::Deny, DecisionSource::Budget);
         }
         for rule in &self.rules {
             if rule.matches(action) {
-                return rule.effect.decision();
+                return (rule.effect.decision(), DecisionSource::Rule);
             }
         }
-        self.default_decision
+        (self.default_decision, DecisionSource::Default)
     }
 }
 
@@ -238,7 +262,22 @@ pub fn arg_domain(arguments: &serde_json::Value) -> Option<String> {
 }
 
 /// A short human-readable description of a tool call for the approval queue.
-fn describe_action(tool: &str, arguments: &serde_json::Value) -> String {
+///
+/// A command-bearing tool is described by its command, because a person approving
+/// `run_command` blind would be approving every `run_command` the run later asks
+/// for — and the unattended approver honours what the queue says about *this*
+/// action (see `agent::executor::unattended`).
+pub fn describe_action(tool: &str, arguments: &serde_json::Value) -> String {
+    if let Some(command) = arguments.get("command").and_then(|v| v.as_str()) {
+        let one_line = command.replace('\n', " ");
+        let shown: String = one_line.chars().take(160).collect();
+        let tail = if one_line.chars().count() > shown.chars().count() {
+            "…"
+        } else {
+            ""
+        };
+        return format!("{tool}: {shown}{tail}");
+    }
     match (arg_path(arguments), arg_domain(arguments)) {
         (Some(path), _) => format!("{tool} on {path}"),
         (_, Some(domain)) => format!("{tool} -> {domain}"),
@@ -365,6 +404,21 @@ impl ApprovalQueue {
             status: ApprovalStatus::Pending,
         });
         id
+    }
+
+    /// Append a pending request unless one already waits on this same action, and
+    /// return its id. `None` means the queue already holds it.
+    ///
+    /// The dedupe matters for an unattended run: it meets the same denied call on
+    /// every turn it retries, and a queue that grows by one duplicate a turn stops
+    /// being a list a person can read.
+    pub fn enqueue_once(&mut self, tool: &str, summary: &str) -> Option<String> {
+        if self.items.iter().any(|item| {
+            item.status == ApprovalStatus::Pending && item.tool == tool && item.summary == summary
+        }) {
+            return None;
+        }
+        Some(self.enqueue(tool, summary))
     }
 
     fn set_status(&mut self, id: &str, status: ApprovalStatus) -> bool {

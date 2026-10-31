@@ -303,7 +303,11 @@ pub fn run_headless_subagent(request: HeadlessSubAgentRequest) -> HeadlessSubAge
     let status_updates_collector = status_updates.clone();
     let transcript_collector = transcript.clone();
     let progress_collector = progress.clone();
-    let auto_approve_tx = agent_ui_tx.clone();
+    let approval_reply_tx = agent_ui_tx.clone();
+    // The workspace the run's own gates read: its rule files, its policy, its
+    // approval queue. An unattended run has no person to answer
+    // `RequestToolApproval`, so it answers from what is on disk here.
+    let approval_root = request.workspace_root.clone();
 
     let collector = std::thread::spawn(move || {
         while let Ok(msg) = agent_event_rx.recv() {
@@ -348,7 +352,13 @@ pub fn run_headless_subagent(request: HeadlessSubAgentRequest) -> HeadlessSubAge
                     tool_name,
                     arguments,
                 } => {
-                    let status = format!("Auto-approving tool: {tool_name}");
+                    // The approver this run has: the rules gate, the workspace
+                    // policy, and the reach of the call — in that order. It used to
+                    // answer every request with `ApproveTool`, which made the step
+                    // decoration: a `git push` was approved exactly as a `read_file`
+                    // was. See `super::unattended`.
+                    let verdict = super::unattended::decide(&approval_root, &tool_name, &arguments);
+                    let status = verdict.status_line(&tool_name);
                     status_updates_collector.lock_safe().push(status.clone());
                     if let Some(progress) = &progress_collector {
                         let mut progress = progress.lock_safe();
@@ -362,7 +372,7 @@ pub fn run_headless_subagent(request: HeadlessSubAgentRequest) -> HeadlessSubAge
                             message: status,
                         });
                     }
-                    let _ = auto_approve_tx.send(UiToAgentMessage::ApproveTool { id, arguments });
+                    let _ = approval_reply_tx.send(verdict.reply(id, arguments));
                 }
                 AgentToUiMessage::ToolExecutionStarted { tool_name } => {
                     if let Some(progress) = &progress_collector {
