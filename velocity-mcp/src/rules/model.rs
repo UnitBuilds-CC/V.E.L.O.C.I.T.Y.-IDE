@@ -14,9 +14,7 @@ use serde_json::Value;
 pub const SCHEMA_VERSION: u32 = 1;
 
 /// Where a rule lives and how far it reaches.
-#[derive(
-    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Default, Serialize, Deserialize,
-)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum RuleScope {
     /// Process memory only; the narrowest scope, evaluated first.
@@ -154,12 +152,20 @@ impl RuleKind {
                 ParamSpec {
                     key: "tool_calls",
                     label: "Tool calls",
-                    kind: ParamKind::Int { min: 1, max: 100_000, unit: "" },
+                    kind: ParamKind::Int {
+                        min: 1,
+                        max: 100_000,
+                        unit: "",
+                    },
                 },
                 ParamSpec {
                     key: "window_minutes",
                     label: "Window",
-                    kind: ParamKind::Int { min: 1, max: 10_080, unit: "min" },
+                    kind: ParamKind::Int {
+                        min: 1,
+                        max: 10_080,
+                        unit: "min",
+                    },
                 },
             ],
         }
@@ -178,7 +184,11 @@ pub struct ParamSpec {
 #[derive(Debug, Clone, Copy)]
 pub enum ParamKind {
     /// Whole number within bounds; `unit` is appended in the editor.
-    Int { min: i64, max: i64, unit: &'static str },
+    Int {
+        min: i64,
+        max: i64,
+        unit: &'static str,
+    },
     /// A list of strings, shown as a comma-separated field.
     List(&'static str),
 }
@@ -563,7 +573,10 @@ pub fn new_rule_id() -> String {
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_nanos() as u64)
         .unwrap_or(0);
-    format!("rule-{:08x}", (nanos ^ (n.wrapping_mul(0x9e37_79b9_7f4a_7c15))) as u32)
+    format!(
+        "rule-{:08x}",
+        (nanos ^ (n.wrapping_mul(0x9e37_79b9_7f4a_7c15))) as u32
+    )
 }
 
 /// `req-<hex>` and `byp-<hex>`, same uniqueness scheme.
@@ -671,14 +684,19 @@ mod tests {
         let value: ParamValue = serde_json::from_value(json!(100)).unwrap();
         assert_eq!(value.as_int(), Some(100));
         let value: ParamValue = serde_json::from_value(json!(["a", "b"])).unwrap();
-        assert_eq!(value.as_list().unwrap(), &["a".to_string(), "b".to_string()]);
+        assert_eq!(
+            value.as_list().unwrap(),
+            &["a".to_string(), "b".to_string()]
+        );
     }
 
     #[test]
     fn budget_summary_reads_both_parameters() {
         let mut rule = sample_rule(RuleKind::ToolBudget);
-        rule.params.insert("tool_calls".into(), ParamValue::Int(100));
-        rule.params.insert("window_minutes".into(), ParamValue::Int(60));
+        rule.params
+            .insert("tool_calls".into(), ParamValue::Int(100));
+        rule.params
+            .insert("window_minutes".into(), ParamValue::Int(60));
         assert_eq!(rule.summary(), "100 calls / 60 min");
     }
 
